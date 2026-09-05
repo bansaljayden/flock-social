@@ -64,6 +64,7 @@ const apiSource = fs.readFileSync(apiPath, 'utf8');
 const dmScreenSource = fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
 const chatModule = (f) => fs.readFileSync(path.join(__dirname, '..', 'components', 'chat', f), 'utf8');
 const messageListSource = chatModule('MessageList.js');
+const chatInputBarSource = chatModule('ChatInputBar.js');
 const messageRowSource = chatModule('MessageRow.js');
 const statusLineSource = chatModule('StatusLine.js');
 
@@ -336,7 +337,15 @@ describe('a block landing mid-thread', () => {
   });
 
   test('the composer is removed rather than left live', () => {
-    expect(appSource).toMatch(/\{!dmBlocked\[String\(selectedDmId\)\] && \(\s*<div style=\{\{ padding: '10px 12px calc\(10px \+ var\(--safe-bottom\)\)'/);
+    // The gate is what matters and it has not moved: a blocked pair gets no
+    // composer at all, rather than one that takes typing and refuses the send.
+    expect(appSource).toMatch(/\{!dmBlocked\[String\(selectedDmId\)\] && \(\s*<>/);
+    expect(appSource).toMatch(/\{!dmBlocked\[String\(selectedDmId\)\] && \(\s*<>[\s\S]{0,2600}<ChatInputBar/);
+    // THE SAFE-AREA CONTRACT went with it. The DM screen draws no tab bar, so
+    // the composer IS the bottom of the phone and has to carry the home
+    // indicator inset itself. The screen used to pad for that by hand; the bar
+    // does it for both threads now, which is why this asserts it there.
+    expect(chatInputBarSource).toMatch(/paddingBottom: 'var\(--safe-bottom\)'/);
   });
 
   test('the live blocked_by event closes the thread too', () => {
@@ -634,13 +643,23 @@ describe('whitespace does not arm the Send button on either chat screen', () => 
     });
   });
 
-  test('the DM Send button is the one reading that boolean', () => {
+  test('the DM send path is the one reading that boolean', () => {
     // If this ever stops being true the executed tests above are describing a
-    // button nothing is wired to.
-    const bar = appSource.slice(appSource.indexOf('{/* Input bar'));
-    const send = bar.slice(0, bar.indexOf('</div>', bar.indexOf('aria-label="Send"')));
-    expect(send.length).toBeGreaterThan(200);
-    expect(send).toContain('disabled={!chatInputHasText}');
+    // control nothing is wired to.
+    //
+    // There is no disabled Send to read any more. The DM draws the module's
+    // bar, which holds ONE slot on the right: the plus until there is
+    // something to send, the send control after that. So the boolean is read
+    // by the guard on the send path instead of by an attribute on a button
+    // that is always drawn, and the AND is unchanged: App.js's
+    // chatInputHasText is `!!value`, so a boxful of spaces is truthy there and
+    // only the screen can see that the box holds nothing but whitespace.
+    const dmSource = dmScreenSource;
+    expect(dmSource).toContain('const canSendDmText = chatInputHasText && dmComposerHasRealText;');
+    expect(dmSource).toMatch(/onSend=\{\(\) => \{ if \(canSendDmText\) sendDmMessage\(\); \}\}/);
+    expect(dmSource).toMatch(/setDmComposerHasRealText\(next\.trim\(\)\.length > 0\);/);
+    // And no disabled send survived the swap on this screen.
+    expect(dmSource).not.toContain('disabled={!chatInputHasText}');
   });
 });
 
