@@ -590,6 +590,19 @@ function MessageRow({
         </div>
       )}
 
+      {/* THE TIME, FOR ANYONE NOT USING A POINTER.
+          Tap to reveal is a pointer gesture, and the row is a plain div: no
+          role, no tab stop, no key handler, because a message is content and
+          announcing every one of them as a button would be worse than the
+          problem. So the reveal below is the sighted pointer user's path and
+          this is everybody else's.
+
+          The old screens printed a time under every bubble, so a screen
+          reader user always had it. The rebuild took the visible time away
+          from the stream, which is right, and took it away from them too,
+          which was not: this is that half put back, at no visual cost. */}
+      {time && <span className="chat-sr-only">{`Sent at ${time}`}</span>}
+
       {timeShown && time && (
         /* The revealed time. Out of flow in the same reserved strip the
            reactions hang in, at the opposite end of it, so showing it costs
