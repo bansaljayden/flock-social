@@ -827,9 +827,19 @@ export default function FlockDetail({
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="hit44 glass-btn glass-secondary" onClick={() => setShowTimeEditor(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
                 <button className="hit44 glass-btn glass-navy" disabled={savingEventTime} onClick={async () => {
+                  // The day chip lands on today once the plan's own hour has
+                  // passed, so a 10 PM pick at 10:30 PM was a plan in the
+                  // past, saved with "Time updated" (first-session audit,
+                  // 2026-09-05). The server floors only to creation, on
+                  // purpose, so the refusal lives here.
+                  const chosen = resolveEditTime(resolveEventTime, timeEditDay, timeEditHour);
+                  if (chosen.getTime() < Date.now()) {
+                    showToast('That time has already passed. Pick a later one.', 'error');
+                    return;
+                  }
                   setSavingEventTime(true);
                   try {
-                    await saveFlockEventTime(flock.id, resolveEditTime(resolveEventTime, timeEditDay, timeEditHour).toISOString());
+                    await saveFlockEventTime(flock.id, chosen.toISOString());
                     setShowTimeEditor(false);
                     showToast('Time updated');
                   } catch (err) {

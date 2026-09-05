@@ -47,7 +47,7 @@ test('a signed-out install says what the invite tap was for', () => {
 });
 
 test('the host is told what the link grants and that it expires', () => {
-  expect(chat).toMatch(/Copied\. Anyone with this link can see the plan, answer, vote, and join this flock\. It stops working in two weeks\./);
+  expect(chat).toMatch(/Copied\. Anyone with this link can see the plan, answer, vote, and join this flock\. It stops working two weeks from now or a week after the plan, whichever is later\./);
 });
 
 test('the two capacity bands no longer contradict each other', () => {
