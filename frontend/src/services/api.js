@@ -2112,11 +2112,20 @@ export async function getActivityFeed() {
 // already refuses to send conversation content to PostHog and says why at
 // length, and this is the same boundary from the other side.
 export async function sendAiChat(messages, location, currentContext) {
-  const data = await request('/api/ai/chat', {
-    method: 'POST',
-    timeout: AI_TIMEOUT_MS,
-    body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
-  });
+  let data;
+  try {
+    data = await request('/api/ai/chat', {
+      method: 'POST',
+      timeout: AI_TIMEOUT_MS,
+      body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
+    });
+  } catch (err) {
+    // The generic POST line ("that may have gone through, so check before
+    // trying it again") has nothing to check in a chat: the reply is gone.
+    // Birdie's bubble says so in voice (chat audit, 2026-09-05).
+    if (err && err.isBadReply) err.message = 'lost that one. ask again';
+    throw err;
+  }
   track('birdie_message', { turn: Array.isArray(messages) ? messages.length : 0 });
   return data;
 }
