@@ -651,6 +651,22 @@ appId: com.flockcorp.flock
           text: "Allow"
           optional: true
       - waitForAnimationToEnd
+# GUARDED THE WAY THE NEST TAP AT THE HEAD OF A3 IS (search extendedWaitUntil
+# above). The block immediately above this relaunches, and every launch
+# leaves permissions unset, which brings the iOS location alert back over
+# the app; the alert taps are optional, so the flow arrives here whether or
+# not the tab bar has finished painting. Unguarded, this REQUIRED tap races
+# that paint, and losing it ends the take before shots 15 and 16 and the
+# contacts screen.
+#
+# That is the exact shape that killed run 19 at B2's login: a required step
+# reached on a screen that had not settled. Everything from B2 onward has
+# never executed on a Simulator, not on any of the 19 runs, so this path is
+# unproven and a run costs real money. Waiting costs nothing when the bar is
+# already there.
+- extendedWaitUntil:
+    visible: "You"
+    timeout: 25000
 - tapOn: "You"
 - scrollUntilVisible:
     element: "Blocked accounts.*"                 # ProfileSettings.js:675 row; its label is the title plus the count, so the whole label is matched (every cleanup pass missed the exact text)
