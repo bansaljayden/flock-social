@@ -235,9 +235,27 @@ test('the reply-target lookup keeps its predicate, so the sweep stays swept', ()
   assert.match(HANDLERS_SRC, /COALESCE\(dm\.is_hidden, false\) = false/,
     'send_dm reply targets must still exclude hidden messages');
 
-  // The other tables that carry is_hidden. Three of them are simply never read
-  // from this file, so direct_messages and guest_rsvps are the whole sweep.
-  for (const table of ['FROM messages', 'FROM stories', 'FROM venue_reviews', 'FROM venue_promotions']) {
+  // `messages` JOINED THIS POPULATION on 2026-09-05 and this assertion had to
+  // change shape rather than simply lose a name. Migration 066 gave flock chat
+  // a reply_to_id, and send_message's reply-target lookup is the first read of
+  // that table this file has ever made, so the blanket "never appears" line it
+  // used to sit under fired exactly as intended: a moderatable table had
+  // acquired a reader here.
+  //
+  // The tripwire is therefore upgraded, not deleted. The predicate is asserted
+  // the way direct_messages' is, AND the number of reads is pinned, because a
+  // bare "the predicate appears somewhere in this file" would go on passing
+  // the day somebody adds a second, unguarded `FROM messages` beside the
+  // guarded one.
+  const messageReads = HANDLERS_SRC.match(/FROM messages\b/g) || [];
+  assert.strictEqual(messageReads.length, 1,
+    'exactly one read of `messages` on this file: the send_message reply-target lookup. '
+    + 'A new one needs the takedown predicate and its own assertion here.');
+  assert.match(HANDLERS_SRC, /m\.is_hidden IS NOT TRUE\s*\n?\s*AND m\.sender_deleted_at IS NULL/,
+    'a flock reply may not quote a hidden or unsent message back into the thread');
+
+  // The other tables that carry is_hidden and are still never read from here.
+  for (const table of ['FROM stories', 'FROM venue_reviews', 'FROM venue_promotions']) {
     assert.ok(!HANDLERS_SRC.includes(table),
       `${table} appeared in sockets/handlers.js — it carries is_hidden, so it needs the predicate too`);
   }
