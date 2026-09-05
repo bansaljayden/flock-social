@@ -391,16 +391,24 @@ DOORS.forEach((door) => {
       expect(api.appleLogin).not.toHaveBeenCalled();
     });
 
-    it('an empty date still reaches Apple, because an existing Apple account signs in without one', async () => {
+    it('an empty date is stopped before the Apple sheet opens, the same as Google', async () => {
+      // This used to pin the opposite: an empty date reached Apple so that an
+      // existing Apple account could sign in from this screen. Reversed
+      // 2026-09-05. Apple hands over the person's name on the first sheet
+      // that completes and never again, and a new account's first tap with
+      // no date was always refused (needsDob), so that tap spent the one
+      // delivery and the retry named the account after a relay address. The
+      // sentence is not an age claim: it asks for the field, not a threshold.
+      // An existing Apple account signs in from the login screen, where the
+      // button asks nothing. firstSessionAccountFixes.test.js pins the rest.
       asNativeIos();
-      mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token' } });
-      api.appleLogin.mockResolvedValueOnce({ user: { id: 4 } });
-
       const utils = door.open();
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
 
-      await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
-      expect(api.appleLogin.mock.calls[0][3]).toBe('');
+      await waitFor(() => expect(utils.getByRole('alert').textContent)
+        .toBe('Add your date of birth above first, then continue with Apple.'));
+      expect(mockAppleAuthorize).not.toHaveBeenCalled();
+      expect(api.appleLogin).not.toHaveBeenCalled();
     });
   });
 });

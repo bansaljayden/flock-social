@@ -17,6 +17,22 @@ const isNativeIos = () =>
   window.Capacitor?.isNativePlatform?.() &&
   window.Capacitor?.getPlatform?.() === 'ios';
 
+// Apple delivers the person's name exactly once per Apple ID, on the first
+// sheet that completes, and never again unless they revoke the app in
+// Settings. The sheet completes on the device before the server has said
+// anything, so a first tap that the server then refuses (the 403 needsDob a
+// brand-new account gets when the date of birth is still blank) has already
+// spent that one delivery. The second tap arrived with no name, and the server
+// built the account from the email's local part, which for a private relay
+// address is a random string like "xk7f9q2s".
+//
+// So the last name the plugin handed over is kept here, at module scope rather
+// than in state, so it outlives the re-render between the two taps, and it is
+// sent again whenever the plugin returns none. It is keyed on Apple's user
+// identifier so one person's name is never sent for another, it is never
+// written to storage, and it dies with the page.
+let lastDelivered = null;
+
 // `dob` (optional): passed through on account CREATION — the server requires a
 // date of birth for new accounts on every auth path (age gate). Existing
 // accounts sign in fine without it.
@@ -51,9 +67,14 @@ const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
       const r = result?.response;
       if (!r?.identityToken) throw new Error('Apple sign-in was cancelled');
       // fullName only arrives on the first-ever authorization for the Apple ID.
-      const fullName = (r.givenName || r.familyName)
+      const delivered = (r.givenName || r.familyName)
         ? { givenName: r.givenName || '', familyName: r.familyName || '' }
         : undefined;
+      if (delivered) lastDelivered = { user: r.user || null, fullName: delivered };
+      const remembered = lastDelivered && (!r.user || !lastDelivered.user || lastDelivered.user === r.user)
+        ? lastDelivered.fullName
+        : undefined;
+      const fullName = delivered || remembered;
       const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob);
       onSuccess?.(data.user);
     } catch (err) {

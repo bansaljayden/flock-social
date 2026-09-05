@@ -463,9 +463,13 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       {/* Apple guideline 4.8 parity with the Google button above; native
           iOS only (returns null on web). Apple accounts do not carry a date of
           birth, so whatever is in the field is passed through and the server
-          decides, the same as the other two paths. An empty field is allowed
-          past on purpose: an Apple account that already exists signs in without
-          one, and a new one gets the server's needsDob answer back. The only
+          decides, the same as the other two paths. An empty field is stopped
+          before the sheet opens, the same as the Google button: this is the
+          signup screen, the server will not create an account without a date,
+          and Apple hands over the person's name only on the first sheet that
+          completes. Letting an empty field through spent that one delivery on
+          a tap the server was always going to refuse, and the retry created
+          the account from the email's local part instead. The only other
           thing stopped here is the date no living person can have, for the
           reason spelled out on dobLooksReal. */}
       <AppleSignInButton
@@ -474,7 +478,11 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         dob={dob}
         beforeAuthorize={() => {
           setError('');
-          if (dob && !dobLooksReal(dob)) {
+          if (!dob) {
+            setError('Add your date of birth above first, then continue with Apple.');
+            return false;
+          }
+          if (!dobLooksReal(dob)) {
             setError('That date of birth does not look right. Check it and try again.');
             return false;
           }

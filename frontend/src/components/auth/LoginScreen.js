@@ -9,6 +9,11 @@ import {
   ForgotPasswordScreen, ResetPasswordScreen, isPasswordResetRoute,
 } from './PasswordReset';
 
+// The same three pages SignupScreen links, for the consent line below.
+const TERMS_URL = 'https://www.flockcorp.com/terms';
+const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
+const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
+
 const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin }) => {
   // The password-reset screens hang off this one rather than off App.js: the
   // emailed link lands on /reset-password, index.js sends every unknown path to
@@ -369,6 +374,23 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           }
         }}
       />
+
+      {/* Guideline 1.2 / EULA consent, worded exactly as SignupScreen words
+          it. The Google and Apple buttons above CREATE an account for anyone
+          who has none, and the server stamps terms_accepted_at on that row,
+          so the agreement has to be on this screen too. It appears once the
+          server has asked for a date of birth, which is the one state from
+          which the next tap creates the account: a first tap on either button
+          is always answered needsDob before any row is written, and an
+          account that already exists signs in without seeing it. */}
+      {needsDob && (
+        <p className="auth-legal">
+          Creating an account means you agree to the{' '}
+          <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
+          <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
+          <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
+        </p>
+      )}
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts, because answering that turns login into an account

@@ -69,6 +69,14 @@ const EditProfileForm = ({
                 const [editError, setEditError] = React.useState('');
                 const [editSuccess, setEditSuccess] = React.useState('');
                 const [editLoading, setEditLoading] = React.useState(false);
+                // How this account signs in. The server compares a current
+                // password only when the row has one; an Apple or Google
+                // account has none, and this form still refused to save
+                // without one, so those accounts could not change a name or a
+                // bio at all. Unknown (an older payload with no sign_in_method)
+                // keeps the field, the same rule the export and delete sheets
+                // in ProfileSettings apply.
+                const passwordAccount = !authUser?.sign_in_method || authUser.sign_in_method === 'password';
                 // Changing your address un-verifies the account (routes/users.js
                 // clears both columns), and that route deliberately does not mail
                 // the new link itself: it answers emailVerificationRequired and
@@ -151,7 +159,7 @@ const EditProfileForm = ({
 
                   if (!editName.trim()) { setEditError('Name is required'); return; }
                   if (!editEmail.trim()) { setEditError('Email is required'); return; }
-                  if (!currentPw) { setEditError('Current password is required to save changes'); return; }
+                  if (passwordAccount && !currentPw) { setEditError('Current password is required to save changes'); return; }
                   if (newPw && newPw.length < 8) { setEditError('New password must be at least 8 characters'); return; }
                   if (newPw && newPw !== confirmPw) { setEditError('New passwords do not match'); return; }
 
@@ -166,8 +174,11 @@ const EditProfileForm = ({
                       name: editName.trim(),
                       email: editEmail.trim(),
                       bio: trimmedBio,
-                      current_password: currentPw,
                     };
+                    // Only a password account has one to send. The server
+                    // skips the compare when the row has no password, and an
+                    // absent field is read as absent, the same as phone below.
+                    if (passwordAccount) payload.current_password = currentPw;
                     // Left out entirely when the field is blank: undefined
                     // falls out of JSON.stringify, and the server reads an
                     // absent phone as "leave the column alone". Sending '' on
@@ -307,6 +318,11 @@ const EditProfileForm = ({
                       />
                     </div>
 
+                    {/* Password accounts only. An Apple or Google account has
+                        no password to confirm and none to change here; the
+                        server refuses to bolt one on without proof that the
+                        address is theirs. */}
+                    {passwordAccount && (
                     <div style={{ borderTop: `1px solid ${colors.creamDark}`, marginTop: '16px', paddingTop: '16px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginBottom: '12px' }}>Security</p>
 
@@ -334,6 +350,7 @@ const EditProfileForm = ({
                         </div>
                       )}
                     </div>
+                    )}
 
                     <button
                       className="hit44 glass-btn glass-primary"

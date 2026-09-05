@@ -969,7 +969,11 @@ export default function ProfileSettings({
                           }
                         }
                         if (err?.status === 429) {
-                          setDeleteError('Too many tries. Wait fifteen minutes and try again.');
+                          // The server names the real window (utils/retryAfter.js
+                          // in the backend) and api.js carries that sentence.
+                          // This used to write a fixed number of minutes over
+                          // it, which was wrong for every lockout but a fresh one.
+                          setDeleteError(err?.message || 'Too many tries. Wait a few minutes and try again.');
                         } else if (reauth === 'reauth') {
                           setDeleteNeedsReauth(true);
                           setDeleteError('');
