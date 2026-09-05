@@ -393,11 +393,22 @@ router.post('/:flockId/create',
       // buys is exact and worth stating exactly: the reads and the write are
       // now one transaction, so the roster this bill is divided across and the
       // payer it is written against are the ones that existed when the lock was
-      // taken, not some earlier moment. What it does not buy is a lock on the
-      // membership table itself. routes/flocks.js does not take this row lock
-      // to leave or remove somebody, so a departure can still commit between
-      // the read and the COMMIT below; closing that fully means that route
-      // taking the same lock, which is that file's change and not this one.
+      // taken, not some earlier moment.
+      //
+      // THE GAP THIS USED TO DESCRIBE IS CLOSED. It said routes/flocks.js does
+      // not take this row lock to leave or remove somebody, so a departure
+      // could still commit between the read and the COMMIT below, and it left
+      // that as "that file's change and not this one". That change was made:
+      // POST /api/flocks/:id/leave now opens a transaction and takes the
+      // identical `SELECT id FROM flocks WHERE id = $1 FOR UPDATE` on both its
+      // creator and non-creator branches, and it is the only route that
+      // removes a membership row (there is no separate kick). So a departure
+      // and this handler serialise against each other.
+      //
+      // Corrected 2026-09-05 while verifying an adversarial review's findings
+      // against current code. A comment describing an open hole that has been
+      // filled is not harmless: it sends the next reader looking for a race
+      // that is not there, or invites a second fix for the same thing.
       //
       // A refusal in here is a ROLLBACK and then the answer, in that order.
       // Nothing has been written at any of those points, and the rollback is
