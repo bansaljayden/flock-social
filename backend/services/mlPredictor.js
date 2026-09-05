@@ -1197,7 +1197,16 @@ function primeBaselineCache(placeId, rows) {
 
 // `userId` (optional) is the account a cache MISS is charged to — see
 // allowVenueLookup. Hits are answered above the gate and cost nothing.
-async function getBaseline(placeId, dayOfWeek, hour, userId) {
+// `miss` (optional): an object this call writes its own miss reason into
+// ('none' | 'refused' | 'error', or null on a usable number), so the caller
+// reads the reason for ITS zero. The shared map behind baselineMissFor is
+// keyed on the slot alone, and two requests for one slot in flight together
+// overwrote each other's reason there: a refused lookup was labelled as a
+// corpus gap by the neighbouring request's query, which is the one
+// misattribution that map was built to end (adversarial audit round 2,
+// 2026-09-05). The map stays for the cached path, where the reason really is
+// a property of the slot.
+async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
   if (!pool || !placeId) return 0;
 
   const cacheKey = `${placeId}_${dayOfWeek}_${hour}`;
@@ -1215,7 +1224,9 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     // already names. A budget refusal is momentary and is the one that means
     // "we could not ask". Calling both 'refused' would move every place-id-less
     // venue onto the outage tag and undo the split.
-    noteBaselineMiss(cacheKey, isPlaceIdShaped(placeId) ? 'refused' : 'none');
+    const reason = isPlaceIdShaped(placeId) ? 'refused' : 'none';
+    noteBaselineMiss(cacheKey, reason);
+    if (miss) miss.reason = reason;
     return 0;
   }
 
@@ -1240,6 +1251,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
 
     if (rows.length === 0) {
       noteBaselineMiss(cacheKey, 'none');
+      if (miss) miss.reason = 'none';
       boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
       return 0;
     }
@@ -1255,11 +1267,13 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     // a venue that has since been scored.
     if (entry.data > 0) baselineMissCache.delete(cacheKey);
     else noteBaselineMiss(cacheKey, 'none');
+    if (miss) miss.reason = entry.data > 0 ? null : 'none';
     boundedSet(baselineCache, cacheKey, { data: entry.data, ts: Date.now(), meta: entry.meta });
     return entry.data;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
     noteBaselineMiss(cacheKey, 'error');
+    if (miss) miss.reason = 'error';
     return 0;
   }
 }
@@ -3134,10 +3148,12 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     const eventInstant = trueEventInstant(ts,
       venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null);
 
+    // This request's own baseline miss reason; see getBaseline.
+    const baselineMiss = {};
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
       getNearbyEvents(lat, lng, eventInstant, userId, eventOpts),
       getUserFeedback(placeId, userId),
-      getBaseline(placeId, ts.getDay(), ts.getHours(), userId),
+      getBaseline(placeId, ts.getDay(), ts.getHours(), userId, baselineMiss),
       getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId),
     ]);
 
@@ -3202,7 +3218,11 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // Which of the three zeros this was. `no_baseline` stays the name of the
       // corpus gap so every existing reader of that tag keeps its meaning; the
       // two failures get their own names instead of borrowing it.
-      const miss = baselineMissFor(placeId, ts.getDay(), ts.getHours());
+      // This request's own reason first; the slot's recorded reason only
+      // when this call answered from the cache and wrote none.
+      const miss = baselineMiss.reason !== undefined
+        ? baselineMiss.reason
+        : baselineMissFor(placeId, ts.getDay(), ts.getHours());
       result.predictionMethod = miss === 'refused' ? 'rule_engine_baseline_refused'
         : miss === 'error' ? 'rule_engine_baseline_error'
         : 'rule_engine_no_baseline';

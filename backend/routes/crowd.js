@@ -322,7 +322,7 @@ function setCache(key, data) {
 }
 
 // Paid-call budget shared with venueSearch (round 8: these fetches bypassed it)
-const { allowPlacesSearch, canAffordPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
+const { allowPlacesSearch, refundPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 
 // ---------------------------------------------------------------------------
@@ -1605,12 +1605,21 @@ router.get('/:placeId/alternatives',
       // reserved. On a cold cache that refuses exactly where the flat charge
       // used to; on a warm one it charges nothing, which the flat charge never
       // managed.
+      //
+      // RESERVED, NOT PEEKED (adversarial audit round 2, 2026-09-05). The
+      // first version of this checked affordability for two units read-only
+      // and then reserved one, so between that check and the search
+      // reservation below another request could spend the caller's last
+      // unit: the details were bought, the search was refused, and the
+      // caller had half an answer they could not retry until the budget
+      // reset, which is exactly the shape the peek existed to prevent. Both
+      // units are reserved here, atomically, and the second is handed back
+      // below if the search cache answers.
       const detailsCost = willCostUpstreamCall(placeId) ? 1 : 0;
-      if (detailsCost && !canAffordPlacesSearch(req.user.id, 2)) {
-        return placesRefusal(res, req.user.id, 2);
-      }
-      if (detailsCost && !allowPlacesSearch(req.user.id, detailsCost)) {
-        return placesRefusal(res, req.user.id, detailsCost);
+      let searchUnitReserved = false;
+      if (detailsCost) {
+        if (!allowPlacesSearch(req.user.id, 2)) return placesRefusal(res, req.user.id, 2);
+        searchUnitReserved = true;
       }
 
       // Fetch target venue
@@ -1686,10 +1695,14 @@ router.get('/:placeId/alternatives',
       // going unlisted for ten minutes rather than a wrong number on a card.
       const searchCacheKey = `altsearch:${primaryType}:${lat.toFixed(2)},${lon.toFixed(2)}`;
       const cachedSearch = getCached(searchCacheKey);
-      // The search unit, reserved only on a miss. A refusal here after the
-      // details were bought is the right shape: those details are cached for
-      // the next request, so the unit was not wasted.
-      if (!cachedSearch && !allowPlacesSearch(req.user.id, 1)) {
+      // The search unit. When the details were cold it was reserved up top
+      // with the details unit, so a warm search cache hands it back and a
+      // cold one is already paid for. When the details were warm nothing is
+      // reserved yet, so a miss reserves one here; a refusal at that point
+      // has bought nothing.
+      if (cachedSearch && searchUnitReserved) {
+        refundPlacesSearch(req.user.id, 1);
+      } else if (!cachedSearch && !searchUnitReserved && !allowPlacesSearch(req.user.id, 1)) {
         return placesRefusal(res, req.user.id, 1);
       }
       // Wrapped for the same reason as the target fetch above: the round-12

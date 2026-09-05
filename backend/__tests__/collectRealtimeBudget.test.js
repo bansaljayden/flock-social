@@ -513,7 +513,15 @@ test('every writer of the corpus takes one advisory lock, and the repair takes i
 
 test('both collectors re-resolve the venue inside the lock, immediately before the insert', () => {
   // Realtime: the id is always stored, so the check is an equality.
-  const rtCheck = collect.indexOf("'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2'");
+  // review_count rides on the identity check since round 2 of the adversarial
+  // audit (2026-09-05): the venue list is read before the lock, and the venue
+  // repair's phase two nulls a synthetic zero under this same lock, so a value
+  // read before it would be written straight back. What the row says NOW is
+  // what is stored, and it is applied to the column list before the INSERT.
+  const rtCheck = collect.indexOf("'SELECT review_count FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2'");
+  const rtRefresh = collect.indexOf("if (rc) rc[1] = still[0].review_count;");
+  assert.ok(rtRefresh > rtCheck && rtRefresh < collect.indexOf("INSERT INTO ml_training_data (collection_mode,"),
+    'collectRealtime does not refresh review_count between the locked check and the insert');
   const rtLock = collect.indexOf('const result = await withCorpusWriteLock(pool, async (client) => {');
   const rtInsert = collect.indexOf("INSERT INTO ml_training_data (collection_mode,");
   assert.ok(rtLock > -1 && rtCheck > rtLock && rtInsert > rtCheck,
@@ -604,4 +612,15 @@ test('a baseline refresh is serialized, and its stamp is the evidence date of th
   assert.ok(!/GREATEST/.test(upsert), 'updated_at still takes GREATEST(old, new) independently of the value written');
   // The churn guard is unchanged, because it is what keeps re-runs free.
   assert.match(upsert, /WHERE ml_venue_baselines\.baseline IS DISTINCT FROM EXCLUDED\.baseline\s*\n\s*OR EXCLUDED\.updated_at > COALESCE\(ml_venue_baselines\.updated_at, 'epoch'::timestamptz\)/);
+});
+
+
+test('the venue repair clears synthetic review counts under the same lock the collectors write under', () => {
+  // Phase two used to UPDATE ml_training_data on the pool with no lock, so a
+  // collector that had read the old zero could wait for the repair and then
+  // put the zero back (adversarial audit round 2, 2026-09-05).
+  const phase2 = venueRepair.slice(venueRepair.indexOf('async function phase2'), venueRepair.indexOf('async function indexState'));
+  assert.match(phase2, /await withCorpusWriteLock\(pool, \(client\) => client\.query\(`/);
+  assert.match(phase2, /SET review_count = NULL/);
+  assert.ok(!/pool\.query/.test(phase2), 'phase two touches the corpus outside the lock');
 });
