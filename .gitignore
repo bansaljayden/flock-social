@@ -191,6 +191,9 @@ backend/scripts/ml/models/incumbent/
 backend/scripts/ml/train/*
 !backend/scripts/ml/train/*.py
 !backend/scripts/ml/train/*.js
+# Research notes written beside the training code are reader-facing and belong
+# in the repo with it; artifacts and logs never carry this suffix.
+!backend/scripts/ml/train/*.md
 !backend/scripts/ml/train/*.sh
 !backend/scripts/ml/train/requirements.txt
 
