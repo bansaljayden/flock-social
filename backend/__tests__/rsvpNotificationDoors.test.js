@@ -60,6 +60,11 @@ let log = [];
 let unknownSql = [];
 
 function dispatch(sql, params) {
+  // The join and update routes read the plan's status first, and the update and
+  // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
+  // this file is open and nobody holds an invite, so both default quietly.
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
+  if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   // Matched against the COLLAPSED sql: these statements are written across
   // several lines in the routers, so a pattern spanning two of them would
   // otherwise depend on where the source happens to wrap.
