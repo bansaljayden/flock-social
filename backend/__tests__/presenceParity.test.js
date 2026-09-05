@@ -130,9 +130,12 @@ const mlPredictor = require('../services/mlPredictor');
 // A rising evening curve, so the best-time sentence names a real later hour
 // rather than "now" — otherwise the locked/unlocked comparison in PART 3 would
 // be comparing two nulls.
+// 45, not 30: the alternatives route answers a quiet or not-busy target
+// (39 and under) with an empty list before the paid search (Explore audit,
+// 2026-09-05), and the PART 3 alternatives tests need the search to run.
 mlPredictor.predictBusyness = async () => ({
-  score: 30,
-  label: crowdEngine.getLabel(30),
+  score: 45,
+  label: crowdEngine.getLabel(45),
   confidence: 60,
   factors: {},
   dataSourcesUsed: ['ml_model'],

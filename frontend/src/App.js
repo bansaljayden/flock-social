@@ -1682,6 +1682,15 @@ const flockTileInitial = (name) => {
 // chip and by the back-navigation snapshot check so they never disagree about
 // what counts as current.
 const CROWD_FRESH_MS = 5 * 60 * 1000;
+// A pin, heat-map or list score older than this is fetched again the next
+// time its venue is scored; without it a session open from five to nine kept
+// five o'clock on every pin (Explore audit, 2026-09-05).
+const CROWD_SCORE_TTL_MS = 30 * 60 * 1000;
+// An owner's live reading carries its expiry; a list row must not print
+// the owner's number past it (Explore audit, 2026-09-05).
+const ownerReportShown = (prediction) => prediction?.confidenceBasis === 'owner_report'
+  && !!prediction?.ownerReport
+  && (!prediction.ownerReport.expiresAt || Date.parse(prediction.ownerReport.expiresAt) > Date.now());
 // Re-cut 2026-08-28 with the qmap arming; the reasoning lives on the
 // canonical copy in backend/services/crowdEngine.js getLabel, which this
 // mirrors word for word and cut for cut.
@@ -2409,6 +2418,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
+  // A rejected tile key or a style that never loads used to be an endless
+  // spinner (Explore audit, 2026-09-05).
+  const [mapFailed, setMapFailed] = useState(false);
+  const mapLoadedRef = useRef(false);
   // The category filter hid every pin on the map. Rendered as a sentence,
   // because an empty map reads as broken.
   const [filterHidesAll, setFilterHidesAll] = useState(false);
@@ -2687,7 +2700,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // Without a listener, MapLibre surfaces style/tile load errors (bad key,
       // network) rather than failing quietly. Swallow them so a broken basemap
       // leaves Discover usable.
-      map.on('error', (e) => { console.warn('[Map]', e?.error?.message || e?.error || e); });
+      map.on('error', (e) => {
+        console.warn('[Map]', e?.error?.message || e?.error || e);
+        const status = Number(e?.error?.status);
+        if (!mapLoadedRef.current && (status === 401 || status === 403)) setMapFailed(true);
+      });
+      setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
       // KEYBOARD ORDER. MapLibre injects its control containers as the FIRST
@@ -2773,6 +2791,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         addOverlayLayers(map);
         applyZoomTier();
         boostNativePoiLabels();
+        mapLoadedRef.current = true;
         setMapReady(true);
       });
 
@@ -2867,7 +2886,20 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // ---------- user blue dot + accuracy ring ----------
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!mapReady || !map || !userLocation) return;
+    if (!mapReady || !map) return;
+    if (!userLocation) {
+      // Location switched off: the dot and its ring go too, or the banner
+      // says the map does not show where you are while it plainly does
+      // (Explore audit, 2026-09-05).
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+        userElRef.current = null;
+      }
+      const ring = map.getSource('user-accuracy');
+      if (ring) ring.setData({ type: 'FeatureCollection', features: [] });
+      return;
+    }
     const lng = userLocation.lng, lat = userLocation.lat;
     const acc = userLocation.accuracy || 50;
 
@@ -3243,7 +3275,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
         <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
       )}
-      {!mapReady && (
+      {!mapReady && mapFailed && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+          <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>The map could not load. Search still works.</p>
+        </div>
+      )}
+      {!mapReady && !mapFailed && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
           <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>Loading map...</p>
@@ -5091,7 +5128,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // invented: the server takes it only when Number.isFinite and otherwise
   // falls back exactly as before.
   const requestCrowdScores = useCallback((venues) => {
-    const unscored = (venues || []).filter(v => v.place_id && !crowdPredictionsRef.current[v.place_id]);
+    const stale = (e) => !e || !e.fetchedAt || Date.now() - e.fetchedAt > CROWD_SCORE_TTL_MS;
+    const unscored = (venues || []).filter(v => v.place_id && stale(crowdPredictionsRef.current[v.place_id]));
     if (unscored.length === 0) return;
     const batchPayload = unscored.slice(0, 20).map(v => ({
       place_id: v.place_id, name: v.name, rating: v.rating,
@@ -5102,7 +5140,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getCrowdBatch(batchPayload)
       .then(res => {
         const map = {};
-        (res.predictions || []).forEach(p => { map[p.placeId] = p; });
+        const fetchedAt = Date.now();
+        (res.predictions || []).forEach(p => { map[p.placeId] = { ...p, fetchedAt }; });
         setCrowdPredictions(prev => ({ ...prev, ...map }));
         if (res.weather) setLiveWeather(res.weather);
       })
@@ -5249,7 +5288,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [enhanceQuery, venuesToMapPins, userLocation, showToast, requestCrowdScores]);
 
   // Open the full venue details modal
+  // Two taps in a row raced: the first venue's slower reads landed after the
+  // second's and overwrote the open sheet with the wrong place (Explore
+  // audit, 2026-09-05). Only the newest open may write.
+  const venueDetailSeqRef = useRef(0);
   const openVenueDetail = useCallback(async (placeId, fallbackData, { panMap } = {}) => {
+    const seq = ++venueDetailSeqRef.current;
+    const current = () => seq === venueDetailSeqRef.current;
     setVenueDetailLoading(true);
     setVenueDetailPhotoIdx(0);
     setCrowdData(null);
@@ -5262,6 +5307,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         getVenueDetails(placeId),
         getCrowdPrediction(placeId),
       ]);
+      if (!current()) return;
 
       const venue = detailResult.status === 'fulfilled' ? detailResult.value.venue : fallbackData;
       const crowd = crowdResult.status === 'fulfilled' ? crowdResult.value : null;
@@ -5294,7 +5340,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // back to the same two places the map-pin path writes to.
       if (crowd && typeof crowd.score === 'number') {
         setAllVenues(prev => prev.map(v => v.place_id === placeId ? { ...v, crowd: crowd.score, crowdLabel: crowd.label || v.crowdLabel } : v));
-        setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label, confidenceBasis: crowd.confidenceBasis || null, ownerReport: crowd.ownerReport || null } }));
+        setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label, confidenceBasis: crowd.confidenceBasis || null, ownerReport: crowd.ownerReport || null, fetchedAt: Date.now() } }));
       }
 
       // Pan map to venue location once we have coordinates
@@ -5307,18 +5353,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
 
       // Fetch quieter alternatives (non-blocking)
-      if (crowd) {
+      // A quiet or not-busy venue (score 39 or under) has no "less crowded
+      // nearby", and the section hides on an empty list; the paid search
+      // used to run anyway (Explore audit, 2026-09-05).
+      if (crowd && !(typeof crowd.score === 'number' && crowd.score <= 39)) {
         getCrowdAlternatives(placeId)
-          .then(res => setCrowdAlternatives(res.alternatives || []))
-          .catch(() => setCrowdAlternatives([]));
+          .then(res => { if (current()) setCrowdAlternatives(res.alternatives || []); })
+          .catch(() => { if (current()) setCrowdAlternatives([]); });
       }
     } catch (err) {
+      if (!current()) return;
       console.error('[VenueDetail] Failed:', err.message);
       if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
     } finally {
-      setVenueDetailLoading(false);
-      setCrowdLoading(false);
+      if (current()) {
+        setVenueDetailLoading(false);
+        setCrowdLoading(false);
+      }
     }
   }, []);
 
@@ -6781,9 +6833,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (data && typeof data.score === 'number') {
           // Sync fresh score into the venue list so the map heatmap matches the dial
           setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
-          setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null } }));
+          setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
         }
-        if (data) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
+        if (data && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       })
       .catch(() => {
         // Recorded, not swallowed. openVenueDetail sets this and the map-marker
@@ -6902,12 +6954,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // different in both directions. Both rooms on one venue at once is normal and
   // the server keeps them in separate Sets so they cannot evict each other.
   // Named so the card's own retry can call the same read the effect does.
+  // The newest sheet's place id; an older read that lands later is dropped
+  // rather than shown under the wrong venue (Explore audit, 2026-09-05).
+  const venueDetailReviewsForRef = useRef(null);
   const loadVenueDetailReviews = useCallback((placeId) => {
     if (!placeId) return;
+    venueDetailReviewsForRef.current = String(placeId);
     setVenueDetailReviewsError('');
     getPublicReviews(placeId)
-      .then(d => { setVenueDetailReviews(d.reviews || []); setVenueDetailReviewTotal(Number.isFinite(d.total) ? d.total : null); })
-      .catch(err => setVenueDetailReviewsError(err?.message || "Reviews aren't loading right now."));
+      .then(d => {
+        if (venueDetailReviewsForRef.current !== String(placeId)) return;
+        setVenueDetailReviews(d.reviews || []);
+        setVenueDetailReviewTotal(Number.isFinite(d.total) ? d.total : null);
+      })
+      .catch(err => {
+        if (venueDetailReviewsForRef.current !== String(placeId)) return;
+        setVenueDetailReviewsError(err?.message || "Reviews aren't loading right now.");
+      });
   }, []);
 
   useEffect(() => {
@@ -12767,8 +12830,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const aiMemoryCut = aiMemoryCutIndex(aiMessages.length);
   // At zero the input stayed live: every send hit the 429 again and re-opened
   // the paywall sheet.
-  const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0;
+  // Locked only while the printed reset time is still ahead; the box used
+  // to stay dead past it until a relaunch (chat audit, 2026-09-05).
+  const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0
+    && (!aiResetsAt || Date.now() < Date.parse(aiResetsAt));
   outOfChirpsRef.current = outOfChirps;
+  useEffect(() => {
+    if (!aiResetsAt) return undefined;
+    const ms = Date.parse(aiResetsAt) - Date.now();
+    if (!(ms > 0)) { setAiResetsAt(null); refreshEntitlements(); return undefined; }
+    const t = setTimeout(() => { setAiResetsAt(null); refreshEntitlements(); }, Math.min(ms + 1000, 2147483647));
+    return () => clearTimeout(t);
+  }, [aiResetsAt, refreshEntitlements]);
   const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;
   const closeAiChat = () => setAiChatMode('bubble');
   // The door from You to the venue dashboard. The welcome screen promised a
@@ -14234,7 +14307,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <AnimatedDial score={score} color={crowdColor} />
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {!cd && !isClosed ? (
+                    {crowdFetchFailed && !isClosed ? (
+                      /* The dial and the chart already say a failed read; this
+                         column pulsed forever (Explore audit, 2026-09-05). */
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No crowd read for this spot right now.</p>
+                    ) : !cd && !isClosed ? (
                       <>
                         <div className="skeleton" style={{ width: '55%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
                         <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '8px' }} />
@@ -15157,7 +15234,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Try searching for a specific event or artist</p>
               </div>
             )}
-            {!featuredEventsLoading && (featuredEvents || []).map(event => {
+            {!featuredEventsLoading && (featuredEvents || []).filter(event => !event.datetime_utc || Date.parse(event.datetime_utc) > Date.now()).map(event => {
               const eventDate = event.date ? new Date(event.date + 'T' + (event.time || '00:00:00')) : null;
               const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
               const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
@@ -16290,7 +16367,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const data = await getCrowdPrediction(pid);
       if (data && typeof data.score === 'number') {
-        setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null } }));
+        setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
         setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
       }
       if (activeVenue?.place_id === pid) setCrowdData(data);
@@ -18532,7 +18609,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                                     the label that keeps it honest (noun is
                                     category-derived server-side), and the
                                     detail card one tap away says the rest. */}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
+                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{ownerReportShown(prediction) ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
                               </div>
                               )}
                             </>
@@ -18563,7 +18640,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                             {!venue.photo_url && crowdScore != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {prediction?.confidenceBasis === 'owner_report' ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
+                                {ownerReportShown(prediction) ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
                               </span>
                             )}
                             {/* Photo cards carry the bare percentage in their
