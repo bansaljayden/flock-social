@@ -8995,9 +8995,46 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           return next;
         });
         const msgs = (data.messages || []).map(m => mapDmRow(m, meRef.current?.id));
-        setDirectMessages(prev => prev.map(d => d.userId === userId
-          ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
-          : d));
+        // The same reset loadFlockMessages does, for the same reason: a read
+        // that does not keep older rows truncates the thread back to this
+        // page, so the pages exist again, and the exhausted flag has to go
+        // or one walk to the top hid "Load earlier messages" for the rest of
+        // the session on every re-entry (guest and DM audit, 2026-09-05).
+        if (!keepOlder) {
+          setDmAtTop(t => {
+            if (!t[userId]) return t;
+            const next = { ...t };
+            delete next[userId];
+            return next;
+          });
+        }
+        setDirectMessages(prev => {
+          // A thread opened before its list row exists: a push tap on a cold
+          // start sets the screen before GET /api/dm has answered, and a map
+          // over the rows we hold was a no-op that threw the history away,
+          // so the thread read "Say hi to start the conversation" over real
+          // unread messages until it was left and re-entered. The row is
+          // made here from the thread itself; the list read that lands after
+          // keeps these messages and fills in the rest.
+          if (!prev.some(d => d.userId === userId)) {
+            const me = meRef.current?.id;
+            const fromThem = (data.messages || []).find(m => String(m.sender_id) !== String(me));
+            const last = (data.messages || [])[(data.messages || []).length - 1];
+            return [...prev, {
+              userId,
+              name: fromThem?.sender_name || 'Unknown',
+              image: fromThem?.sender_image || null,
+              messages: msgs,
+              lastMessage: last?.message_text || '',
+              lastMessageTime: last?.created_at || null,
+              lastMessageIsYou: last ? String(last.sender_id) === String(me) : false,
+              unread: 0,
+            }];
+          }
+          return prev.map(d => d.userId === userId
+            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
+            : d);
+        });
       })
       .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; })
       .finally(() => { if (showSkeleton) setDmMessagesLoading(false); });

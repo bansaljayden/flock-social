@@ -1009,3 +1009,43 @@ test('a socket that disconnects while dm_share_location is still authorizing reg
   assert.strictEqual(dmStops(io, dead, live).length, before + 1,
     'the stop was swallowed by a share the dead socket left behind');
 });
+
+
+test('send_dm echoes to every device of the sender, the way the reaction and pin echoes do', async () => {
+  // A socket.emit reached the phone that sent and left the laptop in the same
+  // thread showing nothing until it reconnected (guest and DM audit,
+  // 2026-09-05). The counterpart still hears it over socket.to; the sender's
+  // copy leaves through io, which the whole account is in.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
+    [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
+    [/INSERT INTO direct_messages/, [{ id: 501, sender_id: 1, receiver_id: 7, message_text: 'hey', created_at: new Date() }]],
+  ];
+  await fire(socket, 'send_dm', { receiverId: 7, message_text: 'hey' });
+  const toPeer = socket.emitted.find((e) => e.target === 'user:7' && e.event === 'new_dm');
+  const echo = io.emitted.find((e) => e.event === 'new_dm');
+  assert.ok(toPeer, 'the recipient no longer hears the message');
+  assert.ok(echo, 'the sender\'s copy has to leave through io');
+  assert.strictEqual(echo.room, 'user:1');
+  assert.strictEqual(echo.payload.id, 501);
+  assert.ok(!socket.emitted.some((e) => e.target === 'self' && e.event === 'new_dm'),
+    'a self-addressed emit reaches one device and leaves the account\'s others empty');
+});
+
+test('a pinned venue rating outside the five-star scale is stored as no rating, not as a 500', async () => {
+  const { socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/FROM user_blocks/, []],
+    [/FROM friendships/, [{ '?column?': 1 }]],
+    [/INSERT INTO dm_pinned_venues/, []],
+  ];
+  await fire(socket, 'dm_pin_venue', { receiverId: 7, venue_name: "Joe's Bar", venue_rating: 47 });
+  const ins = calls.find((c) => /INSERT INTO dm_pinned_venues/.test(c.sql));
+  assert.ok(ins, 'the pin was not written');
+  assert.strictEqual(ins.params[5], null, 'NUMERIC(2,1) cannot hold 47; the rating is dropped, the pin is kept');
+  calls = [];
+  await fire(socket, 'dm_pin_venue', { receiverId: 7, venue_name: "Joe's Bar", venue_rating: 4.5 });
+  assert.strictEqual(calls.find((c) => /INSERT INTO dm_pinned_venues/.test(c.sql)).params[5], 4.5);
+});
