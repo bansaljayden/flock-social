@@ -291,14 +291,53 @@ async function collectWeekly() {
 
       // Update besttime_venue_id if we got one + mark found
       if (forecast.venueId && !venue.besttime_venue_id) {
-        await safeQuery(
-          `UPDATE ml_venues
-           SET besttime_venue_id = $1,
-               besttime_attempted_at = NOW(),
-               besttime_status = 'found'
-           WHERE id = $2`,
-          [forecast.venueId, venue.id]
-        );
+        // TWO GOOGLE PLACES CAN RESOLVE TO ONE BESTTIME VENUE, and since
+        // migration 060 that is a 23505 rather than a silent second claim on the
+        // same forecast. It is rare and it is real: the 2026-09-03 dump holds 24
+        // such pairs, among them a Bangkok "Taco Bell" at two addresses and
+        // Sydney-style near-name collisions ("100 Gramm Bar" / "100 GRAMM
+        // Lounge"), where BestTime's own matcher answered with one venue id for
+        // both. Only one row may hold the mapping, or the hourly sweep pays two
+        // credits and writes two rows for one physical venue, which is the whole
+        // defect 060 exists to end.
+        //
+        // The venue is left unmapped and marked, rather than retried forever:
+        // besttime_status = 'duplicate' is the same vocabulary
+        // scripts/ml/repairBestTimeDiscoveredVenues.js writes on the losing row
+        // of an existing pair, so a later reader has one word to look for. The
+        // run continues; this is not a per-venue failure.
+        try {
+          await safeQuery(
+            `UPDATE ml_venues
+             SET besttime_venue_id = $1,
+                 besttime_attempted_at = NOW(),
+                 besttime_status = 'found'
+             WHERE id = $2`,
+            [forecast.venueId, venue.id]
+          );
+        } catch (err) {
+          if (err.code !== '23505') throw err;
+          await safeQuery(
+            `UPDATE ml_venues
+             SET besttime_attempted_at = NOW(),
+                 besttime_status = 'duplicate'
+             WHERE id = $1`,
+            [venue.id]
+          );
+          const { rows: holder } = await safeQuery(
+            'SELECT id, name, google_place_id FROM ml_venues WHERE besttime_venue_id = $1',
+            [forecast.venueId]
+          );
+          const h = holder[0];
+          console.warn(
+            `  BestTime resolved this to ${forecast.venueId}, already held by ml_venues `
+            + `${h ? `${h.id} (${h.name}, ${h.google_place_id})` : 'another row'}. `
+            + 'Left unmapped and marked duplicate; collecting it would buy the same forecast twice.'
+          );
+          skipped++;
+          consecutiveErrors = 0;
+          continue;
+        }
       } else {
         await safeQuery(
           `UPDATE ml_venues

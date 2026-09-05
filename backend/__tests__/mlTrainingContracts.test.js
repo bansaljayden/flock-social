@@ -57,6 +57,44 @@ function pyDictKeys(source, name) {
 
 // ── Leakage ────────────────────────────────────────────────────────────────
 
+test('review_count is filled the same way in training and in serving', () => {
+  // TWO HALVES OF ONE IMPUTATION, which is the shape this file exists to guard.
+  //
+  // prepare_features.py used to do review_count.fillna(0) while filling `rating`
+  // with the median. Zero is not a neutral fill: it is the minimum of the range
+  // and it means "nobody has ever been here", so a venue with no Google data was
+  // described to the model as average-rated with no reviews. That pairing is a
+  // learnable signature for the collection path rather than the venue, which is
+  // the same leakage shape as the weekly weather defect. The trainer now imputes
+  // the median and publishes it as median_review_count.
+  //
+  // Serving must follow the ARTIFACT, not the trainer's current source: a model
+  // trained on the zero fill has to be served the zero fill, or every cold venue
+  // moves under weights that never saw that value. So the metadata key is the
+  // switch, and the shipped v2.6.0-starling, which predates it, keeps its zero.
+  assert.match(PREPARE_PY, /median_review_count/,
+    'the trainer no longer computes a review_count median');
+  assert.ok(!/\['review_count'\]\.fillna\(0\)/.test(PREPARE_PY),
+    'the trainer still fills review_count with a measured zero');
+
+  const fill = PREDICTOR_JS.slice(PREDICTOR_JS.indexOf('const reviewCount ='));
+  const expr = fill.slice(0, fill.indexOf(';'));
+  assert.match(expr, /metadata\.median_review_count/,
+    'serving cannot follow a median-trained model, so training and serving would skew');
+  assert.ok(!/\|\|\s*0\s*$/.test(expr.trim()),
+    'an unconditional zero fill ignores what the loaded model was trained on');
+  // A real zero is a measurement and must survive, so the chain is `??`, not `||`.
+  assert.ok(!expr.includes('||'),
+    '`||` would replace a genuine Google answer of zero reviews with the median');
+
+  // And the switch has to be honest about the artifact actually loaded.
+  if (METADATA.median_review_count === undefined) {
+    assert.strictEqual(METADATA.model_version, '2.6.0-starling',
+      'a model with no median_review_count is a pre-median artifact; if the shipped '
+      + 'version changed, confirm it really was trained with the zero fill');
+  }
+});
+
 test('the trainer refuses the label, the target and the popular_times baseline as features', () => {
   const forbidden = pyDictKeys(TRAIN_PY, 'FORBIDDEN_FEATURES');
   for (const name of ['busyness_pct', 'delta_label', 'baseline_busyness',
