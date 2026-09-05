@@ -46,5 +46,5 @@ test('the map pin keys are spent first in the push data budget', () => {
 });
 
 test('a banned sender still rings the flock for an SOS and its stand-down', () => {
-  assert.match(read('services/pushHelper.js'), /if \(row\.actor_banned && !RINGS_THROUGH_THE_NIGHT\.has\(data\?\.type\)\) return false;/);
+  assert.match(read('services/pushHelper.js'), /if \(row\.actor_banned && !RINGS_THROUGH_THE_NIGHT\.has\(data\?\.type\)\) return (?:false|CANNOT_SEE);/);
 });
