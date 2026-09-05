@@ -931,9 +931,17 @@ async function deliver(userId, title, body, data, opts = {}) {
   const badge = await unreadBadge(userId);
   const payload = badge === null ? data : { ...data, badge };
 
-  const result = await firebaseService.sendPushToUser(userId, title, body, payload);
+  // A device whose socket is in the room is being looked at, and it gets no
+  // banner (notifications audit, 2026-09-05). alreadyInFrontOfThem answers only
+  // when EVERY device is attended, so a laptop tab left open somewhere put a
+  // banner with sound over the very chat the phone was reading, once per
+  // window. The outbox sweep has no socket server and sends to every device,
+  // as it did.
+  const skipTokens = opts.io ? attentiveTokens(opts.io, userId) : null;
+  const result = await firebaseService.sendPushToUser(userId, title, body, payload, { skipTokens });
   const sent = Number(result && result.sent) || 0;
   const failed = Number(result && result.failed) || 0;
+  const attendedOnly = sent === 0 && failed === 0 && (Number(result && result.attended) || 0) > 0;
 
   if (sent > 0 && failed === 0) touchDeviceTokens(userId);
 
@@ -953,7 +961,7 @@ async function deliver(userId, title, body, data, opts = {}) {
     );
   }
 
-  record(userId, data, sent > 0 ? OUTCOME.DELIVERED : failed > 0 ? OUTCOME.FAILED : OUTCOME.NO_DEVICE, {
+  record(userId, data, sent > 0 ? OUTCOME.DELIVERED : failed > 0 ? OUTCOME.FAILED : attendedOnly ? OUTCOME.ONLINE : OUTCOME.NO_DEVICE, {
     sent,
     failed,
   });
@@ -1032,6 +1040,7 @@ async function sweepPushOutbox() {
         await pool.query(
           `UPDATE push_outbox
               SET next_attempt_at = $2,
+                  reason = 'quiet',
                   expires_at = GREATEST(expires_at, $2 + INTERVAL '1 hour')
             WHERE id = $1`,
           [row.id, at]
@@ -1188,7 +1197,7 @@ async function pushIfOffline(io, userId, title, body, data = {}) {
     return skip(userId, data, OUTCOME.ONLINE);
   }
   if (disabled()) return { skipped: true, reason: 'disabled' };
-  return deliver(userId, title, body, data);
+  return deliver(userId, title, body, data, { io });
 }
 
 // Send push only if user is offline AND not debounced
@@ -1231,7 +1240,7 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
     return skip(userId, data, OUTCOME.DEBOUNCED);
   }
 
-  const result = await deliver(userId, title, body, data);
+  const result = await deliver(userId, title, body, data, { io });
   // Release the window if nothing actually went out. A recipient who was
   // invisible, or who had no registered device at that instant, must not have
   // the next thirty seconds of their notifications suppressed on the strength
@@ -1239,8 +1248,12 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
   // notification exists, in push_outbox, waiting for morning), so it keeps the
   // window: releasing it would let the next forty messages each queue their own
   // copy of the same conversation.
-  const held = Boolean(result && result.reason === OUTCOME.QUIET_HELD);
-  const nothingSent = !result || (result.skipped && !held) || (result.sent === 0);
+  // A quiet hold releases the claim too (notifications audit, 2026-09-05).
+  // It used to be kept, so the second and later messages of each 30 s window
+  // were DEBOUNCED and never reached the merge, and the held body was the
+  // FIRST message of the window rather than the newest. The merge is
+  // idempotent per conversation, so every held message may go through it.
+  const nothingSent = !result || result.skipped || (result.sent === 0);
   if (nothingSent) {
     lastPushSent.delete(key);
     releaseDebounce(key);

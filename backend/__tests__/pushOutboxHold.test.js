@@ -19,7 +19,7 @@ test('a quiet-hour hold is one row per conversation, with the newest words', () 
 test('a retry that meets the night is moved to morning, not expired inside it', () => {
   const src = read('services/pushHelper.js');
   assert.match(src, /return \{ skipped: true, reason: OUTCOME\.QUIET_HELD, requeue: true, releaseAt: quietWindowEnd\(zone\) \|\| null \};/);
-  assert.match(src, /SET next_attempt_at = \$2,\s+expires_at = GREATEST\(expires_at, \$2 \+ INTERVAL '1 hour'\)/);
+  assert.match(src, /SET next_attempt_at = \$2,\s+reason = 'quiet',\s+expires_at = GREATEST\(expires_at, \$2 \+ INTERVAL '1 hour'\)/);
 });
 
 test('revoking sessions also revokes the device rows', () => {
