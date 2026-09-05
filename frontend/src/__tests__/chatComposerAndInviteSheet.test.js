@@ -160,6 +160,11 @@ function chatProps(over = {}) {
     // App.js so a takedown arriving over the socket can close the quote bar.
     flockReplyingTo: null,
     setFlockReplyingTo: () => {},
+    // The numeric haversine, for the who-is-here card. These harnesses carry
+    // no member positions, so a large constant reads as "nobody is near" and
+    // the card does not draw. A test that wants the card overrides this with
+    // a real distance rather than relying on the stub.
+    distanceKm: () => 9999,
     colors: {},
     confirmClick: fn(),
     confirmFlockPlan: fn(),
