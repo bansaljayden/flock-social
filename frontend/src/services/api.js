@@ -1739,6 +1739,10 @@ export async function saveProfileImageUrl(url) {
   });
 }
 
+export async function removeProfileImage() {
+  return request('/api/users/profile-image', { method: 'DELETE' });
+}
+
 // Users
 export async function searchUsers(query) {
   return request(`/api/users/search?q=${encodeURIComponent(query)}`);
@@ -2140,8 +2144,9 @@ export async function unregisterDeviceToken(token) {
   });
 }
 
-export async function unregisterAllTokens() {
-  return request('/api/notifications/unregister-all', { method: 'DELETE' });
+export async function unregisterAllTokens(deviceType) {
+  const kind = ['web', 'ios', 'android'].includes(deviceType) ? `?deviceType=${encodeURIComponent(deviceType)}` : '';
+  return request(`/api/notifications/unregister-all${kind}`, { method: 'DELETE' });
 }
 
 // Sensor + check-in — hardware-driven occupancy + NFC tap pipeline

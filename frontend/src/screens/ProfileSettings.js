@@ -818,8 +818,13 @@ export default function ProfileSettings({
             {/* Every device at once. The server route has existed since the
                 token-version claim shipped; nothing in the app reached it. */}
             <button className="hit44 glass-btn glass-secondary" onClick={async () => {
-              try { await logoutAll(); } catch (_) { /* the local sign-out below still happens */ }
-              if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy('signed_out_everywhere') : undefined);
+              // The server call is the only thing that signs the other devices
+              // out. When it fails, this phone still signs out, and the login
+              // screen says which one happened instead of claiming both
+              // (settings audit, 2026-09-05).
+              let everywhere = true;
+              try { await logoutAll(); } catch (_) { everywhere = false; }
+              if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy(everywhere ? 'signed_out_everywhere' : 'signed_out_here_only') : undefined);
             }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: '600' }}>
               Sign out everywhere
             </button>
@@ -890,6 +895,11 @@ export default function ProfileSettings({
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
+                {/* Only once there is a subscription to speak of; Apple expects
+                    the sheet to say deletion does not cancel one. */}
+                {(entitlements?.paywallEnabled || isPro) && (
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel a Flock Pro subscription. Cancel it first in your Apple ID settings, under Subscriptions.</p>
+                )}
                 {/* Both inputs below close the keyboard on Return
                     (enterKeyHint done + blur). In WKWebView a tap on a button
                     does not blur a focused field, so without this the
