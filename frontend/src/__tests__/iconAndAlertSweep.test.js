@@ -209,3 +209,31 @@ describe('the deleteNeedsReauth refusal is announced', () => {
     );
   });
 });
+
+test('checking in is per venue, and it says so when it works', () => {
+  /* Reported from the running app on 2026-09-05: "there's a button called
+     check in and it does nothing."
+
+     Two causes, both real. `checkinDoneAt` was ONE timestamp with no venue
+     attached, so a check-in anywhere disabled the button everywhere for two
+     hours: the second venue you opened showed a greyed control that could not
+     be pressed. And its own comment said the value came from localStorage
+     while nothing ever read it back, so the per-venue two-hour gate that
+     backend/routes/checkin.js leans on by name did not survive a reload.
+
+     Success was also silent. A haptic that no-ops on the web, and a label that
+     flipped for two seconds on the button under your own thumb. A write that
+     reached the server and told nobody is indistinguishable from a dead
+     control, which is exactly how it was reported. */
+  const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+  // Keyed by place, both directions.
+  expect(app).toMatch(/setCheckinDoneAt\(\(prev\) => \(\{ \.\.\.prev, \[placeId\]: ts \}\)\)/);
+  expect(app).toMatch(/const lastCheckin = lastCheckinAt\(activeVenue\.place_id\)/);
+  // The stored value is actually read back, which is what makes the gate real.
+  expect(app).toMatch(/localStorage\.getItem\('flock_checkin_' \+ placeId\)/);
+  // And storage that throws reads as "not checked in", so the button is
+  // offered rather than withheld.
+  expect(app).toMatch(/catch \(err\) \{\s*return 0;/);
+  // Success is announced.
+  expect(app).toContain("showToast('Checked in', 'success')");
+});

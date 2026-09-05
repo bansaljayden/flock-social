@@ -6012,7 +6012,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [sensorHistory, setSensorHistory] = useState([]); // [{recorded_at, thermal_headcount, ...}]
   const [checkinSaving, setCheckinSaving] = useState(false);
   const [checkinJustSaved, setCheckinJustSaved] = useState(false);
-  const [checkinDoneAt, setCheckinDoneAt] = useState(null); // ms timestamp from localStorage
+  /* WHEN YOU LAST CHECKED IN, AND WHERE. This was a single timestamp with no
+     venue attached, and its comment claimed it came from localStorage while
+     nothing in the app ever read it back.
+
+     Two things followed, and the maintainer hit both: checking in anywhere disabled
+     Check In EVERYWHERE for two hours, because one venue's success was the
+     state every other venue's button read; and the per-venue key the write
+     below stores was invisible to the app, so the two-hour gate that
+     backend/routes/checkin.js explicitly leans on ("the client already
+     self-limits to one check-in per venue per 2h in localStorage") did not
+     survive a reload, or even a second venue sheet.
+
+     It is keyed by place now, and `lastCheckinAt` reads the stored value so the
+     gate is real. Storage can throw outright in a private window or with site
+     data blocked, so every access is guarded and a failure reads as "not
+     checked in", which is the safe direction: it offers the button rather than
+     withholding it. */
+  const [checkinDoneAt, setCheckinDoneAt] = useState({});
+  const lastCheckinAt = useCallback((placeId) => {
+    if (!placeId) return 0;
+    if (checkinDoneAt[placeId]) return checkinDoneAt[placeId];
+    try {
+      const raw = localStorage.getItem('flock_checkin_' + placeId);
+      const ts = raw ? Number(raw) : 0;
+      return Number.isFinite(ts) ? ts : 0;
+    } catch (err) {
+      return 0;
+    }
+  }, [checkinDoneAt]);
 
   const refreshFriendsPulses = useCallback(async () => {
     try {
@@ -6028,8 +6056,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const res = await checkInManual(placeId);
       hapticSuccess();
       const ts = Date.now();
-      localStorage.setItem('flock_checkin_' + placeId, String(ts));
-      setCheckinDoneAt(ts);
+      try {
+        localStorage.setItem('flock_checkin_' + placeId, String(ts));
+      } catch (err) {
+        /* Full, private, or site data blocked. The check-in itself succeeded
+           and the server has it; only the local two-hour gate is lost, which
+           costs a duplicate the server dedupes anyway. */
+      }
+      setCheckinDoneAt((prev) => ({ ...prev, [placeId]: ts }));
+      /* SAY SO OUT LOUD. Success was a haptic and a label that flipped for two
+         seconds on the button you had just covered with your thumb, and the
+         haptic is silent on the web and on a phone with system haptics off. A
+         write that reached the server and told nobody is indistinguishable
+         from a dead button, which is how this was reported. */
+      showToast('Checked in', 'success');
       setCheckinJustSaved(true);
       setTimeout(() => setCheckinJustSaved(false), 2000);
       // Bump local recent_checkins so the card updates immediately even if
@@ -14753,7 +14793,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (() => {
-                  const checkedIn = checkinDoneAt && (Date.now() - checkinDoneAt < 2 * 60 * 60 * 1000);
+                  const lastCheckin = lastCheckinAt(activeVenue.place_id);
+                  const checkedIn = !!lastCheckin && (Date.now() - lastCheckin < 2 * 60 * 60 * 1000);
                   const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
                   const disabled = checkedIn || checkinSaving;
                   // EXACTLY ONE FILLED BUTTON IN THIS STACK, AND IT IS THE ONE

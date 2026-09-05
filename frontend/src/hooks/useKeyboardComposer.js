@@ -177,13 +177,12 @@ const measureSafeBottom = () => {
  * The Keyboard plugin, or null when it is not there. See decision 1 above for
  * why neither branch is a static import.
  *
- * ONE LINE FOR THE INTEGRATION PASS. Once `@capacitor/keyboard` is actually in
- * package.json, the split specifier and the `webpackIgnore` comment can both
- * go and the line becomes `await import('@capacitor/keyboard')`, which webpack
- * then resolves into its own chunk. Leave them alone until the install lands:
- * a literal specifier for a package that is not there fails the CRA build with
- * "Module not found" even from inside this try/catch, because webpack resolves
- * it before any of this code runs.
+ * THE INTEGRATION PASS LANDED. `@capacitor/keyboard` 8.0.5 is in package.json
+ * and in ios/App/CapApp-SPM/Package.swift as of 2026-09-05, so the loader below
+ * uses a literal specifier and webpack gives it its own chunk. Decision 1 above
+ * is kept as written because both of its branches still matter: the plugin
+ * object is read off window.Capacitor first when the native shell has already
+ * registered it, and the import is the fallback.
  *
  * `@capacitor/core` is deliberately never imported here, statically or
  * dynamically. index.js relies on `window.Capacitor` being absent in the web
@@ -196,13 +195,21 @@ const loadKeyboardPlugin = async () => {
   if (!cap || typeof cap.isNativePlatform !== 'function' || !cap.isNativePlatform()) return null;
   if (cap.Plugins && cap.Plugins.Keyboard) return cap.Plugins.Keyboard;
   try {
-    const specifier = ['@capacitor', 'keyboard'].join('/');
-    const mod = await import(/* webpackIgnore: true */ specifier);
+    /* A literal specifier now, which is what this file's header said to do the
+       day @capacitor/keyboard actually landed in package.json (8.0.5, installed
+       2026-09-05). The split-string-plus-webpackIgnore dance existed only
+       because webpack resolves a literal specifier at build time, before any of
+       this code runs, so naming a package that was not installed failed the CRA
+       build outright even from inside this try. It is installed, so webpack
+       resolves it into its own chunk and the guards above still keep it off the
+       web build entirely. */
+    const mod = await import('@capacitor/keyboard');
     if (!mod) return null;
     return mod.Keyboard || (mod.default && mod.default.Keyboard) || null;
   } catch (err) {
-    /* The plugin is not installed yet. The visualViewport path below is the
-       whole behaviour until it is. */
+    /* Still reachable: a native shell built before the plugin was linked, or a
+       chunk that fails to load on a bad connection. The visualViewport path
+       below is the whole behaviour whenever this returns null. */
     return null;
   }
 };
