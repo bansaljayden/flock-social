@@ -2775,18 +2775,42 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // leaver's own row is excluded by id rather than by absence, and
     // EXISTS(gone) keeps a non-member's request from deleting an empty flock
     // it was never in.
-    const left = await pool.query(
-      `WITH gone AS (
-         DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1
-       )
-       DELETE FROM flocks f
-        WHERE f.id = $1
-          AND EXISTS (SELECT 1 FROM gone)
-          AND NOT EXISTS (SELECT 1 FROM flock_members m
-                           WHERE m.flock_id = $1 AND m.status = 'accepted' AND m.user_id <> $2)
-       RETURNING f.id`,
-      [flockId, req.user.id]
-    );
+    //
+    // AND UNDER THE FLOCK ROW LOCK, on one connection. POST /api/billing/
+    // :flockId/create takes `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`
+    // and then reads the accepted roster and the payer's eligibility inside
+    // that transaction. This statement is atomic on its own, but it ran on
+    // the pool, so it could commit between billing's read and billing's
+    // COMMIT: Bob names himself payer, leaves in that window, and a bill is
+    // committed that is payable to someone who can no longer open billing and
+    // whom the creator cannot replace. Taking the same lock means a departure
+    // either commits before billing reads, and is seen, or waits until
+    // billing commits, and the bill was created against the roster it read.
+    // The one statement stays one statement; only the connection changed.
+    const leaveClient = await pool.connect();
+    let left;
+    try {
+      await leaveClient.query('BEGIN');
+      await leaveClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+      left = await leaveClient.query(
+        `WITH gone AS (
+           DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1
+         )
+         DELETE FROM flocks f
+          WHERE f.id = $1
+            AND EXISTS (SELECT 1 FROM gone)
+            AND NOT EXISTS (SELECT 1 FROM flock_members m
+                             WHERE m.flock_id = $1 AND m.status = 'accepted' AND m.user_id <> $2)
+         RETURNING f.id`,
+        [flockId, req.user.id]
+      );
+      await leaveClient.query('COMMIT');
+    } catch (txErr) {
+      await leaveClient.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      leaveClient.release();
+    }
 
     // Revoke live room access (audit 2026-08-12): room auth is checked only at
     // join time, so without this a departed member's open sockets kept
