@@ -13,6 +13,7 @@ const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep, withCorpusWriteLo
 const { getNearestEvent } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
+const { buildRecentDeviation } = require('./buildRecentDeviation');
 const { requireSlotIndex } = require('./collectWeekly');
 
 // Migration 024's realtime arbiter. Same reasoning as collectWeekly's: a
@@ -1087,6 +1088,30 @@ async function run() {
         }
       } catch (err) {
         console.error('[ML:Realtime] Baseline refresh failed:', err.message);
+      }
+
+      // THE TRAILING OFFSET, refreshed after the baselines and not before.
+      //
+      // It is the median of (observed - baseline) over a venue's recent live
+      // readings, so it has to be rebuilt AFTER two things this run just did:
+      // written new live rows, and refreshed the curve those rows are measured
+      // against. Rebuilding it first would compute this hour's deviation from
+      // last hour's baseline and miss every reading the sweep just collected.
+      //
+      // Same skip flag as the baselines, for the same reason: whichever
+      // collector owns the corpus-wide rebuild owns both, and a holdout run
+      // owns neither.
+      //
+      // Its own try/catch, and a failure here is a log line rather than a run
+      // failure. The offset is an improvement on the published number; if it
+      // cannot be rebuilt the serving path refuses a stale one on age and every
+      // card falls back to exactly what it published before this existed.
+      try {
+        const dev = await buildRecentDeviation();
+        console.log(`[ML:Realtime] Recent-deviation offsets rebuilt `
+          + `(${dev.written} venues written, ${dev.pruned} stale rows pruned).`);
+      } catch (err) {
+        console.error('[ML:Realtime] Recent-deviation refresh failed:', err.message);
       }
     }
   } finally {
