@@ -129,32 +129,56 @@ test('every Places call site records an outcome', () => {
   const path = require('path');
   const root = path.join(__dirname, '..');
 
-  // Two shapes, because two shapes are correct. The route files record at each
-  // exit; services/placeDetailsCache.js has SIX exits and one caller, so it
-  // wraps its worker once and passes the boolean through. Both must record a
-  // success as well as a failure — a file that only ever reports failures would
-  // never clear the streak and the alarm would stick on forever.
+  // THREE shapes, all correct. The route files record at each exit;
+  // services/placeDetailsCache.js has six exits and one caller so it wraps its
+  // worker once; routes/crowd.js passes the ok/failed expression straight in.
+  // What every one of them must do is record a SUCCESS as well as a failure —
+  // a file that only ever reported failures would never clear the streak and
+  // the alarm would stick on forever.
   const PLACES_FETCHERS = [
     'routes/publicCrowd.js',
     'routes/venueSearch.js',
+    'routes/crowd.js',
     'services/placeDetailsCache.js',
   ];
+  // recordPlacesResult(true), or any expression whose truth is an `.ok`.
+  const SUCCESS = /recordPlacesResult\(\s*(true\b|[A-Za-z_$][\w$]*\.ok\b)/;
+  const FAILURE = /recordPlacesResult\(\s*(false\b|[A-Za-z_$][\w$]*\.ok\b)/;
+
   for (const rel of PLACES_FETCHERS) {
     const src = fs.readFileSync(path.join(root, rel), 'utf8');
     assert.ok(
       /require\('\.\.\/utils\/placesHealth'\)/.test(src),
       `${rel} calls Google Places and must record outcomes`,
     );
-    const recordsSuccess = src.includes('recordPlacesResult(true)')
-      || /recordPlacesResult\(\s*out\.ok/.test(src);
     assert.ok(
-      recordsSuccess,
+      SUCCESS.test(src),
       `${rel} must record SUCCESS too, or the streak never clears and the alarm sticks on`,
     );
-    const recordsFailure = src.includes('recordPlacesResult(false')
-      || /recordPlacesResult\(\s*out\.ok/.test(src);
-    assert.ok(recordsFailure, `${rel} must record failures`);
+    assert.ok(FAILURE.test(src), `${rel} must record failures`);
   }
+});
+
+test('a cached Places answer is never recorded as health', () => {
+  // THE SUBTLE WAY THIS ALARM COULD HAVE LIED. routes/crowd.js serves its
+  // alternatives search from a ten-minute cache, and the cached branch fakes
+  // `searchResponse = { ok: true }` so the code below it needs no change.
+  // Recording that as a success would let stale answers clear the failure
+  // streak for as long as the cache lasts, which is exactly the window where an
+  // outage is hardest to see. The record therefore sits INSIDE the branch that
+  // actually asked Google, next to the setCache call, not after the join.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
+
+  const setCacheAt = src.indexOf('if (searchResponse.ok && !searchData.error) setCache(searchCacheKey');
+  const recordAt = src.indexOf('recordPlacesResult(searchResponse.ok');
+  assert.ok(setCacheAt > 0, 'the alternatives cache write is still there');
+  assert.ok(recordAt > setCacheAt, 'the record follows the real fetch, not the cache hit');
+
+  // And it must be above the shared failure check, which both branches reach.
+  const sharedCheck = src.indexOf('if (!searchResponse.ok || searchData.error) {');
+  assert.ok(sharedCheck > recordAt, 'the record is inside the else branch, not after the join');
 });
 
 test('a missing API key is NOT an outage', () => {
