@@ -193,6 +193,14 @@ import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
    both screens reach it the same way. See the block at its call below. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 
+/* A half-written message, per flock, for the length of the session.
+   Module scope because App.js unmounts this screen on every navigation,
+   and keyed by flock id because ONE shared box is the original bug: the
+   composer text lives in a single ref in App.js that the DM composer
+   reads too, so an unkeyed draft is a group sentence sitting in a private
+   thread. Cleared for a flock when its draft is sent or emptied. */
+const FLOCK_DRAFTS = new Map();
+
 /* THE DAY SEPARATORS LEFT THIS FILE. `dayKeyOf`, `dayLabelOf` and
    `daySeparatorFor` were declared here and mirrored verbatim in DmDetail.js:
    two copies of the one rule that decides where history is cut. They live in
@@ -802,13 +810,33 @@ export default function ChatDetail({
     // would rub out the space somebody typed before a venue name. The edge is
     // what a send, a photo caption going out and every exit on this screen all
     // produce, and it is the only thing that should empty the field.
-    const [draft, setDraft] = React.useState('');
+    /* ONE DRAFT PER THREAD, kept outside the component so it survives the
+       unmount that every screen change causes (App.js renders one screen at a
+       time through ScreenSlot). Module scope, not localStorage: a draft is
+       worth a trip back to the same flock in the same session, not worth
+       persisting a half-written sentence to disk. */
+    const [draft, setDraft] = React.useState(() => FLOCK_DRAFTS.get(selectedFlockId) || '');
     /* The mirror, readable from the effect below without widening its deps. */
     const draftRef = React.useRef('');
     const writeDraft = React.useCallback((next) => {
       draftRef.current = next;
       setDraft(next);
     }, []);
+    /* Put the stashed sentence back into App.js's shared ref too, or the
+       box would show text that Send does not read. Safe because
+       leaveChatScreen empties that ref on the way out, so it is only ever
+       loaded while this exact thread is on screen. */
+    const restoredForRef = React.useRef(null);
+    React.useEffect(() => {
+      const id = selectedFlockId;
+      if (!id || restoredForRef.current === id) return;
+      restoredForRef.current = id;
+      const stashed = FLOCK_DRAFTS.get(id) || '';
+      if (!stashed) return;
+      writeDraft(stashed);
+      setChatInput(stashed);
+    }, [selectedFlockId, writeDraft, setChatInput]);
+
     const hadTextRef = React.useRef(false);
     React.useEffect(() => {
       /* Same correction as the DM twin: chatInputHasText is `!!value.trim()`
@@ -945,6 +973,16 @@ export default function ChatDetail({
          only spaces never armed that flag and so produces no edge, and
          leaving spaces behind for the next visit is the small half of
          the draft leak this function exists to close. */
+      /* STASHED, NOT DISCARDED. This used to be writeDraft('') and the
+         sentence was gone. The leak it was closing is App.js's shared ref,
+         which setChatInput above has already emptied, so keeping this
+         screen's own copy against this flock's id costs nothing and returns
+         the text when the same thread is opened again. */
+      if (selectedFlockId) {
+        const keep = draftRef.current;
+        if (keep) FLOCK_DRAFTS.set(selectedFlockId, keep); else FLOCK_DRAFTS.delete(selectedFlockId);
+      }
+      restoredForRef.current = null;
       writeDraft('');
       /* THE SAME HOLE, and here it predates the rebuild. `shareImageToChat`
          reads the caption from the shared `chatInputRef`, so a photo picked in
