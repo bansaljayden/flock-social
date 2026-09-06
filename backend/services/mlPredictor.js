@@ -424,14 +424,31 @@ const DEVIATION_MIN_READINGS = 2;
 // published before this feature existed.
 const DEVIATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// A GUARD I ADDED, and it is not part of what was measured, so it is written
-// down as mine. A median over two readings can be extreme, and an unbounded
-// correction added to a 0-100 score could dominate the model entirely. +/-30
-// is wide enough that it binds on almost nothing (the measured offsets run far
-// inside it) and narrow enough that one strange pair of nights cannot take the
-// card over. If it ever binds often, that is a signal the window is wrong, so
-// it is counted rather than silently applied.
-const DEVIATION_CLAMP = 30;
+// A GUARD ADDED HERE, not part of what the research measured, and SIZED AGAINST
+// THE REAL DISTRIBUTION after the first build rather than guessed.
+//
+// It was written as +/-30 with the claim that it would "bind on almost
+// nothing". That was wrong, and measuring the first production build is what
+// caught it. Across the 1,048 venues that clear the two-reading floor:
+//
+//   |offset| > 30   221 venues  21.1%
+//   |offset| > 40   110         10.5%
+//   |offset| > 50    44          4.2%
+//   |offset| > 60    17          1.6%
+//
+// Worse than the rate, +/-30 was ASYMMETRIC in effect. The distribution is
+// skewed negative (mean -11.1, median -10.0, p05 -49.1, p95 +29.1), so a
+// symmetric 30 clipped most of the negative tail and almost none of the
+// positive one. It would have systematically suppressed corrections in the one
+// direction the data says is most common, silently, on a fifth of venues, and
+// none of that was in the measurement the feature rests on.
+//
+// 50 matches DELTA_CLAMP_HI, which is this file's existing precedent for
+// bounding a correction to a 0-100 score, and it binds on 4.2% instead of 21%.
+// A venue genuinely running fifty points under its own curve is a venue whose
+// curve is wrong, which is a corpus problem to fix rather than a number to
+// clip.
+const DEVIATION_CLAMP = 50;
 
 /**
  * The venue's recent deviation, or null when there is nothing usable.
