@@ -398,6 +398,50 @@ const globalBackstopLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 app.use(globalBackstopLimiter);
 
 // ---------------------------------------------------------------------------
+// GZIP. Nothing compressed anything before this line.
+// ---------------------------------------------------------------------------
+// This API answers in JSON and almost nothing else, and JSON is the most
+// compressible payload there is: repeated key names on every row, long runs of
+// ASCII, no entropy. GET /api/flocks with a realistic roster, the DM inbox, a
+// venue search result and a chat page all shrink by six to ten times. On the
+// LTE connection the product is actually used over, that is the difference
+// between one round trip and several, on every screen.
+//
+// ABOVE the routes, because compression works by wrapping res.write and
+// res.end, and a wrapper mounted below the handler that already wrote has
+// nothing left to wrap. BELOW the backstop limiter, because a request the
+// ceiling is about to refuse should not have a compressor attached to it
+// first.
+//
+// SAFE HERE, specifically:
+//   * Nothing in this app streams. There is no text/event-stream route and no
+//     res.write() anywhere outside a completed res.json, so the buffering
+//     compression does cannot stall a response that was meant to arrive in
+//     pieces. (That is checked, not assumed: grep res.write across routes/.)
+//   * Socket.io does not come through here. The engine handles its own
+//     upgrade on its own path and never reaches this middleware chain.
+//   * BREACH wants a secret and attacker-controlled text in the SAME
+//     compressed response. Flock's session token lives in an Authorization
+//     header the server never echoes, there is no CSRF token, and no route
+//     reflects a query parameter back beside a credential. The 1,024 byte
+//     floor also leaves the small auth responses uncompressed as a matter of
+//     course.
+//
+// filter() keeps compression's own opt-out (`x-no-compression`) so a future
+// route can refuse it in one header rather than by moving this line.
+const compression = require('compression');
+app.use(compression({
+  // Below this, the gzip header and trailer cost more than the saving and the
+  // CPU is spent for nothing. 1 KB is compression's own default; it is written
+  // out here so it reads as a decision rather than an omission.
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  },
+}));
+
+// ---------------------------------------------------------------------------
 // CORS
 // ---------------------------------------------------------------------------
 const allowedOrigins = [
@@ -2122,6 +2166,7 @@ let moneyWatchInterval = null;
 let moneyWatchKickoff = null;
 let heartbeatInterval = null;
 let heartbeatKickoff = null;
+let modelWarmKickoff = null;
 let costHeartbeatInterval = null;
 let costHeartbeatKickoff = null;
 
@@ -2143,6 +2188,28 @@ async function boot() {
   server.listen(PORT, () => {
     console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   });
+
+  // WHO PAYS THE 389 ms.
+  //
+  // services/mlPredictor.js loads the 11 MB ONNX artifact lazily, memoised,
+  // and with a catch that guarantees a failed load degrades to the rule engine
+  // once instead of for ever. That design is right and stays. What was wrong
+  // is WHO paid for it: the load is triggered by the first request that
+  // reaches the predictor, and the app fires POST /api/crowd/batch on boot for
+  // every returning user, so after every deploy some real person's app open
+  // ate the whole session build — measured at 389 ms, inside a request that
+  // renders nothing on their first screen.
+  //
+  // Five seconds, ahead of every other kickoff below, because it is the only
+  // one a user can be waiting on. It cannot fail the boot: init() is written
+  // never to reject, and the .catch here is belt and braces for a require that
+  // throws before init exists. It is deliberately AFTER listen() so the port
+  // still opens on schedule and the healthcheck is never held up by it.
+  modelWarmKickoff = setTimeout(() => {
+    try {
+      require('./services/mlPredictor').init().catch(() => {});
+    } catch { /* the predictor falls back to the rule engine on its own */ }
+  }, 5 * 1000);
 
   // Collection heartbeat — hourly, watches the DATA rather than the cron:
   // if no realtime rows landed in ~a day, one email a day goes out until it
@@ -2284,6 +2351,7 @@ function shutdown(signal) {
 
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   if (heartbeatKickoff) clearTimeout(heartbeatKickoff);
+  if (modelWarmKickoff) clearTimeout(modelWarmKickoff);
   if (costHeartbeatInterval) clearInterval(costHeartbeatInterval);
   if (costHeartbeatKickoff) clearTimeout(costHeartbeatKickoff);
   if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);

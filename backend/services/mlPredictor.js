@@ -3607,6 +3607,51 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     );
   } catch { /* seed nothing; every hour below asks for itself, as before */ }
 
+  // ONE BASELINE QUERY FOR THE WHOLE STRIP, for the same reason the event
+  // prefetch above exists and in the same shape.
+  //
+  // Every hour below calls predictBusyness, which calls getBaseline, which
+  // runs its own three-row query against ml_venue_baselines. A 24 hour strip
+  // therefore ran 24 SEQUENTIAL round trips for rows a single unfiltered read
+  // of the same venue returns in one — on the request path, against a
+  // twenty-connection pool. services/advisorFacts.js already fixed the
+  // identical problem for the advisor's week view; the crowd card's own strip,
+  // which is the far more frequently opened of the two, was never given the
+  // same treatment.
+  //
+  // CHARGED ONCE, NOT WAIVED. allowVenueLookup is the per-account venue-lookup
+  // budget and it is consulted here exactly as getBaseline would have
+  // consulted it, so this pays one unit where the loop paid up to 24. A
+  // refusal skips the prime entirely and every hour below takes its normal
+  // refused path, which keeps the budget a real ceiling rather than something
+  // an optimisation can step around.
+  //
+  // WRAPPED, because this is an optimisation and an optimisation may never be
+  // the reason a strip fails — the same rule the event prefetch is written
+  // under. A throw here seeds nothing and the loop behaves exactly as it did.
+  //
+  // THE GUARD IS INSIDE THE try, INCLUDING THE options.userId READ, and that
+  // is not tidiness. __tests__/eventUnknownVsZero.js makes options.userId a
+  // THROWING GETTER for precisely this reason, and it caught this block with
+  // the read one line above the try: the exception escaped the per-hour
+  // try/catch below and took the entire forecast with it. Reading an option
+  // is the cheapest-looking line here and it is the one that throws.
+  try {
+    const basePlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
+    if (pool && basePlaceId && allowVenueLookup(basePlaceId, options && options.userId)) {
+      const { rows: curve } = await pool.query(
+        `SELECT day_of_week, hour, baseline, source, updated_at
+           FROM ml_venue_baselines
+          WHERE google_place_id = $1`,
+        [basePlaceId]
+      );
+      // primeBaselineCache writes only slots the curve actually has a row for,
+      // so an hour this venue has no data on still misses and takes the honest
+      // path. It cannot teach the cache that an unmeasured slot is zero.
+      primeBaselineCache(basePlaceId, curve);
+    }
+  } catch { /* prime nothing; the loop queries per hour, as before */ }
+
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
     const slotWeather = weatherForSlot(hourlyWx, trueEventInstant(ts, utcOff).getTime(), weather, nowMs);
