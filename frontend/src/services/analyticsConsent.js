@@ -64,7 +64,18 @@ export function setConsent(answer) {
  * distinct_id that consent originally created sitting in localStorage.
  */
 export function revokeAnalytics() {
+  // READ BEFORE THE WRITE. Below this line the answer is 'no' and the
+  // question "could the SDK be running?" can no longer be asked.
+  //
+  // Declining without ever having accepted was downloading 247 KB of
+  // posthog-js in order to call opt_out_capturing on an SDK that had never
+  // been initialised and had never stored anything — the most expensive
+  // possible way to do nothing, charged to the one person who just said they
+  // did not want it. Only a previous yes can have loaded it, and only a
+  // previous yes can have left a distinct_id behind to clear.
+  const wasConsented = readConsent() === 'yes';
   setConsent('no');
+  if (!wasConsented) return;
   try {
     import('posthog-js')
       .then(({ default: posthog }) => {
