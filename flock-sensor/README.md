@@ -8,30 +8,55 @@ This is the only part of Flock that runs on hardware, in a building we do not
 control, on wifi we do not control, with nobody around to restart it. Every
 design choice below follows from that.
 
-> ## Status: this has never run on a Raspberry Pi
+> ## Status: it has run on a Pi. No sensor has been read on one.
 >
-> Read this before you trust anything below. As of 2026-08-26, `main.py` has
-> only ever been executed by `test_main.py` on a developer laptop. Nothing in
-> this directory has been on a board. The evidence, so nobody has to re-derive
-> it:
+> Read this before you trust anything below. On 2026-09-06 this directory was
+> installed on a Raspberry Pi 5 and `main.py` ran on the board. Every previous
+> version of this box said the program had only ever been executed by
+> `test_main.py` on a laptop, and that is no longer true. It is also a smaller
+> change than it sounds, so here is the exact line between what has been on
+> hardware and what has not.
 >
-> - No `requirements.lock.txt` exists, and `requirements.txt` says a lock file
->   is produced "once a unit is verified on real hardware".
-> - The IR receiver's voltage question below is still open, which means nobody
->   has wired one.
-> - `noise_db` is uncalibrated, which needs a sound level meter next to a
->   running mic.
-> - The only compiled bytecode ever produced here is CPython 3.14, which is the
->   development machine's Python, not a Pi OS one.
-> - The backend pipeline WAS proven end to end on 2026-05-02, but with curl,
->   not with this program. Those are different claims and only one of them has
->   been checked.
+> **Verified on the board:**
 >
-> So `init_ir`, `init_thermal`, `init_noise`, `thermal_loop`, `noise_loop` and
-> `display_loop` are unexecuted code. Everything else here is covered by tests
-> and has been reasoned about hard, but the first time this meets a bus, a
-> level and a framebuffer, expect it to be wrong somewhere. Budget a bench day
-> before a venue day.
+> - `setup.sh` runs end to end on a fresh Raspberry Pi OS image, including the
+>   service-user detection and the Pi 5 branch. The board was identified from
+>   `/proc/device-tree/model` and `RPi.GPIO` was correctly swapped for
+>   `rpi-lgpio`, which is the failure that would otherwise have reported 0
+>   doorway crossings for the life of the install.
+> - Config load. `main.py` reads `/etc/flock-sensor/flock_sensor.env` on the
+>   device and prints its settings back.
+> - Clock. NTP syncs, which is what TLS and the reading timestamps both rest on.
+> - Backend authentication. The `--selftest` credential check was accepted by
+>   the production backend as a `dry_run`, from the Pi, over the network. The
+>   2026-05-02 curl proof is now a proof about this program as well, which it
+>   explicitly was not before.
+>
+> **The bench found one bug and it is fixed here.** `setup.sh` created
+> `/etc/flock-sensor` as root:root 0750 and chowned only the file inside it, so
+> the service user had no traverse bit on the directory and could not open its
+> own 0600 config. It presents as a missing API key on a box where the key is
+> present and correct, which is a bad hour at a venue. The directory is now
+> owned by the service group too, and `test_main.py` pins it.
+>
+> **Not verified. No sensor has been read on a board.** `init_ir`,
+> `init_thermal`, `init_noise`, `thermal_loop`, `noise_loop` and `display_loop`
+> are all still unexecuted code.
+>
+> - **IR.** Nothing has been wired. The receiver voltage question below is open,
+>   and getting that one wrong damages the Pi rather than returning a bad number.
+> - **Thermal.** The largest unknown here. See the paragraph below.
+> - **Noise.** Uncalibrated, and it needs a sound level meter beside a running
+>   mic. Until someone does that it is a relative loudness index, not dB SPL.
+> - **Display.** No framebuffer has been drawn into.
+> - No `requirements.lock.txt` exists yet. `requirements.txt` produces one
+>   "once a unit is verified on real hardware", and the sensors are precisely
+>   the part that is not.
+> - The pin conflict below is still undecided, so nothing has yet been built
+>   with the cellular HAT and the sensors on the header at the same time.
+>
+> The first time this meets a bus, a level and a framebuffer, expect it to be
+> wrong somewhere. The bench day is not over.
 >
 > **The thermal path is newer than the rest of that.** On 2026-08-26 the sensor
 > was changed from an MLX90640 to the FLIR Lepton the build plan always
@@ -113,9 +138,11 @@ camera, audio or radio library is present. Change what this device measures
 and that test goes red on the same commit. It did exactly that when the
 sensor changed, which is what it is for.
 
-The one thing to be careful about: it is written as a promise about a device
-that has never been switched on. Before the first venue install, re-read
-section 3 against the running unit rather than against this file.
+The one thing to be careful about: it is written as a promise about sensors
+nobody has read on hardware. The box boots and talks to the backend as of
+2026-09-06, and no camera, mic or beam has been brought up on it. Before the
+first venue install, re-read section 3 against the running unit rather than
+against this file.
 
 ---
 
@@ -467,8 +494,11 @@ decide to do.
 
 Things that are still open, so nobody has to rediscover them.
 
-1. **This has never run on a Pi.** See the status box at the top. It is the
-   gap every other gap here is downstream of.
+1. **No sensor has been read on a Pi.** The box itself has: as of 2026-09-06
+   `setup.sh`, the config load, the clock and the backend credential check are
+   all verified on a Pi 5. The beam, the thermal camera, the mic and the
+   display are not, and every gap below is downstream of that half. See the
+   status box at the top.
 2. **No provisioning UI.** Creating, rotating and revoking a device key is
    hand-written SQL against production. That is a mistake waiting to happen
    (wrong `place_id`, plaintext key pasted somewhere) and should become an
