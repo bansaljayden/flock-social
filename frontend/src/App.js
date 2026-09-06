@@ -12059,7 +12059,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
         pointerEvents: 'none',
       }}>
-        {Icons.shield('white', 24)}
+        {/* Cream rather than pure white: the mark is a Flock asset and this is
+            the app's own off-white, which is what every other cream surface
+            uses. The red disc is deliberately unchanged. Red is the only
+            thing separating this control from the other floating buttons,
+            and an emergency control is the wrong place to go quieter. */}
+        {Icons.safetyBirds('#f1ede0', 30)}
       </div>
     </div>
   );
