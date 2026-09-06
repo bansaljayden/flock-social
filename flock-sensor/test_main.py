@@ -991,5 +991,34 @@ class ClockAndDrainRepairs(unittest.TestCase):
             main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL = real_min, real_interval
 
 
+class InstallerConfigOwnership(unittest.TestCase):
+    """The 2026-09-06 bench: the config directory, not only the file in it.
+
+    setup.sh made /etc/flock-sensor root:root 0750 and chowned just the file
+    inside. Without the traverse bit the service user cannot open its own 0600
+    config, so a correctly provisioned device reports a missing API key and the
+    only clue is that running the same command as root works.
+    """
+
+    @staticmethod
+    def installer():
+        return Path(__file__).resolve().parent.joinpath('setup.sh').read_text(encoding='utf-8')
+
+    def test_the_config_directory_is_owned_by_the_service_group(self):
+        self.assertIn('chown root:"${SERVICE_GROUP}" "${CONFIG_DIR}"', self.installer(),
+                      'the service user cannot traverse /etc/flock-sensor and reports a missing config')
+
+    def test_the_config_file_is_chowned_as_well(self):
+        # Owning the directory buys nothing on its own: the file is 0600, so it
+        # has to belong to the service user for the traverse bit to lead anywhere.
+        self.assertIn('chown "${SERVICE_USER}:${SERVICE_GROUP}" "${CONFIG_FILE}"', self.installer(),
+                      'the config file is 0600 and no longer owned by the account that reads it')
+
+    def test_the_directory_is_not_world_readable(self):
+        # 0750, not 0755. The group is the service group after the chown above,
+        # so widening this hands the device key to every account on the box.
+        self.assertIn('chmod 0750 "${CONFIG_DIR}"', self.installer())
+
+
 if __name__ == '__main__':
     unittest.main()

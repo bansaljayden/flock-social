@@ -103,6 +103,11 @@ install -m 0755 -o root -g root "${SCRIPT_DIR}/main.py" "${INSTALL_DIR}/main.py"
 # ---------------------------------------------------------------------------
 echo "==> config"
 mkdir -p "${CONFIG_DIR}"
+# The directory too, not only the file inside it. root creates it here, so
+# it came out root:root 0750 and the service user had no traverse bit: the
+# 0600 config it owns was still unopenable, and the device reports a missing
+# API key on a box where the key is present and correct. Bench, 2026-09-06.
+chown root:"${SERVICE_GROUP}" "${CONFIG_DIR}"
 chmod 0750 "${CONFIG_DIR}"
 
 LEGACY_CONFIG="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)/flock_sensor.env"
