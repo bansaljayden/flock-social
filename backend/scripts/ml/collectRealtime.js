@@ -332,13 +332,30 @@ async function collectRealtime() {
   if (HOLDOUT.active) {
     console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} instead of the training cities.`);
   }
+  // `demand_serves` is how many times a REAL USER has been shown a crowd card
+  // for this venue. It decides collection order below, and nothing else: no
+  // venue is excluded by it and no extra call is made because of it.
+  //
+  // LEFT JOIN, so a venue nobody has seen simply scores 0 rather than dropping
+  // out. The subquery groups first so a venue served forty times contributes
+  // one row here rather than forty.
   const { rows: venues } = await pool.query(
-    `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL`
-    + (cityScope ? ' AND city = ANY($1)' : '')
-    + ' ORDER BY city, id',
+    `SELECT v.*, COALESCE(d.serves, 0)::int AS demand_serves
+       FROM ml_venues v
+       LEFT JOIN (
+         SELECT venue_place_id, COUNT(*)::int AS serves
+           FROM served_predictions
+          GROUP BY venue_place_id
+       ) d ON d.venue_place_id = v.google_place_id
+      WHERE v.is_active = true AND v.besttime_venue_id IS NOT NULL`
+    + (cityScope ? ' AND v.city = ANY($1)' : '')
+    + ' ORDER BY v.city, v.id',
     cityScope ? [cityScope] : []
   );
   console.log(`[ML:Realtime] City scope: ${cityScope ? cityScope.join(', ') : 'ALL CITIES (explicit --all-cities)'}`);
+  const demandedCount = venues.filter((v) => v.demand_serves > 0).length;
+  console.log(`[ML:Realtime] ${demandedCount} of ${venues.length} venues have been served to a real user; `
+    + `those are collected first every run, so the time budget cannot cut them.`);
 
   // THE CREDIT BUDGET. The old Railway cron's mental model was "run until the
   // rate limit"; on a metered BestTime plan there is no rate limit, only a
@@ -417,15 +434,31 @@ async function collectRealtime() {
     byCity[venue.city].push(venue);
   }
 
-  // A RANDOM START, per city and per run. With the time budget below, the
-  // venues at the end of a fixed order would be the ones cut off every single
-  // hour, so they would never be sampled at that hour at all. Rotating the
-  // start each run spreads the cut across the corpus instead. Stateless on
-  // purpose: nothing has to remember where the last run stopped.
+  // DEMAND FIRST, THEN A RANDOM START FOR EVERYTHING ELSE.
+  //
+  // The rotation below is the right answer when every venue matters equally.
+  // They do not. 268 venues have ever had a crowd card shown to a real person
+  // and 137 of those are pollable; the hourly scope is 1,303 and the time
+  // budget leaves several hundred behind most hours. Under a pure rotation the
+  // venues someone will actually open are in the collected set by luck.
+  //
+  // This is the one lever MODEL-METRICS.md section 4 identifies. The model is
+  // not weak at generalising (section 3: R2 0.653 across unseen cities). It is
+  // weak at knowing how ONE venue deviates from its own pattern, which is
+  // learned only by watching that venue repeatedly, and 26 live rows per venue
+  // across 168 weekly slots is not repeatedly. Collecting the served venues
+  // every hour instead of sometimes is density where density is the deficit.
+  //
+  // Nothing is excluded. The tail keeps the rotation, for exactly the reason
+  // the original comment gives: without it the same venues are cut every single
+  // run and never sampled at that hour at all.
   for (const k of Object.keys(byCity)) {
     const arr = byCity[k];
-    const off = Math.floor(Math.random() * arr.length);
-    byCity[k] = arr.slice(off).concat(arr.slice(0, off));
+    const demanded = arr.filter((v) => v.demand_serves > 0)
+      .sort((a, b) => b.demand_serves - a.demand_serves);
+    const rest = arr.filter((v) => v.demand_serves === 0);
+    const off = rest.length ? Math.floor(Math.random() * rest.length) : 0;
+    byCity[k] = demanded.concat(rest.slice(off), rest.slice(0, off));
   }
   const cityOrder = Object.entries(byCity);
   if (cityOrder.length > 1 && Math.random() < 0.5) cityOrder.reverse();

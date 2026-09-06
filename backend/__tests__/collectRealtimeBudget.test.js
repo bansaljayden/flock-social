@@ -15,9 +15,33 @@ test('a sweep stops calling after fifty minutes and says what it left', () => {
   assert.match(collect, /venues left for the next run \(time budget\)/);
 });
 
-test('each run starts at a random venue per city, and the city order varies', () => {
-  assert.match(collect, /const off = Math\.floor\(Math\.random\(\) \* arr\.length\);\s*byCity\[k\] = arr\.slice\(off\)\.concat\(arr\.slice\(0, off\)\);/);
+test('demanded venues lead each city, and the rest still start at a random one', () => {
+  // TWO PROPERTIES NOW, and the order between them is the point.
+  //
+  // The rotation still exists and still protects the tail: without it the same
+  // venues sit at the end of a fixed order and are cut by the time budget every
+  // single run, so they are never sampled at that hour at all. That was this
+  // test's original subject and it is unchanged.
+  //
+  // What is new is that the rotation applies to `rest` rather than to the whole
+  // city. Venues a real user has actually been shown a crowd card for go ahead
+  // of it, so the budget cannot cut them. 140 of the 1,365 venues in the hourly
+  // scope are in that set, and under a pure rotation they were in each run's
+  // collected half by luck. MODEL-METRICS.md section 4 is the reason: the model
+  // is weak at how ONE venue deviates from its own pattern, that is learned
+  // only by watching it repeatedly, and 26 live rows per venue across 168
+  // weekly slots is not repeatedly.
+  assert.match(collect, /const demanded = arr\.filter\(\(v\) => v\.demand_serves > 0\)/);
+  assert.match(collect, /const rest = arr\.filter\(\(v\) => v\.demand_serves === 0\)/);
+  assert.match(collect, /byCity\[k\] = demanded\.concat\(rest\.slice\(off\), rest\.slice\(0, off\)\);/);
+  // The rotation is computed over `rest`, not over the whole array, or the
+  // demanded block would be rotated out of the front it was put in.
+  assert.match(collect, /const off = rest\.length \? Math\.floor\(Math\.random\(\) \* rest\.length\) : 0;/);
   assert.match(collect, /for \(const \[cityKey, cityVenues\] of cityOrder\) \{/);
+  // And the demand signal has to reach the row, or every venue scores 0 and the
+  // split above silently becomes a no-op that still passes the checks above.
+  assert.match(collect, /COALESCE\(d\.serves, 0\)::int AS demand_serves/);
+  assert.match(collect, /FROM served_predictions/);
 });
 
 test('the live call gives up at twenty seconds; the forecast call keeps thirty', () => {
