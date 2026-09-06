@@ -50,13 +50,42 @@ are all real.
 
 ## The crowd model
 
+**Flock's model beats Google's popular times at predicting how busy a specific
+venue will be at a specific hour, and it beats it on every measure we score.**
+On 67,249 held-out venue-hours, against the strongest freely available signal
+for the question:
+
+| | Google popular times | **Flock v2.6** |
+|---|---|---|
+| Average error (0-100 scale) | 31.48 | **29.42** |
+| Explanatory power (R²) | −0.075 | **+0.040** |
+| Within 10 points | 19.2% | **20.7%** |
+
+The R² line is the one that matters and it is worth reading twice. A negative R²
+means Google's popular-times signal is **worse than always guessing the
+average** on this question. Flock's is the first model measured on it that is
+better than guessing. Against that baseline the improvement is **R² +0.115**,
+and it had to be: the ship gate demanded ≥0.10 before the run and
+`mlPredictor.init()` refuses to load an artifact that misses it.
+
+This problem is not solved, and the numbers are deliberately not dressed up to
+suggest it is. Predicting how full a bar will be at 9pm on a specific Friday is
+genuinely open, and everyone measured on it scores low. What the table says is
+narrower and stronger than a big percentage would be: on the question this
+product actually asks, Flock is the only signal here that carries more
+information than guessing, and the thing it beats is the one every competitor
+would reach for.
+
 Flock runs its own trained model, not a wrapper around someone else's busyness
 chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
 **v2.6.0 "Starling"**, trained 2026-08-18) with **106 features**: time patterns,
 weather, nearby events, holiday/holiday-eve calendars, venue category and
 popularity, per-venue baselines, and user feedback. It predicts a *delta* from
-each venue's popular-times baseline, clamped to ±30 points, rather than an
-absolute busyness figure.
+each venue's popular-times baseline rather than an absolute busyness figure. The
+delta is clamped to ±50 at serving time (`DELTA_CLAMP_LO`/`HI` in
+`mlPredictor.js`); the ±30 in the training metadata is deliberately overridden
+there, so any arithmetic that reconstructs a served score with ±30 is wrong at
+the tails.
 
 Trained on **1,934,988 venue-hour observations across 30 cities**, with a
 separate **395,464-row holdout** (Barcelona, Miami, Tokyo), validated
