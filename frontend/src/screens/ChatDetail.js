@@ -1526,6 +1526,29 @@ export default function ChatDetail({
       }
     };
 
+    /* PUT THREE PLACES ON THE TABLE. The empty-state generator.
+       Options, not votes: each entry goes up with an empty `voters`, so the
+       group arrives at a decision to make rather than at somebody's pick.
+       Nothing new is fetched — popularVenues is already in hand, from the
+       cached Places search the vote panel runs, so this costs no quota. */
+    const seedVenueOptions = () => {
+      const already = new Set(flockVotesAll.map((v) => v.venue));
+      const picks = (popularVenues || [])
+        .filter((v) => v && v.name && !already.has(v.name))
+        .slice(0, 3);
+      if (picks.length === 0) return;
+      updateFlockVotes(selectedFlockId, [
+        ...flockVotesAll,
+        ...picks.map((v) => ({
+          venue: v.name,
+          type: v.type || 'Venue',
+          place_id: v.place_id || null,
+          voters: [],
+        })),
+      ]);
+      setShowVotePanel(true);
+    };
+
     const handleUnvote = () => {
       const newVotes = flockVotesAll
         .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
@@ -1919,6 +1942,14 @@ export default function ChatDetail({
           <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.userPlus('white', 14)} Invite friends
           </button>
+          {/* Only when there are three to offer. Without a location
+              popularVenues is empty and this would be a button that does
+              nothing, which is worse than not being here. */}
+          {(popularVenues || []).length >= 3 && (
+            <button className="hit44 glass-btn glass-secondary" onClick={seedVenueOptions} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {Icons.mapPin(colors.navy, 14)} Put 3 places up for a vote
+            </button>
+          )}
           <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.mapPin(colors.navy, 14)} Suggest a place
           </button>
@@ -3199,6 +3230,12 @@ export default function ChatDetail({
                         <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
                           ? 'No votes yet. Vote for a place below, or share one of your own.'
                           : 'No votes yet. Be the first to suggest a venue!'}</p>
+                        {/* THE BRANCH THAT HAD NO BUTTON. "Be the first to
+                            suggest a venue" was an instruction with no control
+                            under it, on a panel showing nothing. */}
+                        {(popularVenues || []).length >= 3 && suggestedVenues.length === 0 && (
+                          <button className="hit44 glass-btn glass-navy" onClick={seedVenueOptions} style={{ marginTop: '10px', padding: '9px 14px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Put 3 places on the table</button>
+                        )}
                       </>
                     ) : (
                       /* The instruction used to have no way to be followed: a
