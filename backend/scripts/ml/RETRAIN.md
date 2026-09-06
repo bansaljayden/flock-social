@@ -840,10 +840,14 @@ bearing; the traps it guards against are pinned in
 1. **SUPERSEDED 2026-09-01, kept for the record.** Collection restarted that
    day on a Pro Package 100 plan ($119/month, a FIXED allowance, not metered),
    the key lives on the Railway BESTTIME service by design, and that service
-   runs `collectRealtime.js` once a night at 02:00 UTC rather than sweeping
+   ran `collectRealtime.js` once a night at 02:00 UTC rather than sweeping
    every three hours. The paragraph that follows described the state before
    that decision and the $4,500/day figure only ever applied to a metered key
-   on the old three-hour schedule, neither of which exists now.
+   on the old three-hour schedule, neither of which exists now. (**Cadence
+   corrected 2026-09-06:** it is hourly, cron `7 * * * *`. The nightly slot in
+   this paragraph is the 2026-09-01 state. Under Package 100 the schedule costs
+   nothing either way, because the plan meters new venue admissions and not
+   calls.)
    *Original text:* Revive the existing BestTime account (the maintainer, in the
    dashboard). The 403 is account level, and the stored `besttime_venue_id`s
    belong to that account: a fresh account re-forecasts all 1,915 PA venues by
