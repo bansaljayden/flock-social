@@ -335,6 +335,7 @@ function chatProps(over = {}) {
     loadFlockVotes: fn(),
     openBirdie: fn(),
     votesError: '',
+    votesLoading: false,
     pendingImage: null,
     popularVenues: [],
     profilePic: null,

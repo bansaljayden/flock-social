@@ -117,6 +117,12 @@ import VenueOnboarding from './screens/VenueOnboarding';
 // screen and is imported by screens/ProfileSettings.js now, not here.
 import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
+
+/* Where each feed was scrolled to, kept across the unmount that every
+   navigation causes. Module scope, not state: restoring is a layout write
+   on attach and re-rendering the app to remember a number would be worse
+   than the problem. Cleared only by a deliberate re-tap of the live tab. */
+const TAB_SCROLL = new Map();
 // maplibre-gl's OWN STYLESHEET IS NOT IMPORTED HERE, and that is the same
 // decision as the library itself, applied to the half of it that was missed.
 // The engine is fetched by `import('maplibre-gl')` inside MapLibreMapView, so
@@ -6182,7 +6188,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [activeTabAnimation, setActiveTabAnimation] = useState(null);
   // scrollY removed — parallax now uses direct DOM manipulation via headerRef
   const headerRef = useRef(null);
-  const handleScroll = useCallback(() => {}, []);
+  /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
+     outlives the unmount every navigation causes, and keyed by tab so the Nest,
+     Plans and Messages do not share one number.
+
+     `scrollEls` keeps the live element per tab so re-tapping a tab can scroll
+     it, which is convention #9 and is what makes a long feed navigable at all
+     once #8 stops dumping you at the top. */
+  const scrollEls = useRef({});
+  const feedScroll = useMemo(() => {
+    const make = (tabId) => ({
+      // Restore on attach. Assigning scrollTop on a fresh element is a layout
+      // write, not an animation, so there is no visible jump.
+      ref: (el) => {
+        scrollEls.current[tabId] = el;
+        if (el && TAB_SCROLL.has(tabId)) el.scrollTop = TAB_SCROLL.get(tabId);
+      },
+      onScroll: (e) => { TAB_SCROLL.set(tabId, e.currentTarget.scrollTop); },
+    });
+    // Built once: a fresh ref callback every render would detach and reattach
+    // on each pass, and the restore would fight the user's own scrolling.
+    return { home: make('home'), calendar: make('calendar'), chat: make('chat') };
+  }, []);
+  const handleScroll = feedScroll.home.onScroll;
 
   // FLOCK REPLY, PLUMBED FOR REAL on 2026-09-05.
   //
@@ -8403,8 +8431,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // decision surface, and it said "No votes yet. Be the first to suggest a
   // venue" when the read had failed.
   const [votesError, setVotesError] = useState('');
+  /* WHICH flock's tally is in flight, not a bare boolean. The panel is opened
+     per flock and the answer for one says nothing about another, so a shared
+     true/false would blank the wrong screen. Null when nothing is loading.
+
+     This exists because the vote panel had votesError but no loading flag, so
+     between opening a flock and its tally arriving it rendered "No votes yet.
+     Be the first to suggest a venue!" over votes that already existed. That is
+     the exact thing ListSkeleton's header forbids: an empty state is a claim
+     about the user's data and must not be made before the data arrives. */
+  const [votesLoadingFor, setVotesLoadingFor] = useState(null);
+  /* chatDetailProps is shorthand-only by contract (a test pins it), and every
+     name in it must bind to something never reassigned. So the per-flock flag
+     is narrowed to THIS flock here rather than inline at the call site. */
+  const votesLoading = votesLoadingFor === selectedFlockId;
   const loadFlockVotes = useCallback((flockId) => {
     if (typeof flockId !== 'number') return;
+    setVotesLoadingFor(flockId);
     getFlockVotes(flockId)
       .then((data) => {
         votesLoadedRef.current.add(flockId);
@@ -8413,7 +8456,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
         )));
       })
-      .catch((err) => setVotesError(err?.message || 'The votes are not loading right now.'));
+      .catch((err) => setVotesError(err?.message || 'The votes are not loading right now.'))
+      // Both settlements, or a failed load leaves the panel loading for ever.
+      .finally(() => setVotesLoadingFor((cur) => (cur === flockId ? null : cur)));
   }, []);
 
   // Birdie's hands, the confirm half. The model can only STAGE these cards
@@ -11361,6 +11406,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (showVenueOnboarding || showModeSelection) return null;
 
     const handleTabClick = (tabId) => {
+      /* CONVENTION #9. Tapping the tab you are already on takes you back to the
+         top of it. Everything below already pops to the tab root (screen,
+         profile sub-screen, open venue), so the scroll is the missing half.
+         Smooth because this is a deliberate gesture, not a restore. */
+      if (tabId === currentTab && currentScreen === 'main') {
+        const el = scrollEls.current[tabId];
+        if (el && el.scrollTop > 0) {
+          TAB_SCROLL.set(tabId, 0);
+          try { el.scrollTo({ top: 0, behavior: 'smooth' }); } catch { el.scrollTop = 0; }
+        }
+      }
       setActiveTabAnimation(tabId);
       setTimeout(() => setActiveTabAnimation(null), 400);
       setCurrentTab(tabId);
@@ -14043,7 +14099,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       </div>
 
       {/* Scrollable Content */}
-      <div onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
         {(() => {
@@ -16069,7 +16125,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
 
         {/* Events section */}
-        <div style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
+        <div ref={feedScroll.calendar.ref} onScroll={feedScroll.calendar.onScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
           {/* Weather module */}
           {weatherReady ? (() => {
             const w = weatherData;
@@ -16352,7 +16408,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           )}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 12px' }}>
+        <div ref={feedScroll.chat.ref} onScroll={feedScroll.chat.onScroll} style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 12px' }}>
           {/* Direct Messages section */}
           {filteredDms.length > 0 && (
             <>
@@ -18229,6 +18285,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         openVenueDetail,
         loadFlockVotes,
         votesError,
+        votesLoading,
         openBirdie,
         pendingImage,
         popularVenues,
