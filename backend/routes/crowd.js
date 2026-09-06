@@ -12,6 +12,9 @@ const gameNights = require('../services/gameNights');
 const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
+// Outage detection. This route has its OWN Text Search for alternatives,
+// separate from routes/venueSearch.js, so it needs its own recording.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const { isPlaceIdShaped } = require('../utils/places');
 // ONE raw Place Details response per venue, shared with routes/venueSearch.js.
 // The crowd card and the detail card are opened together by App.js
@@ -1773,8 +1776,17 @@ router.get('/:placeId/alternatives',
           // venues, or one 429 would publish "nothing quieter nearby" for ten
           // minutes to everyone who asked.
           if (searchResponse.ok && !searchData.error) setCache(searchCacheKey, searchData);
+          // A CACHE HIT RECORDS NOTHING, and that is the whole point of putting this
+          // here rather than below. The cached branch above fakes
+          // `searchResponse = { ok: true }` so the code that follows is unchanged, and
+          // counting that as health would let ten-minute-old answers clear the failure
+          // streak for as long as the cache lasts, which is exactly when an outage is
+          // hardest to see. Only the branch that actually asked Google reports.
+          recordPlacesResult(searchResponse.ok && !searchData.error,
+            searchData.error?.status || searchData.error?.message || `HTTP ${searchResponse.status}`);
         } catch (netErr) {
           console.error('[Crowd] Alternatives search unreachable:', netErr.message);
+          recordPlacesResult(false, 'unreachable');
           return res.status(502).json({ error: 'Could not load nearby venues right now', unavailable: true });
         }
       }
