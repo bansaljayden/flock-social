@@ -43,6 +43,8 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 // definition (round 25).
 const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
+// Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const { upstreamSignal } = require('../utils/upstream');
 const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 const {
@@ -713,6 +715,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         body: JSON.stringify(searchBody),
       });
       const data = await resp.json();
+      recordPlacesResult(resp.ok && !data.error, data.error?.status || `HTTP ${resp.status}`);
       const venues = (data.places || []).map(p => ({
         place_id: p.id,
         // Bounded and stripped of control and format characters BEFORE it is
@@ -767,6 +770,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         },
       });
       const p = await resp.json();
+      recordPlacesResult(resp.ok && !p.error, p.error?.status || `HTTP ${resp.status}`);
       if (p.error) return { error: 'Venue not found' };
 
       // WHOSE CLOCK: the VENUE's, not Railway's UTC and not the caller's phone.
