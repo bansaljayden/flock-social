@@ -21181,39 +21181,56 @@ const FlockApp = () => {
   }
 
   if (!authUser) {
-    if (authScreen === 'signup') {
-      return (
-        <>
-          {notice}
-          <SignupScreen
-            onSignupSuccess={beginSession}
-            onSwitchToLogin={() => setAuthScreen('login')}
-          />
-        </>
-      );
-    }
-    if (authScreen === 'venue-login') {
-      return (
-        <>
-          {notice}
-          <VenueLoginScreen
-            onLoginSuccess={(user) => {
-              beginSession(user);
-              setVenueLoginFlag(true);
-            }}
-            onSwitchToUserLogin={() => setAuthScreen('login')}
-          />
-        </>
-      );
-    }
+    const authScreenEl = authScreen === 'signup' ? (
+      <SignupScreen
+        onSignupSuccess={beginSession}
+        onSwitchToLogin={() => setAuthScreen('login')}
+      />
+    ) : authScreen === 'venue-login' ? (
+      <VenueLoginScreen
+        onLoginSuccess={(user) => {
+          beginSession(user);
+          setVenueLoginFlag(true);
+        }}
+        onSwitchToUserLogin={() => setAuthScreen('login')}
+      />
+    ) : (
+      <LoginScreen
+        onLoginSuccess={beginSession}
+        onSwitchToSignup={() => setAuthScreen('signup')}
+        onSwitchToVenueLogin={() => setAuthScreen('venue-login')}
+      />
+    );
+
+    /* THE GOOGLE SCRIPT LOADS WITH THIS PROVIDER, so it lives here and not at
+       the root.
+
+       Mounting GoogleOAuthProvider is what injects
+       https://accounts.google.com/gsi/client. It used to wrap the whole app,
+       so every launch fetched about 100 KB of third-party JavaScript, over a
+       third-party DNS and TLS handshake, competing with the app's own chunks,
+       for a "Continue with Google" button that a signed-in person is never
+       going to see.
+
+       On iOS it was worse than wasted. components/auth/useGoogleAuth.js sets
+       out at length why GIS is a dead path inside the Capacitor WebView: the
+       popup escapes to Safari with no opener left to postMessage a token back
+       to, and capacitor://localhost is not a registrable origin so the request
+       is refused before a consent screen can render. Native signs in through
+       @capgo/capacitor-social-login. The script was downloaded on every launch
+       of the App Store build to power a flow that cannot run there at all.
+
+       It cannot be dropped outright: useGoogleLogin is called unconditionally
+       inside useGoogleAuth, and all three screens above use it, so a provider
+       has to sit over them. This is the smallest place that is still over all
+       three, and `notice` stays outside it because a session-expiry line has
+       nothing to do with Google. */
     return (
       <>
         {notice}
-        <LoginScreen
-          onLoginSuccess={beginSession}
-          onSwitchToSignup={() => setAuthScreen('signup')}
-          onSwitchToVenueLogin={() => setAuthScreen('venue-login')}
-        />
+        <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+          {authScreenEl}
+        </GoogleOAuthProvider>
       </>
     );
   }
@@ -21285,15 +21302,17 @@ const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
  * this file often, and a provider below the root would reach only what is under
  * it.
  */
+/* GoogleOAuthProvider is NOT here any more. It moved down to the three auth
+   screens, which are the only things under it that ever needed it, because
+   mounting it is what fetches Google's gsi/client script. The reasoning is
+   written out at the new site, above the auth return in FlockApp. */
 const FlockAppWithProviders = () => (
-  <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-    <LazyMotion features={domAnimation} strict>
-      <MotionConfig reducedMotion="user">
-        <OfflineGate />
-        <FlockApp />
-      </MotionConfig>
-    </LazyMotion>
-  </GoogleOAuthProvider>
+  <LazyMotion features={domAnimation} strict>
+    <MotionConfig reducedMotion="user">
+      <OfflineGate />
+      <FlockApp />
+    </MotionConfig>
+  </LazyMotion>
 );
 
 export default FlockAppWithProviders;
