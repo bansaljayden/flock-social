@@ -383,7 +383,8 @@ router.post('/request',
             }
             // A mutual request that accepted itself told the other side over the
             // socket only; an explicit accept also pushes. Same words, same type.
-            await pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
+            pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
+              .catch((e) => console.error('Friend accepted push error:', e.message));
             return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
           }
           return res.json({ message: 'Friend request already sent', status: 'pending' });
@@ -454,7 +455,8 @@ router.post('/request',
           }
           // A mutual request that accepted itself told the other side over the
           // socket only; an explicit accept also pushes. Same words, same type.
-          await pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
+          pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend accepted push error:', e.message));
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
         }
         return res.json(await currentState(req.user.id, user_id));
@@ -463,12 +465,16 @@ router.post('/request',
       // Notify target user
       if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
 
-      // Push notification
-      await pushIfOffline(io, user_id,
+      // Push notification. // FIRE AND FORGET, on purpose. See POST /accept below for the long version:
+      // the push is post-response, nothing in the body depends on it, and a
+      // Firebase round trip has no business inside the request a person is
+      // watching a spinner for. The catch is what keeps a provider outage from
+      // becoming an unhandled rejection.
+      pushIfOffline(io, user_id,
         'New friend request',
         `${req.user.name} wants to be friends`,
         { type: 'friend_request', fromUserId: String(req.user.id) }
-      );
+      ).catch((e) => console.error('Friend request push error:', e.message));
 
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
     } catch (err) {
@@ -920,7 +926,8 @@ router.post('/add-by-code',
           }
           await collapseToOneFriendship(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
-          await pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
+          pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend accepted push error:', e.message));
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         if (row.status === 'pending') {
@@ -961,7 +968,8 @@ router.post('/add-by-code',
         if (await acceptPending(seen.id)) {
           await collapseToOneFriendship(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
-          await pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
+          pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend accepted push error:', e.message));
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
@@ -970,11 +978,17 @@ router.post('/add-by-code',
       if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
       // The push /request sends. This door emitted the socket event only, so
       // a code scanned while its owner was offline reached them never.
-      await pushIfOffline(io, targetUserId,
+      //
+      // // FIRE AND FORGET, on purpose. See POST /accept below for the long version:
+      // the push is post-response, nothing in the body depends on it, and a
+      // Firebase round trip has no business inside the request a person is
+      // watching a spinner for. The catch is what keeps a provider outage from
+      // becoming an unhandled rejection.
+      pushIfOffline(io, targetUserId,
         'New friend request',
         `${req.user.name} wants to be friends`,
         { type: 'friend_request', fromUserId: String(req.user.id) }
-      );
+      ).catch((e) => console.error('Friend request push error:', e.message));
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
     } catch (err) {
       console.error('Add by code error:', err);
