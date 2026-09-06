@@ -68,42 +68,42 @@ import Icons, { starSvgString } from './components/ui/Icons';
 // It is a consumer screen the empty home state points a brand new account
 // straight at, and a 4.33 kB gzipped saving does not pay for a chunk fetch
 // at that moment. The measurement is in the header of the file it moved to.
-import AddFriends from './screens/AddFriends';
+
 // The flock chat screen left App.js in the same sweep and, like Add Friends,
 // it is a static import rather than a lazy one. It is the screen this product
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
-import ChatDetail, { owedOn } from './screens/ChatDetail';
+import { owedOn } from './lib/billShares';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
 // middle of the core loop, so a chunk fetch would be a wait the user
 // bought nothing with. Its header carries the reason.
-import CreateScreen from './screens/CreateScreen';
+
 // The one-to-one DM thread left App.js on 2026-08-27, the fourth screen of the
 // same sweep and the sibling the flock chat extraction deferred. It is a static
 // import for the same reason: a user opens a DM thread immediately, so a lazy
 // chunk would charge a round trip in front of it and save almost nothing.
-import DmDetail from './screens/DmDetail';
+
 // The flock plan detail screen, the hub a tap on any flock card opens, left
 // App.js on 2026-09-01, the eighth screen of the sweep. It is a static import
 // like the flock chat and the DM thread: every user opens it constantly and
 // mid-plan, so a lazy chunk would charge a round trip in front of it and save
 // almost nothing. Its header carries the reason.
-import FlockDetail from './screens/FlockDetail';
+
 // The profile and settings screen, the You tab, left App.js on 2026-08-27 in
 // the same sweep. It is a static import because it is one of the four
 // bottom-tab screens: every signed-in person is one tap from it, so a lazy
 // chunk would charge a round trip in front of a tab and take the tab bar it
 // draws itself down with the Suspense fallback. Its header carries the reason.
-import ProfileSettings from './screens/ProfileSettings';
+
 // The venue signup, the twelve-step onboarding a venue-mode login lands on
 // before the dashboard exists, left App.js on 2026-08-27. It is a static import
 // like AddFriends and ChatDetail: only a venue login reaches it, and splitting a
 // screen this small behind a chunk fetch would charge a round trip in the middle
 // of an owner's own signup to save a few kilobytes a consumer never downloads.
 // Its header carries the reason.
-import VenueOnboarding from './screens/VenueOnboarding';
+
 // Two components that were declared INSIDE FlockAppInner's render and mounted
 // as elements. That combination is the remount defect written up beside
 // `numVenues` below: a function rebuilt on every render is a new component type
@@ -157,6 +157,63 @@ const TAB_SCROLL = new Map();
 // The screen crash boundary catches the rejection and offers "Try again". With
 // a single lazy that button could never work: reset re-renders, the payload is
 // still rejected, it throws again instantly, and the owner is back on the same
+/* THE SEVEN SCREENS THAT USED TO RIDE THE BOOT CHUNK.
+   Each of these carried a comment arguing it should be a static import,
+   because a chunk fetch in front of a screen people open immediately costs a
+   round trip and saves only kilobytes. That argument is right about a bare
+   lazy and it is what the idle prefetch below answers: these chunks are
+   fetched in the background once the Nest has painted, so a tap seconds later
+   resolves from the module cache and renders in the same commit. The boot path
+   gets the saving and the screens keep their instant open.
+
+   MEASURED, not assumed, because one of those comments records a split that
+   saved less than expected. This one did not: the blocking app chunk went from
+   224,921 to 148,403 gzipped bytes, 76,518 off, a third of it. The first build
+   of this variant only reached 184,277, because App.js read owedOn out of
+   ChatDetail synchronously and a module cannot be split while anything does
+   that; moving those five lines to lib/billShares.js was worth the other
+   36 KB.
+
+   `let`, not `const`, and re-armed below for the same reason VenueDashboard
+   and RevenueScreen are: React.lazy remembers a rejected import for ever, so
+   one failed chunk fetch on a flaky connection would leave chat permanently
+   dead. A dead button on the core screen of the product is worth far more than
+   the bytes this saves, so the machinery that was already here now covers all
+   nine screens rather than two. */
+let AddFriends = React.lazy(() => import('./screens/AddFriends'));
+let ChatDetail = React.lazy(() => import('./screens/ChatDetail'));
+let CreateScreen = React.lazy(() => import('./screens/CreateScreen'));
+let DmDetail = React.lazy(() => import('./screens/DmDetail'));
+let FlockDetail = React.lazy(() => import('./screens/FlockDetail'));
+let ProfileSettings = React.lazy(() => import('./screens/ProfileSettings'));
+let VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
+
+/* WARM THEM WHILE NOBODY IS WAITING.
+   webpack caches a module once any import() for it resolves, so these calls
+   are what make the lazies above resolve from memory instead of over the
+   network. Behind requestIdleCallback so they cannot compete with the Nest's
+   own first paint or with the requests that fill it: the browser runs this
+   when it has nothing better to do, and the 4s timeout is a ceiling for the
+   case where that never happens. Failures are swallowed, because a prefetch
+   that does not land just means the lazy fetches it on tap, which is exactly
+   where this started. */
+const warmScreenChunks = () => {
+  const go = () => {
+    import('./screens/ChatDetail').catch(() => {});
+    import('./screens/DmDetail').catch(() => {});
+    import('./screens/FlockDetail').catch(() => {});
+    import('./screens/ProfileSettings').catch(() => {});
+    import('./screens/CreateScreen').catch(() => {});
+    import('./screens/AddFriends').catch(() => {});
+  };
+  // VenueOnboarding is deliberately NOT warmed: only a venue login ever
+  // reaches it, and spending a consumer's bandwidth on an owner signup screen
+  // is the cost this whole change exists to stop.
+  const idle = typeof window !== 'undefined' && window.requestIdleCallback;
+  if (idle) idle(go, { timeout: 4000 });
+  else setTimeout(go, 1500);
+};
+
 // error with no way to the dashboard short of force-quitting the app. Dead
 // button, on the paid product, and DESIGN-STANDARD H5 says a reviewer finding one
 // is a rejection reason. So the fallback arms a new lazy before it resets, and
@@ -190,6 +247,16 @@ let RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
 const rearmLazyScreens = () => {
   VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
   RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
+  // The seven that joined them. All nine, because "Try again" cannot know
+  // which chunk failed and a fresh lazy for a module already in the cache
+  // costs one element type and no request.
+  AddFriends = React.lazy(() => import('./screens/AddFriends'));
+  ChatDetail = React.lazy(() => import('./screens/ChatDetail'));
+  CreateScreen = React.lazy(() => import('./screens/CreateScreen'));
+  DmDetail = React.lazy(() => import('./screens/DmDetail'));
+  FlockDetail = React.lazy(() => import('./screens/FlockDetail'));
+  ProfileSettings = React.lazy(() => import('./screens/ProfileSettings'));
+  VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
 };
 
 // What stands in while that chunk arrives. A skeleton, not a spinner
@@ -1682,6 +1749,28 @@ const ChatSkeleton = ({ label = 'Loading messages' }) => (
         <div className="skeleton" style={{ width: row.w, height: '38px', borderRadius: '16px' }} />
       </div>
     ))}
+  </div>
+);
+
+/* WHAT STANDS IN WHILE A SCREEN'S CHUNK ARRIVES.
+   In practice almost never seen: warmScreenChunks fetches these on idle, so a
+   tap normally resolves from the module cache with no suspend at all. It has
+   to be right for the times it is seen anyway - a cold tap on a bad
+   connection - and the rule is the one index.js's route fallbacks follow:
+   paint the colour the screen is about to paint, so it settles rather than
+   flashing. `chat` reuses the bubble skeleton the chat screens already show
+   while their own messages load, so a cold open and a slow load look alike. */
+const ScreenChunkFallback = ({ chat = false }) => (
+  <div
+    role="status"
+    aria-label="Loading"
+    style={{
+      height: '100%',
+      backgroundColor: chat ? 'var(--bg-card-solid)' : 'var(--bg-primary)',
+      padding: chat ? '12px' : 0,
+    }}
+  >
+    {chat ? <ChatSkeleton /> : null}
   </div>
 );
 
@@ -4838,6 +4927,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // saved mode is the answer to "where do I start", so it routes, once, and
   // only when this launch did not come through the venue login (which the
   // effect above already handles).
+  /* WARM THE SCREEN CHUNKS. Mounted means signed in: FlockAppInner only
+     renders once there is an authUser, so a logged-out visitor never spends
+     bandwidth on screens behind a login. warmScreenChunks defers itself to an
+     idle callback, so this cannot compete with the Nest's first paint or its
+     data; by the time anyone taps into a chat the chunk is already in the
+     module cache and the lazy resolves without a request. */
+  useEffect(() => { warmScreenChunks(); }, []);
+
   const venueBootRoutedRef = useRef(false);
   useEffect(() => {
     if (venueBootRoutedRef.current) return;
@@ -18016,7 +18113,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueServiceStyles,
         venueWeekdays,
       };
-      return <VenueOnboarding {...venueOnboardingProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <VenueOnboarding {...venueOnboardingProps} />
+        </React.Suspense>
+      );
     }
     // There is no consumer onboarding screen. A comment here promised one for
     // long enough that a reader could go looking; the only onboarding in the
@@ -18090,7 +18191,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         stopQrScanner,
         styles,
       };
-      return <AddFriends {...addFriendsProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <AddFriends {...addFriendsProps} />
+        </React.Suspense>
+      );
     }
     if (currentScreen === 'create') {
       // Every value the screen reads, named once and in one place. Object
@@ -18152,7 +18257,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         styles,
         suggestedUsers,
       };
-      return <CreateScreen {...createScreenProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <CreateScreen {...createScreenProps} />
+        </React.Suspense>
+      );
     }
     if (currentScreen === 'pastFlocks') return PastFlocksScreen();
     if (currentScreen === 'detail') {
@@ -18228,7 +18337,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         timeEditHour,
         updateFlockVotes,
       };
-      return <FlockDetail {...flockDetailProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <FlockDetail {...flockDetailProps} />
+        </React.Suspense>
+      );
     }
     if (currentScreen === 'chatDetail') {
       // Every value the chat screen reads, named once and in one place. Object
@@ -18396,7 +18509,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         updateFlockVenue,
         updateFlockVotes,
       };
-      return <ChatDetail {...chatDetailProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback chat />}>
+          <ChatDetail {...chatDetailProps} />
+        </React.Suspense>
+      );
     }
     if (currentScreen === 'dmDetail') {
       // Every value the DM screen reads, named once and in one place. Object
@@ -18507,7 +18624,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // cold start, or a partner who deleted their account, left a blank screen
       // with no way out. The flock twin has had MissingFlockPanel for this.
       if (!selectedDm) return <MissingDmPanel />;
-      return <DmDetail {...dmDetailProps} />;
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback chat />}>
+          <DmDetail {...dmDetailProps} />
+        </React.Suspense>
+      );
     }
     if (currentScreen === 'venueDashboard') {
       if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
@@ -18830,7 +18951,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venmoUsername,
           zelleIdentifier,
         };
-        return <ProfileSettings {...profileSettingsProps} />;
+        return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <ProfileSettings {...profileSettingsProps} />
+        </React.Suspense>
+      );
       }
       default: return HomeScreen();
     }

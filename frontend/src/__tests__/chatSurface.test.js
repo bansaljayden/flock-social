@@ -284,7 +284,19 @@ describe('claims a chat screen must not make', () => {
 
   test('both threads draw a skeleton rather than a blank rectangle', () => {
     expect(appSource).toMatch(/const ChatSkeleton = /);
-    expect(appSource.match(/<ChatSkeleton /g)).toHaveLength(2);
+    // THREE uses, and the count is deliberate rather than loosened, because a
+    // count is what catches one of these being quietly deleted.
+    //   1. ChatDetail, while a flock's history is on the wire.
+    //   2. DmDetail, while a thread's history is on the wire.
+    //   3. ScreenChunkFallback in App.js, which is what stands in while the
+    //      chat screen's own CHUNK arrives. Both chat screens became lazy so
+    //      they would stop riding the boot bundle, and the rule that put a
+    //      skeleton behind a slow load applies just as much to a slow chunk:
+    //      the alternative is the blank rectangle this test is named after.
+    expect(appSource.match(/<ChatSkeleton /g)).toHaveLength(3);
+    // And the chunk fallback is a skeleton for the chat screens specifically,
+    // not a bare colour for everything.
+    expect(appSource).toMatch(/\{chat \? <ChatSkeleton \/> : null\}/);
   });
 
   test('a send in flight says so', () => {
