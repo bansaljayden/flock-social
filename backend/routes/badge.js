@@ -11,6 +11,8 @@ const { upstreamSignal } = require('../utils/upstream');
 // a second thing to keep in step with the first.
 const { isPlaceIdShaped } = require('../utils/places');
 const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget');
+// Outage detection for the public venue badge. See utils/placesHealth.js.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
 const { weekdayOffset } = require('../services/crowdEngine');
 
@@ -368,6 +370,7 @@ router.get('/:placeId.svg',
         signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
       });
       const p = await r.json();
+      recordPlacesResult(r.ok && !p.error, p.error?.status || `HTTP ${r.status}`);
       if (p.error) return res.status(404).send('');
 
       const venue = {
