@@ -8,29 +8,35 @@ This is the only part of Flock that runs on hardware, in a building we do not
 control, on wifi we do not control, with nobody around to restart it. Every
 design choice below follows from that.
 
-> ## Status: it has run on a Pi. No sensor has been read on one.
+> ## Status: two of the three sensors have been read on a Pi. The beam has not.
 >
 > Read this before you trust anything below. On 2026-09-06 this directory was
-> installed on a Raspberry Pi 5 and `main.py` ran on the board. Every previous
-> version of this box said the program had only ever been executed by
-> `test_main.py` on a laptop, and that is no longer true. It is also a smaller
-> change than it sounds, so here is the exact line between what has been on
-> hardware and what has not.
+> installed on a Raspberry Pi 5, `main.py` ran on the board, and the thermal
+> camera and the microphone were read for the first time. Every earlier version
+> of this box said nothing here had ever been on hardware. Here is where the
+> line falls now.
 >
 > **Verified on the board:**
 >
-> - `setup.sh` runs end to end on a fresh Raspberry Pi OS image, including the
+> - `setup.sh` end to end on a fresh Raspberry Pi OS image, including the
 >   service-user detection and the Pi 5 branch. The board was identified from
->   `/proc/device-tree/model` and `RPi.GPIO` was correctly swapped for
->   `rpi-lgpio`, which is the failure that would otherwise have reported 0
->   doorway crossings for the life of the install.
-> - Config load. `main.py` reads `/etc/flock-sensor/flock_sensor.env` on the
->   device and prints its settings back.
-> - Clock. NTP syncs, which is what TLS and the reading timestamps both rest on.
-> - Backend authentication. The `--selftest` credential check was accepted by
->   the production backend as a `dry_run`, from the Pi, over the network. The
->   2026-05-02 curl proof is now a proof about this program as well, which it
->   explicitly was not before.
+>   `/proc/device-tree/model` and `RPi.GPIO` was swapped for `rpi-lgpio`, which
+>   is the failure that would otherwise have reported 0 doorway crossings for
+>   the life of the install.
+> - Config load, clock (NTP), and the `--selftest` credential check, accepted
+>   by the production backend as a `dry_run` from the Pi over the network. The
+>   2026-05-02 curl proof is now a proof about this program too.
+> - **The thermal camera, which was the part most likely to be wrong.** Every
+>   V4L2 ioctl in `ThermalCamera` was written from datasheets and they work.
+>   The Lepton enumerates on `/dev/video0`, opens as raw Y16, and reports
+>   radiometric: the PureThermal AGC-node failure this box used to warn about
+>   did not happen on this unit. Empty room, room median 20.1C, 0 clusters.
+> - **The cluster count, calibrated once.** `THERMAL_BIN` moved from 2 to 4 on
+>   the bench, because at bin 2 one standing person at about 3 ft fragmented
+>   into 3 clusters and at bin 4 the same person reads 1. What that did to
+>   `THERMAL_MIN_CLUSTER` is worked out under Calibration; the short version is
+>   that 12 cells now means four times as many pixels as it used to.
+> - The microphone answers over the MCP3008. Reading it is not calibrating it.
 >
 > **The bench found one bug and it is fixed here.** `setup.sh` created
 > `/etc/flock-sensor` as root:root 0750 and chowned only the file inside it, so
@@ -39,48 +45,36 @@ design choice below follows from that.
 > present and correct, which is a bad hour at a venue. The directory is now
 > owned by the service group too, and `test_main.py` pins it.
 >
-> **Not verified. No sensor has been read on a board.** `init_ir`,
-> `init_thermal`, `init_noise`, `thermal_loop`, `noise_loop` and `display_loop`
-> are all still unexecuted code.
+> **Not verified:**
 >
-> - **IR.** Nothing has been wired. The receiver voltage question below is open,
->   and getting that one wrong damages the Pi rather than returning a bad number.
-> - **Thermal.** The largest unknown here. See the paragraph below.
-> - **Noise.** Uncalibrated, and it needs a sound level meter beside a running
->   mic. Until someone does that it is a relative loudness index, not dB SPL.
-> - **Display.** No framebuffer has been drawn into.
+> - **The IR break-beam, the only sensor that has never been read.** Nothing is
+>   wired. `--selftest` reports it NOT DETECTED and the device reports 0
+>   crossings. The receiver voltage question below is still open, and getting
+>   that one wrong damages the Pi rather than returning a bad number.
+> - **The noise figure.** The mic reads. The number it produces is uncalibrated
+>   and needs a sound level meter beside a running unit, and until then it is a
+>   relative loudness index rather than dB SPL.
+> - **The display.** No framebuffer has been drawn into.
+> - **Two people at once, and any distance past 10 ft.** Everything measured so
+>   far was one person between roughly 3 and 10 ft. A count that has never seen
+>   two bodies is not a headcount yet.
+> - **The loops.** `--selftest` brings a sensor up and reads it once.
+>   `thermal_loop` and `noise_loop` are written to run for months and neither
+>   has run for an hour.
 > - No `requirements.lock.txt` exists yet. `requirements.txt` produces one
->   "once a unit is verified on real hardware", and the sensors are precisely
->   the part that is not.
-> - The pin conflict below is still undecided, so nothing has yet been built
->   with the cellular HAT and the sensors on the header at the same time.
+>   "once a unit is verified on real hardware", and the sensors are not all
+>   there yet.
+> - The pin conflict below is still undecided, so nothing has been built with
+>   the cellular HAT and the sensors on the header at the same time.
 >
-> The first time this meets a bus, a level and a framebuffer, expect it to be
-> wrong somewhere. The bench day is not over.
->
-> **The thermal path is newer than the rest of that.** On 2026-08-26 the sensor
-> was changed from an MLX90640 to the FLIR Lepton the build plan always
-> specified, so `ThermalCamera`, every V4L2 ioctl in it, and the counting
-> thresholds around it were written from datasheets and have never been issued
-> to a board. The two things most likely to be wrong on the bench, both called
-> out where they live in the code:
->
-> - **The camera may not be radiometric.** Some PureThermal firmware exposes
->   two video nodes, one raw Y16 and one 8-bit AGC greyscale. The AGC one
->   opens, streams, and gives numbers that are not temperatures.
->   `--selftest` now says which one you have instead of counting nonsense out
->   of it.
-> - **`THERMAL_MIN_CLUSTER` is derived from lens geometry, not measured.** See
->   Calibration. Until someone stands in front of a unit, the headcount is a
->   relative signal.
->
-> One class of mistake there is at least pinned rather than hoped at. V4L2
-> encodes the size of each argument struct into the ioctl request number, so a
-> struct one byte off does not give a subtly wrong frame, it gives `ENOTTY` and
-> a camera that never opens. `test_main.py` asserts the request numbers and
-> both struct sizes against the kernel's documented values, on the developer
-> machine, before anyone plugs anything in. That bug was in the first draft of
-> this code and the test is what found it.
+> One class of mistake was pinned before any of this rather than hoped at, and
+> it is part of why the camera opened on the first try. V4L2 encodes the size
+> of each argument struct into the ioctl request number, so a struct one byte
+> off does not give a subtly wrong frame, it gives `ENOTTY` and a camera that
+> never opens. `test_main.py` asserts the request numbers and both struct sizes
+> against the kernel's documented values, on the developer machine, before
+> anyone plugs anything in. That bug was in the first draft of this code and
+> the test is what found it.
 
 ---
 
@@ -138,11 +132,12 @@ camera, audio or radio library is present. Change what this device measures
 and that test goes red on the same commit. It did exactly that when the
 sensor changed, which is what it is for.
 
-The one thing to be careful about: it is written as a promise about sensors
-nobody has read on hardware. The box boots and talks to the backend as of
-2026-09-06, and no camera, mic or beam has been brought up on it. Before the
-first venue install, re-read section 3 against the running unit rather than
-against this file.
+The one thing to be careful about: it is a promise about a device that has
+only been switched on once. As of 2026-09-06 the thermal camera and the
+microphone have been brought up on a Pi and the claims above held: no image
+library is present, no frame reaches a file, and the payload is three integers.
+The beam has never been wired. Before the first venue install, re-read section
+3 against the running unit rather than against this file.
 
 ---
 
@@ -384,37 +379,77 @@ matters more here: a Lepton's absolute accuracy without a calibration target is
 several degrees, so `THERMAL_THRESHOLD_C` is closer to a floor than a real
 decision and the median-relative margin does nearly all the work.
 
-**`THERMAL_MIN_CLUSTER` is derived, not measured, and this is the number to
-check first on a bench.** The arithmetic behind the default of 12, so it can be
-argued with:
+**`THERMAL_BIN` is 4, and that one was measured.** Bench 2026-09-06,
+PureThermal 3 and a Lepton 3.5, indoors, room median 20 to 22C, one adult:
 
-- The standard Lepton 3.5 lens is about 57° horizontal, so at distance `d` the
-  frame is roughly `1.09 × d` metres wide, and 160 pixels across it is about
-  `147 / d` pixels per metre.
+| Condition | Bin 2 | Bin 4 |
+|---|---|---|
+| Empty room | 0 | 0 |
+| One person at about 3 ft, whole body in frame | 3 | 1 |
+| One person at 8 to 10 ft, whole body in frame | not run | 1, repeatably |
+| One person at 8 to 10 ft, partly cropped at the frame edge | not run | 0 |
+
+The 3-clusters-at-3-ft reading is the fragmentation failure this file had only
+predicted, seen for real: a bare head and a covered torso are two warm regions
+with a cool band between them, and at bin 2 that band survives pooling. At bin
+4 it averages out. That is why the advice below says raise `THERMAL_BIN` before
+`THERMAL_MIN_CLUSTER`.
+
+**Changing the bin changed what `THERMAL_MIN_CLUSTER` means, and it was not
+retuned.** 12 cells is 48 raw pixels at bin 2 and 192 at bin 4. The derivation
+that produced 12 assumed bin 2, so here it is with the arithmetic finished at
+bin 4 instead:
+
+- The standard Lepton 3.5 lens is about 57 degrees horizontal, so at distance
+  `d` the frame is roughly `1.09 x d` metres wide, and 160 pixels across it is
+  about `147 / d` pixels per metre.
 - At 3 m that is 49 px/m, so an adult head is very roughly 8 by 11 pixels, call
   it 80 to 120 raw pixels of bare skin. At 5 m it is 30 px/m and the same head
   is 30 to 45.
-- Pixels are mean-pooled into `THERMAL_BIN × THERMAL_BIN` cells before counting
-  (default 2), so divide by four: about 20 to 30 cells at 3 m, about 8 at 5 m.
-- The default of 12 cells (48 raw pixels) sits between those. **That is a
-  deliberate bias toward missing a distant person rather than counting sensor
-  noise as a crowd**, because an invented person is a worse number to publish
-  than a missing one.
+- Pixels are mean-pooled into `THERMAL_BIN x THERMAL_BIN` cells, so at bin 4
+  divide by sixteen rather than four: a head is about 5 to 7 cells at 3 m and
+  about 2 at 5 m. **Every one of those is under 12.**
+- A whole standing body is not. At 49 px/m an adult is roughly 80 pixels tall
+  and 25 across, so even a fraction of that silhouette clearing the warm cutoff
+  is hundreds of raw pixels, which is tens of cells at bin 4.
 
-None of that is a measurement. Nobody has stood in front of one of these. On
-the bench: run `main.py --selftest`, which prints the cluster count it sees
-right now, and walk in and out of frame. If one person reads as two, the
-silhouette is fragmenting and `THERMAL_BIN` should go up before
-`THERMAL_MIN_CLUSTER` does. If an empty room reads as one or more people, raise
-`THERMAL_MARGIN_C` first, then `THERMAL_MIN_CLUSTER`.
+So `THERMAL_MIN_CLUSTER = 12` no longer encodes "a head at doorway range". It
+encodes "a body-sized warm region in frame", and the bench is what says that is
+the right thing for it to encode: at 8 to 10 ft a whole silhouette counted every
+time and a partial crop at the frame edge counted zero. **This device measures
+warm area.** It is repeatable at a fixed input. What varied between the early
+runs was how much of a body was in frame, not the algorithm.
 
-**Fragmentation is the failure mode the old sensor did not have.** On a 24x32
-grid a whole person was a handful of pixels and blurred into one blob. At
-160x120 a bare head and a clothed torso can be two separate warm regions with a
-cool band between them, and a naive count reports two people. The code answers
-that with mean-pooling and eight-connectivity (a diagonal touch joins two
-regions), which is enough in the frames the tests construct and has never been
-checked against a real body.
+**Which makes framing a mounting problem, and it is the thing to settle before
+the first venue install.** Where the camera sits and how it is angled decides
+whether somebody crossing the doorway is whole in frame or clipped by its edge.
+Mounted close to a narrow doorway everyone is partly cropped and the count runs
+low. Mounted back far enough that a whole body fits, the count is the one that
+was measured. Nobody has done this against a real doorway yet.
+
+The two constants are one setting in two variables, so `test_main.py` pins the
+pair (4, 12). Move either and re-derive both.
+
+Still unmeasured, and the next two things to run: two people at once, which is
+the difference between a count and a headcount, and any distance past 10 ft.
+
+On the bench: run `main.py --selftest`, which prints the cluster count it sees
+right now, and walk in and out of frame. Stop the service first or it holds the
+camera. If one person reads as several, the silhouette is fragmenting and
+`THERMAL_BIN` should go up before `THERMAL_MIN_CLUSTER` does. If an empty room
+reads as one or more people, raise `THERMAL_MARGIN_C` first, then
+`THERMAL_MIN_CLUSTER`.
+
+**Fragmentation is the failure mode the old sensor did not have**, and it is
+now the one that has actually been seen. On a 24x32 grid a whole person was a
+handful of pixels and blurred into a single blob. At 160x120 a bare head and a
+clothed torso are two warm regions with a cool band across them, and a naive
+count reports two or three people, which is exactly what bin 2 did at 3 ft. The
+code answers that with mean-pooling and eight-connectivity, where a diagonal
+touch joins two regions. Coarser pooling cuts both ways and that is worth
+knowing: at bin 4 two regions have to be closer in raw pixels before they join
+at all, which is why `test_main.py` had to move a fixture that only touched on
+the finer grid.
 
 **IR beam.** `ir_beam_count` is **crossings, not entries**: it counts a break in
 either direction, so a doorway used both ways roughly doubles the true entry
@@ -494,11 +529,12 @@ decide to do.
 
 Things that are still open, so nobody has to rediscover them.
 
-1. **No sensor has been read on a Pi.** The box itself has: as of 2026-09-06
-   `setup.sh`, the config load, the clock and the backend credential check are
-   all verified on a Pi 5. The beam, the thermal camera, the mic and the
-   display are not, and every gap below is downstream of that half. See the
-   status box at the top.
+1. **The beam has never been read, and no sensor has run for longer than a
+   selftest.** As of 2026-09-06 `setup.sh`, the config load, the clock, the
+   backend credential check, the thermal camera and the microphone are all
+   verified on a Pi 5. The IR break-beam is not wired at all, the display has
+   never drawn, and `thermal_loop` and `noise_loop` have never run a shift. See
+   the status box at the top.
 2. **No provisioning UI.** Creating, rotating and revoking a device key is
    hand-written SQL against production. That is a mistake waiting to happen
    (wrong `place_id`, plaintext key pasted somewhere) and should become an
@@ -545,7 +581,11 @@ Things that are still open, so nobody has to rediscover them.
    40-pin cellular HAT still covers the pins the break-beam and the mic's ADC
    need. See "The pin conflict, which is still open". the maintainer's decision, and it
    blocks ordering the modem, not the sensors.
-10. **The Lepton path has never been executed.** Every V4L2 ioctl in
-   `ThermalCamera` was written from documentation. The frame reader, the
-   radiometric check, the shutter check and the cluster thresholds are all
-   first contact on the bench day.
+10. **The Lepton path is executed but barely exercised.** Every V4L2 ioctl in
+   `ThermalCamera` was written from documentation, and on 2026-09-06 they all
+   worked on the first board: the camera enumerates, opens raw Y16, reports
+   radiometric, and counts an empty room as 0. What that run did not touch is
+   the shutter path over a long session, a second unit with different
+   PureThermal firmware, and more than one person in frame. The cluster
+   thresholds are calibrated against exactly one body at two distances. See
+   Calibration.
