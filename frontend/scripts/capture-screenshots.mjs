@@ -598,15 +598,67 @@ function allowLocalApiInCsp() {
   // opens a socket as soon as a session lands and a refused socket is a second
   // silent failure behind the first.
   const wsOrigin = API_ORIGIN.replace(/^http/, 'ws');
-  const widened = html.replace(
-    /connect-src ([^";]*)/,
-    (_m, sources) => `connect-src ${sources} ${API_ORIGIN} ${wsOrigin}`
-  );
-  if (widened === html) {
-    log('WARNING: no connect-src found in the built index.html; the app may not reach the local API');
+
+  /* OPERATE ON THE POLICY, NOT ON THE FIRST TEXT THAT LOOKS LIKE IT.
+
+     This used to run a bare `html.replace(/img-src ([^";]*)/, ...)` over the
+     whole document, and it silently edited the wrong thing. The long comment
+     above the meta tag in public/index.html explains the policy line by line,
+     so it CONTAINS the string "img-src blob: data:" some four hundred
+     characters before the real rule. The regex matched the comment, appended
+     the local origin inside it, and left the actual policy untouched, so
+     every venue image was still refused. `connect-src` never appears in that
+     comment, which is exactly why data loaded and only images failed, and why
+     the rig looked healthy while shipping screenshots with no venue photos in
+     them at all.
+
+     So: isolate the meta tag first, and widen directives only inside its
+     content attribute. Prose about the policy can then say anything it likes. */
+  const metaRe = /(<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*content=")([^"]*)(")/i;
+  const meta = html.match(metaRe);
+  if (!meta) {
+    log('WARNING: no Content-Security-Policy meta tag in the built index.html; leaving it alone');
     return;
   }
+
+  let policy = meta[2];
+  const widenedDirectives = [];
+  const widen = (directive, ...origins) => {
+    // No backslash escapes in the pattern. Built as a template literal, `\s`
+    // is not a valid JS escape and collapses to a bare `s`, so the pattern
+    // silently became `(^|;s*)` and matched nothing: both directives were
+    // left un-widened while this function still logged success. The policy
+    // separator is only ever a semicolon and spaces, so say that literally.
+    const re = new RegExp('(^|;[ ]*)' + directive + ' ([^;]*)');
+    if (!re.test(policy)) {
+      log(`WARNING: no ${directive} in the built policy; some requests may be refused`);
+      return;
+    }
+    policy = policy.replace(re, (_m, lead, sources) => {
+      const missing = origins.filter((o) => !sources.includes(o));
+      return `${lead}${directive} ${sources}${missing.length ? " " + missing.join(" ") : ""}`;
+    });
+    widenedDirectives.push(directive);
+  };
+
+  widen('connect-src', API_ORIGIN, wsOrigin);   // REST and the socket
+  widen('img-src', API_ORIGIN);                 // every venue photo
+
+  const widened = html.replace(metaRe, (_m, a, _b, c) => `${a}${policy}${c}`);
   fs.writeFileSync(indexPath, widened);
+
+  /* Say it out loud, and say what actually happened rather than what was
+     intended. This line was unconditional, so during the regex bug above it
+     printed "CSP widened for ... (connect-src, img-src)" on a run where
+     neither directive had matched and nothing had been touched. That is the
+     same silent failure the comment was warning about, one layer up. */
+  if (widenedDirectives.length === 2) {
+    log(`CSP widened for ${API_ORIGIN} (${widenedDirectives.join(', ')})`);
+  } else if (widenedDirectives.length) {
+    log(`WARNING: CSP only widened ${widenedDirectives.join(', ')} for ${API_ORIGIN}; the rest will be refused`);
+  } else {
+    log(`WARNING: CSP was NOT widened at all for ${API_ORIGIN}; expect refused requests and missing venue photos`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -811,8 +863,15 @@ const DRIVERS = {
        text across the bottom of the shot. Its own (i) button collapses it to
        a single dot, which is the state a real user sees after one tap and is
        still compliant: the credit remains one click away. */
-    const attrib = page.locator('.maplibregl-ctrl-attrib-button').first();
-    if (await attrib.count()) await attrib.click().catch(() => {});
+    /* Collapse it by class rather than by clicking the disclosure. The button
+       is moved out of MapLibre's own container into the map root for tab order
+       and given tabindex -1, so a Playwright click on it raced the move and
+       silently did nothing. Dropping `maplibregl-compact-show` is the same
+       state a user reaches by tapping it, and it cannot race. */
+    await page.evaluate(() => {
+      document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
+        .forEach((el) => el.classList.remove('maplibregl-compact-show'));
+    }).catch(() => {});
     /* WAIT FOR THE PHOTO PINS. Each marker paints a lettered SVG fallback
        immediately and swaps to the venue's circular photo only once
        buildPhotoPin resolves, so a short settle photographs the fallback and
@@ -821,7 +880,10 @@ const DRIVERS = {
       const pins = [...document.querySelectorAll('.mlb-marker-inner')];
       if (!pins.length) return false;
       const withPhoto = pins.filter((p) => p.style.backgroundImage && p.style.backgroundImage !== 'none');
-      return withPhoto.length >= Math.min(6, Math.ceil(pins.length * 0.5));
+      // Nearly all of them, not half. At 50% the light pass shot with 6 of 20
+      // photos in and 14 lettered fallbacks still on screen; none had failed,
+      // they were simply still in flight. One straggler must not stall the run.
+      return withPhoto.length >= Math.ceil(pins.length * 0.9);
     }, null, { timeout: 60000 }).catch(() => {});
     // Let tiles finish rendering; maplibre paints async after markers land.
     await settle(page, { quiet: 3500 });
@@ -1000,6 +1062,25 @@ async function captureAll(dbUrl) {
             if (m.type() === 'error') page.__consoleErrors.push(m.text().slice(0, 200));
           });
           page.on('pageerror', (err) => page.__consoleErrors.push(`pageerror: ${String(err).slice(0, 200)}`));
+
+          /* EVERY IMAGE THAT DOES NOT ARRIVE, NAMED.
+             A venue photo that fails is invisible in this rig by design: the
+             app swaps in its placeholder bird and carries on, so a capture
+             with no photos at all still reports "ok". That is how a CSP that
+             blocked every venue image shipped screenshots for weeks. Failed
+             and non-2xx image requests are collected here and printed per
+             screen, so the next silent fallback is one line in the log. */
+          page.__imgFails = [];
+          page.on('requestfailed', (r) => {
+            if (r.resourceType() === 'image') {
+              page.__imgFails.push(`${(r.failure() && r.failure().errorText) || 'failed'} ${r.url().slice(0, 110)}`);
+            }
+          });
+          page.on('response', (r) => {
+            if (r.request().resourceType() === 'image' && r.status() >= 400) {
+              page.__imgFails.push(`HTTP ${r.status()} ${r.url().slice(0, 110)}`);
+            }
+          });
           try {
             for (const screen of consumerScreens) {
               try {
@@ -1007,6 +1088,7 @@ async function captureAll(dbUrl) {
                 // the search overlay) hide the tab bar, so starting each
                 // driver from the app root is what makes the order of the
                 // screen list irrelevant.
+                page.__imgFails = [];
                 await page.goto(`${WEB_ORIGIN}/app`, { waitUntil: 'domcontentloaded' });
                 await page.addStyleTag({ content: hideCaretCss });
                 await waitAppReady(page);
@@ -1169,7 +1251,9 @@ async function snap(page, sharp, manifest, { screen, size, mode }) {
     await sharp(raw).flatten({ background: '#ffffff' }).removeAlpha().png({ compressionLevel: 9 }).toFile(path.join(APPSTORE_DIR, file));
     manifest.push({ file: `store-assets/${file}`, screen: screen.id, title: screen.title, mode, set: `appstore-${inches}`, width: px.w, height: px.h, replaces: null });
   }
-  log(`  ok ${screen.id} [${size.id}/${mode}]`);
+  const imgFails = [...new Set(page.__imgFails || [])];
+  const imgNote = imgFails.length ? `  (${imgFails.length} image(s) did not load: ${imgFails.slice(0, 3).join(' | ')})` : '';
+  log(`  ok ${screen.id} [${size.id}/${mode}]${imgNote}`);
 }
 
 function writeManifestAndWiring(manifest) {

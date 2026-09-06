@@ -2609,7 +2609,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       inner.innerHTML = svg;
       const svgEl = inner.querySelector('svg');
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
-      buildPhotoPin(venue.photo_url, isActive).then(dataUrl => {
+      /* resolveVenuePhoto, NOT the raw field. `photo_url` arrives from the
+         backend as the RELATIVE path "/api/venues/photo?ref=..." and the API
+         is a different origin from the web app in every environment we run
+         (flockcorp.com against Railway in production, :3410 against :5210 in
+         the screenshot capture). Assigned raw to img.src it resolves against
+         the WEB origin, 404s, fires onerror, and buildPhotoPin resolves null,
+         so the marker keeps the lettered category fallback for ever. Every
+         other consumer of photo_url in this file already goes through the
+         resolver; these two map-pin calls were the only ones that did not,
+         which is why venue photos showed on cards and never on pins. */
+      buildPhotoPin(resolveVenuePhoto(venue.photo_url), isActive).then(dataUrl => {
         if (dataUrl) {
           photoCacheRef.current[venue.place_id] = dataUrl;
           inner.innerHTML = '';
@@ -3129,7 +3139,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         svgEl.setAttribute('width', size);
         svgEl.setAttribute('height', Math.round(size * 1.32));
       } else if (photoCacheRef.current[venue.place_id] && isActive && venue.photo_url) {
-        buildPhotoPin(venue.photo_url, true).then(dataUrl => {
+        buildPhotoPin(resolveVenuePhoto(venue.photo_url), true).then(dataUrl => {
           if (dataUrl) {
             photoCacheRef.current[venue.place_id] = dataUrl;
             inner.style.backgroundImage = `url("${dataUrl}")`;
