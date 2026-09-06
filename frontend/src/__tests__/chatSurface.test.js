@@ -618,14 +618,18 @@ function runComposerHandler(name, value, { threadOpen = true } = {}) {
   const factory = new Function(
     'useCallback', 'chatInputRef', 'setChatInputHasText', 'selectedFlockId',
     'selectedDmId', 'startTyping', 'stopTyping', 'dmStartTyping', 'dmStopTyping',
-    'typingActiveRef', 'typingTimeoutRef', 'dmTypingTimeoutRef',
+    'typingActiveRef', 'typingTimeoutRef', 'dmTypingActiveRef', 'dmTypingTimeoutRef',
     `${source}\nreturn ${name};`
   );
   const handler = factory(
     (fn) => fn, chatInputRef, setChatInputHasText,
     threadOpen ? 7 : null, threadOpen ? 7 : null,
     noop, noop, noop, noop,
-    { current: false }, { current: null }, { current: null }
+    // Two latches now, one per composer. dmTypingActiveRef arrived when the DM
+    // handler stopped emitting a socket frame on every keystroke, and this
+    // harness caught its absence as exactly the ReferenceError it is built to
+    // produce rather than letting the latch read undefined and pass.
+    { current: false }, { current: null }, { current: false }, { current: null }
   );
   handler({ target: { value } });
   return { hasText, draft: chatInputRef.current };
