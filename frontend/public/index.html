@@ -171,6 +171,26 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Flock" />
 
+    <!-- THE API HANDSHAKE, MOVED OFF THE CRITICAL PATH.
+         The first call to the backend (getCurrentUser, and the waitlist POST
+         on the landing page) cannot start until the app chunk has downloaded
+         AND executed, and only then does it pay DNS + TCP + TLS to a second
+         origin. Measured from Pennsylvania that handshake is 60 to 100 ms,
+         and every millisecond of it was serial with the JavaScript.
+
+         This starts it during HTML parse instead, in parallel with the chunk
+         download, so by the time the code wants the connection it is already
+         open. It is here rather than injected from index.js on app routes
+         only because the whole point is to beat main.js, and code inside
+         main.js cannot.
+
+         crossorigin because these are CORS requests carrying an
+         Authorization header; without the attribute the browser would warm a
+         connection in the wrong credentials mode and open a second one
+         anyway. On the marketing pages the cost of being wrong is one idle
+         socket the browser reaps on its own. -->
+    <link rel="preconnect" href="https://api.flockcorp.com" crossorigin />
+
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>Flock | Plans that actually happen</title>
 

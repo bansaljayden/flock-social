@@ -65,6 +65,14 @@ beforeEach(() => {
   mockIdentify.mockClear();
   mockReset.mockClear();
   window.localStorage.clear();
+  // CONSENT IS THE SECOND PRECONDITION, and it has to be re-granted after the
+  // clear above or every capture below this line is refused. api.js gates
+  // withPostHog on hasAnalyticsConsent(), so an un-answered visitor never even
+  // downloads the SDK. This suite is not testing that gate — analyticsPrivacy
+  // and the consent module own it — it is testing what the payload turns out
+  // to be once a capture is allowed to happen, so it grants consent the same
+  // way it supplies a key.
+  window.localStorage.setItem('flock_analytics_consent', 'yes');
   global.fetch = jest.fn(() => Promise.resolve(jsonResponse(200, {})));
 });
 

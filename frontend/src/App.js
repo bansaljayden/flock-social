@@ -20982,8 +20982,22 @@ const FlockApp = () => {
       retryTimer = null;
     };
 
-    Promise.all([getCurrentUser(), pullSettings()])
-      .then(([data]) => {
+    // ONE REQUEST, NOT TWO, AND THE SPLASH ENDS WITH THE ONE THAT MATTERS.
+    //
+    // This was Promise.all([getCurrentUser(), pullSettings()]), so the
+    // "Loading..." screen was held for the SLOWER of the two — and nothing on
+    // the first screen reads settings. Worse, beginSession below calls
+    // pullSettings() itself (deliberately, so signing in mid-session picks up
+    // the account's switches), so a cold boot fetched the same endpoint twice
+    // and blocked on the first copy.
+    //
+    // Dropping it here changes nothing about when settings arrive for any
+    // screen that shows them: beginSession still pulls them, the
+    // flock-settings-loaded listener still reaches an already-mounted screen,
+    // and pullSettings is idempotent and guards on isLoggedIn. It only stops
+    // the Nest waiting on them.
+    getCurrentUser()
+      .then((data) => {
         beginSession(data.user || data);
         // Register this device for push IF the OS has already granted it.
         // This used to call requestNotificationPermission, which on a device
