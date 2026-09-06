@@ -71,6 +71,25 @@ if (!process.env.JWT_SECRET) {
   console.warn('WARNING: JWT_SECRET is not set — auth endpoints will fail until it is configured.');
 }
 
+// CAN THIS SERVER REACH A PERSON? Four services mail operational alerts and
+// every one of them takes its recipient from MODERATION_ALERT_EMAIL: the
+// collection heartbeat, the cost heartbeat, moderation reports and the Places
+// outage alarm. Each discovers the variable is missing at the exact moment it
+// needs to shout, logs one line into the same stream nobody was reading, and
+// gives up. That is how Google Places stayed broken for five days in
+// September while the log recorded every failure.
+//
+// So it is answered once, at boot, beside DATABASE_URL, and the ADDRESS IS
+// NOT PRINTED — the state is the operational fact, the address is somebody's
+// inbox and this log is shared.
+{
+  const opsAlertTo = String(process.env.MODERATION_ALERT_EMAIL || '')
+    .split(',').map((a) => a.trim()).filter((a) => a.includes('@'));
+  console.log('MODERATION_ALERT_EMAIL:', opsAlertTo.length
+    ? `[configured, ${opsAlertTo.length} recipient(s)]`
+    : '[missing — NO operational alert can reach anybody: heartbeats, cost warnings, moderation reports, Places outages]');
+}
+
 const express = require('express');
 const Sentry = require('@sentry/node');
 const http = require('http');
@@ -1997,6 +2016,14 @@ async function runMoneyWatch() {
         + 'project that owns GOOGLE_PLACES_API_KEY (billing, and the '
         + 'SearchTextRequest per day quota).',
         { consecutiveFailures: h.consecutiveFailures, failingForMs: h.failingForMs, reasons: h.reasons });
+        // AND THE HALF THAT REACHES A PERSON. Both lines above are dead ends on
+        // this deployment: console.error goes to the Railway log, which carried
+        // this exact outage for five days unread, and Sentry is a no-op because
+        // SENTRY_DSN is unset (the boot log says so on every deploy). The email
+        // dedupes through ops_alert_ledger in Postgres rather than sayOnceToday's
+        // in-memory map, because migration 058 exists precisely because a restart
+        // resets that map and mails twice.
+        await require('./services/placesOutageAlert').runPlacesOutageAlert(h);
     }
   } catch (e) { console.error('[moneyWatch] places health read failed:', e && e.message); }
 
