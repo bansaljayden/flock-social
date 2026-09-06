@@ -1938,6 +1938,21 @@ module.exports = {
   // forecast entry it named so a chart can highlight that exact bar.
   recommendBestTime,
   findPeakTime,
+  // DEAD, AND DELIBERATELY LEFT THAT WAY. Zero callers as of 2026-09-06, and
+  // the reason is round 14: "Less crowded nearby" used to be scored by THIS
+  // function while the card above it came from the ML model, so a venue could
+  // be listed as quieter than a card it was in fact busier than.
+  // routes/crowd.js now scores every alternative through
+  // mlPredictor.predictBusyness, the same predictor and the same calibration as
+  // GET /api/crowd/:placeId, and its comment records that.
+  //
+  // What makes this worth a comment rather than a deletion: the name is the one
+  // a future caller reaches for, and calling it silently reintroduces the whole
+  // bug. It scores through calculateCrowdScore, so it sees no model, no
+  // quantile map, no venue feedback calibration and no per-venue trailing
+  // deviation offset (shipped 2026-09-06, mlPredictor DEVIATION_WEIGHT), which
+  // means its numbers disagree with every score the product publishes.
+  // Do not wire this into a route. Score alternatives through predictBusyness.
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   // The two noise floors, exported so nothing restates either from memory:
