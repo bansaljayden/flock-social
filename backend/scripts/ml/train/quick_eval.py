@@ -131,8 +131,13 @@ def reconstruct(raw_delta, baseline):
 # Fitted 2026-08-20 on the earliest 30% of gate dates (<= 2026-03-28, 21,148
 # rows) from the shipped 2.6.0-starling artifacts and scored forward on 46,101.
 # The table is that artifact's quantile grid; mlPredictor refuses to apply it to
-# any other model_version and so does this (QMAP_FITTED_ON below is checked by
-# __tests__/mlTrainingContracts.test.js against the JS constant).
+# any other model_version. THIS SCRIPT DOES NOT, and cannot: see the second
+# reason below. mlTrainingContracts.test.js pins QMAP_FITTED_ON here against the
+# JS constant, which keeps the two tables identical but says nothing about which
+# model a run was scored through. That gap is closed at LOAD time instead, by
+# evaluateShipGate in services/mlPredictor.js, which refuses an artifact whose
+# recorded score_qmap_fitted_on is not its own model_version
+# (__tests__/mlPipeline.test.js).
 # ---------------------------------------------------------------------------
 # BOTH SIDES DEFAULT ON, and mlTrainingContracts pins that they read the flag
 # identically. Do not change one without the other: a gate that scores different
