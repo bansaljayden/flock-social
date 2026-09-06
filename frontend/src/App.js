@@ -545,6 +545,18 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
    is still online. The offline screen only mounts once the network is gone,
    and by then a cold fetch would fail. drawBird falls back to the old vector
    bird if either image has not decoded, so the game is never birdless. */
+/* HAS THE PERSON ACTUALLY MOVED? Equirectangular rather than haversine on
+   purpose: over the tens of metres this is asked about the two agree to well
+   under a centimetre, and this runs on every GPS fix of every live share.
+   Missing input counts as movement, so a first fix always lands. */
+const movedAtLeast = (prev, next, metres) => {
+  if (!prev || !next) return true;
+  const latRad = (prev.lat * Math.PI) / 180;
+  const dLat = (next.lat - prev.lat) * 111320;
+  const dLng = (next.lng - prev.lng) * 111320 * Math.cos(latRad);
+  return (dLat * dLat + dLng * dLng) >= metres * metres;
+};
+
 const GAME_SPRITES = (() => {
   if (typeof Image === 'undefined') return { perch: null, flap: null };
   const load = (src) => { const img = new Image(); img.src = src; return img; };
@@ -10167,7 +10179,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     if (!sharingAnywhere || !geolocationAvailable()) return undefined;
     const id = watchPosition(
-      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => {
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        /* THE REF IS WRITTEN ON EVERY FIX, THE STATE IS NOT.
+           Both emitters below read userLocationRef every ten seconds, and that
+           ref is normally assigned from state during render - so throttling the
+           state alone would also freeze the ref and re-create the very defect
+           the comment above this effect describes, a share stuck on one
+           coordinate under the word "just now". Writing it here keeps what goes
+           out on the wire exact.
+
+           The state update is the expensive half: a fresh object every second
+           re-rendered FlockAppInner and the map, for the whole walk to the
+           venue. The functional form returns `prev` untouched below the
+           threshold, React bails out on an identical value, and no render
+           happens - which also means the render-time assignment cannot clobber
+           what was just written here. Past the threshold a render does run and
+           assigns back this same value. */
+        userLocationRef.current = next;
+        setUserLocation((prev) => (movedAtLeast(prev, next, 10) ? next : prev));
+      },
       // A watch that stops answering must not stop the share: the last fix is
       // still the best thing known, and the emitters keep sending it.
       () => {},
