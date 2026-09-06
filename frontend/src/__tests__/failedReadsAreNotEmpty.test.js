@@ -10,7 +10,12 @@ const profile = read('screens/ProfileSettings.js');
 
 test('a vote tally that could not be read says so, with a retry', () => {
   expect(app).toMatch(/const \[votesError, setVotesError\] = useState\(''\);/);
-  expect(app).toMatch(/\.catch\(\(err\) => setVotesError\(err\?\.message \|\| 'The votes are not loading right now\.'\)\);/);
+  /* The catch no longer ends the chain — a .finally clears votesLoadingFor
+     after BOTH settlements, or a failed load would leave the panel showing
+     "Loading the votes..." for ever. So the error assignment is matched
+     without the terminator, and the clear is asserted separately. */
+  expect(app).toMatch(/\.catch\(\(err\) => setVotesError\(err\?\.message \|\| 'The votes are not loading right now\.'\)\)/);
+  expect(app).toMatch(/\.finally\(\(\) => setVotesLoadingFor\(/);
   expect(app).toMatch(/setVotesError\(''\);/);
   expect(chat).toMatch(/\) : votesError \? \(/);
   expect(chat).toMatch(/Nobody's vote has been lost\. This is the tally failing to load\./);
