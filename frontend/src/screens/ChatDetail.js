@@ -188,6 +188,7 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+import { owedOn } from '../lib/billShares';
 /* The keyboard lane. It is a hook and not part of the chat module's index on
    purpose: it owns DOM nodes and a native bridge rather than any markup, and
    both screens reach it the same way. See the block at its call below. */
@@ -529,16 +530,12 @@ const settleUpFigure = (bill, userId) => {
 // reason 'credit', and a button that exists only to be refused is a dead one.
 // The same comparison the route makes.
 const coveredByCredit = (s) => Number(s?.paidAmount) >= Number(s?.amount);
-// What a share owes once its settlement is taken back: the share less the
-// credit carried on it, never below zero. GET serves every settled row with
-// outstanding 0, and the reducers that flipped the flag alone left that zero
-// in place, so a $100 share taken back read "Settle Up · $0.00" (adversarial
-// audit round 2, 2026-09-05). Exported for the socket reducers in App.js.
-export const owedOn = (s) => {
-  if (typeof s?.amount !== 'number') return s?.outstanding;
-  const paid = Number(s.paidAmount) > 0 ? Number(s.paidAmount) : 0;
-  return Math.max(0, Math.round((s.amount - paid) * 100)) / 100;
-};
+// owedOn moved to lib/billShares.js. It was defined here and imported by
+// App.js as a named export, and that one synchronous read pinned this entire
+// screen into the boot chunk: a module cannot be code-split while something
+// reads a value out of it eagerly. Five lines of arithmetic were holding the
+// chat screen on the critical path of every launch. Both readers still call
+// the same function, so they still cannot drift.
 
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
