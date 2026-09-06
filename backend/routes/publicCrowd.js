@@ -15,6 +15,8 @@ const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
+// Free outage detection. This is the file whose console.error below ran for five days in September with nobody counting it. See utils/placesHealth.js.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
 // The one place that decides whether a confidence integer may be called a
@@ -470,18 +472,22 @@ router.get('/demo/venues',
         });
       } catch (netErr) {
         console.error('[PublicDemo] Places search unreachable:', netErr.message);
+        recordPlacesResult(false, 'unreachable');
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
       if (!resp.ok) {
         console.error(`[PublicDemo] Places search failed: HTTP ${resp.status}`);
+        recordPlacesResult(false, `HTTP ${resp.status}`);
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
 
       const data = await resp.json();
       if (data.error) {
         console.error('[PublicDemo] Places search error:', data.error.message || data.error.status);
+        recordPlacesResult(false, 'error body');
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
+      recordPlacesResult(true);
       const places = (data.places || []).filter(p => p.location);
       // Cached like any other answer. This was the one response shape that
       // skipped the cache, and it is the cheapest one to ask for repeatedly:
@@ -609,16 +615,21 @@ router.get('/demo/venue/:placeId',
         });
       } catch (netErr) {
         console.error('[PublicDemo] Places details unreachable:', netErr.message);
+        recordPlacesResult(false, 'unreachable');
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
       if (!resp.ok) {
+        // A 404 is Google ANSWERING, so it is health, not an outage.
+        if (resp.status === 404) recordPlacesResult(true);
         if (resp.status === 404) return res.status(404).json({ error: 'Venue not found' });
         console.error(`[PublicDemo] Places details failed: HTTP ${resp.status}`);
+        recordPlacesResult(false, `HTTP ${resp.status}`);
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
 
       const p = await resp.json();
       if (p.error || !p.id) return res.status(404).json({ error: 'Venue not found' });
+      recordPlacesResult(true);
 
       const v = toVenueShape(p, req.query.localDay != null ? parseInt(req.query.localDay, 10) : null);
       const lat = v.location?.latitude;
