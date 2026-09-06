@@ -1605,6 +1605,10 @@ const crowdEngine = require('../services/crowdEngine');
 const {
   allowPlacesSearch, placesRetryAfter, PER_USER_HOURLY,
 } = require('../utils/placesBudget');
+// Outage detection. SearchNearby had the LOWEST clamped quota of the four
+// (10 a day), so this strip was the first thing to die and the last thing
+// anyone would have noticed. See utils/placesHealth.js.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
 // ---------------------------------------------------------------------------
@@ -1921,12 +1925,14 @@ router.get('/strip', requirePremium, async (req, res) => {
     if (!nearby || nearby.error || nearbyRes.status >= 400) {
       console.error('[VenueStrip] Places searchNearby failed:',
         nearby?.error?.message || nearby?.error?.status || `HTTP ${nearbyRes.status}`);
+        recordPlacesResult(false, nearby?.error?.status || `HTTP ${nearbyRes.status}`);
       return res.json({
         available: false,
         reason: 'Could not load the venues around you right now. Try again in a few minutes.',
       });
     }
 
+    recordPlacesResult(true);
     const weather = await getWeather(me.location.latitude, me.location.longitude).catch(() => null);
     const now = new Date();
 

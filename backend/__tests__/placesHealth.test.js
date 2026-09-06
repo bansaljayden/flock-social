@@ -129,18 +129,36 @@ test('every Places call site records an outcome', () => {
   const path = require('path');
   const root = path.join(__dirname, '..');
 
-  // THREE shapes, all correct. The route files record at each exit;
+  // THE LIST IS DISCOVERED, NOT WRITTEN DOWN. A hardcoded list is a list
+  // somebody forgets to extend: the alarm would then watch a shrinking share of
+  // the app while staying just as green, which is the failure this whole test
+  // exists to prevent. So every server file that actually talks to Places is
+  // found by scanning, and each one must report.
+  //
+  // scripts/ml/ is excluded on purpose. Those are hand-run CLI tools, not
+  // request paths — nobody is waiting on one, and a corpus build failing is
+  // not a user-visible outage.
+  const PLACES_FETCHERS = [];
+  for (const dir of ['routes', 'services']) {
+    for (const f of fs.readdirSync(path.join(root, dir))) {
+      if (!f.endsWith('.js')) continue;
+      const rel = `${dir}/${f}`;
+      const src = fs.readFileSync(path.join(root, rel), 'utf8');
+      // The fetch itself, not a mention in a comment.
+      if (/fetch\(\s*[`'"]https:\/\/places\.googleapis\.com/.test(src)) PLACES_FETCHERS.push(rel);
+    }
+  }
+  assert.ok(
+    PLACES_FETCHERS.length >= 6,
+    `expected to find the known Places callers, found ${PLACES_FETCHERS.length}: ${PLACES_FETCHERS}`,
+  );
+
+  // Three recording shapes, all correct. The route files record at each exit;
   // services/placeDetailsCache.js has six exits and one caller so it wraps its
-  // worker once; routes/crowd.js passes the ok/failed expression straight in.
-  // What every one of them must do is record a SUCCESS as well as a failure —
-  // a file that only ever reported failures would never clear the streak and
-  // the alarm would stick on forever.
-  const PLACES_FETCHERS = [
-    'routes/publicCrowd.js',
-    'routes/venueSearch.js',
-    'routes/crowd.js',
-    'services/placeDetailsCache.js',
-  ];
+  // worker once; crowd.js, ai.js and badge.js pass the ok expression straight
+  // in. What every one of them must do is record a SUCCESS as well as a
+  // failure — a file that only ever reported failures would never clear the
+  // streak and the alarm would stick on forever.
   // recordPlacesResult(true), or any expression whose truth is an `.ok`.
   const SUCCESS = /recordPlacesResult\(\s*(true\b|[A-Za-z_$][\w$]*\.ok\b)/;
   const FAILURE = /recordPlacesResult\(\s*(false\b|[A-Za-z_$][\w$]*\.ok\b)/;
