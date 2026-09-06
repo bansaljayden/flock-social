@@ -198,7 +198,18 @@ let VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
    that does not land just means the lazy fetches it on tap, which is exactly
    where this started. */
 const warmScreenChunks = () => {
+  /* NOT ON A METERED CONNECTION. A prefetch is speculative traffic the person
+     did not ask for, and this is the same rule AuthShell.js already applies to
+     the login video. On save-data or 2g the lazy simply fetches on tap. */
+  const c = typeof navigator !== 'undefined'
+    && (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
+  if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return;
+
   const go = () => {
+    /* CHAT AND THE DM THREAD FIRST, and the order is load-bearing. They are the
+       two screens somebody opens from the Nest and the two biggest of the
+       seven; on one connection, warming them ahead of the other four is the
+       difference between beating a tap and losing to it. */
     import('./screens/ChatDetail').catch(() => {});
     import('./screens/DmDetail').catch(() => {});
     import('./screens/FlockDetail').catch(() => {});
@@ -209,9 +220,35 @@ const warmScreenChunks = () => {
   // VenueOnboarding is deliberately NOT warmed: only a venue login ever
   // reaches it, and spending a consumer's bandwidth on an owner signup screen
   // is the cost this whole change exists to stop.
+  //
+  // 1000, NOT 4000, AND EVERY NUMBER HERE WAS MEASURED against the real
+  // signed-in app on a 1.6 Mbps / 4x-CPU profile.
+  //
+  // requestIdleCallback's timeout is a CEILING, not a delay: the callback runs
+  // at the first idle moment or at the timeout, whichever comes first. A phone
+  // still fetching the Nest's own data never goes idle, so at 4000 the timeout
+  // was the number that actually applied, and it handed the user a four second
+  // head start. Tap to chat composer, by how long the user waited first:
+  //
+  //     tap at +250ms   2492ms, 7 chunks    (unbeatable; nobody taps this fast)
+  //     tap at +750ms   1976ms, 6 chunks
+  //     tap at +1500ms   956ms, 3 chunks
+  //     tap at +2500ms   200ms, 0 chunks    <- warm, from the module cache
+  //     tap at +4000ms   185ms, 0 chunks
+  //
+  // FIRING IMMEDIATELY INSTEAD WAS TRIED AND MEASURED IDENTICAL: 2518 / 1983 /
+  // 959 / 199 / 188, with the flock list readable at ~7.15s either way, so
+  // there is no contention argument in either direction. The idle version is
+  // kept because it is the politer of two equals - it still yields if the
+  // browser does have something better to do.
+  //
+  // The residual cost is a first visit after a deploy where somebody taps
+  // within ~2s on a slow connection. Later visits are free: the chunks are
+  // served max-age=31536000, immutable, and a repeat load of production was
+  // measured going from 9 network fetches to 0.
   const idle = typeof window !== 'undefined' && window.requestIdleCallback;
-  if (idle) idle(go, { timeout: 4000 });
-  else setTimeout(go, 1500);
+  if (idle) idle(go, { timeout: 1000 });
+  else setTimeout(go, 400);
 };
 
 // error with no way to the dashboard short of force-quitting the app. Dead
