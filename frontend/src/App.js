@@ -10728,6 +10728,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [dmPinnedVenue, showToast]);
 
+  /* Pin a venue to a DM. Optimistic like the unpin, and — like the unpin —
+     it PUTS THE OLD VALUE BACK when the write fails. Both call sites used to
+     inline `setDmPinnedVenue(v)` and then fire a REST call whose .catch only
+     toasted, so a refused pin left the strip advertising a venue the server
+     had never stored, until a reload. Rolling back is what makes the toast
+     true. */
+  const pinDmVenueNow = useCallback(async (userId, venue) => {
+    const previous = dmPinnedVenue;
+    setDmPinnedVenue(venue);
+    // The socket path returns false when it could not emit at all; only then
+    // is REST the fallback. A socket refusal now surfaces through the global
+    // error listener above rather than vanishing.
+    if (dmPinVenue(userId, venue)) return;
+    try {
+      await pinDmVenue(userId, venue);
+    } catch (err) {
+      setDmPinnedVenue(previous);
+      showToast(err?.message || 'Could not pin that place. Try again.', 'error');
+    }
+  }, [dmPinnedVenue, showToast]);
+
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     // The old failed bubble is dropped from state and from the reload store; the
     // resend below mints a fresh one that persists again only if it fails again.
@@ -12847,7 +12868,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return onSocketError((data) => {
       const message = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!message) return;
-      if (pendingEchoRef.current.size === 0 && dmEchoRef.current.size === 0) return;
+      /* NO BLANKET GATE ON A MESSAGE BEING IN FLIGHT.
+         This used to `return` unless pendingEchoRef or dmEchoRef had something
+         waiting, which meant every socket write that is NOT a message had its
+         server refusal thrown away: dm_pin_venue, dm_vote_venue,
+         dm_share_location, dm_stop_sharing_location. Those emitters return true
+         on emit and never hear back, so the discard was the ONLY place the
+         error could have surfaced. The result was a pinned venue the server
+         never stored and a vote that reverted on the next load with nothing
+         said — the same silent-write shape __tests__/silentWriteFailures.test.js
+         was written for, arriving through a different transport.
+         A toast with no correlation id is imprecise, but an imprecise
+         explanation beats none. */
       // The socket twin of the REST branch in transmitDm. Same refusal, same
       // standing explanation instead of a toast that outlives nothing. The
       // channel carries no correlation id, so this marks the conversations
@@ -13457,6 +13489,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
                 <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
                 <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
+                {/* THE AI DISCLOSURE, IN THE PRODUCT.
+                    Terms sec.7 and the privacy policy both name Google's Gemini
+                    and say Birdie's answers are generated and can be wrong, but
+                    neither reaches a user who never opens a legal page. An app
+                    was rejected by App Review for exactly that gap. This is the
+                    one screen a first-time user reads before typing, so it says
+                    it here, in the same words as the Terms so the two cannot
+                    drift. */}
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', maxWidth: '280px', lineHeight: 1.45 }}>Birdie is an assistant built on Google's Gemini. Its answers are generated and can be wrong.</p>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
                   {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
                     <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -13699,13 +13740,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   </button>
                 ))}
                 <div style={{ flex: 1 }} />
-                {/* Free-tier meter surfaces only when it's about to matter */}
+                {/* Free-tier meter surfaces only when it's about to matter.
+                    The else branch is the AI disclosure: "Birdie AI" alone is a
+                    label, not a disclosure, and this is the only line rendered
+                    under EVERY turn, so it carries the generated-output caveat
+                    for anyone who scrolled past the empty state. */}
                 {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
                   <span style={{ fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
                     {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
                 ) : (
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI &middot; answers are generated and can be wrong</span>
                 )}
               </div>
             </div>
@@ -15226,9 +15271,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     const venueData = { ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude };
                     if (pickingVenueForDm) {
                       const v = { name: venueData.name, addr: venueData.addr, place_id: venueData.place_id, rating: venueData.stars || venueData.rating, photo_url: venueData.photo_url };
-                      setDmPinnedVenue(v);
-                      // Persist over REST when the socket is down, or the pin reverts on the next load.
-                      if (!dmPinVenue(selectedDmId, v)) pinDmVenue(selectedDmId, v).catch(() => showToast('Could not pin that place. Try again.', 'error'));
+                      pinDmVenueNow(selectedDmId, v);
                       setActiveVenue(null);
                       setPickingVenueForCreate(false);
                       setPickingVenueForDm(false);
@@ -20017,8 +20060,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
                 if (pickingVenueForDm) {
                   const v = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl };
-                  setDmPinnedVenue(v);
-                  if (!dmPinVenue(selectedDmId, v)) pinDmVenue(selectedDmId, v).catch(() => showToast('Could not pin that place. Try again.', 'error'));
+                  pinDmVenueNow(selectedDmId, v);
                   setVenueDetailModal(null);
                   setPickingVenueForCreate(false);
                   setPickingVenueForDm(false);
