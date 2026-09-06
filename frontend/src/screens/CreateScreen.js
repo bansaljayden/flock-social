@@ -377,7 +377,20 @@ export default function CreateScreen({
     const trimmedName = flockName.trim();
     const suggestedToShow = suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id));
     const openVenuePicker = () => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); };
-    const leave = () => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); };
+    /* LEAVING IS NOT DISCARDING. This used to clear the name, the invited
+       friends, the search box and the chosen venue on the way out, which
+       made the header comment above this file untrue: it promises that a
+       half-typed plan survives a trip elsewhere, and the back arrow was
+       quietly deleting it. There is no confirmation prompt either, so one
+       mis-tap threw away a name, four invitations and a venue.
+
+       The state lives in FlockAppInner, not here, so simply not clearing it
+       is the whole fix. The successful-create path already resets
+       everything, and openVenuePicker deliberately never cleared, which is
+       why browsing for a venue and coming back has always worked. Only the
+       inline error is dropped, because a stale validation message about a
+       field you have since left is noise. */
+    const leave = () => { setCurrentScreen('main'); setFlockNameError(''); };
 
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>

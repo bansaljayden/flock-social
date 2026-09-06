@@ -19,12 +19,56 @@ test('a DM reaction over a dead socket falls back to REST instead of vanishing',
   expect(d).toMatch(/if \(!dmReact\(m\.id, emoji, selectedDmId\)\) addDmReaction\(m\.id, emoji\)/);
 });
 
-test('a DM venue pin over a dead socket persists over REST', () => {
+test('a DM venue pin persists over REST AND puts the old pin back when it fails', () => {
+  /* THIS TEST USED TO PIN THE SHAPE AND HAS BEEN REPOINTED AT THE PROPERTY.
+     It asserted that the literal `if (!dmPinVenue(selectedDmId, v)) pinDmVenue(...)`
+     appeared exactly twice, which locked both call sites into an inline
+     fire-and-forget whose .catch only toasted. That inline version had a real
+     defect the assertion could not see: it wrote `setDmPinnedVenue(v)`
+     optimistically and NEVER ROLLED BACK, so a refused pin left the strip
+     advertising a venue the server had never stored until a reload. Counting
+     the occurrences of a broken line twice does not make it correct.
+
+     The behaviour that matters is three things, so those are what is checked:
+     the socket is tried first, REST is the fallback when it could not emit,
+     and a failure restores the previous pin. That is the same contract
+     unpinDmVenueNow already honours, which is why both now go through a
+     named helper instead of a copied expression. This is the THIRD time in
+     this file's history that a shape assertion outlived the behaviour it was
+     standing in for; prefer the property. */
   const a = read('App.js');
-  expect((a.match(/if \(!dmPinVenue\(selectedDmId, v\)\) pinDmVenue\(selectedDmId, v\)/g) || []).length).toBe(2);
-  expect(a).not.toMatch(/\n\s+dmPinVenue\(selectedDmId, v\);\n/);
+
+  // One helper, used by both call sites, rather than the expression twice.
+  expect(a).toMatch(/const pinDmVenueNow = useCallback\(async \(userId, venue\) => \{/);
+  expect((a.match(/pinDmVenueNow\(selectedDmId, v\);/g) || []).length).toBe(2);
+  expect(a).not.toMatch(/if \(!dmPinVenue\(selectedDmId, v\)\) pinDmVenue/);
+
+  // Socket first, REST only when the emit could not happen.
+  const body = a.slice(a.indexOf('const pinDmVenueNow'));
+  const fn = body.slice(0, body.indexOf('const retryFailedMessage'));
+  expect(fn).toMatch(/if \(dmPinVenue\(userId, venue\)\) return;/);
+  expect(fn).toMatch(/await pinDmVenue\(userId, venue\);/);
+
+  // And the rollback, which is the half the old assertion could not express.
+  expect(fn).toMatch(/const previous = dmPinnedVenue;/);
+  expect(fn).toMatch(/setDmPinnedVenue\(previous\);/);
+
   const api = read('services/api.js');
   expect(api).toMatch(/export async function pinDmVenue\(userId, v\) \{[\s\S]*?method: 'PUT'/);
+});
+
+test('a refused socket write is no longer thrown away', () => {
+  /* The global socket-error listener early-returned unless a MESSAGE was in
+     flight, so every non-message socket write had its server refusal
+     discarded: dm_pin_venue, dm_vote_venue, dm_share_location,
+     dm_stop_sharing_location. Those emitters return true on emit and never
+     hear back, so that discard was the only place the error could surface. */
+  const a = read('App.js');
+  expect(a).not.toMatch(/if \(pendingEchoRef\.current\.size === 0 && dmEchoRef\.current\.size === 0\) return;/);
+  // The DM "not connected" case still takes the standing-explanation path
+  // rather than a toast, and still only when a DM send is in flight to
+  // attribute it to.
+  expect(a).toMatch(/NOT_CONNECTED_HINT\.test\(message\) && dmEchoRef\.current\.size > 0/);
 });
 
 test('DM search says when nothing matches, and an empty query keeps scrollback', () => {

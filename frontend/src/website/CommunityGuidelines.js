@@ -136,7 +136,12 @@ export default function CommunityGuidelines() {
         <p>
           Every report is reviewed and acted on promptly, typically by removing the violating
           content and ejecting the responsible user. Serious or repeated violations result in a permanent
-          ban. If you think a ban was a mistake, email social@flockcorp.com and a person will read it. Deleting a banned account does not lift the ban. Illegal content may be reported
+          ban. If you think a ban was a mistake, email{' '}
+          {/* The only unlinked address on the site, and it sat in the ban-appeal
+              sentence, which is the moment somebody most needs to tap it. It was
+              also hardcoded past this file's own SUPPORT_EMAIL, four lines below
+              a correct mailto that uses it. */}
+          <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> and a person will read it. Deleting a banned account does not lift the ban. Illegal content may be reported
           to the authorities.
         </p>
       </section>

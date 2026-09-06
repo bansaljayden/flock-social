@@ -11,8 +11,19 @@ test('the landing page does not claim check-ins feed the crowd number', () => {
   expect(s).not.toMatch(/Check-ins from people who are actually there fold in live/);
 });
 
-test('a permanent ban comes with a published way to contest it', () => {
-  expect(read('website/CommunityGuidelines.js')).toMatch(/If you think a ban was a mistake, email social@flockcorp\.com and a person will read it\./);
+test('a permanent ban comes with a published way to contest it, and it is tappable', () => {
+  /* The sentence is still here; the address inside it is now a mailto link
+     rather than plain text, which is why this no longer matches one literal
+     run. It was the only unlinked address on the site and it sat in the
+     ban-appeal paragraph, i.e. the moment somebody most needs to tap it. It
+     was also hardcoded past this file's own SUPPORT_EMAIL constant, so the
+     link is asserted through that constant rather than the address. */
+  const s = read('website/CommunityGuidelines.js');
+  expect(s).toMatch(/If you think a ban was a mistake, email/);
+  expect(s).toMatch(/a person will read it\./);
+  // The appeal address is a link, and it follows SUPPORT_EMAIL.
+  expect(s).toMatch(/mailto:\$\{SUPPORT_EMAIL\}`\}>\{SUPPORT_EMAIL\}<\/a> and a person will read it/);
+  expect(s).not.toMatch(/email social@flockcorp\.com and a person/);
 });
 
 test('the privacy policy describes the export delivery and the push bookkeeping truthfully', () => {
