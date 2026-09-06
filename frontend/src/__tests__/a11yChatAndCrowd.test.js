@@ -52,7 +52,9 @@ describe('chat message actions are reachable without a pointer', () => {
   test('both screens still open the actions menu the row reports', () => {
     // A row draws its keyboard door only when a handler exists for it, so a
     // screen that stopped passing one would take the door away silently.
-    expect(CHAT).toMatch(/onLongPress=\{openMessageActions\}/);
+    // Same handler, passed through a stable wrapper for the row memo.
+    expect(CHAT).toMatch(/onLongPress=\{stableLongPress\}/);
+    expect(CHAT).toMatch(/const stableLongPress = useStableFn\(\(m, detail\) => openMessageActions\(m, detail\)\)/);
     expect(DM).toMatch(/onLongPress=\{openDmActions\}/);
   });
 

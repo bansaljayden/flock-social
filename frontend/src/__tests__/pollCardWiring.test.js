@@ -112,7 +112,13 @@ describe('every sender gets their own colour', () => {
 
        Found by looking at a screenshot, not by a test, which is why there is
        one now. */
-    expect(chatDetailSrc).toMatch(/colourFor=\{\(run\) => \(run\.isMine \? OWN_RUN_COLOUR : runColourFor\(run\.senderId\)\)\}/);
+    /* The expression is unchanged; it now lives behind a stable wrapper so
+       MessageRow's React.memo can reject a re-render. An inline arrow here
+       gave every row a new prop identity on every render, which meant the
+       whole thread re-rendered on each keystroke. Both halves are asserted
+       so neither the wiring nor the colour rule can be lost. */
+    expect(chatDetailSrc).toMatch(/colourFor=\{stableColourFor\}/);
+    expect(chatDetailSrc).toMatch(/const stableColourFor = useStableFn\(\(run\) => \(run\.isMine \? OWN_RUN_COLOUR : runColourFor\(run\.senderId\)\)\)/);
     expect(chatDetailSrc).toMatch(/^  runColourFor,$/m);
   });
 

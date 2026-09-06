@@ -201,6 +201,27 @@ import useKeyboardComposer from '../hooks/useKeyboardComposer';
    thread. Cleared for a flock when its draft is sent or emptied. */
 const FLOCK_DRAFTS = new Map();
 
+/* STABLE IDENTITY, LATEST CLOSURE.
+   MessageGroup and MessageRow are React.memo, and MessageGroup's header says
+   what that needs: memoised runs and stable callbacks. Every handler this
+   screen passed down was a fresh arrow, so the shallow compare failed on every
+   row, every render — and because the composer's draft lives in this
+   component, that meant a full re-render of the thread on each keystroke.
+
+   A plain useCallback would need a dep array over flock, search state, reply
+   state and viewer state, and one missing entry is a stale closure: a
+   correctness bug traded for a speed win. This keeps the identity fixed for
+   the component's life and always calls the newest closure through a ref, so
+   there is nothing to get wrong. It is the useEvent RFC, in six lines.
+
+   useLayoutEffect, not useEffect: the ref must be current before any child
+   effect can fire the handler in the same commit. */
+function useStableFn(fn) {
+  const ref = React.useRef(fn);
+  React.useLayoutEffect(() => { ref.current = fn; });
+  return React.useCallback((...args) => ref.current(...args), []);
+}
+
 /* THE DAY SEPARATORS LEFT THIS FILE. `dayKeyOf`, `dayLabelOf` and
    `daySeparatorFor` were declared here and mirrored verbatim in DmDetail.js:
    two copies of the one rule that decides where history is cut. They live in
@@ -1001,6 +1022,28 @@ export default function ChatDetail({
       setShowVotePanel(false);
       setChatNavOpen(false);
     };
+
+    /* ABOVE THE `if (!flock)` GUARD ON PURPOSE. Hooks must run in the same
+       order on every render, and there is an early return a few lines down, so
+       these cannot be declared next to the JSX that uses them. Each wrapper
+       only REFERENCES its body inside an arrow, and that arrow is not called
+       until render time, by which point every one of those consts exists.
+
+       What they buy: MessageGroup and MessageRow are both React.memo, and
+       MessageGroup's own header states the precondition — memoised runs and
+       stable callbacks. This screen passed a fresh arrow for all seven, so the
+       shallow compare failed on every row of every render, and because the
+       composer's draft lives here that meant re-rendering the whole thread on
+       each keystroke. At 300 messages that is roughly 4,200 hooks and 1,200
+       DOM nodes per character typed. */
+    const stableColourFor = useStableFn((run) => (run.isMine ? OWN_RUN_COLOUR : runColourFor(run.senderId)));
+    const stableRenderCard = useStableFn((m) => renderCard(m));
+    const stableRenderStatus = useStableFn((m) => renderStatus(m));
+    const stableLoadOlder = useStableFn(() => loadOlderHere());
+    const stableLongPress = useStableFn((m, detail) => openMessageActions(m, detail));
+    const stableSwipeReply = useStableFn((m) => setFlockReplyingTo(originalRow(m)));
+    const stableOpenImage = useStableFn((m) => openImageViewer(originalRow(m)));
+    const stableReactionTap = useStableFn((emoji, m) => addReactionToMessage(flock.id, m.id, emoji));
 
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
@@ -2457,21 +2500,21 @@ export default function ChatDetail({
              A system run has a null senderId; runColourFor answers null for
              one, and MessageList's fallback covers it. Those rows draw no name
              anyway. */
-          colourFor={(run) => (run.isMine ? OWN_RUN_COLOUR : runColourFor(run.senderId))}
-          renderCard={renderCard}
-          renderStatus={renderStatus}
-          onLoadOlder={loadOlderHere}
+          colourFor={stableColourFor}
+          renderCard={stableRenderCard}
+          renderStatus={stableRenderStatus}
+          onLoadOlder={stableLoadOlder}
           atTop={scrollbackExhausted}
           olderLoading={olderLoading}
-          onLongPress={openMessageActions}
+          onLongPress={stableLongPress}
           /* originalRow, not the dressed row. The list rows carry a
              search-highlighted `text` full of <mark> tags and a blanked venue
              caption, and quoting either would put markup or an empty string in
              the composer's quote bar and then into the optimistic bubble. The
              photo viewer above takes the same care for the same reason. */
-          onSwipeReply={(m) => setFlockReplyingTo(originalRow(m))}
-          onOpenImage={(m) => openImageViewer(originalRow(m))}
-          onReactionTap={(emoji, m) => addReactionToMessage(flock.id, m.id, emoji)}
+          onSwipeReply={stableSwipeReply}
+          onOpenImage={stableOpenImage}
+          onReactionTap={stableReactionTap}
           loadingState={messagesLoading && flock.messages.length === 0
             ? <ChatSkeleton label={`Loading messages in ${flock.name}`} />
             : null}

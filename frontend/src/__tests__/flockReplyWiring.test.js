@@ -150,7 +150,13 @@ describe('a quote must not outlive the message it quotes', () => {
 
 describe('the screen', () => {
   test('both ways into a reply exist: the swipe and the long-press sheet', () => {
-    expect(chatDetailSrc).toMatch(/onSwipeReply=\{\(m\) => setFlockReplyingTo\(originalRow\(m\)\)\}/);
+    /* The handler is now passed through a stable wrapper so MessageRow's
+       React.memo can actually reject a re-render — an inline arrow here made
+       every row re-render on every keystroke. The BEHAVIOUR is unchanged and
+       is what this asserts: the swipe still replies to the ORIGINAL row, not
+       the search-highlighted one. */
+    expect(chatDetailSrc).toMatch(/onSwipeReply=\{stableSwipeReply\}/);
+    expect(chatDetailSrc).toMatch(/const stableSwipeReply = useStableFn\(\(m\) => setFlockReplyingTo\(originalRow\(m\)\)\)/);
     expect(chatDetailSrc).toMatch(/aria-label="Reply"[^\n]*setFlockReplyingTo\(originalRow\(actionsMessage\)\)/);
   });
 
