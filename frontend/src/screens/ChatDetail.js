@@ -216,7 +216,10 @@ const FLOCK_DRAFTS = new Map();
 
    useLayoutEffect, not useEffect: the ref must be current before any child
    effect can fire the handler in the same commit. */
-function useStableFn(fn) {
+/* EXPORTED because screens/DmDetail.js has the identical problem and there is
+   no sense in owning two copies of a hook whose entire job is identity. It
+   already imports groupReactions from this file. */
+export function useStableFn(fn) {
   const ref = React.useRef(fn);
   React.useLayoutEffect(() => { ref.current = fn; });
   return React.useCallback((...args) => ref.current(...args), []);

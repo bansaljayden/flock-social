@@ -93,7 +93,11 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
     // groupReactions keeps who left each reaction; the old inline reduce keyed
     // on emoji alone and threw the user_id away, so after a reload the pill knew
     // it existed but not that it was yours.
-    expect(DM).toMatch(/import \{ groupReactions \} from '\.\/ChatDetail'/);
+    // The point is WHERE groupReactions comes from, not what travels beside
+    // it. useStableFn is imported on the same line now, because DmDetail has
+    // the same memo boundary ChatDetail does and two copies of a hook whose
+    // whole job is identity would be an odd thing to own.
+    expect(DM).toMatch(/import \{[^}]*\bgroupReactions\b[^}]*\} from '\.\/ChatDetail'/);
     expect(DM).toContain('groupReactions(m.reactions)');
     // And the row that draws the pill reaches for the same helper.
     expect(ROW).toMatch(/groupReactions\(message && message\.reactions\)/);
