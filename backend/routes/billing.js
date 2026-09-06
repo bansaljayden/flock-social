@@ -472,10 +472,25 @@ router.post('/:flockId/create',
         // is a clean 500 with nothing written. It sits after the membership
         // check for the same reason every other read does: a caller who is
         // not in this flock gets the 403 and nothing else is looked up on
-        // their behalf. It goes through the pool rather than the client
-        // because utils/blocks.js owns that query, and a block is a fact
-        // about two people, not about the row this transaction holds.
-        invisibleToCreator = new Set(await getInvisibleUserIds(userId));
+        // their behalf.
+        //
+        // ON THE TRANSACTION'S OWN CLIENT, and that is a correction. This
+        // read used to go through the pool, on the reasoning that a block is a
+        // fact about two people rather than about the row this transaction
+        // holds. That is true and it is not the point: `client` is already
+        // checked out of a twenty-connection pool, and awaiting pool.query
+        // here asks for a SECOND connection while holding the first. Twenty
+        // concurrent bill splits would each hold one and each wait for a
+        // twenty-first, which is a deadlock that resolves only by timeout and
+        // looks like the database being slow.
+        //
+        // getInvisibleUserIds takes its runner as an argument (`db = pool`)
+        // precisely so a caller inside a transaction can hand it one, and the
+        // answer is identical either way: the statement is read-only, this
+        // transaction never writes user_blocks or users, and READ COMMITTED
+        // gives each statement the latest committed snapshot regardless of
+        // which connection asks.
+        invisibleToCreator = new Set(await getInvisibleUserIds(userId, client));
 
         // Get flock name + creator. creator_id is an authorization input for
         // the existing-bill rules below, which is why it is read in here.
