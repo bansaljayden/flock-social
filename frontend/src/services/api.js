@@ -1,3 +1,6 @@
+// Consent, read live on every capture. See the gate in withPostHog below.
+import { hasAnalyticsConsent } from './analyticsConsent';
+
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
 // brand's own domain, which took the entire app down on exactly the machines
@@ -19,6 +22,25 @@ const BASE_URL = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 let posthogPromise = null;
 function withPostHog(fn) {
   if (!process.env.REACT_APP_POSTHOG_KEY) return;
+  /* THE CONSENT GATE HAD TWO DOORS AND ONLY ONE WAS SHUT.
+     index.js stopped calling posthog.init() until somebody answers the
+     banner, which is the part that governs storage and network sends. This
+     function is the other door: every track() in the app comes through it,
+     several of them fire before anybody has been asked (page views, the guest
+     invite open), and it reached straight for import('posthog-js') on the
+     first one. So the 247 KB SDK was DOWNLOADED on /app and on /i/<token>
+     whatever the visitor had said, or before they had said anything.
+
+     It did not send: init never ran, so the calls queued against a singleton
+     that was never configured and went nowhere. That makes it a bytes problem
+     rather than a privacy breach, but it also makes the banner slightly
+     dishonest, because the answer changed nothing about whether the SDK
+     arrived. On the guest invite it was 35% of the page, for a stranger on
+     mobile data who has not agreed to anything.
+
+     Read live rather than captured once at module scope: somebody who accepts
+     mid-session gets analytics from the next event, with no reload. */
+  if (!hasAnalyticsConsent()) return;
   if (!posthogPromise) {
     posthogPromise = import('posthog-js').then((m) => m.default).catch(() => null);
   }

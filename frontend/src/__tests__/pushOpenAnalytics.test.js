@@ -69,6 +69,11 @@ beforeEach(() => {
   jest.resetModules();
   mockCapture.mockClear();
   mockFcm.reset();
+  // Same second precondition as analyticsEvents: api.js refuses a capture, and
+  // refuses even to fetch the SDK, until somebody has said yes. A real
+  // notification tap on a device that declined analytics correctly reports
+  // nothing, which is not the chain this file exists to prove.
+  window.localStorage.setItem('flock_analytics_consent', 'yes');
   window.Capacitor = { isNativePlatform: () => true };
 });
 
