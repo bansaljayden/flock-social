@@ -1,5 +1,11 @@
 import React from 'react';
 import { BirdieStill, BIRDIE, WARM_BIRD } from './ui/BirdieBird';
+// STATICALLY imported on purpose, against this file's own rule about the
+// entry chunk. The most common thing this boundary catches is a FAILED
+// CHUNK LOAD after a deploy, and a game lazy-loaded from a second chunk
+// would fail for exactly the person left staring at the screen with
+// nothing to do. It is a few KB of pure canvas with no dependencies.
+import FloppyBird from './ui/FloppyBird';
 
 /**
  * The app's crash net.
@@ -193,6 +199,9 @@ class ErrorBoundary extends React.Component {
             {error && error.message ? error.message : 'Unknown error'}
           </p>
           {eventId && <p style={styles.detail}>Reference {eventId}</p>}
+          {/* Something to do while you wait for a reload. Collapsed by
+              default so the failure and the reference id are read first. */}
+          <FloppyBird />
         </div>
       </div>
     );

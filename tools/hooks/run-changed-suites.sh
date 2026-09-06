@@ -103,6 +103,26 @@ if touched "backend/"; then
   fi
 fi
 
+# DEPENDENCY SCAN. The fourth item on the security checklist, and the one that
+# had no automatic gate left.
+#
+# `npm audit --audit-level=high` lives in .github/workflows/tests.yml, but that
+# workflow carries continue-on-error AND has been workflow_dispatch-only since
+# the Actions billing hold, so in practice nothing has scanned dependencies on a
+# push for weeks. This restores it at no billing cost.
+#
+# BACKEND ONLY, on purpose. The frontend's advisories come through
+# react-scripts (webpack-dev-server), they are dev-only, they have no fix that
+# does not mean leaving CRA, and that is a decision already parked. Gating every
+# push on an advisory nobody can act on is how people learn to reach for
+# --no-verify, and then the gate catches nothing at all.
+#
+# --omit=dev because a production advisory is the one that ships.
+if touched "backend/"; then
+  echo "pre-push: backend dependency audit"
+  ( cd backend && npm audit --omit=dev --audit-level=high ) || FAILED="$FAILED backend-audit"
+fi
+
 if [ -n "$FAILED" ]; then
   echo ""
   echo "pre-push: REFUSED. Failing:$FAILED"

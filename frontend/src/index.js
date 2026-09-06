@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 // Already in the entry chunk through ErrorBoundary, so the two page-level
 // fallbacks below get their birds for free.
 import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
+import FloppyBird from './components/ui/FloppyBird';
 
 // Bearer tokens ride in URLs in two places. Guest invites carry one in the
 // path (/i/<token>): anyone holding it can RSVP and vote as that guest. The
@@ -717,6 +718,9 @@ function NotFound() {
             screenshot, or in a support email. /i/ never reaches this page
             today, but the scrub costs nothing and outlives the assumption. */}
         <p className="page-error-detail">Asked for {scrubUrlTokens(rawPath)}</p>
+        {/* The one page with nothing else on it already gets two birds.
+            This makes one of them flyable. Collapsed until asked for. */}
+        <FloppyBird />
       </div>
     </main>
   );
