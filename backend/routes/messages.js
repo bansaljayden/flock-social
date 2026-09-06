@@ -437,12 +437,24 @@ router.get('/flocks/:id/messages',
       // and the ordering can never drift apart between copies again.
       const messagesQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
+          -- EVERY COLUMN NAMED, because m.* was one of them.
+          -- The star already contained image_url, so Postgres detoasted and
+          -- transmitted the whole base64 image for every row and node-postgres
+          -- then dropped it in favour of the CASE below (last duplicate name
+          -- wins). That saved the CLIENT's bandwidth and none of the database's:
+          -- fifteen photos at ~800 KB is ~12 MB read, pulled over the pool and
+          -- allocated on the heap, to deliver ~1.4 MB of thumbnails.
+          -- __tests__/historyColumnCoverage.test.js derives this list from the
+          -- schema and fails if a migration adds a column and this falls behind.
+          SELECT m.id, m.flock_id, m.sender_id, m.message_text, m.message_type,
+                 m.venue_data, m.created_at, m.is_hidden, m.thumb_url,
+                 m.sender_deleted_at, m.reply_to_id, m.system_kind,
+                 u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
                  -- The bandwidth half of the thumbnail feature: when a row has
                  -- one, history ships ONLY the thumbnail (the app draws 260px
                  -- max and has no zoom viewer, so the full image was pure
-                 -- re-download waste). node-postgres keeps the LAST duplicate
-                 -- column name, so this CASE overrides m.image_url in the row.
+                 -- re-download waste). It is the ONLY source of image_url now,
+                 -- rather than an override of a column that was fetched anyway.
                  CASE WHEN m.thumb_url IS NOT NULL THEN NULL ELSE m.image_url END AS image_url
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
@@ -1465,9 +1477,16 @@ router.get('/dm/:userId',
       // equivalent here — a DM cannot outlive its sender.)
       const dmQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
-                 -- Same rule as the flock history: a row with a thumbnail
-                 -- ships only the thumbnail; the duplicate name overrides.
+          -- Named for the same reason as the flock history above: dm.*
+          -- carried image_url, so the full base64 was read and transmitted for
+          -- every row before being discarded in JS.
+          SELECT dm.id, dm.sender_id, dm.receiver_id, dm.message_text, dm.message_type,
+                 dm.venue_data, dm.reply_to_id, dm.read_status, dm.created_at,
+                 dm.delivered_at, dm.opened_at, dm.is_hidden, dm.thumb_url,
+                 dm.sender_deleted_at,
+                 u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
+                 -- Same rule as the flock history: a row with a thumbnail ships
+                 -- only the thumbnail, and this is now its only source.
                  CASE WHEN dm.thumb_url IS NOT NULL THEN NULL ELSE dm.image_url END AS image_url
           FROM direct_messages dm
           JOIN users u ON u.id = dm.sender_id
