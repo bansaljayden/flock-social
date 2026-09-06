@@ -19336,7 +19336,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                                 twice on one row. */}
                             {crowdLabel && (venue.photo_url || crowdScore == null) && (
                             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                              {Icons.clock(colors.navy, 12)} {crowdLabel}
+                              {/* ESTIMATE FRAMING ON THE BROWSE SURFACE. The venue
+                                  DETAIL sheet carries a LIVE/ESTIMATED chip and a
+                                  four-way attribution line naming where the number
+                                  came from; the list card printed a bare label. An
+                                  app was rejected by App Review for showing model
+                                  output it could not source, and a crowd forecast
+                                  is exactly that shape. Owner-reported readings are
+                                  already labelled as the venue's own word, so only
+                                  the model's own guess needs the qualifier. */}
+                              {Icons.clock(colors.navy, 12)} {ownerReportShown(prediction) ? crowdLabel : `${crowdLabel} (est.)`}
                             </span>
                             )}
                           </div>

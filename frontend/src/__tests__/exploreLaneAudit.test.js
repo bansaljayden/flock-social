@@ -37,7 +37,16 @@ test('scores carry fetchedAt and expire, and an owner reading is not printed pas
   expect(app).toContain("const stale = (e) => !e || !e.fetchedAt || Date.now() - e.fetchedAt > CROWD_SCORE_TTL_MS;");
   expect(app).toContain("map[p.placeId] = { ...p, fetchedAt };");
   expect((app.match(/fetchedAt: Date\.now\(\) \} \}\)\);/g) || []).length).toBe(3);
-  expect((app.match(/ownerReportShown\(prediction\) \?/g) || []).length).toBe(2);
+  /* THREE now, not two. The third is the list card's crowd label, which used
+     to print a bare "Busy" with no framing while the venue DETAIL sheet
+     carried an ESTIMATED chip and a four-way attribution line. An app was
+     rejected by App Review for showing model output it could not source, and
+     a crowd forecast is that shape, so the browse surface now says (est.)
+     unless the reading is the venue's own word. The count is a crude proxy
+     for the real property — wherever a crowd number is shown, an owner
+     reading is labelled as the venue's — but it does catch a new site added
+     without the owner branch, which is what it is here to do. */
+  expect((app.match(/ownerReportShown\(prediction\) \?/g) || []).length).toBe(3);
   expect(app).toContain("Date.parse(prediction.ownerReport.expiresAt) > Date.now()");
 });
 
