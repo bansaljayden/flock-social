@@ -358,7 +358,11 @@ function Shell({ children }) {
       <div className="gi-wrap">
         <p className="gi-brand">
           <a className="gi-mark" href="/">
-            <img src="/logo192.png" width="24" height="24" alt="" aria-hidden="true" />
+            {/* The 3.5 KB mark, not the 32.5 KB logo192.png. LandingPage was
+                moved off logo192 for exactly this reason and these two pages
+                were not: it is the same artwork at ten times the weight, eager,
+                in a 24px slot, on the page a stranger opens first. */}
+            <img src="/marks/logo-64.png" width="24" height="24" alt="" aria-hidden="true" />
             Flock
           </a>
           <span className="gi-brand-line">Where a group picks the place and the time.</span>

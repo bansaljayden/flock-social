@@ -5549,13 +5549,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const qrScannerRef = useRef(null);
   const qrScannerDivId = 'flock-qr-scanner';
 
+  /* OPTIMISTIC, WITH A ROLLBACK, like updateFlockVotes. This waited for the
+     round trip before the button changed at all, while confirmClick painted a
+     full-button green tick for 1.1 seconds the moment it was pressed — so a
+     request that failed showed a confirmation for something that had not
+     happened, which is worse than showing nothing. The pill now flips to
+     Pending immediately and goes back to Add if the server refuses. */
   const handleSendFriendRequest = useCallback(async (user) => {
+    setFriendStatuses(prev => ({ ...prev, [user.id]: 'pending' }));
     try {
       const data = await sendFriendRequest(user.id);
       setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
     } catch (err) {
+      // Put the button back. Without this the row keeps saying Pending for a
+      // request the server never accepted, until the screen is reloaded.
+      setFriendStatuses(prev => {
+        const next = { ...prev };
+        delete next[user.id];
+        return next;
+      });
       if (needsEmailVerification(err, 'add friends')) return;
-      showToast(err.message || 'Failed to send request', 'error');
+      showToast(err.message || "That friend request didn't send.", 'error');
     }
   }, [showToast, needsEmailVerification]);
 
