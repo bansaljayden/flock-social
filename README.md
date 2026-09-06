@@ -50,26 +50,52 @@ are all real.
 
 ## The crowd model
 
-**Flock tells you how busy a place will be before you leave, and it is better at
-that than Google is.**
+**The card shows one of five words. Flock picks the right word more often than
+the venue's own typical-hours curve does.**
 
-That is the whole claim, and it is measured rather than asserted. Google's
-popular times is the best free answer to this question and the one every
-competitor builds on. Flock trained its own model against it, on 1.9 million
-venue-hours across 30 cities, and beats it on every measure scored:
+That is the claim in the form a user meets it. Quiet, Not Busy, Steady, Busy,
+Packed. The alternative, and what every competitor reaches for, is to publish
+the venue's typical curve for that hour, the same kind of signal Google's
+popular times shows. On 67,249 readings from three cities the model never
+trained on:
 
-| | Google popular times | **Flock v2.6** |
+| | publish the typical curve | **Flock v2.6** |
 |---|---|---|
-| Average error (0-100 scale) | 31.48 | **29.42** |
-| Explanatory power (R²) | −0.075 | **+0.040** |
+| Names the exact right word | 22.9% | **25.5%** |
+| Within one word | 57.7% | **62.0%** |
+| Average miss (0-100 scale) | 31.48 | **29.42** |
 | Within 10 points | 19.2% | **20.7%** |
 
-The R² line is the one that matters and it is worth reading twice. A negative R²
-means Google's popular-times signal is **worse than always guessing the
-average** on this question. Flock's is the first model measured on it that is
-better than guessing. Against that baseline the improvement is **R² +0.115**,
-and it had to be: the ship gate demanded ≥0.10 before the run and
-`mlPredictor.init()` refuses to load an artifact that misses it.
+Flock wins every row, and the margins are a few points. Both statements are the
+result.
+
+**How that compares to the field, since the raw numbers look low.** They are
+low, and so is everyone's. The closest published task is BysGNN (SIGSPATIAL '23,
+[arXiv:2306.15927](https://arxiv.org/abs/2306.15927)), hourly point-of-interest
+visit forecasting across five US cities, which uses a baseline it describes as
+"similar to Google Maps' popular times graph". Its state-of-the-art gain over
+that baseline is **4.34% to 6.71% MAE**. Flock's 31.48 to 29.42 is a **6.5%
+reduction**, at the top of that band. Beating the trivial baseline is not a
+given here either: in one 2022 occupancy study both Random Forest and SARIMA
+*lost* to naive persistence.
+
+**And the R² line, which is the one that needs its context stated.** Flock
+scores +0.040 where the curve scores −0.075. A negative R² means a signal is
+worse than always guessing the average. That sounds damning for the curve and it
+is not an outlier: the closest peer-reviewed occupancy study
+([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) watches
+its own R² fall from 0.87 at an aggregated site to **−0.08, −0.30, −0.75 and
+−1.26** at individual entrances, and writes that fine-grained occupancy
+prediction often shows "a weak or non-existent relationship, as evidenced by R²
+values below zero". Flock predicts at the finest granularity there is, one venue
+at one hour, which is precisely the regime where that paper goes negative.
+Crossing zero there is a real result. It is also, by the same paper's cited
+thresholds, still below "weak" in absolute terms. Both halves are true and this
+file states the second one rather than waiting to be caught by it.
+
+Against the curve the improvement is **R² +0.115**, and it had to be: the ship
+gate demanded ≥0.10 before the run and `mlPredictor.init()` refuses to load an
+artifact that misses it.
 
 This problem is not solved, and the numbers are deliberately not dressed up to
 suggest it is. Predicting how full a bar will be at 9pm on a specific Friday is
