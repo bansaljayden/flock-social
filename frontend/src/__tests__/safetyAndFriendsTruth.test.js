@@ -12,7 +12,18 @@ const friends = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend'
 
 test('a live share follows the person instead of re-sending one frozen fix', () => {
   expect(app).toMatch(/const sharingAnywhere = !!sharingLocationForFlock \|\| !!dmSharingLocation;/);
-  expect(app).toMatch(/const id = watchPosition\(\s*\(pos\) => setUserLocation\(\{ lat: pos\.coords\.latitude, lng: pos\.coords\.longitude \}\),/);
+  // WHAT MAKES THE SHARE FOLLOW THE PERSON is that every fix reaches
+  // userLocationRef, because that ref is what both ten-second emitters send.
+  // This used to pin the literal callback `(pos) => setUserLocation({...})`.
+  // That spelling changed and the property got stronger: the callback writes
+  // the ref ITSELF on every fix now, and only the re-render is throttled (a
+  // fresh object every second was re-rendering the whole app for the length of
+  // the walk). Pinning the ref write is the real invariant - throttle the state
+  // without it and the share freezes again, which is the defect this test is
+  // named after.
+  expect(app).toMatch(/const id = watchPosition\(/);
+  expect(app).toMatch(/userLocationRef\.current = next;/);
+  expect(app).toMatch(/setUserLocation\(\(prev\) => \(movedAtLeast\(prev, next, \d+\) \? next : prev\)\)/);
   expect(app).toMatch(/return \(\) => \{ if \(id != null\) clearWatch\(id\); \};\s*\}, \[sharingAnywhere\]\);/);
   // A DM share always takes a fresh fix; the old early return could broadcast
   // a coordinate restored from a previous session.
