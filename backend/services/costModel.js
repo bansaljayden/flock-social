@@ -373,7 +373,7 @@ const FIXED_MONTHLY = [
     kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
-    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. the maintainer committed to roughly five months, so this line is expected through early 2027 and is cancelled by him, not by a code change. The nightly puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js at 02:00 UTC.',
+    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. the maintainer committed to roughly five months, so this line is expected through early 2027 and is cancelled by him, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
   },
   {
     id: 'sportsdb',
