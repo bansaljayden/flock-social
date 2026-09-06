@@ -442,6 +442,39 @@ function evaluateShipGate(meta) {
     // No verdict means nothing has verified this artifact. Do not promote it.
     return { promote: false, reason: 'no valid ship_gate in metadata — the artifact is unverified' };
   }
+  // WAS THIS ARTIFACT GATED THROUGH SOMEBODY ELSE'S QUANTILE MAP?
+  //
+  // quick_eval.py records `score_qmap_fitted_on` on the verdict it writes, and
+  // its own comment (train/quick_eval.py, above QMAP_ENABLED) states the
+  // exposure plainly: "nothing here compares QMAP_FITTED_ON to the model under
+  // test, and it cannot, because export_model.py stamps model_version AFTER
+  // this script runs. So a v2.7 candidate would be gated through v2.6's
+  // quantile grid and then served unmapped by mlPredictor's version check, and
+  // the two numbers would describe different products."
+  //
+  // The gate cannot catch it. THIS can, because by the time an artifact is
+  // loaded both facts exist side by side: the version stamped at export, and
+  // the version whose grid the gate actually scored through. A mismatch means
+  // the PASS on record was measured on arithmetic this server will not perform,
+  // so the verdict is about a different product and is not a verdict about this
+  // one. Refusing is the fail-closed direction and costs a rule-engine night;
+  // promoting on it ships a model whose only evidence describes something else.
+  //
+  // Null is not a mismatch: the map was off for that run, which is a state the
+  // gate records honestly and both sides agree on.
+  const gatedThrough = gate.score_qmap_fitted_on;
+  const artifactVersion = meta.model_version || '';
+  if (gatedThrough && gatedThrough !== artifactVersion) {
+    return {
+      promote: false,
+      reason: `ship gate scored this artifact through the score quantile map fitted on `
+        + `${gatedThrough}, but the artifact is ${artifactVersion || '(unversioned)'}. `
+        + `The serving path applies that map only to ${QMAP_FITTED_ON}, so the gate `
+        + `measured arithmetic this server will not perform. Re-run the gate with `
+        + `CROWD_QMAP_ENABLED=false, or refit the map on this artifact.`,
+    };
+  }
+
   if (gate.overall_pass === true) {
     const basis = gate.gate_basis || 'unspecified';
     const detail = gate.realtime_mae_improvement != null

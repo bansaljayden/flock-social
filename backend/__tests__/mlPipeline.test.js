@@ -60,6 +60,47 @@ test('a missing or malformed ship gate refuses promotion (fail closed)', () => {
   assert.equal(gate({ ship_gate: { overall_pass: true, gate_basis: 'holdout_realtime' } }).promote, true);
 });
 
+test('an artifact gated through another model\'s quantile map is refused', () => {
+  // THE GATE CANNOT CATCH THIS AND SAYS SO. train/quick_eval.py, in the comment
+  // above QMAP_ENABLED: "nothing here compares QMAP_FITTED_ON to the model
+  // under test, and it cannot, because export_model.py stamps model_version
+  // AFTER this script runs. So a v2.7 candidate would be gated through v2.6's
+  // quantile grid and then served unmapped by mlPredictor's version check, and
+  // the two numbers would describe different products."
+  //
+  // Load time is where both facts finally exist together, so this is where it
+  // is caught. A PASS measured through arithmetic the server will not perform
+  // is not a verdict about the artifact being loaded.
+  const gate = _internals.evaluateShipGate;
+
+  const mismatched = {
+    model_version: '2.7.0-swift',
+    ship_gate: { overall_pass: true, gate_basis: 'holdout_realtime_served', score_qmap_fitted_on: '2.6.0-starling' },
+  };
+  assert.equal(gate(mismatched).promote, false,
+    'a v2.7 artifact gated through v2.6 grid must not promote');
+  assert.match(gate(mismatched).reason, /quantile map fitted on 2\.6\.0-starling/);
+
+  // The matching case still promotes: gated through its own grid.
+  assert.equal(gate({
+    model_version: '2.6.0-starling',
+    ship_gate: { overall_pass: true, gate_basis: 'holdout_realtime_served', score_qmap_fitted_on: '2.6.0-starling' },
+  }).promote, true);
+
+  // Null is NOT a mismatch. It records that the map was off for that run, which
+  // is a state both sides agree on, and it is what the shipped artifact carries.
+  assert.equal(gate({
+    model_version: '2.7.0-swift',
+    ship_gate: { overall_pass: true, gate_basis: 'holdout_realtime_served', score_qmap_fitted_on: null },
+  }).promote, true);
+
+  // And the refusal outranks a PASS rather than being reported alongside it.
+  assert.equal(gate({
+    model_version: '2.7.0-swift',
+    ship_gate: { overall_pass: true, score_qmap_fitted_on: '2.6.0-starling' },
+  }).promote, false);
+});
+
 test('the checked-in artifact loads and its gate passes', async () => {
   assert.equal(await mlPredictor.init(), true,
     'crowd_model.onnx + model_metadata.json should load and pass the ship gate');
