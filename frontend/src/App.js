@@ -7556,6 +7556,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [dmIsTyping, setDmIsTyping] = useState(false);
   const [dmTypingUser, setDmTypingUser] = useState('');
   const dmTypingTimeoutRef = useRef(null);
+  // THE LATCH THE DM COMPOSER NEVER HAD. handleDmInputChange called
+  // dmStartTyping on every keystroke, so typing at a normal five characters a
+  // second put out five socket frames a second, about three hundred a minute,
+  // each one fanned out by the server and handled by the other person's
+  // client, all to say a boolean that was already true. The flock composer has
+  // had a latch since it was written and the comment above it says outright
+  // that the DM side has none. This is that flag.
+  const dmTypingActiveRef = useRef(false);
   const [dmChatSearch, setDmChatSearch] = useState('');
   const [showDmChatSearch, setShowDmChatSearch] = useState(false);
   const dmChatSearchRef = useRef(null);
@@ -12875,11 +12883,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Same as the flock twin: `[data-dm-input]` went with the rebuild and
       // DmDetail's own `dmDraft` is what clears the field.
     }
-    // Stop typing indicator
+    // Stop typing indicator.
+    //
+    // The reset is not optional now that there is a latch, and the flock twin
+    // records why: sending CANCELS the 2s timer that would have cleared the
+    // flag, so without this line the flag stays true and the next message this
+    // person types shows no typing indicator to the other side at all. It
+    // would only recover if they paused mid-word for two full seconds.
     if (dmTypingTimeoutRef.current) {
       clearTimeout(dmTypingTimeoutRef.current);
       dmStopTyping(selectedDmId);
     }
+    dmTypingActiveRef.current = false;
     // Clear reply
     const replyTo = dmReplyingTo;
     if (!opts.noReply) setDmReplyingTo(null);
@@ -13315,6 +13330,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // "Alex is typing..." over Sam's conversation, and stayed that way.
     setDmIsTyping(false);
     setDmTypingUser('');
+    // The OUTGOING latch resets here too. It is per-conversation state living
+    // in a ref that is not, so leaving a thread mid-burst carried a true flag
+    // into the next one and the first thing typed there told nobody.
+    dmTypingActiveRef.current = false;
     const unsubTyping = onDmUserTyping((data) => {
       if (data.userId === selectedDmId) {
         setDmTypingUser(data.name);
@@ -13340,9 +13359,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const hasText = !!e.target.value.trim();
     setChatInputHasText(prev => prev !== hasText ? hasText : prev);
     if (selectedDmId) {
-      dmStartTyping(selectedDmId);
+      // ONE FRAME PER BURST, not one per character. The timer below is what
+      // ends the burst: two seconds without a keystroke clears the flag and
+      // tells the other side, and the next character starts a new burst. The
+      // recipient sees exactly what they saw before, because "is typing" was
+      // never more than a boolean.
+      if (!dmTypingActiveRef.current) {
+        dmTypingActiveRef.current = true;
+        dmStartTyping(selectedDmId);
+      }
       clearTimeout(dmTypingTimeoutRef.current);
       dmTypingTimeoutRef.current = setTimeout(() => {
+        dmTypingActiveRef.current = false;
         dmStopTyping(selectedDmId);
       }, 2000);
     }
