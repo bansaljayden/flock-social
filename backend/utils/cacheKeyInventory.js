@@ -687,6 +687,28 @@ const INVENTORY = [
       + 'the dm_location rate limit already meter.',
   },
   {
+    file: 'services/mlPredictor.js', name: 'deviationCache', kind: 'cache',
+    key: '`${placeId}` alone — one row per venue, no day or hour in the key',
+    callerControls: 'the whole placeId, the same 256-char field POST /api/crowd/batch '
+      + 'passes; the read is a primary-key lookup on ml_venue_recent_deviation and '
+      + 'a value the caller invents simply misses',
+    protects: 'one indexed Postgres lookup per prediction on the 20-connection '
+      + 'primary pool, in front of the per-venue trailing deviation offset',
+    denominator: 'not a separate spend surface: it rides the same request as the '
+      + 'baselineCache lookup, which allowVenueLookup already meters at '
+      + '1500/hr and 5000/day per account. It adds one keyed read to a request '
+      + 'that was already making one, and never fans out',
+    bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, 5 minute TTL',
+    verdict: 'SAFE',
+    why: 'Five minutes rather than the baseline cache\'s 24 hours, and the short '
+      + 'TTL is the point rather than caution. A baseline is static; this tracks '
+      + 'a level that moves, and a TRAILING window is the whole reason it beats '
+      + 'the static per-venue intercept that measured HARM at depth >= 50 '
+      + 'readings. Caching it for a day would reintroduce exactly the staleness '
+      + 'the design exists to avoid. Growth is bounded by distinct place ids '
+      + 'seen in 5 minutes, under the same 2000-entry ceiling as its siblings.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'baselineMissCache', kind: 'cache',
     key: '`${placeId}_${dayOfWeek}_${hour}` — the same key as baselineCache',
     callerControls: 'the whole placeId, same 256-char batch field as baselineCache; '
