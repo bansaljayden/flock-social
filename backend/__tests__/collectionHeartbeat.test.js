@@ -26,6 +26,12 @@ process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
 const pool = require('../config/database');
 
 let freshRows = 1;
+// Distinct hours the rows landed across, of a 26-hour window. It is a second
+// signal and not a cosmetic one: a collector that stops firing keeps a full
+// row count for most of a day, so the row floor alone cannot see it. Default
+// to a healthy full window, so a test that cares only about volume says so by
+// setting freshRows alone.
+let freshHours = 26;
 let queryError = null;
 // The durable dedupe ledger, emulated: (alert_key, sent_on) uniqueness with
 // ON CONFLICT DO NOTHING semantics, so the suite can prove once-per-day
@@ -44,7 +50,7 @@ pool.query = async (text) => {
     ledger.add(key);
     return { rows: [{ sent_on: key }] };
   }
-  return { rows: [{ n: freshRows }] };
+  return { rows: [{ n: freshRows, hours: freshHours }] };
 };
 
 const sent = [];
@@ -60,26 +66,61 @@ require('../services/emailService').sendEmail = async (msg) => {
 
 const hb = require('../services/collectionHeartbeat');
 
-test('a healthy night means silence', async () => {
+test('a healthy day means silence', async () => {
   hb.__test.reset();
   ledger.clear();
   sent.length = 0;
-  freshRows = 1400;
+  // The trailing 26 hours as measured in production on 2026-09-06.
+  freshRows = 3779;
+  freshHours = 26;
   await hb.runCollectionHeartbeat();
   assert.strictEqual(sent.length, 0);
 });
 
 test('a run that died partway still alerts, and says so', async () => {
-  // The shape a throttle wall produces: the night started, wrote a handful
+  // The shape a throttle wall produces: the run started, wrote a handful
   // of rows, and aborted. A nonzero test would have stayed silent here.
   hb.__test.reset();
   ledger.clear();
   sent.length = 0;
   freshRows = 20;
+  freshHours = 26;
   await hb.runCollectionHeartbeat();
-  assert.strictEqual(sent.length, 1, 'twenty rows out of 1,400 is a failure, not a night');
+  assert.strictEqual(sent.length, 1, 'twenty rows against roughly 3,000 is a failure, not a day');
   assert.match(sent[0].subject, /failing partway/);
   assert.match(sent[0].text, /Only 20 live crowd observations/);
+});
+
+test('the floor is sized for the hourly cadence, not the old nightly one', async () => {
+  // THE REGRESSION THIS EXISTS TO STOP. The floor was 200 while the collector
+  // was producing 3,779 rows a window, because it had been sized when the cron
+  // fired once a night and nothing moved it when the cadence went hourly. At
+  // 200, a collector down to 6% of its yield reported healthy. Anything that
+  // lowers the floor back under a real collapse has to fail here.
+  hb.__test.reset();
+  ledger.clear();
+  sent.length = 0;
+  freshRows = 250;
+  freshHours = 26;
+  await hb.runCollectionHeartbeat();
+  assert.strictEqual(sent.length, 1, '250 rows is a 93% collapse and must alarm');
+  assert.match(sent[0].subject, /failing partway/);
+});
+
+test('a collector that stopped firing alarms while its row count still looks fine', async () => {
+  // The failure the row floor cannot see. The cron quit twelve hours ago, so
+  // the window still holds half a day of good rows, well over the floor. What
+  // gives it away is that they all landed in the far half of the window.
+  hb.__test.reset();
+  ledger.clear();
+  sent.length = 0;
+  freshRows = 1800;
+  freshHours = 6;
+  await hb.runCollectionHeartbeat();
+  assert.strictEqual(sent.length, 1, '1,800 rows over 6 of 26 hours is a stopped cron');
+  assert.match(sent[0].subject, /stopped firing/);
+  assert.match(sent[0].text, /only across 6 distinct hours/,
+    'the email distinguishes a stopped cron from a throttled one');
 });
 
 test('a stopped pipeline mails once per day, even across restarts', async () => {
