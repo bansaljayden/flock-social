@@ -55,7 +55,13 @@ describe('chat message actions are reachable without a pointer', () => {
     // Same handler, passed through a stable wrapper for the row memo.
     expect(CHAT).toMatch(/onLongPress=\{stableLongPress\}/);
     expect(CHAT).toMatch(/const stableLongPress = useStableFn\(\(m, detail\) => openMessageActions\(m, detail\)\)/);
-    expect(DM).toMatch(/onLongPress=\{openDmActions\}/);
+    // The DM screen gained the same stable wrapper the flock screen has, for
+    // the same reason: dmDraft is state in that component, so without it every
+    // keystroke reconciled the whole thread. Assert the CHAIN, not the
+    // spelling — a wrapper that exists but forwards nothing would pass a check
+    // for the prop alone and would take the keyboard door away just as surely.
+    expect(DM).toMatch(/onLongPress=\{stableDmLongPress\}/);
+    expect(DM).toMatch(/const stableDmLongPress = useStableFn\(\(m, detail\) => openDmActions\(m, detail\)\)/);
   });
 
   test('every row carries a real button for its actions, not a press on a div', () => {
@@ -84,7 +90,8 @@ describe('chat message actions are reachable without a pointer', () => {
     // Both screens still hand the row a tap handler, which is what earns the
     // pill the words "Tap to react" in the first place.
     expect(CHAT).toMatch(/onReactionTap=\{/);
-    expect(DM).toMatch(/onReactionTap=\{toggleDmReaction\}/);
+    expect(DM).toMatch(/onReactionTap=\{stableDmReactionTap\}/);
+    expect(DM).toMatch(/const stableDmReactionTap = useStableFn\(\(emoji, m\) => toggleDmReaction\(emoji, m\)\)/);
     // The old span pill is gone from both screens and did not come back.
     expect(CHAT).not.toMatch(/<span key=\{g\.emoji\} onClick/);
     expect(DM).not.toMatch(/<span key=\{g\.emoji\} onClick/);

@@ -90,7 +90,10 @@ test('the person you are talking to is drawn in a colour, not the secondary grey
      runs and takes your own colour away instead of deferring to ownColour. It
      has to answer for both sides. */
   const d = read('screens/DmDetail.js');
-  expect(d).toMatch(/colourFor=\{\(run\) => \(run\.isMine \? DM_OWN_COLOUR : DM_FRIEND_COLOUR\)\}/);
+  // Through a stable wrapper now, so the memoised row can reject a re-render;
+  // the colour rule itself is unchanged and is asserted where it is written.
+  expect(d).toMatch(/colourFor=\{stableDmColour\}/);
+  expect(d).toMatch(/const stableDmColour = useStableFn\(\(run\) => \(run\.isMine \? DM_OWN_COLOUR : DM_FRIEND_COLOUR\)\)/);
   expect(d).toMatch(/const DM_OWN_COLOUR = /);
   expect(d).toMatch(/DM_FRIEND_COLOUR \} from '\.\.\/components\/chat'/);
 
