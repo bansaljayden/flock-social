@@ -148,6 +148,39 @@ If training dies, the feature pickles persist — rerun `train_model.py`.
 > succeeded. After pushing, confirm with
 > `git log --oneline -1 -- backend/scripts/ml/models/crowd_model.onnx`.
 
+## Before you score anything ad hoc: the pickle does not match the shipped model
+
+If you are about to write a throwaway script that loads
+`train/features_holdout.pkl` and feeds it to `models/crowd_model.onnx` to test an
+idea, read this first. Measured 2026-09-06:
+
+```
+metadata features: 106 | pickle features: 106
+positions that differ: 19
+in metadata not pickle: gtype_bakery
+in pickle not metadata: gtype_night_club
+```
+
+The two are the same LENGTH and different ORDER, which is the worst combination:
+onnxruntime consumes positions, so nothing throws, nothing warns, and every
+number you get is confidently wrong. The pickles on disk are from a later
+`prepare_features.py` run than the shipped v2.6.0 artifact, which is normal and
+not a defect in either.
+
+**Remap by NAME before scoring**, using `model_metadata.json`'s `feature_names`
+as the order and zero-filling any column the pickle lacks. A correct remap
+reproduces the shipped MAE of 29.34 on the served gate slice; if your number is
+not close to that, your matrix is scrambled and nothing downstream of it means
+anything.
+
+THE SHIP GATE ITSELF IS NOT EXPOSED TO THIS, and the distinction matters. It
+scores a model it has just trained against a matrix it has just prepared, and
+`quick_eval.py` additionally refuses to run if `features_train.pkl` and
+`features_holdout.pkl` disagree on their columns (it reads `is_realtime` out of
+X by position, so a mismatch would silently select the wrong gate rows). The
+exposure is ad-hoc measurement only. It is written here because ad-hoc
+measurement is how every idea in this directory starts.
+
 ## The ship gate
 
 `quick_eval.py` writes `ship_gate` and `mlPredictor.init()` refuses to load an
