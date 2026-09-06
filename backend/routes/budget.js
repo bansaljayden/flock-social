@@ -944,19 +944,42 @@ router.post('/:flockId/remind',
         }
       }
 
-      // Push regardless of online status — explicit creator action
-      for (const member of missingResult.rows) {
-        await pushAlways(member.id,
+      // ANSWER FIRST, THEN PUSH. This loop used to sit in front of the
+      // response and await one full Firebase delivery per outstanding member,
+      // one after another. Each pushAlways is roughly four database round trips
+      // (visibility, quiet-hours zone, unread badge, device tokens) plus an FCM
+      // call whose own deadline is eight seconds, so an organiser chasing four
+      // people held the button for half a second on a good day and could hold
+      // it for half a minute on a bad one.
+      //
+      // None of it feeds the response: `reminded` counts rows, not deliveries.
+      // The socket toasts the caller actually cares about went out above.
+      //
+      // This is the shape routes/flocks.js pushInvitesToOffline already uses,
+      // and its comment makes the same argument for invites. allSettled, so one
+      // recipient's Firebase failure cannot abort the rest. Its own try/catch,
+      // because the response is already gone by the time any of this runs and a
+      // throw here must never try to answer twice.
+      res.json({ reminded: missingResult.rows.length });
+
+      try {
+        await Promise.allSettled(missingResult.rows.map((member) => pushAlways(
+          member.id,
           'Budget reminder',
           `Submit your budget for ${flockName}`,
           { type: 'budget_reminder', flockId: String(flockId) }
-        );
+        )));
+      } catch (pushErr) {
+        console.error('Budget reminder push error:', pushErr.message);
       }
-
-      res.json({ reminded: missingResult.rows.length });
+      return;
     } catch (err) {
       console.error('Budget remind error:', err);
-      res.status(500).json({ error: 'Failed to send reminders' });
+      // headersSent: the push fan-out above runs POST-response, so a failure
+      // that reaches here must not attempt a second write to a finished
+      // response. Same guard routes/friends.js POST /accept carries, for the
+      // same reason.
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to send reminders' });
     }
   }
 );
