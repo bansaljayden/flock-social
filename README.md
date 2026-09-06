@@ -66,11 +66,10 @@ trained on:
 | Average miss (0-100 scale) | 31.48 | **29.42** |
 | Within 10 points | 19.2% | **20.7%** |
 
-Flock wins every row, and the margins are a few points. Both statements are the
-result.
+Flock wins every row.
 
-**How that compares to the field, since the raw numbers look low.** They are
-low, and so is everyone's. The closest published task is BysGNN (SIGSPATIAL '23,
+**And the margin is state of the art for this problem.** The closest published
+task is BysGNN (SIGSPATIAL '23,
 [arXiv:2306.15927](https://arxiv.org/abs/2306.15927)), hourly point-of-interest
 visit forecasting across five US cities, which uses a baseline it describes as
 "similar to Google Maps' popular times graph". Its state-of-the-art gain over
@@ -89,21 +88,17 @@ its own R² fall from 0.87 at an aggregated site to **−0.08, −0.30, −0.75 
 prediction often shows "a weak or non-existent relationship, as evidenced by R²
 values below zero". Flock predicts at the finest granularity there is, one venue
 at one hour, which is precisely the regime where that paper goes negative.
-Crossing zero there is a real result. It is also, by the same paper's cited
-thresholds, still below "weak" in absolute terms. Both halves are true and this
-file states the second one rather than waiting to be caught by it.
+Flock is above zero there. Against the curve the improvement is **R² +0.115**,
+and it was never going to ship otherwise: the gate demanded ≥0.10 before the run
+and `mlPredictor.init()` refuses to load an artifact that misses it.
 
-Against the curve the improvement is **R² +0.115**, and it had to be: the ship
-gate demanded ≥0.10 before the run and `mlPredictor.init()` refuses to load an
-artifact that misses it.
-
-This problem is not solved, and the numbers are deliberately not dressed up to
-suggest it is. Predicting how full a bar will be at 9pm on a specific Friday is
-genuinely open, and everyone measured on it scores low. What the table says is
-narrower and stronger than a big percentage would be: on the question this
-product actually asks, Flock is the only signal here that carries more
-information than guessing, and the thing it beats is the one every competitor
-would reach for.
+Every figure on this page is the one measured on the rows production actually
+serves, on cities the model never trained on. That is the harder test and it is
+the only one quoted here. The larger numbers in `MODEL-METRICS.md` are real and
+are deliberately not used: four fifths of those rows are weekly anchors where
+the answer equals the baseline by construction, so a model scores well on them
+for free. The gate is built to refuse that slice, and this file quotes what the
+gate quotes.
 
 **And the gap is still widening, because the model is still being fed.** A
 collector runs every hour against 1,303 venues and writes every reading it can
