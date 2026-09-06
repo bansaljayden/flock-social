@@ -2434,6 +2434,42 @@ function pushDestination(screen) {
   return PUSH_DESTINATIONS.includes(screen) ? screen : 'unknown';
 }
 
+/* HOW FAST THE APP ACTUALLY IS, ON REAL DEVICES.
+   Every performance figure this project has ever quoted came from a laptop
+   with a throttle applied. That is a lab reading: it cannot show the spread,
+   and it cannot show the mid-range Android phones where JavaScript parse costs
+   four to six times what it does on a desktop. This is the only thing in the
+   product that reports a real one.
+
+   WHAT IT CARRIES, and nothing else: the metric's name, its value rounded to
+   an integer (CLS is unitless and tiny, so it keeps three decimals or every
+   reading would round to zero), and the route it was measured on. No id, no
+   token, no URL, no user agent string. `route` is matched against a fixed list
+   for the same reason nfc_tap's source is: a value read off the address bar
+   and forwarded verbatim is a property anyone holding a link can invent, and
+   /i/<token> would put an invite token in an analytics property.
+
+   Bounded server-side too, in the sense that matters here: an unknown metric
+   name is dropped rather than filed, so a future version of web-vitals adding
+   a metric cannot silently widen what leaves the device. */
+const WEB_VITALS = ['CLS', 'FID', 'FCP', 'LCP', 'TTFB', 'INP'];
+// The real page ids from index.js's PAGES table, plus 'app' for the product
+// itself. Written out rather than bucketed, because a route list that folds
+// six real pages into 'other' answers fewer questions than it looks like it
+// does - and the whole point of collecting this is to find the slow one.
+const VITAL_ROUTES = ['app', 'landing', 'guest-invite', 'privacy', 'terms',
+  'guidelines', 'support', 'about', 'delete-account', 'tap', 'moderation', 'other'];
+
+export function trackWebVital(metric, route) {
+  if (!metric || !WEB_VITALS.includes(metric.name)) return;
+  track('web_vital', {
+    metric: metric.name,
+    // CLS is a unitless score well under 1; everything else is milliseconds.
+    value: metric.name === 'CLS' ? Math.round(metric.value * 1000) / 1000 : Math.round(metric.value),
+    route: VITAL_ROUTES.includes(route) ? route : 'other',
+  });
+}
+
 export function trackPushOpened(screen) {
   track('push_opened', { destination: pushDestination(screen) });
 }
