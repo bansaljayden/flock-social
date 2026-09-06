@@ -301,6 +301,14 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'venue_profile_created',     // does an owner who starts onboarding finish
       'venue_verification_requested',
       'venue_vote_cast',     // does the mechanic the product is named for run
+      // How fast the app is on a REAL device. Added deliberately, per the note
+      // above: reportWebVitals() was called with no argument, so web-vitals
+      // never loaded and nothing in this product had ever measured its own
+      // speed anywhere but a developer's laptop. It carries three properties
+      // and no fourth: the metric name (from a fixed list), its value as a
+      // number, and the route from index.js's own PAGES ids. No URL, so an
+      // invite token cannot ride in on the /i/<token> path.
+      'web_vital',
     ]);
   });
 

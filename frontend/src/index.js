@@ -977,4 +977,30 @@ if (analyticsEnabled) {
   });
 }
 
-reportWebVitals();
+/* THE ARGUMENT IS THE WHOLE POINT.
+   This line was `reportWebVitals()`, CRA's default. reportWebVitals only
+   imports web-vitals when it is handed a function, so with no argument the
+   module never loaded, no metric was ever collected, and nothing in this
+   product has ever measured its own speed anywhere but on a developer's
+   machine.
+
+   GATED ON CONSENT AT THE CALL, not merely at the capture. track() already
+   refuses to send without consent, so passing the callback unconditionally
+   would leak nothing - but it would still DOWNLOAD web-vitals for somebody who
+   said no, which is precisely the shape just closed in services/api.js. It is
+   not going back in through a different door.
+
+   Behind afterLoad, because a measurement must not compete with the thing it
+   is measuring. The metrics themselves are collected by the browser from the
+   moment the page starts regardless of when the library attaches; web-vitals
+   reads them out of the performance timeline, so deferring the import costs no
+   accuracy. LCP and CLS are reported on hide, long after this. */
+if (analyticsEnabled && hasAnalyticsConsent()) {
+  afterLoad(() => {
+    reportWebVitals((metric) => {
+      import('./services/api')
+        .then((api) => api.trackWebVital(metric, page ? page.id : (wantsApp ? 'app' : 'other')))
+        .catch(() => { /* a number is never load-bearing */ });
+    });
+  });
+}
