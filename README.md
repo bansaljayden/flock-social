@@ -50,14 +50,21 @@ are all real.
 
 ## The crowd model
 
+Flock runs its own trained model, not a wrapper around someone else's busyness
+chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
+**v2.6.0 "Starling"**) with **106 features**: time patterns, weather, nearby
+events, holiday calendars, venue category and popularity, per-venue baselines,
+and user feedback. It is trained on **1.9 million venue-hours across 30 cities**,
+collected by Flock, and it predicts a delta from each venue's own baseline rather
+than an absolute figure.
+
 **The card shows one of five words. Flock picks the right word more often than
 the venue's own typical-hours curve does.**
 
-That is the claim in the form a user meets it. Quiet, Not Busy, Steady, Busy,
-Packed. The alternative, and what every competitor reaches for, is to publish
-the venue's typical curve for that hour, the same kind of signal Google's
-popular times shows. On 67,249 readings from three cities the model never
-trained on:
+Quiet, Not Busy, Steady, Busy, Packed. The alternative, and what every
+competitor reaches for, is to publish the venue's typical curve for that hour,
+the same kind of signal Google's popular times shows. Scored on 67,249 readings
+from three cities the model never trained on:
 
 | | publish the typical curve | **Flock v2.6** |
 |---|---|---|
@@ -74,164 +81,48 @@ task is BysGNN (SIGSPATIAL '23,
 visit forecasting across five US cities, which uses a baseline it describes as
 "similar to Google Maps' popular times graph". Its state-of-the-art gain over
 that baseline is **4.34% to 6.71% MAE**. Flock's 31.48 to 29.42 is a **6.5%
-reduction**, at the top of that band. Beating the trivial baseline is not a
-given here either: in one 2022 occupancy study both Random Forest and SARIMA
-*lost* to naive persistence.
+reduction**, at the top of that band.
 
-**And the R² line, which is the one that needs its context stated.** Flock
-scores +0.040 where the curve scores −0.075. A negative R² means a signal is
-worse than always guessing the average. That sounds damning for the curve and it
-is not an outlier: the closest peer-reviewed occupancy study
+Predicting one venue at one hour is the hardest granularity this problem has.
+The closest peer-reviewed occupancy study
 ([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) watches
-its own R² fall from 0.87 at an aggregated site to **−0.08, −0.30, −0.75 and
-−1.26** at individual entrances, and writes that fine-grained occupancy
-prediction often shows "a weak or non-existent relationship, as evidenced by R²
-values below zero". Flock predicts at the finest granularity there is, one venue
-at one hour, which is precisely the regime where that paper goes negative.
-Flock is above zero there. Against the curve the improvement is **R² +0.115**,
-and it was never going to ship otherwise: the gate demanded ≥0.10 before the run
-and `mlPredictor.init()` refuses to load an artifact that misses it.
+its own R² fall from 0.87 at an aggregated site to **negative** at individual
+entrances, and reports that fine-grained occupancy prediction often shows "a
+weak or non-existent relationship, as evidenced by R² values below zero". Flock
+is positive there, at **+0.040** against the curve's **−0.075**, an improvement
+of **R² +0.115** on the rows production actually serves.
 
-Every figure on this page is the one measured on the rows production actually
-serves, on cities the model never trained on. That is the harder test and it is
-the only one quoted here. The larger numbers in `MODEL-METRICS.md` are real and
-are deliberately not used: four fifths of those rows are weekly anchors where
-the answer equals the baseline by construction, so a model scores well on them
-for free. The gate is built to refuse that slice, and this file quotes what the
-gate quotes.
+Every figure above is measured on cities the model never trained on, which is
+the harder test. `backend/scripts/ml/MODEL-METRICS.md` carries the full
+measurement and the per-city breakdown.
 
-**And the gap is still widening, because the model is still being fed.** A
-collector runs every hour against 1,303 venues and writes every reading it can
-actually observe into the training corpus. On 2026-09-06 that was nine runs and
-892 new rows: 108, 156, 108, 63, 53, 63, 83, 125, 133. Every one of them is a
-LIVE observation. The provenance audit that closes each run reports `0
-vendor-forecast, 0 unlabelled`, which matters more than the volume does: a
-corpus that quietly absorbs a vendor's prediction as if it were an observation
-teaches the model to imitate that vendor instead of the world. Flock's does not,
-and it checks, hourly.
+**The corpus is still growing.** A collector runs hourly against 1,303 venues
+and writes every reading it can observe. Each run closes with a provenance audit
+reporting `0 vendor-forecast, 0 unlabelled`: every row is a live observation,
+never a vendor's prediction absorbed as though it were one.
 
-So the table above is a floor rather than a ceiling. It reports what one
-artifact scored on the corpus that existed when it was trained; the corpus that
-the next retrain sees is larger every hour, and the ship gate will refuse the
-next artifact if it does not beat this one.
-
-Flock runs its own trained model, not a wrapper around someone else's busyness
-chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
-**v2.6.0 "Starling"**, trained 2026-08-18) with **106 features**: time patterns,
-weather, nearby events, holiday/holiday-eve calendars, venue category and
-popularity, per-venue baselines, and user feedback. It predicts a *delta* from
-each venue's popular-times baseline rather than an absolute busyness figure. The
-delta is clamped to ±50 at serving time (`DELTA_CLAMP_LO`/`HI` in
-`mlPredictor.js`); the ±30 in the training metadata is deliberately overridden
-there, so any arithmetic that reconstructs a served score with ±30 is wrong at
-the tails.
-
-Trained on **1,934,988 venue-hour observations across 30 cities**, with a
-separate **395,464-row holdout** (Barcelona, Miami, Tokyo), validated
-leave-one-city-out.
-
-One model, three populations. Which one gets quoted decides whether the number
-means anything at all:
-
-| Population | Rows | MAE | R² | Within 10 |
-|---|---|---|---|---|
-| Every training row | 1,934,988 | 6.89 | 0.653 | 85.1% |
-| **Realtime rows — what production actually scores** | **369,076** | **27.54** | **0.127** | **22.8%** |
-| Weekly snapshots (diagnostic only) | 1,565,912 | 2.02 | 0.986 | 99.8% |
-
-Those three rows are the same model. The first looks four times better than the
-second purely because 81% of the corpus is weekly popular-times snapshots, and
-on those rows the label is zero *by construction* — the model is asked to
-predict that a venue matches its own baseline, which it does almost perfectly
-and which proves nothing. Averaging them together produces a number that is
-arithmetically correct and completely misleading. `model_metadata.json` labels
-that row `"close to a tautology on that majority"` in the artifact itself, and
-the ship gate refuses to score against it.
-
-What the model is actually measured on is the realtime slice, and it is measured
-against what it replaced rather than against nothing. Predicting how full a specific bar
-will be at 9pm on a specific Friday is a genuinely open problem, and the yardstick
-says so: the popular-times baseline this model starts from — the strongest freely
-available signal for the question — scores **R² −0.075** on those rows, which is
-worse than always guessing the average. That is the bar. Two generations of the
-model have moved it:
-
-| On the same 67,249 holdout rows | MAE | R² | Within 10 |
-|---|---|---|---|
-| Popular-times baseline alone | 31.48 | −0.075 | 19.2% |
-| v2.5.0-starling (previous) | 30.77 | −0.043 | 19.3% |
-| **v2.6.0-starling (serving)** | **29.42** | **+0.040** | **20.7%** |
-
-Crossing zero is the part that matters: v2.6 is the first version whose
-predictions carry more information than the mean of the data. Both margins are
-small and both are real, measured on identical rows with identical features.
-
-**Against the baseline it replaces, on the rows production actually serves, the
-margin is R² +0.115.** That is the number the ship gate is written against, and
-the gate was set before the run, not after it: four criteria, all of which must
-hold, and `mlPredictor.init()` refuses to load an artifact that fails any of
-them. The first criterion demands **R² up ≥0.10 or MAE down ≥5** against
-popular-times; v2.6 clears it at +0.115 and −2.06. The others exist because an
-earlier version squeaked through on one arm. v2.5 passed while *failing* the MAE
-arm by 2.7 points and clearing R² by 0.0026, so the gate now also forbids an MAE
-regression, sets an absolute within-10 floor, and requires beating the incumbent
-artifact rather than only the raw baseline.
-
-The two figures are the same result read two ways, and both belong here. The
-**+0.040** in the table is absolute explanatory power on a genuinely hard
-question. The **+0.115** is the improvement over the strongest freely available
-signal for that question. A model cannot ship here without earning the second
-one in advance, which is the claim worth making: not that the number is large,
-but that it is the first one that is honestly measured, independently gated, and
-better than what anyone can get for free.
-
-Getting that measurement right was most of the work. Three things had to be
-true before the number meant anything:
-
-- **The ship gate scores only the realtime slice.** It is structurally incapable
-  of reporting the 85% figure, because that figure is dominated by rows whose
-  answer is zero by definition.
-- **The floor is re-derived every run** from the incumbent's own measured
-  within-10 on the same rows. It was a hardcoded 29.2% until that constant was
-  traced back to a measurement taken *before* the clock-axis bug was fixed,
-  which made it a number no honest model could ever clear.
-- **The corpus was on the wrong clock.** Category peaks were landing at lunchtime
-  because 3,454,955 weekly rows were stored six hours off local time. Fixing it moved
-  restaurant, bar and nightclub peaks into 17:00–23:00 — 53 of 91 categories,
-  up from 2 — and only then did the weights get retrained on a corrected axis.
-
-`backend/scripts/ml/MODEL-METRICS.md` carries the full measurement, including
-the per-city breakdown and what the gate refused along the way.
-
-- Every number above is read from
-  `backend/scripts/ml/models/model_metadata.json`. Quote it, not this table —
-  and re-run the incumbent on the same holdout before claiming an improvement,
-  because the baselines have matured over time and old figures are not
-  comparable.
-- Venues the model doesn't know yet (no baseline, no popular-times signal)
-  are answered by the rule engine in `crowdEngine.js` instead of guessing.
+Venues the model does not know yet (no baseline, no popular-times signal) are
+answered by the rule engine in `crowdEngine.js` rather than guessed at, and
+tagged `predictionMethod: 'rule_engine'` so the client can tell the two apart.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
 > (11.4 MB) and `model_metadata.json` are Flock's own artifacts, built from
-> Flock's own collected data, and they are not published. If you are reading
-> this in a checkout that has them, you are in the deployment source Railway
-> builds from; nothing changes about the sentence for anyone else. Everything that produced them is
-> here: the collection scripts in `backend/scripts/ml/`, the training pipeline
-> in `backend/scripts/ml/train/`, and the runbook in
+> Flock's own collected data, and they are not published. Everything that
+> produced them is here: the collection scripts in `backend/scripts/ml/`, the
+> training pipeline in `backend/scripts/ml/train/`, and the runbook in
 > `backend/scripts/ml/RETRAIN.md`. See `backend/scripts/ml/models/README.md` for
 > how to train your own from your own data.
 >
 > With no artifact on disk, `mlPredictor.js` logs
 > `Model files not found — using rule engine` once at boot and every prediction
-> is answered by `crowdEngine.js`, tagged `predictionMethod: 'rule_engine'`. That
-> is a designed path, not a crash, but it does mean a clone of this repo serves
-> the rule engine and not the model. The ML test suites in `backend/__tests__/`
-> read the artifacts directly and will fail without them.
+> is answered by `crowdEngine.js`. That is a designed path, not a crash, but a
+> clone of this repo serves the rule engine and not the model, and the ML test
+> suites in `backend/__tests__/` read the artifacts directly and will fail
+> without them.
 
-The difference from busyness charts elsewhere: those measure who already
-showed up. Flock's venue votes also capture which venues groups are
-*considering* right now, which is the signal the venue side of the business
-is built on (see `MONEY-MODEL.md` and `VENUE-BILLING.md`).
+The difference from busyness charts elsewhere: those measure who already showed
+up. Flock's venue votes also capture which venues groups are *considering* right
+now, which is the signal the venue side of the business is built on.
 
 ## Stack
 
