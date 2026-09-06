@@ -127,6 +127,10 @@
 // being an accounting fact. If that is ever wanted it needs its own argument
 // about which ledger a cache hit belongs to, not an extra import.
 const { upstreamSignal } = require('../utils/upstream');
+// Outage detection for the SHARED details path. GetPlaceRequest was clamped
+// to 38/day alongside Text Search in the September outage, so this half of
+// Places can be just as dead while search looks fine.
+const { recordPlacesResult } = require('../utils/placesHealth');
 
 // The union of everything any consumer of a Place Details response reads. This
 // is routes/venueSearch.js's former DETAILS_FIELD_MASK unchanged; routes/crowd.js
@@ -223,7 +227,22 @@ function willCostUpstreamCall(placeId) {
 // <message>" and anything else with 500, while routes/crowd.js turned both into
 // null (and then a 502). Collapsing them here would have quietly changed one of
 // those, which is the kind of thing a "pure refactor" ships by accident.
+// HEALTH RECORDING, in one place rather than at all six of fetchOnceRaw's
+// exits. utils/placesHealth.js turns a RUN of failures into one alert a day;
+// this is the call site that feeds it for Place Details.
+//
+// 'unconfigured' is deliberately NOT recorded. That is OUR missing API key,
+// not Google refusing us, and counting it would fire the outage alarm on
+// every dev box that never set GOOGLE_PLACES_API_KEY.
 async function fetchOnce(placeId) {
+  const out = await fetchOnceRaw(placeId);
+  if (out.kind !== 'unconfigured') {
+    recordPlacesResult(out.ok === true, out.ok ? undefined : (out.message || out.kind));
+  }
+  return out;
+}
+
+async function fetchOnceRaw(placeId) {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return { ok: false, kind: 'unconfigured', message: 'Google Places API key not configured' };
 

@@ -129,20 +129,43 @@ test('every Places call site records an outcome', () => {
   const path = require('path');
   const root = path.join(__dirname, '..');
 
-  const PLACES_FETCHERS = ['routes/publicCrowd.js', 'routes/venueSearch.js'];
+  // Two shapes, because two shapes are correct. The route files record at each
+  // exit; services/placeDetailsCache.js has SIX exits and one caller, so it
+  // wraps its worker once and passes the boolean through. Both must record a
+  // success as well as a failure — a file that only ever reports failures would
+  // never clear the streak and the alarm would stick on forever.
+  const PLACES_FETCHERS = [
+    'routes/publicCrowd.js',
+    'routes/venueSearch.js',
+    'services/placeDetailsCache.js',
+  ];
   for (const rel of PLACES_FETCHERS) {
     const src = fs.readFileSync(path.join(root, rel), 'utf8');
     assert.ok(
-      src.includes("require('../utils/placesHealth')"),
+      /require\('\.\.\/utils\/placesHealth'\)/.test(src),
       `${rel} calls Google Places and must record outcomes`,
     );
+    const recordsSuccess = src.includes('recordPlacesResult(true)')
+      || /recordPlacesResult\(\s*out\.ok/.test(src);
     assert.ok(
-      src.includes('recordPlacesResult(true)'),
+      recordsSuccess,
       `${rel} must record SUCCESS too, or the streak never clears and the alarm sticks on`,
     );
-    assert.ok(
-      src.includes('recordPlacesResult(false'),
-      `${rel} must record failures`,
-    );
+    const recordsFailure = src.includes('recordPlacesResult(false')
+      || /recordPlacesResult\(\s*out\.ok/.test(src);
+    assert.ok(recordsFailure, `${rel} must record failures`);
   }
+});
+
+test('a missing API key is NOT an outage', () => {
+  // services/placeDetailsCache.js returns kind:'unconfigured' when
+  // GOOGLE_PLACES_API_KEY is unset, and deliberately does not record it. That
+  // is our own missing config, not Google refusing us, and counting it would
+  // fire this alarm on every dev box that never set the variable.
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'services', 'placeDetailsCache.js'), 'utf8',
+  );
+  assert.match(src, /kind !== 'unconfigured'/);
 });
