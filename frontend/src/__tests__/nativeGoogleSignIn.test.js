@@ -337,6 +337,32 @@ describe('the split is written once and the plugin stays out of the web bundle',
     }
   });
 
+  test('the Google provider is mounted on the auth screens, not at the root', () => {
+    // MOUNTING GoogleOAuthProvider IS WHAT FETCHES gsi/client. It used to wrap
+    // the whole app, so every launch pulled ~100 KB of third-party JavaScript,
+    // over a third-party DNS and TLS handshake, for a button a signed-in
+    // person never sees — and on iOS for a flow this very file proves cannot
+    // run in the WebView at all.
+    //
+    // It cannot be removed: useGoogleLogin is called unconditionally inside
+    // useGoogleAuth and all three screens use it. So the requirement is
+    // exactly this: present, and under the logged-out branch.
+    const app = SRC('App.js');
+
+    // The root component renders the motion providers and nothing Google.
+    const root = app.slice(app.indexOf('const FlockAppWithProviders'));
+    expect(root).toContain('<LazyMotion');
+    expect({ where: 'root', hasProvider: /<GoogleOAuthProvider/.test(root) })
+      .toEqual({ where: 'root', hasProvider: false });
+
+    // And it IS still mounted, inside the `if (!authUser)` branch, or the
+    // three screens above would throw on useGoogleLogin.
+    const loggedOut = app.slice(app.indexOf('  if (!authUser) {'),
+      app.indexOf('const FlockAppWithProviders'));
+    expect({ where: 'logged out', hasProvider: /<GoogleOAuthProvider/.test(loggedOut) })
+      .toEqual({ where: 'logged out', hasProvider: true });
+  });
+
   test('the detection matches the one Sign in with Apple already uses', () => {
     const apple = SRC('components', 'auth', 'AppleSignInButton.js');
     for (const probe of ['isNativePlatform', "getPlatform?.() === 'ios'"]) {
