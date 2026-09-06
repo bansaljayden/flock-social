@@ -193,13 +193,17 @@ class ThermalCounting(unittest.TestCase):
     def person(r0, c0, temp=34.0):
         """A warm blob the size a person plausibly is on THIS sensor.
 
-        Twenty by sixteen raw pixels, which at the default bin of 2 is 80
-        analysis cells. The 24x32 version of these tests used a 3x3 blob;
-        on a 160x120 grid a 3x3 blob is a speck, and that difference is the
-        whole reason THERMAL_MIN_CLUSTER had to move.
+        Twenty by sixteen raw pixels. At the bench-set bin of 4 that lands on
+        exactly 12 analysis cells, which is exactly THERMAL_MIN_CLUSTER, so
+        these fixtures sit ON the threshold rather than safely above it. That
+        is deliberate and pinned below: raise the minimum by one and every
+        count in this class drops to zero, which is the warning you want.
+        The 24x32 version of these tests used a 3x3 blob; on a 160x120 grid a
+        3x3 blob is a speck, and that difference is the whole reason
+        THERMAL_MIN_CLUSTER had to move.
 
         The size is derived from lens geometry, not measured against a body.
-        See count_thermal_clusters.
+        See count_thermal_clusters for what the bench did measure.
         """
         return (r0, c0, 20, 16, temp)
 
@@ -234,13 +238,53 @@ class ThermalCounting(unittest.TestCase):
         # this is ever back at 4, the device is counting noise as a crowd.
         self.assertGreater(main.THERMAL_MIN_CLUSTER, 4)
 
+    def test_the_bench_pair_is_still_the_bench_pair(self):
+        # These two are one setting in two variables. 12 cells is 48 raw pixels
+        # at bin 2 and 192 at bin 4, so moving either one silently redefines the
+        # other, and the 2026-09-06 bench only measured the pair (4, 12).
+        # Changing either means re-deriving both. See README.md, Calibration.
+        self.assertEqual((main.THERMAL_BIN, main.THERMAL_MIN_CLUSTER), (4, 12),
+                         'the thermal pair moved off the only combination anyone has measured')
+
+    def test_a_fragmenting_silhouette_is_one_person_at_the_default_bin(self):
+        # The bench, made executable: a bare head over a covered torso with a
+        # cool band between them. At bin 2 the band survives pooling and the
+        # person is counted twice, which is what a real body did at 3 ft. At
+        # bin 4 the band is averaged out and the count is 1.
+        f = self.frame(20.0, [(20, 20, 8, 16, 34.0), (29, 20, 20, 16, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(f, bin_size=2), 2,
+                         'bin 2 no longer fragments, so this fixture stopped reproducing the bench')
+        self.assertEqual(main.count_thermal_clusters(f), 1,
+                         'the default bin fragments one person into several again')
+
+    def test_a_partly_cropped_body_is_not_counted(self):
+        # The other half of the same bench: at 8 to 10 ft a full silhouette
+        # counts every time and a partial one at the frame edge does not. An
+        # eighth of the person fixture clears 12 cells at bin 2 and does not at
+        # bin 4, which is the 4x threshold shift in one assertion. Whether real
+        # doorway crossings are fully in frame is a mounting question, not a
+        # software one.
+        f = self.frame(20.0, [(20, 20, 8, 8, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(f, bin_size=2), 1)
+        self.assertEqual(main.count_thermal_clusters(f), 0,
+                         'a partial crop counts as a person, so the area threshold has softened')
+
     def test_two_warm_regions_touching_at_a_corner_are_one_cluster(self):
         # Eight-connectivity, where the coarse sensor used four. At this
         # resolution one person can break into pieces that touch diagonally
         # (bare head, covered torso), and four-connectivity would report them
         # as two people. UNVERIFIED against a real body: this pins the
-        # algorithm's behaviour, not its accuracy.
-        f = self.frame(20.0, [(10, 10, 20, 16, 34.0), (30, 26, 20, 16, 34.0)])
+        # algorithm behaviour, not its accuracy.
+        #
+        # The blobs moved when the default bin went 2 -> 4. They used to touch
+        # only on the 80x60 grid: at 40x30 the half-warm cells that joined them
+        # average below the cutoff and the same fixture reads 2. That is the bin
+        # change doing its job rather than a bug, and it is worth knowing that
+        # coarser pooling pulls regions apart as well as pushing them together.
+        # These coordinates touch diagonally on both grids, so the assertion
+        # below is about connectivity at either bin.
+        f = self.frame(20.0, [(10, 10, 20, 16, 34.0), (28, 24, 20, 16, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(f, bin_size=2), 1)
         self.assertEqual(main.count_thermal_clusters(f), 1)
 
     def test_a_short_frame_returns_zero_rather_than_raising(self):

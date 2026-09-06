@@ -101,13 +101,20 @@ DEFAULTS = {
     'THERMAL_MARGIN_C': '3.0',
     # Pixels are mean-pooled into bin x bin cells before counting, so the two
     # settings below are coupled: THERMAL_MIN_CLUSTER counts CELLS in that
-    # binned grid, not raw pixels. At the default bin of 2 the grid is 80x60
-    # and one cell is four pixels.
-    'THERMAL_BIN': '2',
-    # DERIVED, NOT MEASURED. See count_thermal_clusters and README.md,
-    # Calibration. A person fills hundreds of this sensor's pixels, not the
-    # nine they filled on the 24x32 part, so the old default of 4 counted
-    # sensor noise as a crowd.
+    # binned grid, not raw pixels. At bin 4 the grid is 40x30, one cell is
+    # sixteen pixels, and 12 cells is 192 of the sensor's 19,200.
+    #
+    # 4, not the 2 this shipped with. Bench 2026-09-06, PureThermal 3 and a
+    # Lepton 3.5 indoors, room median about 20C: at bin 2 one standing person
+    # at roughly 3 ft fragmented into 3 clusters, at bin 4 the same person
+    # reads 1. That is the bare-head-against-covered-torso failure predicted
+    # in count_thermal_clusters, seen for real.
+    'THERMAL_BIN': '4',
+    # 12 was derived from lens geometry at bin 2, where it meant 48 raw
+    # pixels. At bin 4 the same 12 means 192, so it now encodes a body-sized
+    # warm region rather than a head, and the bench above is what says that
+    # is the right thing for it to encode. See count_thermal_clusters and
+    # README.md, Calibration.
     'THERMAL_MIN_CLUSTER': '12',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
@@ -175,7 +182,7 @@ PUSH_INTERVAL = _cfg_number('PUSH_INTERVAL_SECONDS', int, 10, 3600, 30)
 THERMAL_DEVICE = (CONFIG.get('THERMAL_DEVICE') or DEFAULTS['THERMAL_DEVICE']).strip()
 THERMAL_THRESHOLD_C = _cfg_number('THERMAL_THRESHOLD_C', float, 0.0, 100.0, 28.0)
 THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
-THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 2)
+THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
@@ -772,22 +779,30 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
     median-relative margin does nearly all the work and THERMAL_THRESHOLD_C is
     closer to a floor than a real decision.
 
-    THIS IS NOT CALIBRATED. THERMAL_MIN_CLUSTER's default is derived, not
-    measured: a person at doorway range fills a few hundred of this sensor's
-    19,200 pixels rather than the nine or so they filled on a 24x32 grid, so
-    the old default of 4 would count sensor noise as a crowd. The derivation is
-    written out in README.md under Calibration. Two things it cannot predict,
-    and only a bench day can:
+    MEASURED ONCE, 2026-09-06, on a PureThermal 3 and a Lepton 3.5 indoors at
+    a room median near 20C. Both halves of what that established matter:
 
-      - a person whose torso is covered and whose head is bare can fragment
-        into two or three clusters at this resolution, where the coarse grid
-        blurred them into one. Eight-connectivity and the binning above reduce
-        that. Neither has been measured against a real body.
-      - the right minimum depends on how far the camera is from the doorway and
-        on which lens is on it, and nobody has put one on a wall yet.
+      - Fragmentation is real, and THERMAL_BIN is the lever for it. A person
+        whose torso is covered and whose head is bare does come apart at this
+        resolution: at bin 2 one person at about 3 ft read as 3 clusters. At
+        bin 4 the same person reads 1, and an empty room reads 0 at both.
+        Bin 4 is the default now.
+      - THERMAL_MIN_CLUSTER survived that change at 12 without retuning, and
+        it no longer means what its derivation said. 12 cells is 48 raw
+        pixels at bin 2 and 192 at bin 4. The lens arithmetic in README.md
+        cannot get 192 pixels out of a head past about 2 m, and a whole
+        standing body supplies it comfortably at 3 m, so the threshold now
+        encodes a body-sized warm region rather than a head.
 
-    Until a unit is calibrated in a real room, anything built on this number is
-    a relative activity signal.
+    That shows up as the one repeatable miss on the bench: at 8 to 10 ft a
+    full silhouette counts every time and a partially cropped one at the edge
+    of frame does not. This function counts warm AREA, and whether a person
+    crossing a real doorway is fully in frame is a mounting-angle question,
+    which is the thing to settle before a first venue install rather than
+    after it.
+
+    Still unmeasured: two people at once, and any distance past 10 ft. A count
+    that has never seen two bodies is not yet a headcount.
     """
     rows = THERMAL_ROWS if rows is None else rows
     cols = THERMAL_COLS if cols is None else cols
