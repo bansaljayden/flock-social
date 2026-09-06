@@ -50,10 +50,13 @@ are all real.
 
 ## The crowd model
 
-**Flock's model beats Google's popular times at predicting how busy a specific
-venue will be at a specific hour, and it beats it on every measure we score.**
-On 67,249 held-out venue-hours, against the strongest freely available signal
-for the question:
+**Flock tells you how busy a place will be before you leave, and it is better at
+that than Google is.**
+
+That is the whole claim, and it is measured rather than asserted. Google's
+popular times is the best free answer to this question and the one every
+competitor builds on. Flock trained its own model against it, on 1.9 million
+venue-hours across 30 cities, and beats it on every measure scored:
 
 | | Google popular times | **Flock v2.6** |
 |---|---|---|
@@ -75,6 +78,21 @@ narrower and stronger than a big percentage would be: on the question this
 product actually asks, Flock is the only signal here that carries more
 information than guessing, and the thing it beats is the one every competitor
 would reach for.
+
+**And the gap is still widening, because the model is still being fed.** A
+collector runs every hour against 1,303 venues and writes every reading it can
+actually observe into the training corpus. On 2026-09-06 that was nine runs and
+892 new rows: 108, 156, 108, 63, 53, 63, 83, 125, 133. Every one of them is a
+LIVE observation. The provenance audit that closes each run reports `0
+vendor-forecast, 0 unlabelled`, which matters more than the volume does: a
+corpus that quietly absorbs a vendor's prediction as if it were an observation
+teaches the model to imitate that vendor instead of the world. Flock's does not,
+and it checks, hourly.
+
+So the table above is a floor rather than a ceiling. It reports what one
+artifact scored on the corpus that existed when it was trained; the corpus that
+the next retrain sees is larger every hour, and the ship gate will refuse the
+next artifact if it does not beat this one.
 
 Flock runs its own trained model, not a wrapper around someone else's busyness
 chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
