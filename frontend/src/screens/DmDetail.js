@@ -73,7 +73,7 @@
 import React from 'react';
 import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
-import { groupReactions } from './ChatDetail';
+import { groupReactions, useStableFn } from './ChatDetail';
 import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 /* The keyboard lane, the same hook the flock thread calls. See the block at
@@ -743,6 +743,24 @@ export default function DmDetail({
     } else if (!dmReact(m.id, g.emoji, otherUser)) { addDmReaction(m.id, g.emoji).catch(() => showToast('Could not react. Try again.', 'error')); }
   };
 
+  /* THE SEVEN PROPS MessageList FORWARDS INTO A MEMOISED MessageRow.
+     Each keeps a fixed identity so the memo can actually reject a re-render,
+     while still running this render's closure. Declared here, after every body
+     they call, so nothing is referenced before it exists, and unconditionally
+     above the return so they are never called behind a branch.
+
+     Without them the memo boundary was decorative: dmDraft is state in this
+     component, so every character typed re-ran this body, handed MessageRow
+     seven new function identities, and reconciled the whole thread. */
+  const stableDmColour = useStableFn((run) => (run.isMine ? DM_OWN_COLOUR : DM_FRIEND_COLOUR));
+  const stableDmCard = useStableFn((m) => renderDmCard(m));
+  const stableDmStatus = useStableFn((m) => renderDmStatus(m));
+  const stableDmLoadOlder = useStableFn(() => loadOlderDms(selectedDmId, oldestServerId(dmSourceRows)));
+  const stableDmLongPress = useStableFn((m, detail) => openDmActions(m, detail));
+  const stableDmSwipeReply = useStableFn((m) => startDmReply(m));
+  const stableDmOpenImage = useStableFn((m) => openImageViewer(originalDmRow(m)));
+  const stableDmReactionTap = useStableFn((emoji, m) => toggleDmReaction(emoji, m));
+
   return currentScreen === 'dmDetail' && selectedDm && (
     /* The keyboard's committed height, spent once, on this column. The padding
        is what puts the bar and the bottom of the stream above the keys; the
@@ -1332,18 +1350,18 @@ export default function DmDetail({
            One fixed blue and not the group palette: a one to one thread has
            nobody to tell apart, and this is the colour the reference capture
            uses for whoever you are talking to. */
-        colourFor={(run) => (run.isMine ? DM_OWN_COLOUR : DM_FRIEND_COLOUR)}
-        renderCard={renderDmCard}
-        renderStatus={renderDmStatus}
+        colourFor={stableDmColour}
+        renderCard={stableDmCard}
+        renderStatus={stableDmStatus}
         /* Scrollback. The button and its Loading state are the module's; the
            condition behind atTop is this screen's, unchanged. */
-        onLoadOlder={() => loadOlderDms(selectedDmId, oldestServerId(dmSourceRows))}
+        onLoadOlder={stableDmLoadOlder}
         atTop={!dmCanLoadOlder}
         olderLoading={olderLoading}
-        onLongPress={openDmActions}
-        onSwipeReply={startDmReply}
-        onOpenImage={(m) => openImageViewer(originalDmRow(m))}
-        onReactionTap={toggleDmReaction}
+        onLongPress={stableDmLongPress}
+        onSwipeReply={stableDmSwipeReply}
+        onOpenImage={stableDmOpenImage}
+        onReactionTap={stableDmReactionTap}
         loadingState={dmMessagesLoading && selectedDm.messages.length === 0 ? (
           <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
         ) : null}
