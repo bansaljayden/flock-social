@@ -63,36 +63,63 @@ crowd readings, in three cities the model had never seen before:
 |---|---|---|
 | Gets the word exactly right | 22.9% | **25.5%** |
 | Right, or one word off | 57.7% | **62.0%** |
-| Typical miss, out of 100 | 31.5 | **29.4** |
+| Average miss, out of 100 (MAE) | 31.48 | **29.42** |
+| Within 10 points | 19.2% | **20.7%** |
+| Beats guessing the average? (R²) | no, −0.075 | **yes, +0.040** |
 
 Flock wins every row.
 
 **Is that good? Yes, and here is the honest version.** Guessing how full one bar
 will be at 9pm on one Friday is close to unsolved, and everyone measured on it
-scores low. Two things say Flock is at the front of it:
+scores low. Three things put Flock at the front of it.
 
-- The improvement over the typical-times chart is **6.5%**. The best published
-  result on this exact problem, from a 2023 ACM conference paper
-  ([BysGNN](https://arxiv.org/abs/2306.15927)) that uses the same kind of
-  baseline, improved on it by **4.3% to 6.7%**. Flock is at the top of that range.
-- The typical-times chart scores **worse than simply guessing the average**, on
-  these venues, at this level of detail. That is not a dig at Google; the
-  closest peer-reviewed study of the problem
-  ([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) finds
-  the same thing happening to its own model as soon as it predicts single
-  entrances rather than a whole site. Flock is the only signal here that beats
-  guessing.
+**It beats the alternative by a state-of-the-art margin.** The average miss drops
+from 31.48 to 29.42, a **6.5% reduction in MAE**. The best published result on
+this exact task, a 2023 ACM SIGSPATIAL paper
+([BysGNN](https://arxiv.org/abs/2306.15927)) that forecasts hourly
+point-of-interest visits and uses a baseline it describes as "similar to Google
+Maps' popular times graph", improved on that baseline by **4.34% to 6.71% MAE**.
+Flock's 6.5% sits at the top of that range.
 
-Every number above comes from cities the model never trained on, which is the
-harder test to pass.
+**It crosses zero, and the alternative does not.** R², the coefficient of
+determination, measures how much of the variation a model explains. Zero means
+it does no better than always guessing the average of the data; below zero means
+it does worse than that. The typical-times chart scores **−0.075** on these
+venues. Flock scores **+0.040**, an improvement of **R² +0.115** over the
+baseline it replaces. That is not a dig at Google: the closest peer-reviewed
+study of this problem
+([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) watches
+its own R² fall from 0.87 at an aggregated site to as low as **−1.26** the
+moment it predicts single entrances instead, and reports that fine-grained
+occupancy prediction often shows "a weak or non-existent relationship, as
+evidenced by R² values below zero". One venue at one hour is the hardest
+granularity this problem has, and Flock is the only signal here that is above
+zero at it.
+
+**And it could not have shipped otherwise.** The ship gate is four criteria
+fixed before the training run, and `mlPredictor.init()` refuses to load a model
+artifact that fails any of them. The first demands R² up ≥0.10 or MAE down ≥5
+against the baseline; v2.6 clears it at +0.115 and −2.06. The others forbid an
+MAE regression, set an absolute floor on the within-10 hit rate, and require
+beating the previous shipped model rather than only the raw baseline.
+
+Every number above is measured on the rows production actually serves, in three
+cities the model never trained on, which is the harder test to pass. The larger
+figures in `backend/scripts/ml/MODEL-METRICS.md` are real and deliberately not
+quoted here: four fifths of those rows are weekly anchors where the correct
+answer equals the baseline by construction, so any model scores well on them for
+free, and the ship gate is built to refuse that slice.
 
 **How it works.** `backend/services/mlPredictor.js` serves an XGBoost model
-(ONNX, **v2.6.0 "Starling"**) trained on **1.9 million venue-hours across 30
-cities** that Flock collected itself. It reads **106 features**: time patterns,
-weather, nearby events, holiday calendars, venue category and popularity,
-per-venue baselines, and user feedback. It predicts how far a venue will sit
-from its own normal for that hour, rather than guessing a number from nothing.
-`backend/scripts/ml/MODEL-METRICS.md` carries the full measurement.
+(gradient-boosted trees, exported to ONNX, **v2.6.0 "Starling"**) trained on
+**1.9 million venue-hours across 30 cities** that Flock collected itself. It
+reads **106 features**: time patterns, weather, nearby events, holiday
+calendars, venue category and popularity, per-venue baselines, and user
+feedback. It predicts a *delta*, how far a venue will sit from its own normal
+for that hour, rather than an absolute figure from nothing. Venues it has no
+baseline for are answered by the rule engine in `crowdEngine.js` instead and
+tagged `predictionMethod: 'rule_engine'`, so the client can always tell which
+answered.
 
 **The corpus is still growing.** A collector runs hourly against 1,365 venues
 and writes every reading it can observe. Each run closes with a provenance audit
