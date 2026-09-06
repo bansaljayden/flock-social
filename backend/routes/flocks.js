@@ -576,7 +576,12 @@ router.get('/', async (req, res) => {
               -- three faces where four visible members exist.
               (SELECT json_agg(row_to_json(m) ORDER BY m.is_creator DESC, m.id)
                  FROM (
-                   SELECT mu.id, mu.name, mu.profile_image_url, (mu.id = f.creator_id) AS is_creator
+                   SELECT mu.id, mu.name,
+                          -- Up to 4 per flock across up to FLOCK_LIST_LIMIT flocks, on
+                          -- the one request the first screen waits for. Same >12000
+                          -- guard routes/messages.js has carried all along.
+                          CASE WHEN LENGTH(mu.profile_image_url) > 12000 THEN NULL ELSE mu.profile_image_url END AS profile_image_url,
+                          (mu.id = f.creator_id) AS is_creator
                    FROM flock_members mfm
                    JOIN users mu ON mu.id = mfm.user_id AND mu.is_banned IS NOT TRUE
                    WHERE mfm.flock_id = f.id AND mfm.status = 'accepted'
@@ -1070,7 +1075,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     }
 
     const membersResult = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1
@@ -2940,7 +2945,7 @@ router.get('/:id/members', param('id').isInt({ min: 1, max: INT4_MAX }).withMess
     }
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, fm.status, fm.joined_at
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, fm.status, fm.joined_at
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1
