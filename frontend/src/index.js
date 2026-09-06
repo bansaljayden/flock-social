@@ -7,6 +7,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 // fallbacks below get their birds for free.
 import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
+import ConsentBanner from './components/ConsentBanner';
+import { hasAnalyticsConsent } from './services/analyticsConsent';
 
 // Bearer tokens ride in URLs in two places. Guest invites carry one in the
 // path (/i/<token>): anyone holding it can RSVP and vote as that guest. The
@@ -279,11 +281,30 @@ const analyticsEnabled = !!process.env.REACT_APP_POSTHOG_KEY && (
   || !isLocalAnalyticsOrigin(window.location, !!window.Capacitor)
 );
 
-if (analyticsEnabled) {
+/* NOTHING UNTIL SOMEBODY SAYS YES.
+   This used to run here, at module scope, on page load — before render, before
+   routing, and before any interaction. A first-time visitor to flockcorp.com, a
+   legal page, or a guest invite got a $pageview sent with their IP and a
+   distinct_id written to localStorage, unasked.
+
+   What Flock collects is unusually restrained (autocapture, session recording,
+   heatmaps, dead clicks, exception capture and surveys are all pinned off in
+   POSTHOG_PRIVACY_CONFIG above, and every event is scrubbed by before_send).
+   That is not the point: under ePrivacy Art. 5(3) the localStorage write itself
+   needs consent however small the payload, and legitimate interest is not a
+   substitute for it.
+
+   The config object is unchanged and is still handed to init verbatim, which
+   __tests__/analyticsPrivacy.test.js pins. Only the MOMENT moved. */
+export function startAnalytics() {
+  if (!analyticsEnabled || !hasAnalyticsConsent()) return;
   import('posthog-js').then(({ default: posthog }) => {
     posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
   }).catch(() => { /* analytics is never load-bearing */ });
 }
+
+// Already answered yes on a previous visit: start straight away, no banner.
+startAnalytics();
 
 // ---------------------------------------------------------------------------
 // WHERE ARE WE
@@ -826,6 +847,9 @@ if (page) {
   const { Loading } = page;
   root.render(
     <React.StrictMode>
+      {/* The ask, on every surface analytics can run on. Renders nothing
+          once answered, and declining is remembered. */}
+      <ConsentBanner onAnswer={startAnalytics} />
       {/* Outside Suspense on purpose: this also catches a chunk that 404s
           against a stale cached index.html after a deploy, which is a real
           production failure mode and, unhandled, is the same white screen as
@@ -849,6 +873,9 @@ if (page) {
     .then((m) => ({ default: m.PasswordResetPage })));
   root.render(
     <React.StrictMode>
+      {/* The ask, on every surface analytics can run on. Renders nothing
+          once answered, and declining is remembered. */}
+      <ConsentBanner onAnswer={startAnalytics} />
       <ErrorBoundary label="reset-password" fallback={pageErrorFallback}>
         <React.Suspense fallback={null}><PasswordResetPage /></React.Suspense>
       </ErrorBoundary>
@@ -883,6 +910,9 @@ if (page) {
 
   root.render(
     <React.StrictMode>
+      {/* The ask, on every surface analytics can run on. Renders nothing
+          once answered, and declining is remembered. */}
+      <ConsentBanner onAnswer={startAnalytics} />
       {/* ThemeProvider writes data-theme onto <html> and never removes it, and
           applyStoredTheme above set it before this first render, so the
           fallback paints in the user's theme even though it renders before
@@ -899,6 +929,9 @@ if (page) {
   // "no route matched AND the page that says so threw".
   root.render(
     <React.StrictMode>
+      {/* The ask, on every surface analytics can run on. Renders nothing
+          once answered, and declining is remembered. */}
+      <ConsentBanner onAnswer={startAnalytics} />
       <ErrorBoundary label="not-found" fallback={pageErrorFallback}>
         <NotFound />
       </ErrorBoundary>

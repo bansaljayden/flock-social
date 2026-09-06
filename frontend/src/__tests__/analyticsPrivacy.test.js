@@ -371,7 +371,17 @@ describe('isLocalAnalyticsOrigin', () => {
     const index = readSrc('index.js');
     expect(index).toMatch(/const analyticsEnabled = [\s\S]*?isLocalAnalyticsOrigin\(window\.location, !!window\.Capacitor\)/);
     expect(index).toMatch(/REACT_APP_POSTHOG_ALLOW_LOCAL === 'true'/);
-    expect(index).toMatch(/if \(analyticsEnabled\) \{\s*\n\s*import\('posthog-js'\)/);
+    /* THE GATE MOVED AND GREW A SECOND HALF. init used to run at module scope
+       inside `if (analyticsEnabled)`, on page load, before render and before
+       any interaction — so every anonymous visitor got a $pageview with their
+       IP and a distinct_id in localStorage, unasked. It now lives in
+       startAnalytics(), which returns early unless the origin check passes AND
+       the person has actually said yes. Unset is not consent. */
+    expect(index).toMatch(/export function startAnalytics\(\) \{/);
+    expect(index).toMatch(/if \(!analyticsEnabled \|\| !hasAnalyticsConsent\(\)\) return;/);
+    expect(index).toMatch(/import\('posthog-js'\)\.then\(\(\{ default: posthog \}\) => \{\s*\n\s*posthog\.init\(/);
+    // And nothing may start it back up at module scope without the check.
+    expect(index).not.toMatch(/if \(analyticsEnabled\) \{\s*\n\s*import\('posthog-js'\)/);
   });
 });
 
