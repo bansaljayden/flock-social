@@ -19,6 +19,10 @@ const {
   allowPlacesSearch, allowGlobalPlacesCall, placesRetryAfter, globalPlacesRetryAfter,
   PER_USER_HOURLY, GLOBAL_DAILY,
 } = require('../utils/placesBudget');
+// Free outage detection, counted beside the spend it cannot see: a refused
+// call costs nothing, so the money watch stays quiet through a total
+// outage. See utils/placesHealth.js.
+const { recordPlacesResult } = require('../utils/placesHealth');
 const {
   waitPhrase, refusalBody, retryAfterSeconds, resetsAtISO,
   msUntilUtcMidnight, msUntilUtcMonthStart,
@@ -887,6 +891,7 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     // is what any client keying off err.status still keys off.
     if (data && data.error) {
       console.error('Places API error:', data.error.status, data.error.message);
+      recordPlacesResult(false, `error body ${data.error.status || ''}`.trim());
       return { status: 502, error: UPSTREAM_SICK };
     }
 
@@ -914,6 +919,7 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     // would lose the status and message this file logs for an operator.
     if (httpStatus < 200 || httpStatus >= 300) {
       console.error('Places text search HTTP', httpStatus, 'with no error body');
+      recordPlacesResult(false, `HTTP ${httpStatus}`);
       return { status: 502, error: UPSTREAM_SICK };
     }
     // A 200 whose body is not an object at all, or whose `places` is present
@@ -921,6 +927,7 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     // and must stay a 200. Google omits the key rather than sending [].
     if (!data || typeof data !== 'object' || (data.places !== undefined && !Array.isArray(data.places))) {
       console.error('Places text search returned a body with no usable places list');
+      recordPlacesResult(false, 'malformed body');
       return { status: 502, error: UPSTREAM_SICK };
     }
 
@@ -951,6 +958,7 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
       };
     });
 
+    recordPlacesResult(true);
     const result = { venues, total: venues.length };
     setCache(cacheKey, result);
     return { status: 200, result };

@@ -1965,6 +1965,41 @@ async function runMoneyWatch() {
     });
   } catch (e) { console.error('[moneyWatch] places read failed:', e && e.message); }
 
+  // PLACES HEALTH — the leg that is NOT about money, and the reason it exists.
+  // Every other leg here watches a ceiling Flock spends its way into. This one
+  // watches the opposite failure: Google refusing us. A refused call costs
+  // nothing, so the places-global leg above barely moves during a total outage
+  // and would stay silent all the way through one.
+  //
+  // It did. Places answered 429 from 2026-09-01 to 2026-09-05, venue pins and
+  // photos were dead for five days, and the only detector was the maintainer noticing by
+  // eye. Railway's log carried "[PublicDemo] Places search failed: HTTP 429" the
+  // whole time, which is the point: the signal existed from hour one and nothing
+  // counted it.
+  //
+  // Deliberately NOT an active probe. Calling Places on a timer to see if it
+  // answers would cost about $1/month and was rejected for that reason. This
+  // costs nothing because it reads the outcomes of calls the app was already
+  // making. See utils/placesHealth.js for why "no successful calls" and "no
+  // calls at all" are different states and only one of them is an alarm.
+  try {
+    const h = require('./utils/placesHealth').placesHealthStatus();
+    if (h.unhealthy) {
+      const mins = Math.round(h.failingForMs / 60000);
+      const forPhrase = mins >= 120 ? `${Math.round(mins / 60)} hours`
+        : mins >= 1 ? `${mins} minutes` : 'less than a minute';
+      const why = h.reasons.length ? ` Google said: ${h.reasons.join(', ')}.` : '';
+      sayOnceToday('places-health', 'exhausted', h.day,
+        'GOOGLE PLACES IS FAILING. Venue search, venue photos, the crowd card and '
+        + 'the public demo are all degraded or blank. '
+        + `${h.consecutiveFailures} calls in a row have failed over the last ${forPhrase}.${why} `
+        + 'This is NOT a spend ceiling: check the Google Cloud console for the '
+        + 'project that owns GOOGLE_PLACES_API_KEY (billing, and the '
+        + 'SearchTextRequest per day quota).',
+        { consecutiveFailures: h.consecutiveFailures, failingForMs: h.failingForMs, reasons: h.reasons });
+    }
+  } catch (e) { console.error('[moneyWatch] places health read failed:', e && e.message); }
+
   // Vision. It already logs at its own thresholds; this adds the Sentry half
   // its inventory row asks for, and says out loud what exhaustion costs.
   try {
