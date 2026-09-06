@@ -612,6 +612,7 @@ export default function ChatDetail({
   loadFlockVotes,
   openBirdie,
   votesError,
+  votesLoading,
   pendingImage,
   popularVenues,
   profilePic, // unused: the 34px own-avatar beside every own message
@@ -3172,6 +3173,16 @@ export default function ChatDetail({
                         </div>
                       );
                     })}
+                  </div>
+                ) : votesLoading ? (
+                  /* NOT AN EMPTY STATE UNTIL THE DATA ARRIVES. Between opening
+                     a flock and its tally landing, this rendered "No votes yet.
+                     Be the first to suggest a venue!" over votes that already
+                     existed — a claim about the user's data made before the
+                     data was known, which is what ListSkeleton's header in
+                     App.js forbids. */
+                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }} aria-busy="true">
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Loading the votes…</p>
                   </div>
                 ) : votesError ? (
                   <div role="alert" style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
