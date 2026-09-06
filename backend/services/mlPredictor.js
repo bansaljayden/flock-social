@@ -386,6 +386,97 @@ function cacheEvents(key, data) {
 const baselineCache = new Map();
 const BASELINE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (static data)
 
+// ---------------------------------------------------------------------------
+// THE PER-VENUE TRAILING DEVIATION OFFSET.
+// ---------------------------------------------------------------------------
+// One number per venue: the median of (observed - that venue's own curve) over
+// its most recent live readings, precomputed nightly by
+// scripts/ml/buildRecentDeviation.js into ml_venue_recent_deviation.
+//
+// It exists because the model's one measured weakness is how a SPECIFIC venue
+// departs from its OWN pattern, which is not a generalisable rule and is
+// learned only by watching that place. On the 8,895 provenance-verified live
+// September rows production serves, adding it to the curve moved MAE 25.90 to
+// 24.53, within-10 32.8% to 35.7% and band-exact 32.1% to 38.0%, improving
+// band-exact on 5 of 5 days and in both cities independently.
+//
+// Five minutes, not 24 hours, unlike the baseline cache above. A baseline is
+// static; this tracks a level that moves, and the whole reason a TRAILING
+// window beats the static per-venue intercept (which measured HARM at depth
+// >= 50) is that it does not average across drift. Caching it for a day would
+// reintroduce exactly the staleness the design exists to avoid.
+const deviationCache = new Map();
+const DEVIATION_CACHE_TTL = 5 * 60 * 1000;
+
+// HALF, and the half is measured rather than cautious. At w=1.0 the gate slice
+// shows within-10 +4.3pp but MAE +0.289 with a confidence interval that crosses
+// zero; at w=0.5 all three of MAE, within-10 and band-exact move the right way
+// with every interval excluding zero. w=0.5 is the weight that clears the bar
+// every refuted candidate failed, so it is the weight that ships.
+const DEVIATION_WEIGHT = 0.5;
+
+// One reading is an anecdote. Two is the smallest number from which a median
+// means anything, and it is where the measured depth table starts gaining.
+const DEVIATION_MIN_READINGS = 2;
+
+// If the builder has not run in a week, the offset describes a level the venue
+// may have left. Refusing is free: the prediction falls back to exactly what it
+// published before this feature existed.
+const DEVIATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A GUARD I ADDED, and it is not part of what was measured, so it is written
+// down as mine. A median over two readings can be extreme, and an unbounded
+// correction added to a 0-100 score could dominate the model entirely. +/-30
+// is wide enough that it binds on almost nothing (the measured offsets run far
+// inside it) and narrow enough that one strange pair of nights cannot take the
+// card over. If it ever binds often, that is a signal the window is wrong, so
+// it is counted rather than silently applied.
+const DEVIATION_CLAMP = 30;
+
+/**
+ * The venue's recent deviation, or null when there is nothing usable.
+ *
+ * Never throws: a failure here must degrade to the number this function did not
+ * exist to change, not take a prediction down with it.
+ */
+async function getRecentDeviation(placeId) {
+  if (!pool || !placeId) return null;
+
+  const cached = deviationCache.get(placeId);
+  if (cached && Date.now() - cached.ts < DEVIATION_CACHE_TTL) return cached.data;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT offset_pct, n_readings, updated_at
+         FROM ml_venue_recent_deviation
+        WHERE google_place_id = $1`,
+      [placeId]
+    );
+    const row = rows[0];
+    let data = null;
+    if (row
+      && Number.isFinite(Number(row.offset_pct))
+      && Number(row.n_readings) >= DEVIATION_MIN_READINGS
+      && row.updated_at
+      && Date.now() - new Date(row.updated_at).getTime() < DEVIATION_MAX_AGE_MS) {
+      const raw = Number(row.offset_pct);
+      data = {
+        offset: Math.max(-DEVIATION_CLAMP, Math.min(DEVIATION_CLAMP, raw)),
+        clamped: Math.abs(raw) > DEVIATION_CLAMP,
+        readings: Number(row.n_readings),
+      };
+    }
+    boundedSet(deviationCache, placeId, { data, ts: Date.now() });
+    return data;
+  } catch (err) {
+    // A missing table is the expected state before migration 070 has run
+    // anywhere, and it must not be an error condition.
+    console.error('[MLPredictor] Recent-deviation lookup failed:', err.message);
+    boundedSet(deviationCache, placeId, { data: null, ts: Date.now() });
+    return null;
+  }
+}
+
 // User feedback cache: key = venue_place_id → { data, ts }
 const feedbackCache = new Map();
 const FEEDBACK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -3330,6 +3421,33 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       qmapApplied = true;
     }
 
+    // THE PER-VENUE TRAILING OFFSET, applied last and before the word.
+    //
+    // After the reconstruction and after the quantile map, because it is a
+    // correction to the PUBLISHED number and that is the number it was measured
+    // against. Before getLabel, for the same reason the qmap is: the band must
+    // never describe a different figure than the one on the card.
+    //
+    // Everything about it is past-only. It is a median over readings that
+    // already happened, taken from a table this request does not write, so
+    // there is no path by which tonight informs tonight's own prediction.
+    let deviationApplied = null;
+    const devPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
+    if (devPlaceId) {
+      const dev = await getRecentDeviation(devPlaceId);
+      if (dev) {
+        const before = score;
+        score = Math.max(0, Math.min(100, Math.round(score + DEVIATION_WEIGHT * dev.offset)));
+        deviationApplied = {
+          offset: dev.offset,
+          weight: DEVIATION_WEIGHT,
+          readings: dev.readings,
+          moved: score - before,
+          clamped: dev.clamped,
+        };
+      }
+    }
+
     const label = getLabel(score);
 
     // THE CONFIDENCE FIGURE, AND WHAT IT IS ALLOWED TO CLAIM.
@@ -3483,6 +3601,20 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // decide what a `false` on a pre-flag response would have meant. Internal
       // to the serve path; routes strip it, same as baselineScore.
       scoreCalibration: qmapApplied ? 'score_qmap_v26' : null,
+      // The per-venue trailing offset, if one was applied. Null when the venue
+      // has no usable recent history, which today is most of them: of 268
+      // served place ids only 73 carry the two readings the floor requires.
+      // Reported rather than hidden for the same reason predictionMethod is: a
+      // correction nobody can see is a correction nobody can debug, and this
+      // one moves the published number.
+      //
+      // It does not reach a client today, and by a stronger mechanism than
+      // baselineScore's: routes/crowd.js builds its response by NAMING the
+      // fields it wants off this object rather than spreading it, so a new key
+      // here is invisible until somebody adds it there on purpose. Keep it that
+      // way. A per-venue offset published to clients is an invitation to
+      // re-derive the venue's private level from the difference.
+      recentDeviation: deviationApplied,
     };
 
     // Add event alert when large event nearby
