@@ -98,6 +98,25 @@ Crossing zero is the part that matters: v2.6 is the first version whose
 predictions carry more information than the mean of the data. Both margins are
 small and both are real, measured on identical rows with identical features.
 
+**Against the baseline it replaces, on the rows production actually serves, the
+margin is R² +0.115.** That is the number the ship gate is written against, and
+the gate was set before the run, not after it: four criteria, all of which must
+hold, and `mlPredictor.init()` refuses to load an artifact that fails any of
+them. The first criterion demands **R² up ≥0.10 or MAE down ≥5** against
+popular-times; v2.6 clears it at +0.115 and −2.06. The others exist because an
+earlier version squeaked through on one arm. v2.5 passed while *failing* the MAE
+arm by 2.7 points and clearing R² by 0.0026, so the gate now also forbids an MAE
+regression, sets an absolute within-10 floor, and requires beating the incumbent
+artifact rather than only the raw baseline.
+
+The two figures are the same result read two ways, and both belong here. The
+**+0.040** in the table is absolute explanatory power on a genuinely hard
+question. The **+0.115** is the improvement over the strongest freely available
+signal for that question. A model cannot ship here without earning the second
+one in advance, which is the claim worth making: not that the number is large,
+but that it is the first one that is honestly measured, independently gated, and
+better than what anyone can get for free.
+
 Getting that measurement right was most of the work. Three things had to be
 true before the number meant anything:
 
