@@ -1027,6 +1027,19 @@ The armed sequence, in order, once the maintainer says go on BestTime:
 
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 
+> **The cadence in this section is historical. Corrected 2026-09-06.** It runs
+> HOURLY now, cron `7 * * * *`, verified against the Railway service config on
+> that date, with the start command carrying
+> `--holdout-city=miami --holdout-utc-hours=15,23`. Everything below was
+> written for the nightly slot and is kept as the record of it, so read
+> "nightly" as "at the time of the audit" wherever it appears. The change had a
+> cost nobody noticed for days: `services/collectionHeartbeat.js` kept a
+> healthy-row floor of 200 that had been sized for one nightly run, against a
+> measured 3,779 rows per window under the hourly one, so a collector down to
+> 6% of its yield still reported healthy. Fixed the same day, along with a
+> second floor on how many distinct hours the rows landed across, because a
+> cron that stops firing keeps a passing row count for most of a day.
+
 The nightly pull runs on Railway service BESTTIME (project trustworthy-spirit,
 `node scripts/ml/collectRealtime.js`, cron `0 2 * * *`, restart NEVER). An
 audit hours before its first real run found two faults that would have wasted
@@ -1069,13 +1082,20 @@ readings in the corpus, a same-day-of-week rule would have dropped 29 of them,
 week-wide with no padding 18, `+/-1` seven, and `+/-2` none.
 
 What it buys, measured against production on 2026-09-03 for the 1,414-venue PA
-selection: at the CURRENT `0 2 * * *` slot (22:00 local) only about 15% of the
-calls go away, because at 10 PM almost everything is open. The saving is in the
-hours the cron does not use yet: 50% of the sweep goes away at 04:00 UTC, 78% at
-08:00 UTC, 69% at 10:00 UTC and 49% at 12:00 UTC. Adding a morning occurrence
-in that window now costs roughly a quarter of a sweep rather than a whole one,
-which is the point of it. Over a full 24 hours the average sweep is 993 calls
-instead of 1,414, so 70% of the old cost.
+selection: at the then-current `0 2 * * *` slot (22:00 local) only about 15% of
+the calls go away, because at 10 PM almost everything is open. The saving is in
+the hours that slot never reached: 50% of the sweep goes away at 04:00 UTC, 78%
+at 08:00 UTC, 69% at 10:00 UTC and 49% at 12:00 UTC. Adding a morning occurrence
+in that window costs roughly a quarter of a sweep rather than a whole one, which
+is the point of it. Over a full 24 hours the average sweep is 993 calls instead
+of 1,414, so 70% of the old cost.
+
+That last figure stopped being a projection on 2026-09-06. The cron is hourly
+now, so every one of those cheap hours is being used, and the measured result is
+the one this paragraph predicted: 3,779 rows landed in the trailing 26 hours
+spread across all 26 of them, per-hour mean 140, against roughly 1,400 rows a
+day under the nightly slot. The open-hours filter is what makes that affordable,
+and the corpus rate it produced is what exposed the stale heartbeat floor.
 
 Two residuals worth knowing rather than fixing tonight. A refusal (over the
 ceiling, or zero venues selected) exits 0, so Railway reports SUCCESS and
