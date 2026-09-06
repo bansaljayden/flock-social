@@ -28,12 +28,41 @@ const path = require('node:path');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'routes', 'budget.js'), 'utf8');
 
-test('the settle push fans out with Promise.allSettled, once, and it is the Budget set push', () => {
-  assert.strictEqual((SRC.match(/Promise\.allSettled/g) || []).length, 1,
-    'the one fan-out in this file is the budget-settle push');
-  const at = SRC.indexOf('Promise.allSettled');
-  assert.ok(SRC.slice(at, at + 400).includes("type: 'budget_ready'"),
-    'the allSettled block is the Budget set push, not some unrelated fan-out');
+test('every push fan-out in this file is allSettled, and each one is the push it should be', () => {
+  // COUNTING WAS THE WRONG ASSERTION. This asserted there was exactly ONE
+  // Promise.allSettled, which fails the moment a SECOND correct fan-out is
+  // added and would still pass if somebody swapped the settle push for an
+  // unrelated one. There are two now, both deliberate: the budget-settle push,
+  // and the "Remind everyone" push, which stopped awaiting one Firebase
+  // delivery per member in front of its own response. So each is located by
+  // the push it actually sends.
+  const offsets = [];
+  for (let i = SRC.indexOf('Promise.allSettled'); i !== -1; i = SRC.indexOf('Promise.allSettled', i + 1)) {
+    offsets.push(i);
+  }
+  assert.strictEqual(offsets.length, 2, 'the settle fan-out and the reminder fan-out');
+
+  const types = offsets.map((at) => {
+    const block = SRC.slice(at, at + 400);
+    if (block.includes("type: 'budget_ready'")) return 'budget_ready';
+    if (block.includes("type: 'budget_reminder'")) return 'budget_reminder';
+    return 'unknown';
+  });
+  assert.ok(types.includes('budget_ready'), 'the settle push still fans out with allSettled');
+  assert.ok(types.includes('budget_reminder'), 'the reminder push fans out with allSettled too');
+  assert.ok(!types.includes('unknown'), 'no unidentified fan-out crept into this file');
+});
+
+test('the reminder pushes run after its response, not in front of the button', () => {
+  // It used to `await pushAlways(...)` once per outstanding member, serially,
+  // with res.json below the loop: roughly four DB round trips plus one FCM
+  // call each, and firebaseService caps a single send at eight seconds.
+  const iResponse = SRC.indexOf('reminded: missingResult.rows.length');
+  const iFanOut = SRC.indexOf("type: 'budget_reminder'");
+  assert.ok(iResponse > -1 && iFanOut > -1, 'both markers are present');
+  assert.ok(iFanOut > iResponse, 'the reminder fans out after the response has gone');
+  assert.ok(/if \(!res\.headersSent\) res\.status\(500\)/.test(SRC),
+    'and the catch cannot answer a response that has already been sent');
 });
 
 test('the fan-out runs AFTER res.json, so a delivery failure cannot unwind a settled budget', () => {
