@@ -252,7 +252,11 @@ test('the flock roster withholds a blocked member without shrinking the head cou
 
 test('the members list applies the same rule', async () => {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] }));
-  on(/SELECT u\.id, u\.name, u\.profile_image_url, fm\.status/, () => ({ rows: ROSTER }));
+  // Matches the SHAPE, not the spelling. The avatar column is wrapped in the
+  // >12000 base64 guard now (the same one routes/messages.js has always
+  // carried), so a matcher pinned to the bare column name stopped matching
+  // and every roster read fell through to "unscripted query" and a 500.
+  on(/SELECT u\.id, u\.name,[\s\S]*?profile_image_url[\s\S]*?fm\.status/, () => ({ rows: ROSTER }));
   on(/FROM guest_rsvps/, () => ({ rows: [] }));
   on(INVISIBLE_IDS, () => ({ rows: [{ id: 3 }] }));
 

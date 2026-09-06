@@ -600,7 +600,7 @@ router.post('/accept',
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, f.created_at AS friends_since
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, f.created_at AS friends_since
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
        WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.status = 'accepted'
@@ -633,7 +633,7 @@ router.get('/', async (req, res) => {
 router.get('/pending', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, f.created_at
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, f.created_at
        FROM friendships f
        JOIN users u ON u.id = f.requester_id
        WHERE f.addressee_id = $1 AND f.status = 'pending'
@@ -739,7 +739,7 @@ router.get('/outgoing', async (req, res) => {
       // keeps the row precisely so the requester is not told they were turned
       // down, and this read was dropping it instead, so the request silently
       // vanished from Sent Requests. Vanishing is its own disclosure.
-      `SELECT u.id, u.name, u.profile_image_url, f.created_at
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, f.created_at
        FROM friendships f
        JOIN users u ON u.id = f.addressee_id
        WHERE f.requester_id = $1 AND f.status IN ('pending', 'declined')

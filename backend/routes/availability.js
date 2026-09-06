@@ -321,7 +321,7 @@ router.get('/friends', async (req, res) => {
     // has anything to do; they are here so that a block which coexists with a
     // friendship still reads as a block rather than as a friend.
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url,
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url,
               ap.status, ap.note, ap.set_at, ap.expires_at
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END

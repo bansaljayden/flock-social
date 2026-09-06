@@ -430,7 +430,7 @@ const BLOCK_LIST_LIMIT = 500;
 router.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT b.blocked_id AS user_id, u.name, u.profile_image_url, b.created_at
+      `SELECT b.blocked_id AS user_id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, b.created_at
        FROM user_blocks b JOIN users u ON u.id = b.blocked_id
        WHERE b.blocker_id = $1
        ORDER BY b.created_at DESC
