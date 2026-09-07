@@ -65,34 +65,8 @@ const APP_STORE_LIVE = false;
 const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
 
 /* ── SWITCH 2 OF 2: THE GITHUB BUTTON ───────────────────────────────────────
-   OFF, and this one is a decision waiting on the maintainer rather than a date on a
-   calendar.
-
-   Flock has two repositories. `bansaljayden/Flock-app-` is the private one
-   everything is pushed to. `bansaljayden/flock-social` was the repository,
-   the one built to be read by anyone evaluating the project, and it was made
-   PRIVATE and its push-publishing deliberately switched off. So there is no
-   repository today, and a GitHub button on this page would hand a judge
-   either a 404 or a GitHub login wall. Both are worse than no button: the
-   button promises "the code is open, go look", and the page then fails to
-   deliver in front of the person scoring him.
-
-   To turn this on, one of two things has to happen first, and both are
-   the maintainer's calls, not a code change:
-     1. publish a repository again (that is what tools/publish/
-        repository maintenance exists for, and it must not be run on his behalf),
-        then set the URL below to whatever it ends up being, or
-     2. decide the source stays private, in which case delete this constant,
-        the URL, the button and the icon rather than leaving a dead switch
-        sitting in the file.
-   Do not flip this to true and hope. Open the URL in a private window first.
-
-   2026-08-25: condition 1 is met. The old mirror was deleted because a real
-   reused password had reached its history inside a seed file, and a fresh
-   repository was published in its place with that literal redacted from
-   all 998 commits and the full timeline from 2026-01-18 preserved. Verified
-   unauthenticated before flipping: the repository page and the raw README both
-   answer 200 with no login wall. */
+   Verify that the repository is accessible without authentication
+   before enabling this link. */
 const GITHUB_LIVE = true;
 const GITHUB_URL = 'https://github.com/bansaljayden/flock-social';
 

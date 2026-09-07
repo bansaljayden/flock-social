@@ -200,9 +200,7 @@ backend/scripts/ml/train/*
 !backend/scripts/ml/train/*.sh
 !backend/scripts/ml/train/requirements.txt
 
-# Strategy notes that stay private. The repository is generated from this
-# repo, so anything not ignored here reaches it -- these are the working
-# documents where a decision is argued rather than announced.
+# Private strategy notes excluded from version control and any repository copy.
 PAYMENTS-ROUTING.md
 VENUE-ADVISOR.md
 MODEL-EPOCH-FINDING.md
