@@ -168,7 +168,7 @@ flock-app/
 ├── backend/           # Express API + Socket.io + ML predictor
 │   └── scripts/ml/    # Data collection + training pipeline (trained model not distributed)
 ├── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
-└── tools/             # repository maintenance (the repository) + the ASC upload helper
+└── tools/             # filtered-export and ASC upload helpers
 ```
 
 An abandoned React Native port lived in `mobile/` until 2026-08-18 and was
