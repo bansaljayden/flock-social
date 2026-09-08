@@ -177,9 +177,19 @@ describe('A9 / A10: the Discover location controls answer the tap', () => {
     // A denied permission answers in one frame, so a retry that sets the
     // identical sentence looks like nothing happened. The forceRefresh path
     // inside requestUserLocation gets its own words.
-    const geo = between(APP, 'const requestUserLocation = useCallback', '[loadVenuesAtLocation]', 400, 4000);
+    const geo = between(APP, 'const requestUserLocation = useCallback', '[loadVenuesAtLocation, browseVenuesAt]', 400, 5000);
     expect(geo).toContain('forceRefresh');
-    expect(geo).toContain('Location is still off.');
+    // The sentence gained "so this is Philadelphia, not you" when the empty
+    // fallback view became a real city, so the assertion stops at the part
+    // that carries the meaning: a second refusal is worded as a second one.
+    expect(geo).toContain('Location is still off');
+    // The point of A9 stated directly, so a future reword cannot make the two
+    // sentences identical again while still containing the phrase above.
+    const first = geo.match(/'Location is off[^']*'/);
+    const again = geo.match(/'Location is still off[^']*'/);
+    expect(first).toBeTruthy();
+    expect(again).toBeTruthy();
+    expect(first[0]).not.toEqual(again[0]);
   });
 
   it('A10: Turn on that the device refuses leaves a sentence, not silence', () => {
