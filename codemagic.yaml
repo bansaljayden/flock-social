@@ -626,11 +626,23 @@ workflows:
           open('/tmp/flock-review-photo.png','wb').write(png)
           PY
           xcrun simctl addmedia "$UDID" /tmp/flock-review-photo.png
-          # A Simulator has no location fix until one is set. Without this the
-          # location dialog still appears (that is the shot), but the vote
-          # panel's "Popular Chains Nearby" list, which is fed by the granted
-          # location, would stay empty. Center City Philadelphia.
-          xcrun simctl location "$UDID" set 39.9526,-75.1652 || true
+          # A Simulator has no location fix until one is set, and it hands out
+          # no fix at all until the app is authorized. Both halves are needed
+          # and build 40 proved it: the location was set here, the app was left
+          # to ask for itself, no prompt was ever drawn, and CoreLocation
+          # simply never answered. Discover sat on "Finding where you are" and
+          # the vote panel's nearby list -- which is fed by that location --
+          # stayed empty, which is where the person flow died.
+          #
+          # The grant is what makes the fix reach the app; `location set` is
+          # what makes there be a fix. Center City Philadelphia, the same
+          # coordinate the app falls back to when it has nothing, so the
+          # footage matches what a viewer would see.
+          #
+          # Errors are shown rather than swallowed. `|| true` on the set kept
+          # the build green through exactly the failure that mattered.
+          xcrun simctl privacy "$UDID" grant location com.flockcorp.flock             || echo "location grant failed; the app will have to ask on camera"
+          xcrun simctl location "$UDID" set 39.9526,-75.1652             || echo "location set FAILED; nearby lists will be empty in this take"
           xcrun simctl install "$UDID" ios/output/Build/Products/Debug-iphonesimulator/App.app
           # Contacts is authorized up front. Run 14 (2026-09-02) left every
           # permission unset: the location prompt appeared and was accepted on
