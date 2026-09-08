@@ -78,6 +78,12 @@ appId: com.flockcorp.flock
           start: 50%, 75%
           end: 50%, 35%
       - waitForAnimationToEnd
+      # AGAIN, as late as possible. ConsentBanner renders synchronously from
+      # index.js so the call above should already have caught it, but the bar
+      # is the one thing known to sit on top of this exact button and a second
+      # guarded call costs nothing when it is already answered.
+      - runFlow:
+          file: dismiss-consent.yaml
       # Leaves a line in the debug log naming what the swipe revealed. The
       # button carries its label as an accessibility label and NOT as text
       # (hierarchy at build 34: accessibilityText=Sign in, text=None), which is

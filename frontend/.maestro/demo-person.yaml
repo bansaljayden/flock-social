@@ -112,9 +112,16 @@ appId: com.flockcorp.flock
 - runFlow:
     file: parts/open-chat.yaml
 
-- tapOn: "Features"                             # ChatDetail.js:533
+# THE HEADER RAIL IS GONE AND "Features" NEVER EXISTED HERE. ChatDetail.js:577
+# says it plainly: `chatNavOpen, // unused: the header rail it opened is gone;
+# the plus holds those five`. The five tiles moved into ComposerPlusSheet, which
+# the composer's plus button opens (ChatInputBar.js:475, aria-label
+# "More to send"). There is an aria-label="Features" in App.js:15681, but that is
+# the DISCOVER header, not this screen, which is how the wrong selector looked
+# right in a grep. A required tap on it would have ended the run here.
+- tapOn: "More to send"                         # ChatInputBar.js:475 -> setPlusOpen(true)
 - tapOn:
-    text: "Vote on a venue"                     # ChatDetail.js:528 aria-label
+    text: "Vote on a venue"                     # ComposerPlusSheet.js:96/108 tile label
 - extendedWaitUntil:
     visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
     timeout: 20000
@@ -155,7 +162,7 @@ appId: com.flockcorp.flock
       notVisible: "Group Budget|Split the Bill"
     commands:
       - tapOn:
-          text: "Features"
+          text: "More to send"                  # ChatInputBar.js:475, not "Features"
           optional: true
       - tapOn:
           text: ".*[Cc]ash pool.*"
