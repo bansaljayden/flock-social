@@ -152,6 +152,28 @@ appId: com.flockcorp.flock
 - tapOn: "More to send"                         # ChatInputBar.js:475 -> setPlusOpen(true)
 - tapOn:
     text: "Vote on a venue"                     # ComposerPlusSheet.js:96/108 tile label
+    optional: true
+# THE SECOND DOOR TO THE SAME PANEL, because a tap that lands on nothing still
+# reports COMPLETED. Build 39 died here with the composer sitting UNDER the
+# keyboard: the plus was at y=796, the keyboard began at y=539, and Maestro
+# taps coordinates without knowing what is over them. The composer bug itself
+# is fixed (useKeyboardComposer binds its listeners before it turns WebView
+# resizing off, and measures the rise that fix reveals), so the tile above is
+# the path this normally takes and the path the video shows.
+#
+# This stays anyway. It is keyed on the PANEL rather than on the tile, which is
+# the only honest test: an element in the hierarchy proves nothing about what
+# is drawn over it, and `visible` cannot tell the difference. The empty state's
+# own button calls setShowVotePanel(true) and loadPopularVenues() -- the same
+# two things the tile does (ChatDetail.js:1996) -- so recovery lands in exactly
+# the same place with no seam in the footage.
+- runFlow:
+    when:
+      notVisible: "Vote for a Venue"
+    commands:
+      - tapOn:
+          text: "Suggest a place"               # ChatDetail.js:1997 empty state
+          optional: true
 - extendedWaitUntil:
     visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
     timeout: 20000

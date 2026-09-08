@@ -72,10 +72,19 @@ appId: com.flockcorp.flock
 # (App.js:14156). Build 38's venue flow signed in perfectly as review-b and
 # then failed its wait for "Nest" because Nest sits behind this screen. Guarded,
 # so a plain user passes straight through.
+#
+# AND IT PICKS THE PERSON SIDE, NOT THE DASHBOARD. Build 39 chose "Venue
+# Dashboard" here and failed the same wait for a second reason: the chooser had
+# already taken the account where shot 1 was supposed to walk it. Shot 1 is the
+# crossover -- the same login going from Nest, through You, into the dashboard
+# -- and it is the shot that shows a judge the two halves are one app. Landing
+# on the dashboard directly deletes it. The button's accessible text is the
+# logo's alt, the heading and the chevron run together, hence the wildcards
+# (App.js:14275).
 - runFlow:
     file: parts/choose-mode.yaml
     env:
-      MODE: '[\s\S]*Venue Dashboard[\s\S]*'
+      MODE: '[\s\S]*I''m Going Out[\s\S]*'
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 30000
