@@ -174,6 +174,24 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: '[\s\S]*You voted for[\s\S]*'
     timeout: 20000
+# LOCK THE PLAN IN. Two reasons, and the second one is the one that would have
+# quietly cost beat 8.
+#
+# It is a real step in the story: the vote decides the venue and somebody has
+# to commit to it. The button only renders for the creator and only while the
+# plan is open (`isCreator && !planLocked`, ChatDetail.js:3242), and the demo
+# account created this flock, so it is here.
+#
+# And it is what makes the bill split reachable at all. ChatDetail.js:2937
+# wraps the first "Split the Bill" button in `isConfirmedOrComplete`, and the
+# second in `!hasBudget` -- which is FALSE here, because creation turned the
+# budget on. So with the budget enabled and the flock still in `voting`,
+# NEITHER bill-split button exists, and the tap further down would have missed
+# silently and dropped beat 8 from the footage without failing the run.
+- tapOn:
+    text: "Confirm|Lock it in"                  # ChatDetail.js:3243
+    index: 0
+- waitForAnimationToEnd
 - tapOn:
     text: "Close"                               # ChatDetail.js:1730 aria-label
 
