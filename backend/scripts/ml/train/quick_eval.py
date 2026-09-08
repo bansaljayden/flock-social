@@ -105,6 +105,29 @@ def metrics(y_true, y_pred):
         # rather than earned it. Nothing gates on this and nothing should; it is
         # here so the number cannot be quoted without its caveat visible.
         'on_grid_pct': round(float(np.mean(np.mod(np.round(y_pred), 5) == 0) * 100), 1),
+        # AND THE COMPANION THAT REMOVES THE CONFOUND INSTEAD OF FLAGGING IT
+        # (2026-09-08, ML-RESEARCH 8.15).
+        #
+        # on_grid_pct above says how EXPOSED a candidate is. It does not say
+        # what the candidate is worth once the exposure is taken away, and two
+        # candidates at different alignments still cannot be compared on
+        # within_10 by reading it.
+        #
+        # Snapping every candidate to the same lattice fixes that in one line.
+        # All of them become 100% on-grid, so none can buy the metric with
+        # alignment, and what is left is where the predictions actually sit.
+        #
+        # It has now been used in both directions, which is the only reason to
+        # trust it: it killed the w = 1.0 deviation weight (8.10, whose entire
+        # +4.8 within_10 was lattice) and it CLEARED the score quantile map
+        # (8.14/8.15, whose +3.8 raw survives as +2.6 equalised).
+        #
+        # Read it beside within_10, never instead of it. Snapping discards
+        # sub-5 resolution, so it cannot separate two candidates that differ
+        # only inside a band, and the number a user is owed is still the raw
+        # one, because the raw one is what the card shows.
+        'within_10_grid_equalised': round(float(np.mean(
+            np.abs(y_true - np.round(np.clip(y_pred, 0, 100) / 5) * 5) <= 10) * 100), 1),
     }
 
 
