@@ -173,6 +173,53 @@ const measureSafeBottom = () => {
   return value;
 };
 
+/* Below this, a height change is a rounding artefact or a bar appearing, not a
+   keyboard. A docked iOS keyboard is 250pt and up and even the undocked
+   accessory strip clears 80, so the threshold only has to be above the noise. */
+const MIN_KEYBOARD_PX = 80;
+
+/**
+ * How tall the keyboard already was, measured by the only thing that still
+ * moves once the plugin is bound: the WebView's own height.
+ *
+ * WHY NOTHING ELSE CAN ANSWER THIS. Under resize mode 'native' the WebView
+ * shrinks for the keyboard, so `window.innerHeight` and `visualViewport.height`
+ * shrink TOGETHER and their difference is zero -- the visualViewport path
+ * cannot see a keyboard it did not watch rise. Under mode 'none' nothing
+ * resizes at all, so the difference is zero again. `readViewport` therefore
+ * reports 0 in both modes for a keyboard that was already up, which is exactly
+ * the case decision 4 makes normal.
+ *
+ * The switch between the two modes is the one moment the height is legible:
+ * turning resizing off while the keyboard is up gives the WebView its full
+ * frame back, and it grows by precisely the keyboard's height. That growth is
+ * what this waits for. A few frames, because the resize crosses the bridge and
+ * lands on a later frame than the call that asked for it; `null` if it never
+ * comes, which is the honest answer when the keyboard was down all along and
+ * there was nothing to grow by.
+ */
+const measureKeyboardByExpansion = (before, frames = 20) => new Promise((resolve) => {
+  if (!isBrowser() || !before) {
+    resolve(null);
+    return;
+  }
+  let left = frames;
+  const look = () => {
+    const grew = Math.round(window.innerHeight - before);
+    if (grew > MIN_KEYBOARD_PX) {
+      resolve(grew);
+      return;
+    }
+    left -= 1;
+    if (left <= 0) {
+      resolve(null);
+      return;
+    }
+    window.requestAnimationFrame(look);
+  };
+  window.requestAnimationFrame(look);
+});
+
 /**
  * The Keyboard plugin, or null when it is not there. See decision 1 above for
  * why neither branch is a static import.
@@ -409,31 +456,18 @@ export default function useKeyboardComposer(options = {}) {
       if (!Keyboard || cancelled) return;
       pluginRef.current = Keyboard;
 
-      /* The chat screens own their own layout, so the WebView must not resize
-         itself underneath them. App-wide the mode stays 'native'; this is the
-         one screen that turns it off, and it is put back on the way out. */
-      try {
-        if (typeof Keyboard.setResizeMode === 'function') {
-          await Keyboard.setResizeMode({ mode: 'none' });
-          resizeModeChangedRef.current = true;
-        }
-      } catch (err) {
-        /* An older plugin build without setResizeMode still delivers the
-           events, which is the part that matters. */
-      }
-
-      if (cancelled) {
-        /* The screen left while that bridge call was in flight, so the cleanup
-           below has already run and found nothing to put back. Put it back
-           here instead, or the whole app keeps a WebView that no longer
-           resizes for anyone's keyboard. */
-        if (resizeModeChangedRef.current) {
-          resizeModeChangedRef.current = false;
-          restoreResizeMode(Keyboard);
-        }
-        return;
-      }
-
+      /* LISTENERS FIRST, THEN THE MODE SWITCH. The order was the other way
+         round and it cost build 39 of the demonstration recording: the flock
+         chat opened, the keyboard came up with it, and the composer stayed at
+         the bottom of the screen underneath it. The view hierarchy from that
+         run has the plus button at y=796 with the keyboard starting at y=539,
+         which is also why the tap on it reported COMPLETED and did nothing --
+         Maestro taps coordinates and does not know what is over them. Anyone
+         opening a chat saw the same thing: the composer buried, and the empty
+         state's own buttons the only way out.
+         Binding first means a rise that begins during the switch is still
+         heard; the height of one that already finished is recovered below. */
+      let listenerError = false;
       try {
         const show = await Keyboard.addListener('keyboardWillShow', (info) => {
           moveTo(info && info.keyboardHeight, { hiding: false });
@@ -444,26 +478,72 @@ export default function useKeyboardComposer(options = {}) {
         if (cancelled) {
           if (show && show.remove) show.remove();
           if (hide && hide.remove) hide.remove();
+          return;
+        }
+        handles.push(show, hide);
+        eventsBoundRef.current = true;
+      } catch (err) {
+        /* Decision 11. Registration failed, so this screen falls back to the
+           visualViewport path. The mode switch below is skipped along with it:
+           mode 'none' with nothing listening is the one combination that
+           leaves the bar with no keyboard behaviour at all, because it also
+           blinds the fallback. */
+        eventsBoundRef.current = false;
+        listenerError = true;
+      }
+
+      if (!listenerError) {
+        /* The chat screens own their own layout, so the WebView must not
+           resize itself underneath them. App-wide the mode stays 'native';
+           this is the one screen that turns it off, and it is put back on the
+           way out. */
+        const beforeSwitch = isBrowser() ? window.innerHeight : 0;
+        try {
+          if (typeof Keyboard.setResizeMode === 'function') {
+            await Keyboard.setResizeMode({ mode: 'none' });
+            resizeModeChangedRef.current = true;
+          }
+        } catch (err) {
+          /* An older plugin build without setResizeMode still delivers the
+             events, which is the part that matters. */
+        }
+
+        if (cancelled) {
+          /* The screen left while that bridge call was in flight, so the
+             cleanup below has already run and found nothing to put back. Put
+             it back here instead, or the whole app keeps a WebView that no
+             longer resizes for anyone's keyboard. */
           if (resizeModeChangedRef.current) {
             resizeModeChangedRef.current = false;
             restoreResizeMode(Keyboard);
           }
           return;
         }
-        handles.push(show, hide);
-        eventsBoundRef.current = true;
-        /* Three bridge round trips have been awaited since mount, so the rise
-           that opened this screen is already over and no will-show is left to
-           hear. Read the state instead of waiting for the next event. */
+
+        /* The rise that opened this screen. Decision 4 makes it the normal
+           opening state, and every event for it fired while the plugin was
+           still loading, so there is nothing left to hear -- only the WebView
+           growing back to full height to measure it by. `moveTo` ignores a
+           target already committed or in flight, so a will-show that did land
+           is not applied twice. */
+        if (resizeModeChangedRef.current) {
+          const carried = await measureKeyboardByExpansion(beforeSwitch);
+          if (cancelled) return;
+          if (carried) moveTo(carried, { instant: true });
+          else readViewport();
+        } else {
+          readViewport();
+        }
+      }
+
+      if (listenerError) {
+        /* Decision 11's other half: `pluginRef` is NOT nulled here. It is the
+           only handle the teardown has for putting the resize mode back, and
+           nulling it left every other screen in the app without a resizing
+           keyboard for the rest of the session. Nothing was changed on this
+           path now that the switch is skipped, but the handle still has to
+           survive for the case where a later screen changed it. */
         readViewport();
-      } catch (err) {
-        /* Decision 11. Registration failed, so this screen falls back to the
-           visualViewport path, but `pluginRef` is NOT nulled: it is the only
-           handle the teardown has for putting the resize mode back, and mode
-           'none' has already been set by the time we get here. Nulling it left
-           every other screen in the app without a resizing keyboard for the
-           rest of the session. */
-        eventsBoundRef.current = false;
       }
     })();
 
