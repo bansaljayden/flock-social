@@ -86,7 +86,7 @@
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Get the flock out the door.';
+const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one night at a time.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // Title and description per route mirror what each React page writes via its
@@ -124,7 +124,7 @@ const PAGE_META = {
 // drift test told you to; see the regeneration note in the header.
 const PAGE_BLOCKS = {
   home: [
-    ["h1", "Get the flock out the door."],
+    ["h1", "Nurturing friendship, one night at a time."],
     ["p", "Start a flock, invite your people, and vote on where to go. Everyone ends up on the same plan without the 200-message thread."],
     ["p", "Free, and it runs in your browser right now, so there’s nothing to download. Flock took 1st place at PA DECA States."],
     ["h2", "Six people say yes. Then the chat goes quiet."],
