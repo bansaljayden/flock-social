@@ -1,20 +1,30 @@
-# Answer the "Choose how you want to use Flock" screen. Env: MODE.
+# Answer the mode chooser, if it is there.
 #
 # An account with a venue-owner or admin role does NOT land on Nest after
-# signing in. It lands on a mode chooser (App.js:14156, "Choose how you want to
-# use Flock") offering "I'm Going Out", "Venue Dashboard" and, for an admin, a
-# third. A plain user never sees it, so nothing in these flows had ever met it.
-#
-# Build 38 met it. The venue flow signed in perfectly as review-b -- the
-# hierarchy shows "Welcome, Sam" and both mode cards -- and then failed its
+# signing in. App.js (`Choose how you want to use Flock`) puts a chooser over
+# the app first: "I'm Going Out", "Venue Dashboard" and, for admins, "Admin
+# Dashboard". A plain user never sees it, which is why this is guarded rather
+# than required: build 38 signed in perfectly as review-b and then failed a
 # required wait for "Nest", because Nest is behind whichever mode you pick.
-# That is a direct and expected consequence of promoting review-b to
-# venue_owner so it could reach the dashboard at all; the account change was
-# right, the flow simply did not know about the extra screen.
 #
-# The label sits in an <h3> inside a much larger button that also carries the
-# description, and Maestro matches the WHOLE string, so the wildcards are not
-# optional. Guarded, so a plain user passes straight through.
+# TWO WAYS IN, BECAUSE THE FIRST ONE HAS FAILED TWICE. Each choice is a
+# <button> whose accessible name is everything inside it run together -- the
+# logo's alt, the heading, the description, the chevron -- so no exact text
+# matches it (build 44: "Element not found: I'm Going Out"), and a wildcard
+# pattern also matches the chooser's own container, whose centre is the blank
+# space between the buttons (build 42: the tap landed, nothing happened, and
+# the dashboard opened later only because a following tap matched the
+# chooser's second button by accident).
+#
+# So the text tap is tried, and if the chooser is still on screen afterwards
+# the button is tapped BY POSITION. The layout is fixed and measured from build
+# 43's footage on the recording device: "I'm Going Out" is centred at 50% of
+# the width and 58% of the height, "Venue Dashboard" at 69%. A percentage
+# point is the one selector nothing in the accessibility tree can swallow.
+#
+# Env:
+#   MODE        exact text for the text tap, e.g. "I'm Going Out"
+#   MODE_POINT  the fallback, e.g. "50%,58%"
 appId: com.flockcorp.flock
 ---
 - runFlow:
@@ -24,4 +34,12 @@ appId: com.flockcorp.flock
       - tapOn:
           text: ${MODE}
           retryTapIfNoChange: false
+          optional: true
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: "[\\s\\S]*Choose how you want to use Flock[\\s\\S]*"
+    commands:
+      - tapOn:
+          point: ${MODE_POINT}
       - waitForAnimationToEnd

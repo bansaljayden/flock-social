@@ -122,6 +122,7 @@ appId: com.flockcorp.flock
       # shot never filmed. The <h3> carries exactly this text and nothing else
       # (App.js:14275), and its centre is inside the button.
       MODE: "I'm Going Out"
+      MODE_POINT: "50%,58%"                     # by position; parts/choose-mode.yaml says why
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 30000
@@ -181,6 +182,42 @@ appId: com.flockcorp.flock
 # "More to send"). There is an aria-label="Features" in App.js:15681, but that is
 # the DISCOVER header, not this screen, which is how the wrong selector looked
 # right in a grep. A required tap on it would have ended the run here.
+# THE INVITE SHEET, ON CAMERA. Beat 4 of the narration is "invite your friends
+# ... everyone RSVPs in one place ... guests can join from a link without the
+# app", and until this take nothing on screen showed any of it: the words ran
+# over the create form. The empty state's own Invite friends button
+# (ChatDetail.js "Invite friends", the same handler the plus tile uses) opens
+# the sheet whose share-link button says the guest sentence in the app's own
+# copy: "Share invite link (no account needed)".
+#
+# Every step is optional: this is a shot, not a gate, and a chat that already
+# has messages has no empty state to press.
+- tapOn:
+    text: "Invite friends"                      # ChatDetail.js empty-state button
+    optional: true
+- extendedWaitUntil:
+    visible: "Invite Friends"                   # ChatDetail.js invite modal <h3>
+    timeout: 8000
+    optional: true
+- assertVisible:
+    text: "Share invite link (no account needed)"
+    optional: true
+# Close it. The modal's own Close is the first one in the tree while it is
+# open; if the sheet is somehow still up after that, the second Close is tried.
+- tapOn:
+    text: "Close"
+    index: 0
+    optional: true
+- runFlow:
+    when:
+      visible: "Invite Friends"
+    commands:
+      - tapOn:
+          text: "Close"
+          index: 1
+          optional: true
+- waitForAnimationToEnd
+
 - tapOn: "More to send"                         # ChatInputBar.js:475 -> setPlusOpen(true)
 - tapOn:
     text: "Vote on a venue"                     # ComposerPlusSheet.js:96/108 tile label
