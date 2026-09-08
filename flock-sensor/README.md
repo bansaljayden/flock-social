@@ -317,6 +317,11 @@ checks the credentials against the real backend, and exits non-zero with a
 plain-English reason if anything is wrong. **Do not leave a venue until this
 exits 0.**
 
+On a unit with a thermal camera, run `main.py --calibrate` on the same visit,
+once the camera is mounted where it will stay. The shipped headcount threshold
+was measured in one room, and it is the setting most likely to be wrong for
+yours. See Calibration.
+
 The credential check is a `dry_run`: the backend authenticates and validates it
 exactly as it would a real push and stores nothing, so running a self test never
 writes a fake "0 people" reading into the venue's history or the model's
@@ -440,6 +445,52 @@ camera. If one person reads as several, the silhouette is fragmenting and
 reads as one or more people, raise `THERMAL_MARGIN_C` first, then
 `THERMAL_MIN_CLUSTER`.
 
+**Lowering the minimum to reach farther does not work the way it looks like it
+should.** A silhouette's area falls with the square of distance, so range goes
+as `sqrt(current / new)`:
+
+| `THERMAL_MIN_CLUSTER` | Raw pixels at bin 4 | Range against 12 |
+|---|---|---|
+| 12 | 192 | 1.00x |
+| 11 | 176 | 1.04x |
+| 10 | 160 | 1.10x |
+| 8 | 128 | 1.22x |
+| 6 | 96 | 1.41x |
+| 5 | 80 | 1.55x |
+
+12 to 11 buys about 4%, which at 10 ft is five inches. Buying a useful amount
+of range means roughly halving the number, and 5 is where this sensor's own
+noise starts being counted as people. That is the failure the 24x32 default of
+4 produced, and the reason `test_main.py` pins the minimum above 4. When the
+count has to reach farther than the setting allows, the lever is where the
+camera is mounted rather than this number.
+
+**`main.py --calibrate` measures the number for the room it is actually in.**
+The shipped 12 is one number from one bench in one room. What it should be
+depends on how far the camera sits from the crossing and how warm the room
+runs. Mount the unit where it is going to live, then:
+
+    sudo systemctl stop flock-sensor
+    sudo -u <service user> python3 /opt/flock-sensor/main.py --calibrate
+
+It watches an empty frame for twenty seconds to find how large this room's warm
+noise gets, then watches somebody standing at the farthest point a person
+actually crosses, and prints a `THERMAL_MIN_CLUSTER` sitting between the two
+along with both measurements. `--seconds` changes the window. It writes
+nothing: paste the line into the config, restart, and walk the doorway again.
+
+When the two overlap it recommends nothing and says why, which is the answer
+worth having. A person who is no larger than the room's own noise cannot be
+separated from it by any threshold, and the camera has to move instead.
+
+**It does not adjust itself while the service runs, and that is deliberate.** A
+threshold that moved on its own would have to tell "a distant person" from
+"sensor noise" out of identical evidence, and the version that lowers itself
+when it sees nothing converges on inventing people in an empty room. These
+readings are also ground truth for the crowd model, so a venue whose definition
+of a person drifts week to week poisons the training data quietly and nothing
+downstream can tell. The adjustment happens once, at install, with somebody
+standing in the room to say which reading is which.
 **Fragmentation is the failure mode the old sensor did not have**, and it is
 now the one that has actually been seen. On a 24x32 grid a whole person was a
 handful of pixels and blurred into a single blob. At 160x120 a bare head and a
