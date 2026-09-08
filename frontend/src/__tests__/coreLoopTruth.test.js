@@ -18,8 +18,21 @@ test('a tie at the top is a tie, not "Leading" with a flame', () => {
 });
 
 test('the vote row is not a button with a button inside it', () => {
-  expect(chat).toMatch(/<div role="button" tabIndex=\{0\} aria-pressed=\{isMyVote\} key=\{v\.venue\}/);
+  // The first version of this rule swapped the outer <button> for a
+  // <div role="button">, which fixes the invalid HTML and leaves the real
+  // problem in place: WebKit collapses a control nested in a control into ONE
+  // accessible element, so the row read as "The Dandelion Leading You 1
+  // Confirm" and a screen reader could not land on Confirm at all. Build 43 of
+  // the demonstration recording found it by the same route, because Maestro
+  // reads the same tree. So: the container is not a control of any kind, the
+  // vote is its own button, and Confirm is its sibling.
+  expect(chat).not.toMatch(/<div role="button" tabIndex=\{0\} aria-pressed=\{isMyVote\} key=\{v\.venue\}/);
   expect(chat).not.toMatch(/<button key=\{v\.venue\}/);
+  expect(chat).toMatch(/<div key=\{v\.venue\} className="glass-btn glass-secondary"/);
+  expect(chat).toMatch(/<button type="button" aria-pressed=\{isMyVote\} aria-label=\{`\$\{v\.venue\}, \$\{count\} vote/);
+  // Confirm says which venue it locks in, since a screen reader hears the
+  // label and not the row it sits in.
+  expect(chat).toMatch(/aria-label=\{`\$\{isAssigned \? 'Lock in' : 'Confirm'\} \$\{v\.venue\}`\}/);
 });
 
 test('the chat says when the plan is and where the plan screen is', () => {
