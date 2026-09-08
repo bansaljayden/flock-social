@@ -3214,11 +3214,24 @@ export default function ChatDetail({
                       const iconBg = isAssigned
                         ? colors.navyBg
                         : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                      /* TWO CONTROLS, SIDE BY SIDE, IN A PLAIN CONTAINER.
+                      This row used to be role="button" with the Confirm
+                      <button> nested inside it. WebKit collapses a control
+                      nested in a control into one accessible element, so
+                      VoiceOver read the whole row as "The Dandelion
+                      Leading You 1 Confirm" and could not land on Confirm
+                      at all -- the host's one way to lock the plan in was
+                      unreachable to a screen reader. (The demonstration
+                      recording found it the same way: Maestro sees the
+                      accessibility tree, and there was no Confirm in it.)
+                      The vote is the left button, Confirm is the right
+                      one, and the container just draws the card. */
                       return (
-                        <div role="button" tabIndex={0} aria-pressed={isMyVote} key={v.venue} className="hit44 glass-btn glass-secondary" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }} onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                        <div key={v.venue} className="glass-btn glass-secondary" style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
                             <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                             </div>
@@ -3237,11 +3250,12 @@ export default function ChatDetail({
                                 return isAssigned ? 'Current flock venue. Tap to vote' : 'No votes yet';
                               })()}</p>
                             </div>
+                            </button>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                              {count > 0 && <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
+                              {count > 0 && <span aria-hidden="true" style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !planLocked && (
-                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
+                                <button type="button" aria-label={`${isAssigned ? 'Lock in' : 'Confirm'} ${v.venue}`} className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
                               )}
                             </div>
                           </div>
