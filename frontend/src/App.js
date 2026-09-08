@@ -2592,7 +2592,9 @@ function declutterMarkers(map, markerEntries) {
 // dot, write flock_user_lat/lng, or compute a distance from it -- those three
 // are what made the old fixed point in Bethlehem a bug rather than a default,
 // and the comments at requestUserLocation explain why in full.
-const NO_LOCATION_VIEW = { lat: 39.9526, lng: -75.1652, zoom: 11.5 };
+// The label rides along with the coordinate so no screen can name a different
+// city than the one it is actually showing.
+const NO_LOCATION_VIEW = { lat: 39.9526, lng: -75.1652, zoom: 11.5, label: 'Philadelphia' };
 
 const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true }) => {
   const mapRef = useRef(null);
@@ -8318,10 +8320,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Ref to track if initial venue load has been attempted (survives re-renders)
   const venueLoadAttemptedRef = useRef(false);
 
+  // Where the venue suggestions came from, when they did not come from the
+  // device. Null the moment a real location is known, and the vote panel keys
+  // its wording on exactly that: a list headed "nearby" that is not near you is
+  // a claim the app cannot support. A plain const rather than a value computed
+  // in the props object, because a props object of shorthand names is what
+  // stops a screen being handed a copy of something that has since moved
+  // (extractionEquivalence.test.js).
+  const venuesFromLabel = userLocation ? null : NO_LOCATION_VIEW.label;
+
   // Load diverse popular chain venues for vote panels (independent of map search)
+  //
+  // THE SAME FALLBACK THE MAP USES, because the alternative is the app
+  // contradicting itself. This returned early with no location, so a person
+  // whose location was refused or simply never arrived could be looking at
+  // twenty Philadelphia venues on Discover, open the vote panel in a flock, and
+  // be told "to see places to suggest, Flock needs your location" -- one tab
+  // apart, at the same moment, with the venues already on screen. That reads as
+  // a broken panel, and it is: the panel had a coordinate available to it and
+  // declined to use the one the rest of the app was already using.
+  //
+  // NO_LOCATION_VIEW carries the same rules here as everywhere else: it is a
+  // place to look, never a claim about the user. Nothing below draws a blue
+  // dot, writes flock_user_lat/lng or measures a distance, and the panel says
+  // in its own words which city these came from, so nobody mistakes a fallback
+  // for a neighbourhood.
   const loadPopularVenues = useCallback(() => {
-    if (!userLocation) return;
-    const locStr = `${userLocation.lat},${userLocation.lng}`;
+    const at = userLocation || NO_LOCATION_VIEW;
+    const locStr = `${at.lat},${at.lng}`;
     const cacheKey = `popular_vote|${locStr}`;
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
@@ -18608,6 +18634,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadFlockInviteFriends,
         loadOlderFlockMessages,
         loadPopularVenues,
+        venuesFromLabel,
         locationBannerDismissed,
         messagesLoading,
         notifAskDismissed,
@@ -18746,6 +18773,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadDmVenueVotes,
         loadOlderDms,
         loadPopularVenues,
+        venuesFromLabel,
         olderLoading,
         openCameraViewfinder,
         openUserProfile,

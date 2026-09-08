@@ -125,6 +125,9 @@ function dmProps(over = {}) {
     openUserProfile: fn(),
     openVenueDetail: fn(),
     popularVenues: [],
+    // Null is "a real location produced this list"; the fallback wording is
+    // exercised where the fallback lives.
+    venuesFromLabel: null,
     profilePic: null,
     retryFailedDm: fn(),
   discardFailedDm: fn(),

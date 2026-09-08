@@ -210,6 +210,7 @@ export default function DmDetail({
   openUserProfile,
   openVenueDetail,
   popularVenues,
+  venuesFromLabel,
   profilePic, // unused: runs carry a name and a coloured bar, not avatars
   retryFailedDm,
   discardFailedDm,
@@ -1085,7 +1086,10 @@ export default function DmDetail({
               {/* Popular chains nearby */}
               {suggestedVenues.length > 0 && (
                 <>
-                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
+                  {/* Same list, same rule as the flock panel: "nearby" is a
+                      claim about distance, and it is only true when a real
+                      coordinate produced the list. */}
+                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venuesFromLabel ? `Popular in ${venuesFromLabel}` : 'Popular Chains Nearby'}</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {suggestedVenues.map(venue => (
                       <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
