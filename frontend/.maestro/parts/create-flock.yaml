@@ -48,6 +48,27 @@ appId: com.flockcorp.flock
     index: 0
     optional: true
 - waitForAnimationToEnd
+# TURN THE GROUP BUDGET ON, OR BEAT 7 CANNOT BE FILMED.
+#
+# CreateScreen.js:275 sends `budget_enabled: capturedBudget || undefined`, so a
+# flock created with a name alone has budgetEnabled FALSE. ChatDetail.js:2792
+# then gates the whole budget panel on `hasBudget`, so "What's your budget
+# tonight?" never renders, the chat's cash-pool strip
+# (`flock.budgetEnabled && budgetStatus`) never appears either, and the demo's
+# required wait for that prompt fails. The anonymous budget is the feature the
+# narration spends its longest beat on; a demonstration that cannot reach it is
+# not worth filming.
+#
+# The control is a `role="switch"` button whose aria-label is its `label` prop
+# (App.js:11571), so the text to match is "Shared cash pool" and not the
+# "Group budget" heading beside it.
+- scrollUntilVisible:
+    element: "Shared cash pool"                 # CreateScreen.js:643 <Toggle label>
+    direction: DOWN
+    timeout: 8000
+    optional: true
+- tapOn: "Shared cash pool"
+- waitForAnimationToEnd
 - scrollUntilVisible:
     element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
     direction: DOWN
