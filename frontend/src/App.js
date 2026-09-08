@@ -2581,6 +2581,19 @@ function declutterMarkers(map, markerEntries) {
   });
 }
 
+// WHERE THE APP LOOKS WHEN IT DOES NOT KNOW WHERE YOU ARE.
+//
+// Module scope on purpose: the map component opens on this, and FlockAppInner
+// loads venues around it, and those two must never be able to drift to
+// different cities. Philadelphia because that is where the crowd corpus has
+// coverage, so the pins carry live scores rather than the "Usually busy" hedge.
+//
+// It is a VIEW, never an identity. Nothing that consumes it may draw the blue
+// dot, write flock_user_lat/lng, or compute a distance from it -- those three
+// are what made the old fixed point in Bethlehem a bug rather than a default,
+// and the comments at requestUserLocation explain why in full.
+const NO_LOCATION_VIEW = { lat: 39.9526, lng: -75.1652, zoom: 11.5 };
+
 const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
@@ -2638,10 +2651,31 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     }
   });
 
-  // Where the map opens when nothing knows where the user is: the whole
-  // country, zoomed out far enough that it reads as "pick somewhere" rather
-  // than as a claim about where you are standing.
-  const UNKNOWN_LOCATION_VIEW = { lat: 39.83, lng: -98.58, zoom: 3.2 };
+  // Where the map opens when nothing knows where the user is.
+  //
+  // This was the whole United States at zoom 3.2, chosen so it could not read
+  // as a claim about where you are standing. It succeeded at that and failed at
+  // everything else: a continent with no venues on it is not a screen anybody
+  // can use, and it is the first thing a new install shows.
+  //
+  // Philadelphia instead, at city zoom. What makes that safe is the thing the
+  // old fixed point in Bethlehem got wrong, and it is worth being precise about
+  // the difference, because the comments elsewhere in this file are right and
+  // this is not a reversal of them:
+  //
+  //   - `located` stays NULL. No blue dot is drawn, so nothing says you are
+  //     here.
+  //   - Nothing is written to flock_user_lat/lng, so the guess cannot outlive
+  //     the session or bias a later search. The Bethlehem bug was permanent.
+  //   - No distance is computed from it. "1.2 km away" needs a real origin and
+  //     still refuses without one.
+  //   - The location banner stays up and says which city is on screen.
+  //
+  // So it opens somewhere real and searchable rather than nowhere, and it still
+  // does not pretend to know where you are. Philadelphia because that is where
+  // the crowd corpus actually has coverage, so the pins carry live scores
+  // instead of the "Usually busy" hedge.
+  const UNKNOWN_LOCATION_VIEW = NO_LOCATION_VIEW;
 
   // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
   // on dark tiles was a hole in the map.
@@ -8304,6 +8338,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [userLocation, venuesToMapPins]);
 
   // Core venue loading function
+  // Venues around a point WITHOUT claiming the user is standing on it.
+  //
+  // loadVenuesAtLocation cannot be reused for the no-location case: it calls
+  // setUserLocation, which draws the blue dot, and it writes
+  // flock_user_lat/lng, which makes the guess permanent. Those two lines are
+  // precisely the Bethlehem bug the comments above describe. This one fetches
+  // and scores and stops there, so the map has something on it while the
+  // banner explains whose city it is.
+  const browseVenuesAt = useCallback((lat, lng) => {
+    const locStr = `${lat},${lng}`;
+    const cacheKey = `nearby|${locStr}`;
+    const cached = searchCacheRef.current[cacheKey];
+    if (cached && Date.now() - cached.timestamp < 300000) {
+      setAllVenues(venuesToMapPins(cached.data));
+      setMapVenuesLoaded(true);
+      requestCrowdScores(cached.data);
+      return;
+    }
+    searchVenues('popular restaurants cafes bars fast food', locStr)
+      .then((data) => {
+        const venues = data.venues || [];
+        searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+        setAllVenues(venuesToMapPins(venues));
+        setMapVenuesLoaded(true);
+        setVenueLoadError('');
+        requestCrowdScores(venues);
+      })
+      .catch((err) => {
+        console.error('[Geo] Fallback venue browse failed:', err);
+      });
+  }, [venuesToMapPins, requestCrowdScores]);
+
   const loadVenuesAtLocation = useCallback((lat, lng) => {
     setLocationError('');
     setUserLocation({ lat, lng });
@@ -8392,7 +8458,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // browser with no geolocation at all was permanently, silently
         // relocated: the blue dot, the search bias and every "1.2km away"
         // label were computed from a town the user had never been to.
-        setLocationError('This browser cannot share a location, so nothing here knows where you are. Search for a place by name instead.');
+        setLocationError('This browser cannot share a location, so nothing here knows where you are. Showing Philadelphia. Search any place by name to look somewhere else.');
+        browseVenuesAt(NO_LOCATION_VIEW.lat, NO_LOCATION_VIEW.lng);
       }
       return;
     }
@@ -8426,14 +8493,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // words, so the tap is acknowledged instead of swallowed.
           setLocationError(err && err.code === 1
             ? (forceRefresh
-                ? 'Location is still off. Turn it on in your device Settings, then come back. Or search for a place by name.'
-                : 'Location is off, so Flock cannot show what is near you. Turn it on in Settings, or search for a place by name.')
-            : 'Could not get your location just now. Try again, or search for a place by name.');
+                ? 'Location is still off, so this is Philadelphia, not you. Turn it on in your device Settings, then come back. Or search any place by name.'
+                : 'Location is off, so this is Philadelphia, not you. Turn it on in Settings, or search any place by name.')
+            : 'Could not get your location just now, so this is Philadelphia. Try again, or search any place by name.');
+          // Something real and searchable to look at while that banner is up.
+          // Venues only: no blue dot, nothing stored, no distances computed.
+          browseVenuesAt(NO_LOCATION_VIEW.lat, NO_LOCATION_VIEW.lng);
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 30000 }
     );
-  }, [loadVenuesAtLocation]);
+  }, [loadVenuesAtLocation, browseVenuesAt]);
 
   // Load venues on mount — but never against an explicit opt-out (round 3:
   // this fired unconditionally, so on an already-granted device the opt-out
