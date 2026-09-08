@@ -61,24 +61,53 @@ appId: com.flockcorp.flock
       notVisible: "Welcome back"
     file: logout.yaml
 - assertVisible: "Welcome back"                 # LoginScreen.js:146 <h1>
-- tapOn:
-    text: "you@example.com"                     # LoginScreen.js:261 placeholder
-    optional: true
-- tapOn:
-    text: "Email"                               # LoginScreen.js:248 <label htmlFor="login-email">
-    optional: true
-- eraseText: 80
-- inputText: ${EMAIL}
-- tapOn:
-    text: "Your password"                       # LoginScreen.js:291 placeholder
-    optional: true
-- tapOn:
-    text: "Password"                            # LoginScreen.js:275 <label htmlFor="login-password">
-    optional: true
-- eraseText: 80
-- inputText: ${PASSWORD}
-- pressKey: Enter                               # LoginScreen.js:183 <form onSubmit={handleSubmit} noValidate>
-- waitForAnimationToEnd
+# TYPING INTO THE SIMULATOR DROPS CHARACTERS, AND IT DOES IT SILENTLY.
+#
+# Build 38 failed both flows here, and the failure hierarchy says exactly what
+# happened: the email field contained "revie" and the form showed its own
+# "Valid email required" alert. `inputText` reported COMPLETED. Five characters
+# of "review-a@flockcorp.com" arrived. The request never left the app, which is
+# why the backend looked healthy and the account logged in fine by hand.
+#
+# So the sign-in is attempted up to three times, and the loop condition is the
+# only honest test available: the login screen's own heading. If "Welcome back"
+# is still on screen the sign-in has not happened, whatever any step reported.
+# Each pass clears both fields first, so a partial value from the pass before
+# cannot be typed on top of -- run 4 (2026-09-02) lost a take exactly that way.
+#
+# The email is additionally verified after typing, because it is the one field
+# whose contents are readable: a password renders as dots. If the field does not
+# show the whole address, it is cleared and retyped before the password is
+# touched, which keeps a bad email from wasting the whole attempt.
+- repeat:
+    times: 3
+    while:
+      visible: "Welcome back"
+    commands:
+      - tapOn:
+          text: "you@example.com"                     # LoginScreen.js:261 placeholder
+          optional: true
+      - tapOn:
+          text: "Email"                               # LoginScreen.js:248 <label htmlFor="login-email">
+          optional: true
+      - eraseText: 80
+      - inputText: ${EMAIL}
+      - runFlow:
+          when:
+            notVisible: ${EMAIL}
+          commands:
+            - eraseText: 80
+            - inputText: ${EMAIL}
+      - tapOn:
+          text: "Your password"                       # LoginScreen.js:291 placeholder
+          optional: true
+      - tapOn:
+          text: "Password"                            # LoginScreen.js:275 <label htmlFor="login-password">
+          optional: true
+      - eraseText: 80
+      - inputText: ${PASSWORD}
+      - pressKey: Enter                               # LoginScreen.js:183 <form onSubmit={handleSubmit} noValidate>
+      - waitForAnimationToEnd
 # Fallback only. If Enter already submitted, the button is gone or busy and
 # both steps are no-ops.
 - scrollUntilVisible:
