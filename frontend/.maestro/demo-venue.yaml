@@ -26,6 +26,19 @@ appId: com.flockcorp.flock
     permissions:
       all: unset
       contacts: allow
+      # LOCATION IS GRANTED UP FRONT, and `all: unset` above is why it has to
+      # be said here. Maestro applies these AFTER its clear-state reinstall,
+      # so `unset` wipes the grant the build script gives the Simulator and the
+      # app is back to asking. In build 40 it asked and no prompt was ever
+      # drawn: CoreLocation never answered, Discover held "Finding where you
+      # are", and the vote panel's nearby list stayed empty because that list
+      # is fed by the granted location. The flow died there.
+      #
+      # A demonstration is not a permissions checklist. The Apple 2.1 flow is
+      # the one that has to film the prompt being accepted, and it still does;
+      # this one is about what the product DOES, and every shot after Discover
+      # needs a real coordinate behind it.
+      location: allow
 # THE FIRST SCREEN ON A FRESH SIMULATOR IS SIGNUP, NOT LOGIN (2026-09-08).
 #
 # Build 6a9fedb7 lost both flows here, each waiting the full 90 seconds for

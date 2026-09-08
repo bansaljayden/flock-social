@@ -161,9 +161,49 @@ export function getCurrentPosition(onSuccess, onError, options) {
     navigator.geolocation.getCurrentPosition(onSuccess, onError, options);
     return;
   }
+  /* THE `timeout` OPTION IS ENFORCED HERE BECAUSE THE PLUGIN DOES NOT ENFORCE
+     IT. On the web, `timeout` is part of the geolocation API's contract and the
+     browser fires the error callback with code 3 when it elapses. The native
+     path passes the same options object across the bridge, where CoreLocation
+     simply waits: a device that cannot get a fix produces no fix, no error and
+     no callback, forever.
+
+     The caller in App.js has always passed `timeout: 10000` and has always had
+     a code-3 branch written for it. Neither could ever run on a device. What
+     the user saw instead was the "Finding where you are" spinner and the
+     line under it, with nothing behind them and no way to a different answer.
+     A simulator with no location set reproduces it exactly, which is how the
+     demonstration recording found it: the vote panel's nearby list is fed by
+     the granted location, and it sat empty behind a request that never
+     finished.
+
+     `settled` is what makes this safe rather than merely fast. A late fix
+     arriving after the timeout must not call `onSuccess` on a caller that has
+     already been told the request failed and has already moved on -- and the
+     opposite, an error arriving after a success, would overwrite a real
+     coordinate with a banner. First answer wins, whoever it is. */
+  let settled = false;
+  const answer = (fn) => (...args) => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    if (typeof fn === 'function') fn(...args);
+  };
+  const succeed = answer(onSuccess);
+  const failNow = (code, message) => answer(() => fail(onError, code, message))();
+  const failPlugin = (err) => answer(() => failFromPlugin(onError, err))();
+
+  /* No timeout asked for, no timeout imposed: watchPosition-style callers that
+     want to wait indefinitely keep that behaviour by passing nothing, which is
+     also what the web API does with the option absent. */
+  const ms = Number(options && options.timeout);
+  const timer = Number.isFinite(ms) && ms > 0
+    ? setTimeout(() => failNow(TIMEOUT, 'Timed out getting your location.'), ms)
+    : null;
+
   load().then((Geolocation) => {
     if (!Geolocation) {
-      fail(onError, POSITION_UNAVAILABLE, 'Location is not available on this device.');
+      failNow(POSITION_UNAVAILABLE, 'Location is not available on this device.');
       return;
     }
     // try/catch as well as the rejection handler: an SOS is one of the callers,
@@ -171,11 +211,11 @@ export function getCurrentPosition(onSuccess, onError, options) {
     // rather than becoming an unhandled rejection nobody is waiting on.
     try {
       Geolocation.getCurrentPosition(options).then(
-        (position) => { if (typeof onSuccess === 'function') onSuccess(position); },
-        (err) => failFromPlugin(onError, err),
+        (position) => succeed(position),
+        (err) => failPlugin(err),
       );
     } catch (err) {
-      failFromPlugin(onError, err);
+      failPlugin(err);
     }
   });
 }
