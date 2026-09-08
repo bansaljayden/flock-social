@@ -184,17 +184,37 @@ describe('a location the app does not have', () => {
   });
 
   test('a denied permission says so instead of inventing an answer', () => {
-    const fn = region(APP, 'const requestUserLocation = useCallback', '}, [loadVenuesAtLocation]);');
+    const fn = region(APP, 'const requestUserLocation = useCallback', '}, [loadVenuesAtLocation, browseVenuesAt]);');
     expect(fn).toMatch(/setLocationError\(/);
     // PERMISSION_DENIED is code 1, and it gets different words from a timeout:
     // "turn it on in Settings" is useless advice to somebody who already did.
     expect(fn).toMatch(/err\.code === 1/);
+    // The original assertion, and still the important one: whatever this
+    // function does about a missing location, it must never hand a made-up
+    // coordinate to loadVenuesAtLocation, because that writes it to
+    // localStorage and every distance on screen is measured from it afterwards.
     expect(fn).not.toMatch(/loadVenuesAtLocation\(\d/);
+    expect(fn).not.toMatch(/loadVenuesAtLocation\(NO_LOCATION_VIEW/);
   });
 
-  test('the map opens on a wide view when nothing knows where the user is', () => {
+  test('the fallback city is a view, never an identity', () => {
+    // The map used to open on the whole United States, which could not be
+    // mistaken for a claim about the user but also could not be used: a
+    // continent with no venues on it is the first screen of a new install.
+    // It opens on Philadelphia now and loads venues there, which is only
+    // acceptable while every one of these holds.
     expect(APP).toMatch(/UNKNOWN_LOCATION_VIEW/);
     expect(APP).toMatch(/zoom: located \? DEFAULT_ZOOM : UNKNOWN_LOCATION_VIEW\.zoom/);
+    // Still gated on `located`, so no blue dot is drawn for a guess.
+    expect(APP).toMatch(/const userLoc = located \|\| UNKNOWN_LOCATION_VIEW/);
+
+    // And the loader used for it must not do the two things that made the old
+    // Bethlehem default a bug rather than a default: claim the position as the
+    // user's, and persist it.
+    const browse = region(APP, 'const browseVenuesAt = useCallback', '}, [venuesToMapPins, requestCrowdScores]);');
+    expect(browse).toMatch(/searchVenues\(/);
+    expect(browse).not.toMatch(/setUserLocation/);
+    expect(browse).not.toMatch(/localStorage\.setItem/);
   });
 
   test('the reason the map is empty is on the screen, with a way to retry', () => {
