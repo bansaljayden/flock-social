@@ -22,28 +22,29 @@
 # 2. IT IS BEAT 5 OF THE NARRATION. "The crowd card" is the model's whole
 #    visible surface, and it lives on this screen.
 #
-# The usage string on the dialog is NSLocationWhenInUseUsageDescription
-# (Info.plist:50). Answering is required, not optional: without it the app has
-# no location and everything downstream of it is empty.
+# The dialog itself is no longer part of this: the launch block grants location
+# up front (see the permissions note in demo-person.yaml), so the app never
+# asks. What this part still does is open the tab and let the venues land.
 appId: com.flockcorp.flock
 ---
 - tapOn: "Discover"                             # App.js tab table, label: 'Discover'
-- extendedWaitUntil:
-    visible: "Allow While Using App"            # iOS dialog
-    timeout: 20000
-    optional: true
-- tapOn:
-    text: "Allow While Using App|Allow Once"
-    optional: true
-- tapOn:
-    text: "Allow"
-    optional: true
+# NO WAIT FOR THE PERMISSION DIALOG. Location is granted in the launch block
+# (`location: inuse`), so the dialog never appears, and a 20-second wait for it
+# was 20 seconds of Maestro polling the accessibility tree for nothing.
+#
+# AND NO WAIT FOR A CROWD LABEL. The 30-second wait that used to sit here was
+# for "busy", "Quiet" or "Packed" on the map, and the map pins carry no such
+# text, so it never matched once and ran to its timeout on every take: fifty
+# seconds of every recording spent watching a loaded screen. Both waits are
+# gone, and the take is that much shorter.
+#
+# What replaces them is a wait that MATCHES and so stops the moment it does:
+# the results button appears once Places has answered (App.js
+# "All {n} results"), which is also the state the vote panel needs, since it
+# reads the same cache this populates.
 - waitForAnimationToEnd
-# Give Places time to answer before anything asks for a venue. This is the one
-# place in the demo where a wait is not padding: the vote panel reads the same
-# cache this populates.
 - extendedWaitUntil:
-    visible: "[\\s\\S]*busy[\\s\\S]*|[\\s\\S]*Quiet[\\s\\S]*|[\\s\\S]*Packed[\\s\\S]*"
+    visible: 'All \d+ results'
     timeout: 30000
     optional: true
 - waitForAnimationToEnd
