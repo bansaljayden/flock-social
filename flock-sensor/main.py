@@ -63,7 +63,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.3.0'
+VERSION = '1.4.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -808,8 +808,30 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
     cols = THERMAL_COLS if cols is None else cols
     if len(frame) < rows * cols:
         return 0
-    threshold_c = THERMAL_THRESHOLD_C if threshold_c is None else threshold_c
     min_cluster = THERMAL_MIN_CLUSTER if min_cluster is None else min_cluster
+    sizes = thermal_region_sizes(frame, threshold_c=threshold_c, margin_c=margin_c,
+                                 rows=rows, cols=cols, bin_size=bin_size)
+    return min(MAX_THERMAL, sum(1 for s in sizes if s >= min_cluster))
+
+
+def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
+                         rows=None, cols=None, bin_size=None):
+    """Every connected warm region in the frame, as a list of cell counts.
+
+    The same flood fill count_thermal_clusters runs, with the minimum-size
+    filter left off. Nothing on the serving path wants this. --calibrate does,
+    because the questions it asks are "how big is a person from here" and "how
+    big does this room's noise get", and the filter throws both answers away.
+
+    Split out rather than copied: two flood fills that were supposed to agree
+    would eventually stop agreeing, and the one in the calibration path is the
+    one nobody would notice had drifted.
+    """
+    rows = THERMAL_ROWS if rows is None else rows
+    cols = THERMAL_COLS if cols is None else cols
+    if len(frame) < rows * cols:
+        return []
+    threshold_c = THERMAL_THRESHOLD_C if threshold_c is None else threshold_c
     margin_c = THERMAL_MARGIN_C if margin_c is None else margin_c
     bin_size = THERMAL_BIN if bin_size is None else bin_size
 
@@ -819,7 +841,7 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
 
     grid = [[cells[r * cols + c] >= cutoff for c in range(cols)] for r in range(rows)]
     visited = [[False] * cols for _ in range(rows)]
-    count = 0
+    sizes = []
     for r0 in range(rows):
         for c0 in range(cols):
             if not grid[r0][c0] or visited[r0][c0]:
@@ -840,11 +862,8 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
                     for dc in (-1, 0, 1):
                         if dr or dc:
                             stack.append((r + dr, c + dc))
-            if size >= min_cluster:
-                count += 1
-                if count >= MAX_THERMAL:
-                    return MAX_THERMAL
-    return count
+            sizes.append(size)
+    return sizes
 
 
 def thermal_loop():
@@ -1593,6 +1612,146 @@ def display_loop():
 # Self test
 # ---------------------------------------------------------------------------
 
+# The smallest minimum this program will ever recommend, whatever a
+# calibration window happens to measure. The 24x32 sensor's default of 4
+# counted noise as a crowd on a 160x120 grid, test_main.py pins the minimum
+# above 4, and a quiet twenty seconds is not evidence that a room is quiet at
+# midnight on a Friday. Below this the honest answer is that the camera is
+# mounted too far from where people cross.
+NOISE_FLOOR_MIN_CLUSTER = 5
+CALIBRATE_SECONDS = 20
+
+
+def recommend_min_cluster(noise_regions, person_frame_maxes, current=None):
+    """Pick a THERMAL_MIN_CLUSTER from measured noise and a measured person.
+
+    Returns (recommended, note). `recommended` is None when no threshold can
+    separate the two, which is a real answer and the more useful one: it means
+    the camera is too far from where people actually cross, and that is a
+    mounting decision rather than a number to tune.
+
+    Pure, so it is tested without a camera. See README.md, Calibration.
+    """
+    current = THERMAL_MIN_CLUSTER if current is None else current
+    noise_max = max(noise_regions) if noise_regions else 0
+    if not person_frame_maxes:
+        return None, 'no frames were captured with a person in view'
+    # The person's WEAKEST frame over the window, not their average. A
+    # threshold that only clears on their best frame drops them on the rest.
+    person_min = min(person_frame_maxes)
+
+    if person_min <= noise_max:
+        return None, (
+            f'a person reads {person_min} cells at worst from there and the empty room '
+            f'reaches {noise_max}. Nothing separates those, so no setting fixes it. Move the '
+            f'camera closer to where people cross, or angle it so a whole body fills more of '
+            f'the frame.')
+    if person_min <= NOISE_FLOOR_MIN_CLUSTER:
+        return None, (
+            f'a person reads {person_min} cells at worst from there, which is inside the '
+            f'range where this sensor\'s own noise lives. The room measured quiet during '
+            f'this window, and twenty seconds of quiet is not something to publish occupancy '
+            f'on. Mount the camera closer.')
+
+    # Geometric mean: these are areas, so the point halfway between them in
+    # cells is not the point halfway between them in distance. This one is.
+    rec = int(round(math.sqrt(max(noise_max, 1) * person_min)))
+    rec = max(NOISE_FLOOR_MIN_CLUSTER, min(rec, person_min - 1))
+    reach = math.sqrt(current / float(rec))
+    return rec, (
+        f'noise reaches {noise_max} cells, a person there never drops below {person_min}, '
+        f'and {rec} sits between them. Against the current {current} that is about '
+        f'{reach:.2f}x the range, because a silhouette shrinks with the square of distance.')
+
+
+def _watch_regions(seconds, label):
+    """Sample the camera for a while. Returns (frames, all_regions, per_frame_max)."""
+    regions, frame_maxes, frames = [], [], 0
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        frame = _thermal_camera.read_frame()
+        if frame is None:
+            time.sleep(0.2)
+            continue
+        if not is_plausible_frame(frame):
+            print('\n    NOT RADIOMETRIC. These numbers are not temperatures, so nothing '
+                  'measured here would mean anything. See README.md, Troubleshooting.')
+            return 0, [], []
+        sizes = thermal_region_sizes(frame)
+        regions.extend(sizes)
+        frame_maxes.append(max(sizes) if sizes else 0)
+        frames += 1
+        print('.', end='', flush=True)
+        time.sleep(0.4)
+    print(f'  {frames} frames')
+    if frames == 0:
+        print(f'    the camera delivered no frames during the {label} window')
+    return frames, regions, frame_maxes
+
+
+def calibrate(seconds=CALIBRATE_SECONDS):
+    """Measure what a person is worth in cells AT THIS mounting position.
+
+    THERMAL_MIN_CLUSTER's shipped default is one number from one bench in one
+    room. What it should be depends on how far the camera is from the doorway
+    and how warm the room runs, so this measures both ends of that with a human
+    confirming which is which, and prints the setting.
+
+    It deliberately does NOT adjust anything while the service runs. A
+    threshold that moved on its own would have to decide "that faint thing is a
+    distant person" or "that faint thing is noise" from identical evidence, and
+    the version that lowers itself when it sees nothing converges on inventing
+    people in an empty room. Occupancy that drifts for reasons nobody can
+    reconstruct is also poison for the crowd model, which takes these readings
+    as ground truth. So the adjustment happens once, at install, where somebody
+    can see the room it is being fitted to.
+    """
+    print(f'flock-sensor {VERSION} thermal calibration')
+    print(f'  bin {THERMAL_BIN}, threshold {THERMAL_THRESHOLD_C}C, '
+          f'margin {THERMAL_MARGIN_C}C, current minimum {THERMAL_MIN_CLUSTER} cells')
+    print('  Mount the camera where it is going to live before running this.')
+    print('  Calibrating on a desk measures the desk.')
+    if not init_thermal():
+        print(f'\n  thermal camera NOT DETECTED at {THERMAL_DEVICE}.')
+        print('  If the service is running it is holding the camera: '
+              'sudo systemctl stop flock-sensor')
+        return 1
+    try:
+        print('\n1. EMPTY the frame. Nobody in view, including you.')
+        input('   Press Enter when the room is clear...')
+        print('   watching', end='', flush=True)
+        frames, noise, _ = _watch_regions(seconds, 'empty room')
+        if frames == 0:
+            return 1
+        print(f'   empty room: largest warm region seen was '
+              f'{max(noise) if noise else 0} cells')
+
+        print('\n2. Stand at the FARTHEST point a person actually crosses.')
+        print('   Not the middle of the room. The far edge of the doorway, where')
+        print('   the count still has to work. Face the camera and stay still.')
+        input('   Press Enter once you are there...')
+        print('   watching', end='', flush=True)
+        frames, _, person = _watch_regions(seconds, 'person')
+        if frames == 0:
+            return 1
+        print(f'   person: {min(person)} cells at worst, {max(person)} at best')
+
+        rec, note = recommend_min_cluster(noise, person)
+        print('')
+        if rec is None:
+            print(f'NO SETTING WORKS HERE: {note}')
+            return 1
+        print(f'RECOMMENDED: {note}')
+        print(f'\n  Put this in {CONFIG_PATH} and restart the service:')
+        print(f'      THERMAL_MIN_CLUSTER={rec}')
+        print('\n  Then walk the doorway again and watch the count. Two people at')
+        print('  once is the check this cannot run for you.')
+        return 0
+    except (KeyboardInterrupt, EOFError):
+        print('\n  cancelled, nothing was changed')
+        return 1
+    finally:
+        _thermal_camera.close()
 def selftest():
     """Check an installation end to end and say exactly what is wrong.
 
@@ -1781,8 +1940,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Flock venue occupancy sensor')
     parser.add_argument('--selftest', action='store_true',
                         help='check this installation and exit')
+    parser.add_argument('--calibrate', action='store_true',
+                        help='measure THERMAL_MIN_CLUSTER against this mounting position')
+    parser.add_argument('--seconds', type=int, default=CALIBRATE_SECONDS,
+                        help=f'seconds to watch per --calibrate stage (default {CALIBRATE_SECONDS})')
     parser.add_argument('--version', action='version', version=f'flock-sensor {VERSION}')
     args = parser.parse_args()
     if args.selftest:
         sys.exit(selftest())
+    if args.calibrate:
+        sys.exit(calibrate(max(5, args.seconds)))
     main()

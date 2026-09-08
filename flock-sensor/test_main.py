@@ -1064,5 +1064,65 @@ class InstallerConfigOwnership(unittest.TestCase):
         self.assertIn('chmod 0750 "${CONFIG_DIR}"', self.installer())
 
 
+class CalibrationRecommendation(unittest.TestCase):
+    """--calibrate turns two measurements into a threshold, or refuses to.
+
+    All of this is pure, which is deliberate: the arithmetic that decides what
+    a venue's occupancy means should not be the part that can only be checked
+    by standing in a doorway.
+    """
+
+    def test_the_regions_the_counter_keeps_are_the_regions_it_was_given(self):
+        # count_thermal_clusters and thermal_region_sizes run one flood fill
+        # between them now. If they ever disagree, --calibrate would recommend
+        # a threshold for a picture of the room the serving path never sees.
+        f = ThermalCounting.frame(20.0, [ThermalCounting.person(10, 10),
+                                         ThermalCounting.person(70, 100),
+                                         (4, 4, 4, 4, 40.0)])
+        sizes = main.thermal_region_sizes(f)
+        self.assertEqual(main.count_thermal_clusters(f),
+                         sum(1 for s in sizes if s >= main.THERMAL_MIN_CLUSTER))
+        self.assertGreater(len(sizes), main.count_thermal_clusters(f),
+                           'the unfiltered list dropped the small regions, which is the '
+                           'one thing calibration needs it for')
+
+    def test_it_lands_between_the_noise_and_the_person(self):
+        rec, _ = main.recommend_min_cluster([1, 2, 3], [40, 60, 55])
+        self.assertEqual(rec, 11)
+
+    def test_it_refuses_when_a_person_is_smaller_than_the_room_noise(self):
+        # The important failure. There is no number that fixes this, and saying
+        # so is more use than picking one: the camera is too far from the door.
+        rec, note = main.recommend_min_cluster([20], [15, 30])
+        self.assertIsNone(rec)
+        self.assertIn('Move the camera closer', note)
+
+    def test_it_refuses_below_the_noise_floor_even_in_a_quiet_room(self):
+        # Twenty seconds of a quiet room is not evidence that the room is quiet
+        # on a Friday night, so a measured-quiet window cannot buy a threshold
+        # down where sensor noise lives.
+        rec, _ = main.recommend_min_cluster([1], [5, 9])
+        self.assertIsNone(rec)
+
+    def test_it_never_recommends_the_value_that_counts_noise_as_a_crowd(self):
+        rec, _ = main.recommend_min_cluster([1], [7, 8])
+        self.assertGreaterEqual(rec, main.NOISE_FLOOR_MIN_CLUSTER)
+        self.assertGreater(rec, 4)
+
+    def test_it_never_recommends_a_threshold_that_drops_the_person_it_measured(self):
+        rec, _ = main.recommend_min_cluster([30], [32, 40])
+        self.assertLess(rec, 32)
+
+    def test_no_person_frames_is_not_a_recommendation(self):
+        rec, note = main.recommend_min_cluster([1, 2], [])
+        self.assertIsNone(rec)
+        self.assertIn('no frames', note)
+
+    def test_the_weakest_frame_decides_and_not_the_average(self):
+        # A person who reads 40 once and 12 the rest of the time is a person the
+        # count loses most of the time. Averaging hides exactly that.
+        weak, _ = main.recommend_min_cluster([2], [12, 40, 38])
+        strong, _ = main.recommend_min_cluster([2], [38, 40, 38])
+        self.assertLess(weak, strong)
 if __name__ == '__main__':
     unittest.main()
