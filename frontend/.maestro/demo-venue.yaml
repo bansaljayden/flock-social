@@ -26,9 +26,35 @@ appId: com.flockcorp.flock
     permissions:
       all: unset
       contacts: allow
+# THE FIRST SCREEN ON A FRESH SIMULATOR IS SIGNUP, NOT LOGIN (2026-09-08).
+#
+# Build 6a9fedb7 lost both flows here, each waiting the full 90 seconds for
+# "Welcome back" and then failing the run. App.js:21052 decides the opening
+# screen:
+#
+#   return (window.Capacitor?.isNativePlatform?.() && !hasToken) ? 'signup' : 'login';
+#
+# On NATIVE with no stored token that is 'signup', and `clearState: true`
+# guarantees no stored token, so a fresh Simulator can never show the login
+# form first. On the web it is 'login', which is where the wrong assumption
+# came from; apple-2-1.yaml still carries it in a comment that says a fresh
+# launch shows LoginScreen.
+#
+# So: wait for EITHER screen, then cross to login if we landed on signup.
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:146
+    visible: "Welcome back|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
     timeout: 90000
+- runFlow:
+    when:
+      notVisible: "Welcome back"
+    commands:
+      - tapOn:
+          text: "Sign in"                         # SignupScreen.js:301, the door back to the login form
+          optional: true
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:164
+    timeout: 30000
 
 - runFlow:
     file: parts/login.yaml
