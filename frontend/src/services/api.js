@@ -1362,9 +1362,10 @@ export async function unpinFlockMessage(flockId, messageId) {
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
 
-// "Get the flock out the door" is the promise on the landing page, and this is
-// the event that tests it. A flock that never leaves 'planning' never got out
-// the door, which is the exact failure the product claims to prevent. `status`
+// "Nurturing friendship, one night at a time" is the promise on the landing
+// page, and this is the event that tests it. A flock that never leaves
+// 'planning' is a night that never happened, which is the exact failure the
+// product claims to prevent. `status`
 // is safe to send because it is one of the four values checked on the line
 // above and can never be anything else.
 export async function setFlockStatus(flockId, status) {
