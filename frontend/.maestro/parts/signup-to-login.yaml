@@ -26,29 +26,48 @@
 #    being optional, gave up silently. An explicit swipe is a real touch drag and
 #    WebKit applies those to the overflow container under the finger.
 #
-# 2. ONE TAP, NOT TWO. From build 34's debug bundle, after the swipe was fixed:
+# 2. SOMETHING IS ON TOP OF THE BUTTON. From build 34's bundle, after the swipe
+#    was fixed:
 #
 #      Tapping on element: accessibilityText=Sign in, bounds=[257,772][317,816]
 #      Try tapping at (287, 794) using hierarchy based logic for wait
 #      Tapping at (287, 794) using screenshot based logic for wait
 #      Something have changed in the UI judging by screenshot (d=0.01635473)
 #
-#    The selector matched and the tap landed dead centre. It still failed,
-#    because `retryTapIfNoChange` defaults to true and a d=0.016 delta (a focus
-#    ring) does not read as a change, so Maestro tapped the same point twice.
-#    The first tap reaches the login screen; the second is delivered at the same
-#    coordinate, where "Create an account" occupies x 168-306, y 754-798
-#    (LoginScreen.js:371, measured against the live DOM at the Simulator's
-#    402x874). (287, 794) is inside it, so the retry bounced straight back to
-#    signup. The scroll position survives the round trip because both screens
-#    render through AuthShell and React reuses the same .auth-root node, which
-#    is what made a bounce look like a tap that never landed.
+#    The selector matched and Maestro aimed at the button's exact centre. The
+#    run failed anyway and the tap changed nothing.
+#
+#    THE FIRST EXPLANATION FOR THAT WAS WRONG AND IS LEFT HERE SO IT IS NOT
+#    REACHED FOR AGAIN. It read the two tap lines as a retry
+#    (`retryTapIfNoChange` defaults to true) whose second delivery hit login's
+#    "Create an account" at x 168-306, y 754-798 and bounced back to signup. The
+#    coordinates really do overlap, so it was plausible. Build 35 set
+#    `retryTapIfNoChange: false`, both tap lines appeared ANYWAY, and the run
+#    failed identically. That was not the mechanism, and a build was spent
+#    finding out.
+#
+#    Build 35's failure hierarchy carried what build 34's did not: a
+#    `role="dialog"` analytics consent bar at [12,681][390,828], sitting over
+#    the footer, with (287, 794) in its dead space to the right of both its
+#    buttons. The tap hit the overlay. Maestro called it a success because the
+#    element it matched is genuinely in the hierarchy; it is simply underneath,
+#    and a view hierarchy does not say what is on top of what.
+#    dismiss-consent.yaml answers the bar before this part touches anything.
+#
+#    `retryTapIfNoChange: false` is kept: it is a real field of
+#    YamlElementSelector, one tap is all this needs, and it removes a variable.
 appId: com.flockcorp.flock
 ---
 - runFlow:
     when:
       visible: "Create your account"             # SignupScreen.js:240 <h1>
     commands:
+      # BEFORE ANYTHING ELSE. The analytics bar covers [12,681][390,828] at
+      # 402x874, and the footer "Sign in" is at [257,772][317,816] -- underneath
+      # it. Build 35 aimed correctly at (287, 794), hit the bar's dead space and
+      # did nothing, which reads in the log as a tap that succeeded.
+      - runFlow:
+          file: dismiss-consent.yaml
       # Travel needed is ~140px on web and ~200px on native; one swipe covers
       # it and the second is slack. A swipe that hits the end of the container
       # is a no-op, not an error.
