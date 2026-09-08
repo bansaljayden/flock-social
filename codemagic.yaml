@@ -280,7 +280,31 @@ workflows:
           # list of entitlements is read from App.entitlements rather than typed
           # out, so this check covers whatever the app declares next as well.
           set -eu
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          # TWO DIRECTORIES, AND BOTH ARE REQUIRED (2026-09-08).
+          #
+          # Xcode 16 moved where provisioning profiles live, from
+          #   ~/Library/MobileDevice/Provisioning Profiles          (through Xcode 15)
+          # to
+          #   ~/Library/Developer/Xcode/UserData/Provisioning Profiles  (Xcode 16+)
+          #
+          # This file pins `xcode: latest`, so the image rolled onto 16 without
+          # anything here changing. fetch-signing-files kept working and
+          # installed into the NEW directory; this check kept reading the OLD
+          # one, found it empty, and failed with "no provisioning profile was
+          # installed" while blaming the fetch step. The fetch was fine. The
+          # build that hit this had nothing wrong with its signing at all.
+          #
+          # Both are scanned rather than swapping one for the other: the old
+          # path is not wiped by the Xcode upgrade, a rolled-back image would
+          # use it again, and a stale profile sitting in EITHER directory is
+          # still reachable by the archive. That is the whole reason this check
+          # counts every profile instead of stopping at the first good one.
+          # Two plain variables rather than one newline-delimited list: this
+          # body is a YAML literal block, and a continuation line starting at
+          # column 0 ENDS the block. That mistake turns the whole step into a
+          # syntax error the parser reports far from its cause.
+          PROFILE_DIR_OLD="$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_DIR_NEW="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
           DECODED=/tmp/flock-provisioning-profile.plist
           # See the note in the plist step above: named so this body can be run
           # off a Mac by frontend/src/__tests__/codemagicShellSteps.test.js.
@@ -346,6 +370,10 @@ workflows:
           # and a check that had already skipped past it could not name it.
           FOUND=0
           STALE=0
+          # Quoted, so "Provisioning Profiles" stays one path in both.
+          for PROFILE_DIR in "$PROFILE_DIR_OLD" "$PROFILE_DIR_NEW"; do
+          [ -d "$PROFILE_DIR" ] || continue
+          echo "Scanning: $PROFILE_DIR"
           for p in "$PROFILE_DIR"/*.mobileprovision; do
             [ -e "$p" ] || continue
             security cms -D -i "$p" -o "$DECODED" 2>/dev/null || continue
@@ -375,10 +403,16 @@ workflows:
               echo "  carries every entitlement this app declares."
             fi
           done
+          done
 
           if [ "$FOUND" -eq 0 ]; then
             echo "SIGNING CHECK FAILED: no provisioning profile for $BUNDLE_ID was installed."
-            echo "The fetch-signing-files step above is where that went wrong, not the archive."
+            echo "Searched both profile directories:"
+            echo "  $PROFILE_DIR_OLD"
+            echo "  $PROFILE_DIR_NEW"
+            echo "If BOTH are empty, fetch-signing-files is where that went wrong, not the archive."
+            echo "If Xcode moved the directory again, add the new path to PROFILE_DIRS above;"
+            echo "that is what broke the 2026-09-08 build, and the signing itself was fine."
             exit 1
           fi
 

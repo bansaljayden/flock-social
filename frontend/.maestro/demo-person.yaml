@@ -1,0 +1,178 @@
+# Demonstration video, person side. Congressional App Challenge, Oct 2026.
+#
+# THIS IS NOT THE APPLE 2.1 FLOW AND SHOULD NOT BECOME IT. That flow was a
+# compliance checklist: it spends most of its length on report, block, unblock
+# and account deletion because App Review needed those behaviours proven on
+# camera. A product demonstration that dwells on moderation reads as a product
+# about moderation, so none of that is here.
+#
+# What this covers instead, in the order the video needs it:
+#   1. Nest, the home screen
+#   2. Vote on a venue, which is where the crowd model is visible
+#   3. The anonymous budget match, which was shot 10 in the Apple flow and was
+#      NEVER FILMED (the reply called it optional and the run never reached it)
+#   4. The bill split
+#
+# Env, same accounts and the same reason as apple-2-1.yaml:
+#   REVIEW_EMAIL_A, REVIEW_PASSWORD   a fixed, pre-verified, persistent account.
+#                                     Budget, voting and invites all require a
+#                                     verified account (middleware/auth.js
+#                                     UNVERIFIED_DENY), so a throwaway will not
+#                                     do here.
+#   DEMO_RUN                          any string; names the flock so a leftover
+#                                     from a failed take cannot collide.
+#
+# Selector rules are inherited from AUDIT-2026-09-01.md and are not restated:
+# text only, no `id:`, no `back`, no `hideKeyboard`, and an aria-label REPLACES
+# the visible text for matching on iOS. Every selector below is quoted against
+# the source line it comes from, same as the Apple flow.
+#
+# PACING IS AN EDIT DECISION, NOT A FLOW DECISION. Do not add artificial waits
+# to make the video breathe. Maestro drives the app; the editor holds the frame.
+# A flow padded with waits is slower to run, costs more per Codemagic take, and
+# still gives the editor the wrong pauses.
+appId: com.flockcorp.flock
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: unset
+      contacts: allow
+# Cold start: the WKWebView has to load the bundle before anything paints.
+# Apple run 24 asserted with no wait and died in the first seconds.
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:146
+    timeout: 90000
+
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_A}
+      PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 30000
+
+# ---------------------------------------------------------------------------
+# SHOT 1 - Nest. The home screen with tonight's status and the flock list.
+# Nothing to do; the camera just needs it on screen and unobstructed.
+# ---------------------------------------------------------------------------
+- assertVisible: "Nest"
+
+# ---------------------------------------------------------------------------
+# SHOT 2 - open a flock and vote on a venue. THIS IS THE MODEL SHOT.
+#
+# The crowd number and its word come from services/mlPredictor.js by way of
+# crowdEngine.publishedLabel. Read the note in VIDEO-PLAN.md before filming
+# this: a venue with no baseline is scored by the rule engine and its label is
+# hedged to "Usually busy", which shows the model doing nothing. Film against a
+# venue that has corpus coverage.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Nest"
+    optional: true
+- tapOn:
+    text: ".{6,}"                               # the first flock card in the list
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- runFlow:
+    file: parts/open-chat.yaml
+
+- tapOn: "Features"                             # ChatDetail.js:533
+- tapOn:
+    text: "Vote on a venue"                     # ChatDetail.js:528 aria-label
+- extendedWaitUntil:
+    visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
+    timeout: 20000
+- extendedWaitUntil:
+    visible: "Popular Chains Nearby"            # ChatDetail.js:1802
+    timeout: 20000
+- tapOn:
+    text: ".{12,}Vote"                          # ChatDetail.js:1807 chain row button
+- extendedWaitUntil:
+    visible: ".*You voted for.*"
+    timeout: 20000
+- tapOn:
+    text: "Close"                               # ChatDetail.js:1730 aria-label
+
+# ---------------------------------------------------------------------------
+# SHOT 3 - THE ANONYMOUS BUDGET MATCH. Never filmed before this flow.
+#
+# This is the most distinctive thing Flock does and the hardest to explain in
+# words, which is exactly why it belongs on camera. The privacy property is the
+# point: the client never receives an individual amount, only
+# { ceiling, submissionCount, isReady, skipCount } plus the caller's own number,
+# and the ceiling is withheld until at least three non-skipped submissions exist
+# and is then published as a BAND rather than the raw minimum
+# (routes/budget.js bandCeiling).
+#
+# The narration should say that while this is on screen. Do not claim the app
+# hides amounts "for privacy" as a feature bullet; say what it actually does,
+# which is that nobody including the group creator can see what any one person
+# put in.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Open group cash pool"                # ChatDetail.js:2365 aria-label on the chat banner
+    optional: true
+# Fallback: the same sheet is reachable from the composer's plus menu
+# (ChatDetail.js:2755 onCashPool) when the banner is not showing.
+- runFlow:
+    when:
+      notVisible: "Group Budget|Split the Bill"
+    commands:
+      - tapOn:
+          text: "Features"
+          optional: true
+      - tapOn:
+          text: ".*[Cc]ash pool.*"
+          optional: true
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Group Budget|Split the Bill"      # ChatDetail.js:2787 <h2>
+    timeout: 20000
+- extendedWaitUntil:
+    visible: "What's your budget tonight?"      # ChatDetail.js:2794
+    timeout: 20000
+# The preset row renders as "$20", "$40", "$60+" etc from `presets`
+# (ChatDetail.js:2798-2802). Tap the middle one so the shot shows a chosen
+# state rather than a rail.
+- tapOn:
+    text: "\\$\\d+"
+    index: 1
+- waitForAnimationToEnd
+# Submit. The button label sits under the presets and the custom field
+# ("Or enter a custom amount", ChatDetail.js:2805).
+- tapOn:
+    text: "Submit|Set my budget|Done"
+    optional: true
+- waitForAnimationToEnd
+# One of these is true afterwards depending on how many others have answered:
+# the group number, the withheld-number explanation, or the waiting state.
+- assertVisible:
+    text: "The group number is not being shown|Waiting on more answers|No group number for a flock this size|.*budget.*"
+    optional: true
+
+# ---------------------------------------------------------------------------
+# SHOT 4 - the bill split, reached from the same sheet.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Split the Bill"                      # ChatDetail.js:2938
+    optional: true
+- waitForAnimationToEnd
+- assertVisible:
+    text: "Create a bill split after your hangout|Split the Bill"   # ChatDetail.js:2946
+    optional: true
+- tapOn:
+    text: "Close"
+    optional: true
+
+# ---------------------------------------------------------------------------
+# Land back on Nest so the take ends somewhere the editor can cut from.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Back"                                # ChatDetail.js:487 aria-label; the chat has no tab bar
+    optional: true
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 20000

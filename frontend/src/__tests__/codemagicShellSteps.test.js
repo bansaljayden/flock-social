@@ -153,10 +153,18 @@ function sandbox() {
   }
   const work = path.join(root, 'work', 'ios', 'App', 'App');
   fs.mkdirSync(work, { recursive: true });
+  // BOTH profile directories, because Xcode 16 moved the one that matters.
+  // Through Xcode 15 profiles lived under Library/MobileDevice; from Xcode 16
+  // they live under Library/Developer/Xcode/UserData. codemagic.yaml pins
+  // `xcode: latest`, so the image moved and the check kept reading the old
+  // path, found nothing, and failed a build whose signing was fine
+  // (2026-09-08). The step scans both now and these fixtures prove it.
   const home = path.join(root, 'home', 'Library', 'MobileDevice', 'Provisioning Profiles');
   fs.mkdirSync(home, { recursive: true });
+  const homeNew = path.join(root, 'home', 'Library', 'Developer', 'Xcode', 'UserData', 'Provisioning Profiles');
+  fs.mkdirSync(homeNew, { recursive: true });
   return {
-    root, bin, work, profiles: home, cwd: path.join(root, 'work'),
+    root, bin, work, profiles: home, profilesNew: homeNew, cwd: path.join(root, 'work'),
   };
 }
 
@@ -178,6 +186,11 @@ function run(step, opts = {}) {
   }
   for (const [name, contents] of Object.entries(opts.profiles || {})) {
     fs.writeFileSync(path.join(box.profiles, name), contents, 'utf8');
+  }
+  // Xcode 16+ location. Separate option so a test can put a profile in exactly
+  // one directory and prove the step looks there.
+  for (const [name, contents] of Object.entries(opts.profilesNew || {})) {
+    fs.writeFileSync(path.join(box.profilesNew, name), contents, 'utf8');
   }
 
   const env = {
@@ -441,11 +454,41 @@ describe(s('the provisioning profile step, run'), () => {
     expect(r.out).toContain(`All 2 installed profiles for ${BUNDLE_ID} carry every entitlement this app declares.`);
   });
 
-  shellTest('no profile installed blames the fetch step, not the archive', () => {
+  shellTest('no profile installed names both directories it searched', () => {
     const r = withProfiles({});
     expect(r.code).toBe(1);
     expect(r.out).toContain(`SIGNING CHECK FAILED: no provisioning profile for ${BUNDLE_ID} was installed.`);
-    expect(r.out).toContain('The fetch-signing-files step above is where that went wrong, not the archive.');
+    expect(r.out).toContain('Searched both profile directories:');
+    expect(r.out).toContain('Library/MobileDevice/Provisioning Profiles');
+    expect(r.out).toContain('Library/Developer/Xcode/UserData/Provisioning Profiles');
+  });
+
+  // THE 2026-09-08 REGRESSION, PINNED.
+  //
+  // Xcode 16 moved the profile directory. fetch-signing-files installed into
+  // the new one, this check read only the old one, and a build with perfectly
+  // good signing failed claiming no profile existed. A profile in EITHER
+  // directory alone has to satisfy the step, or that failure returns the next
+  // time Apple moves anything.
+  shellTest('a profile in the Xcode 16 directory alone is found', () => {
+    const r = run(PROFILE_STEP, {
+      files: { 'App.entitlements': fixture('entitlements-complete.plist') },
+      profilesNew: { 'aaaa.mobileprovision': GOOD },
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`All 1 installed profiles for ${BUNDLE_ID} carry every entitlement this app declares.`);
+  });
+
+  shellTest('a stale profile hiding in the Xcode 16 directory still fails the build', () => {
+    // The archive reaches both directories, so a stale profile in the new one
+    // is exactly as fatal as a stale profile in the old one.
+    const r = run(PROFILE_STEP, {
+      files: { 'App.entitlements': fixture('entitlements-complete.plist') },
+      profiles: { 'aaaa.mobileprovision': GOOD },
+      profilesNew: { 'zzzz.mobileprovision': STALE },
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`SIGNING CHECK FAILED: 1 of 2 installed profiles for ${BUNDLE_ID} cannot sign this app.`);
   });
 
   shellTest('a profile for a different app id is not this app having a profile', () => {
