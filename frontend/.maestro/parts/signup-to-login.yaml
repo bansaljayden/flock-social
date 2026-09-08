@@ -1,0 +1,74 @@
+# Cross from the signup screen to the login screen. Safe to call from anywhere:
+# every step is guarded, so on a screen that is already the login form, or on
+# any screen that is neither, this does nothing.
+#
+# WHY THIS EXISTS. App.js:21052 decides the opening screen:
+#
+#   return (window.Capacitor?.isNativePlatform?.() && !hasToken) ? 'signup' : 'login';
+#
+# On NATIVE with no stored token that is 'signup'. On the web it is 'login',
+# which is where the long-standing assumption that a fresh launch shows the
+# login form came from; apple-2-1.yaml still carries it in a comment. Every
+# launchApp on a Simulator with no session therefore lands on SIGNUP, including
+# the relaunch inside login.yaml, so the crossover has to live somewhere both
+# can reach.
+#
+# Two separate defects were paid for one build at a time before this file read
+# the way it does; both fixes are load-bearing and neither is obvious.
+#
+# 1. THE PAGE DOES NOT SCROLL, AN INNER DIV DOES. Measured on the real DOM at
+#    390x844: document.scrollingElement has scrollHeight 844 against clientHeight
+#    844, while .auth-root is 981 against 844. AuthShell.js:241-244 gives
+#    .auth-root `height: 100dvh; overflow-y: auto`, so the whole auth screen is
+#    an inner scroller inside a body that is exactly viewport height. The footer
+#    "Sign in" sits at top 913, below the fold, further still on native where the
+#    Apple button also renders. `scrollUntilVisible` had nothing to scroll and,
+#    being optional, gave up silently. An explicit swipe is a real touch drag and
+#    WebKit applies those to the overflow container under the finger.
+#
+# 2. ONE TAP, NOT TWO. From build 34's debug bundle, after the swipe was fixed:
+#
+#      Tapping on element: accessibilityText=Sign in, bounds=[257,772][317,816]
+#      Try tapping at (287, 794) using hierarchy based logic for wait
+#      Tapping at (287, 794) using screenshot based logic for wait
+#      Something have changed in the UI judging by screenshot (d=0.01635473)
+#
+#    The selector matched and the tap landed dead centre. It still failed,
+#    because `retryTapIfNoChange` defaults to true and a d=0.016 delta (a focus
+#    ring) does not read as a change, so Maestro tapped the same point twice.
+#    The first tap reaches the login screen; the second is delivered at the same
+#    coordinate, where "Create an account" occupies x 168-306, y 754-798
+#    (LoginScreen.js:371, measured against the live DOM at the Simulator's
+#    402x874). (287, 794) is inside it, so the retry bounced straight back to
+#    signup. The scroll position survives the round trip because both screens
+#    render through AuthShell and React reuses the same .auth-root node, which
+#    is what made a bounce look like a tap that never landed.
+appId: com.flockcorp.flock
+---
+- runFlow:
+    when:
+      visible: "Create your account"             # SignupScreen.js:240 <h1>
+    commands:
+      # Travel needed is ~140px on web and ~200px on native; one swipe covers
+      # it and the second is slack. A swipe that hits the end of the container
+      # is a no-op, not an error.
+      - swipe:
+          start: 50%, 75%
+          end: 50%, 35%
+      - swipe:
+          start: 50%, 75%
+          end: 50%, 35%
+      - waitForAnimationToEnd
+      # Leaves a line in the debug log naming what the swipe revealed. The
+      # button carries its label as an accessibility label and NOT as text
+      # (hierarchy at build 34: accessibilityText=Sign in, text=None), which is
+      # the same rule AUDIT-2026-09-01.md records for aria-labels; Maestro
+      # matches it either way.
+      - assertVisible:
+          text: "Sign in"
+          optional: true
+      - tapOn:
+          text: "Sign in"                        # SignupScreen.js:516 -> onSwitchToLogin
+          retryTapIfNoChange: false
+          optional: true
+      - waitForAnimationToEnd

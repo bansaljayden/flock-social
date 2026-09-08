@@ -58,67 +58,14 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Welcome back|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
     timeout: 90000
+# A fresh Simulator with clearState has no token, so App.js:21052 opens on
+# SIGNUP, not login. The crossover is shared with parts/login.yaml, whose own
+# relaunch lands on the same screen for the same reason, and it carries the
+# two non-obvious fixes that cost a build each: the page does not scroll (an
+# inner .auth-root does), and the tap must not be retried or its second
+# delivery lands on "Create an account" and bounces back here.
 - runFlow:
-    when:
-      notVisible: "Welcome back"
-    commands:
-      # THE LINK IS BELOW THE FOLD. Build 6a9ff24e got this far and then failed
-      # the wait underneath: it saw the signup screen, tapped, and never reached
-      # the login form. Both "Sign in" buttons call onSwitchToLogin
-      # (SignupScreen.js:301 and :516) so the selector was right, but they live
-      # in `auth-foot` at the BOTTOM of the form, off-screen at phone height. An
-      # `optional: true` tap that matches nothing does not fail; it silently
-      # does nothing, which is why the flow carried on to die one step later
-      # with a message about the login screen rather than about the tap.
-      # MEASURED 2026-09-08, real DOM at 390x844 (iPhone height):
-      #
-      #   document.scrollingElement  scrollHeight 844 == clientHeight 844
-      #   .auth-root                 scrollHeight 981  > clientHeight 844
-      #   the footer "Sign in"       top 913, i.e. 69px BELOW the fold
-      #
-      # The DOCUMENT does not scroll. AuthShell.js:241-244 gives .auth-root
-      # `height: 100dvh; overflow-y: auto`, so the whole screen is an inner
-      # scrolling div inside a body that is exactly viewport height. A scroll
-      # aimed at the page scrolls nothing, `scrollUntilVisible` gives up, and
-      # because it was optional it gave up SILENTLY -- which is why builds
-      # 6a9ff24e, 6a9fedb7 and 6a9ff829 all died 30 seconds later on the login
-      # screen instead of here on the tap. On native it is worse than the 69px
-      # above: AppleSignInButton renders on iOS only (it returns null on web,
-      # so the measurement above does not include it) and pushes the footer
-      # roughly another 60px down.
-      #
-      # An explicit swipe is a real touch drag, and WebKit applies those to
-      # whatever overflow container is under the finger, so this moves
-      # .auth-root where a page scroll could not. Two of them: the travel
-      # needed is only ~140px on web and ~200px on native, so one is enough
-      # and the second is slack for the taller native form. A swipe that hits
-      # the end of the container is a no-op, not an error.
-      - swipe:
-          start: 50%, 75%
-          end: 50%, 35%
-      - swipe:
-          start: 50%, 75%
-          end: 50%, 35%
-      - waitForAnimationToEnd
-      # Leaves a line in the log naming what the swipe actually revealed, so a
-      # future failure here says which of the two it was.
-      - assertVisible:
-          text: "Sign in"
-          optional: true
-      - tapOn:
-          text: "Sign in"                         # SignupScreen.js:516 / :301, both call onSwitchToLogin
-          optional: true
-      - waitForAnimationToEnd
-      # Second door, in case the first tap landed on a disabled submit rather
-      # than the footer link: the prompt text next to it is unique to the footer.
-      - runFlow:
-          when:
-            notVisible: "Welcome back"
-          commands:
-            - tapOn:
-                text: 'Already have an account\?|Signed up before\?'
-                optional: true
-            - waitForAnimationToEnd
+    file: parts/signup-to-login.yaml
 - extendedWaitUntil:
     visible: "Welcome back"                     # LoginScreen.js:164
     timeout: 30000
