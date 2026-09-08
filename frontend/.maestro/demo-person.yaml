@@ -200,8 +200,14 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
     timeout: 20000
+# EITHER HEADING IS A PASS, and which one appears says where the list came
+# from. "Popular Chains Nearby" means a real coordinate fed it. "Popular in
+# Philadelphia" means the device gave nothing and the app fell back to the city
+# it falls back to everywhere else, which is the state a Simulator has been in
+# on every take so far: location granted, location set, and CoreLocation
+# delivering nothing inside ten seconds.
 - extendedWaitUntil:
-    visible: "Popular Chains Nearby"            # ChatDetail.js:1802
+    visible: '[\s\S]*Popular Chains Nearby[\s\S]*|[\s\S]*Popular in [\s\S]*'
     timeout: 20000
 # NO TRAILING WILDCARD ON THIS ONE, EVER. apple-2-1.yaml:316-322 records why:
 # Maestro's text match is case-INSENSITIVE as well as whole-string, so anything
@@ -245,8 +251,14 @@ appId: com.flockcorp.flock
     text: "Confirm|Lock it in"                  # ChatDetail.js:3243
     index: 0
 - waitForAnimationToEnd
+# OPTIONAL, BECAUSE THE PANEL HAS USUALLY CLOSED ITSELF BY NOW.
+# handleConfirmVenue calls setShowVotePanel(false) before it even sends the
+# update (ChatDetail.js:1622), so the Close button this used to tap is gone the
+# moment the lock lands. A required tap on it would have ended the run here --
+# in the stretch no take has ever reached, which is the worst place to learn it.
 - tapOn:
     text: "Close"                               # ChatDetail.js:1730 aria-label
+    optional: true
 
 # ---------------------------------------------------------------------------
 # SHOT 3 - THE ANONYMOUS BUDGET MATCH. Never filmed before this flow.
@@ -307,9 +319,37 @@ appId: com.flockcorp.flock
 
 # ---------------------------------------------------------------------------
 # SHOT 4 - the bill split, reached from the same sheet.
-# ---------------------------------------------------------------------------
+#
+# THE SHEET IS SHUT BY NOW. Submitting a budget ends with setShowChatPool(false)
+# (ChatDetail.js, the submit handler), so by the time the run gets here the
+# money sheet has closed itself and "Split the Bill" is not on screen. The tap
+# below is optional, so it would have missed in silence and beat 8 would have
+# been narration over a chat screen -- a hole in the footage that no failure
+# would have reported.
+#
+# So the sheet is reopened first, by the same two doors that opened it before:
+# the chat banner, or the composer's plus. The button inside is gated on
+# `isConfirmedOrComplete` (ChatDetail.js:2938), which is why the plan is locked
+# in further up rather than left in voting.
 - tapOn:
-    text: "Split the Bill"                      # ChatDetail.js:2938
+    text: "Open group cash pool"                # ChatDetail.js:2365 aria-label
+    optional: true
+- runFlow:
+    when:
+      notVisible: "Group Budget|Split the Bill"
+    commands:
+      - tapOn:
+          text: "More to send"
+          optional: true
+      - tapOn:
+          text: '[\s\S]*[Cc]ash pool[\s\S]*'
+          optional: true
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Group Budget|Split the Bill"
+    timeout: 20000
+- tapOn:
+    text: "Split the Bill"                      # ChatDetail.js:2939
     optional: true
 - waitForAnimationToEnd
 - assertVisible:
