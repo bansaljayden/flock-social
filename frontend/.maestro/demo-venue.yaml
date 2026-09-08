@@ -1,0 +1,129 @@
+# Demonstration video, venue side. Congressional App Challenge, Oct 2026.
+#
+# DELIBERATELY SHORT. the maintainer's instruction 2026-09-08: "The user flow should be
+# a lot bigger than the venue flow." Target is about 30 seconds of a 2:45 cut
+# against 1:45 for the person side. This flow exists to prove the second half
+# of the product is real, not to tour it.
+#
+# This half has NEVER been filmed. The Apple 2.1 recording never opened the
+# owner dashboard once.
+#
+# Env:
+#   DEMO_VENUE_EMAIL, DEMO_VENUE_PASSWORD
+#       An account whose `role` is 'venue_owner' (or 'admin'). THIS IS NOT AN
+#       ORDINARY ACCOUNT and the flow cannot create one: the row that opens the
+#       dashboard is rendered only for those roles
+#       (ProfileSettings.js:680), and role is set server-side. If this account
+#       is a plain user the You tab simply will not have the row, and the flow
+#       ends at the first required wait below with the reason on screen.
+#
+# Selector rules inherited from AUDIT-2026-09-01.md: text only, no `id:`, no
+# `back`, no `hideKeyboard`, and an aria-label REPLACES visible text on iOS.
+appId: com.flockcorp.flock
+---
+- launchApp:
+    clearState: true
+    permissions:
+      all: unset
+      contacts: allow
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:146
+    timeout: 90000
+
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${DEMO_VENUE_EMAIL}
+      PASSWORD: ${DEMO_VENUE_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 30000
+
+# ---------------------------------------------------------------------------
+# SHOT 1 - the same account crosses into the venue product.
+#
+# Worth filming as a transition rather than cutting to the dashboard: it shows
+# the two halves are one app and one login, which is the point a judge would
+# otherwise miss. The door is in the You tab, and it exists because the welcome
+# screen used to promise a switch "in your profile" and there was none
+# (App.js openVenueDashboard).
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "You"                                 # tab bar
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element: "Venue dashboard"                  # ProfileSettings.js:680, role-gated row
+    direction: DOWN
+    timeout: 8000
+    optional: true
+- tapOn:
+    text: "Venue dashboard"
+- extendedWaitUntil:
+    visible: "Analytics"                        # VenueDashboard.js:220 tab label
+    timeout: 30000
+
+# ---------------------------------------------------------------------------
+# SHOT 2 - THE LIVE CAPACITY CONTROL. The strongest venue shot in the product.
+#
+# This is the owner overriding the model in real time: they set how full the
+# room actually is, and users see that number instead of the forecast, labelled
+# as the venue's own. It expires by itself so nobody has to remember to turn it
+# off. Film the slider moving.
+#
+# NOTE FOR THE EDIT: the forecast card BELOW this one will read "The forecast
+# couldn't load". That is not a defect. routes/venueDashboard.js does a live
+# Google Places Details lookup on the venue's google_place_id, and a demo venue
+# that is not a real Google listing can never resolve. Frame the shot on the
+# capacity control, or cut before the forecast card. Do not fake the forecast.
+# ---------------------------------------------------------------------------
+- assertVisible:
+    text: "How full are you compared to your capacity?"   # VenueDashboard.js:263
+- tapOn:
+    text: "How full is your venue compared to its capacity, 0 to 100 percent"  # :302 aria-label on the slider
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Set live number|Update live number"  # VenueDashboard.js:326
+    optional: true
+- waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# SHOT 3 - promotions and events, the owner's own surfaces.
+# Both may be empty on a fresh account; the empty states are named so the flow
+# does not stall waiting for content that was never created.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Promotions"                          # VenueDashboard.js:228
+- waitForAnimationToEnd
+- assertVisible:
+    text: ".*"                                  # either a promo row or "No promotions yet. Create your first one!" (:1462)
+    optional: true
+- tapOn:
+    text: "Events"                              # :229
+- waitForAnimationToEnd
+- assertVisible:
+    text: ".*"                                  # or "No events yet. Create your first one!" (:1630)
+    optional: true
+
+# ---------------------------------------------------------------------------
+# SHOT 4 - a review with an owner reply. The two-sided moment: a customer wrote
+# it, the owner answers it, inside the same product the group used to pick the
+# place.
+# ---------------------------------------------------------------------------
+- tapOn:
+    text: "Reviews"                             # :230
+- extendedWaitUntil:
+    visible: "Recent Reviews"                   # VenueDashboard.js:1764
+    timeout: 20000
+- tapOn:
+    text: "Reply"
+    optional: true
+- tapOn:
+    text: "Your reply"                          # :1804 aria-label on the reply field
+    optional: true
+- waitForAnimationToEnd
+
+# End on the dashboard so the editor has a clean tail to cut from.
+- assertVisible:
+    text: "Reviews|Analytics"
+    optional: true
