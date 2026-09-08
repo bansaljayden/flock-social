@@ -256,8 +256,15 @@ appId: com.flockcorp.flock
 # budget on. So with the budget enabled and the flock still in `voting`,
 # NEITHER bill-split button exists, and the tap further down would have missed
 # silently and dropped beat 8 from the footage without failing the run.
+# THE BUTTON HAS A NAME NOW, AND THE NAME IS THE SELECTOR. Build 43 stopped
+# here with the button on screen: the vote row was role="button" with Confirm
+# nested inside it, WebKit collapsed the two into one accessible element
+# reading "The Dandelion Leading You 1 Confirm", and nothing matched. The row is
+# two sibling controls now, and Confirm carries aria-label "Confirm <venue>" /
+# "Lock in <venue>", which on iOS is the text Maestro sees in place of the
+# visible word.
 - tapOn:
-    text: "Confirm|Lock it in"                  # ChatDetail.js:3243
+    text: 'Confirm [\s\S]+|Lock in [\s\S]+'   # ChatDetail.js vote row, aria-label
     index: 0
 - waitForAnimationToEnd
 # OPTIONAL, BECAUSE THE PANEL HAS USUALLY CLOSED ITSELF BY NOW.
