@@ -691,7 +691,15 @@ workflows:
             # A, which is correct only if A holds one of those roles: if it does
             # not, the flow stops at the missing row rather than filming a
             # half-open dashboard, and the log says so.
-            -e "DEMO_VENUE_EMAIL=${DEMO_VENUE_EMAIL:-$REVIEW_EMAIL_A}"
+            # Account B, not A. The venue half needs an account that can reach the
+            # venue dashboard at all: ProfileSettings.js:680 gates that row on
+            # role venue_owner or admin, and A is a plain user. B was promoted to
+            # venue_owner on 2026-09-08 and the verified Hoppers profile moved onto
+            # it, so the demo venue is owned by a demo account rather than by a
+            # personal one whose password would then have to live in this group.
+            # Both persistent accounts share REVIEW_PASSWORD, which is why there is
+            # still no DEMO_VENUE_PASSWORD to set.
+            -e "DEMO_VENUE_EMAIL=${DEMO_VENUE_EMAIL:-$REVIEW_EMAIL_B}"
             -e "DEMO_VENUE_PASSWORD=${DEMO_VENUE_PASSWORD:-$REVIEW_PASSWORD}"
           )
           # Reset pass, off camera: puts A back in a state the recording can
