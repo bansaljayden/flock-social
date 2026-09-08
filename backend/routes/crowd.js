@@ -1432,6 +1432,13 @@ router.post('/batch',
             rawEngineScore: result.score,
             confidence: rowConfidence,
             predictionMethod: result.predictionMethod || null,
+            // Which artifact produced the number. The served_predictions row
+            // below is what every after-the-fact evaluation of the model
+            // reads, and this list is the main path the model is served on
+            // (the map pins), so leaving the version off here left 723 of the
+            // last fortnight's 731 ML serves unattributable to any model at
+            // all. The detail card has always carried it; the list did not.
+            modelVersion: result.modelVersion || null,
             confidenceBasis: support.basis,
             confidenceMeans: support.confidenceMeans,
             // Same rule as the card this list sits under, and it has to be the
@@ -1509,7 +1516,8 @@ router.post('/batch',
         placeId: p.placeId,
         score: p.score,
         method: p.confidenceBasis === 'owner_report' ? 'owner_report' : p.predictionMethod,
-        modelVersion: null,
+        // Was a literal null, on the path that serves the most predictions.
+        modelVersion: p.modelVersion || null,
         source: 'batch',
         localDay: p.venueClock?.day,
         localHour: p.venueClock?.hour,

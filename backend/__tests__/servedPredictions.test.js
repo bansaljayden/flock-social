@@ -204,6 +204,24 @@ test('the batch records every shaped id in ONE statement and drops the junk ones
   for (const s of scores) assert.ok(Number.isInteger(s) && s >= 0 && s <= 100);
 });
 
+test('the batch records WHICH model served each row, the same as the card does', async () => {
+  // Was a literal null on this path for as long as the column existed, and
+  // this is the path the map pins are served on: 723 of the last fortnight's
+  // 731 ML serves in production had no model version at all, which made them
+  // unattributable to any artifact when the time came to evaluate it.
+  const good = pid('Version1');
+  const r = await call('POST', '/api/crowd/batch', {
+    venues: [{ place_id: good, name: 'Bar Versioned', types: ['bar'] }],
+  });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(servedWrites.length, 1);
+  const versions = servedWrites[0].params[4];
+  assert.deepEqual(versions, ['test-model'],
+    "the batch row must carry the predictor's model version, not null");
+  assert.equal(r.body.predictions[0].modelVersion, 'test-model',
+    'and the response says it too, the way the detail card always has');
+});
+
 test('a duplicated place id in one batch is one serve, not many', async () => {
   // The batch route accepts the same place id many times in one body (its
   // header documents that as the clock oracle). Twenty copies of one venue in
