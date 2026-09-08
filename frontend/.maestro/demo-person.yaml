@@ -104,11 +104,25 @@ appId: com.flockcorp.flock
 - tapOn:
     text: "Nest"
     optional: true
-- tapOn:
-    text: ".{6,}"                               # the first flock card in the list
-    index: 0
-    optional: true
+# CREATE THE PLAN ON CAMERA. Build 37 reached Nest here for the first time and
+# then died inside open-chat.yaml, whose log named the reason in one line:
+# `Assert that (Optional) "Start a Flock" is visible COMPLETED`, which is the
+# EMPTY STATE. The review account holds no flock, the ".{6,}" tap above had no
+# card to hit, and open-chat.yaml is a recovery helper rather than a creator --
+# it was written for apple-2-1.yaml, which creates one first. This flow never
+# did.
+#
+# Creating it here is also what the video is for: beat 4 of NARRATION-v2.md is
+# "create, invite, RSVP", so the demonstration should show a plan being made
+# rather than open one that happened to be lying around. The name carries
+# DEMO_RUN so a leftover from a failed take cannot be picked up by mistake.
+- runFlow:
+    file: parts/create-flock.yaml
+    env:
+      FLOCK_NAME: "Friday night out ${DEMO_RUN}"
 - waitForAnimationToEnd
+# The create success path opens the chat directly (App.js newlyCreatedFlockRef,
+# setCurrentScreen('chatDetail')), so this normally passes on its first assert.
 - runFlow:
     file: parts/open-chat.yaml
 

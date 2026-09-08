@@ -1,0 +1,83 @@
+# Create a flock and land in its chat. Env: FLOCK_NAME.
+#
+# Lifted verbatim from the shot 6 block of apple-2-1.yaml, which is the only
+# version of this that has ever worked on a Simulator, along with the comments
+# that record why each step is there. Nothing here is new; it is shared so the
+# demo flows stop assuming a flock already exists.
+#
+# WHY THE DEMO NEEDS IT. Build 37 got the person flow through the crossover,
+# through login and onto Nest for the first time, and then failed in
+# open-chat.yaml. The log says why in one line: `Assert that (Optional)
+# "Start a Flock" is visible COMPLETED` -- that is the EMPTY STATE. The review
+# account holds no flock, so there was no chat to open, and open-chat.yaml is a
+# recovery helper, not a creator. It was written for apple-2-1.yaml, which
+# creates a flock first.
+#
+# It is also what the video is supposed to show. Beat 4 of NARRATION-v2.md is
+# "create, invite, RSVP", so a demonstration that silently opens an existing
+# chat would not match its own narration.
+#
+# The form submits with a name alone (CreateScreen.js:160 is the only
+# validation). Nobody is added here on purpose: one invitee turns the flock
+# into a direct message (CreateScreen.js:156 dmTarget).
+appId: com.flockcorp.flock
+---
+- tapOn: "Nest"
+- tapOn:
+    text: "Start a flock"                       # App.js:12374 header button (flocks exist) or :12434 empty state; same text, either opens the create screen
+    index: 0
+- extendedWaitUntil:
+    visible: "Start a Flock"                    # CreateScreen.js:293 <h1>
+    timeout: 10000
+- tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
+- inputText: ${FLOCK_NAME}
+# The name commits on a 120 ms debounce (SearchInputLocal, App.js:4071).
+# Close the keyboard for real. Runs 7 to 11 (2026-09-02) all tapped Create
+# Flock with the keyboard still up: on iOS a tap on a button does not take
+# focus from a text field, so the day-chip tap of run 10 changed nothing, and
+# the request never left the app (Railway http log). Three things that do
+# close it, each optional: the keyboard's own Done bar, the Return key (the
+# name field blurs on Return), and only then the chip.
+- tapOn:
+    text: "Done"
+    optional: true
+- pressKey: Enter
+- waitForAnimationToEnd
+- tapOn:
+    text: "Tonight|Tomorrow|This Weekend|Next Week"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
+    direction: DOWN
+    timeout: 8000
+    optional: true
+- tapOn: "Create Flock"
+- waitForAnimationToEnd
+# Probes: which of these is on screen says what the tap did.
+- assertVisible:
+    text: "Name your plan first"                # CreateScreen.js handleCreate: name state was empty
+    optional: true
+- assertVisible:
+    text: "Movie night, dinner, party..."       # placeholder visible = the field is empty
+    optional: true
+- assertVisible:
+    text: "Create Flock"                        # still on the create screen
+    optional: true
+- repeat:
+    times: 2
+    commands:
+      - runFlow:
+          when:
+            visible: "Create Flock"
+          commands:
+            - tapOn:
+                text: "Done"
+                optional: true
+            - pressKey: Enter
+            - waitForAnimationToEnd
+            - tapOn:
+                text: "Create Flock"
+                optional: true
+            - waitForAnimationToEnd
