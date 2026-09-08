@@ -128,10 +128,18 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Popular Chains Nearby"            # ChatDetail.js:1802
     timeout: 20000
+# KOTLIN'S `.` DOES NOT MATCH A NEWLINE, and Maestro anchors the whole string
+# (Filters.textMatches -> regex.matches). A row's accessible text is assembled
+# from JSX and carries newlines and trailing space, so `.{12,}Vote` can fail on
+# an element that plainly reads "... Vote" on screen. parts/open-chat.yaml
+# already works around this with `Review night[\s\S]*`; the same care is
+# applied to every multi-line matcher here. The target is the Popular Chains
+# row, a <button> whose content ends `{Icons.vote(...)} Vote`
+# (ChatDetail.js:3305/3318).
 - tapOn:
-    text: ".{12,}Vote"                          # ChatDetail.js:1807 chain row button
+    text: '[\s\S]{12,}Vote[\s\S]*'                          # ChatDetail.js:1807 chain row button
 - extendedWaitUntil:
-    visible: ".*You voted for.*"
+    visible: '[\s\S]*You voted for[\s\S]*'
     timeout: 20000
 - tapOn:
     text: "Close"                               # ChatDetail.js:1730 aria-label
@@ -165,7 +173,7 @@ appId: com.flockcorp.flock
           text: "More to send"                  # ChatInputBar.js:475, not "Features"
           optional: true
       - tapOn:
-          text: ".*[Cc]ash pool.*"
+          text: '[\s\S]*[Cc]ash pool[\s\S]*'
           optional: true
       - waitForAnimationToEnd
 - extendedWaitUntil:
@@ -190,7 +198,7 @@ appId: com.flockcorp.flock
 # One of these is true afterwards depending on how many others have answered:
 # the group number, the withheld-number explanation, or the waiting state.
 - assertVisible:
-    text: "The group number is not being shown|Waiting on more answers|No group number for a flock this size|.*budget.*"
+    text: 'The group number is not being shown|Waiting on more answers|No group number for a flock this size|[\s\S]*budget[\s\S]*'
     optional: true
 
 # ---------------------------------------------------------------------------
