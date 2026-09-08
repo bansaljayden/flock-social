@@ -116,6 +116,14 @@ appId: com.flockcorp.flock
 # "create, invite, RSVP", so the demonstration should show a plan being made
 # rather than open one that happened to be lying around. The name carries
 # DEMO_RUN so a leftover from a failed take cannot be picked up by mistake.
+# DISCOVER FIRST, AND NOT ONLY BECAUSE IT IS BEAT 5. It is where userLocation
+# comes from, and without it App.js:8270 loadPopularVenues returns immediately,
+# leaving the vote panel's "Popular Chains Nearby" empty and the required tap
+# under it with nothing to hit. apple-2-1.yaml has always taken the location at
+# its shot 5 for exactly this reason and says so at its shot 9.
+- runFlow:
+    file: parts/discover-and-locate.yaml
+
 - runFlow:
     file: parts/create-flock.yaml
     env:
@@ -142,6 +150,17 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Popular Chains Nearby"            # ChatDetail.js:1802
     timeout: 20000
+# NO TRAILING WILDCARD ON THIS ONE, EVER. apple-2-1.yaml:316-322 records why:
+# Maestro's text match is case-INSENSITIVE as well as whole-string, so anything
+# that lets the pattern end early matches the panel's own header, which reads
+# "0 votes cast" and later "... You voted for X". Run 26 cast no vote at all and
+# still reported COMPLETED that way. Requiring at least twelve characters and
+# then ENDING at "Vote" is what excludes the header and matches only a real row,
+# whose label concatenates name, category, rating, price and the pill, e.g.
+# "Good Dog Bar Bar - 4.4 * - $$ Vote". A `[\s\S]*` suffix was added here
+# earlier today for newline tolerance and quietly undid that; the prefix alone
+# gives the tolerance.
+#
 # KOTLIN'S `.` DOES NOT MATCH A NEWLINE, and Maestro anchors the whole string
 # (Filters.textMatches -> regex.matches). A row's accessible text is assembled
 # from JSX and carries newlines and trailing space, so `.{12,}Vote` can fail on
@@ -151,7 +170,7 @@ appId: com.flockcorp.flock
 # row, a <button> whose content ends `{Icons.vote(...)} Vote`
 # (ChatDetail.js:3305/3318).
 - tapOn:
-    text: '[\s\S]{12,}Vote[\s\S]*'                          # ChatDetail.js:1807 chain row button
+    text: '[\s\S]{12,}Vote'                          # ChatDetail.js:1807 chain row button
 - extendedWaitUntil:
     visible: '[\s\S]*You voted for[\s\S]*'
     timeout: 20000
