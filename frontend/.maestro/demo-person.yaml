@@ -50,7 +50,17 @@ appId: com.flockcorp.flock
       # the one that has to film the prompt being accepted, and it still does;
       # this one is about what the product DOES, and every shot after Discover
       # needs a real coordinate behind it.
-      location: allow
+      #
+      # `inuse`, NOT `allow`. Location is the one permission Maestro does not
+      # route through applesimutils: LocalSimulatorUtils.setLocationPermission
+      # takes always / inuse / never / unset and throws on anything else, which
+      # is what killed build 41 nine seconds in ("wrong argument value 'allow'
+      # was provided for 'location' permission"). The docs' own example says
+      # `location: allow` and it is wrong. `inuse` runs
+      # `simctl privacy grant location`, which is While Using the App, which is
+      # exactly what the app asks for. An explicit entry beats `all: unset`
+      # above whatever order they appear in.
+      location: inuse
 # Cold start: the WKWebView has to load the bundle before anything paints.
 # Apple run 24 asserted with no wait and died in the first seconds.
 # THE FIRST SCREEN ON A FRESH SIMULATOR IS SIGNUP, NOT LOGIN (2026-09-08).
