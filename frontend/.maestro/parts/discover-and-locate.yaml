@@ -48,3 +48,26 @@ appId: com.flockcorp.flock
     timeout: 30000
     optional: true
 - waitForAnimationToEnd
+# THE MODEL'S NUMBER, ON CAMERA. Beat 5 of the narration is "this is a real
+# venue, and this number is my own model predicting how busy it will be at
+# this hour", and the heat map alone has no number on it. The results list
+# does: every row carries the crowd pill, "Crowd level 62 out of 100, Steady"
+# in the accessibility tree and the figure with its word on screen (App.js
+# search results, `crowdLabel` / `(est.)`). So the list is opened, held long
+# enough to read, and closed again with its own back control, whose accessible
+# name is the one word "Map".
+#
+# Optional throughout: a shot, not a gate. If Places answered with nothing the
+# button is not there and the take carries on to the flock.
+- tapOn:
+    text: 'All \d+ results'                     # App.js "All {n} results"
+    optional: true
+- extendedWaitUntil:
+    visible: '[\s\S]*Crowd level \d+ out of 100[\s\S]*'
+    timeout: 10000
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Map"                                 # App.js results header, back to the map
+    optional: true
+- waitForAnimationToEnd

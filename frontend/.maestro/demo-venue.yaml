@@ -117,6 +117,9 @@ appId: com.flockcorp.flock
       # shot never filmed. The <h3> carries exactly this text and nothing else
       # (App.js:14275), and its centre is inside the button.
       MODE: "I'm Going Out"
+      # The fallback, by position: see parts/choose-mode.yaml for the two builds
+      # that made it necessary and the footage it was measured from.
+      MODE_POINT: "50%,58%"
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 30000
