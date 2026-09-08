@@ -48,10 +48,33 @@ appId: com.flockcorp.flock
     when:
       notVisible: "Welcome back"
     commands:
+      # THE LINK IS BELOW THE FOLD. Build 6a9ff24e got this far and then failed
+      # the wait underneath: it saw the signup screen, tapped, and never reached
+      # the login form. Both "Sign in" buttons call onSwitchToLogin
+      # (SignupScreen.js:301 and :516) so the selector was right, but they live
+      # in `auth-foot` at the BOTTOM of the form, off-screen at phone height. An
+      # `optional: true` tap that matches nothing does not fail; it silently
+      # does nothing, which is why the flow carried on to die one step later
+      # with a message about the login screen rather than about the tap.
+      - scrollUntilVisible:
+          element: "Sign in"
+          direction: DOWN
+          timeout: 8000
+          optional: true
       - tapOn:
-          text: "Sign in"                         # SignupScreen.js:301, the door back to the login form
+          text: "Sign in"                         # SignupScreen.js:516 / :301, both call onSwitchToLogin
           optional: true
       - waitForAnimationToEnd
+      # Second door, in case the first tap landed on a disabled submit rather
+      # than the footer link: the prompt text next to it is unique to the footer.
+      - runFlow:
+          when:
+            notVisible: "Welcome back"
+          commands:
+            - tapOn:
+                text: 'Already have an account\?|Signed up before\?'
+                optional: true
+            - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "Welcome back"                     # LoginScreen.js:164
     timeout: 30000
