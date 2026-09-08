@@ -111,8 +111,21 @@ appId: com.flockcorp.flock
 # ---------------------------------------------------------------------------
 - assertVisible:
     text: "How full are you compared to your capacity?"   # VenueDashboard.js:263
-- tapOn:
-    text: "How full is your venue compared to its capacity, 0 to 100 percent"  # :302 aria-label on the slider
+# DRAG THE THUMB, DO NOT TAP IT. The note above says to film the slider moving,
+# and a tap does not move an iOS range thumb, so the shot would have been a
+# still control and a number that changed by itself. A swipe from the element
+# drags it, which is both the shot and the thing that sets venueBusyDraft.
+#
+# The draft matters when a reading is already live: VenueDashboard.js:323
+# disables the CTA on `!!live && venueBusyDraft == null`, deliberately, so that
+# re-posting an unchanged number is not a no-op button. With no live reading
+# the 50 on screen is already postable and the button is enabled either way,
+# which is why this stays optional: if the drag ever misses, the take still
+# gets the post rather than ending the run.
+- swipe:
+    from:
+      text: "How full is your venue compared to its capacity, 0 to 100 percent"  # :302 aria-label on the slider
+    direction: RIGHT
     optional: true
 - waitForAnimationToEnd
 - tapOn:
