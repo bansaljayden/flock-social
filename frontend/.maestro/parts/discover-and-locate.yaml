@@ -1,0 +1,49 @@
+# Open Discover, answer the location prompt, and let the venue list load.
+#
+# TWO REASONS THIS IS NOT OPTIONAL, and the first one is invisible until it
+# bites.
+#
+# 1. IT IS WHERE userLocation COMES FROM. App.js:8270 `loadPopularVenues`
+#    opens with `if (!userLocation) return`, so with no location the vote
+#    panel's "Popular Chains Nearby" section never populates and the demo's
+#    required wait for that heading, and the row tap under it, both fail. A
+#    fresh Simulator launched with clearState has no stored
+#    flock_user_lat/lng, so the only way to get a fix is to ask for one:
+#    tapping Discover calls requestUserLocation() (App.js `tabId === 'explore'
+#    && locationEnabled`, locationEnabled defaults true, App.js:4629), which
+#    uses navigator.geolocation and raises the iOS dialog.
+#
+#    apple-2-1.yaml has always done this, at shot 5, and says so at its shot 9:
+#    the chain rows are "fed by the location granted in shot 5". The demo flow
+#    was written without it and would have died at the vote panel with an empty
+#    list, which reads in a log as a missing element rather than a missing
+#    permission.
+#
+# 2. IT IS BEAT 5 OF THE NARRATION. "The crowd card" is the model's whole
+#    visible surface, and it lives on this screen.
+#
+# The usage string on the dialog is NSLocationWhenInUseUsageDescription
+# (Info.plist:50). Answering is required, not optional: without it the app has
+# no location and everything downstream of it is empty.
+appId: com.flockcorp.flock
+---
+- tapOn: "Discover"                             # App.js tab table, label: 'Discover'
+- extendedWaitUntil:
+    visible: "Allow While Using App"            # iOS dialog
+    timeout: 20000
+    optional: true
+- tapOn:
+    text: "Allow While Using App|Allow Once"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd
+# Give Places time to answer before anything asks for a venue. This is the one
+# place in the demo where a wait is not padding: the vote panel reads the same
+# cache this populates.
+- extendedWaitUntil:
+    visible: "[\\s\\S]*busy[\\s\\S]*|[\\s\\S]*Quiet[\\s\\S]*|[\\s\\S]*Packed[\\s\\S]*"
+    timeout: 30000
+    optional: true
+- waitForAnimationToEnd
