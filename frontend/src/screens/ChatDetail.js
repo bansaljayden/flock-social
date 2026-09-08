@@ -636,6 +636,7 @@ export default function ChatDetail({
   votesLoading,
   pendingImage,
   popularVenues,
+  venuesFromLabel,
   profilePic, // unused: the 34px own-avatar beside every own message
   renderFlockInviteRow,
   retryFailedMessage,
@@ -3267,12 +3268,24 @@ export default function ChatDetail({
                   </div>
                 ) : (
                   <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
-                    {userLocation ? (
+                    {suggestedVenues.length > 0 || (popularVenues || []).length > 0 ? (
                       <>
                         <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
                         <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
                           ? 'No votes yet. Vote for a place below, or share one of your own.'
                           : 'No votes yet. Be the first to suggest a venue!'}</p>
+                        {/* WHOSE CITY THIS IS. The list below is fed by a
+                            coordinate, and when the device has not given one
+                            the app falls back to a city rather than showing an
+                            empty panel. Saying so is the whole licence for that
+                            fallback: a list headed "nearby" that is not near
+                            you is a claim, and this app does not make claims it
+                            cannot support. Absent once a real location lands. */}
+                        {venuesFromLabel && (
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                            These are in {venuesFromLabel}. Flock does not know where you are yet.
+                          </p>
+                        )}
                         {/* THE BRANCH THAT HAD NO BUTTON. "Be the first to
                             suggest a venue" was an instruction with no control
                             under it, on a panel showing nothing. */}
@@ -3281,15 +3294,14 @@ export default function ChatDetail({
                         )}
                       </>
                     ) : (
-                      /* The instruction used to have no way to be followed: a
-                         fresh install with no location got "be the first to
-                         suggest a venue" over an empty panel (the nearby list
-                         is location-fed), and the only other door claimed
-                         venue search was down. Name the actual next step and
-                         open the door to it. */
+                      /* Nothing to show at all, which after the fallback means
+                         the venue search itself failed rather than that the
+                         location did. The instruction used to have no way to be
+                         followed, so it names the next step and opens the door
+                         to it. */
                       <>
                         <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
-                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet. To see places to suggest, Flock needs your location.</p>
+                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet, and no places to suggest just now. Search for one instead.</p>
                         <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveChatScreen(); setShowVotePanel(false); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
                       </>
                     )}
@@ -3299,7 +3311,9 @@ export default function ChatDetail({
                 {/* Popular chains nearby */}
                 {suggestedVenues.length > 0 && (
                   <>
-                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Popular Chains Nearby</p>
+                    {/* "Nearby" is a claim about distance and it is only true
+                        when a real coordinate produced this list. */}
+                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venuesFromLabel ? `Popular in ${venuesFromLabel}` : 'Popular Chains Nearby'}</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {suggestedVenues.map(venue => (
                         <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>

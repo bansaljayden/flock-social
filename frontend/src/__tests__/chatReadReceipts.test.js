@@ -338,6 +338,10 @@ function chatProps(over = {}) {
     votesLoading: false,
     pendingImage: null,
     popularVenues: [],
+    // Null means "a real location produced this list", which is the state a
+    // chat harness should be in; the fallback wording is exercised where the
+    // fallback itself is.
+    venuesFromLabel: null,
     profilePic: null,
     renderFlockInviteRow: () => null,
     retryFailedMessage: fn(),
@@ -596,6 +600,10 @@ function dmProps(over = {}) {
     openUserProfile: fn(),
     openVenueDetail: fn(),
     popularVenues: [],
+    // Null means "a real location produced this list", which is the state a
+    // chat harness should be in; the fallback wording is exercised where the
+    // fallback itself is.
+    venuesFromLabel: null,
     profilePic: null,
     retryFailedDm: fn(),
     discardFailedDm: fn(),
