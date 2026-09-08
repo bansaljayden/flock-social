@@ -107,7 +107,16 @@ appId: com.flockcorp.flock
 - runFlow:
     file: parts/choose-mode.yaml
     env:
-      MODE: '[\s\S]*I''m Going Out[\s\S]*'
+      # EXACT TEXT, NO WILDCARDS. Build 42 matched the wildcard form and the
+      # tap did nothing: a pattern that swallows the whole string also matches
+      # the chooser's CONTAINER, whose text includes every button, and the
+      # container's centre is the blank space between them. The run still
+      # passed, because "Nest" is in the hierarchy under the overlay and the
+      # later tap on "Venue dashboard" matched the chooser's own button (the
+      # match is case-insensitive), so the dashboard opened with the crossover
+      # shot never filmed. The <h3> carries exactly this text and nothing else
+      # (App.js:14275), and its centre is inside the button.
+      MODE: "I'm Going Out"
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 30000
