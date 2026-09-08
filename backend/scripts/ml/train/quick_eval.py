@@ -77,6 +77,34 @@ def metrics(y_true, y_pred):
         'within_10': round(float(np.mean(errors <= 10) * 100), 1),
         'within_15': round(float(np.mean(errors <= 15) * 100), 1),
         'within_20': round(float(np.mean(errors <= 20) * 100), 1),
+        # THE BAND METRICS ABOVE CAN BE BOUGHT WITH LATTICE ALIGNMENT, SO THIS
+        # SITS NEXT TO THEM (2026-09-08).
+        #
+        # Every live label in this corpus is a multiple of 5 (14,237 of 14,237
+        # checked; the 21-point grid migration 025 records). A prediction that
+        # also lands on a multiple of 5 is being scored against values that are
+        # always multiples of 5, and `within_k` pays for that coincidence
+        # whether or not the prediction moved closer to the truth.
+        #
+        # This is not hypothetical. Sweeping the serve-time deviation weight
+        # produced w = 1.0 as a strict winner on MAE, within_10 AND within_15,
+        # +4.8 points of within_10 over the shipped weight, from a
+        # one-constant change. It was an artifact: at that weight the score
+        # becomes baseline + median(observed - baseline), which lands on the
+        # grid 82.9% of the time against 46-48% elsewhere, and the absolute
+        # error quantiles were FLAT (median 20 at both weights, p75 35, p90 55).
+        # Section 8.10 of ML-RESEARCH.md has the numbers.
+        #
+        # The baseline is the worst offender and the most misleading, because it
+        # is 100% on-grid by construction: it is a rounded average of
+        # multiple-of-5 weekly rows. So `within_k` structurally flatters DOING
+        # NOTHING against any correction that moves off the lattice (8.11).
+        #
+        # Read it as a confound, not a criterion: a candidate whose within_10
+        # gain arrives with a jump in on_grid_pct has probably bought the metric
+        # rather than earned it. Nothing gates on this and nothing should; it is
+        # here so the number cannot be quoted without its caveat visible.
+        'on_grid_pct': round(float(np.mean(np.mod(np.round(y_pred), 5) == 0) * 100), 1),
     }
 
 
