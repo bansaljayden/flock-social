@@ -8236,12 +8236,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus AI input when chat opens
+  // Focus the input only when there is already a conversation to continue.
+  //
+  // ON A REAL DEVICE THIS EFFECT WAS THE WHOLE "BIRDIE DOES NOT OPEN RIGHT"
+  // BUG (TestFlight, 2026-09-08). It focused unconditionally 200 ms after the
+  // panel appeared, so tapping Birdie raised the keyboard immediately, iOS
+  // shifted and scaled the viewport to keep the caret in view, and the panel
+  // read as "zooming in" the instant it was tapped.
+  //
+  // What the keyboard covered is the point: the empty state IS the greeting
+  // (see aiMessages, "Birdie himself + prompt chips"). Opening Birdie for the
+  // first time showed a keyboard over the one screen that explains what he can
+  // do, which is why it looked like it had not popped out properly.
+  //
+  // Coming back to an existing thread is the opposite case: the greeting is
+  // long gone, the person is there to type, and the keyboard is what they
+  // want. Hence the length check rather than removing the focus outright.
   useEffect(() => {
-    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen') && aiInputRef.current) {
+    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen')
+        && aiMessages.length > 0
+        && aiInputRef.current) {
       setTimeout(() => aiInputRef.current?.focus(), 200);
     }
-  }, [aiChatMode]);
+  }, [aiChatMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Birdie is a helper for the screen you are on, not a follower. Its bubble
   // only lives on Home, but the OPEN panel used to stay put over every tab and
@@ -8444,6 +8462,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       || localStorage.getItem('flock_user_lat') !== null;
     if (alreadyAnswered) requestUserLocation();
   }, [requestUserLocation]);
+
+  // OPENING BIRDIE IS A REASON TO ASK FOR LOCATION, so this is where the ask
+  // happens.
+  //
+  // The mount effect below deliberately does not prompt: iOS gives an app one
+  // location prompt per install and a denial is permanent, so the ask is saved
+  // for a moment whose reason is visible. Birdie lives on Home, and NOTHING on
+  // Home asked, so a person who only ever opened Birdie was never offered the
+  // prompt at all and Birdie answered "near you" questions with no idea where
+  // that was (TestFlight, 2026-09-08: "there's no popup for me to accept my
+  // location").
+  //
+  // Tapping an assistant whose whole job is what is open and busy nearby is as
+  // context-ful as tapping Explore, which already prompts. The opt-out is still
+  // honoured, and requestUserLocation is a no-op when a coordinate is already
+  // stored, so a device that has answered never sees anything.
+  useEffect(() => {
+    if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen') return;
+    if (localStorage.getItem('flock_location_enabled') === 'false') return;
+    requestUserLocation();
+  }, [aiChatMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // No `|| flocks[0]` fallback, and its absence is the point. A chat screen
   // opened for a flock this list does not hold used to silently render SOMEBODY
