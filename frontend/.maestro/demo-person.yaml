@@ -58,6 +58,13 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Welcome back|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
     timeout: 90000
+# The analytics consent bar is up on every take, because clearState wipes the
+# stored answer and ConsentBanner.js renders whenever the question is
+# unanswered. It is fixed to the bottom of the screen and covers the footer AND
+# the tab bar strip, so it breaks taps long before it spoils a frame. Answer it
+# once, here, and it does not come back for the rest of the run.
+- runFlow:
+    file: parts/dismiss-consent.yaml
 # A fresh Simulator with clearState has no token, so App.js:21052 opens on
 # SIGNUP, not login. The crossover is shared with parts/login.yaml, whose own
 # relaunch lands on the same screen for the same reason, and it carries the
