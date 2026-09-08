@@ -82,6 +82,14 @@ appId: com.flockcorp.flock
     env:
       EMAIL: ${REVIEW_EMAIL_A}
       PASSWORD: ${REVIEW_PASSWORD}
+# A venue-owner or admin account lands on a mode chooser, not on Nest
+# (App.js:14156). Build 38's venue flow signed in perfectly as review-b and
+# then failed its wait for "Nest" because Nest sits behind this screen. Guarded,
+# so a plain user passes straight through.
+- runFlow:
+    file: parts/choose-mode.yaml
+    env:
+      MODE: '[\s\S]*I''m Going Out[\s\S]*'
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 30000

@@ -1,0 +1,27 @@
+# Answer the "Choose how you want to use Flock" screen. Env: MODE.
+#
+# An account with a venue-owner or admin role does NOT land on Nest after
+# signing in. It lands on a mode chooser (App.js:14156, "Choose how you want to
+# use Flock") offering "I'm Going Out", "Venue Dashboard" and, for an admin, a
+# third. A plain user never sees it, so nothing in these flows had ever met it.
+#
+# Build 38 met it. The venue flow signed in perfectly as review-b -- the
+# hierarchy shows "Welcome, Sam" and both mode cards -- and then failed its
+# required wait for "Nest", because Nest is behind whichever mode you pick.
+# That is a direct and expected consequence of promoting review-b to
+# venue_owner so it could reach the dashboard at all; the account change was
+# right, the flow simply did not know about the extra screen.
+#
+# The label sits in an <h3> inside a much larger button that also carries the
+# description, and Maestro matches the WHOLE string, so the wildcards are not
+# optional. Guarded, so a plain user passes straight through.
+appId: com.flockcorp.flock
+---
+- runFlow:
+    when:
+      visible: "[\\s\\S]*Choose how you want to use Flock[\\s\\S]*|[\\s\\S]*Venue Dashboard[\\s\\S]*"
+    commands:
+      - tapOn:
+          text: ${MODE}
+          retryTapIfNoChange: false
+      - waitForAnimationToEnd
