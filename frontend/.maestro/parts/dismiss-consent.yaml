@@ -1,0 +1,32 @@
+# Answer the analytics consent bar, and take the privacy-preserving answer.
+#
+# ConsentBanner.js renders whenever `consentUnanswered()` is true, and every
+# demo take launches with `clearState: true`, so it is up on EVERY run. It is a
+# `role="dialog"` fixed to the bottom of the screen, and at the Simulator's
+# 402x874 it occupies [12,681][390,828].
+#
+# THAT RECTANGLE IS ON TOP OF THINGS THE FLOWS NEED. Build 35's failure
+# hierarchy has the signup footer's "Sign in" button at [257,772][317,816],
+# entirely inside it, and (287, 794) -- the centre Maestro correctly aimed at --
+# lands in the bar's dead space to the RIGHT of both its buttons ("No thanks" is
+# [29,769][123,813], "That's fine" is [130,769][226,813]). So the tap hit the
+# overlay, did nothing, and Maestro reported success: the element it matched is
+# real and in the hierarchy, it is simply underneath. The bar also overlaps the
+# bottom of the screen where the tab bar sits, so this was not only a crossover
+# problem.
+#
+# It is answered "No thanks" on purpose. Declining is free by that component's
+# own design -- nothing is gated and the bar does not return -- and a recording
+# should not opt a demo account into analytics to get through a screen.
+#
+# Idempotent and safe to call anywhere: if the bar is not up, nothing matches.
+appId: com.flockcorp.flock
+---
+- runFlow:
+    when:
+      visible: "Analytics choice|Can we count anonymous page views"
+    commands:
+      - tapOn:
+          text: "No thanks"                      # ConsentBanner.js:40 -> answer('no')
+          optional: true
+      - waitForAnimationToEnd
