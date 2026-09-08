@@ -48,6 +48,14 @@ appId: com.flockcorp.flock
 # never ran and the required "Welcome back" below ended the take. The
 # guard is keyed on the login form being absent instead, and logout.yaml
 # now taps Back first for screens without a tab bar.
+# THIS PART'S OWN launchApp LANDS ON SIGNUP, NOT LOGIN, whenever there is no
+# stored session (App.js:21052 -- see signup-to-login.yaml). That is every
+# demo take, because those flows launch with clearState. The logout fallback
+# below cannot help there: it needs the tab bar, and the signup screen has
+# none, so its required `tapOn: "You"` ends the run. Cross over first; the
+# part is guarded on the signup heading and does nothing on any other screen.
+- runFlow:
+    file: signup-to-login.yaml
 - runFlow:
     when:
       notVisible: "Welcome back"
