@@ -6336,7 +6336,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [checkinDoneAt, setCheckinDoneAt] = useState({});
   const lastCheckinAt = useCallback((placeId) => {
     if (!placeId) return 0;
-    if (checkinDoneAt[placeId]) return checkinDoneAt[placeId];
+    // Guarded against a non-object as well: a stale writer that hands this
+    // state anything but a map must not take the whole map screen down.
+    if (checkinDoneAt && typeof checkinDoneAt === 'object' && checkinDoneAt[placeId]) return checkinDoneAt[placeId];
     try {
       const raw = localStorage.getItem('flock_checkin_' + placeId);
       const ts = raw ? Number(raw) : 0;
@@ -7230,14 +7232,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (!pid) {
       setSensorData(null);
       setSensorHistory([]);
-      setCheckinDoneAt(null);
       return;
     }
 
-    // Restore disabled-checkin state from localStorage (2-hour window)
-    const stored = parseInt(localStorage.getItem('flock_checkin_' + pid) || '0', 10);
-    if (stored && Date.now() - stored < 2 * 60 * 60 * 1000) setCheckinDoneAt(stored);
-    else setCheckinDoneAt(null);
+    // NO CHECK-IN STATE IS TOUCHED HERE, AND THIS IS WHERE EVERY PIN TAP
+    // USED TO DIE. checkinDoneAt became a per-place map (see lastCheckinAt),
+    // and this effect kept writing the older single-timestamp shape into it:
+    // `null` when no venue was active, a bare number when one was. The venue
+    // card's first render then asked lastCheckinAt for the place, which
+    // indexed into null, and Discover fell into its error boundary: "The map
+    // stopped working, null is not an object (evaluating 'checkinDoneAt[e]')".
+    // On the demonstration rig that was every tap on a pin and every result
+    // row that opened a card, and in the shipped app it is the same taps. The
+    // two-hour restore this block was doing is already what lastCheckinAt does
+    // on read, keyed by place, so there is nothing left for it to write.
 
     let cancelled = false;
     Promise.all([
