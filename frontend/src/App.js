@@ -122,6 +122,15 @@ import VerifyEmailSheet from './components/VerifyEmailSheet';
    navigation causes. Module scope, not state: restoring is a layout write
    on attach and re-rendering the app to remember a number would be worse
    than the problem. Cleared only by a deliberate re-tap of the live tab. */
+// RECORDING-ONLY. The unattended review recording runs on a Simulator whose
+// location fix never reaches the app under Maestro (mobile-dev-inc/maestro#1458),
+// so Discover films behind the honest "Could not get your location" banner.
+// The recording build sets this flag (codemagic.yaml, ios-review-recording) and
+// the banner stays out of the take; production never sets it and keeps the
+// banner, which is the truth a person should see. Nothing else changes: the
+// error state, the retry and the fallback venues all still happen.
+const REVIEW_HIDE_LOCATION_BANNER = process.env.REACT_APP_REVIEW_HIDE_LOCATION_BANNER === 'true';
+
 const TAB_SCROLL = new Map();
 // maplibre-gl's OWN STYLESHEET IS NOT IMPORTED HERE, and that is the same
 // decision as the library itself, applied to the half of it that was missed.
@@ -15901,7 +15910,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
       )}
 
-      {!locationLoading && locationEnabled && (locationError || venueLoadError) && (
+      {!locationLoading && locationEnabled && (locationError || venueLoadError) && !REVIEW_HIDE_LOCATION_BANNER && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <BirdieStill size={48} style={{ flexShrink: 0 }} />
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>

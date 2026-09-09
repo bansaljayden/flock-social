@@ -573,9 +573,13 @@ workflows:
         # the map at all; every take without it loaded them, behind the honest
         # "Could not get your location just now, so this is Philadelphia"
         # banner. The banner is the state this Simulator is really in (its fix
-        # never reaches the app under Maestro; mobile-dev-inc/maestro#1458),
-        # so it films.
-        script: npm run build
+        # never reaches the app under Maestro; mobile-dev-inc/maestro#1458).
+        # Two RECORDING-ONLY flags, read nowhere but App.js and the theme clock:
+        # the first keeps that banner out of the take (the fallback venues and
+        # the retry still happen underneath), the second forces the light theme,
+        # because this machine keeps UTC time and a run after 20:00 UTC would
+        # otherwise film dark. Neither is set on any other workflow or on Vercel.
+        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
       - name: Firebase config for the recording build, optional

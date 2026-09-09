@@ -24,6 +24,10 @@ const writeStore = (key, value) => {
 // out loud ("Auto dark at 8 PM, light at 6 AM"). Keep this window in sync with
 // the copy in App.js and with the same three lines in src/index.js.
 const isNightTime = () => {
+  // RECORDING-ONLY: the review recording's build forces the light theme, because
+  // the Mac mini that films it keeps UTC time and any run after 20:00 UTC
+  // would otherwise come out dark. Production never sets the flag.
+  if (process.env.REACT_APP_REVIEW_FORCE_LIGHT === 'true') return false;
   const hour = new Date().getHours();
   return hour >= 20 || hour < 6;
 };

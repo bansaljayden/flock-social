@@ -405,6 +405,10 @@ const readStore = (key) => {
 };
 
 const isNightTime = () => {
+  // RECORDING-ONLY: the review recording's build forces the light theme, because
+  // the Mac mini that films it keeps UTC time and any run after 20:00 UTC
+  // would otherwise come out dark. Production never sets the flag.
+  if (process.env.REACT_APP_REVIEW_FORCE_LIGHT === 'true') return false;
   const hour = new Date().getHours();
   return hour >= 20 || hour < 6;
 };
