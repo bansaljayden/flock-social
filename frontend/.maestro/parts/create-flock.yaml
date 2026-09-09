@@ -76,10 +76,19 @@ appId: com.flockcorp.flock
 # The control is a `role="switch"` button whose aria-label is its `label` prop
 # (App.js:11571), so the text to match is "Shared cash pool" and not the
 # "Group budget" heading beside it.
+# Build 53 died here: "Element not found: Shared cash pool" after eight seconds
+# of scrolling on a runner that took twice its usual time for every flow. The
+# toggle is unconditional in the form (CreateScreen.js), so the only way it is
+# missing is that the form has not finished laying out yet. A wait for it,
+# then the scroll, with the patience a slow machine needs.
+- extendedWaitUntil:
+    visible: "Shared cash pool"
+    timeout: 20000
+    optional: true
 - scrollUntilVisible:
     element: "Shared cash pool"                 # CreateScreen.js:643 <Toggle label>
     direction: DOWN
-    timeout: 8000
+    timeout: 30000
     optional: true
 - tapOn: "Shared cash pool"
 - waitForAnimationToEnd
