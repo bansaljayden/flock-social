@@ -356,6 +356,7 @@ This is the part that matters, because nobody is going to be there.
 | **A reading the backend will never accept (400)** | Dropped, with the reason logged. One bad reading is worth losing; re-sending it every 30 seconds forever is not. One exception: "recorded_at is in the future" means the device clock is running fast, and dropping would mean dropping every reading until a human notices, so that one resends undated and the backend files it on arrival. |
 | **A sensor fails at startup** | That signal reports 0 and the other two carry on. Repeated read errors are logged once every 5 minutes, not every 2 seconds. |
 | **A sensor stops answering mid-shift** | Same: it reports 0, not the last number it read. The thermal count and the noise level are latched values, so without this a bus that locked up at 11pm went on posting 11pm's headcount every 30 seconds, and the venue card showed a packed room at 4am. Thermal goes to 0 after 90 seconds without a good read, the mic after 60. |
+| **The thermal camera falls off the USB bus** | It is closed and opened again after about 30 seconds of unusable reads, on a backoff out to 5 minutes, for as long as it takes. Before 2026-09-08 nothing ever re-opened it: one dropout, which a USB device in a bar will have, ended the headcount for the rest of the deployment while the push kept succeeding and the fleet status kept saying online. A camera absent at boot is also retried now, rather than written off. |
 | **The backend says slow down (429)** | It waits the interval the backend asks for, which is seconds, and carries on draining. It does not treat this as an outage. |
 | **The push thread dies** | It cannot: the cycle is wrapped. If it somehow does, an in-process watchdog exits non-zero and systemd restarts the service. |
 | **The display crashes (demo units)** | The process falls through to headless operation instead of exiting cleanly, which systemd would not have restarted. |
@@ -441,9 +442,65 @@ the difference between a count and a headcount, and any distance past 10 ft.
 On the bench: run `main.py --selftest`, which prints the cluster count it sees
 right now, and walk in and out of frame. Stop the service first or it holds the
 camera. If one person reads as several, the silhouette is fragmenting and
-`THERMAL_BIN` should go up before `THERMAL_MIN_CLUSTER` does. If an empty room
+`THERMAL_BIN` should go up, and `THERMAL_MIN_CLUSTER` should come down with it:
+the two are one setting, the product `min_cluster x bin^2` is the real threshold
+in raw pixels, and it wants to stay near the measured 192. Raising the bin alone
+past 5 leaves the shipped 12 demanding more warm area than a whole person has,
+which counts nobody at all. `validated_thermal_pair` refuses that combination,
+falls back to the measured 4 and 12, and says so in the log and in `--selftest`.
+If an empty room
 reads as one or more people, raise `THERMAL_MARGIN_C` first, then
 `THERMAL_MIN_CLUSTER`.
+
+**The threshold has two arms and only one of them has ever run.** This is the
+largest open question about this sensor, it was found by three independent
+research passes on 2026-09-08 that each arrived at it from a different
+direction, and it is not settled here because settling it needs a measurement.
+
+The cutoff is `max(THERMAL_THRESHOLD_C, median + THERMAL_MARGIN_C)`. At the
+shipped 28.0 and 3.0 the median-relative arm only wins once the room is above
+25C. The bench room was 20.1C, so **every result this sensor has ever produced
+came from the fixed 28.0C arm**, and the docstring claiming the margin "does
+nearly all the work" is backwards for any room below 25C, which is most rooms
+and nearly every doorway.
+
+That matters because of what an absolute temperature is worth here. The Lepton
+Engineering Datasheet's own accuracy table gives **±7C at a 10C scene**,
+uncalibrated, and that is the row a 20C room and a 27C clothed torso sit in.
+Per-unit calibration against two blackbodies only brings it to ±5C, an
+enclosure window makes it worse, and published measurements on this exact part
+show a step in absolute temperature across every flat field correction plus
+about a minute of settling afterwards, with FFC firing every three minutes by
+default. So the question the sensor actually asks a venue is "is this pixel
+above 28C", asked by an instrument that may be seven degrees off, differently
+per unit, and that moves after every shutter event.
+
+Reproduced here, against the real counter:
+
+| Scene | What a venue sees |
+|---|---|
+| 14C vestibule, two clothed bodies at 25 to 27C apparent | **0** |
+| Same, bodies at 28C apparent | 2 |
+| Room where people fill more than about half the frame | **0**, because the median becomes body temperature and the cutoff climbs above it |
+
+A median-relative cutoff is immune to a constant radiometric offset. A fixed
+one is not. The design already in this file is the right one; it is sitting
+behind a `max()` that stops it from ever running.
+
+**What to do about it, in order.** Run `main.py --calibrate`. It now measures
+the margin as well as the cluster size: it reports how far above the room
+median the warmest thing in an empty frame gets, how far above it a real person
+gets, recommends a `THERMAL_MARGIN_C` between them, and **tells you whether the
+fixed floor will override the number it just measured at your room's
+temperature**. At a 20C room with a 5C margin it says, in as many words, that
+`THERMAL_THRESHOLD_C=28.0` makes the measurement decorative. Then lower
+`THERMAL_THRESHOLD_C` below the cutoff it names, so the margin becomes the arm
+that decides.
+
+That default has not been changed here. Doing it from a desk would be swapping
+one unmeasured number for another, which is the thing this file exists to stop.
+It wants one bench session: a person at the far edge of the crossing, in a room
+at a normal temperature, with `--calibrate` running.
 
 **Lowering the minimum to reach farther does not work the way it looks like it
 should.** A silhouette's area falls with the square of distance, so range goes

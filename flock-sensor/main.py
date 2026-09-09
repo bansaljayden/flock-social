@@ -63,7 +63,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.4.0'
+VERSION = '1.5.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -184,6 +184,53 @@ THERMAL_THRESHOLD_C = _cfg_number('THERMAL_THRESHOLD_C', float, 0.0, 100.0, 28.0
 THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
 THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
+
+# The bench measured the pair (4, 12) and nothing else, and the two settings are
+# not independent: a cell is bin x bin pixels, so the SAME 12 means 48 raw pixels
+# at bin 2 and 768 at bin 8. Each is range-checked on its own above, which is not
+# enough. Two combinations reachable from a config file silently count nobody,
+# ever, with no error and no log line, and the README used to walk installers
+# straight into one of them: its troubleshooting row for "one person counted as
+# two or three" said to raise THERMAL_BIN, and at bin 6, 7 or 8 the shipped
+# minimum of 12 is more area than a whole person occupies.
+#
+# The band below is in raw pixels, which is the physical quantity, and is
+# anchored on the two numbers there is evidence for: 192 raw pixels is the
+# measured working threshold, and a person is at least the 320-pixel blob these
+# tests are built from. Outside the band the pair is refused rather than clamped,
+# because a threshold nobody measured is not an improvement on the one somebody
+# did.
+_MEASURED_BIN, _MEASURED_MIN_CLUSTER = 4, 12
+_NOMINAL_PERSON_PIXELS = 320
+_MIN_SANE_THRESHOLD_PIXELS = 48
+
+
+def validated_thermal_pair(bin_size, min_cluster):
+    """Return (bin, min_cluster, complaint); complaint is None when the pair is sane.
+
+    Pure, so the arithmetic that can switch a venue's sensor off gets checked
+    without a camera.
+    """
+    raw = min_cluster * bin_size * bin_size
+    if raw > _NOMINAL_PERSON_PIXELS:
+        return (_MEASURED_BIN, _MEASURED_MIN_CLUSTER,
+                f'THERMAL_BIN={bin_size} with THERMAL_MIN_CLUSTER={min_cluster} needs '
+                f'{raw} warm pixels before it counts anybody, and a person is about '
+                f'{_NOMINAL_PERSON_PIXELS}. That pair counts nobody, ever. Falling back '
+                f'to the measured {_MEASURED_BIN}/{_MEASURED_MIN_CLUSTER}. For a coarser '
+                f'bin, bring THERMAL_MIN_CLUSTER down with it: min_cluster times bin '
+                f'squared is the number to keep near 192.')
+    if raw < _MIN_SANE_THRESHOLD_PIXELS:
+        return (_MEASURED_BIN, _MEASURED_MIN_CLUSTER,
+                f'THERMAL_BIN={bin_size} with THERMAL_MIN_CLUSTER={min_cluster} counts '
+                f'anything over {raw} warm pixels as a person, which is inside this '
+                f'sensor own noise. Falling back to the measured '
+                f'{_MEASURED_BIN}/{_MEASURED_MIN_CLUSTER}.')
+    return bin_size, min_cluster, None
+
+
+THERMAL_BIN, THERMAL_MIN_CLUSTER, _pair_complaint = validated_thermal_pair(
+    THERMAL_BIN, THERMAL_MIN_CLUSTER)
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 
@@ -533,6 +580,13 @@ _VIDIOC_DQBUF = _ioc(3, 17, ctypes.sizeof(_v4l2_buffer))
 _VIDIOC_STREAMON = _ioc(1, 18, ctypes.sizeof(ctypes.c_int))
 _VIDIOC_STREAMOFF = _ioc(1, 19, ctypes.sizeof(ctypes.c_int))
 
+# uvcvideo sets this on a buffer whose frame lost USB packets, which is
+# ordinary on a bus carrying a Lepton. The buffer is reused, so the missing
+# region still holds the PREVIOUS frame's bytes and bytesused is often full
+# size: a torn frame that is half now and half two seconds ago looks
+# perfectly plausible to every other check in this file.
+_V4L2_BUF_FLAG_ERROR = 0x00000040
+
 _BUFFER_COUNT = 4
 _FRAME_WAIT_SECONDS = 2.0
 
@@ -561,7 +615,24 @@ class ThermalCamera:
     def open(self):
         if fcntl is None:
             raise OSError('V4L2 needs Linux; this host has no fcntl')
-        self.fd = os.open(self.path, os.O_RDWR)
+        # O_NONBLOCK matters more than it looks. After a UVC disconnect the
+        # driver can report the fd readable and then never return from DQBUF
+        # (raspberrypi/linux#1211), which on a blocking fd hangs the thermal
+        # thread forever with no exception and no log line. Non-blocking turns
+        # that into the EAGAIN this code already handles.
+        self.fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
+        try:
+            self._configure()
+        except Exception:
+            # Every raise below used to leave the fd open. A raw fd is an int
+            # with no finalizer, so it held the V4L2 node for the life of the
+            # process and the next open of the same camera got EBUSY. That was
+            # survivable while init ran exactly once. It is not survivable now
+            # that thermal_loop re-opens after a dropout.
+            self.close()
+            raise
+
+    def _configure(self):
 
         cap = _v4l2_capability()
         fcntl.ioctl(self.fd, _VIDIOC_QUERYCAP, cap)
@@ -584,8 +655,21 @@ class ThermalCamera:
         if fmt.fmt.pix.pixelformat != _V4L2_PIX_FMT_Y16:
             raise OSError('camera would not give a raw Y16 stream; this node is '
                           'probably the 8-bit AGC one rather than the radiometric one')
-        self.cols = int(fmt.fmt.pix.width)
-        self.rows = int(fmt.fmt.pix.height)
+        # The counter never passes rows/cols, so it always reinterprets the
+        # buffer as THERMAL_ROWS x THERMAL_COLS whatever the driver returned.
+        # Accepting a substitution here therefore does not adapt anything, it
+        # just reads the buffer at the wrong stride while every plausibility
+        # check still passes. Two real ways this happens: a 160x122 telemetry
+        # descriptor (the PureThermal advertises both, and asking for 160x120
+        # is what keeps telemetry off), and a board carrying an 80x60 Lepton
+        # 2.5 instead of a 3.5, which used to report 0 forever with the
+        # freshness clock still green and not one line in the log.
+        if (int(fmt.fmt.pix.width), int(fmt.fmt.pix.height)) != (self.cols, self.rows):
+            raise OSError(
+                f'camera gave {fmt.fmt.pix.width}x{fmt.fmt.pix.height}, not '
+                f'{self.cols}x{self.rows}. 160x122 is the telemetry descriptor; '
+                f'80x60 is a Lepton 2.5, which this program cannot count from. '
+                f'Run `v4l2-ctl -d {self.path} --list-formats-ext`.')
         self.frame_bytes = self.cols * self.rows * 2
 
         req = _v4l2_requestbuffers()
@@ -639,8 +723,14 @@ class ThermalCamera:
                     break
                 raise
             try:
-                used = int(buf.bytesused) or self.frame_bytes
-                if used >= self.frame_bytes:
+                # bytesused 0 used to fall through `or self.frame_bytes` and get
+                # copied as a full frame, handing back whatever was already in
+                # that mmap region: the previous frame latched as current, or
+                # zeros. V4L2 reports exactly that on a dropped isochronous
+                # frame. Neither is a reading.
+                used = int(buf.bytesused)
+                torn = bool(int(buf.flags) & _V4L2_BUF_FLAG_ERROR)
+                if not torn and used >= self.frame_bytes:
                     newest = bytes(self.buffers[buf.index][:self.frame_bytes])
             finally:
                 # Always give the buffer back. Leaking one starves the queue and
@@ -684,8 +774,28 @@ def raw_y16_to_celsius(raw):
     return [v * _CENTIKELVIN - _KELVIN_ZERO_C for v in values]
 
 
-def init_thermal():
+def _set_thermal_camera(camera):
     global _thermal_camera
+    _thermal_camera = camera
+
+
+def init_thermal():
+    """Open the thermal camera, replacing any camera already open.
+
+    Called at boot and again by thermal_loop after a run of failed reads. The
+    close is what makes the second case safe: this used to assign over
+    _thermal_camera without closing it, so re-initing a live camera left the
+    old fd streaming, the new REQBUFS returned EBUSY, the except set
+    _thermal_camera to None, and a camera that was working was then off for
+    the rest of the deployment.
+    """
+    global _thermal_camera
+    if _thermal_camera is not None:
+        try:
+            _thermal_camera.close()
+        except Exception:
+            pass
+        _thermal_camera = None
     try:
         camera = ThermalCamera(THERMAL_DEVICE)
         camera.open()
@@ -745,7 +855,27 @@ def bin_frame(frame, rows, cols, bin_size):
 
 
 def is_shutter_frame(frame, spread_c=FFC_FLAT_SPREAD_C):
-    """True when the frame is one flat surface, i.e. the FFC shutter."""
+    """True when the frame is one flat surface, i.e. the FFC shutter.
+
+    KNOWN WEAK, and deliberately left alone. max minus min is an extreme-value
+    statistic over 19,200 pixels, and at the datasheet's sub-50 mK NEdT the
+    expected range of pure noise on a flat scene is already around 0.4C, so a
+    0.5C test is sitting close to its own noise floor and two stuck pixels
+    defeat it. The obvious repair, trimming to the 1st and 99th percentile,
+    was tried and reverted: 1% of this frame is 192 pixels, which is the size
+    of a person at the far end of the range this sensor works at, so the
+    trimmed version discards a distant body as a flat frame. Dropping a real
+    reading is worse than occasionally counting a shutter, so this stays as it
+    is until somebody measures a real FFC on a real unit.
+
+    Worth knowing what this is and is not for. The Lepton's FFC most likely
+    shows up as a GAP in the stream rather than a flat frame: the shutter takes
+    about 0.9s, the part emits discard packets while it has no new frame, and
+    _FRAME_WAIT_SECONDS is longer than that, so read_frame simply waits. This
+    guard is cheap insurance for the case where a flat frame does arrive. It is
+    also why thermal_loop now asks whether the numbers are temperatures at all
+    BEFORE it asks whether they are flat: an all-zero frame is flat too.
+    """
     if not frame:
         return True
     return (max(frame) - min(frame)) < spread_c
@@ -866,32 +996,90 @@ def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
     return sizes
 
 
+# After this many consecutive reads that produced nothing usable, stop trusting
+# the file descriptor and open the camera again. At a 2s cadence that is about
+# 30s of silence, comfortably longer than any FFC (0.9s) or frame timeout (2s),
+# and shorter than the 90s staleness latch, so a camera that comes back is
+# reporting again before the venue card has finished going quiet.
+_THERMAL_REOPEN_AFTER = 15
+_THERMAL_REOPEN_BACKOFF_MAX = 300.0
+
+
 def thermal_loop():
+    """Read the camera forever, and put it back when it falls off the bus.
+
+    The recovery is the point of this function. A USB thermal camera on a Pi in
+    a bar will drop at least once over months: GroupGets' own support threads
+    carry "once it got upset it would never work again until the script was
+    restarted", and the Pi kernel has an open issue where DQBUF never returns
+    after a UVC disconnect. This loop used to catch the exception, log one line
+    every five minutes, and retry the same dead file descriptor until somebody
+    drove to the venue. Nothing downstream would have noticed either: the push
+    keeps succeeding, so last_seen_at stays current and the fleet-status
+    endpoint still says online, while the venue card shows an empty room for
+    however many weeks it takes for a person to look.
+    """
+    failures = 0
+    backoff = 0.0
     while not _stop.is_set():
+        if _thermal_camera is None:
+            # Either the camera was absent at boot, which used to mean this
+            # thread never started at all and a late-enumerating camera was
+            # written off for the life of the process, or a reopen is due.
+            if init_thermal():
+                logger.info('Thermal camera opened')
+                failures, backoff = 0, 0.0
+            else:
+                backoff = min(_THERMAL_REOPEN_BACKOFF_MAX, max(5.0, backoff * 2))
+                _stop.wait(backoff)
+                continue
         try:
             frame = _thermal_camera.read_frame()
             if frame is None:
+                failures += 1
                 log_throttled('thermal_timeout', logging.WARNING,
                               'Thermal camera delivered no frame within '
                               f'{_FRAME_WAIT_SECONDS}s')
-            elif is_shutter_frame(frame):
-                # Flat field correction. Not a reading, and not a failure
-                # either, so the freshness clock is left alone: an FFC lasts
-                # well under a second and this loop comes back around in two.
-                pass
             elif not is_plausible_frame(frame):
+                # Asked BEFORE flatness, and the order is the whole point. An
+                # all-zero frame is 19,200 copies of -273.15C, which is flat, so
+                # the old ordering filed a camera streaming nothing but zeros as
+                # an FFC event: no log line, no freshness update, and the stale
+                # warning never fired either because the count was already 0. A
+                # camera in that state produced literally no output at all.
+                failures += 1
                 log_throttled('thermal_not_radiometric', logging.ERROR,
                               'Thermal frames are not room temperatures (median '
                               f'{_median(frame):.1f}C). The camera is probably not in '
-                              'radiometric TLinear mode, so no headcount can be read '
-                              'from it. Reporting 0. See README.md, Troubleshooting.')
+                              'radiometric TLinear mode, or its TLinear resolution is '
+                              '0.1 rather than 0.01. No headcount can be read from it. '
+                              'Reporting 0. See README.md, Troubleshooting.')
+            elif is_shutter_frame(frame):
+                # Flat field correction, and these numbers ARE temperatures, so
+                # this really is the shutter. Not a reading and not a failure
+                # either, so the freshness clock is left alone and the failure
+                # count is not advanced: an FFC lasts well under a second and
+                # this loop comes back around in two.
+                pass
             else:
+                failures = 0
+                backoff = 0.0
                 n = count_thermal_clusters(frame)
                 with _lock:
                     _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
                     _state['thermal_at'] = time.monotonic()
         except Exception as e:
+            failures += 1
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
+        if failures >= _THERMAL_REOPEN_AFTER:
+            logger.warning('Thermal camera has produced nothing usable for '
+                           f'{failures} reads; closing it and opening it again')
+            try:
+                _thermal_camera.close()
+            except Exception:
+                pass
+            _set_thermal_camera(None)
+            failures = 0
         _stop.wait(2)
 
 
@@ -1664,9 +1852,59 @@ def recommend_min_cluster(noise_regions, person_frame_maxes, current=None):
         f'{reach:.2f}x the range, because a silhouette shrinks with the square of distance.')
 
 
+def recommend_margin_c(empty_above_median, person_above_median, room_median,
+                       threshold_c=None):
+    """Pick THERMAL_MARGIN_C, and say whether it will ever be the deciding arm.
+
+    The cutoff is max(THERMAL_THRESHOLD_C, median + margin), so the fixed arm
+    wins in every room cooler than threshold minus margin, which at the shipped
+    28.0 and 3.0 is every room below 25C. That is most rooms, and it means the
+    number a venue sees is decided by an absolute temperature read by a part
+    whose own datasheet allows +/-7C of error at room-temperature scenes,
+    uncalibrated, per unit, with a step across every flat field correction. A
+    median-relative cutoff is immune to a constant offset of that kind. A fixed
+    one is not. This function is how the margin stops being a guess.
+
+    Pure, so it is tested without a camera.
+    """
+    threshold_c = THERMAL_THRESHOLD_C if threshold_c is None else threshold_c
+    if not person_above_median:
+        return None, 'no frames were captured with a person in view'
+    noise_ceiling = max(empty_above_median) if empty_above_median else 0.0
+    # A person's WEAKEST frame again, for the same reason as the cluster size.
+    person_floor = min(person_above_median)
+    if person_floor <= noise_ceiling:
+        return None, (
+            f'the warmest thing in the empty room sat {noise_ceiling:.1f}C above the '
+            f'room median and a person only reached {person_floor:.1f}C above it. No '
+            f'margin separates them. Something warm is in frame, or the camera is too '
+            f'far from the crossing.')
+    rec = round(max(1.0, (noise_ceiling + person_floor) / 2.0), 1)
+    cutoff = room_median + rec
+    if cutoff < threshold_c:
+        return rec, (
+            f'empty room reaches {noise_ceiling:.1f}C above median, a person reaches at '
+            f'least {person_floor:.1f}C above it, so {rec:.1f}C sits between them. '
+            f'WARNING: at this room median ({room_median:.1f}C) that puts the cutoff at '
+            f'{cutoff:.1f}C, and THERMAL_THRESHOLD_C={threshold_c:.1f} overrides it. The '
+            f'margin you just measured will never be the deciding arm here. Lower '
+            f'THERMAL_THRESHOLD_C below {cutoff:.1f} or the measurement is decorative.')
+    return rec, (
+        f'empty room reaches {noise_ceiling:.1f}C above median, a person reaches at '
+        f'least {person_floor:.1f}C above it, so {rec:.1f}C sits between them. At this '
+        f'room median the cutoff is {cutoff:.1f}C, above THERMAL_THRESHOLD_C, so the '
+        f'margin is the arm actually deciding.')
+
 def _watch_regions(seconds, label):
-    """Sample the camera for a while. Returns (frames, all_regions, per_frame_max)."""
-    regions, frame_maxes, frames = [], [], 0
+    """Sample the camera. Returns (frames, regions, per_frame_max, above_median).
+
+    `above_median` is the per-frame `max(frame) - median(frame)` in degrees,
+    which is the quantity THERMAL_MARGIN_C is compared against. Collected here
+    because the frame is already in hand and sorting it twice is cheaper than
+    a second twenty-second window.
+    """
+    regions, frame_maxes, aboves, frames = [], [], [], 0
+    medians = []
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         frame = _thermal_camera.read_frame()
@@ -1676,8 +1914,11 @@ def _watch_regions(seconds, label):
         if not is_plausible_frame(frame):
             print('\n    NOT RADIOMETRIC. These numbers are not temperatures, so nothing '
                   'measured here would mean anything. See README.md, Troubleshooting.')
-            return 0, [], []
+            return 0, [], [], [], 0.0
         sizes = thermal_region_sizes(frame)
+        med = _median(frame)
+        medians.append(med)
+        aboves.append(max(frame) - med)
         regions.extend(sizes)
         frame_maxes.append(max(sizes) if sizes else 0)
         frames += 1
@@ -1686,7 +1927,7 @@ def _watch_regions(seconds, label):
     print(f'  {frames} frames')
     if frames == 0:
         print(f'    the camera delivered no frames during the {label} window')
-    return frames, regions, frame_maxes
+    return frames, regions, frame_maxes, aboves, (_median(medians) if medians else 0.0)
 
 
 def calibrate(seconds=CALIBRATE_SECONDS):
@@ -1720,30 +1961,44 @@ def calibrate(seconds=CALIBRATE_SECONDS):
         print('\n1. EMPTY the frame. Nobody in view, including you.')
         input('   Press Enter when the room is clear...')
         print('   watching', end='', flush=True)
-        frames, noise, _ = _watch_regions(seconds, 'empty room')
+        frames, noise, _, noise_above, _ = _watch_regions(seconds, 'empty room')
         if frames == 0:
             return 1
-        print(f'   empty room: largest warm region seen was '
-              f'{max(noise) if noise else 0} cells')
+        print(f'   empty room: largest warm region {max(noise) if noise else 0} cells, '
+              f'warmest point {max(noise_above):.1f}C above the room median')
 
         print('\n2. Stand at the FARTHEST point a person actually crosses.')
         print('   Not the middle of the room. The far edge of the doorway, where')
         print('   the count still has to work. Face the camera and stay still.')
         input('   Press Enter once you are there...')
         print('   watching', end='', flush=True)
-        frames, _, person = _watch_regions(seconds, 'person')
+        frames, _, person, person_above, room_median = _watch_regions(seconds, 'person')
         if frames == 0:
             return 1
-        print(f'   person: {min(person)} cells at worst, {max(person)} at best')
+        print(f'   person: {min(person)} cells at worst, {max(person)} at best, '
+              f'{min(person_above):.1f}C above the median at worst')
 
-        rec, note = recommend_min_cluster(noise, person)
         print('')
-        if rec is None:
-            print(f'NO SETTING WORKS HERE: {note}')
+        size_rec, size_note = recommend_min_cluster(noise, person)
+        if size_rec is None:
+            print(f'NO SIZE THRESHOLD WORKS HERE: {size_note}')
+        else:
+            print(f'THERMAL_MIN_CLUSTER: {size_note}')
+
+        margin_rec, margin_note = recommend_margin_c(noise_above, person_above, room_median)
+        print('')
+        if margin_rec is None:
+            print(f'NO MARGIN WORKS HERE: {margin_note}')
+        else:
+            print(f'THERMAL_MARGIN_C: {margin_note}')
+
+        if size_rec is None and margin_rec is None:
             return 1
-        print(f'RECOMMENDED: {note}')
-        print(f'\n  Put this in {CONFIG_PATH} and restart the service:')
-        print(f'      THERMAL_MIN_CLUSTER={rec}')
+        print(f'\n  Put these in {CONFIG_PATH} and restart the service:')
+        if size_rec is not None:
+            print(f'      THERMAL_MIN_CLUSTER={size_rec}')
+        if margin_rec is not None:
+            print(f'      THERMAL_MARGIN_C={margin_rec}')
         print('\n  Then walk the doorway again and watch the count. Two people at')
         print('  once is the check this cannot run for you.')
         return 0
@@ -1758,6 +2013,8 @@ def selftest():
     Exits 0 only if the device can actually deliver a reading.
     """
     print(f'flock-sensor {VERSION} self test')
+    if _pair_complaint:
+        print(f'  CONFIG REFUSED   : {_pair_complaint}')
     print(f'  board            : {pi_model() or "not a Raspberry Pi"}')
     print(f'  config file      : {CONFIG_PATH} ({"found" if CONFIG_PATH.exists() else "MISSING"})')
     print(f'  device id        : {CONFIG.get("SENSOR_DEVICE_ID") or "(not set)"}')
@@ -1875,6 +2132,10 @@ def main():
     global _pending
 
     logger.info(f'=== Flock sensor {VERSION} starting ===')
+    if _pair_complaint:
+        # Loud, because the alternative is a venue whose sensor is switched
+        # off by its own config file and says nothing about it.
+        logger.error(_pair_complaint)
     logger.info(f"Device ID: {CONFIG.get('SENSOR_DEVICE_ID') or '(not set)'}")
     logger.info(f'API URL: {api_url()}')
     logger.info(f'Push interval: {PUSH_INTERVAL}s')
@@ -1911,8 +2172,11 @@ def main():
         logger.error('No sensor initialized. The device will report zeros but stay '
                      'online so it can be diagnosed remotely.')
 
-    if thermal_ok:
-        threading.Thread(target=thermal_loop, daemon=True, name='thermal').start()
+    # Started whatever init_thermal said. The loop opens the camera itself when
+    # it does not have one, so a camera that is absent or slow to enumerate at
+    # boot is picked up later rather than written off for the life of the
+    # process. thermal_ok above now only decides what the log line says.
+    threading.Thread(target=thermal_loop, daemon=True, name='thermal').start()
     if noise_ok:
         threading.Thread(target=noise_loop, daemon=True, name='noise').start()
 

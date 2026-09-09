@@ -1124,5 +1124,75 @@ class CalibrationRecommendation(unittest.TestCase):
         weak, _ = main.recommend_min_cluster([2], [12, 40, 38])
         strong, _ = main.recommend_min_cluster([2], [38, 40, 38])
         self.assertLess(weak, strong)
+class ThermalPairValidation(unittest.TestCase):
+    """A config file can switch the headcount off, and used to do it in silence.
+
+    THERMAL_BIN and THERMAL_MIN_CLUSTER are one physical setting held in two
+    variables, and the README's own troubleshooting advice, "one person counted
+    as two or three, raise THERMAL_BIN", walked installers into the pair that
+    counts nobody.
+    """
+
+    def test_the_measured_pair_passes_untouched(self):
+        self.assertEqual(main.validated_thermal_pair(4, 12), (4, 12, None))
+
+    def test_the_shipped_minimum_at_a_coarse_bin_is_refused(self):
+        # bin 6, 7 and 8 with min_cluster 12 need 432, 588 and 768 warm pixels
+        # and a person is about 320. Checked against the real counter before this
+        # guard existed: all three returned 0 for two person-sized bodies.
+        for b in (6, 7, 8):
+            binned, minimum, complaint = main.validated_thermal_pair(b, 12)
+            self.assertEqual((binned, minimum), (4, 12))
+            self.assertIn('counts nobody', complaint)
+
+    def test_a_coarse_bin_is_allowed_when_the_minimum_comes_down_with_it(self):
+        # The product is what matters, not the bin. 8 x 6^2 is 288 pixels, inside
+        # the band, so that pair is a legitimate choice and is left alone.
+        self.assertEqual(main.validated_thermal_pair(6, 8), (6, 8, None))
+
+    def test_a_threshold_inside_the_noise_is_refused(self):
+        binned, minimum, complaint = main.validated_thermal_pair(1, 12)
+        self.assertEqual((binned, minimum), (4, 12))
+        self.assertIn('noise', complaint)
+
+    def test_the_running_configuration_is_a_pair_that_counts_people(self):
+        # Belt and braces on the module's live values, whatever a config file
+        # said, since these are what actually decide what a venue sees.
+        raw = main.THERMAL_MIN_CLUSTER * main.THERMAL_BIN ** 2
+        self.assertLessEqual(raw, main._NOMINAL_PERSON_PIXELS)
+        self.assertGreaterEqual(raw, main._MIN_SANE_THRESHOLD_PIXELS)
+class MarginRecommendation(unittest.TestCase):
+    """The cutoff has two arms and only one of them ever runs in a normal room.
+
+    cutoff = max(THERMAL_THRESHOLD_C, median + margin). At the shipped 28.0 and
+    3.0 the fixed arm wins below 25C ambient, which is most rooms, so the
+    number a venue sees rests on an absolute temperature from a part the
+    datasheet allows +/-7C of error on at room-temperature scenes. These pin
+    the tool that measures the way out of that.
+    """
+
+    def test_it_lands_between_the_room_and_the_person(self):
+        rec, _ = main.recommend_margin_c([1.2, 1.5], [9.0, 11.0], 26.0)
+        self.assertEqual(rec, 5.2)
+
+    def test_it_says_when_the_fixed_floor_makes_the_measurement_decorative(self):
+        # The bench room was 20.1C. Any margin measured there is overridden by
+        # THERMAL_THRESHOLD_C=28.0, and saying so is the whole point.
+        rec, note = main.recommend_margin_c([1.5], [9.0], 20.1, threshold_c=28.0)
+        self.assertIsNotNone(rec)
+        self.assertIn('overrides it', note)
+
+    def test_it_says_when_the_margin_is_the_arm_that_decides(self):
+        _, note = main.recommend_margin_c([1.2], [9.0], 26.0, threshold_c=28.0)
+        self.assertIn('actually deciding', note)
+
+    def test_a_warm_object_in_frame_is_refused_not_tuned_around(self):
+        rec, note = main.recommend_margin_c([8.0], [6.0, 9.0], 22.0)
+        self.assertIsNone(rec)
+        self.assertIn('No margin separates them', note)
+
+    def test_no_person_frames_is_not_a_recommendation(self):
+        rec, _ = main.recommend_margin_c([1.0], [], 22.0)
+        self.assertIsNone(rec)
 if __name__ == '__main__':
     unittest.main()
