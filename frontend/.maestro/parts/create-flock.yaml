@@ -30,6 +30,20 @@ appId: com.flockcorp.flock
     visible: "Start a Flock"                    # CreateScreen.js:293 <h1>
     timeout: 10000
 - tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
+# THE KEYBOARD'S OWN TUTORIAL. The first time a text field takes focus on a
+# fresh Simulator, iOS draws "Speed up your typing by sliding your finger
+# across the letters to compose a word" over the keyboard with a Continue
+# button, and build 48 filmed that card for the whole of the typing below.
+# codemagic.yaml sets the flag that keeps it from appearing; this is the
+# second line of defence, a one-shot check rather than an optional tap,
+# because an optional tap on an absent element polls for up to eight seconds.
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+      - waitForAnimationToEnd
+      - tapOn: "Movie night, dinner, party..."
 - inputText: ${FLOCK_NAME}
 # The name commits on a 120 ms debounce (SearchInputLocal, App.js:4071).
 # Close the keyboard for real. Runs 7 to 11 (2026-09-02) all tapped Create
