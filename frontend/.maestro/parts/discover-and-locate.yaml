@@ -71,3 +71,30 @@ appId: com.flockcorp.flock
     text: "Map"                                 # App.js results header, back to the map
     optional: true
 - waitForAnimationToEnd
+# ONE PIN, TAPPED, SO THE CARD WITH THE NUMBER IS ON SCREEN. The narration's
+# model beat is about a single place ("this place runs quieter than its own
+# weekly curve"), and until this step nothing in the take ever opened one.
+# Markers carry an accessible name now (App.js buildMarkerEl: "<venue>, crowd
+# <n>"), which is what makes a pin addressable at all; before that the map was
+# a region with nothing in it as far as the tree was concerned. The first named
+# pin is taken; tapping it sets the active venue, the map eases in to zoom 17,
+# and the card under the map shows the score and its word. Held long enough to
+# read, then closed with the card's own Close so the flow lands back where the
+# next part expects it.
+- tapOn:
+    text: '[\s\S]*, crowd \d+'
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+# The card is the only thing on this screen that prints a street address
+# (App.js renderConsumerVenueCard, `activeVenue.addr`), so the address is the
+# wait: it appears when the card does and not before.
+- extendedWaitUntil:
+    visible: '[\s\S]*, PA [\s\S]*'
+    timeout: 6000
+    optional: true
+- tapOn:
+    text: "Close"
+    index: 0
+    optional: true
+- waitForAnimationToEnd

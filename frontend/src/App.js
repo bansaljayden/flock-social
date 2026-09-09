@@ -2758,6 +2758,15 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const el = document.createElement('div');
     el.className = 'mlb-venue-marker';
     el.style.cursor = 'pointer';
+    // A NAME, so the pin exists to anything that is not a pointer. Markers are
+    // built by hand outside React and had no role and no label, which made
+    // every pin invisible to VoiceOver: the whole map read as an empty region
+    // with a list button in the corner. The name carries the crowd number when
+    // there is one, because that number is what the pin is showing.
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', Number.isFinite(venue.crowd)
+      ? `${venue.name}, crowd ${Math.round(venue.crowd)}`
+      : `${venue.name}`);
     el.style.display = 'flex';
     el.style.flexDirection = 'column';
     el.style.alignItems = 'center';
