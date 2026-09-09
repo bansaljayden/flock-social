@@ -19552,9 +19552,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                         value={venueQuery}
                         onChange={(e) => handleVenueQueryChange(e.target.value)}
                         placeholder="Search restaurants, bars, venues..."
+                        /* NO autoFocus. Both doors into this list are "View
+                           all" / "All N results" buttons: the person tapped to
+                           SEE the results, and on a phone focusing this field
+                           raised the keyboard over the bottom two thirds of
+                           the list they had just asked for. A field they can
+                           tap is a field they can still search with. */
                         style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }}
                         autoComplete="off"
-                        autoFocus
                       />
                       <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
                       {venueQuery && (
