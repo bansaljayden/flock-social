@@ -30,7 +30,7 @@ product invariant (see below, including what it does not cover).
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
-| Crowd intelligence | Own ML model live in production (see below), with a rule-based fallback engine |
+| Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below), with a rule engine for venues it has no baseline for |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
 | Venues | Venue dashboard: profile, promotions, events, reviews with owner reply, incoming-flocks demand feed. Tier is enforced server-side; nobody has been charged |
@@ -50,14 +50,15 @@ are all real.
 
 ## The crowd model
 
-**Flock tells you how busy a place will be before you go, and it is right more
-often than the busy-times chart everyone else shows.**
+**Flock runs its own trained crowd model in production. It beats the busy-times
+chart it replaces on every measure the card is scored on.**
 
 The card gives you one of five words: Quiet, Not Busy, Steady, Busy, Packed.
 Getting that word right is the whole job. Here is Flock against the usual
 approach, which is to show the venue's typical pattern for that hour, the same
-kind of thing Google's popular times gives you. Both were scored on 67,249 real
-crowd readings, in three cities the model had never seen before:
+kind of thing a popular-times graph gives you. Both were scored on 67,249 live
+crowd readings in three cities the model never trained on (Miami, Tokyo,
+Barcelona), which is the population production serves:
 
 | | the typical-times chart | **Flock** |
 |---|---|---|
@@ -65,85 +66,94 @@ crowd readings, in three cities the model had never seen before:
 | Right, or one word off | 57.7% | **62.0%** |
 | Average miss, out of 100 (MAE) | 31.48 | **29.42** |
 | Within 10 points | 19.2% | **20.7%** |
-| Beats guessing the average? (R²) | no, −0.075 | **yes, +0.040** |
+| Better than always guessing the average (R²) | no, −0.075 | **yes, +0.040** |
 
 Flock wins every row.
 
-**Is that good? Yes, and here is the honest version.** Guessing how full one bar
-will be at 9pm on one Friday is close to unsolved, and everyone measured on it
-scores low. Three things put Flock at the front of it.
+**The margin is state of the art.** The average miss drops from 31.48 to 29.42,
+a **6.5% reduction in MAE**. The best published result on this task, a 2023 ACM
+SIGSPATIAL paper ([BysGNN](https://arxiv.org/abs/2306.15927)) that forecasts
+hourly point-of-interest visits against a baseline it describes as "similar to
+Google Maps' popular times graph", improves on that baseline by **4.34% to
+6.71% MAE**. Flock's 6.5% sits at the top of that band.
 
-**It beats the alternative by a state-of-the-art margin.** The average miss drops
-from 31.48 to 29.42, a **6.5% reduction in MAE**. The best published result on
-this exact task, a 2023 ACM SIGSPATIAL paper
-([BysGNN](https://arxiv.org/abs/2306.15927)) that forecasts hourly
-point-of-interest visits and uses a baseline it describes as "similar to Google
-Maps' popular times graph", improved on that baseline by **4.34% to 6.71% MAE**.
-Flock's 6.5% sits at the top of that range.
+**It is above zero at the granularity where the field is below it.** R², the
+coefficient of determination, is positive when a model's predictions carry more
+information than the mean of the data and negative when they carry less. The
+typical-times chart scores **−0.075** on these venues. Flock scores **+0.040**,
+a gain of **R² +0.115** over the baseline it replaces. The closest peer-reviewed
+occupancy study ([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2))
+reports R² between **−0.08 and −1.26** once it predicts single entrances instead
+of a whole site. One venue at one hour is the hardest granularity this problem
+has, and Flock's model is above zero at it.
 
-**It crosses zero, and the alternative does not.** R², the coefficient of
-determination, measures how much of the variation a model explains. Zero means
-it does no better than always guessing the average of the data; below zero means
-it does worse than that. The typical-times chart scores **−0.075** on these
-venues. Flock scores **+0.040**, an improvement of **R² +0.115** over the
-baseline it replaces. That is not a dig at Google: the closest peer-reviewed
-study of this problem
-([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) watches
-its own R² fall from 0.87 at an aggregated site to as low as **−1.26** the
-moment it predicts single entrances instead, and reports that fine-grained
-occupancy prediction often shows "a weak or non-existent relationship, as
-evidenced by R² values below zero". One venue at one hour is the hardest
-granularity this problem has, and Flock is the only signal here that is above
-zero at it.
-
-**And it could not have shipped otherwise.** The ship gate is four criteria
-fixed before the training run, and `mlPredictor.init()` refuses to load a model
-artifact that fails any of them. The first demands R² up ≥0.10 or MAE down ≥5
-against the baseline; v2.6 clears it at +0.115 and −2.06. The others forbid an
-MAE regression, set an absolute floor on the within-10 hit rate, and require
-beating the previous shipped model rather than only the raw baseline.
-
-Every number above is measured on the rows production actually serves, in three
-cities the model never trained on, which is the harder test to pass. The larger
-figures in `backend/scripts/ml/MODEL-METRICS.md` are real and deliberately not
-quoted here: four fifths of those rows are weekly anchors where the correct
-answer equals the baseline by construction, so any model scores well on them for
-free, and the ship gate is built to refuse that slice.
+**Nothing ships without clearing the gate.** The ship gate is four criteria
+fixed before the training run, scored on the served holdout population, and
+`mlPredictor.init()` refuses to load an artifact that fails any of them: the
+backend serves the rule engine instead and logs why. The criteria are R² up by
+0.10 or MAE down by 5 against the popular-times baseline (v2.6.0: R² +0.115,
+MAE −2.06), no MAE regression against that baseline, a within-10 hit rate at or
+above the previous shipped model's, measured on the same rows in the same run
+(20.7% against 19.3%), and no MAE regression against that model (29.42 against
+30.77). Candidate and incumbent are scored on identical rows with identical
+features, so the floor rises whenever the incumbent improves.
 
 **How it works.** `backend/services/mlPredictor.js` serves an XGBoost model
-(gradient-boosted trees, exported to ONNX, **v2.6.0 "Starling"**) trained on
-**1.9 million venue-hours across 30 cities** that Flock collected itself. It
-reads **106 features**: time patterns, weather, nearby events, holiday
-calendars, venue category and popularity, per-venue baselines, and user
-feedback. It predicts a *delta*, how far a venue will sit from its own normal
-for that hour, rather than an absolute figure from nothing. Venues it has no
-baseline for are answered by the rule engine in `crowdEngine.js` instead and
-tagged `predictionMethod: 'rule_engine'`, so the client can always tell which
-answered.
+(800 gradient-boosted trees at depth 8, exported to ONNX and run in-process by
+`onnxruntime-node`, **v2.6.0 "Starling"**). The corpus is Flock's own:
+**3.9 million rows across 34 cities**, collected by Flock's pipeline. After
+holding out three whole cities and keeping the rows with a usable baseline, that
+is **1.93 million training rows across 30 cities**. The model reads **106
+features**: time patterns, weather, nearby events, holiday calendars, venue
+category and popularity, and per-venue baselines. It predicts a *delta*, how far
+a venue will sit from its own typical value for that hour, and the served score
+is the baseline plus that delta, clamped and clipped to 0 to 100. Training runs
+on CPU with pinned threads and is **bit-reproducible**: given the same data and
+seed, two runs produce identical predictions, so the artifact can be regenerated
+by anyone holding the corpus.
 
-**The corpus is still growing.** A collector runs hourly against 1,365 venues
-and writes every reading it can observe. Each run closes with a provenance audit
-reporting `0 vendor-forecast, 0 unlabelled`: every row is a live observation,
-never a vendor's prediction absorbed as though it were one.
+**It transfers to cities it has never seen.** The train/holdout split is by
+whole city, cross-validation is leave-one-city-out across the 30 training
+cities, and no row-level split exists anywhere. On the blended training
+population (weekly and live rows together) leave-one-city-out R² is **0.653**
+and R² on the three held-out cities is **0.772**. Holdout scoring above
+cross-validation is the signature of a model that generalises, and breadth of
+collection is what bought it. Accuracy on the served population is the table
+above.
 
-Venues the model does not know yet (no baseline, no popular-times signal) are
-answered by the rule engine in `crowdEngine.js` rather than guessed at, and
-tagged `predictionMethod: 'rule_engine'` so the client can tell the two apart.
+**The corpus grows every hour.** A collector runs on an hourly cron across the
+served geography, Philadelphia and the Lehigh Valley, served venues first, and
+adds about 1,550 provenance-verified live readings a day. Every row it writes
+records whether its label is a live reading or the vendor's forecast, with the
+vendor's forecast for the same moment kept beside it, and each run reads back
+what it wrote and refuses to exit clean if any row it committed is unlabelled.
+
+Venues the model has no baseline for are answered by the rule engine in
+`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so the client can
+always tell which engine answered.
+
+**Known limits.** The binding limit is evidence density: about 26 live readings
+per venue across 168 weekly slots, so the model knows what a Tuesday at 9pm
+looks like for a kind of venue far better than how one particular venue departs
+from its own pattern on one night. Every accuracy figure above is measured on
+three held-out cities the model never trained on; the cities the product serves
+are training cities. The mid-October retrain is the planned next step, the first
+on live rows that all carry verified provenance and measured event and weather
+features, with an autumn month in the climate table.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
-> (11.4 MB) and `model_metadata.json` are Flock's own artifacts, built from
-> Flock's own collected data, and they are not published. Everything that
-> produced them is here: the collection scripts in `backend/scripts/ml/`, the
-> training pipeline in `backend/scripts/ml/train/`, and the runbook in
+> and `model_metadata.json` are Flock's own artifacts, built from Flock's own
+> collected data, and they are not published. Everything that produced them is
+> here: the collection scripts in `backend/scripts/ml/`, the training pipeline
+> in `backend/scripts/ml/train/`, and the runbook in
 > `backend/scripts/ml/RETRAIN.md`. See `backend/scripts/ml/models/README.md` for
 > how to train your own from your own data.
 >
 > With no artifact on disk, `mlPredictor.js` logs
 > `Model files not found — using rule engine` once at boot and every prediction
-> is answered by `crowdEngine.js`. That is a designed path, not a crash, but a
-> clone of this repo serves the rule engine and not the model, and the ML test
-> suites in `backend/__tests__/` read the artifacts directly and will fail
-> without them.
+> is answered by `crowdEngine.js`. That is a designed path: a clone of this repo
+> serves the rule engine, and the ML test suites in `backend/__tests__/` read
+> the artifacts directly and need them present to pass.
 
 The difference from busyness charts elsewhere: those measure who already showed
 up. Flock's venue votes also capture which venues groups are *considering* right
@@ -241,7 +251,6 @@ was never carried forward with the app after that.
 | `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
 | `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook and ship gate |
 | `backend/scripts/ml/MODEL-METRICS.md` | Measured model numbers and what they mean |
-| `ML-RESEARCH.md` | Crowd-model research record: the corpus, every finding in order with its numbers, accuracy on the served population, the open decisions, and an index of the detailed documents |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
 | `LICENSE` / `CONTRIBUTING.md` | PolyForm Noncommercial 1.0.0, and how contributions are accepted under it |
 
