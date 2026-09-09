@@ -567,7 +567,14 @@ workflows:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
       - name: Build web app (relative asset paths)
-        script: npm run build
+        # REACT_APP_REVIEW_LOCATION is THIS workflow's and no other's. The
+        # Simulator that Maestro launches never delivers a fix to the app even
+        # with the grant and `location set` below in place (builds 46 and 47
+        # opened Discover on "Could not get your location just now"), so the
+        # recording build answers a failed read with Center City itself; see
+        # REVIEW_LOCATION in frontend/src/services/geolocation.js. The
+        # TestFlight workflow above builds without it, and a test pins that.
+        script: REACT_APP_REVIEW_LOCATION=39.9526,-75.1652 npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
       - name: Firebase config for the recording build, optional

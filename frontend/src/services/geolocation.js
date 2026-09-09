@@ -82,6 +82,34 @@ const PERMISSION_DENIED = 1;
 const POSITION_UNAVAILABLE = 2;
 const TIMEOUT = 3;
 
+/* A LOCATION FOR THE RECORDING RIG, AND NOTHING ELSE.
+ *
+ * The demonstration is filmed on a Simulator that Maestro launches, and that
+ * Simulator never delivers a fix to the app: `simctl location set` runs clean
+ * before the flow starts, the permission is granted, no dialog appears, and
+ * the request still times out ten seconds after the tap on Discover. Builds
+ * 46 and 47 both opened the map on "Could not get your location just now, so
+ * this is Philadelphia" for that reason, and mobile-dev-inc/maestro#1458 is
+ * the same symptom under the same launcher with no resolution.
+ *
+ * So the recording build carries its own answer. REACT_APP_REVIEW_LOCATION is
+ * set on exactly one build in codemagic.yaml, the review-recording workflow,
+ * and nowhere else: not the TestFlight workflow, not Vercel, and it stands
+ * EMPTY in .env.example under a line that says so. A test pins all three.
+ * When it is set, a native read that
+ * fails for any reason other than a refused permission is answered with this
+ * coordinate instead of the error. Refusals are deliberately left out: if the
+ * grant is ever missing, the "Location is off" banner films, which is the
+ * truth of that take and the thing to fix. A production bundle has the
+ * variable undefined, this constant is null, and every line below that reads
+ * it is a no-op. */
+const REVIEW_LOCATION = (() => {
+  const raw = process.env.REACT_APP_REVIEW_LOCATION;
+  if (!raw) return null;
+  const [lat, lng] = String(raw).split(',').map((s) => Number(s.trim()));
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+})();
+
 /*
  * The plugin's iOS errors, from
  * node_modules/@capacitor/geolocation/ios/.../GeolocationError.swift:
@@ -190,8 +218,31 @@ export function getCurrentPosition(onSuccess, onError, options) {
     if (typeof fn === 'function') fn(...args);
   };
   const succeed = answer(onSuccess);
-  const failNow = (code, message) => answer(() => fail(onError, code, message))();
-  const failPlugin = (err) => answer(() => failFromPlugin(onError, err))();
+  /* The recording rig's answer to a failed read (see REVIEW_LOCATION). Goes
+     through `succeed`, so it settles the request and cancels the timer the
+     same way a real fix would, and a refused permission never takes it. */
+  const seeded = (code) => {
+    if (!REVIEW_LOCATION || code === PERMISSION_DENIED) return false;
+    succeed({
+      coords: {
+        latitude: REVIEW_LOCATION.lat,
+        longitude: REVIEW_LOCATION.lng,
+        accuracy: 50,
+        altitude: null,
+        altitudeAccuracy: null,
+        heading: null,
+        speed: null,
+      },
+      timestamp: Date.now(),
+    });
+    return true;
+  };
+  const failNow = (code, message) => {
+    if (!seeded(code)) answer(() => fail(onError, code, message))();
+  };
+  const failPlugin = (err) => {
+    if (!seeded(codeFor(err))) answer(() => failFromPlugin(onError, err))();
+  };
 
   /* No timeout asked for, no timeout imposed: watchPosition-style callers that
      want to wait indefinitely keep that behaviour by passing nothing, which is
