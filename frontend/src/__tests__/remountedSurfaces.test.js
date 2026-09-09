@@ -568,14 +568,19 @@ describe('the helpers whose correct behaviour the remount weaponised', () => {
     expect(body).toContain('React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);');
   });
 
-  it('DialogBehavior still moves focus to the first focusable child on mount', () => {
+  it('DialogBehavior still moves focus into the sheet on mount, and never onto a text field', () => {
     // Also right, and also why a remounting sheet stole the caret. Same reason
-    // for pinning it.
+    // for pinning it. The one refinement since: when the first focusable
+    // control is a text field, the sheet itself takes focus rather than the
+    // field, because focusing a field on a phone raises the keyboard over the
+    // sheet that was just opened (the venue results list, whose first control
+    // is its search box, opened two-thirds covered every time).
     const at = APP_SOURCE.indexOf('const DialogBehavior = ({ onClose, label, modal = true }) => {');
     expect(at).toBeGreaterThan(-1);
-    const body = APP_SOURCE.slice(at, at + 2200);
-    expect(body.length).toBe(2200);
-    expect(body).toContain('(list[0] || node).focus({ preventScroll: true });');
+    const body = APP_SOURCE.slice(at, at + 3200);
+    expect(body).toContain('((first && !isTextField) ? first : node).focus({ preventScroll: true });');
+    expect(body).toMatch(/first\.tagName === 'TEXTAREA'/);
+    expect(body).toMatch(/first\.tagName === 'INPUT'/);
   });
 
   it('the New Message sheet receives both of them as props', () => {
