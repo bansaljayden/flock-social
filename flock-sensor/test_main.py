@@ -1194,5 +1194,149 @@ class MarginRecommendation(unittest.TestCase):
     def test_no_person_frames_is_not_a_recommendation(self):
         rec, _ = main.recommend_margin_c([1.0], [], 22.0)
         self.assertIsNone(rec)
+class CrowdedRoomCounting(unittest.TestCase):
+    """Past half the frame the room used to read as empty.
+
+    The cutoff is anchored on an estimate of the background, and the median
+    stops being the background once most of the frame is people. Measured on the
+    real counter before the fix: 24 separated bodies counted correctly to 40%
+    coverage and then returned 0 at 60% and 70%, which is the same number an
+    empty room publishes.
+    """
+
+    R, C = main.THERMAL_ROWS, main.THERMAL_COLS
+
+    @classmethod
+    def crowd(cls, n, ambient, h=20, w=16, temp=34.0):
+        g = [ambient] * (cls.R * cls.C)
+        made = 0
+        for r in range(0, cls.R, 28):
+            for c in range(0, cls.C, 28):
+                if made >= n:
+                    break
+                for rr in range(r, min(r + h, cls.R)):
+                    for cc in range(c, min(c + w, cls.C)):
+                        g[rr * cls.C + cc] = temp
+                made += 1
+            if made >= n:
+                break
+        return g
+
+    def test_a_room_that_is_mostly_people_is_not_an_empty_room(self):
+        self.assertEqual(main.count_thermal_clusters(self.crowd(24, 24.0, h=24, w=20)), 24)
+        self.assertEqual(main.count_thermal_clusters(self.crowd(24, 26.0, h=26, w=24)), 24)
+
+    def test_the_sparse_cases_still_read_the_same(self):
+        for n in (1, 4, 12):
+            self.assertEqual(main.count_thermal_clusters(self.crowd(n, 20.0)), n)
+
+    def test_an_empty_room_is_still_empty_at_any_temperature(self):
+        for ambient in (14.0, 20.0, 30.0):
+            self.assertEqual(main.count_thermal_clusters([ambient] * (self.R * self.C)), 0)
+
+    def test_a_cold_draft_across_the_frame_invents_nobody(self):
+        # The risk of anchoring low: a cold patch drags the estimate under the
+        # true background and the cutoff follows it down.
+        g = [20.0] * (self.R * self.C)
+        for r in range(0, 40):
+            for c in range(0, 60):
+                g[r * self.C + c] = 8.0
+        self.assertEqual(main.count_thermal_clusters(g), 0)
+
+    def test_the_ambient_estimate_is_the_background_not_a_body(self):
+        full = self.crowd(24, 26.0, h=26, w=24)
+        cells, _, _ = main.bin_frame(full, self.R, self.C, main.THERMAL_BIN)
+        # The property that matters is not a particular number, it is that the
+        # estimate plus the margin still lands under a body. Once it does not,
+        # nothing in the frame clears the cutoff and a full room reads as empty.
+        self.assertLess(main._ambient(cells) + main.THERMAL_MARGIN_C, 34.0,
+                        'the background estimate has been captured by the bodies again')
+class SceneBackgroundCounting(unittest.TestCase):
+    """A radiator is warm in every frame, so a per-frame estimate cannot see it.
+
+    Every number in this class was measured against the real counter, and the
+    numbers are the argument for the feature: a warm fixture in view is a
+    permanent +1 on that venue's headcount, at 4am on a locked venue included,
+    and the crowd model learns it as a property of the venue.
+    """
+
+    R, C = main.THERMAL_ROWS, main.THERMAL_COLS
+
+    @classmethod
+    def room(cls, ambient=20.0, fixture=True, people=0):
+        g = [ambient] * (cls.R * cls.C)
+        if fixture:
+            # A radiator: 40x60 raw pixels at 32C, in frame forever.
+            for r in range(70, 110):
+                for c in range(4, 64):
+                    g[r * cls.C + c] = 32.0
+        made = 0
+        for r in range(0, 60, 28):
+            for c in range(0, cls.C, 28):
+                if made >= people:
+                    break
+                for rr in range(r, r + 20):
+                    for cc in range(c, c + 16):
+                        g[rr * cls.C + cc] = 34.0
+                made += 1
+            if made >= people:
+                break
+        return g
+
+    @classmethod
+    def seeded(cls, people=0):
+        scene = main.SceneBackground()
+        for _ in range(main._BG_SEED_FRAMES + 5):
+            main.count_people(cls.room(people=people), scene)
+        return scene
+
+    def test_the_fixture_is_a_person_without_the_background(self):
+        # The thing being fixed, pinned so nobody removes the fix and wonders.
+        self.assertEqual(main.count_thermal_clusters(self.room(people=0)), 1)
+        self.assertEqual(main.count_thermal_clusters(self.room(people=3)), 4)
+
+    def test_the_fixture_is_nobody_once_the_scene_is_learned(self):
+        scene = self.seeded()
+        self.assertEqual(main.count_people(self.room(people=0), scene), 0)
+        self.assertEqual(main.count_people(self.room(people=1), scene), 1)
+        self.assertEqual(main.count_people(self.room(people=3), scene), 3)
+
+    def test_while_it_is_seeding_it_says_nothing_rather_than_zero(self):
+        # None and 0 are different claims. The loop leaves the freshness clock
+        # alone for None, so the device reports "no reading" and not "empty".
+        self.assertIsNone(main.count_people(self.room(), main.SceneBackground()))
+
+    def test_a_motionless_person_is_not_absorbed_into_the_room(self):
+        # The classic failure of background subtraction, and the reason
+        # foreground cells learn at alpha/20. Two hours at a 2s cadence.
+        scene = self.seeded()
+        for _ in range(3600):
+            main.count_people(self.room(people=1), scene)
+        self.assertEqual(main.count_people(self.room(people=1), scene), 1,
+                         'somebody who stood still was absorbed into the background')
+
+    def test_seeding_with_somebody_in_frame_costs_a_blind_spot_that_heals(self):
+        # The documented cost. Somebody perfectly still for the whole seed window
+        # is learned as furniture, and the spot recovers within a few minutes of
+        # the room actually being empty.
+        scene = self.seeded(people=1)
+        self.assertEqual(main.count_people(self.room(people=1), scene), 0)
+        for _ in range(150):
+            main.count_people(self.room(people=0), scene)
+        self.assertEqual(main.count_people(self.room(people=1), scene), 1,
+                         'the blind spot from a bad seed never healed')
+
+    def test_the_mask_can_only_take_people_away_never_invent_them(self):
+        # The safety property that makes this sane to run unattended. Whatever
+        # the background has learned, a masked count can never exceed the
+        # unmasked one, so a broken model loses a person rather than conjuring
+        # one, and an invented person is the error this project refuses.
+        scene = self.seeded()
+        for people in (0, 1, 3):
+            frame = self.room(people=people)
+            cells, _, _ = main.bin_frame(frame, self.R, self.C, main.THERMAL_BIN)
+            masked = main.count_thermal_clusters(
+                frame, mask=scene.mask(cells, main._ambient(cells)))
+            self.assertLessEqual(masked, main.count_thermal_clusters(frame))
 if __name__ == '__main__':
     unittest.main()
