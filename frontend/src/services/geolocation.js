@@ -82,31 +82,14 @@ const PERMISSION_DENIED = 1;
 const POSITION_UNAVAILABLE = 2;
 const TIMEOUT = 3;
 
-/* A LOCATION FOR THE RECORDING RIG, AND NOTHING ELSE.
- *
- * The demonstration is filmed on a Simulator that Maestro launches, and that
- * Simulator never delivers a fix to the app: `simctl location set` runs clean
- * before the flow starts, the permission is granted, no dialog appears, and
- * the request still times out ten seconds after the tap on Discover. Builds
- * 46 and 47 both opened the map on "Could not get your location just now, so
- * this is Philadelphia" for that reason, and mobile-dev-inc/maestro#1458 is
- * the same symptom under the same launcher with no resolution.
- *
- * So the recording build carries its own answer. REACT_APP_REVIEW_LOCATION is
- * set on exactly one build in codemagic.yaml, the review-recording workflow,
- * and nowhere else: not the TestFlight workflow, not Vercel, and it stands
- * EMPTY in .env.example under a line that says so. A test pins all three.
- * When it is set, a native read is answered with this coordinate at once,
- * without asking the device: build 50 showed that even a timed-out read
- * cannot be relied on under Maestro. A production bundle has the variable
- * undefined, this constant is null, and every line below that reads it is a
- * no-op. */
-const REVIEW_LOCATION = (() => {
-  const raw = process.env.REACT_APP_REVIEW_LOCATION;
-  if (!raw) return null;
-  const [lat, lng] = String(raw).split(',').map((s) => Number(s.trim()));
-  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-})();
+/* NO SEEDED LOCATION FOR THE RECORDING RIG. The Simulator that Maestro
+ * launches never delivers a fix to the app (the grant and `simctl location
+ * set` both run clean and the read still times out; mobile-dev-inc/maestro
+ * #1458), so for one evening a build-time REACT_APP_REVIEW_LOCATION answered
+ * the read with Center City. On both takes built that way the Discover tab
+ * then loaded neither a venue nor the map; every take without it loaded both
+ * behind the honest "Could not get your location just now" banner. The
+ * timeout below is the whole of what this module does about a missing fix. */
 
 /*
  * The plugin's iOS errors, from
@@ -227,32 +210,6 @@ export function getCurrentPosition(onSuccess, onError, options) {
     ? setTimeout(() => failNow(TIMEOUT, 'Timed out getting your location.'), ms)
     : null;
 
-  /* THE RECORDING RIG'S ANSWER, GIVEN AT ONCE (see REVIEW_LOCATION). The first
-     version of this waited for CoreLocation to fail and only then answered,
-     which tied the take to the plugin's behaviour under Maestro; build 50
-     sat on "Finding where you are" for the whole Discover scene with no
-     answer of either kind. Here nothing is asked of the device at all: the
-     coordinate comes back on the next tick, through `succeed`, exactly the
-     way a fix would, and `succeed` cancels the caller's timeout above. This
-     sits AFTER that timer on purpose: `answer` reads `timer`, and returning
-     before its declaration would make the seed throw on the very tick it
-     answers. A production bundle has REVIEW_LOCATION null and never enters
-     this branch. */
-  if (REVIEW_LOCATION) {
-    setTimeout(() => succeed({
-      coords: {
-        latitude: REVIEW_LOCATION.lat,
-        longitude: REVIEW_LOCATION.lng,
-        accuracy: 50,
-        altitude: null,
-        altitudeAccuracy: null,
-        heading: null,
-        speed: null,
-      },
-      timestamp: Date.now(),
-    }), 250);
-    return;
-  }
 
   load().then((Geolocation) => {
     if (!Geolocation) {

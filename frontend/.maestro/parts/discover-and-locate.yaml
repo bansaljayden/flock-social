@@ -27,17 +27,16 @@
 # asks. What this part still does is open the tab and let the venues land.
 appId: com.flockcorp.flock
 ---
-# WHERE THE FIX COMES FROM ON THIS RIG. Builds 46 and 47 both opened Discover
-# on "Could not get your location just now, so this is Philadelphia": the
-# request timed out ten seconds after the tap even though `simctl location set`
-# had run clean before Maestro started (its failure echo never printed), and
-# mobile-dev-inc/maestro#1458 is the same symptom under Maestro's launch, with
-# no resolution. Maestro's own setLocation is the same simctl call from the
-# other side of the launch and its runner has no location route of its own, so
-# it is not used here. The recording build answers instead: it is built with
-# REACT_APP_REVIEW_LOCATION set (codemagic.yaml, this workflow only), which
-# services/geolocation.js hands back when CoreLocation fails for any reason but
-# a refused permission. The banner and its Try again stay for real phones.
+# THE BANNER FILMS, ON PURPOSE. Builds 46 to 48 opened Discover on "Could not
+# get your location just now, so this is Philadelphia": the request times out
+# ten seconds after the tap even though `simctl location set` ran clean before
+# Maestro started, and mobile-dev-inc/maestro#1458 is the same symptom under
+# Maestro's launch with no resolution. Maestro's own setLocation is the same
+# simctl call from the other side of the launch (its runner has no location
+# route), so it is not used. A build-time seed that answered the read itself
+# was tried in builds 50 and 51 and on both the tab then loaded neither venues
+# nor the map, so the honest state is what the take shows: the fallback city,
+# with every venue, number and card real.
 - tapOn: "Discover"                             # App.js tab table, label: 'Discover'
 # NO WAIT FOR THE PERMISSION DIALOG. Location is granted in the launch block
 # (`location: inuse`), so the dialog never appears, and a 20-second wait for it
