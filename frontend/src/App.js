@@ -4705,7 +4705,21 @@ const DialogBehavior = ({ onClose, label, modal = true }) => {
     const t = setTimeout(() => {
       if (node.contains(document.activeElement) && document.activeElement !== document.body) return;
       const list = focusables();
-      try { (list[0] || node).focus({ preventScroll: true }); } catch { /* detached */ }
+      // NEVER LAND ON A TEXT FIELD. Focusing an input on a phone raises the
+      // keyboard, and a sheet whose first control is a search box opened with
+      // the keyboard over the bottom two thirds of whatever it was opened to
+      // show: the venue results list, every time. The dialog itself takes
+      // focus instead (it has tabindex and a label, so a screen reader hears
+      // the sheet's name), and the field is one tap away for anyone who wants
+      // it. Removing autoFocus from the field was not enough because this
+      // trap put it straight back.
+      const first = list[0];
+      const isTextField = first && (
+        first.tagName === 'TEXTAREA'
+        || (first.tagName === 'INPUT' && !/^(button|submit|checkbox|radio|range|file|reset)$/i.test(first.type || 'text'))
+        || first.isContentEditable
+      );
+      try { ((first && !isTextField) ? first : node).focus({ preventScroll: true }); } catch { /* detached */ }
     }, 0);
 
     openDialogNodes.push(node);
