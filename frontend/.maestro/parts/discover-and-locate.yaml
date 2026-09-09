@@ -78,34 +78,49 @@ appId: com.flockcorp.flock
     timeout: 10000
     optional: true
 - waitForAnimationToEnd
+# ONE PLACE, OPENED FROM THE LIST, SO THE CARD WITH THE DIAL IS ON SCREEN.
+# Two takes tried to tap a map pin and neither opened the card: in build 48 the
+# pin's accessible frame was the whole marker column and the centre tap landed
+# beside the circle; in build 50, with the name moved onto the circle, the tree
+# exposed no pin at all. The list row is the reliable door. Tapping a row
+# (App.js search results `onClick`) closes the list, pans the map to the venue
+# and sets it active (`__flockPanToVenue`), which is what draws the map card
+# with the dial (renderConsumerVenueCard, AnimatedDial), and it also opens the
+# venue detail sheet on top. The sheet's own Close is the SECOND "Close" in the
+# tree (the map card's comes first in document order), so index 1 dismisses
+# the sheet and leaves the card; if the card is not there the same tap simply
+# finds nothing. The card is then held long enough to read and closed with its
+# own Close, index 0, so the flow lands where the next part expects it.
 - tapOn:
-    text: "Map"                                 # App.js results header, back to the map
-    optional: true
-- waitForAnimationToEnd
-# ONE PIN, TAPPED, SO THE CARD WITH THE NUMBER IS ON SCREEN. The narration's
-# model beat is about a single place ("this place runs quieter than its own
-# weekly curve"), and until this step nothing in the take ever opened one.
-# Markers carry an accessible name now (App.js buildMarkerEl: "<venue>, crowd
-# <n>"), which is what makes a pin addressable at all; before that the map was
-# a region with nothing in it as far as the tree was concerned. The first named
-# pin is taken; tapping it sets the active venue, the map eases in to zoom 17,
-# and the card under the map shows the score and its word. Held long enough to
-# read, then closed with the card's own Close so the flow lands back where the
-# next part expects it.
-- tapOn:
-    text: '[\s\S]*, crowd \d+'
+    text: '[\s\S]*Crowd level \d+ out of 100[\s\S]*'   # the first row's crowd pill; the click bubbles to the row
     index: 0
     optional: true
+- extendedWaitUntil:
+    visible: "Close"
+    timeout: 8000
+    optional: true
 - waitForAnimationToEnd
-# The card is the only thing on this screen that prints a street address
+- tapOn:
+    text: "Close"
+    index: 1
+    optional: true
+- waitForAnimationToEnd
+# The card is the only thing left on this screen that prints a street address
 # (App.js renderConsumerVenueCard, `activeVenue.addr`), so the address is the
 # wait: it appears when the card does and not before.
 - extendedWaitUntil:
     visible: '[\s\S]*, PA [\s\S]*'
     timeout: 6000
     optional: true
+- waitForAnimationToEnd
 - tapOn:
     text: "Close"
     index: 0
+    optional: true
+- waitForAnimationToEnd
+# If the row tap never happened the list is still open and the tab bar is
+# under it; its own back control puts the map back before the next part.
+- tapOn:
+    text: "Map"                                 # App.js results header, back to the map
     optional: true
 - waitForAnimationToEnd

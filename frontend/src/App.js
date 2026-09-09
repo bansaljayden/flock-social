@@ -2758,18 +2758,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const el = document.createElement('div');
     el.className = 'mlb-venue-marker';
     el.style.cursor = 'pointer';
-    // THE NAME GOES ON THE CIRCLE, NOT ON THIS WRAPPER. Markers are built by
-    // hand outside React and had no role and no label, which made every pin
-    // invisible to VoiceOver: the whole map read as an empty region with a
-    // list button in the corner. The first fix named this outer element, and
-    // that named the wrong box: it is a flex column holding the 44 px circle
-    // AND the name-plus-rating label below it, which is laid out even while
-    // the zoom tier keeps it unseen, so the accessible frame was 250 px wide
-    // and 68 px tall around a pin you could cover with a fingertip. Anything
-    // that taps the centre of an accessible frame (VoiceOver's double-tap,
-    // the recording rig, build 48 on tape) landed beside the pin and got the
-    // map instead of the card. The circle is the pin, so the circle carries
-    // the name, and the label is hidden from the tree so the pin is read once.
+    // A NAME, so the pin exists to anything that is not a pointer. Markers are
+    // built by hand outside React and had no role and no label, which made
+    // every pin invisible to VoiceOver: the whole map read as an empty region
+    // with a list button in the corner. The name carries the crowd number when
+    // there is one, because that number is what the pin is showing.
+    //
+    // ON THIS OUTER ELEMENT, NOT THE CIRCLE. One build moved the role onto the
+    // inner circle so the accessible frame would be the pin alone, and the
+    // tree then exposed no pin at all (build 50 of the demonstration
+    // recording found nothing matching "<venue>, crowd <n>"). This element is
+    // the one WebKit hands to the accessibility tree; its frame includes the
+    // label laid out under the circle, which is a known imprecision, not an
+    // absence.
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', Number.isFinite(venue.crowd)
+      ? `${venue.name}, crowd ${Math.round(venue.crowd)}`
+      : `${venue.name}`);
     el.style.display = 'flex';
     el.style.flexDirection = 'column';
     el.style.alignItems = 'center';
@@ -2783,13 +2788,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     inner.style.width = size + 'px';
     inner.style.height = size + 'px';
     inner.style.display = 'block';
-    // The name carries the crowd number when there is one, because that
-    // number is what the pin is showing. The click handler sits on the outer
-    // element and a tap on the circle bubbles to it.
-    inner.setAttribute('role', 'button');
-    inner.setAttribute('aria-label', Number.isFinite(venue.crowd)
-      ? `${venue.name}, crowd ${Math.round(venue.crowd)}`
-      : `${venue.name}`);
 
     const ring = categoryRingColor(venue.category);
     const applyPhotoStyle = () => {
@@ -2857,9 +2855,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // anyway.
     const label = document.createElement('div');
     label.className = 'mlb-marker-label';
-    // The circle above already says the name; this would say it twice and,
-    // worse, widen the accessible frame back out to the label (see the note
-    // at the top of this function).
+    // The outer element already says the name; the label under the pin would
+    // say it a second time.
     label.setAttribute('aria-hidden', 'true');
     // System star via starSvgString, not a raw glyph: the label is innerHTML
     // so JSX cannot reach it, but the geometry must still be the icon set's.

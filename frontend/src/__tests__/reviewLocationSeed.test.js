@@ -1,18 +1,20 @@
 /**
  * The recording rig's location seed, and the fence around it.
  *
- * services/geolocation.js answers a failed native read with a fixed coordinate
- * when REACT_APP_REVIEW_LOCATION is set at build time, because the Simulator
- * that Maestro launches never delivers one (builds 46 and 47 opened Discover
- * on "Could not get your location just now" with the grant and `simctl
- * location set` both in place; mobile-dev-inc/maestro#1458). Two things have
- * to stay true for that to be harmless:
+ * services/geolocation.js answers a native read with a fixed coordinate, at
+ * once and without asking the device, when REACT_APP_REVIEW_LOCATION is set at
+ * build time. The Simulator that Maestro launches never delivers one (builds
+ * 46 to 48 opened Discover on "Could not get your location just now" with the
+ * grant and `simctl location set` both in place; build 50, which waited for
+ * the read to fail before seeding, sat on "Finding where you are" instead;
+ * mobile-dev-inc/maestro#1458). Two things have to stay true for the seed to
+ * be harmless:
  *
  *   1. Only the review-recording workflow sets the variable. The TestFlight
- *      workflow, Vercel and .env.example never mention it, so a production
- *      bundle compiles the seed to null and the banner behaves as before.
- *   2. A refused permission is never seeded. A missing grant films as the
- *      "Location is off" banner, which is what a take like that should show.
+ *      workflow and Vercel never do, and .env.example lists it empty under a
+ *      warning, so a production bundle compiles the seed to null.
+ *   2. Without the variable the module behaves exactly as before: a read that
+ *      never answers is a TIMEOUT error, not a coordinate.
  */
 const fs = require('fs');
 const path = require('path');
@@ -24,9 +26,10 @@ const ENV_EXAMPLE = fs.readFileSync(path.join(ROOT, 'frontend', '.env.example'),
 const NATIVE = { isNativePlatform: () => true };
 
 let mockPluginBehaviour = () => new Promise(() => {});
+let mockCalls = 0;
 jest.mock('@capacitor/geolocation', () => ({
   Geolocation: {
-    getCurrentPosition: (...args) => mockPluginBehaviour(...args),
+    getCurrentPosition: (...args) => { mockCalls += 1; return mockPluginBehaviour(...args); },
   },
 }), { virtual: true });
 
@@ -75,6 +78,7 @@ describe('getCurrentPosition on a device, with the seed compiled in', () => {
 
   beforeEach(() => {
     process.env.REACT_APP_REVIEW_LOCATION = '39.9526,-75.1652';
+    mockCalls = 0;
     jest.resetModules();
     jest.useFakeTimers();
     window.Capacitor = NATIVE;
@@ -89,61 +93,36 @@ describe('getCurrentPosition on a device, with the seed compiled in', () => {
     else process.env.REACT_APP_REVIEW_LOCATION = previous;
   });
 
-  test('a timed-out read is answered with the seed, as a success', async () => {
+  test('the read is answered with the seed at once, and the device is never asked', async () => {
     mockPluginBehaviour = () => new Promise(() => {});
     const onSuccess = jest.fn();
     const onError = jest.fn();
 
     getCurrentPosition(onSuccess, onError, { timeout: 10000 });
     await flush();
-    jest.advanceTimersByTime(10000);
+    expect(onSuccess).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(300);
 
     expect(onError).not.toHaveBeenCalled();
     expect(onSuccess).toHaveBeenCalledTimes(1);
     const { coords } = onSuccess.mock.calls[0][0];
     expect(coords.latitude).toBeCloseTo(39.9526, 4);
     expect(coords.longitude).toBeCloseTo(-75.1652, 4);
+    expect(mockCalls).toBe(0);
   });
 
-  test('a plugin failure that is not a refusal is answered with the seed', async () => {
-    mockPluginBehaviour = () => Promise.reject({ code: 'OS-PLUG-GLOC-0002', message: 'Position unavailable' });
+  test('the caller\'s timeout never fires on top of the seed', async () => {
+    mockPluginBehaviour = () => new Promise(() => {});
     const onSuccess = jest.fn();
     const onError = jest.fn();
 
     getCurrentPosition(onSuccess, onError, { timeout: 10000 });
-    await flush();
-
-    expect(onError).not.toHaveBeenCalled();
-    expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(onSuccess.mock.calls[0][0].coords.latitude).toBeCloseTo(39.9526, 4);
-  });
-
-  test('a refused permission is still a refusal', async () => {
-    mockPluginBehaviour = () => Promise.reject({ code: 'OS-PLUG-GLOC-0003', message: 'Permission denied' });
-    const onSuccess = jest.fn();
-    const onError = jest.fn();
-
-    getCurrentPosition(onSuccess, onError, { timeout: 10000 });
-    await flush();
-
-    expect(onSuccess).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0].code).toBe(1);
-  });
-
-  test('a real fix still wins, and the seed never overwrites it', async () => {
-    const real = { coords: { latitude: 40.0, longitude: -75.0 }, timestamp: 1 };
-    mockPluginBehaviour = () => Promise.resolve(real);
-    const onSuccess = jest.fn();
-    const onError = jest.fn();
-
-    getCurrentPosition(onSuccess, onError, { timeout: 10000 });
+    jest.advanceTimersByTime(300);
     await flush();
     jest.advanceTimersByTime(10000);
 
-    expect(onError).not.toHaveBeenCalled();
     expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(onSuccess.mock.calls[0][0].coords.latitude).toBe(40.0);
+    expect(onError).not.toHaveBeenCalled();
   });
 });
 

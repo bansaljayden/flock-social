@@ -96,13 +96,11 @@ const TIMEOUT = 3;
  * set on exactly one build in codemagic.yaml, the review-recording workflow,
  * and nowhere else: not the TestFlight workflow, not Vercel, and it stands
  * EMPTY in .env.example under a line that says so. A test pins all three.
- * When it is set, a native read that
- * fails for any reason other than a refused permission is answered with this
- * coordinate instead of the error. Refusals are deliberately left out: if the
- * grant is ever missing, the "Location is off" banner films, which is the
- * truth of that take and the thing to fix. A production bundle has the
- * variable undefined, this constant is null, and every line below that reads
- * it is a no-op. */
+ * When it is set, a native read is answered with this coordinate at once,
+ * without asking the device: build 50 showed that even a timed-out read
+ * cannot be relied on under Maestro. A production bundle has the variable
+ * undefined, this constant is null, and every line below that reads it is a
+ * no-op. */
 const REVIEW_LOCATION = (() => {
   const raw = process.env.REACT_APP_REVIEW_LOCATION;
   if (!raw) return null;
@@ -218,12 +216,30 @@ export function getCurrentPosition(onSuccess, onError, options) {
     if (typeof fn === 'function') fn(...args);
   };
   const succeed = answer(onSuccess);
-  /* The recording rig's answer to a failed read (see REVIEW_LOCATION). Goes
-     through `succeed`, so it settles the request and cancels the timer the
-     same way a real fix would, and a refused permission never takes it. */
-  const seeded = (code) => {
-    if (!REVIEW_LOCATION || code === PERMISSION_DENIED) return false;
-    succeed({
+  const failNow = (code, message) => answer(() => fail(onError, code, message))();
+  const failPlugin = (err) => answer(() => failFromPlugin(onError, err))();
+
+  /* No timeout asked for, no timeout imposed: watchPosition-style callers that
+     want to wait indefinitely keep that behaviour by passing nothing, which is
+     also what the web API does with the option absent. */
+  const ms = Number(options && options.timeout);
+  const timer = Number.isFinite(ms) && ms > 0
+    ? setTimeout(() => failNow(TIMEOUT, 'Timed out getting your location.'), ms)
+    : null;
+
+  /* THE RECORDING RIG'S ANSWER, GIVEN AT ONCE (see REVIEW_LOCATION). The first
+     version of this waited for CoreLocation to fail and only then answered,
+     which tied the take to the plugin's behaviour under Maestro; build 50
+     sat on "Finding where you are" for the whole Discover scene with no
+     answer of either kind. Here nothing is asked of the device at all: the
+     coordinate comes back on the next tick, through `succeed`, exactly the
+     way a fix would, and `succeed` cancels the caller's timeout above. This
+     sits AFTER that timer on purpose: `answer` reads `timer`, and returning
+     before its declaration would make the seed throw on the very tick it
+     answers. A production bundle has REVIEW_LOCATION null and never enters
+     this branch. */
+  if (REVIEW_LOCATION) {
+    setTimeout(() => succeed({
       coords: {
         latitude: REVIEW_LOCATION.lat,
         longitude: REVIEW_LOCATION.lng,
@@ -234,23 +250,9 @@ export function getCurrentPosition(onSuccess, onError, options) {
         speed: null,
       },
       timestamp: Date.now(),
-    });
-    return true;
-  };
-  const failNow = (code, message) => {
-    if (!seeded(code)) answer(() => fail(onError, code, message))();
-  };
-  const failPlugin = (err) => {
-    if (!seeded(codeFor(err))) answer(() => failFromPlugin(onError, err))();
-  };
-
-  /* No timeout asked for, no timeout imposed: watchPosition-style callers that
-     want to wait indefinitely keep that behaviour by passing nothing, which is
-     also what the web API does with the option absent. */
-  const ms = Number(options && options.timeout);
-  const timer = Number.isFinite(ms) && ms > 0
-    ? setTimeout(() => failNow(TIMEOUT, 'Timed out getting your location.'), ms)
-    : null;
+    }), 250);
+    return;
+  }
 
   load().then((Geolocation) => {
     if (!Geolocation) {
