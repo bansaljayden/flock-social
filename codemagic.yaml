@@ -665,6 +665,14 @@ workflows:
           # after its own reinstall. A background loop re-granting every few
           # seconds was tried on run 16 and killed the app each time it ran.
           xcrun simctl privacy "$UDID" grant contacts com.flockcorp.flock || echo "contacts grant failed; the flow answers the sheet if it can"
+          # The keyboard's "Speed up your typing by sliding your finger" card.
+          # A fresh Simulator shows it over the keyboard the first time a text
+          # field takes focus, and build 48 filmed it across the whole of the
+          # create-flock typing. This is the flag the card sets for itself when
+          # its Continue is tapped; setting it first means it never appears.
+          # create-flock.yaml also taps Continue if it does, so a Simulator
+          # image that ignores this still films clean.
+          xcrun simctl spawn "$UDID" defaults write com.apple.keyboard.preferences DidShowContinuousPathIntroduction -bool true || echo "keyboard tip flag not set; the flow taps Continue if the card appears"
       - name: Install Maestro
         script: |
           curl -Ls "https://get.maestro.mobile.dev" | bash
