@@ -6,6 +6,20 @@ import { BASE_URL } from '../services/api';
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
 
+// A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
+// arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
+// encodeURI, which both photo sites below used to go through, encodes the `%`
+// itself: `%2F` became `%252F`, the proxy decoded it once, saw `places%2F...`
+// and answered 400 "Photo ref is not a valid photo name" for every venue. Every
+// pin fell back to its initial and every card to the placeholder bird, which
+// read from the outside as "the site does not load Places". What the CSS
+// `url("...")` and the img src actually need protecting against is a quote, a
+// backslash, whitespace, an angle bracket or a control character leaving the
+// string; those are encoded, and nothing else in the URL is touched.
+export const photoHrefFor = (path) => Array.from(`${BASE_URL}${path}`, (c) => (
+  (c.charCodeAt(0) < 33 || '"\'\\<>'.includes(c)) ? encodeURIComponent(c) : c
+)).join('');
+
 // School and work network filters commonly block *.railway.app while allowing
 // this site's own domain, and that one difference took the whole demo down on
 // exactly the machines students browse on (the maintainer's school laptop,
@@ -350,16 +364,17 @@ function buildDemoPin(venue, onClick) {
     // locked-down network. `background-image` fails silently, which left a
     // matte navy disc with nothing in it. Load it first, keep the venue's
     // initial if it never arrives.
-    // ENCODED ONCE, USED TWICE. `venue.photo_url` is a server string, and it
+    // ESCAPED ONCE, USED TWICE. `venue.photo_url` is a server string, and it
     // used to be interpolated raw into a CSS `url("...")` value. A `"` in it
     // closes the CSS string, and everything after it is parsed as more of the
     // declaration. `background-image` is a single property assignment so a `;`
-    // cannot open a second declaration and this was never script execution —
+    // cannot open a second declaration and this was never script execution,
     // but it is server data reaching a CSS parser unescaped, which is not a
-    // property to keep. encodeURI percent-encodes `"` and `\` (and every
-    // control character), so the value cannot leave the quotes, and it leaves
-    // the characters a URL legitimately contains alone.
-    const photoHref = encodeURI(`${BASE_URL}${venue.photo_url}`);
+    // property to keep. photoHrefFor (top of file) encodes the quote, the
+    // backslash and the control characters, so the value cannot leave the
+    // quotes, and leaves the server's own percent-encoding alone, which the
+    // encodeURI that stood here did not.
+    const photoHref = photoHrefFor(venue.photo_url);
     const img = new Image();
     img.onload = () => {
       // The initial has to come back off. Setting only the background left the
@@ -846,7 +861,7 @@ export default function LiveDemo() {
   // Google genuinely has no photo of the place.
   const photoSrc = !selectedPhoto
     ? null
-    : (photoFailed ? '/marks/venue-placeholder.jpg' : encodeURI(`${BASE_URL}${selectedPhoto}`));
+    : (photoFailed ? '/marks/venue-placeholder.jpg' : photoHrefFor(selectedPhoto));
 
   // Read once and used twice, so the "Best time to go" line and the locked
   // note can never both decide they are the right thing to draw.
