@@ -70,12 +70,15 @@ Barcelona), which is the population production serves:
 
 Flock wins every row.
 
-**The margin is state of the art.** The average miss drops from 31.48 to 29.42,
-a **6.5% reduction in MAE**. The best published result on this task, a 2023 ACM
-SIGSPATIAL paper ([BysGNN](https://arxiv.org/abs/2306.15927)) that forecasts
-hourly point-of-interest visits against a baseline it describes as "similar to
-Google Maps' popular times graph", improves on that baseline by **4.34% to
-6.71% MAE**. Flock's 6.5% sits at the top of that band.
+**How that compares.** The average miss drops from 31.48 to 29.42, a **6.5%
+reduction in MAE**, earned from the venue's attributes, the calendar, the
+weather and nearby events alone. The closest published system, a 2023 ACM
+SIGSPATIAL graph model ([BysGNN](https://arxiv.org/abs/2306.15927)), starts from
+a baseline it describes as "similar to Google Maps' popular times graph" and
+cuts its error roughly in half, and it does that by feeding each venue's own
+recent visit history back in. Flock's model has no such input yet. The
+collector now gathers exactly that reading, every hour, for the venues the app
+serves, and it is the next feature in line.
 
 **It is above zero at the granularity where the field is below it.** R², the
 coefficient of determination, is positive when a model's predictions carry more
