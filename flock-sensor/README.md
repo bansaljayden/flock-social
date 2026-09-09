@@ -548,6 +548,53 @@ readings are also ground truth for the crowd model, so a venue whose definition
 of a person drifts week to week poisons the training data quietly and nothing
 downstream can tell. The adjustment happens once, at install, with somebody
 standing in the room to say which reading is which.
+**A warm fixture in frame was a permanent person, and now it is not.** A
+radiator, a kitchen pass, a heat lamp, a television, an espresso machine or a
+patch of floor the sun reaches is warm in every single frame. Nothing that looks
+at one frame at a time can tell that from a person standing very still, so it
+added a constant +1 or +2 to that venue's headcount forever, including at 4am
+with the doors locked. Measured on the real counter: one 40x60-pixel fixture at
+32C in a 20C room counts as 1 person with nobody there, and turns 3 people into
+4.
+
+`SceneBackground` learns the room per cell over time instead. What it models is
+the residual, the cell minus the frame's own background estimate, so it is
+immune to slow ambient drift and to the offset step the Lepton leaves after
+every flat field correction. It seeds for about a minute on the per-cell
+*minimum* residual, so somebody who walks through the seed window never becomes
+furniture, then decays with a time constant of roughly seventeen minutes.
+
+Three properties are worth knowing, and all three are pinned by tests:
+
+- **It can only subtract.** A cell has to clear the old cutoff AND be warmer
+  than the scene usually is. A background model that has gone wrong therefore
+  loses a person; it cannot invent one. That asymmetry is deliberate, and it is
+  what makes this safe to leave running unattended.
+- **It reports nothing while seeding**, which is a different claim from zero,
+  and the loop leaves the freshness clock alone so the device says "no reading"
+  rather than "nobody here".
+- **A motionless person is not absorbed.** Cells currently held to be people
+  learn at a twentieth of the normal rate, so somebody who stands still for two
+  hours is still counted. This is the classic failure of background subtraction
+  and it is the one thing this design spends complexity on.
+
+The cost, measured: if somebody stands perfectly still through the whole seed
+window they are learned as furniture and leave a blind spot. It heals within
+about five minutes of the room actually being empty, and the rest of the frame
+keeps counting normally in the meantime. Seeding happens at start-up and again
+after the camera is re-opened, so an install where somebody loiters in view at
+boot is worth avoiding.
+
+**One thing here needs a human decision rather than a passing test suite.** The
+published privacy policy says the thermal grid is reduced to a count and thrown
+away. This holds 1,200 numbers in RAM: a 4x4-pooled, low-pass-filtered residual
+of a static scene. It is never written to disk, never transmitted, and at that
+pooling it is not a recognisable image of anything; the raw 19,200-pixel frame
+this program already holds transiently is strictly more revealing. The wording
+still deserves a read before the first venue install, because
+`legalPagesMatchCode.test.js` pins the policy by parsing imports and will not
+fire on this either way.
+
 **Fragmentation is the failure mode the old sensor did not have**, and it is
 now the one that has actually been seen. On a 24x32 grid a whole person was a
 handful of pixels and blurred into a single blob. At 160x120 a bare head and a

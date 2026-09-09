@@ -63,7 +63,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.5.0'
+VERSION = '1.6.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -895,8 +895,124 @@ def is_plausible_frame(frame):
     return low <= _median(frame) <= high
 
 
+# Which point in the frame stands for "the room".
+#
+# This was the median, and the median is the room only while the room is mostly
+# not people. Past about half the frame covered, the median IS a body, the cutoff
+# climbs above body temperature, and the count collapses to 0. Measured on the
+# real counter with 24 separated bodies: correct up to 40% coverage, then 0 at
+# 60% and 0 at 70%. A packed entrance therefore published the same number as an
+# empty one, at the exact moment the number is worth something.
+#
+# The 20th percentile is the room's cool background whether the frame is empty or
+# full. Checked against every scene that could be constructed, including a hot
+# 30C day and a cold draft patch across a third of the frame: it agrees with the
+# median everywhere the median was right, and it counts 24 of 24 where the median
+# counted 0. Lower is not better; at the 10th percentile the cutoff drops far
+# enough that bodies merge and 24 reads as 6.
+_AMBIENT_PERCENTILE = 0.20
+
+
+def _ambient(cells):
+    """The background temperature of the scene, robust to the scene being full."""
+    if not cells:
+        return 0.0
+    ordered = sorted(cells)
+    return ordered[min(len(ordered) - 1, int(len(ordered) * _AMBIENT_PERCENTILE))]
+
+# ---------------------------------------------------------------------------
+# Scene background
+#
+# A radiator, a kitchen pass, a heat lamp, a television, an espresso machine or
+# a sunlit patch of floor is warm in every single frame. A per-frame estimate of
+# the room cannot see it, because the object is in every frame that estimate is
+# built from, so it adds a constant +1 or +2 to that venue's headcount forever,
+# including a locked venue at 4am. For the crowd model that is worse than it
+# looks on the card: a constant offset is learned as a property of the venue and
+# validation never sees it.
+#
+# The fix is per-cell and over time rather than per-frame and over space. What is
+# modelled is the RESIDUAL, cell minus the frame's own background estimate, which
+# makes it immune to slow ambient drift and to the offset step the Lepton leaves
+# behind after every flat field correction.
+#
+# Two properties make this safe to have on by default on a device nobody has run
+# for a full shift:
+#
+#   1. It can only ever SUBTRACT a detection. The warm test is the old cutoff
+#      AND the residual test, so the worst this can do is miss somebody. It
+#      cannot invent a person, which is the error this project treats as the
+#      unacceptable one.
+#   2. It reports nothing at all while seeding, so the first minute cannot
+#      publish a number built on a half-learned scene. _fresh already knows how
+#      to say "no reading" honestly.
+#
+# Seeding takes the per-cell MINIMUM residual rather than the mean: somebody who
+# walks through during the seed window never enters the background, while a
+# radiator that is hot for the whole minute does. Somebody who stands perfectly
+# still for the entire seed does get burned in, and that is a real failure; it
+# self-corrects over roughly one time constant once they move.
+#
+# PRIVACY, and this needs a human decision rather than a green test suite. The
+# published policy says the thermal grid is reduced to a count and thrown away.
+# This holds 1,200 numbers in RAM: a 4x4-pooled, low-pass-filtered, residual
+# representation of a static scene. It is never written to disk, never
+# transmitted, and at that pooling it is not a recognisable image of anything,
+# and the raw 19,200-pixel frame this program already holds transiently is
+# strictly more revealing than it. The wording still deserves a read before the
+# first venue install. The test that pins the policy parses imports, so it will
+# not fire on this either way, which is exactly why it is written down here.
+_BG_SEED_FRAMES = 30
+_BG_ALPHA = 0.002
+_BG_STILL_DIVISOR = 20
+_BG_DELTA_C = 1.5
+
+
+class SceneBackground:
+    """Per-cell residual background, learned over time and slowly forgotten."""
+
+    def __init__(self, seed_frames=_BG_SEED_FRAMES, alpha=_BG_ALPHA,
+                 delta_c=_BG_DELTA_C, still_divisor=_BG_STILL_DIVISOR):
+        self.seed_frames = seed_frames
+        self.alpha = alpha
+        self.delta_c = delta_c
+        self.still_divisor = still_divisor
+        self.seen = 0
+        self.bg = None
+
+    @property
+    def ready(self):
+        return self.bg is not None and self.seen >= self.seed_frames
+
+    def observe(self, cells, ambient, foreground=()):
+        """Fold one frame in. `foreground` marks cells currently held to be people."""
+        residual = [c - ambient for c in cells]
+        if self.bg is None or len(self.bg) != len(residual):
+            self.bg = list(residual)
+            self.seen = 1
+            return
+        self.seen += 1
+        if self.seen <= self.seed_frames:
+            # Cold-biased seed: the quietest this cell has been so far.
+            for i, r in enumerate(residual):
+                if r < self.bg[i]:
+                    self.bg[i] = r
+            return
+        fg = set(foreground)
+        slow = self.alpha / float(self.still_divisor)
+        for i, r in enumerate(residual):
+            a = slow if i in fg else self.alpha
+            self.bg[i] += a * (r - self.bg[i])
+
+    def mask(self, cells, ambient):
+        """Cells that are warmer than this scene usually is. None until seeded."""
+        if not self.ready:
+            return None
+        return [(c - ambient) - b >= self.delta_c for c, b in zip(cells, self.bg)]
+
 def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
-                           margin_c=None, rows=None, cols=None, bin_size=None):
+                           margin_c=None, rows=None, cols=None, bin_size=None,
+                           mask=None):
     """Flood fill over a binned thermal frame. Returns a cluster count.
 
     The threshold floats above the frame's own median. With a fixed 28C
@@ -940,12 +1056,13 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
         return 0
     min_cluster = THERMAL_MIN_CLUSTER if min_cluster is None else min_cluster
     sizes = thermal_region_sizes(frame, threshold_c=threshold_c, margin_c=margin_c,
-                                 rows=rows, cols=cols, bin_size=bin_size)
+                                 rows=rows, cols=cols, bin_size=bin_size,
+                                 mask=mask)
     return min(MAX_THERMAL, sum(1 for s in sizes if s >= min_cluster))
 
 
 def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
-                         rows=None, cols=None, bin_size=None):
+                         rows=None, cols=None, bin_size=None, mask=None):
     """Every connected warm region in the frame, as a list of cell counts.
 
     The same flood fill count_thermal_clusters runs, with the minimum-size
@@ -966,10 +1083,17 @@ def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
     bin_size = THERMAL_BIN if bin_size is None else bin_size
 
     cells, rows, cols = bin_frame(frame, rows, cols, max(1, int(bin_size)))
-    ambient = _median(cells)
+    ambient = _ambient(cells)
     cutoff = max(threshold_c, ambient + margin_c)
 
-    grid = [[cells[r * cols + c] >= cutoff for c in range(cols)] for r in range(rows)]
+    # The background mask can only take cells away, never add them: a cell
+    # has to clear the cutoff AND be warmer than this scene usually is. So a
+    # background model that has gone wrong loses a person; it cannot conjure
+    # one, and that asymmetry is what makes it safe to run unattended.
+    def _warm(i):
+        return cells[i] >= cutoff and (mask is None or mask[i])
+
+    grid = [[_warm(r * cols + c) for c in range(cols)] for r in range(rows)]
     visited = [[False] * cols for _ in range(rows)]
     sizes = []
     for r0 in range(rows):
@@ -1005,6 +1129,36 @@ _THERMAL_REOPEN_AFTER = 15
 _THERMAL_REOPEN_BACKOFF_MAX = 300.0
 
 
+# One frame in roughly fifteen used to decide the label for a whole 30 second
+# row, in the corpus the crowd model trains on. A single silhouette split, a
+# frame taken as somebody crosses the edge of view, or the frame right after a
+# flat field correction became that row's ground truth. The median of the window
+# costs fifteen integers and rejects all three. It does not fix bias, only
+# variance, and that is the point: it makes every other accuracy change
+# measurable instead of drowned in single-frame noise.
+_THERMAL_WINDOW = 15
+_thermal_window = deque(maxlen=_THERMAL_WINDOW)
+
+def count_people(frame, scene=None):
+    """Cluster count for one frame, with the scene background folded in.
+
+    Returns None while the background is still seeding, which is a different
+    thing from 0 and is reported as one: the caller leaves the freshness clock
+    alone, so the device says "no reading yet" rather than "nobody here".
+    """
+    if scene is None:
+        return count_thermal_clusters(frame)
+    cells, rows, cols = bin_frame(frame, THERMAL_ROWS, THERMAL_COLS, max(1, int(THERMAL_BIN)))
+    ambient = _ambient(cells)
+    cutoff = max(THERMAL_THRESHOLD_C, ambient + THERMAL_MARGIN_C)
+    # Cells the old rule calls warm are the ones held to be people this frame, and
+    # they are the ones the background must learn slowly rather than absorb.
+    foreground = [i for i, c in enumerate(cells) if c >= cutoff]
+    scene.observe(cells, ambient, foreground)
+    if not scene.ready:
+        return None
+    return count_thermal_clusters(frame, mask=scene.mask(cells, ambient))
+
 def thermal_loop():
     """Read the camera forever, and put it back when it falls off the bus.
 
@@ -1020,6 +1174,7 @@ def thermal_loop():
     however many weeks it takes for a person to look.
     """
     failures = 0
+    scene = SceneBackground()
     backoff = 0.0
     while not _stop.is_set():
         if _thermal_camera is None:
@@ -1064,7 +1219,17 @@ def thermal_loop():
             else:
                 failures = 0
                 backoff = 0.0
-                n = count_thermal_clusters(frame)
+                n = count_people(frame, scene)
+                if n is None:
+                    # Still learning the room. Not a reading and not a
+                    # failure, so the freshness clock is left alone.
+                    log_throttled('thermal_seeding', logging.INFO,
+                                  'Learning the scene background; no headcount '
+                                  f'until about {_BG_SEED_FRAMES * 2}s after start')
+                    _stop.wait(2)
+                    continue
+                _thermal_window.append(n)
+                n = _median(list(_thermal_window))
                 with _lock:
                     _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
                     _state['thermal_at'] = time.monotonic()
@@ -1079,6 +1244,10 @@ def thermal_loop():
             except Exception:
                 pass
             _set_thermal_camera(None)
+            # A camera that went away and came back may be pointing at a
+            # different scene, or the same one hours later. Relearn it.
+            scene = SceneBackground()
+            _thermal_window.clear()
             failures = 0
         _stop.wait(2)
 
