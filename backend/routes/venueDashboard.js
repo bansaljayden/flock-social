@@ -865,6 +865,11 @@ function reviewPage(page, limit) {
 // card with the author's name and kept moving the average. Each read's users
 // join carries `AND u.is_banned IS NOT TRUE`; the digest count, which has no
 // join, carries the NOT EXISTS.
+// The same rule for the demo accounts the recording stages: their reviews
+// are rows, not opinions, and leave every list and average unless the
+// viewer is one of them. See utils/demoAccounts.js.
+const { hideDemoReviews } = require('../utils/demoAccounts');
+
 const NOT_OWNER_OF_THE_PLACE = `AND NOT EXISTS (
            SELECT 1 FROM venue_profiles vpo
            WHERE vpo.user_id = vr.user_id
@@ -907,7 +912,8 @@ router.get('/reviews', async (req, res) => {
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
-         ${NOT_OWNER_OF_THE_PLACE}`,
+         ${NOT_OWNER_OF_THE_PLACE}
+         ${hideDemoReviews(req.user.id)}`,
       [venue.google_place_id]
     );
     const s = statsResult.rows[0] || {};
@@ -937,6 +943,7 @@ router.get('/reviews', async (req, res) => {
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          ${NOT_OWNER_OF_THE_PLACE}
+         ${hideDemoReviews(req.user.id)}
          ${cursor ? 'AND (vr.created_at, vr.id) < ($2::timestamptz, $3::int)' : ''}
        ORDER BY vr.created_at DESC, vr.id DESC
        LIMIT ${cursor ? '$4' : '$2'}`,
@@ -1330,7 +1337,8 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
            WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
-         ${NOT_OWNER_OF_THE_PLACE}`,
+         ${NOT_OWNER_OF_THE_PLACE}
+         ${hideDemoReviews(req.user.id)}`,
       [req.params.placeId, req.user.id]
     );
     const total = statsResult.rows[0]?.total || 0;
@@ -1378,6 +1386,7 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
          ${NOT_OWNER_OF_THE_PLACE}
+         ${hideDemoReviews(req.user.id)}
          ${cursor ? 'AND (vr.created_at, vr.id) < ($3::timestamptz, $4::int)' : ''}
        -- A LIMIT over a tie is a page that can drop a row and show another
        -- twice. id DESC breaks it deterministically, and it is the write order.
@@ -2428,7 +2437,8 @@ router.get('/this-week', requirePro, async (req, res) => {
           WHERE vr.google_place_id = $1 AND COALESCE(vr.is_hidden, false) = false
             AND vr.created_at >= NOW() - INTERVAL '7 days'
             AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
-            ${NOT_OWNER_OF_THE_PLACE}`,
+            ${NOT_OWNER_OF_THE_PLACE}
+            ${hideDemoReviews(null)}`,
         [placeId]
       ),
       pool.query(
