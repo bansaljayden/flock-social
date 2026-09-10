@@ -179,9 +179,9 @@ async function ownVenue(a, b) {
   }
   const venue = {
     id: placeId,
-    name: p.venue_name || p.name || 'the venue',
+    name: p.business_name || p.venue_name || p.name || 'the venue',
     address: p.address || p.venue_address || '',
-    plan: `Drinks at ${p.venue_name || p.name || 'the venue'}`,
+    plan: `Drinks at ${p.business_name || p.venue_name || p.name || 'the venue'}`,
   };
   const flock = await planAt(a, b, venue);
   for (const u of [a, b]) {
