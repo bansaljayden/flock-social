@@ -39,6 +39,13 @@
  * it is 56 MB of submission material with no reason to be fetchable on the web,
  * and store-assets/ is gitignored. manifest.json and WIRING.md are written into
  * the web set.
+ *
+ * ONLY WHAT SHIPS STAYS IN public/. After a run, every web capture that no
+ * source file, public/index.html or public/manifest.json references is moved
+ * to frontend/screenshots/ (tracked, not deployed, not in the iPhone bundle).
+ * The full set used to ride along in every IPA: 34 files, 7.96 MB, for the
+ * two the landing page shows and the four the PWA manifest lists.
+ * publicScreenshotsShipped.test.js pins the rule.
  */
 
 import { createRequire } from 'node:module';
@@ -1164,6 +1171,7 @@ async function captureAll(dbUrl) {
   }
 
   writeManifestAndWiring(manifest);
+  archiveUnshipped();
   log(`captured ${manifest.length} images${failures.length ? `, ${failures.length} FAILURES` : ''}`);
   for (const f of failures) log(`  FAIL ${f}`);
   if (failures.length) process.exitCode = 1;
@@ -1254,6 +1262,44 @@ async function snap(page, sharp, manifest, { screen, size, mode }) {
   const imgFails = [...new Set(page.__imgFails || [])];
   const imgNote = imgFails.length ? `  (${imgFails.length} image(s) did not load: ${imgFails.slice(0, 3).join(' | ')})` : '';
   log(`  ok ${screen.id} [${size.id}/${mode}]${imgNote}`);
+}
+
+// The captures that ship: anything source, index.html or the PWA manifest
+// names under /screenshots/. Everything else the run produced leaves public/.
+function shippedCaptures() {
+  const names = new Set();
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== '__tests__') walk(p); }
+      else if (/\.(js|jsx|css|html)$/.test(e.name)) {
+        for (const m of fs.readFileSync(p, 'utf8').matchAll(/\/screenshots\/([A-Za-z0-9@._-]+\.(?:png|webp))/g)) names.add(m[1]);
+      }
+    }
+  };
+  walk(path.join(FRONTEND_DIR, 'src'));
+  for (const m of fs.readFileSync(path.join(FRONTEND_DIR, 'public', 'index.html'), 'utf8').matchAll(/\/screenshots\/([A-Za-z0-9@._-]+\.(?:png|webp))/g)) names.add(m[1]);
+  try {
+    const pwa = JSON.parse(fs.readFileSync(path.join(FRONTEND_DIR, 'public', 'manifest.json'), 'utf8').replace(/^\uFEFF/, ''));
+    for (const s of pwa.screenshots || []) {
+      const m = String(s.src).match(/screenshots\/([A-Za-z0-9@._-]+)/);
+      if (m) names.add(m[1]);
+    }
+  } catch { /* no PWA screenshots */ }
+  return names;
+}
+
+function archiveUnshipped() {
+  const archive = path.join(FRONTEND_DIR, 'screenshots');
+  fs.mkdirSync(archive, { recursive: true });
+  const shipped = shippedCaptures();
+  let n = 0;
+  for (const f of fs.readdirSync(OUT_DIR)) {
+    if (!/\.(png|webp)$/.test(f) || shipped.has(f)) continue;
+    fs.renameSync(path.join(OUT_DIR, f), path.join(archive, f));
+    n += 1;
+  }
+  log(`${n} unreferenced capture(s) moved to frontend/screenshots/; ${shipped.size} stay in public/`);
 }
 
 function writeManifestAndWiring(manifest) {
