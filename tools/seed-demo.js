@@ -12,6 +12,15 @@
  *
  * Env: REVIEW_EMAIL_A, REVIEW_EMAIL_B, REVIEW_PASSWORD (the same group the
  * recording workflow already checks), API_URL (default https://api.flockcorp.com).
+ *
+ * REVIEWS ARE WRITTEN ONLY WHEN THEY STAY PRIVATE. A five-star line this script
+ * puts on a real bar is a scripted opinion, and it must not reach real users'
+ * ratings. So before any review the script asks /api/auth/me whether both
+ * accounts are configured demo accounts (DEMO_USER_IDS on the server, which
+ * keeps their reviews out of everyone else's lists and averages). If they are
+ * not, it stages the friendship, the plans, the votes, the promotion and the
+ * event, and skips every review, unless DEMO_REVIEWS_PUBLIC=1 is set in the
+ * workflow's environment as an explicit decision to publish them anyway.
  * Prints what it did; exits 0 on success, 1 on the first hard failure. The
  * caller decides whether that fails a build.
  *
@@ -141,6 +150,28 @@ async function unblockEachOther(a, b) {
   }
 }
 
+// Both accounts must be configured demo accounts on the server, or the
+// workflow must say in so many words that public scripted reviews are wanted.
+async function reviewsMayBeWritten(a, b) {
+  const flags = [];
+  for (const u of [a, b]) {
+    const me = await api('GET', '/api/auth/me', u.token);
+    if (!me.ok) throw new Error(`/api/auth/me for ${u.name}: ${me.status}`);
+    flags.push(Boolean(me.data && me.data.user && me.data.user.demo_account));
+  }
+  if (flags.every(Boolean)) {
+    console.log('reviews: both accounts are configured demo accounts; their reviews stay out of other users\' view');
+    return true;
+  }
+  if ((process.env.DEMO_REVIEWS_PUBLIC || '').trim() === '1') {
+    console.log('reviews: DEMO_REVIEWS_PUBLIC=1, so scripted reviews are written even though real users will see them');
+    return true;
+  }
+  console.log('reviews: SKIPPED. Neither DEMO_USER_IDS on the server names both accounts nor DEMO_REVIEWS_PUBLIC=1 is set,');
+  console.log('reviews: so no scripted review is written where real users would count it. Friends, plans, votes, promotion and event still run.');
+  return false;
+}
+
 async function befriend(a, b) {
   const list = await api('GET', '/api/friends', a.token);
   if (!list.ok) throw new Error(`friends list: ${list.status}`);
@@ -178,6 +209,10 @@ async function planAt(a, b, venue, window = REVIEW_WINDOW) {
   // and anything else on A's list are left alone. Build 59 reused a
   // recording plan dated two days out and both reviews came back
   // VISIT_REQUIRED; build 60 reused one from a fortnight before.
+  // GET /api/flocks returns the newest 300; the demo account has a few dozen
+  // plans, so the list is exhaustive in practice. If a matching plan ever fell
+  // off it, the worst case is one more plan with the same name, and a join
+  // that fails after a create leaves a one-person plan the next run reuses.
   const mine = await api('GET', '/api/flocks', a.token);
   if (!mine.ok) throw new Error(`flock list: ${mine.status}`);
   const flocks = Array.isArray(mine.data) ? mine.data : (mine.data && mine.data.flocks) || [];
@@ -230,7 +265,9 @@ function pick(pool, key) {
 async function alreadyReviewed(user, venue) {
   // Walks every page (the public list is newest first, fifty a page, with a
   // `before` cursor), and a read that fails is an error rather than "absent":
-  // absent is what leads to a write.
+  // absent is what leads to a write. A review a moderator hid is not listed
+  // and would be upserted with identical text; the upsert does not touch
+  // is_hidden, so it stays hidden.
   let before = '';
   for (let page = 0; page < 40; page += 1) {
     const q = `limit=50${before ? `&before=${encodeURIComponent(before)}` : ''}`;
@@ -276,7 +313,7 @@ async function review(user, venue, text) {
   return r.ok;
 }
 
-async function ownVenue(a, b) {
+async function ownVenue(a, b, reviewsAllowed) {
   const prof = await api('GET', '/api/venue-profile', b.token);
   const p = prof.data || {};
   const placeId = p.google_place_id;
@@ -295,6 +332,10 @@ async function ownVenue(a, b) {
     const v = await api('POST', `/api/flocks/${flock.id}/vote`, u.token, { venue_name: venue.name, venue_id: venue.id });
     console.log(`own venue: ${u.name} votes ${venue.name} in #${flock.id}: ${v.status} ${v.ok ? '' : JSON.stringify(v.data)}`);
     if (!v.ok) throw new Error(`${u.name}'s vote for ${venue.name} failed: ${v.status}`);
+  }
+  if (!reviewsAllowed) {
+    console.log(`own venue: review of ${venue.name} skipped (see the reviews line above)`);
+    return;
   }
   if (!(await review(a, venue, 'Went with a group of five on a weeknight. Good pours, fair prices, and the owner came by to check on us.'))) {
     throw new Error(`review of ${venue.name} failed`);
@@ -347,10 +388,11 @@ async function venueSide(b) {
 
   await unblockEachOther(a, b);
   const friends = await befriend(a, b);
+  const reviewsAllowed = await reviewsMayBeWritten(a, b);
 
   let reviews = 0;
   let failures = friends ? 0 : 1;
-  for (let i = 0; i < VENUES.length; i += 1) {
+  for (let i = 0; reviewsAllowed && i < VENUES.length; i += 1) {
     const venue = VENUES[i];
     try {
       const n = await stage(a, b, venue, REVIEWS.A[i], REVIEWS.B[i]);
@@ -363,7 +405,7 @@ async function venueSide(b) {
   }
   let top = [];
   try {
-    top = await discoverTop(a);
+    if (reviewsAllowed) top = await discoverTop(a);
   } catch (e) {
     failures += 1;
     console.log(`discover: ${e.message}`);
@@ -385,7 +427,7 @@ async function venueSide(b) {
   // makes a plan there, both vote for it, and A reviews it; the owner cannot
   // review their own venue, so B does not try.
   try {
-    await ownVenue(a, b);
+    await ownVenue(a, b, reviewsAllowed);
   } catch (e) {
     failures += 1;
     console.log(`own venue: ${e.message}`);

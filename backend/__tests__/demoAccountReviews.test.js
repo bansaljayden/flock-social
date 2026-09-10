@@ -71,11 +71,13 @@ test('every dashboard review query that excludes the owner excludes the demo acc
   const owner = src.match(/\$\{NOT_OWNER_OF_THE_PLACE\}/g) || [];
   const demo = src.match(/\$\{hideDemoReviews\((req\.user\.id|null)\)\}/g) || [];
   assert.ok(owner.length >= 5, 'the five review readers are still there');
-  // Every owner-clause reader carries the demo clause, and so does the one
-  // write that reads a review back: the owner's reply (RETURNING *), which
+  // Every carrier of the owner clause carries the demo clause, including the
+  // one write that reads a review back: the owner's reply (RETURNING *), which
   // otherwise let an owner answer a review they are not shown.
-  assert.equal(demo.length, owner.length + 1, 'one demo clause per owner clause plus the reply');
-  assert.match(src, /UPDATE venue_reviews vr SET venue_reply[\s\S]{0,300}\$\{hideDemoReviews\(req\.user\.id\)\}[\s\S]{0,40}RETURNING \*/);
+  assert.equal(demo.length, owner.length, 'one demo clause per owner clause, the reply included');
+  assert.match(src, /UPDATE venue_reviews vr SET venue_reply[\s\S]{0,700}\$\{hideDemoReviews\(req\.user\.id\)\}[\s\S]{0,40}RETURNING \*/);
+  assert.match(src, /UPDATE venue_reviews vr SET venue_reply[\s\S]{0,400}bu\.is_banned IS TRUE[\s\S]{0,200}\$\{NOT_OWNER_OF_THE_PLACE\}/,
+    'the reply refuses a banned author and the owner\'s own review, like the list does');
   assert.match(src, /require\('\.\.\/utils\/demoAccounts'\)/);
   // The clause correlates on `vr`, so every carrier must alias the table that way.
   const carriers = src.split('${hideDemoReviews(').slice(1);

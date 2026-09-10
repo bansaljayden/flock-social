@@ -46,6 +46,7 @@ const jwksClient = require('jwks-rsa');
 const { body, validationResult } = require('express-validator');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
+const { demoUserIds } = require('../utils/demoAccounts');
 
 // A new account claims its waitlist row, once. created_at on that row is the
 // person's original place in line, so an account made after launch still
@@ -2643,6 +2644,10 @@ router.get('/me', authenticate, async (req, res) => {
     // provider name is not itself sent; only the method.
     const { oauth_provider: provider, ...user } = result.rows[0];
     user.sign_in_method = provider || 'password';
+    // Whether DEMO_USER_IDS names this account: the recording's staging
+    // script asks before it writes a review, and writes none unless the
+    // server will keep them out of everyone else's view.
+    user.demo_account = demoUserIds().includes(Number(user.id));
     res.json({ user });
   } catch (err) {
     console.error('Get current user error:', err);
