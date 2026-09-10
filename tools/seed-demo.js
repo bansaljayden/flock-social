@@ -124,7 +124,16 @@ async function planAt(a, b, venue) {
   // when it already exists on A's list.
   const mine = await api('GET', '/api/flocks', a.token);
   const flocks = Array.isArray(mine.data) ? mine.data : (mine.data && mine.data.flocks) || [];
-  let flock = flocks.find((f) => f.venue_id === venue.id && f.status !== 'cancelled');
+  // Only a plan the review route will count: dated within the last 30 days
+  // or the next 12 hours (a margin inside both edges). Build 59 reused the
+  // recording's own "Friday night out" plan, dated two days out, and both
+  // reviews at that venue came back VISIT_REQUIRED.
+  const now = Date.now();
+  const counts = (f) => {
+    const t = f.event_time ? Date.parse(f.event_time) : NaN;
+    return Number.isFinite(t) && t > now - 29 * 24 * 3600 * 1000 && t < now + 11 * 3600 * 1000;
+  };
+  let flock = flocks.find((f) => f.venue_id === venue.id && f.status !== 'cancelled' && counts(f));
   if (!flock) {
     const when = new Date(Date.now() + 90 * 60 * 1000).toISOString();
     const created = await api('POST', '/api/flocks', a.token, {
@@ -158,6 +167,28 @@ async function review(user, venue, text) {
   });
   console.log(`review: ${user.name} on ${venue.name}: ${r.status} ${r.ok ? '' : JSON.stringify(r.data)}`);
   return r.ok;
+}
+
+async function ownVenue(a, b) {
+  const prof = await api('GET', '/api/venue-profile', b.token);
+  const p = prof.data || {};
+  const placeId = p.google_place_id;
+  if (!prof.ok || !placeId) {
+    console.log(`own venue: ${b.name} has no claimed place id (${prof.status}); skipped`);
+    return;
+  }
+  const venue = {
+    id: placeId,
+    name: p.venue_name || p.name || 'the venue',
+    address: p.address || p.venue_address || '',
+    plan: `Drinks at ${p.venue_name || p.name || 'the venue'}`,
+  };
+  const flock = await planAt(a, b, venue);
+  for (const u of [a, b]) {
+    const v = await api('POST', `/api/flocks/${flock.id}/vote`, u.token, { venue_name: venue.name, venue_id: venue.id });
+    console.log(`own venue: ${u.name} votes ${venue.name} in #${flock.id}: ${v.status} ${v.ok ? '' : JSON.stringify(v.data)}`);
+  }
+  await review(a, venue, 'Went with a group of five on a weeknight. Good pours, fair prices, and the owner came by to check on us.');
 }
 
 async function venueSide(b) {
@@ -215,6 +246,16 @@ async function venueSide(b) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
     }
+  }
+  // The venue account's own venue. Its dashboard lists incoming flocks by the
+  // venue VOTES that name its place id (not by the flock's own venue), so A
+  // makes a plan there, both vote for it, and A reviews it; the owner cannot
+  // review their own venue, so B does not try.
+  try {
+    await ownVenue(a, b);
+  } catch (e) {
+    failures += 1;
+    console.log(`own venue: ${e.message}`);
   }
   // The venue side stands on its own: a promotion and an event show on the
   // dashboard whatever happened above.
