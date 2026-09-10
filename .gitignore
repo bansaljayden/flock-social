@@ -106,9 +106,10 @@ frontend/public/birdie/birdie-idle.mp4
 # referenced them; they exist to be dragged into App Store Connect. Moved here on
 # 2026-08-18 and untracked. SUBMIT-CHECKLIST.md points at this directory.
 #
-# The @2x captures under frontend/public/screenshots/ STAY tracked and stay in
-# public/: LandingPage.js, public/manifest.json and public/index.html all
-# reference them, and websiteA11y.test.js pins two of them.
+# The @2x captures stay tracked. The ones LandingPage.js and public/manifest.json
+# reference stay in frontend/public/screenshots/ (websiteA11y.test.js pins two);
+# the rest of the set lives in frontend/screenshots/, tracked but not deployed
+# and not in the iPhone bundle (publicScreenshotsShipped.test.js pins which).
 store-assets/
 
 
