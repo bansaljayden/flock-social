@@ -241,7 +241,9 @@ async function alreadyReviewed(user, venue) {
     if (!r.data || !r.data.hasMore || !r.data.nextBefore) return false;
     before = r.data.nextBefore;
   }
-  return false;
+  // Forty pages is two thousand reviews. Past that the answer is unknown, and
+  // unknown must not become "absent", because absent is what leads to a write.
+  throw new Error(`reviews of ${venue.name}: more than 2000, could not confirm ${user.name}'s`);
 }
 
 // Reviews first: a venue both accounts have already reviewed needs no plan,
