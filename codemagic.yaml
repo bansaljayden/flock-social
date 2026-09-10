@@ -691,7 +691,9 @@ workflows:
           # gets a promotion and an event. Idempotent, so a second build finds
           # everything in place and writes nothing. It never fails the build;
           # the recording is worth more with the staging than without, and
-          # the log says what happened either way.
+          # the log says what happened either way. Reviews are written only
+          # when the server hides them from everyone else (DEMO_USER_IDS on
+          # Railway) or DEMO_REVIEWS_PUBLIC=1 is set here on purpose.
           API_URL="${DEMO_API_URL:-https://api.flockcorp.com}" node ../tools/seed-demo.js || echo "staging failed (non-fatal); the recording proceeds on the account as it is"
       - name: Record the Simulator and drive the shot list
         script: |
