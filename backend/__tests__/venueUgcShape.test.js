@@ -257,7 +257,7 @@ test('markup in an event title is stripped before it reaches the column', async 
 test("markup in a venue owner's public reply is stripped before it reaches the column", async () => {
   venueExists();
   let upd = null;
-  handlers.push([/^UPDATE venue_reviews SET venue_reply/, (p) => { upd = p; return { rows: [{ id: 55 }] }; }]);
+  handlers.push([/^UPDATE venue_reviews (?:vr )?SET venue_reply/, (p) => { upd = p; return { rows: [{ id: 55 }] }; }]);
   const res = await call('POST', '/api/venue-dashboard/reviews/55/reply', {
     reply: 'Thanks<script>alert(1)</script> for coming',
   });
