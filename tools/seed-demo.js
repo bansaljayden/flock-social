@@ -284,8 +284,14 @@ async function alreadyReviewed(user, venue) {
 }
 
 // Reviews first: a venue both accounts have already reviewed needs no plan,
-// so a later run touches nothing there. Returns how many reviews stand.
-async function stage(a, b, venue, textA, textB) {
+// so a later run touches nothing there. Returns how many reviews stand, or
+// null when reviews are not allowed: the plan is still made, because the
+// plans are what make the Nest look lived in, and only the reviews wait.
+async function stage(a, b, venue, textA, textB, reviewsAllowed) {
+  if (!reviewsAllowed) {
+    await planAt(a, b, venue);
+    return null;
+  }
   const haveA = await alreadyReviewed(a, venue);
   const haveB = await alreadyReviewed(b, venue);
   if (haveA && haveB) {
@@ -392,12 +398,11 @@ async function venueSide(b) {
 
   let reviews = 0;
   let failures = friends ? 0 : 1;
-  for (let i = 0; reviewsAllowed && i < VENUES.length; i += 1) {
+  for (let i = 0; i < VENUES.length; i += 1) {
     const venue = VENUES[i];
     try {
-      const n = await stage(a, b, venue, REVIEWS.A[i], REVIEWS.B[i]);
-      reviews += n;
-      failures += 2 - n;
+      const n = await stage(a, b, venue, REVIEWS.A[i], REVIEWS.B[i], reviewsAllowed);
+      if (n !== null) { reviews += n; failures += 2 - n; }
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
@@ -405,7 +410,7 @@ async function venueSide(b) {
   }
   let top = [];
   try {
-    if (reviewsAllowed) top = await discoverTop(a);
+    top = await discoverTop(a);
   } catch (e) {
     failures += 1;
     console.log(`discover: ${e.message}`);
@@ -414,9 +419,8 @@ async function venueSide(b) {
   for (const venue of top) {
     if (fixed.has(venue.id)) continue;
     try {
-      const n = await stage(a, b, venue, pick(MORE_REVIEWS.A, venue.id), pick(MORE_REVIEWS.B, 'b:' + venue.id));
-      reviews += n;
-      failures += 2 - n;
+      const n = await stage(a, b, venue, pick(MORE_REVIEWS.A, venue.id), pick(MORE_REVIEWS.B, 'b:' + venue.id), reviewsAllowed);
+      if (n !== null) { reviews += n; failures += 2 - n; }
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
