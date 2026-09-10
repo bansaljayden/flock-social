@@ -42,6 +42,47 @@ const REVIEWS = {
   ],
 };
 
+// For venues found on the live list, past the three above. Generic on
+// purpose: they must read true of any bar or restaurant in the city.
+const MORE_REVIEWS = {
+  A: [
+    'Six of us on a Friday and they found us a table in ten minutes. Good pours, easy to hear each other.',
+    'Came for one drink after work and stayed for dinner. The staff never rushed us.',
+    'Split everything across the group and nobody grumbled. Solid spot for a first meetup.',
+    'Loud, warm, and quick. Exactly what a Thursday needs.',
+    'The kind of place where the plan survives. We will be back with more people.',
+    'Big group, one bill, no drama. The kitchen kept up.',
+    'Sat outside, watched the block go by, ordered too many fries. Worth it.',
+  ],
+  B: [
+    'Good energy without being a scene. Ask for a booth in the back.',
+    'Went on a weeknight and it was steady, not slammed. Happy hour is the move.',
+    'Friendly bar, fair prices, plenty of room for eight of us.',
+    'Reliable. That is rarer than it sounds.',
+    'Great for a group that cannot decide. Long menu, fast kitchen.',
+    'Got there at nine and it was filling up. Go early or get a reservation.',
+    'The one place everyone in the chat agreed on. Says a lot.',
+  ],
+};
+
+// The Discover list is the search the app itself runs from the recording's
+// fixed location, in the server's order; the row the recording taps is
+// whichever comes first that night. Build 60 tapped a venue the three fixed
+// ones did not cover, and its sheet still said "No reviews yet". So the top
+// of that list, as it stands at staging time, is seeded too.
+const DISCOVER_QUERY = 'popular restaurants cafes bars fast food';
+const DISCOVER_LOCATION = '39.9526,-75.1652';
+const DISCOVER_TOP = 10;
+
+async function discoverTop(user) {
+  const r = await api('GET', `/api/venues/search?query=${encodeURIComponent(DISCOVER_QUERY)}&location=${encodeURIComponent(DISCOVER_LOCATION)}`, user.token);
+  const venues = (r.data && r.data.venues) || [];
+  console.log(`discover: ${r.status}, ${venues.length} venue(s); top ${DISCOVER_TOP}: ${venues.slice(0, DISCOVER_TOP).map((v) => v.name).join(' | ')}`);
+  return venues.slice(0, DISCOVER_TOP)
+    .filter((v) => v.place_id && v.name)
+    .map((v) => ({ id: v.place_id, name: v.name, address: v.formatted_address || v.address || '', plan: `Night out at ${v.name}` }));
+}
+
 function need(name) {
   // Trimmed, like the recording step trims the same three values before
   // handing them to Maestro: a secure variable pasted into Codemagic can carry
@@ -246,6 +287,27 @@ async function venueSide(b) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
     }
+  }
+  let top = [];
+  try {
+    top = await discoverTop(a);
+  } catch (e) {
+    failures += 1;
+    console.log(`discover: ${e.message}`);
+  }
+  const fixed = new Set(VENUES.map((v) => v.id));
+  let k = 0;
+  for (const venue of top) {
+    if (fixed.has(venue.id)) continue;
+    try {
+      await planAt(a, b, venue);
+      if (await review(a, venue, MORE_REVIEWS.A[k % MORE_REVIEWS.A.length])) reviews += 1;
+      if (await review(b, venue, MORE_REVIEWS.B[k % MORE_REVIEWS.B.length])) reviews += 1;
+    } catch (e) {
+      failures += 1;
+      console.log(`plan: ${venue.name}: ${e.message}`);
+    }
+    k += 1;
   }
   // The venue account's own venue. Its dashboard lists incoming flocks by the
   // venue VOTES that name its place id (not by the flock's own venue), so A
