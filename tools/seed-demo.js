@@ -85,6 +85,7 @@ const DISCOVER_TOP = 10;
 
 async function discoverTop(user) {
   const r = await api('GET', `/api/venues/search?query=${encodeURIComponent(DISCOVER_QUERY)}&location=${encodeURIComponent(DISCOVER_LOCATION)}`, user.token);
+  if (!r.ok) throw new Error(`discover search: ${r.status}`);
   const venues = (r.data && r.data.venues) || [];
   console.log(`discover: ${r.status}, ${venues.length} venue(s); top ${DISCOVER_TOP}: ${venues.slice(0, DISCOVER_TOP).map((v) => v.name).join(' | ')}`);
   return venues.slice(0, DISCOVER_TOP)
