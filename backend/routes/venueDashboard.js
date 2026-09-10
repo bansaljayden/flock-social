@@ -1010,9 +1010,10 @@ router.post('/reviews/:id/reply', [
     // they may not see, and it would tell a harassing owner that their complaint
     // landed on a specific review.
     const { rows } = await pool.query(
-      `UPDATE venue_reviews SET venue_reply = $1, venue_replied_at = NOW()
-       WHERE id = $2 AND google_place_id = $3
-         AND COALESCE(is_hidden, false) = false
+      `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW()
+       WHERE vr.id = $2 AND vr.google_place_id = $3
+         AND COALESCE(vr.is_hidden, false) = false
+         ${hideDemoReviews(req.user.id)}
        RETURNING *`,
       [req.body.reply, req.params.id, venue.google_place_id]
     );
@@ -2438,6 +2439,8 @@ router.get('/this-week', requirePro, async (req, res) => {
             AND vr.created_at >= NOW() - INTERVAL '7 days'
             AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
             ${NOT_OWNER_OF_THE_PLACE}
+            -- No viewer on purpose: this summary is computed per place and shown to
+            -- its owner, so demo rows stay out of it whoever the owner is.
             ${hideDemoReviews(null)}`,
         [placeId]
       ),

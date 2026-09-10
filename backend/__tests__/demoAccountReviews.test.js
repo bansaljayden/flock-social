@@ -45,14 +45,15 @@ test('unset, there are no demo accounts and no clause: nothing changes', () => {
   });
 });
 
-test('only positive integers survive parsing; nothing else can reach a query', () => {
-  withEnv(' 98, 99 ,abc,-4,0,7.5,;DROP TABLE users;', () => {
-    // 7.5 parses to 7 with parseInt and 7 is a plausible id, which is why
-    // the recording accounts are named by id and never by a free string.
-    assert.deepEqual(demoUserIds(), [98, 99, 7]);
+test('only whole decimal ids inside int4 survive parsing; nothing else can reach a query', () => {
+  withEnv(' 98, 99 ,abc,-4,0,7.5,12junk,99,2147483648,;DROP TABLE users;', () => {
+    // "7.5" and "12junk" are dropped, not rounded into somebody else's id;
+    // 2147483648 does not fit a Postgres int4 and would fail the query;
+    // a repeated id is listed once.
+    assert.deepEqual(demoUserIds(), [98, 99]);
     const clause = hideDemoReviews(1);
-    assert.equal(clause, 'AND vr.user_id <> ALL(ARRAY[98,99,7]::int[])');
-    assert.ok(!/DROP|abc|;/.test(clause));
+    assert.equal(clause, 'AND vr.user_id <> ALL(ARRAY[98,99]::int[])');
+    assert.ok(!/DROP|abc|;|7|junk/.test(clause.replace(/98|99/g, '')));
   });
 });
 
@@ -70,14 +71,18 @@ test('every dashboard review query that excludes the owner excludes the demo acc
   const owner = src.match(/\$\{NOT_OWNER_OF_THE_PLACE\}/g) || [];
   const demo = src.match(/\$\{hideDemoReviews\((req\.user\.id|null)\)\}/g) || [];
   assert.ok(owner.length >= 5, 'the five review readers are still there');
-  assert.equal(demo.length, owner.length, 'one demo clause per owner clause, no reader left out');
+  // Every owner-clause reader carries the demo clause, and so does the one
+  // write that reads a review back: the owner's reply (RETURNING *), which
+  // otherwise let an owner answer a review they are not shown.
+  assert.equal(demo.length, owner.length + 1, 'one demo clause per owner clause plus the reply');
+  assert.match(src, /UPDATE venue_reviews vr SET venue_reply[\s\S]{0,300}\$\{hideDemoReviews\(req\.user\.id\)\}[\s\S]{0,40}RETURNING \*/);
   assert.match(src, /require\('\.\.\/utils\/demoAccounts'\)/);
   // The clause correlates on `vr`, so every carrier must alias the table that way.
   const carriers = src.split('${hideDemoReviews(').slice(1);
   assert.equal(carriers.length, demo.length);
   for (const after of src.split('${hideDemoReviews(').slice(0, -1)) {
     const tail = after.slice(-900);
-    assert.match(tail, /FROM venue_reviews vr/, 'the demo clause sits in a query over venue_reviews vr');
+    assert.match(tail, /(FROM|UPDATE) venue_reviews vr/, 'the demo clause sits in a query over venue_reviews vr');
   }
 });
 
