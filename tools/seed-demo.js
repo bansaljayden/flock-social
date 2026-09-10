@@ -130,6 +130,7 @@ async function unblockEachOther(a, b) {
   // lists its blocks and lifts the one on the other before asking.
   for (const [x, y] of [[a, b], [b, a]]) {
     const list = await api('GET', '/api/blocks', x.token);
+    if (!list.ok) throw new Error(`block list for ${x.name}: ${list.status}`);
     const blocked = (list.data && list.data.blocked) || [];
     if (blocked.some((u) => u.user_id === y.id)) {
       const r = await api('DELETE', `/api/blocks/${y.id}`, x.token);
@@ -142,6 +143,7 @@ async function unblockEachOther(a, b) {
 
 async function befriend(a, b) {
   const list = await api('GET', '/api/friends', a.token);
+  if (!list.ok) throw new Error(`friends list: ${list.status}`);
   const already = Array.isArray(list.data) ? list.data.some((f) => f.id === b.id)
     : Array.isArray(list.data && list.data.friends) ? list.data.friends.some((f) => f.id === b.id) : false;
   if (already) {
@@ -153,28 +155,39 @@ async function befriend(a, b) {
   if (req.ok && req.data && req.data.status === 'accepted') return true;
   const acc = await api('POST', '/api/friends/accept', b.token, { user_id: a.id });
   console.log(`friends: accept by ${b.name}: ${acc.status} ${JSON.stringify(acc.data)}`);
-  if (!acc.ok && !req.ok) {
+  if (!acc.ok) {
+    // A request that went out but was never accepted is a pending row, not a
+    // friendship: the invite sheet would still show nobody.
     console.log('friends: NOT established; the plans and reviews are still attempted, and the venue side does not depend on it');
     return false;
   }
   return true;
 }
 
-async function planAt(a, b, venue) {
+const HOUR = 3600 * 1000;
+// The review route counts a plan dated within the last 30 days or the next
+// 12 hours; the dashboard's incoming list wants one newer than 12 hours ago
+// and less than 7 days out. Margins inside both edges.
+const REVIEW_WINDOW = { pastMs: 29 * 24 * HOUR, futureMs: 11 * HOUR };
+const INCOMING_WINDOW = { pastMs: 11 * HOUR, futureMs: 11 * HOUR };
+
+async function planAt(a, b, venue, window = REVIEW_WINDOW) {
   // A plan for later today at this venue, with B invited and joined. Reused
-  // when it already exists on A's list.
+  // only when it is THIS script's plan (same name, made by A, still open)
+  // inside the caller's window; the recording's own "Friday night out" plans
+  // and anything else on A's list are left alone. Build 59 reused a
+  // recording plan dated two days out and both reviews came back
+  // VISIT_REQUIRED; build 60 reused one from a fortnight before.
   const mine = await api('GET', '/api/flocks', a.token);
+  if (!mine.ok) throw new Error(`flock list: ${mine.status}`);
   const flocks = Array.isArray(mine.data) ? mine.data : (mine.data && mine.data.flocks) || [];
-  // Only a plan the review route will count: dated within the last 30 days
-  // or the next 12 hours (a margin inside both edges). Build 59 reused the
-  // recording's own "Friday night out" plan, dated two days out, and both
-  // reviews at that venue came back VISIT_REQUIRED.
   const now = Date.now();
-  const counts = (f) => {
+  const inWindow = (f) => {
     const t = f.event_time ? Date.parse(f.event_time) : NaN;
-    return Number.isFinite(t) && t > now - 29 * 24 * 3600 * 1000 && t < now + 11 * 3600 * 1000;
+    return Number.isFinite(t) && t > now - window.pastMs && t < now + window.futureMs;
   };
-  let flock = flocks.find((f) => f.venue_id === venue.id && f.status !== 'cancelled' && counts(f));
+  const open = (f) => !f.status || f.status === 'planning' || f.status === 'confirmed';
+  let flock = flocks.find((f) => f.venue_id === venue.id && f.name === venue.plan && open(f) && inWindow(f));
   if (!flock) {
     const when = new Date(Date.now() + 90 * 60 * 1000).toISOString();
     const created = await api('POST', '/api/flocks', a.token, {
@@ -197,10 +210,34 @@ async function planAt(a, b, venue) {
   }
   const join = await api('POST', `/api/flocks/${flock.id}/join`, b.token);
   console.log(`plan: ${b.name} joins #${flock.id}: ${join.status} ${join.ok ? '' : JSON.stringify(join.data)}`);
+  if (!join.ok) {
+    // The review route needs two ACCEPTED members; without the join the
+    // reviews below would fail one by one for a reason that sits here.
+    throw new Error(`${b.name} could not join #${flock.id}: ${join.status} ${JSON.stringify(join.data)}`);
+  }
   return flock;
 }
 
+// A small stable hash, so the same venue always draws the same line from a
+// pool whatever position it holds in the search that night.
+function pick(pool, key) {
+  let h = 0;
+  for (const ch of String(key)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return pool[h % pool.length];
+}
+
+async function alreadyReviewed(user, venue) {
+  const r = await api('GET', `/api/venue-dashboard/public-reviews/${encodeURIComponent(venue.id)}`, user.token);
+  if (!r.ok) return false; // unknown: fall through to the upsert, which is safe on identical text
+  const list = Array.isArray(r.data) ? r.data : (r.data && r.data.reviews) || [];
+  return list.some((x) => x.user_id === user.id || x.userId === user.id);
+}
+
 async function review(user, venue, text) {
+  if (await alreadyReviewed(user, venue)) {
+    console.log(`review: ${user.name} on ${venue.name}: already there, left as is`);
+    return true;
+  }
   const r = await api('POST', '/api/venue-dashboard/submit-review', user.token, {
     googlePlaceId: venue.id,
     rating: 5,
@@ -224,16 +261,20 @@ async function ownVenue(a, b) {
     address: p.address || p.venue_address || '',
     plan: `Drinks at ${p.business_name || p.venue_name || p.name || 'the venue'}`,
   };
-  const flock = await planAt(a, b, venue);
+  const flock = await planAt(a, b, venue, INCOMING_WINDOW);
   for (const u of [a, b]) {
     const v = await api('POST', `/api/flocks/${flock.id}/vote`, u.token, { venue_name: venue.name, venue_id: venue.id });
     console.log(`own venue: ${u.name} votes ${venue.name} in #${flock.id}: ${v.status} ${v.ok ? '' : JSON.stringify(v.data)}`);
+    if (!v.ok) throw new Error(`${u.name}'s vote for ${venue.name} failed: ${v.status}`);
   }
-  await review(a, venue, 'Went with a group of five on a weeknight. Good pours, fair prices, and the owner came by to check on us.');
+  if (!(await review(a, venue, 'Went with a group of five on a weeknight. Good pours, fair prices, and the owner came by to check on us.'))) {
+    throw new Error(`review of ${venue.name} failed`);
+  }
 }
 
 async function venueSide(b) {
   const promos = await api('GET', '/api/venue-dashboard/promotions', b.token);
+  if (!promos.ok) throw new Error(`promotions list: ${promos.status}`);
   const plist = Array.isArray(promos.data) ? promos.data : (promos.data && promos.data.promotions) || [];
   if (plist.length === 0) {
     const r = await api('POST', '/api/venue-dashboard/promotions', b.token, {
@@ -243,10 +284,12 @@ async function venueSide(b) {
       days: 'Tuesday to Thursday',
     });
     console.log(`venue: promotion: ${r.status} ${r.ok ? '' : JSON.stringify(r.data)}`);
+    if (!r.ok) throw new Error(`promotion: ${r.status}`);
   } else {
     console.log(`venue: ${plist.length} promotion(s) already there`);
   }
   const events = await api('GET', '/api/venue-dashboard/events', b.token);
+  if (!events.ok) throw new Error(`events list: ${events.status}`);
   const elist = Array.isArray(events.data) ? events.data : (events.data && events.data.events) || [];
   if (elist.length === 0) {
     const d = new Date();
@@ -258,6 +301,7 @@ async function venueSide(b) {
       capacity: 60,
     });
     console.log(`venue: event: ${r.status} ${r.ok ? '' : JSON.stringify(r.data)}`);
+    if (!r.ok) throw new Error(`event: ${r.status}`);
   } else {
     console.log(`venue: ${elist.length} event(s) already there`);
   }
@@ -281,8 +325,8 @@ async function venueSide(b) {
     const venue = VENUES[i];
     try {
       await planAt(a, b, venue);
-      if (await review(a, venue, REVIEWS.A[i])) reviews += 1;
-      if (await review(b, venue, REVIEWS.B[i])) reviews += 1;
+      if (await review(a, venue, REVIEWS.A[i])) reviews += 1; else failures += 1;
+      if (await review(b, venue, REVIEWS.B[i])) reviews += 1; else failures += 1;
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
@@ -296,18 +340,16 @@ async function venueSide(b) {
     console.log(`discover: ${e.message}`);
   }
   const fixed = new Set(VENUES.map((v) => v.id));
-  let k = 0;
   for (const venue of top) {
     if (fixed.has(venue.id)) continue;
     try {
       await planAt(a, b, venue);
-      if (await review(a, venue, MORE_REVIEWS.A[k % MORE_REVIEWS.A.length])) reviews += 1;
-      if (await review(b, venue, MORE_REVIEWS.B[k % MORE_REVIEWS.B.length])) reviews += 1;
+      if (await review(a, venue, pick(MORE_REVIEWS.A, venue.id))) reviews += 1; else failures += 1;
+      if (await review(b, venue, pick(MORE_REVIEWS.B, 'b:' + venue.id))) reviews += 1; else failures += 1;
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
     }
-    k += 1;
   }
   // The venue account's own venue. Its dashboard lists incoming flocks by the
   // venue VOTES that name its place id (not by the flock's own venue), so A
