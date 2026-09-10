@@ -43,7 +43,11 @@ const REVIEWS = {
 };
 
 function need(name) {
-  const v = process.env[name];
+  // Trimmed, like the recording step trims the same three values before
+  // handing them to Maestro: a secure variable pasted into Codemagic can carry
+  // a trailing newline, and the login route compares the password byte for
+  // byte. Build 57's staging log was one 401 for exactly that reason.
+  const v = (process.env[name] || '').trim();
   if (!v) {
     console.error(`seed-demo: ${name} is not set`);
     process.exit(1);
