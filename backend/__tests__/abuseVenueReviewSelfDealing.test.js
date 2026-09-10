@@ -202,8 +202,8 @@ async function dispatch(sql, params) {
   }
 
   // owner reply
-  if (/^UPDATE venue_reviews SET venue_reply = \$1/.test(flat)) {
-    const hiddenGuard = /COALESCE\(is_hidden, false\) = false/.test(flat);
+  if (/^UPDATE venue_reviews (?:vr )?SET venue_reply = \$1/.test(flat)) {
+    const hiddenGuard = /COALESCE\((?:vr\.)?is_hidden, false\) = false/.test(flat);
     const r = world.reviews.find((x) => x.id === Number(p[1]) && x.google_place_id === p[2]
       && (!hiddenGuard || !x.is_hidden));
     if (!r) return { rows: [], rowCount: 0 };

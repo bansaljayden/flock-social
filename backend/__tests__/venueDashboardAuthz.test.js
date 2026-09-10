@@ -218,7 +218,7 @@ function dispatch(rawSql, params = []) {
   }
 
   // Owner reply write
-  if (/^UPDATE venue_reviews SET venue_reply/.test(sql)) {
+  if (/^UPDATE venue_reviews (?:vr )?SET venue_reply/.test(sql)) {
     const i = pidx(sql, ID_RE);
     const p = pidx(sql, /google_place_id = \$(\d+)/);
     const row = REVIEWS.find((r) =>

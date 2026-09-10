@@ -586,13 +586,13 @@ test('the owner cannot reply to a hidden review, and gets none of its text back'
     venueCtx,
     // The takedown predicate is now part of the WHERE, so a hidden row matches
     // nothing and the UPDATE writes nothing.
-    [/UPDATE venue_reviews SET venue_reply/, () => ({ rows: [], rowCount: 0 })],
+    [/UPDATE venue_reviews (?:vr )?SET venue_reply/, () => ({ rows: [], rowCount: 0 })],
   ];
   const res = await call('POST', '/api/venue-dashboard/reviews/55/reply', { reply: 'thanks' });
   assert.strictEqual(res.status, 404);
   assert.strictEqual(res.body.error, 'Review not found');
-  const upd = ran(/UPDATE venue_reviews SET venue_reply/)[0];
-  assert.match(upd.sql, /COALESCE\(is_hidden, false\) = false/,
+  const upd = ran(/UPDATE venue_reviews (?:vr )?SET venue_reply/)[0];
+  assert.match(upd.sql, /COALESCE\((?:vr\.)?is_hidden, false\) = false/,
     'without this the route returned the whole row of a taken-down review');
   assert.ok(!res.text.includes('rating'), 'no part of the hidden row may come back');
 });
@@ -601,7 +601,7 @@ test('replying to a visible review still works', async () => {
   CURRENT_USER = OWNER;
   handlers = [
     venueCtx,
-    [/UPDATE venue_reviews SET venue_reply/, () => ({ rows: [{ id: 55, rating: 5, venue_reply: 'thanks' }], rowCount: 1 })],
+    [/UPDATE venue_reviews (?:vr )?SET venue_reply/, () => ({ rows: [{ id: 55, rating: 5, venue_reply: 'thanks' }], rowCount: 1 })],
   ];
   const res = await call('POST', '/api/venue-dashboard/reviews/55/reply', { reply: 'thanks' });
   assert.strictEqual(res.status, 200);
