@@ -81,21 +81,42 @@ async function login(email, password) {
   return { token: r.data.token, id: r.data.user.id, name: r.data.user.name };
 }
 
+async function unblockEachOther(a, b) {
+  // The friend-request route answers a blocked pair with the same 404 it
+  // gives a missing user, on purpose (no block oracle). Build 58's staging
+  // log was exactly that 404 for two real accounts, and the review recording
+  // has blocked B from A in its compliance shots for weeks. So each side
+  // lists its blocks and lifts the one on the other before asking.
+  for (const [x, y] of [[a, b], [b, a]]) {
+    const list = await api('GET', '/api/blocks', x.token);
+    const blocked = (list.data && list.data.blocked) || [];
+    if (blocked.some((u) => u.user_id === y.id)) {
+      const r = await api('DELETE', `/api/blocks/${y.id}`, x.token);
+      console.log(`blocks: ${x.name} had blocked ${y.name}; unblock: ${r.status}`);
+    } else {
+      console.log(`blocks: ${x.name} has no block on ${y.name} (${blocked.length} blocked in all)`);
+    }
+  }
+}
+
 async function befriend(a, b) {
   const list = await api('GET', '/api/friends', a.token);
   const already = Array.isArray(list.data) ? list.data.some((f) => f.id === b.id)
     : Array.isArray(list.data && list.data.friends) ? list.data.friends.some((f) => f.id === b.id) : false;
   if (already) {
     console.log(`friends: ${a.name} and ${b.name} already friends`);
-    return;
+    return true;
   }
   const req = await api('POST', '/api/friends/request', a.token, { user_id: b.id });
   console.log(`friends: request ${a.name} -> ${b.name}: ${req.status} ${JSON.stringify(req.data)}`);
+  if (req.ok && req.data && req.data.status === 'accepted') return true;
   const acc = await api('POST', '/api/friends/accept', b.token, { user_id: a.id });
   console.log(`friends: accept by ${b.name}: ${acc.status} ${JSON.stringify(acc.data)}`);
   if (!acc.ok && !req.ok) {
-    throw new Error('friendship could not be established');
+    console.log('friends: NOT established; the plans and reviews are still attempted, and the venue side does not depend on it');
+    return false;
   }
+  return true;
 }
 
 async function planAt(a, b, venue) {
@@ -179,17 +200,32 @@ async function venueSide(b) {
   const b = await login(emailB, password);
   console.log(`seed-demo: signed in as ${a.name} (#${a.id}) and ${b.name} (#${b.id})`);
 
-  await befriend(a, b);
+  await unblockEachOther(a, b);
+  const friends = await befriend(a, b);
 
   let reviews = 0;
+  let failures = friends ? 0 : 1;
   for (let i = 0; i < VENUES.length; i += 1) {
     const venue = VENUES[i];
-    await planAt(a, b, venue);
-    if (await review(a, venue, REVIEWS.A[i])) reviews += 1;
-    if (await review(b, venue, REVIEWS.B[i])) reviews += 1;
+    try {
+      await planAt(a, b, venue);
+      if (await review(a, venue, REVIEWS.A[i])) reviews += 1;
+      if (await review(b, venue, REVIEWS.B[i])) reviews += 1;
+    } catch (e) {
+      failures += 1;
+      console.log(`plan: ${venue.name}: ${e.message}`);
+    }
   }
-  await venueSide(b);
-  console.log(`seed-demo: done, ${reviews} review(s) written or refreshed`);
+  // The venue side stands on its own: a promotion and an event show on the
+  // dashboard whatever happened above.
+  try {
+    await venueSide(b);
+  } catch (e) {
+    failures += 1;
+    console.log(`venue: ${e.message}`);
+  }
+  console.log(`seed-demo: done, ${reviews} review(s) written or refreshed, ${failures} part(s) failed`);
+  if (failures > 0) process.exit(1);
 })().catch((e) => {
   console.error(`seed-demo: ${e.message}`);
   process.exit(1);
