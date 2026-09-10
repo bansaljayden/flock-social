@@ -1013,6 +1013,8 @@ router.post('/reviews/:id/reply', [
       `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW()
        WHERE vr.id = $2 AND vr.google_place_id = $3
          AND COALESCE(vr.is_hidden, false) = false
+         AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
+         ${NOT_OWNER_OF_THE_PLACE}
          ${hideDemoReviews(req.user.id)}
        RETURNING *`,
       [req.body.reply, req.params.id, venue.google_place_id]
