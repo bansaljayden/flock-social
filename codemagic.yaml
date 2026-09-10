@@ -692,7 +692,7 @@ workflows:
           # everything in place and writes nothing. It never fails the build;
           # the recording is worth more with the staging than without, and
           # the log says what happened either way.
-          API_URL="${DEMO_API_URL:-https://api.flockcorp.com}" node tools/seed-demo.js || echo "staging failed (non-fatal); the recording proceeds on the account as it is"
+          API_URL="${DEMO_API_URL:-https://api.flockcorp.com}" node ../tools/seed-demo.js || echo "staging failed (non-fatal); the recording proceeds on the account as it is"
       - name: Record the Simulator and drive the shot list
         script: |
           set +e
