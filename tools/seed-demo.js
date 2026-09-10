@@ -187,7 +187,8 @@ async function planAt(a, b, venue, window = REVIEW_WINDOW) {
     return Number.isFinite(t) && t > now - window.pastMs && t < now + window.futureMs;
   };
   const open = (f) => !f.status || f.status === 'planning' || f.status === 'confirmed';
-  let flock = flocks.find((f) => f.venue_id === venue.id && f.name === venue.plan && open(f) && inWindow(f));
+  const madeByA = (f) => f.creator_id == null ? f.is_creator !== false : Number(f.creator_id) === a.id;
+  let flock = flocks.find((f) => f.venue_id === venue.id && f.name === venue.plan && madeByA(f) && open(f) && inWindow(f));
   if (!flock) {
     const when = new Date(Date.now() + 90 * 60 * 1000).toISOString();
     const created = await api('POST', '/api/flocks', a.token, {
@@ -227,10 +228,36 @@ function pick(pool, key) {
 }
 
 async function alreadyReviewed(user, venue) {
-  const r = await api('GET', `/api/venue-dashboard/public-reviews/${encodeURIComponent(venue.id)}`, user.token);
-  if (!r.ok) return false; // unknown: fall through to the upsert, which is safe on identical text
-  const list = Array.isArray(r.data) ? r.data : (r.data && r.data.reviews) || [];
-  return list.some((x) => x.user_id === user.id || x.userId === user.id);
+  // Walks every page (the public list is newest first, fifty a page, with a
+  // `before` cursor), and a read that fails is an error rather than "absent":
+  // absent is what leads to a write.
+  let before = '';
+  for (let page = 0; page < 40; page += 1) {
+    const q = `limit=50${before ? `&before=${encodeURIComponent(before)}` : ''}`;
+    const r = await api('GET', `/api/venue-dashboard/public-reviews/${encodeURIComponent(venue.id)}?${q}`, user.token);
+    if (!r.ok) throw new Error(`reviews of ${venue.name}: ${r.status}`);
+    const list = (r.data && r.data.reviews) || [];
+    if (list.some((x) => Number(x.user_id) === user.id)) return true;
+    if (!r.data || !r.data.hasMore || !r.data.nextBefore) return false;
+    before = r.data.nextBefore;
+  }
+  return false;
+}
+
+// Reviews first: a venue both accounts have already reviewed needs no plan,
+// so a later run touches nothing there. Returns how many reviews stand.
+async function stage(a, b, venue, textA, textB) {
+  const haveA = await alreadyReviewed(a, venue);
+  const haveB = await alreadyReviewed(b, venue);
+  if (haveA && haveB) {
+    console.log(`review: both already on ${venue.name}; nothing to stage`);
+    return 2;
+  }
+  await planAt(a, b, venue);
+  let n = 0;
+  if (haveA || await review(a, venue, textA)) n += 1;
+  if (haveB || await review(b, venue, textB)) n += 1;
+  return n;
 }
 
 async function review(user, venue, text) {
@@ -324,9 +351,9 @@ async function venueSide(b) {
   for (let i = 0; i < VENUES.length; i += 1) {
     const venue = VENUES[i];
     try {
-      await planAt(a, b, venue);
-      if (await review(a, venue, REVIEWS.A[i])) reviews += 1; else failures += 1;
-      if (await review(b, venue, REVIEWS.B[i])) reviews += 1; else failures += 1;
+      const n = await stage(a, b, venue, REVIEWS.A[i], REVIEWS.B[i]);
+      reviews += n;
+      failures += 2 - n;
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
@@ -343,9 +370,9 @@ async function venueSide(b) {
   for (const venue of top) {
     if (fixed.has(venue.id)) continue;
     try {
-      await planAt(a, b, venue);
-      if (await review(a, venue, pick(MORE_REVIEWS.A, venue.id))) reviews += 1; else failures += 1;
-      if (await review(b, venue, pick(MORE_REVIEWS.B, 'b:' + venue.id))) reviews += 1; else failures += 1;
+      const n = await stage(a, b, venue, pick(MORE_REVIEWS.A, venue.id), pick(MORE_REVIEWS.B, 'b:' + venue.id));
+      reviews += n;
+      failures += 2 - n;
     } catch (e) {
       failures += 1;
       console.log(`plan: ${venue.name}: ${e.message}`);
