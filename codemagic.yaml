@@ -682,6 +682,17 @@ workflows:
         script: |
           curl -Ls "https://get.maestro.mobile.dev" | bash
           echo 'export PATH="$PATH:$HOME/.maestro/bin"' >> "$CM_ENV"
+      - name: Stage the demo accounts (friends, reviews, a promotion, an event)
+        script: |
+          # Off camera, through the public API, as the two review accounts
+          # themselves: they become friends, each reviews the three venues the
+          # Discover list shows first (after a plan at each that both joined,
+          # which is what the review route requires), and the venue account
+          # gets a promotion and an event. Idempotent, so a second build finds
+          # everything in place and writes nothing. It never fails the build;
+          # the recording is worth more with the staging than without, and
+          # the log says what happened either way.
+          API_URL="${DEMO_API_URL:-https://api.flockcorp.com}" node tools/seed-demo.js || echo "staging failed (non-fatal); the recording proceeds on the account as it is"
       - name: Record the Simulator and drive the shot list
         script: |
           set +e
