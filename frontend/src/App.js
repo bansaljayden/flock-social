@@ -10594,14 +10594,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Listen for member location updates
   useEffect(() => {
+    // One map for the session, keyed by member, with the flock each position
+    // came from kept on the entry: the Discover map shows everyone sharing
+    // with you, while a flock's chat counts only its own people (ChatDetail
+    // filters on flockId). Before the flock rode along, a member of two flocks
+    // saw the sharers of one counted as "here" in the other.
     const unsubLocation = onLocationUpdate((data) => {
       setFlockMemberLocations(prev => ({
         ...prev,
-        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp },
+        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp, flockId: data.flockId },
       }));
     });
     const unsubStopped = onMemberStoppedSharing((data) => {
       setFlockMemberLocations(prev => {
+        const current = prev[data.userId];
+        if (!current) return prev;
+        // A stop in flock A does not clear a position that belongs to flock
+        // B. An entry with no flock (an older server) is cleared as before.
+        if (current.flockId != null && data.flockId != null && String(current.flockId) !== String(data.flockId)) return prev;
         const next = { ...prev };
         delete next[data.userId];
         return next;
