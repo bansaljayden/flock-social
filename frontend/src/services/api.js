@@ -1,5 +1,6 @@
 // Consent, read live on every capture. See the gate in withPostHog below.
 import { hasAnalyticsConsent } from './analyticsConsent';
+import { lsGet } from '../lib/storage';
 
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
@@ -115,7 +116,9 @@ function identifyUser(user) {
 }
 
 function getToken() {
-  return localStorage.getItem('flockToken');
+  // isLoggedIn() calls this at boot; a storage that throws must read as
+  // signed out, not as a blank screen.
+  return lsGet('flockToken');
 }
 
 function setToken(token) {

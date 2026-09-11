@@ -52,7 +52,8 @@ test('scores carry fetchedAt and expire, and an owner reading is not printed pas
 
 test('a failed crowd read, a map that cannot load, and a show that started are all said', () => {
   const app = read('App.js');
-  expect(app).toContain("{crowdFetchFailed && !isClosed ? (");
+  // noEstimate is crowdFetchFailed plus a read that carried no finite score.
+  expect(app).toContain("{noEstimate && !isClosed ? (");
   expect(app).toContain("The map could not load. Search still works.");
   expect(app).toContain("setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);");
   expect(app).toContain("{!mapReady && !mapFailed && (");

@@ -41,6 +41,7 @@ import EmergencySheet from './components/safety/EmergencySheet';
 import { deliverExport } from './services/dataExport';
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
+import { lsGet, lsSet } from './lib/storage';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { trackScreenView, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
@@ -1099,7 +1100,9 @@ const CyclingGreeting = React.memo(function CyclingGreeting() {
 // The backend stores venue photo URLs as RELATIVE proxy paths
 // (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
 // Resolve to the API origin whenever a stored value is rendered.
-const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
+// A stored venue_card whose photo_url is not a string (an object from an older
+// sender shape) used to throw here and take the whole chat list down with it.
+const resolveVenuePhoto = (u) => (typeof u === 'string' && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
 
 // ---------------------------------------------------------------------------
 // ONE FAILURE BEHAVIOUR FOR EVERY VENUE PHOTO IN THE APP.
@@ -2631,7 +2634,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // Same guard as the map constructor below: a stored 'hybrid' is only honoured
   // while there is a satellite style to honour it with.
   const [mapType, setMapType] = useState(() => (
-    SATELLITE_AVAILABLE && localStorage.getItem('flock_map_type') === 'hybrid' ? 'hybrid' : 'roadmap'
+    SATELLITE_AVAILABLE && lsGet('flock_map_type') === 'hybrid' ? 'hybrid' : 'roadmap'
   ));
   /* The basemap follows the app theme. It used to be chosen ONCE, at map
      construction, so flipping to dark mode left three quarters of Discover as a
@@ -4952,11 +4955,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // User Mode Selection
   const [userMode, setUserMode] = useState(() => {
-    const saved = localStorage.getItem('flockUserMode');
+    // Guarded reads on the boot path: a storage that throws (Safari with all
+    // cookies blocked, a full quota) is a blank screen before the boundary.
+    const saved = lsGet('flockUserMode');
     if (saved) return saved;
     // No saved mode — auto-select 'user' for regular users immediately (no flash)
     if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') {
-      localStorage.setItem('flockUserMode', 'user');
+      lsSet('flockUserMode', 'user');
       return 'user';
     }
     return null;
@@ -5189,15 +5194,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [liveWeather, setLiveWeather] = useState(null);
 
   // Geolocation state — restore last known location immediately so map isn't empty
-  const [locationEnabled, setLocationEnabled] = useState(() => localStorage.getItem('flock_location_enabled') !== 'false');
+  const [locationEnabled, setLocationEnabled] = useState(() => lsGet('flock_location_enabled') !== 'false');
   // Read by the settings-loaded listener, which runs outside this state's
   // render cycle and must not toggle what is already so.
   const locationEnabledRef = useRef(locationEnabled);
   useEffect(() => { locationEnabledRef.current = locationEnabled; }, [locationEnabled]);
   const [userLocation, setUserLocation] = useState(() => {
-    if (localStorage.getItem('flock_location_enabled') === 'false') return null;
-    const savedLat = localStorage.getItem('flock_user_lat');
-    const savedLng = localStorage.getItem('flock_user_lng');
+    if (lsGet('flock_location_enabled') === 'false') return null;
+    const savedLat = lsGet('flock_user_lat');
+    const savedLng = lsGet('flock_user_lng');
     if (savedLat && savedLng) return { lat: parseFloat(savedLat), lng: parseFloat(savedLng) };
     return null;
   });
@@ -5623,7 +5628,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
 
-      setCrowdData(crowd);
+      // Tagged with the place it describes. `crowdData` is shared with the map
+      // card, which may be showing a different venue (pin B open, search result
+      // A tapped); the card reads it only when the tag is its own.
+      setCrowdData(crowd ? { ...crowd, forPlaceId: placeId } : null);
 
       // A13: the score fetched here used to stay in the modal, so the list and
       // the map behind it kept quoting whatever they had (or nothing). Write it
@@ -7023,10 +7031,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Flock ordering & pinning (persisted in localStorage)
   const [pinnedFlockIds, setPinnedFlockIds] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('flock_pinned') || '[]'); } catch { return []; }
+    // A stored shape that is not an array made .includes below throw on every boot.
+    try { const v = JSON.parse(localStorage.getItem('flock_pinned') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
   });
   const [flockOrder, setFlockOrder] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('flock_order') || '[]'); } catch { return []; }
+    try { const v = JSON.parse(localStorage.getItem('flock_order') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
   });
   const [editingFlockList, setEditingFlockList] = useState(false);
 
@@ -7037,13 +7046,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // audit, 2026-09-05). Same first-run guard interests have.
   const pinsSyncedRef = useRef(false);
   useEffect(() => {
-    localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds));
+    lsSet('flock_pinned', JSON.stringify(pinnedFlockIds));
     if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }
     queueSync({ pinnedFlockIds });
   }, [pinnedFlockIds]);
   const orderSyncedRef = useRef(false);
   useEffect(() => {
-    localStorage.setItem('flock_order', JSON.stringify(flockOrder));
+    lsSet('flock_order', JSON.stringify(flockOrder));
     if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }
     queueSync({ flockOrder });
   }, [flockOrder]);
@@ -7214,7 +7223,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getCrowdPrediction(pid)
       .then(data => {
         if (cancelled) return;
-        setCrowdData(data);
+        setCrowdData(data ? { ...data, forPlaceId: pid } : null);
         if (data?.weather) setLiveWeather(data.weather);
         if (data && typeof data.score === 'number') {
           // Sync fresh score into the venue list so the map heatmap matches the dial
@@ -7329,7 +7338,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (!venueDetailPlaceId) return;
     const interval = setInterval(() => {
       getCrowdPrediction(venueDetailPlaceId)
-        .then(data => setCrowdData(data))
+        .then(data => setCrowdData(data ? { ...data, forPlaceId: venueDetailPlaceId } : null))
         .catch(() => {});
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
@@ -8137,7 +8146,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // worth sending.
   const interestsSyncedRef = useRef(false);
   useEffect(() => {
-    localStorage.setItem('flock_interests', JSON.stringify(userInterests));
+    lsSet('flock_interests', JSON.stringify(userInterests));
     if (!interestsSyncedRef.current) {
       interestsSyncedRef.current = true;
       return;
@@ -9816,10 +9825,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // could be one. Named so the reconnect catch-up can re-read it: it used to
   // re-read the messages alone, and a budget that locked or a bill that
   // landed while the phone was in a pocket stayed off the screen.
+  const moneyStateSeqRef = useRef(0);
   const loadMoneyState = useCallback((flockId) => {
+    // Same guard openVenueDetail uses on its own async result. Without it a
+    // chat-to-chat jump let the previous flock's slower response land on the
+    // new flock's budget and bill card.
+    const seq = ++moneyStateSeqRef.current;
+    const current = () => seq === moneyStateSeqRef.current;
     getBudgetStatus(flockId)
-      .then(data => { if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
-      .catch(() => setBudgetStatus(null));
+      .then(data => { if (!current()) return; if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
+      .catch(() => { if (current()) setBudgetStatus(null); });
     // A bill only exists after someone splits one, and the UI only offers
     // that on a confirmed or completed flock. Asking for one on every open
     // meant a 404 (and a red line in the console) every single time a plan
@@ -9828,8 +9843,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const flockNow = flocksRef.current.find(f => f.id === flockId);
     if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
       getBillSplit(flockId)
-        .then(data => setBillSplit(data.bill))
-        .catch(() => setBillSplit(null));
+        .then(data => { if (current()) setBillSplit(data.bill); })
+        .catch(() => { if (current()) setBillSplit(null); });
     } else {
       setBillSplit(null);
     }
@@ -9873,6 +9888,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         leaveFlock(prevFlockIdRef.current);
       }
       prevFlockIdRef.current = null;
+      // Retire any money read still in flight for the chat being left.
+      moneyStateSeqRef.current += 1;
       setBudgetStatus(null);
       setBillSplit(null);
       // The cash pool sheet and the bill form belong to the chat being left,
@@ -14930,7 +14947,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
               {/* AI Crowd Forecast Widget */}
               {(() => {
-                const cd = crowdData;
+                // Only this venue's read. The detail modal writes the same
+                // state for whichever place it has open, and an untagged read
+                // put venue A's score and chart on venue B's card.
+                const cdTagged = crowdData && crowdData.forPlaceId === activeVenue.place_id ? crowdData : null;
+                // A read without a finite score is a read with no estimate:
+                // the dial drew it as "NaN%".
+                const cd = cdTagged && Number.isFinite(cdTagged.score) ? cdTagged : null;
+                const noEstimate = crowdFetchFailed || (!!cdTagged && !cd);
                 const score = cd ? cd.score : (activeVenue.crowd || 0);
                 // One vocabulary, one set of cut points, shared with the
                 // backend and the site. The old local ladder had three bands
@@ -15272,7 +15296,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
-                  ) : (!cd && crowdFetchFailed) ? (
+                  ) : (!cd && noEstimate) ? (
                     <div style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
                     </div>
@@ -15286,7 +15310,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <AnimatedDial score={score} color={crowdColor} />
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {crowdFetchFailed && !isClosed ? (
+                    {noEstimate && !isClosed ? (
                       /* The dial and the chart already say a failed read; this
                          column pulsed forever (Explore audit, 2026-09-05). */
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No crowd read for this spot right now.</p>
@@ -17413,7 +17437,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
         setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
       }
-      if (activeVenue?.place_id === pid) setCrowdData(data);
+      if (activeVenue?.place_id === pid) setCrowdData(data ? { ...data, forPlaceId: pid } : null);
     } catch { /* the next card open refetches anyway */ }
   };
 
