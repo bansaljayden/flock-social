@@ -276,7 +276,9 @@ describe('userSettings sync', () => {
     // boolean is read. String(false) is 'false' and 'false' is truthy, so the
     // reader MUST compare against the string. Update the reader to keep the
     // comparison, then update this pin.
-    expect(appSource).toContain("localStorage.getItem('flock_location_enabled') !== 'false'");
+    // The boot-path initializer reads through the guarded helper (lib/storage)
+    // so a storage that throws cannot blank the screen; the comparison stays.
+    expect(appSource).toContain("lsGet('flock_location_enabled') !== 'false'");
     expect(appSource).toContain("localStorage.getItem('flock_location_enabled') === 'false'");
     expect(appSource).toContain("localStorage.getItem('flock_safety_on') !== 'false'");
     expect(appSource).toContain("String(s.safetyOn) !== 'false'");

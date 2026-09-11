@@ -197,6 +197,9 @@ const EditProfileForm = ({
                     // verify sheet says "We sent a link to {authUser.email}",
                     // which named the mailbox the person had just moved AWAY
                     // from, and told them to go and look in it.
+                    // A 200 with no user row used to surface as a raw
+                    // TypeError in the error line; say what happened instead.
+                    if (!data || !data.user) throw new Error('The profile did not come back from the server. Try again.');
                     if (onUserUpdated && data.user) {
                       onUserUpdated({
                         name: data.user.name,

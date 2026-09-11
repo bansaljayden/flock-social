@@ -43,6 +43,7 @@
  */
 import React from 'react';
 import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } from '../services/api';
+import { lsSet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 
 export default function VenueOnboarding({
@@ -475,7 +476,10 @@ export default function VenueOnboarding({
           return; // stay on the last step with every answer still filled in
         }
         setVenueOnboardingError('');
-        localStorage.setItem('flockVenueOnboardingComplete', 'true');
+        // The claim is already saved on the server by this line. A storage
+        // that throws here used to stop the screen change below, so "Launch
+        // Dashboard" did nothing and a retry said the venue was already claimed.
+        lsSet('flockVenueOnboardingComplete', 'true');
         // The server just made this account an owner and says so in its
         // answer. Without this the dashboard's role guard bounced a brand-new
         // owner to the consumer feed, and the auto-mode effect had written

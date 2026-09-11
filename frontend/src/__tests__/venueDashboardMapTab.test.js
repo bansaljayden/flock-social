@@ -184,7 +184,8 @@ describe('slider-to-pin update loop', () => {
     expect(refresh).toContain('getCrowdPrediction(pid)');
     expect(refresh).toContain('setCrowdPredictions(prev');
     expect(refresh).toContain('setAllVenues(prev');
-    expect(refresh).toContain('setCrowdData(data)');
+    // Tagged with the place it describes; the card reads only its own tag.
+    expect(refresh).toContain('setCrowdData(data ? { ...data, forPlaceId: pid } : null)');
   });
 
   it('both set and clear trigger the refresh', () => {

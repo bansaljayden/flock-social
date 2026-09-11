@@ -189,6 +189,7 @@ import {
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import { owedOn } from '../lib/billShares';
+import { lsSet } from '../lib/storage';
 /* The keyboard lane. It is a hook and not part of the chat module's index on
    purpose: it owns DOM nodes and a native bridge rather than any markup, and
    both screens reach it the same way. See the block at its call below. */
@@ -1161,11 +1162,16 @@ export default function ChatDetail({
     const undoMySettle = async () => {
       try {
         const unsettled = await unsettleShare(selectedFlockId);
-        setBillSplit(prev => ({
-          ...prev,
-          ...tallyOf(unsettled),
-          shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
-        }));
+        setBillSplit(prev => {
+          // Leaving the chat clears the bill; a response that lands after
+          // that has nothing to update.
+          if (!prev) return prev;
+          return {
+            ...prev,
+            ...tallyOf(unsettled),
+            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
+          };
+        });
         showToast('Your share is marked unpaid again');
       } catch (err) { showToast(err.message, 'error'); }
     };
@@ -2345,7 +2351,7 @@ export default function ChatDetail({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-green-text)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
             <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
-            <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: flock.eventTime || true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
+            <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: flock.eventTime || true }; lsSet('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
 
@@ -3108,11 +3114,14 @@ export default function ChatDetail({
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
                           const settled = await settleShare(selectedFlockId);
-                          setBillSplit(prev => ({
-                            ...prev,
-                            ...tallyOf(settled),
-                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true, outstanding: 0 } : s),
-                          }));
+                          setBillSplit(prev => {
+                            if (!prev) return prev;
+                            return {
+                              ...prev,
+                              ...tallyOf(settled),
+                              shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true, outstanding: 0 } : s),
+                            };
+                          });
                           showToast('Marked as settled');
                         } catch (err) { showToast(err.message, 'error'); }
                       }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>

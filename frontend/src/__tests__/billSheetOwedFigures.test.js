@@ -530,6 +530,32 @@ describe('taking a settlement back restores the figure Settle Up asks for', () =
     expect(after.shareCount).toBe(3);
     expect(after.settledCount).toBe(3);
   });
+
+  // Leaving the chat runs setBillSplit(null) in App.js. A settle or undo that
+  // answers after that used to throw "Cannot read properties of null (reading
+  // 'shares')" inside the updater; both updaters now hand null straight back.
+  test('a settle that lands after the chat was left leaves the cleared bill cleared', async () => {
+    api.settleShare.mockResolvedValueOnce({ settled: true, shareCount: 2, settledCount: 2, fullySettled: true });
+    const setBillSplit = jest.fn();
+    mount(bill([share(1, 'Ava', 100), share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 })]), { setBillSplit });
+    fireEvent.click(screen.getByText('Mark as Paid (cash or other)'));
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    expect(() => setBillSplit.mock.calls[0][0](null)).not.toThrow();
+    expect(setBillSplit.mock.calls[0][0](null)).toBeNull();
+  });
+
+  test('an undo that lands after the chat was left leaves the cleared bill cleared', async () => {
+    api.unsettleShare.mockResolvedValueOnce({ settled: false, shareCount: 2, settledCount: 1, fullySettled: false });
+    const setBillSplit = jest.fn();
+    mount(bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 0, settled: true, settledAt: 'now' }),
+    ]), { setBillSplit });
+    fireEvent.click(screen.getByText(UNDO));
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    expect(() => setBillSplit.mock.calls[0][0](null)).not.toThrow();
+    expect(setBillSplit.mock.calls[0][0](null)).toBeNull();
+  });
 });
 
 describe('the header counts the rows the viewer cannot see from the server\'s tally', () => {
