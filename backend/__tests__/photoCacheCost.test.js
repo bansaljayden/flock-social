@@ -290,6 +290,57 @@ function restart() {
   clearPhotoCache();
 }
 
+test('a name Google rejects is bought once, then answered 404 from memory for a day', async () => {
+  resetFakeDb();
+  clearPhotoCache();
+  venueSearch.__test.deadPhotoRefs.clear();
+  googleCalls = 0;
+  const bad = 'places/PLACE_B/photos/TruncatedOrStale';
+  const realFetch = global.fetch;
+  global.fetch = async () => {
+    googleCalls++;
+    return { ok: false, status: 400, text: async () => '{"error":{"message":"Invalid photo name"}}' };
+  };
+  try {
+    const first = await fetchPhotoOnce(bad, 400, photoCacheKey(bad, 400), REQ);
+    assert.strictEqual(first.status, 404, 'a rejected name is not a gateway failure');
+    assert.strictEqual(first.gone, true);
+    assert.strictEqual(googleCalls, 1);
+    assert.strictEqual(fakeDb.spendToday, 1, 'the first ask is a real charge; charge-before-call');
+
+    const again = await fetchPhotoOnce(bad, 400, photoCacheKey(bad, 400), REQ);
+    const thumb = await fetchPhotoOnce(bad, 160, photoCacheKey(bad, 160), REQ);
+    assert.strictEqual(again.status, 404);
+    assert.strictEqual(thumb.status, 404, 'the other size is the same name and the same no');
+    assert.strictEqual(googleCalls, 1, 'a name Google rejected was asked for again');
+    assert.strictEqual(fakeDb.spendToday, 1, 'a name Google rejected was charged again');
+
+    // A transient failure is NOT remembered: the next request goes back
+    // upstream, as placesProxyAbuse pins for the 429 case.
+    global.fetch = async () => {
+      googleCalls++;
+      return { ok: false, status: 503, text: async () => 'unavailable' };
+    };
+    const flaky = 'places/PLACE_C/photos/FineButUnlucky';
+    assert.strictEqual((await fetchPhotoOnce(flaky, 400, photoCacheKey(flaky, 400), REQ)).status, 502);
+    assert.strictEqual((await fetchPhotoOnce(flaky, 400, photoCacheKey(flaky, 400), REQ)).status, 502);
+    assert.strictEqual(googleCalls, 3, 'a 503 was pinned as a dead name');
+
+    // The memory expires: a day later the name is asked about once more.
+    const key = photoCacheKey(bad, 0);
+    venueSearch.__test.deadPhotoRefs.set(key, Date.now() - venueSearch.__test.DEAD_PHOTO_REF_TTL_MS - 1);
+    global.fetch = async () => {
+      googleCalls++;
+      return { ok: false, status: 400, text: async () => '' };
+    };
+    assert.strictEqual((await fetchPhotoOnce(bad, 400, photoCacheKey(bad, 400), REQ)).status, 404);
+    assert.strictEqual(googleCalls, 4, 'an expired memory still refused the ask');
+  } finally {
+    global.fetch = realFetch;
+    venueSearch.__test.deadPhotoRefs.clear();
+  }
+});
+
 test('a photo bought before a restart is served after it without a second Google call', async () => {
   resetFakeDb();
   clearPhotoCache();
