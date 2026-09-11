@@ -2337,26 +2337,6 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     );
   }
 
-  // Only the door that checked the status asks why nothing was written:
-  // rerun seats people on a plan that is seconds old and cannot have
-  // closed, and its fixtures do not model this read. Either write
-  // can come back empty for an innocent reason (every new id conflicted with
-  // a concurrent invite; the declined member changed their mind first), so
-  // the plan is read back rather than assumed closed.
-  const wroteNothing = (reinvited !== null && reinvited.rowCount === 0)
-    || (written !== null && written.rowCount === 0);
-  if (refuseClosed && wroteNothing) {
-    const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
-    const st = now.rows[0] && now.rows[0].status;
-    // A plan that vanished is reported apart from one that closed, so the
-    // door can answer 404 for the one and 409 for the other, as the vote
-    // and invite-link doors do.
-    if (!now.rows[0]) return { invited: [], throttled: false, full: false, closed: true, gone: true };
-    if (st === 'completed' || st === 'cancelled') {
-      return { invited: [], throttled: false, full: false, closed: true };
-    }
-  }
-
   // The people invited are the ones the database reports written, not the
   // ones planned: a new id that conflicted with a concurrent invite was
   // seated by that invite and has already been told, and a declined member
@@ -2368,6 +2348,31 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
   ].map((r) => Number(r.user_id)));
   for (let i = invited.length - 1; i >= 0; i -= 1) {
     if (!landed.has(invited[i].user_id)) invited.splice(i, 1);
+  }
+
+  // Only the door that checked the status asks why nothing was written:
+  // rerun seats people on a plan that is seconds old and cannot have
+  // closed, and its fixtures do not model this read. Either write
+  // can come back empty for an innocent reason (every new id conflicted with
+  // a concurrent invite; the declined member changed their mind first), so
+  // the plan is read back rather than assumed closed. The two writes are
+  // separate statements, so a plan can close between them: the re-invite
+  // that landed while it was open is announced below like any other, and
+  // only a request that seated nobody at all is answered "closed".
+  const wroteNothing = (reinvited !== null && reinvited.rowCount === 0)
+    || (written !== null && written.rowCount === 0);
+  if (refuseClosed && wroteNothing && invited.length === 0) {
+    const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+    const st = now.rows[0] && now.rows[0].status;
+    // A plan that vanished is reported apart from one that closed, so the
+    // door can answer 404 for the one and 409 for the other, as the vote
+    // and invite-link doors do. A status that cannot be read is closed
+    // here because the write already treated it so (NOT IN is not true
+    // of NULL), and "closed" is the answer that seats nobody twice.
+    if (!now.rows[0]) return { invited: [], throttled: false, full: false, closed: true, gone: true };
+    if (typeof st !== 'string' || st === 'completed' || st === 'cancelled') {
+      return { invited: [], throttled: false, full: false, closed: true };
+    }
   }
 
   // Notify invited users via socket

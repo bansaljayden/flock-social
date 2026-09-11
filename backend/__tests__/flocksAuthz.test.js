@@ -114,12 +114,16 @@ let vanishAfterOwnershipCheck; // see the flock-row lookup below
 let closeAfterStatusRead = null; // a flock id: closed right after its status is read (same lookup)
 let seatAfterMembershipRead = null; // a user id: invited by someone else right after the roster is read
 let closeAfterReopenCheck = null; // a flock id: closed right after PUT's own status read (the one before its write)
+let closeAfterStatusReadTo = 'cancelled'; // what closeAfterStatusRead sets: 'cancelled', or null for a status nobody can read
+let closeAfterReinvite = null; // a flock id: cancelled right after the re-invite UPDATE landed, before the INSERT
 
 function reset() {
   vanishAfterOwnershipCheck = false;
   closeAfterStatusRead = null;
   seatAfterMembershipRead = null;
   closeAfterReopenCheck = null;
+  closeAfterStatusReadTo = 'cancelled';
+  closeAfterReinvite = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -256,7 +260,9 @@ async function dispatch(text, params = []) {
     if (f && vanishAfterOwnershipCheck) { flocks.delete(Number(params[0])); }
     // "Cancelled mid-request": the status check reads an open plan and the
     // plan is closed by the time the write lands. Same device, one row later.
-    if (f && closeAfterStatusRead === Number(params[0])) { f.status = 'cancelled'; closeAfterStatusRead = null; }
+    if (f && closeAfterStatusRead === Number(params[0])) {
+      f.status = closeAfterStatusReadTo; closeAfterStatusRead = null; closeAfterStatusReadTo = 'cancelled';
+    }
     // PUT reads the flock twice before writing (creator, then status); this
     // hook waits for the second read, the last one before the write.
     if (f && closeAfterReopenCheck === Number(params[0]) && /^SELECT status FROM flocks WHERE id = \$1$/.test(sql)) {
@@ -440,13 +446,20 @@ async function dispatch(text, params = []) {
     // status); the fixture does what the clause does.
     if (/AND EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(sql)) {
       const f = flocks.get(Number(params[0]));
-      if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
+      if (!f || typeof f.status !== 'string' || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
     }
     // RETURNING user_id: the rows the statement changed, as Postgres reports.
     const written = [];
     for (const uid of params[1] || []) {
       const m = memberOf(params[0], uid);
       if (m && m.status === 'declined') { m.status = 'invited'; written.push(Number(uid)); }
+    }
+    // "Cancelled between the two writes": the re-invite landed on an open
+    // plan, and the INSERT that follows finds it closed.
+    if (closeAfterReinvite === Number(params[0])) {
+      const f = flocks.get(Number(params[0]));
+      if (f) f.status = 'cancelled';
+      closeAfterReinvite = null;
     }
     return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
@@ -456,7 +469,7 @@ async function dispatch(text, params = []) {
     // plan (WHERE EXISTS on the status); the fixture does what the WHERE does.
     if (/WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(sql)) {
       const f = flocks.get(fid);
-      if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
+      if (!f || typeof f.status !== 'string' || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
     }
     if (!members.has(fid)) members.set(fid, []);
     const list = members.get(fid);
@@ -1113,6 +1126,65 @@ test('direct invite: a person a concurrent invite seated first is not announced 
   } finally {
     seatAfterMembershipRead = null;
   }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan cancelled between the re-invite and the new seat still announces the re-invite', async () => {
+  // Dave (5) declined, 4 was never asked. The UPDATE lands while the plan is
+  // open; the plan cancels; the INSERT is refused. Dave's row changed, so
+  // Dave is announced and returned; 4 is not, and a retry will hear 409.
+  closeAfterReinvite = 10;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5, 4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.deepStrictEqual(body.invited.map((i) => i.user_id), [5]);
+    assert.strictEqual(memberOf(10, 5).status, 'invited', 'a re-invite that landed was lost');
+    assert.strictEqual(memberOf(10, 4), undefined, 'a seat was written on a plan that had just closed');
+  } finally {
+    closeAfterReinvite = null;
+    flocks.get(10).status = 'planning';
+    const dave = memberOf(10, 5);
+    if (dave) dave.status = 'declined';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan whose status cannot be read as open seats nobody and answers closed', async () => {
+  // The status column is nullable. The write treats NULL as not open (NOT IN
+  // is not true of it) and seats nobody; the answer must say so rather than
+  // report an invite of nobody as success.
+  closeAfterStatusRead = 10;
+  closeAfterStatusReadTo = null;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(memberOf(10, 4), undefined, 'a seat was written on a plan whose status nobody can read');
+  } finally {
+    closeAfterStatusRead = null;
+    closeAfterStatusReadTo = 'cancelled';
+    flocks.get(10).status = 'planning';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: both writes return the ids they wrote', async () => {
+  // The list of people invited is built from what the two writes return.
+  // A write without RETURNING would come back with rows: [] from Postgres
+  // and prune everyone, while a fixture that fabricates rows would not
+  // notice; the statements themselves are pinned here.
+  const before = queries.length;
+  const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5, 4] });
+  const body = await res.json();
+  assert.strictEqual(res.status, 200, JSON.stringify(body));
+  assert.deepStrictEqual(body.invited.map((i) => i.user_id), [5, 4]);
+  const writes = queries.slice(before).filter((q) => /UPDATE flock_members SET status = 'invited'|INSERT INTO flock_members/.test(q.sql));
+  assert.strictEqual(writes.length, 2, 'one UPDATE for the declined member, one INSERT for the new one');
+  for (const w of writes) assert.match(w.sql, /RETURNING user_id/);
+  const dave = memberOf(10, 5);
+  if (dave) dave.status = 'declined';
   assertQueriesUnderstood();
 });
 

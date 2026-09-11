@@ -587,6 +587,49 @@ test('vote_venue: a plan cancelled between the closure check and the write recor
   } finally { pool.connect = realConnect; restore(); }
 });
 
+test('vote_venue: a write that lands nothing on a plan the re-read still calls open is rolled back, not committed', async () => {
+  __resetRateLimiters();
+  const calls = [];
+  const restore = mockPool([
+    [MEMBERSHIP, [{ id: 1 }]],
+    // Open on both reads; the write still lands nothing (a status the
+    // statement's NOT IN cannot read as open). Nothing explains it, so the
+    // transaction is rolled back and the caller is asked to try again.
+    [/SELECT status FROM flocks WHERE id = \$1/, [{ status: 'planning' }]],
+    [/DELETE FROM venue_votes/, []],
+    [/INSERT INTO venue_votes/, [], 0],
+  ], calls);
+  const realConnect = pool.connect;
+  const txn = [];
+  const viaClient = [];
+  pool.connect = async () => ({
+    query: (text, params) => {
+      viaClient.push(String(text).replace(/\s+/g, ' ').trim());
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(text)) {
+        txn.push(text.trim().split(/\s+/)[0].toUpperCase());
+        return Promise.resolve({ rows: [] });
+      }
+      return pool.query(text, params);
+    },
+    release: () => {},
+  });
+  try {
+    const io = fakeIo();
+    const s = fakeSocket('race-vote-open', { id: 212, name: 'Member' }, io);
+    registerHandlers(io, s);
+
+    await fire(s, 'vote_venue', { flockId: 4103, venue_name: 'Bar' });
+
+    assert.deepStrictEqual(errorsOf(s), ['The plan changed while your vote was being saved. Try again.']);
+    assert.ok(txn.includes('ROLLBACK'), 'a write that did not land must be rolled back');
+    assert.ok(!txn.includes('COMMIT'), 'and never committed');
+    assert.strictEqual(viaClient.filter((t) => /^SELECT status FROM flocks/.test(t)).length, 1,
+      'the re-read runs on the transaction client, so a burst of refused votes cannot exhaust the pool');
+    assert.strictEqual(io.emitted.filter((e) => e.event === 'new_vote').length, 0,
+      'a vote that was not recorded must not be announced');
+  } finally { pool.connect = realConnect; restore(); }
+});
+
 test('select_venue rejects a malformed place id before reading or writing the flock', async () => {
   __resetRateLimiters();
   const calls = [];
