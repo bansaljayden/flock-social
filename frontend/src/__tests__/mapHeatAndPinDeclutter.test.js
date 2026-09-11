@@ -227,6 +227,11 @@ describe('pin size and anchor', () => {
     expect(APP).toContain(".mlb-marker-under {");
     expect(APP).toMatch(/\.mlb-marker-under \{\s*position: absolute;\s*top: 100%;/);
     expect(codeOnly(APP)).toContain("(el.querySelector('.mlb-marker-under') || el).appendChild(chip);");
+    // Sized to its content: an absolute box shrinks to its containing block,
+    // and with the 44px pin as that block every venue name wrapped to two
+    // letters ("Th.", "Mo.") on the first street-zoom capture.
+    const under = APP.slice(APP.indexOf('.mlb-marker-under {'), APP.indexOf('.mlb-marker-under {') + 700);
+    expect(under).toContain('width: max-content;');
   });
 
   it('a photo pin waits behind a disc, not a teardrop, so nothing jumps when the photo lands', () => {
