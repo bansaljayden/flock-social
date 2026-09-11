@@ -190,6 +190,79 @@ describe('the bridge probe', () => {
     await flush();
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+    // And the long clock was cleared by the success, not merely outlived:
+    // past PROMPT_WINDOW nothing fires on a caller that already has its fix.
+    jest.advanceTimersByTime(PROMPT_WINDOW + 1000);
+    await flush();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  test('two requests in the same moment share one probe', async () => {
+    const probes = jest.fn(() => Promise.resolve({ location: 'granted', coarseLocation: 'granted' }));
+    mockProbe = probes;
+    geo.getCurrentPosition(jest.fn(), jest.fn(), { timeout: 10000 });
+    geo.getCurrentPosition(jest.fn(), jest.fn(), { timeout: 10000 });
+    await flush();
+
+    expect(probes).toHaveBeenCalledTimes(1);
+    expect(mockPluginBehaviour).toHaveBeenCalledTimes(2);
+  });
+
+  test('a probe that was superseded cannot flip the flag when it finally times out', async () => {
+    // First probe hangs; second request arrives after it resolved 'silent'
+    // and hears the plugin. The old probe's late timer must not send the
+    // third request back to WebKit.
+    const hung = deferred();
+    mockProbe = () => hung.promise;
+    geo.getCurrentPosition(jest.fn(), jest.fn(), { timeout: 10000 });
+    await flush();
+    jest.advanceTimersByTime(PROBE_WINDOW);
+    await flush();
+    expect(web.getCurrentPosition).toHaveBeenCalledTimes(1);
+
+    // The plugin answers the old probe late: bridge alive again.
+    hung.resolve({ location: 'granted', coarseLocation: 'granted' });
+    await flush();
+    mockProbe = () => Promise.resolve({ location: 'granted', coarseLocation: 'granted' });
+    geo.getCurrentPosition(jest.fn(), jest.fn(), { timeout: 10000 });
+    await flush();
+    expect(mockPluginBehaviour).toHaveBeenCalledTimes(1);
+    expect(web.getCurrentPosition).toHaveBeenCalledTimes(1);
+  });
+
+  test('the WebKit fallback has a clock of its own, so a WebView that ignores timeout cannot hang it', async () => {
+    mockProbe = () => new Promise(() => {});
+    web.getCurrentPosition.mockImplementation(() => {});
+    const onError = jest.fn();
+
+    geo.getCurrentPosition(jest.fn(), onError, { enableHighAccuracy: true, timeout: 10000 });
+    await flush();
+    jest.advanceTimersByTime(PROBE_WINDOW);
+    await flush();
+    expect(web.getCurrentPosition).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(9999);
+    await flush();
+    expect(onError).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(1);
+    await flush();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].code).toBe(3);
+    expect(onError.mock.calls[0][0].detail).toBe('webkit/bridge-silent');
+  });
+
+  test('a watch that is the first request of the session still finds a silent bridge', async () => {
+    mockProbe = () => new Promise(() => {});
+    const handle = geo.watchPosition(jest.fn(), jest.fn(), { enableHighAccuracy: true });
+    await flush();
+    expect(web.watchPosition).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(PROBE_WINDOW);
+    await flush();
+
+    expect(web.watchPosition).toHaveBeenCalledTimes(1);
+    geo.clearWatch(handle);
+    expect(web.clearWatch).toHaveBeenCalledWith(7);
   });
 
   test('a sheet nobody answers inside PROMPT_WINDOW fails once, and is not retried', async () => {
@@ -246,10 +319,9 @@ describe('the bridge probe', () => {
     jest.advanceTimersByTime(PROBE_WINDOW);
     await flush();
 
-    const id = geo.watchPosition(jest.fn(), jest.fn(), { enableHighAccuracy: true });
+    const handle = geo.watchPosition(jest.fn(), jest.fn(), { enableHighAccuracy: true });
     expect(web.watchPosition).toHaveBeenCalledTimes(1);
-    expect(id).toBe(7);
-    geo.clearWatch(id);
+    geo.clearWatch(handle);
     expect(web.clearWatch).toHaveBeenCalledWith(7);
   });
 });
