@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T03:17:15.744Z",
+  "generatedAt": "2026-09-11T03:38:43.672Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
@@ -184,6 +184,46 @@
       "replaces": null
     },
     {
+      "file": "screenshots/discover-far-dark@2x.png",
+      "screen": "discover-far",
+      "title": "Discover map zoomed out: overlapping pins fold behind a count",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-far-dark@2x.webp",
+      "screen": "discover-far",
+      "title": "Discover map zoomed out: overlapping pins fold behind a count",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-far-light@2x.png",
+      "screen": "discover-far",
+      "title": "Discover map zoomed out: overlapping pins fold behind a count",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-far-light@2x.webp",
+      "screen": "discover-far",
+      "title": "Discover map zoomed out: overlapping pins fold behind a count",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
       "file": "screenshots/discover-light@2x.png",
       "screen": "discover",
       "title": "Discover map with venue pins",
@@ -197,6 +237,46 @@
       "file": "screenshots/discover-light@2x.webp",
       "screen": "discover",
       "title": "Discover map with venue pins",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-near-dark@2x.png",
+      "screen": "discover-near",
+      "title": "Discover map at street zoom: heat hands over to the pins",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-near-dark@2x.webp",
+      "screen": "discover-near",
+      "title": "Discover map at street zoom: heat hands over to the pins",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-near-light@2x.png",
+      "screen": "discover-near",
+      "title": "Discover map at street zoom: heat hands over to the pins",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/discover-near-light@2x.webp",
+      "screen": "discover-near",
+      "title": "Discover map at street zoom: heat hands over to the pins",
       "mode": "light",
       "set": "web",
       "width": 780,

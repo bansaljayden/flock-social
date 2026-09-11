@@ -762,6 +762,14 @@ const SCREENS = [
   { id: 'create', title: 'Start a flock form', appstore: true, replaces: { light: ['app-create.png'] } },
   { id: 'chat', title: 'Flock chat with a venue card', appstore: true, replaces: {} },
   { id: 'discover', title: 'Discover map with venue pins', appstore: true, replaces: {} },
+  /* THE MAP AT TWO MORE ZOOMS, WITH A MEASUREMENT BEHIND EACH SHOT. Neither
+     is shipped; both exist so the pin rules are proven rather than eyeballed:
+     every pin's tip (or disc centre) lands on the projected venue within a
+     pixel or two, at rest and on every sampled frame of an animated zoom;
+     overlapping pins at city zoom fade out behind a survivor that says how
+     many; the pin scale moves monotonically through the zoom. See auditMap. */
+  { id: 'discover-far', title: 'Discover map zoomed out: overlapping pins fold behind a count', appstore: false, replaces: {} },
+  { id: 'discover-near', title: 'Discover map at street zoom: heat hands over to the pins', appstore: false, replaces: {} },
   { id: 'crowd', title: 'Venue search results with live crowd scores', appstore: true, replaces: { dark: ['app-crowd.png'] } },
   { id: 'birdie', title: 'Birdie answering with real venue cards', appstore: true, replaces: { dark: ['app-birdie.png', 'app-birdie.webp'] } },
   /* TWO WHOLE TABS THAT NOTHING HAS EVER PHOTOGRAPHED. The rig covered Nest,
@@ -839,6 +847,123 @@ const OWNER_SCREENS = new Set(['venue-dash', 'venue-analytics']);
 
 // Per-screen drivers. Each takes an already-logged-in page sitting on the app
 // and leaves the target screen fully rendered.
+/* Open Discover and wait for the pins and their photos. Shared by the three
+   Discover captures. */
+async function openDiscoverPins(page) {
+    await tab(page, 'Discover').click();
+    await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
+    await page.locator('.mlb-venue-marker').first().waitFor({ timeout: 45000 });
+    /* COLLAPSE THE ATTRIBUTION. MapLibre renders "MapTiler (c) OpenStreetMap
+       contributors" expanded by default and it reads as a stray bar of legal
+       text across the bottom of the shot. Its own (i) button collapses it to
+       a single dot, which is the state a real user sees after one tap and is
+       still compliant: the credit remains one click away. */
+    /* Collapse it by class rather than by clicking the disclosure. The button
+       is moved out of MapLibre's own container into the map root for tab order
+       and given tabindex -1, so a Playwright click on it raced the move and
+       silently did nothing. Dropping `maplibregl-compact-show` is the same
+       state a user reaches by tapping it, and it cannot race. */
+    await page.evaluate(() => {
+      document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
+        .forEach((el) => el.classList.remove('maplibregl-compact-show'));
+    }).catch(() => {});
+    /* WAIT FOR THE PHOTO PINS. Each marker paints a lettered SVG fallback
+       immediately and swaps to the venue's circular photo only once
+       buildPhotoPin resolves, so a short settle photographs the fallback and
+       makes the map look like it failed to load. Wait for the swap. */
+    await page.waitForFunction(() => {
+      const pins = [...document.querySelectorAll('.mlb-marker-inner')];
+      if (!pins.length) return false;
+      const withPhoto = pins.filter((p) => p.style.backgroundImage && p.style.backgroundImage !== 'none');
+      // Nearly all of them, not half. At 50% the light pass shot with 6 of 20
+      // photos in and 14 lettered fallbacks still on screen; none had failed,
+      // they were simply still in flight. One straggler must not stall the run.
+      return withPhoto.length >= Math.ceil(pins.length * 0.9);
+    }, null, { timeout: 60000 }).catch(() => {});
+}
+
+/* THE MAP AUDIT. Zoom to `zoom` (animated when asked, with the animation
+   marked essential so the rig's reduced-motion setting does not skip it),
+   sample the pins along the way, and measure them at rest: for every visible
+   pin, the point MapLibre anchors (a teardrop's tip, a disc's centre) against
+   the venue's projected coordinate. A pin more than two pixels off its venue
+   fails the capture, which is what a "declutter" that moved pins used to be
+   guilty of by design. Also reported: how many pins folded behind a
+   neighbour, the badges they left, and the pin scale, which must move in
+   one direction through the zoom. */
+function readMapState() {
+  const d = window.__flockMapDebug;
+  if (!d) return { error: 'no __flockMapDebug hook on the page (flag=' + String(window.__FLOCK_MAP_DEBUG__) + ', maps=' + document.querySelectorAll('.maplibregl-map').length + ', globals=' + Object.keys(window).filter((k) => /flock/i.test(k)).join('+') + ')' };
+  const root = d.container().getBoundingClientRect();
+  const pins = [];
+  for (const m of d.markers()) {
+    if (m.el.style.display === 'none') continue;
+    const inner = m.el.querySelector('.mlb-marker-inner');
+    if (!inner) continue;
+    const r = inner.getBoundingClientRect();
+    const round = (inner.style.transformOrigin || '').startsWith('center');
+    const ax = r.left + r.width / 2 - root.left;
+    const ay = (round ? r.top + r.height / 2 : r.bottom) - root.top;
+    const p = d.project(m.lng, m.lat);
+    const t = getComputedStyle(inner).transform;
+    const mm = t && t !== 'none' ? t.match(/matrix\(([^,]+),/) : null;
+    pins.push({
+      id: m.id,
+      dx: +(ax - p.x).toFixed(2),
+      dy: +(ay - p.y).toFixed(2),
+      covered: m.el.dataset.covered === '1',
+      badge: (m.el.querySelector('.mlb-cluster-badge') || {}).textContent || '',
+      scale: mm ? +(+mm[1]).toFixed(3) : 1,
+    });
+  }
+  const shown = pins.filter((q) => !q.covered);
+  const worst = shown.reduce((w, q) => Math.max(w, Math.abs(q.dx), Math.abs(q.dy)), 0);
+  return {
+    zoom: +d.getZoom().toFixed(2),
+    pins: pins.length,
+    shown: shown.length,
+    covered: pins.length - shown.length,
+    badges: shown.filter((q) => q.badge).map((q) => q.badge),
+    worstPx: +worst.toFixed(2),
+    scale: shown[0] ? shown[0].scale : null,
+  };
+}
+
+async function auditMap(page, zoom, { label, animate = false } = {}) {
+  const before = await page.evaluate(readMapState);
+  if (before.error) throw new Error(`${label}: ${before.error}`);
+  const samples = [];
+  if (animate) {
+    await page.evaluate((z) => window.__flockMapDebug.zoomTo(z, 1600), zoom);
+    for (let i = 0; i < 10; i += 1) {
+      await page.waitForTimeout(150);
+      samples.push(await page.evaluate(readMapState));
+    }
+  } else {
+    await page.evaluate((z) => window.__flockMapDebug.zoomTo(z, 0), zoom);
+  }
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(readMapState);
+  const line = (st) => `z=${st.zoom} pins=${st.pins} shown=${st.shown} covered=${st.covered} badges=[${st.badges.join(',')}] worst=${st.worstPx}px scale=${st.scale}`;
+  log(`  map ${label}: before ${line(before)}`);
+  for (const st of samples) log(`  map ${label}: frame  ${line(st)}`);
+  log(`  map ${label}: after  ${line(after)}`);
+  const failures = [];
+  if (after.worstPx > 2) failures.push(`a pin sits ${after.worstPx}px off its venue at rest`);
+  for (const st of samples) {
+    if (st.worstPx > 3) failures.push(`a pin was ${st.worstPx}px off its venue mid-zoom at z=${st.zoom}`);
+  }
+  const scales = samples.map((st) => st.scale).filter((v) => v !== null);
+  for (let i = 1; i < scales.length; i += 1) {
+    if (scales[i] < scales[i - 1] - 0.001) failures.push(`the pin scale went backwards mid-zoom (${scales[i - 1]} -> ${scales[i]})`);
+  }
+  if (label === 'discover-far' && after.pins > 8 && after.covered === 0) {
+    failures.push('twenty-odd pins at city zoom and none folded behind a neighbour');
+  }
+  if (after.covered > 0 && after.badges.length === 0) failures.push('pins folded but no survivor carries a count');
+  if (failures.length) throw new Error(`${label}: ${failures.join('; ')}`);
+}
+
 const DRIVERS = {
   async nest(page) {
     await tab(page, 'Nest').click();
@@ -875,38 +1000,19 @@ const DRIVERS = {
     await settle(page);
   },
   async discover(page) {
-    await tab(page, 'Discover').click();
-    await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
-    await page.locator('.mlb-venue-marker').first().waitFor({ timeout: 45000 });
-    /* COLLAPSE THE ATTRIBUTION. MapLibre renders "MapTiler (c) OpenStreetMap
-       contributors" expanded by default and it reads as a stray bar of legal
-       text across the bottom of the shot. Its own (i) button collapses it to
-       a single dot, which is the state a real user sees after one tap and is
-       still compliant: the credit remains one click away. */
-    /* Collapse it by class rather than by clicking the disclosure. The button
-       is moved out of MapLibre's own container into the map root for tab order
-       and given tabindex -1, so a Playwright click on it raced the move and
-       silently did nothing. Dropping `maplibregl-compact-show` is the same
-       state a user reaches by tapping it, and it cannot race. */
-    await page.evaluate(() => {
-      document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
-        .forEach((el) => el.classList.remove('maplibregl-compact-show'));
-    }).catch(() => {});
-    /* WAIT FOR THE PHOTO PINS. Each marker paints a lettered SVG fallback
-       immediately and swaps to the venue's circular photo only once
-       buildPhotoPin resolves, so a short settle photographs the fallback and
-       makes the map look like it failed to load. Wait for the swap. */
-    await page.waitForFunction(() => {
-      const pins = [...document.querySelectorAll('.mlb-marker-inner')];
-      if (!pins.length) return false;
-      const withPhoto = pins.filter((p) => p.style.backgroundImage && p.style.backgroundImage !== 'none');
-      // Nearly all of them, not half. At 50% the light pass shot with 6 of 20
-      // photos in and 14 lettered fallbacks still on screen; none had failed,
-      // they were simply still in flight. One straggler must not stall the run.
-      return withPhoto.length >= Math.ceil(pins.length * 0.9);
-    }, null, { timeout: 60000 }).catch(() => {});
+    await openDiscoverPins(page);
     // Let tiles finish rendering; maplibre paints async after markers land.
     await settle(page, { quiet: 3500 });
+  },
+  async 'discover-far'(page) {
+    await openDiscoverPins(page);
+    await auditMap(page, 12.2, { label: 'discover-far' });
+    await settle(page, { quiet: 2500 });
+  },
+  async 'discover-near'(page) {
+    await openDiscoverPins(page);
+    await auditMap(page, 16.4, { label: 'discover-near', animate: true });
+    await settle(page, { quiet: 2500 });
   },
   async crowd(page) {
     await tab(page, 'Discover').click();
@@ -1025,6 +1131,8 @@ async function newAppContext(browser, { size, mode, token, userMode }) {
     localStorage.setItem('flock_user_lat', '39.9526');
     localStorage.setItem('flock_user_lng', '-75.1652');
     localStorage.setItem('flockToken', jwt);
+    // Lets the map audit below project venues and measure their pins.
+    window.__FLOCK_MAP_DEBUG__ = true;
   }, [mode, token, userMode]);
   const page = await context.newPage();
   return { context, page };
