@@ -1475,6 +1475,8 @@ describe('the moderation console has a way in', () => {
     const console_ = readSource('frontend', 'src', 'website', 'ModerationDashboard.js');
     expect(console_).toMatch(/getToken\(\)/);
     const api = readSource('frontend', 'src', 'services', 'api.js');
-    expect(api).toMatch(/localStorage\.getItem\('flockToken'\)/);
+    // Through the guarded helper: isLoggedIn() runs at boot and a storage that
+    // throws has to read as signed out rather than a blank screen.
+    expect(api).toMatch(/lsGet\('flockToken'\)/);
   });
 });

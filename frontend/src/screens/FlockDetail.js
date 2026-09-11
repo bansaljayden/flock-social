@@ -55,6 +55,7 @@
  */
 import React from 'react';
 import { submitVenueFeedback } from '../services/api';
+import { lsGet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 
@@ -423,7 +424,7 @@ export default function FlockDetail({
                   if (!Number.isFinite(et)) return null;
                   const now = Date.now();
                   if (now < et - 3 * 3600 * 1000 || now > et + 6 * 3600 * 1000) return null;
-                  const ts = parseInt(localStorage.getItem('flock_checkin_' + flock.venueId) || '0', 10);
+                  const ts = parseInt(lsGet('flock_checkin_' + flock.venueId) || '0', 10);
                   const checkedIn = ts > 0 && now - ts < 2 * 60 * 60 * 1000;
                   return (
                     <button className="hit44 glass-btn glass-secondary" disabled={checkedIn || checkinSaving} onClick={() => handleCheckIn(flock.venueId)} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: checkedIn ? 'default' : 'pointer', opacity: checkedIn ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
