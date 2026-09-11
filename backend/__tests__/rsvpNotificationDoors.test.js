@@ -207,7 +207,7 @@ function scriptCreate({ realUsers = [2, 3, 4], blocked = [] } = {}) {
     rowCount: blocked.length,
   }));
   on(/INSERT INTO flock_members \(flock_id, user_id, status\) SELECT/, (params) => ({
-    rows: (params[1] || []).map((user_id) => ({ user_id: Number(user_id) })), rowCount: (params[1] || []).length,
+    rows: [], rowCount: (params[1] || []).length,
   }));
   scriptPushMachinery();
 }
