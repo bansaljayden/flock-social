@@ -1377,6 +1377,9 @@ export default function ChatDetail({
       for (const [uid, loc] of Object.entries(positions)) {
         if (String(uid) === String(authUser?.id)) continue;
         if (!loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) continue;
+        // This flock's people only. The session map holds every flock's
+        // sharers, so a position that names another flock is not "here".
+        if (loc.flockId != null && String(loc.flockId) !== String(flock.id)) continue;
         const at = loc.timestamp ? new Date(loc.timestamp).getTime() : NaN;
         if (!Number.isFinite(at) || nowMs - at > POSITION_FRESH_MS) continue;
         // No venue yet means nobody can be "near" it, but people are still
@@ -1394,6 +1397,12 @@ export default function ChatDetail({
       }
       return (near === 0 && onTheWay === 0) ? null : { near, onTheWay, people: nearPeople, hasVenue };
     })();
+    // The "N sharing" figure on the sharing bar, scoped the same way: the
+    // reader's own position is not one of the N, and another flock's are not.
+    const sharingHere = Object.entries(flockMemberLocations || {}).filter(([uid, loc]) => (
+      String(uid) !== String(authUser?.id)
+      && loc && (loc.flockId == null || String(loc.flockId) === String(flock.id))
+    )).length;
 
     /* The bar takes `{ id, preview }`. The server sends the message id and
        enough of the row to describe it, so the preview is built here with the
@@ -2360,8 +2369,8 @@ export default function ChatDetail({
           <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none' }} />
             <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
-            {Object.keys(flockMemberLocations).length > 0 && (
-              <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{Object.keys(flockMemberLocations).length} sharing</span>
+            {sharingHere > 0 && (
+              <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{sharingHere} sharing</span>
             )}
             <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>

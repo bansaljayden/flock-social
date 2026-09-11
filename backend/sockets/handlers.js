@@ -1978,7 +1978,11 @@ function registerHandlers(io, socket) {
         [flockId, user.id]
       );
       const invisible = new Set(await getInvisibleUserIds(user.id));
-      const payload = { userId: user.id, name: user.name, lat, lng, timestamp: Date.now() };
+      // The flock rides along. The client keeps one map of positions for the
+      // whole session, and without this a member of two flocks saw the
+      // people sharing in one of them counted as "here" in the other's chat.
+      // The stop already carries it (member_stopped_sharing below).
+      const payload = { userId: user.id, name: user.name, lat, lng, flockId, timestamp: Date.now() };
       for (const m of members.rows) {
         if (invisible.has(m.user_id)) continue;
         io.to(`user:${m.user_id}`).emit('location_update', payload);

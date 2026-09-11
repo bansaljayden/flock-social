@@ -456,9 +456,15 @@ test('update_location fans out only to accepted members and never to blocked pee
     registerHandlers(io, s);
 
     await fire(s, 'update_location', { flockId: 4304, lat: 40.7, lng: -74.0 });
-    const targets = io.emitted.filter((e) => e.event === 'location_update').map((e) => e.room);
+    const sent = io.emitted.filter((e) => e.event === 'location_update');
+    const targets = sent.map((e) => e.room);
     assert.deepStrictEqual(targets, ['user:801'],
       'recipients come from the flock_members read at emit time, minus blocked pairs — the payload cannot be redirected by a client-supplied id');
+    // The position names its flock, so a client in two flocks can keep the
+    // two apart; the stop event has always carried it.
+    assert.strictEqual(sent[0].payload.flockId, 4304);
+    assert.deepStrictEqual(Object.keys(sent[0].payload).sort(),
+      ['flockId', 'lat', 'lng', 'name', 'timestamp', 'userId']);
   } finally { restore(); }
 });
 
