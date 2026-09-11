@@ -411,6 +411,12 @@ async function dispatch(text, params = []) {
     return { rows: [{ flock_id: Number(params[0]), ...m }], rowCount: 1 };
   }
   if (has("UPDATE flock_members SET status = 'invited'")) {
+    // The re-invite carries the plan's status rule (AND EXISTS on the
+    // status); the fixture does what the clause does.
+    if (/AND EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(sql)) {
+      const f = flocks.get(Number(params[0]));
+      if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
+    }
     let n = 0;
     for (const uid of params[1] || []) {
       const m = memberOf(params[0], uid);
@@ -1001,6 +1007,42 @@ test('direct invite: a plan cancelled between the status check and the write sea
   } finally {
     closeAfterStatusRead = null;
     flocks.get(10).status = 'planning';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a declined member re-invited on a plan cancelled after the check stays declined', async () => {
+  // Dave (5) declined flock 10. The re-invite is an UPDATE, not the INSERT
+  // the other race test pins, so it needs its own proof.
+  closeAfterStatusRead = 10;
+  try {
+    const before = queries.length;
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(memberOf(10, 5).status, 'declined', 'a declined member was re-invited on a plan that had just closed');
+    const upd = queries.slice(before).find((q) => /UPDATE flock_members SET status = 'invited'/.test(q.sql));
+    assert.ok(upd, 'the write is what decides, so it must run');
+    assert.match(upd.sql, /AND EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+  } finally {
+    closeAfterStatusRead = null;
+    flocks.get(10).status = 'planning';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan that vanishes between the status check and the write is a 404', async () => {
+  const row = flocks.get(10);
+  vanishAfterOwnershipCheck = true;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    assert.strictEqual(res.status, 404);
+    assert.deepStrictEqual(await res.json(), { error: 'Flock not found' });
+    assert.strictEqual(memberOf(10, 4), undefined, 'a member row was written on a plan that no longer exists');
+  } finally {
+    vanishAfterOwnershipCheck = false;
+    flocks.set(10, row);
   }
   assertQueriesUnderstood();
 });
