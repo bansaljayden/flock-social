@@ -1701,6 +1701,17 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
       return res.status(403).json({ error: 'Not a member of this flock' });
     }
 
+    const flockResult = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+    if (flockResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Flock not found' });
+    }
+    if (flockResult.rows[0].status === 'completed' || flockResult.rows[0].status === 'cancelled') {
+      return res.status(409).json({
+        error: 'This plan is finished and cannot accept new invites',
+        code: 'FLOCK_CLOSED',
+      });
+    }
+
     if (req.body?.regenerate) {
       // SECURITY-AUDIT-auth.md R2-4, step 4: this used to run on ACCEPTED
       // MEMBERSHIP alone, which is a privilege inversion. Anyone who walked up
@@ -2445,9 +2456,15 @@ router.post('/:id/invite',
         return res.status(403).json({ error: 'You must be a member of this flock to invite others' });
       }
 
-      const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
+      const flockResult = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
       if (flockResult.rows.length === 0) {
         return res.status(404).json({ error: 'Flock not found' });
+      }
+      if (flockResult.rows[0].status === 'completed' || flockResult.rows[0].status === 'cancelled') {
+        return res.status(409).json({
+          error: 'This plan is finished and cannot accept new invites',
+          code: 'FLOCK_CLOSED',
+        });
       }
 
       // Everything from the roster ceilings to the socket fan-out is the

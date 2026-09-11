@@ -19,7 +19,7 @@ const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 // The vote tally is routes/venues.js's, not a copy of it. See the note at
 // vote_venue below.
-const { collectVoteRows, tailorVotes } = require('../routes/venues');
+const { collectVoteRows, tailorVotes, votingClosedReason } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const { SYSTEM_KINDS, writeSystemMessage } = require('../utils/systemMessages');
 const {
@@ -1822,6 +1822,12 @@ function registerHandlers(io, socket) {
         return;
       }
 
+      const closed = await votingClosedReason(flockId);
+      if (closed) {
+        socket.emit('error', { message: closed });
+        return;
+      }
+
       // One vote per user per flock. The unique key is
       // (flock_id, user_id, venue_name), so a plain INSERT let one person
       // accumulate a vote on every venue they ever tapped: switching picks
@@ -2945,10 +2951,16 @@ function registerHandlers(io, socket) {
       const venue_address = typeof data.venue_address === 'string'
         ? stripHtml(data.venue_address.trim()).slice(0, 512) || null
         : null;
-      const venue_id = typeof data.venue_id === 'string' ? data.venue_id.slice(0, 255) : null;
+      const venue_id = typeof data.venue_id === 'string'
+        ? data.venue_id.trim().slice(0, 255) || null
+        : null;
 
       if (!venue_name) {
         socket.emit('error', { message: 'Venue name is required' });
+        return;
+      }
+      if (venue_id !== null && !isPlaceIdShaped(venue_id)) {
+        socket.emit('error', { message: 'Invalid venue id' });
         return;
       }
       if (!moderateText(venue_name).allowed || (venue_address && !moderateText(venue_address).allowed)) {
@@ -2967,12 +2979,19 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      await pool.query(
+      const updated = await pool.query(
         `UPDATE flocks
          SET venue_name = $1, venue_address = $2, venue_id = $3, status = 'confirmed', updated_at = NOW()
-         WHERE id = $4`,
+         WHERE id = $4 AND status NOT IN ('completed', 'cancelled')`,
         [venue_name, venue_address, venue_id, flockId]
       );
+      if (updated.rowCount === 0) {
+        socket.emit('error', {
+          message: 'This plan is finished and cannot be reopened',
+          code: 'FLOCK_CLOSED',
+        });
+        return;
+      }
 
       // Round 18: `selected_by` carries the creator's name, and this was the
       // last identity-bearing broadcast on the file that reached the room

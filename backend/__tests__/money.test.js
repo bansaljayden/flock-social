@@ -228,7 +228,8 @@ test('submitting a budget echoes aggregates only, never a neighbour amount', asy
     // land inside /create's read-then-rewrite and be erased by it.
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id/, isMember],
-    [/SELECT budget_enabled, budget_locked FROM flocks/, () => ({ rows: [{ budget_enabled: true, budget_locked: false }] })],
+    [/SELECT budget_enabled, budget_locked, status FROM flocks/,
+      () => ({ rows: [{ budget_enabled: true, budget_locked: false, status: 'planning' }] })],
     [/SELECT skipped FROM budget_submissions/, () => ({ rows: [] })],
     [/INSERT INTO budget_submissions/, () => ({ rows: [] })],
     [/SELECT MIN\(amount\) AS ceiling/, () => ({ rows: [{ ceiling: String(VICTIM_AMOUNT) }] })],
@@ -266,6 +267,43 @@ test('the budget lock refuses to publish a ceiling backed by fewer than three pe
   assert.ok(!res.text.includes('37.11'));
   // It must bail out BEFORE the MIN is even read.
   assert.ok(!log.some((q) => /MIN\(amount\)/.test(q.sql)));
+});
+
+test('budget submission refuses completed and cancelled flocks before writing', async () => {
+  for (const status of ['completed', 'cancelled']) {
+    handlers = [
+      [/SELECT id FROM flock_members WHERE flock_id/, isMember],
+      [/SELECT budget_enabled, budget_locked, status FROM flocks/,
+        () => ({ rows: [{ budget_enabled: true, budget_locked: false, status }] })],
+    ];
+
+    const res = await call('POST', '/api/budget/42/submit', { amount: 50 });
+
+    assert.strictEqual(res.status, 409, `${status} flock accepted a budget submission`);
+    assert.strictEqual(res.body.code, 'FLOCK_CLOSED');
+  }
+  assert.strictEqual(inserts('budget_submissions').length, 0);
+});
+
+test('an already locked budget is a 409 on both submit and lock', async () => {
+  handlers = [
+    [/SELECT id FROM flock_members WHERE flock_id/, isMember],
+    [/SELECT budget_enabled, budget_locked, status FROM flocks/,
+      () => ({ rows: [{ budget_enabled: true, budget_locked: true, status: 'planning' }] })],
+  ];
+  const submit = await call('POST', '/api/budget/42/submit', { amount: 50 });
+
+  handlers = [
+    [/SELECT id FROM flock_members WHERE flock_id/, isMember],
+    [/SELECT creator_id, budget_enabled, budget_locked FROM flocks/,
+      () => ({ rows: [{ creator_id: 1, budget_enabled: true, budget_locked: true }] })],
+  ];
+  const lock = await call('POST', '/api/budget/42/lock');
+
+  assert.strictEqual(submit.status, 409);
+  assert.strictEqual(lock.status, 409);
+  assert.strictEqual(submit.body.error, 'Budget has been locked');
+  assert.strictEqual(lock.body.error, 'Budget has been locked');
 });
 
 // ---------------------------------------------------------------------------
@@ -980,6 +1018,26 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
 
   assert.strictEqual(res.status, 400);
   assert.strictEqual(inserts('bill_split_shares').length, 0);
+});
+
+test('ghost commit refuses completed and cancelled flocks before bill writes', async () => {
+  for (const status of ['completed', 'cancelled']) {
+    handlers = [
+      [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+      [/SELECT id FROM flock_members/, isMember],
+      [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/,
+        () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status, ghost_mode_enabled: true }] })],
+    ];
+
+    const res = await call('POST', '/api/billing/42/ghost-commit');
+
+    assert.strictEqual(res.status, 409, `${status} flock accepted a ghost commitment`);
+    assert.strictEqual(res.body.code, 'FLOCK_CLOSED');
+  }
+  assert.strictEqual(inserts('bill_splits').length, 0);
+  assert.strictEqual(inserts('bill_split_shares').length, 0);
+  assert.ok(!log.some((q) => /COUNT\(\*\)::int AS n FROM budget_submissions/.test(q.sql)),
+    'the terminal-state refusal must run before the anonymity threshold read');
 });
 
 test('ghost commit still works against an unclaimed placeholder bill', async () => {

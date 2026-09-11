@@ -961,6 +961,7 @@ test('vote_venue tallies group by venue_name alone, so one venue is one row', as
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
+    [/SELECT status FROM flocks WHERE id = \$1/, [{ status: 'planning' }]],
     [/pg_advisory_xact_lock/, []],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, []],

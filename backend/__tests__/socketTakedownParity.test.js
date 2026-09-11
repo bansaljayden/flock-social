@@ -556,6 +556,7 @@ test('the socket vote tally counts what the REST tally counts', async () => {
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
+    [/SELECT status FROM flocks WHERE id = \$1/, [{ status: 'planning' }]],
     [/pg_advisory_xact_lock/, []],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, []],

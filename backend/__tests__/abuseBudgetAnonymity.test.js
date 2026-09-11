@@ -123,9 +123,11 @@ async function dispatch(sql, params) {
     return m ? { rows: [{ id: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
 
-  if (/^SELECT budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
+  if (/^SELECT budget_enabled, budget_locked, status FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
-    return f ? { rows: [{ budget_enabled: f.budget_enabled, budget_locked: f.budget_locked }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    return f
+      ? { rows: [{ budget_enabled: f.budget_enabled, budget_locked: f.budget_locked, status: f.status }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
   }
   if (/^SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
@@ -252,7 +254,7 @@ function seedFlock({ creator, members, locked = false }) {
   world.flocks.set(FLOCK, {
     id: FLOCK, creator_id: creator, name: 'Dinner', budget_enabled: true,
     budget_locked: locked, budget_ceiling: null, budget_context: null,
-    ghost_mode_enabled: false,
+    ghost_mode_enabled: false, status: 'planning',
   });
   for (const uid of members) world.members.push({ flock_id: FLOCK, user_id: uid, status: 'accepted' });
 }
@@ -357,7 +359,7 @@ test('ABUSE E2: the LOCK commits the group to the members\' MIN, not a departed 
   // Locking is still one-way: nobody can move the number afterwards.
   as(1);
   const after = await submit(70);
-  assert.strictEqual(after.status, 400, after.text);
+  assert.strictEqual(after.status, 409, after.text);
   assert.match(after.body.error, /locked/i);
   assertQueriesUnderstood();
 });
@@ -523,7 +525,7 @@ test('CLOSED: resubmit-and-difference gets ONE sample, because the first answer 
     'the settling answer publishes band(MIN), which here is the attacker\'s own $5');
 
   for (const [probe, statusCode, ceiling] of observed.slice(1)) {
-    assert.strictEqual(statusCode, 400, `probe ${probe} was accepted after the budget settled`);
+    assert.strictEqual(statusCode, 409, `probe ${probe} was accepted after the budget settled`);
     assert.strictEqual(ceiling, undefined, `probe ${probe} answered with a ceiling`);
   }
 
@@ -728,9 +730,9 @@ test('HELD: the raw MIN never reaches the wire on any of the three read paths', 
   // a second lock are both refused rather than answering with a number that
   // could differ from the first one.
   const sub = await submit(37.42);
-  assert.strictEqual(sub.status, 400, sub.text);
+  assert.strictEqual(sub.status, 409, sub.text);
   const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
-  assert.strictEqual(locked.status, 400, locked.text);
+  assert.strictEqual(locked.status, 409, locked.text);
   assert.strictEqual(world.flocks.get(FLOCK).budget_ceiling, 35,
     'the cached column holds the band, not the minimum');
   assertQueriesUnderstood();

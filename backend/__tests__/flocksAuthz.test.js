@@ -941,6 +941,25 @@ test('invite-link: a member can still share, and a departed one cannot', async (
   assertQueriesUnderstood();
 });
 
+test('invite-link and direct invite refuse completed and cancelled flocks before writes', async () => {
+  for (const status of ['completed', 'cancelled']) {
+    flocks.get(10).status = status;
+
+    const link = await call('POST', '/api/flocks/10/invite-link', 'alice', { regenerate: true });
+    const invite = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+
+    assert.strictEqual(link.status, 409, `invite link stayed open for a ${status} flock`);
+    assert.strictEqual(invite.status, 409, `direct invite stayed open for a ${status} flock`);
+    assert.strictEqual((await link.json()).code, 'FLOCK_CLOSED');
+    assert.strictEqual((await invite.json()).code, 'FLOCK_CLOSED');
+  }
+  assert.strictEqual(links[0].revoked, false, 'the terminal-state refusal ran after link revocation');
+  assert.strictEqual(memberOf(10, 4), undefined, 'the terminal-state refusal ran after the invite write');
+  noWriteMatching('flock_invite_links');
+  noWriteMatching('flock_members');
+  assertQueriesUnderstood();
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 8. POST /api/flocks/:id/join — RSVP yes (self only)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1411,6 +1430,7 @@ test('cross-flock: a body cannot redirect a mutation at a flock the path did not
   assert.strictEqual(memberOf(20, 4).attendance, 'attended');
   assert.strictEqual(memberOf(10, 1).attendance, 'unmarked', 'attendance landed on the smuggled flock');
 
+  flocks.get(20).status = 'planning';
   const invite = await call('POST', '/api/flocks/20/invite', 'mallory', { ...smuggle, user_ids: [3] });
   assert.strictEqual(invite.status, 200);
   assert.strictEqual(memberOf(20, 3).status, 'invited');

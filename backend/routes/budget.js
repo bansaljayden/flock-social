@@ -363,12 +363,19 @@ router.post('/:flockId/submit',
         await client.query('BEGIN');
 
         const flockCheck = await client.query(
-          'SELECT budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
+          'SELECT budget_enabled, budget_locked, status FROM flocks WHERE id = $1 FOR UPDATE',
           [flockId]
         );
         if (flockCheck.rows.length === 0) {
           await client.query('ROLLBACK');
           return res.status(404).json({ error: 'Flock not found' });
+        }
+        if (flockCheck.rows[0].status === 'completed' || flockCheck.rows[0].status === 'cancelled') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'This plan is finished and cannot accept budget submissions',
+            code: 'FLOCK_CLOSED',
+          });
         }
         if (!flockCheck.rows[0].budget_enabled) {
           await client.query('ROLLBACK');
@@ -376,7 +383,7 @@ router.post('/:flockId/submit',
         }
         if (flockCheck.rows[0].budget_locked) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'Budget has been locked' });
+          return res.status(409).json({ error: 'Budget has been locked' });
         }
 
         // UPSERT budget submission
@@ -764,7 +771,7 @@ router.post('/:flockId/lock',
         // number is now the first one, permanently.
         if (flockResult.rows[0].budget_locked) {
           await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'Budget has been locked' });
+          return res.status(409).json({ error: 'Budget has been locked' });
         }
 
         const countResult = await client.query(

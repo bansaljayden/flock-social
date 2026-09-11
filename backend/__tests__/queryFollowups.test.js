@@ -133,9 +133,9 @@ pool.query = async (text, params = []) => {
     const ok = Number(params[0]) === FLOCK_ID && members.get(Number(params[1])) === 'accepted';
     return { rows: ok ? [{ id: 1 }] : [], rowCount: ok ? 1 : 0 };
   }
-  if (has('SELECT id, name FROM flocks WHERE id = $1')) {
+  if (has('SELECT id, name, status FROM flocks WHERE id = $1')) {
     return Number(params[0]) === FLOCK_ID
-      ? { rows: [{ id: FLOCK_ID, name: 'Friday' }], rowCount: 1 }
+      ? { rows: [{ id: FLOCK_ID, name: 'Friday', status: 'planning' }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
   if (has('AS total') && has('FROM flock_members')) {

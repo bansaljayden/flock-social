@@ -316,7 +316,8 @@ test('flock_deleted names the deleter, so it is filtered — and its recipients 
 
 test('flock_members_invited does not hand the inviter name to someone who blocked them', async () => {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status/, () => ({ rows: [{ id: 1 }] }));
-  on(/SELECT id, name FROM flocks WHERE id/, () => ({ rows: [{ id: 9, name: 'Dinner' }] }));
+  on(/SELECT id, name(?:, status)? FROM flocks WHERE id/,
+    () => ({ rows: [{ id: 9, name: 'Dinner', status: 'planning' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 2 }] }));
   // The invite path's three reads are set-based now (2026-08-14). Same answers
   // as the per-row branches they replace: 5 has no row here, 5 is a real user
@@ -350,7 +351,8 @@ test('flock_members_invited names only the people who really got a row', async (
   // the ceilings refused. None of that is the flock's business, and two of those
   // three are facts about somebody else's account.
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status/, () => ({ rows: [{ id: 1 }] }));
-  on(/SELECT id, name FROM flocks WHERE id/, () => ({ rows: [{ id: 9, name: 'Dinner' }] }));
+  on(/SELECT id, name(?:, status)? FROM flocks WHERE id/,
+    () => ({ rows: [{ id: 9, name: 'Dinner', status: 'planning' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 2 }] }));
   on(/SELECT user_id, status FROM flock_members WHERE flock_id = \$1 AND user_id = ANY\(\$2::int\[\]\)/, () => ({ rows: [] }));
   // 5 is a real account; 6 has none.

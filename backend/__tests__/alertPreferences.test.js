@@ -460,7 +460,8 @@ test('the join push still names the joiner and still goes out', async () => {
 
 function scriptInvite() {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/i, () => ({ rows: [{ id: 1 }] }));
-  on(/SELECT id, name FROM flocks WHERE id/i, () => ({ rows: [{ id: 42, name: 'Taco Night' }] }));
+  on(/SELECT id, name(?:, status)? FROM flocks WHERE id/i,
+    () => ({ rows: [{ id: 42, name: 'Taco Night', status: 'planning' }] }));
   on(/SELECT status FROM flocks WHERE id = \$1/i, () => ({ rows: [{ status: 'planning' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/i, () => ({ rows: [{ n: 2 }] }));
   // The invite path reads the roster, the directory and the block set one SET at
