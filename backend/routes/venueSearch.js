@@ -237,6 +237,57 @@ function storePhoto(cacheKey, entry) {
 const inflight = new Map();      // search: cacheKey -> Promise<descriptor>
 const photoInflight = new Map(); // photo cacheKey -> Promise<descriptor>
 
+// ---------------------------------------------------------------------------
+// A NAME GOOGLE REJECTS IS REMEMBERED, because asking again costs money.
+// ---------------------------------------------------------------------------
+// A failure is never written to the photo cache, and for a transient one (429,
+// 5xx, a timeout) that is right: the next request should go back upstream.
+// But a 400 or 404 on the metadata leg is Google saying this NAME is no good,
+// and the answer will not change in an hour. One phone rendering five flock
+// tiles whose stored photo names Google no longer accepts was five paid
+// metadata calls per render, five 502s in the error rate, and five placeholder
+// birds anyway. Those names are kept here, by the same hash the caches use
+// (the name itself is never stored), for a day, and answered 404 without a
+// charge. Bounded, oldest out first; cleared with the rest of memory on a
+// restart, which is when a re-ask is cheap enough to be worth it.
+const DEAD_PHOTO_REF_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_DEAD_PHOTO_REFS = 5000;
+const deadPhotoRefs = new Map(); // photoCacheKey(ref, 0) -> ts
+const deadPhotoKey = (photoRef) => photoCacheKey(photoRef, 0);
+
+function rememberDeadPhotoRef(photoRef) {
+  const key = deadPhotoKey(photoRef);
+  deadPhotoRefs.delete(key);
+  deadPhotoRefs.set(key, Date.now());
+  while (deadPhotoRefs.size > MAX_DEAD_PHOTO_REFS) {
+    deadPhotoRefs.delete(deadPhotoRefs.keys().next().value);
+  }
+}
+
+function isDeadPhotoRef(photoRef) {
+  const ts = deadPhotoRefs.get(deadPhotoKey(photoRef));
+  if (ts === undefined) return false;
+  if (Date.now() - ts > DEAD_PHOTO_REF_TTL_MS) {
+    deadPhotoRefs.delete(deadPhotoKey(photoRef));
+    return false;
+  }
+  return true;
+}
+
+const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer available.' };
+
+// What Google said, bounded, for the log. The body is JSON with an
+// error.message on a 400; anything else is still worth a glance.
+async function googleErrorText(res) {
+  try {
+    if (typeof res.text !== 'function') return '';
+    const text = String(await res.text()).replace(/\s+/g, ' ').trim();
+    return text.slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
 // A Google photo resource name is exactly `places/{place}/photos/{photo}` and
 // nothing else. `ref` was bounded only by "at least one character" and was then
 // interpolated raw into the /media URL this proxy builds around our API key, so
@@ -386,6 +437,9 @@ router.get('/photo',
             resetsAt: resetsAtISO(out.retryMs),
           });
         }
+        // A name that is gone is gone for the day here and for the day in
+        // the browser: an <img> re-rendered twenty times asks once.
+        if (out.gone) res.set('Cache-Control', `public, max-age=${Math.floor(DEAD_PHOTO_REF_TTL_MS / 1000)}`);
         return res.status(out.status).json({ error: out.error });
       }
       sendPhoto(res, out);
@@ -452,6 +506,11 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
       storePhoto(cacheKey, stored);
       return { status: 200, buffer: stored.buffer, contentType: stored.contentType };
     }
+
+    // Step 0-and-a-half: a name Google already refused today. Answered before
+    // every gate below, because it costs nothing and would otherwise cost a
+    // paid call, again, for the same no.
+    if (isDeadPhotoRef(photoRef)) return PHOTO_GONE;
 
     // Step 0a: the abuse gate. Per address, on MISSES only, so one script cannot
     // spend a budget everyone draws on. Nothing about money is decided here.
@@ -521,7 +580,15 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // deadline of their own — see utils/upstream.js.
     const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
     if (!metaRes.ok) {
-      console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
+      // The ref's length rides along with its prefix: a name Google rejects
+      // is usually a truncated or stale one, and sixty characters of prefix
+      // cannot show which. Google's own sentence says the rest.
+      console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60),
+        `(${photoRef.length} chars)`, await googleErrorText(metaRes));
+      if (metaRes.status === 400 || metaRes.status === 404) {
+        rememberDeadPhotoRef(photoRef);
+        return PHOTO_GONE;
+      }
       return { status: 502, error: 'That photo is not loading right now. Try again in a moment.' };
     }
     const meta = await metaRes.json();
@@ -1168,6 +1235,8 @@ module.exports = router;
 // in Postgres now (services/photoStore.js), so resetPhotoBudget only clears the
 // per-IP abuse table. Production code must never reset a spending counter.
 module.exports.__test = {
+  deadPhotoRefs,
+  DEAD_PHOTO_REF_TTL_MS,
   // Round 23 — the two sized-against-something numbers and the constants they
   // are sized against, so the inequalities are pinned from one source.
   VENUE_CACHE_MAX,
