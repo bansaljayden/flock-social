@@ -48,7 +48,14 @@ function dispatch(sql, params) {
   // The join and update routes read the plan's status first, and the update and
   // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
   // this file is open and nobody holds an invite, so both default quietly.
-  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) {
+    // Logged, and a test may script it: the join re-reads the status under
+    // the flock lock, and one test answers the second read differently.
+    log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+    const scripted = handlers.find(([re]) => re.test(sql));
+    if (scripted) return Promise.resolve(scripted[1](params || [], String(sql)));
+    return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
+  }
   if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
@@ -412,6 +419,31 @@ test('an invitee accepting takes the flock lock before the membership statement'
   const acceptAt = log.findIndex((q) => /UPDATE flock_members SET status = 'accepted'/.test(q.sql));
   assert.ok(begin > -1 && commit > -1 && begin < acceptAt && acceptAt < commit,
     'the accept statement must sit inside the transaction, not before or after it');
+  // And the plan's status is read again UNDER that lock, between BEGIN and
+  // the accept: the read before the transaction cannot see a cancel that
+  // lands after it, and a cancel is an UPDATE on the row this lock holds.
+  const statusReads = log
+    .map((q, i) => [i, String(q.sql).trim()])
+    .filter(([, sql]) => /^SELECT status FROM flocks WHERE id = \$1$/.test(sql))
+    .map(([i]) => i);
+  assert.ok(statusReads.some((i) => i > begin && i < acceptAt),
+    'the plan status must be re-read inside the transaction, before the accept');
+});
+
+test('an invitee accepting a plan cancelled a moment ago is refused under the lock, and nothing is written', async () => {
+  CURRENT_USER = { id: 7, name: 'Cara', role: 'user' };
+  let reads = 0;
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }] }));
+  // Open on the pool read, cancelled by the time the lock is held.
+  on(/^SELECT status FROM flocks WHERE id = \$1$/, () => ({ rows: [{ status: (reads++ === 0) ? 'planning' : 'cancelled' }] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
+  on(/UPDATE flock_members SET status = 'accepted'/, () => { throw new Error('the accept ran on a cancelled plan'); });
+
+  const res = await call('POST', '/api/flocks/42/join');
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(JSON.parse(res.text).code, 'FLOCK_CLOSED');
+  assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)), 'the refusal must roll the transaction back');
+  assert.ok(!log.some((q) => /UPDATE flock_members/.test(q.sql)), 'a refused join wrote a membership row');
 });
 
 test('the host is told when the last member leaves, and never told about the ones before', async () => {

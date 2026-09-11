@@ -1887,6 +1887,18 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     try {
       await joinClient.query('BEGIN');
       await joinClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+      // The lifecycle check above ran on the pool, before this lock, so a
+      // cancel landing between it and the UPDATE below still admitted the
+      // member to a plan that had just closed. Read it again here: a cancel
+      // is an UPDATE on this row and has to wait for the lock, so what this
+      // read sees is what the accept commits against. Same statement text as
+      // the first read, so every fixture that answers one answers both.
+      const locked = await joinClient.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+      const lockedStatus = locked.rows[0] && locked.rows[0].status;
+      if (lockedStatus === 'completed' || lockedStatus === 'cancelled') {
+        await joinClient.query('ROLLBACK');
+        return res.status(409).json({ error: 'This plan is no longer open', code: 'FLOCK_CLOSED' });
+      }
       result = await joinClient.query(
         `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
          WHERE flock_id = $1 AND user_id = $2 AND status <> 'accepted'
