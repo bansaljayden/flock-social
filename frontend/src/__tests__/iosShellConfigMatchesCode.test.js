@@ -199,12 +199,17 @@ describe('the shell config files are well formed', () => {
 describe('every NS*UsageDescription is one the app actually needs', () => {
   const usageKeys = () => plistKeys(infoPlist).filter((k) => /UsageDescription$/.test(k));
 
-  test('the plist declares exactly the four permissions the client exercises', () => {
-    // Adding a fifth is not forbidden, it just has to be justified by code and
-    // added to this list in the same change.
+  test('the plist declares exactly the five purpose strings the shell needs', () => {
+    // Four are exercised by code. The fifth, always-and-when-in-use location,
+    // is exercised by nothing: App Store Connect flagged build 28 with
+    // ITMS-90683 because the geolocation plugin's binary references the
+    // always-on API, and Apple requires the string whenever the API is
+    // referenced, used or not. Its text says the app never does that (see
+    // the test below). Adding a sixth still has to be justified here.
     expect(usageKeys().sort()).toEqual([
       'NSCameraUsageDescription',
       'NSContactsUsageDescription',
+      'NSLocationAlwaysAndWhenInUseUsageDescription',
       'NSLocationWhenInUseUsageDescription',
       'NSPhotoLibraryUsageDescription',
     ]);
@@ -462,7 +467,7 @@ describe('the permissions that are absent are absent for a reason', () => {
     expect(contactsService).toMatch(/export async function readContactPhoneNumbers\(/);
   });
 
-  test('no always-location string, and nothing asks for always authorization', () => {
+  test('the always-location string is the text Apple mandates, and nothing asks for always authorization', () => {
     // An always-authorization string with no always API is what produced the
     // ITMS-90683 rejection this file used to carry.
     //
@@ -493,7 +498,14 @@ describe('the permissions that are absent are absent for a reason', () => {
     expect(pluginSource).toMatch(/requestLocationAuthorisation\(type: \.whenInUse\)/);
     expect(pluginSource).not.toMatch(/requestAlwaysAuthorization|\.always\b/);
     expect(geolocationService).not.toMatch(/requestPermissions|authorizationRequest/);
-    expect(hasKey(infoPlist, 'NSLocationAlwaysAndWhenInUseUsageDescription')).toBe(false);
+    // The always-and-when-in-use string exists only because Apple demands it
+    // when the plugin binary references the API (ITMS-90683 on build 28). It
+    // must say, in the user's language, that the app does not do that.
+    expect(hasKey(infoPlist, 'NSLocationAlwaysAndWhenInUseUsageDescription')).toBe(true);
+    const always = infoPlist.match(/<key>NSLocationAlwaysAndWhenInUseUsageDescription<\/key>\s*<string>([^<]+)<\/string>/);
+    expect(always).not.toBeNull();
+    expect(always[1]).toMatch(/only while the app is open/);
+    expect(always[1]).toMatch(/does not track you in the background/);
     expect(hasKey(infoPlist, 'NSLocationAlwaysUsageDescription')).toBe(false);
   });
 

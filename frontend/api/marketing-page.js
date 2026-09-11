@@ -149,7 +149,7 @@ const PAGE_BLOCKS = {
     ["li", "Crowd reports from people at the venue fold in live"],
     ["p", "Everything below is live. The map, the pins, and the numbers come from the same model that ships inside Flock, trained on 1.9 million venue-hour observations across 30 cities. Pick a pin."],
     ["h2", "“Idk, you pick.” Birdie picks."],
-    ["p", "Ask Birdie the way you’d ask a friend who knows the city. It comes back with real places near you, not a list it made up."],
+    ["p", "Ask Birdie the way you’d ask a friend who knows the city. It comes back with real places near you."],
     ["p", "Birdie is AI. It runs on Google Gemini, and the crowd numbers it quotes are the app’s own."],
     ["li", "Ask in plain words. “Where’s poppin rn” works"],
     ["li", "Crowd numbers come from the same model as the map above"],
