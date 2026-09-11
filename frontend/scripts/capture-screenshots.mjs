@@ -968,6 +968,10 @@ const DRIVERS = {
     // Same owner context as venue-dash. Analytics is the tab the dashboard
     // opens on, so the click is belt and braces for a future default change.
     await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    // The owner context never passes through waitAppReady (no tab bar to wait
+    // for), so the consent bar has to be declined here as well, or it sits at
+    // the bottom of every owner capture.
+    await declineAnalyticsAsk(page);
     const analyticsTab = page.getByRole('button', { name: 'Analytics' }).first();
     if (await analyticsTab.count()) await analyticsTab.click();
     await settle(page);
@@ -975,6 +979,7 @@ const DRIVERS = {
   async 'venue-dash'(page) {
     // Separate context: owner token + venue mode + ?venue=true deep link.
     await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await declineAnalyticsAsk(page);
     const reviewsTab = page.getByRole('button', { name: 'Reviews' }).first();
     if (await reviewsTab.count()) await reviewsTab.click();
     await page.getByText('Jordan Avery').first().waitFor({ timeout: 15000 }).catch(() => {});
