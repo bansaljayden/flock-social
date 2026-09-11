@@ -452,8 +452,9 @@ async function dispatch(text, params = []) {
     // fixture holds no bills for it. The member-leave form names the leaver
     // as $2, and `owes` says whether that person still has an unsettled
     // share on that plan.
-    const owed = params && params.length >= 2 ? owes.has(`${Number(params[0])}:${Number(params[1])}`) : false;
-    return { rows: [{ owed }] };
+    if (!params || params.length < 2) return { rows: [{ owed: false }] };
+    const key = `${Number(params[0])}:${Number(params[1])}`;
+    return { rows: [{ owes: owes.has(key), owed: owedTo.has(key) }] };
   }
 
   unknown.push(sql);
@@ -502,6 +503,8 @@ function assertQueriesUnderstood() {
 // `${flockId}:${userId}` pairs that still owe on the plan's bill (see the
 // bill_split_shares rule in dispatch). Empty unless a test adds to it.
 const owes = new Set();
+// `${flockId}:${userId}` pairs that are the PAYER of a bill others still owe on.
+const owedTo = new Set();
 const noWriteMatching = (frag) =>
   assert.ok(!writes.some((w) => w.sql.includes(frag)),
     `unexpected write matching ${frag}: ${JSON.stringify(writes.map((w) => w.sql))}`);
@@ -1115,6 +1118,22 @@ test('leave: a member who still owes on the bill is refused, and keeps their row
     noWriteMatching('DELETE FROM flocks');
   } finally {
     owes.delete('10:6');
+  }
+  assertQueriesUnderstood();
+});
+
+test('leave: the payer of a bill others still owe on is refused too, with different words', async () => {
+  owedTo.add('10:6');
+  try {
+    const res = await call('POST', '/api/flocks/10/leave', 'erin');
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'BILL_OWED_TO_YOU');
+    assert.match(body.error, /owe you/);
+    assert.strictEqual(memberOf(10, 6).status, 'accepted');
+    noWriteMatching('flock_members');
+  } finally {
+    owedTo.delete('10:6');
   }
   assertQueriesUnderstood();
 });
