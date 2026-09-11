@@ -22,14 +22,17 @@ test('a run that will not end is ended, so the next hour can start', () => {
   // after it was lost too. Past MAX_RUN_MS the process exits with its own
   // code, and the timer is unref'd so it can never be what keeps a finished
   // run open.
-  assert.match(collect, /const MAX_RUN_MS = 55 \* 60 \* 1000;/);
+  assert.match(collect, /const MAX_RUN_MS = 3 \* 60 \* 60 \* 1000;/);
   assert.match(collect, /const WATCHDOG_EXIT_CODE = 3;/);
   assert.match(collect, /async function run\(\) \{\s*const watchdog = setTimeout\(/);
   assert.match(collect, /process\.exit\(WATCHDOG_EXIT_CODE\)/);
   assert.match(collect, /watchdog\.unref\(\);/);
-  // Longer than the call budget it backs up, shorter than the hour it protects.
-  const budgetMinutes = Number((collect.match(/RUN_TIME_BUDGET_MS = (\d+) \* 60 \* 1000/) || [])[1] || 50);
-  assert.ok(budgetMinutes < 55 && 55 < 60, `watchdog must sit between the ${budgetMinutes}-minute call budget and the hour`);
+  // Far past any legitimate run: fifty minutes of calls plus a corpus-wide
+  // baseline refresh that can take a good part of an hour. A watchdog that
+  // could fire inside the refresh would roll it back every hour; one that
+  // fires at three hours catches only a run that has stopped doing anything.
+  const m = collect.match(/const MAX_RUN_MS = (\d+) \* 60 \* 60 \* 1000;/);
+  assert.ok(m && Number(m[1]) >= 2 && Number(m[1]) <= 6, 'the watchdog must sit hours past a legitimate run, not minutes');
 });
 
 test('demanded venues lead each city, and the rest still start at a random one', () => {
