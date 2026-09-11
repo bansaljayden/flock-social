@@ -420,6 +420,12 @@ async function dispatch(text, params = []) {
   }
   if (has('INSERT INTO flock_members')) {
     const fid = Number(params[0]);
+    // The invite pipeline's INSERT ... SELECT writes nothing for a closed
+    // plan (WHERE EXISTS on the status); the fixture does what the WHERE does.
+    if (/WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(sql)) {
+      const f = flocks.get(fid);
+      if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
+    }
     if (!members.has(fid)) members.set(fid, []);
     const list = members.get(fid);
     const status = /'accepted'/.test(sql) ? 'accepted' : 'invited';
@@ -977,6 +983,21 @@ test('invite-link: a plan cancelled between the status check and the write mints
     assert.strictEqual(res.status, 409, JSON.stringify(body));
     assert.strictEqual(body.code, 'FLOCK_CLOSED');
     assert.strictEqual(links.length, before, 'a link was minted on a plan that had just closed');
+  } finally {
+    closeAfterStatusRead = null;
+    flocks.get(10).status = 'planning';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan cancelled between the status check and the write seats nobody', async () => {
+  closeAfterStatusRead = 10;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(memberOf(10, 4), undefined, 'a member row was written on a plan that had just closed');
   } finally {
     closeAfterStatusRead = null;
     flocks.get(10).status = 'planning';

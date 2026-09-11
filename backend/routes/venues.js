@@ -344,14 +344,30 @@ router.post('/:id/vote',
           'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
           [flockId, req.user.id, venue_name]
         );
+        // WRITTEN ONLY WHILE THE PLAN IS OPEN. votingClosedReason ran before
+        // this transaction, on the pool, so a cancel landing between it and
+        // this statement still recorded a vote on a plan that had just
+        // closed. The write reads the status in the same statement, so it
+        // decides for itself; an empty write is read back below. Same form
+        // as the socket handler's.
         const upsert = await client.query(
           `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
-           VALUES ($1, $2, $3, $4)
+           SELECT $1::int, $2::int, $3::text, $4::text
+            WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
            ON CONFLICT (flock_id, user_id, venue_name)
            DO UPDATE SET venue_id = COALESCE(EXCLUDED.venue_id, venue_votes.venue_id)
            RETURNING *`,
           [flockId, req.user.id, venue_name, venue_id || null]
         );
+        if (upsert.rowCount === 0) {
+          const closedNow = await votingClosedReason(flockId);
+          if (closedNow) {
+            // The DELETE above rolls back with it: a closed plan keeps the
+            // vote it had.
+            await client.query('ROLLBACK');
+            return res.status(closedNow === 'Flock not found' ? 404 : 409).json({ error: closedNow });
+          }
+        }
         await client.query('COMMIT');
         vote = upsert.rows[0];
       } catch (err) {
