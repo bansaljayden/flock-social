@@ -49,6 +49,12 @@
 	     and no location background mode is declared. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Flock uses your location to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS.</string>
+	<!-- App Store Connect warned on build 28 (ITMS-90683) that the geolocation
+	     plugin references the always-on API, so this string is required even
+	     though the app asks only for while-in-use and never tracks in the
+	     background: there is no location entry in UIBackgroundModes. -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Flock uses your location only while the app is open, to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS. It does not track you in the background.</string>
 	<!-- Camera. Three ways in, all started by an explicit tap:
 	       1. the in-app viewfinder (App.js `openCameraViewfinder`, getUserMedia,
 	          opened from the flock chat composer and the DM composer),
