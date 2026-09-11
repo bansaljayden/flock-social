@@ -224,7 +224,8 @@ async function dispatch(text, params = [], sink) {
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
   if (has('INSERT INTO flock_members')) {
-    return { rows: [], rowCount: 1 };
+    const ids = Array.isArray(params[1]) ? params[1] : [params[1]];
+    return { rows: ids.map((user_id) => ({ user_id: Number(user_id) })), rowCount: ids.length };
   }
 
   // ── budget remind ─────────────────────────────────────────────────────────
