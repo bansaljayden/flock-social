@@ -281,11 +281,31 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 async function googleErrorText(res) {
   try {
     if (typeof res.text !== 'function') return '';
+    // Google's error bodies are a few hundred bytes of JSON; the slice is for
+    // the log line, not a defence, since the only upstream here is Google.
     const text = String(await res.text()).replace(/\s+/g, ' ').trim();
     return text.slice(0, 200);
   } catch {
     return '';
   }
+}
+
+/* ONLY A NO THAT IS ABOUT THIS NAME IS REMEMBERED. Google answers 400 for a
+   bad API key ("API key not valid"), a quota or billing problem and a
+   malformed request, as well as for a malformed photo name, and a 404 is
+   what a name that once existed becomes. Remembering every 400 for a day
+   would turn a ten-minute key outage into a day without photos for every
+   name asked for during it, with the browser told to remember the no as
+   well. So a 404 is always the name's fault; a 400 counts only when Google's
+   own sentence talks about the resource and not about the key, the quota,
+   or permission; and a 400 with no sentence at all is not remembered. */
+function googleSaysNameIsBad(status, text) {
+  if (status === 404) return true;
+  if (status !== 400) return false;
+  const t = String(text || '');
+  if (!t) return false;
+  if (/api key|apikey|quota|billing|permission|unauthenticated|rate limit|too many/i.test(t)) return false;
+  return /photo|resource|name|not found|invalid/i.test(t);
 }
 
 // A Google photo resource name is exactly `places/{place}/photos/{photo}` and
@@ -437,9 +457,10 @@ router.get('/photo',
             resetsAt: resetsAtISO(out.retryMs),
           });
         }
-        // A name that is gone is gone for the day here and for the day in
-        // the browser: an <img> re-rendered twenty times asks once.
-        if (out.gone) res.set('Cache-Control', `public, max-age=${Math.floor(DEAD_PHOTO_REF_TTL_MS / 1000)}`);
+        // A name that is gone is gone for the day here and for an hour in
+        // the browser: an <img> re-rendered twenty times asks once, and a
+        // wrong no (see googleSaysNameIsBad) costs a phone an hour, not a day.
+        if (out.gone) res.set('Cache-Control', 'public, max-age=3600');
         return res.status(out.status).json({ error: out.error });
       }
       sendPhoto(res, out);
@@ -583,9 +604,10 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
       // The ref's length rides along with its prefix: a name Google rejects
       // is usually a truncated or stale one, and sixty characters of prefix
       // cannot show which. Google's own sentence says the rest.
+      const why = await googleErrorText(metaRes);
       console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60),
-        `(${photoRef.length} chars)`, await googleErrorText(metaRes));
-      if (metaRes.status === 400 || metaRes.status === 404) {
+        `(${photoRef.length} chars)`, why);
+      if (googleSaysNameIsBad(metaRes.status, why)) {
         rememberDeadPhotoRef(photoRef);
         return PHOTO_GONE;
       }
