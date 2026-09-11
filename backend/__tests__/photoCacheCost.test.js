@@ -331,10 +331,31 @@ test('a name Google rejects is bought once, then answered 404 from memory for a 
     venueSearch.__test.deadPhotoRefs.set(key, Date.now() - venueSearch.__test.DEAD_PHOTO_REF_TTL_MS - 1);
     global.fetch = async () => {
       googleCalls++;
-      return { ok: false, status: 400, text: async () => '' };
+      return { ok: false, status: 404, text: async () => '{"error":{"status":"NOT_FOUND"}}' };
     };
     assert.strictEqual((await fetchPhotoOnce(bad, 400, photoCacheKey(bad, 400), REQ)).status, 404);
     assert.strictEqual(googleCalls, 4, 'an expired memory still refused the ask');
+
+    // A 400 that is about the KEY, not the name, is never remembered: the
+    // next request goes back upstream, and nothing tells a browser the photo
+    // is gone.
+    venueSearch.__test.deadPhotoRefs.clear();
+    const fine = 'places/PLACE_D/photos/PerfectlyGood';
+    global.fetch = async () => {
+      googleCalls++;
+      return { ok: false, status: 400, text: async () => '{"error":{"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}' };
+    };
+    const keyOut = await fetchPhotoOnce(fine, 400, photoCacheKey(fine, 400), REQ);
+    assert.strictEqual(keyOut.status, 502, 'a key outage was reported as a dead name');
+    assert.strictEqual(keyOut.gone, undefined);
+    assert.strictEqual(venueSearch.__test.deadPhotoRefs.size, 0, 'a key outage poisoned the dead-name memory');
+    // And a 400 with no sentence at all is not evidence either way.
+    global.fetch = async () => {
+      googleCalls++;
+      return { ok: false, status: 400, text: async () => '' };
+    };
+    assert.strictEqual((await fetchPhotoOnce(fine, 400, photoCacheKey(fine, 400), REQ)).status, 502);
+    assert.strictEqual(venueSearch.__test.deadPhotoRefs.size, 0);
   } finally {
     global.fetch = realFetch;
     venueSearch.__test.deadPhotoRefs.clear();
