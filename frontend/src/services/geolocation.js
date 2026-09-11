@@ -82,6 +82,12 @@ const PERMISSION_DENIED = 1;
 const POSITION_UNAVAILABLE = 2;
 const TIMEOUT = 3;
 
+// The second, coarse attempt a precise request falls back to on a timeout or
+// an unavailable fix: low accuracy, a twelve-second window, and a fix up to
+// five minutes old is fine. Exported so the test can pin it.
+export const COARSE_RETRY = Object.freeze({ enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+
+
 /* NO SEEDED LOCATION FOR THE RECORDING RIG. The Simulator that Maestro
  * launches never delivers a fix to the app (the grant and `simctl location
  * set` both run clean and the read still times out; mobile-dev-inc/maestro
@@ -186,47 +192,82 @@ export function getCurrentPosition(onSuccess, onError, options) {
      the granted location, and it sat empty behind a request that never
      finished.
 
-     `settled` is what makes this safe rather than merely fast. A late fix
-     arriving after the timeout must not call `onSuccess` on a caller that has
-     already been told the request failed and has already moved on -- and the
-     opposite, an error arriving after a success, would overwrite a real
-     coordinate with a banner. First answer wins, whoever it is. */
+     First answer wins, per attempt and overall. A late fix arriving after the
+     timeout must not call `onSuccess` on a caller that has already been told
+     the request failed and has already moved on, and an error arriving after
+     a success must not overwrite a real coordinate with a banner.
+
+     ONE COARSE RETRY BEFORE "TRY AGAIN". Every caller asks for a precise fix
+     with a ten-second window, and indoors a precise fix can take longer than
+     that or never come, while a coarse one (cell, Wi-Fi, the fix from a few
+     minutes ago) is there for the asking. On a granted device that is what
+     "Could not get your location just now. Try again" was: a precise-only
+     request timing out, over and over, with the permission fine the whole
+     time. So a precise request that times out or comes back unavailable is
+     tried once more at low accuracy, accepting a fix up to five minutes old,
+     before the caller hears a failure. A refused permission is not retried:
+     the answer would be the same and the words the caller prints for code 1
+     are the right ones. */
   let settled = false;
-  const answer = (fn) => (...args) => {
+  const finish = (fn) => (...args) => {
     if (settled) return;
     settled = true;
-    if (timer) clearTimeout(timer);
-    if (typeof fn === 'function') fn(...args);
+    fn(...args);
   };
-  const succeed = answer(onSuccess);
-  const failNow = (code, message) => answer(() => fail(onError, code, message))();
-  const failPlugin = (err) => answer(() => failFromPlugin(onError, err))();
+  const succeed = finish((position) => { if (typeof onSuccess === 'function') onSuccess(position); });
+  const failFinal = finish((code, message, pluginErr) => {
+    if (pluginErr) failFromPlugin(onError, pluginErr);
+    else fail(onError, code, message);
+  });
 
-  /* No timeout asked for, no timeout imposed: watchPosition-style callers that
-     want to wait indefinitely keep that behaviour by passing nothing, which is
-     also what the web API does with the option absent. */
-  const ms = Number(options && options.timeout);
-  const timer = Number.isFinite(ms) && ms > 0
-    ? setTimeout(() => failNow(TIMEOUT, 'Timed out getting your location.'), ms)
-    : null;
+  const attempt = (opts, onAttemptFail) => {
+    let done = false;
+    let timer = null;
+    const settle = (code, message, pluginErr) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      onAttemptFail(code, message, pluginErr);
+    };
+    /* No timeout asked for, no timeout imposed: watchPosition-style callers
+       that want to wait indefinitely keep that behaviour by passing nothing,
+       which is also what the web API does with the option absent. */
+    const ms = Number(opts && opts.timeout);
+    timer = Number.isFinite(ms) && ms > 0
+      ? setTimeout(() => settle(TIMEOUT, 'Timed out getting your location.', null), ms)
+      : null;
+    load().then((Geolocation) => {
+      if (!Geolocation) {
+        settle(POSITION_UNAVAILABLE, 'Location is not available on this device.', null);
+        return;
+      }
+      // try/catch as well as the rejection handler: an SOS is one of the
+      // callers, and a bridge that throws synchronously must still reach an
+      // error path rather than becoming an unhandled rejection nobody is
+      // waiting on.
+      try {
+        Geolocation.getCurrentPosition(opts).then(
+          (position) => {
+            if (done) return;
+            done = true;
+            if (timer) clearTimeout(timer);
+            succeed(position);
+          },
+          (err) => settle(codeFor(err), null, err),
+        );
+      } catch (err) {
+        settle(codeFor(err), null, err);
+      }
+    });
+  };
 
-
-  load().then((Geolocation) => {
-    if (!Geolocation) {
-      failNow(POSITION_UNAVAILABLE, 'Location is not available on this device.');
+  const wantsPrecise = !!(options && options.enableHighAccuracy);
+  attempt(options, (code, message, pluginErr) => {
+    if (wantsPrecise && (code === TIMEOUT || code === POSITION_UNAVAILABLE)) {
+      attempt(COARSE_RETRY, (code2, message2, pluginErr2) => failFinal(code2, message2, pluginErr2));
       return;
     }
-    // try/catch as well as the rejection handler: an SOS is one of the callers,
-    // and a bridge that throws synchronously must still reach an error path
-    // rather than becoming an unhandled rejection nobody is waiting on.
-    try {
-      Geolocation.getCurrentPosition(options).then(
-        (position) => succeed(position),
-        (err) => failPlugin(err),
-      );
-    } catch (err) {
-      failPlugin(err);
-    }
+    failFinal(code, message, pluginErr);
   });
 }
 
