@@ -557,10 +557,15 @@ test('vote_venue: a plan cancelled between the closure check and the write recor
   // The vote runs on a checked-out client (advisory lock), which mockPool
   // does not cover; BEGIN, the lock and ROLLBACK are answered here.
   const realConnect = pool.connect;
+  const txn = [];
   pool.connect = async () => ({
-    query: (text, params) => (/^\s*(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(text)
-      ? Promise.resolve({ rows: [] })
-      : pool.query(text, params)),
+    query: (text, params) => {
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(text)) {
+        txn.push(text.trim().split(/\s+/)[0].toUpperCase());
+        return Promise.resolve({ rows: [] });
+      }
+      return pool.query(text, params);
+    },
     release: () => {},
   });
   try {
@@ -571,6 +576,8 @@ test('vote_venue: a plan cancelled between the closure check and the write recor
     await fire(s, 'vote_venue', { flockId: 4102, venue_name: 'Bar' });
 
     assert.deepStrictEqual(errorsOf(s), ['This plan was cancelled, so its venue vote is closed']);
+    assert.ok(txn.includes('ROLLBACK'), 'a write that did not land must be rolled back');
+    assert.ok(!txn.includes('COMMIT'), 'and never committed');
     const insert = calls.find((c) => /INSERT INTO venue_votes/.test(c.text));
     assert.ok(insert, 'the write is what decides, so it must run');
     assert.match(insert.text, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
