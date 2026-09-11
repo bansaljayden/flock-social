@@ -14,8 +14,12 @@
 const NATIVE = { isNativePlatform: () => true };
 
 let mockPluginBehaviour = () => new Promise(() => {});
+// The probe every request starts with. Granted here; the bridge-probe suite
+// covers the other answers and the silence.
+let mockProbe = () => Promise.resolve({ location: 'granted', coarseLocation: 'granted' });
 jest.mock('@capacitor/geolocation', () => ({
   Geolocation: {
+    checkPermissions: (...args) => mockProbe(...args),
     getCurrentPosition: (...args) => mockPluginBehaviour(...args),
   },
 }), { virtual: true });
