@@ -19,10 +19,30 @@ test('a fresh native install opens on account creation', () => {
 });
 
 test('every ask for location on a first run carries the control', () => {
-  const events = app.slice(app.indexOf('Events need your location'), app.indexOf('Events need your location') + 1200);
+  // The window is wide enough for the three-sentence gate (the ask, the
+  // wait, the failure) that sits between the heading and the control.
+  const events = app.slice(app.indexOf('Events need your location'), app.indexOf('Events need your location') + 2400);
   expect(events).toMatch(/if \(!locationEnabled\) toggleLocation\(true\); else requestUserLocation\(true\);/);
   expect(events).toMatch(/Turn on location/);
   expect(app).toMatch(/Finding where you are\. Venues near you show up once that lands\./);
+});
+
+test('the events gate reads the list once a location lands, and says what it is doing', () => {
+  // The tap used to ask the device and then stop: a fix that arrived set
+  // userLocation and nothing read events, so the screen did not change. And
+  // for the ten seconds a device can take to answer, nothing on the screen
+  // said a request was running.
+  expect(app).toMatch(/if \(!showEventsView \|\| !userLocation\) return;\s*if \(featuredEvents \|\| featuredEventsLoading \|\| featuredEventsError\) return;\s*fetchFeaturedEvents\(`\$\{userLocation\.lat\},\$\{userLocation\.lng\}`, eventsSearchQuery\);/);
+  const events = app.slice(app.indexOf('Events need your location'), app.indexOf('Events need your location') + 2400);
+  expect(events).toMatch(/Finding where you are\. Events near you show up once that lands\./);
+  expect(events).toMatch(/Could not get your location just now\. Try again\./);
+  expect(events).toMatch(/Turn it on in Settings, then come back\./);
+  expect(events).toMatch(/disabled=\{locationLoading\}/);
+  // The toggle path reports its wait, or the gate above would have nothing
+  // to show while a device thinks.
+  const toggle = app.slice(app.indexOf('const toggleLocation = '), app.indexOf('const toggleLocation = ') + 2400);
+  expect(toggle).toMatch(/setLocationLoading\(true\);\s*getCurrentPosition\(/);
+  expect((toggle.match(/setLocationLoading\(false\);/g) || []).length).toBe(2);
 });
 
 test('the empty calendar has a next action', () => {
