@@ -65,7 +65,7 @@ function reset() {
     flock: {
       id: FLOCK, creator_id: 1, name: 'Rooftop Friday', budget_enabled: true,
       budget_locked: false, budget_ceiling: null, budget_context: 'dinner',
-      ghost_mode_enabled: false,
+      ghost_mode_enabled: false, status: 'planning',
     },
     members: [1, 2, 3, 4],
     submissions: [],
@@ -94,8 +94,9 @@ async function dispatch(sql, params) {
   if (/^SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'$/.test(flat)) {
     return world.members.includes(Number(p[1])) ? { rows: [{ id: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
-  if (/^SELECT budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
-    return { rows: [{ budget_enabled: world.flock.budget_enabled, budget_locked: world.flock.budget_locked }], rowCount: 1 };
+  if (/^SELECT budget_enabled, budget_locked, status FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
+    const { budget_enabled, budget_locked, status } = world.flock;
+    return { rows: [{ budget_enabled, budget_locked, status }], rowCount: 1 };
   }
   if (/^SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
     const { creator_id, budget_enabled, budget_locked } = world.flock;
@@ -300,7 +301,7 @@ test('a late submission BELOW the published cap is refused, and the number does 
   world.members.push(5);
   as(5);
   const late = await submit(5);
-  assert.strictEqual(late.status, 400, late.text);
+  assert.strictEqual(late.status, 409, late.text);
   assert.match(late.body.error, /locked/i);
   assert.strictEqual(world.submissions.find((s) => s.user_id === 5), undefined,
     'a refused submission still wrote a row');
@@ -308,7 +309,7 @@ test('a late submission BELOW the published cap is refused, and the number does 
   // And an existing member cannot walk it down by editing their own answer.
   as(1);
   const edit = await submit(1);
-  assert.strictEqual(edit.status, 400, edit.text);
+  assert.strictEqual(edit.status, 409, edit.text);
 
   assert.deepStrictEqual(distinctNumbers(broadcastCeilings()), published,
     'a refused submission still moved the published number');
@@ -335,7 +336,7 @@ test('the creator locking early publishes once too, and cannot publish a second,
   world.flock.creator_id = 2;
   as(2);
   const relock = await call('POST', `/api/budget/${FLOCK}/lock`);
-  assert.strictEqual(relock.status, 400, relock.text);
+  assert.strictEqual(relock.status, 409, relock.text);
   assert.match(relock.body.error, /locked/i);
 
   assert.deepStrictEqual(distinctNumbers(broadcastCeilings()), [bandCeiling(60)],

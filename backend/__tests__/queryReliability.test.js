@@ -207,8 +207,8 @@ function scriptInvite({
 } = {}) {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/,
     () => ({ rows: [{ id: 99 }], rowCount: 1 }));
-  on(/SELECT id, name FROM flocks WHERE id = \$1/,
-    (p) => ({ rows: [{ id: Number(p[0]), name: 'Friday' }], rowCount: 1 }));
+  on(/SELECT id, name(?:, status)? FROM flocks WHERE id = \$1/,
+    (p) => ({ rows: [{ id: Number(p[0]), name: 'Friday', status: 'planning' }], rowCount: 1 }));
   on(/COUNT\(\*\)::int AS n FROM flock_members WHERE flock_id = \$1/, () => ({ rows: [{ n: seated }], rowCount: 1 }));
 
   // The three set-based reads. Each answers exactly what the per-id shape it

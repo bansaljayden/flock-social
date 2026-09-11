@@ -1683,6 +1683,13 @@ router.post('/:flockId/ghost-commit',
           await client.query('ROLLBACK');
           return res.status(404).json({ error: 'Flock not found' });
         }
+        if (flockResult.rows[0].status === 'completed' || flockResult.rows[0].status === 'cancelled') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'This plan is finished and cannot accept budget commitments',
+            code: 'FLOCK_CLOSED',
+          });
+        }
 
         // PRIVACY (audit 2026-08-12): this endpoint was a third door to the raw
         // ceiling. Same anonymity threshold as everywhere else, and ghost mode

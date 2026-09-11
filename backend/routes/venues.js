@@ -496,3 +496,4 @@ module.exports.broadcastGuestVote = broadcastGuestVote;
 // arithmetic that was not. Sharing the functions makes parity structural.
 module.exports.collectVoteRows = collectVoteRows;
 module.exports.tailorVotes = tailorVotes;
+module.exports.votingClosedReason = votingClosedReason;
