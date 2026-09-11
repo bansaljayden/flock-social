@@ -111,9 +111,11 @@ let writes;    // every mutating statement the routes issued
 let queries;   // { sql, params } for every statement
 let unknown;   // statements the fixture did not model
 let vanishAfterOwnershipCheck; // see the flock-row lookup below
+let closeAfterStatusRead = null; // a flock id: closed right after its status is read (same lookup)
 
 function reset() {
   vanishAfterOwnershipCheck = false;
+  closeAfterStatusRead = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -243,11 +245,15 @@ async function dispatch(text, params = []) {
   // ── flock row lookups (PUT, DELETE, leave, invite, attendance, join push) ──
   if (/^SELECT [\w, ]+ FROM flocks WHERE id = \$1$/.test(sql)) {
     const f = flocks.get(Number(params[0]));
+    const row = f ? { ...f } : null;
     // "Revoked mid-request": the ownership check reads a row that is real at
     // the instant it is read and gone by the time the write lands. This is the
     // only way to produce that interleaving deterministically.
     if (f && vanishAfterOwnershipCheck) { flocks.delete(Number(params[0])); }
-    return { rows: f ? [{ ...f }] : [], rowCount: f ? 1 : 0 };
+    // "Cancelled mid-request": the status check reads an open plan and the
+    // plan is closed by the time the write lands. Same device, one row later.
+    if (f && closeAfterStatusRead === Number(params[0])) { f.status = 'cancelled'; closeAfterStatusRead = null; }
+    return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   }
   if (has('FROM flocks f JOIN users u ON u.id = f.creator_id')) {
     const f = flocks.get(Number(params[0]));
@@ -343,8 +349,13 @@ async function dispatch(text, params = []) {
     return { rows: l ? [{ token: l.token }] : [], rowCount: l ? 1 : 0 };
   }
   if (has('INSERT INTO flock_invite_links')) {
+    // The route's INSERT ... SELECT reads the flock row in the same statement
+    // and writes nothing for a closed or missing plan; the fixture does what
+    // the WHERE does.
+    const f = flocks.get(Number(params[1]));
+    if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
     links.push({ token: params[0], flock_id: Number(params[1]), revoked: false });
-    return { rows: [], rowCount: 1 };
+    return { rows: [{ token: params[0] }], rowCount: 1 };
   }
 
   // ── mutations on flocks ──
@@ -951,6 +962,25 @@ test('invite-link: a member can still share, and a departed one cannot', async (
   await call('POST', '/api/flocks/10/leave', 'erin');
   const after = await call('POST', '/api/flocks/10/invite-link', 'erin');
   assert.strictEqual(after.status, 403);
+  assertQueriesUnderstood();
+});
+
+test('invite-link: a plan cancelled between the status check and the write mints no link', async () => {
+  // The check reads an open plan; the write lands on a cancelled one. The
+  // write itself carries the rule, so nothing is minted and the caller hears
+  // the same 409 the check would have given.
+  closeAfterStatusRead = 10;
+  try {
+    const before = links.length;
+    const res = await call('POST', '/api/flocks/10/invite-link', 'alice', { regenerate: true });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(links.length, before, 'a link was minted on a plan that had just closed');
+  } finally {
+    closeAfterStatusRead = null;
+    flocks.get(10).status = 'planning';
+  }
   assertQueriesUnderstood();
 });
 

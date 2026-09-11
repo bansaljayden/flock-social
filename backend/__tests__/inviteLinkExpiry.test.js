@@ -135,6 +135,8 @@ async function dispatch(text, params = []) {
     // the fixture reproduces the SAME expression rather than inventing a value:
     // GREATEST(NOW() + 14 days, COALESCE(event_time, NOW()) + 7 days).
     if (Number(params[1]) !== flockRow.id) return { rows: [], rowCount: 0 };
+    // The write carries the closed-plan rule (INSERT ... SELECT ... WHERE status).
+    if (flockRow.status === 'completed' || flockRow.status === 'cancelled') return { rows: [], rowCount: 0 };
     const carriesExpiry = clause(sql, /expires_at/);
     const eventMs = flockRow.event_time ? Date.parse(flockRow.event_time) : Date.now();
     links.push({
