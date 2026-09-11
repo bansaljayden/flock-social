@@ -21,10 +21,13 @@ const NATIVE = { isNativePlatform: () => true };
 
 let mockProbe = () => Promise.resolve({ location: 'granted', coarseLocation: 'granted' });
 let mockPluginBehaviour = () => new Promise(() => {});
+let mockWatch = () => new Promise(() => {});
 jest.mock('@capacitor/geolocation', () => ({
   Geolocation: {
     checkPermissions: (...args) => mockProbe(...args),
     getCurrentPosition: (...args) => mockPluginBehaviour(...args),
+    watchPosition: (...args) => mockWatch(...args),
+    clearWatch: () => Promise.resolve(),
   },
 }), { virtual: true });
 
@@ -60,6 +63,7 @@ describe('the bridge probe', () => {
     Object.defineProperty(window.navigator, 'geolocation', { value: web, configurable: true });
     mockProbe = () => Promise.resolve({ location: 'granted', coarseLocation: 'granted' });
     mockPluginBehaviour = jest.fn(() => new Promise(() => {}));
+    mockWatch = jest.fn(() => new Promise(() => {}));
     // eslint-disable-next-line global-require
     geo = require('../services/geolocation');
     ({ PROBE_WINDOW, PROMPT_WINDOW } = geo);
@@ -190,8 +194,11 @@ describe('the bridge probe', () => {
     await flush();
     expect(onSuccess).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
-    // And the long clock was cleared by the success, not merely outlived:
-    // past PROMPT_WINDOW nothing fires on a caller that already has its fix.
+    // And the long clock was cleared BY the success, not merely outlived:
+    // the fake clock holds no pending timer at all once the fix is in, so a
+    // leaked PROMPT_WINDOW timer (a caller that has moved on, a settle that
+    // only ignores it) would show up here as a count of one.
+    expect(jest.getTimerCount()).toBe(0);
     jest.advanceTimersByTime(PROMPT_WINDOW + 1000);
     await flush();
     expect(onError).not.toHaveBeenCalled();
@@ -209,10 +216,14 @@ describe('the bridge probe', () => {
     expect(mockPluginBehaviour).toHaveBeenCalledTimes(2);
   });
 
-  test('a probe that was superseded cannot flip the flag when it finally times out', async () => {
-    // First probe hangs; second request arrives after it resolved 'silent'
-    // and hears the plugin. The old probe's late timer must not send the
-    // third request back to WebKit.
+  test('a late answer from a probe that already timed out restores the plugin, once, for the next request', async () => {
+    // First probe hangs and times out (silent); its late answer then clears
+    // the silence; the next request probes afresh and reaches the plugin.
+    // The sequence guard in probe() covers the one ordering this cannot
+    // build: with a single shared flight, a superseded probe's timer cannot
+    // fire after a newer probe exists, because a newer probe starts only
+    // after the old flight has settled. The guard is kept as a belt for a
+    // future change to that invariant, and this test does not claim it.
     const hung = deferred();
     mockProbe = () => hung.promise;
     geo.getCurrentPosition(jest.fn(), jest.fn(), { timeout: 10000 });
@@ -250,6 +261,71 @@ describe('the bridge probe', () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0].code).toBe(3);
     expect(onError.mock.calls[0][0].detail).toBe('webkit/bridge-silent');
+  });
+
+  test('a WebKit fix that arrives after the fallback clock does not reach a caller already told it failed', async () => {
+    mockProbe = () => new Promise(() => {});
+    let lateOk = null;
+    web.getCurrentPosition.mockImplementation((ok) => { lateOk = ok; });
+    const onSuccess = jest.fn();
+    const onError = jest.fn();
+
+    geo.getCurrentPosition(onSuccess, onError, { enableHighAccuracy: true, timeout: 10000 });
+    await flush();
+    jest.advanceTimersByTime(PROBE_WINDOW);
+    await flush();
+    expect(typeof lateOk).toBe('function');
+    jest.advanceTimersByTime(10000);
+    await flush();
+    expect(onError).toHaveBeenCalledTimes(1);
+
+    lateOk({ coords: { latitude: 1, longitude: 2 } });
+    await flush();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  test('a timeout of zero is a clock, on the native path and on the WebKit fallback', async () => {
+    // Native: granted, the plugin never answers, and zero means now.
+    const onError = jest.fn();
+    geo.getCurrentPosition(jest.fn(), onError, { timeout: 0 });
+    await flush();
+    jest.advanceTimersByTime(0);
+    await flush();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].code).toBe(3);
+
+    // WebKit: the bridge is silent, WebKit never answers, and zero means now.
+    jest.resetModules();
+    mockProbe = () => new Promise(() => {});
+    web.getCurrentPosition.mockImplementation(() => {});
+    // eslint-disable-next-line global-require
+    const fresh = require('../services/geolocation');
+    const onWebError = jest.fn();
+    fresh.getCurrentPosition(jest.fn(), onWebError, { timeout: 0 });
+    await flush();
+    jest.advanceTimersByTime(PROBE_WINDOW);
+    await flush();
+    jest.advanceTimersByTime(0);
+    await flush();
+    expect(onWebError).toHaveBeenCalledTimes(1);
+    expect(onWebError.mock.calls[0][0].code).toBe(3);
+    expect(onWebError.mock.calls[0][0].detail).toBe('webkit/bridge-silent');
+  });
+
+  test('a native watch cleared before the plugin answered does not report the plugin\'s rejection', async () => {
+    const setup = deferred();
+    mockWatch = jest.fn(() => setup.promise);
+    const onError = jest.fn();
+
+    const handle = geo.watchPosition(jest.fn(), onError, { enableHighAccuracy: true });
+    await flush();
+    expect(mockWatch).toHaveBeenCalledTimes(1);
+    geo.clearWatch(handle);
+    setup.reject({ code: 'OS-PLUG-GLOC-0002', message: 'Position unavailable' });
+    await flush();
+
+    expect(onError).not.toHaveBeenCalled();
   });
 
   test('a watch that is the first request of the session still finds a silent bridge', async () => {

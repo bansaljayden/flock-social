@@ -507,6 +507,16 @@ const INVENTORY = [
     why: 'Self-draining; followers ride free, which is the intended "charge what you spend" reading.',
   },
   {
+    file: 'routes/venueSearch.js', name: 'deadPhotoRefs', kind: 'cache',
+    key: 'photoCacheKey(photoRef, 0): the same sha256 the photo tiers use, with a width of 0, so the name itself is never held',
+    callerControls: 'the ref, within isPhotoRefShaped',
+    protects: 'the paid /media metadata call from being repeated, and charged, for a name Google has already answered 400 or 404 to; one phone re-rendering five stale flock-tile photos was five paid calls per render',
+    denominator: 'rejected names, 24h TTL',
+    bound: 'MAX_DEAD_PHOTO_REFS = 5000, oldest out first',
+    verdict: 'SAFE',
+    why: 'An entry is written only AFTER Google refused the name, which means the caller already paid the metadata charge every other gate in this path meters; filling it costs a charged call per entry. Bounded, expiring, hashed, and cleared on restart with the rest of memory. A transient failure (429, 5xx, timeout) is never written, so the next request for a healthy name still goes upstream.',
+  },
+  {
     file: 'routes/venueSearch.js', name: 'venueCache', kind: 'cache',
     key: '`search:${normalized}|${lat2dp,lng2dp}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js on 2026-08-20, so the duplicate Place Details call the venue detail screen was making could be collapsed onto one shared payload)',
     callerControls: 'the ~80-char free-text query',
