@@ -262,12 +262,13 @@ function scriptInvite({
     throw new Error('PER-PAIR isBlockedBetween issued — the invite loop is back');
   });
 
-  on(/UPDATE flock_members SET status = 'invited'/, (p) => (
-    { rows: [], rowCount: (Array.isArray(p[1]) ? p[1].length : 1) }
-  ));
-  on(/INSERT INTO flock_members/, (p) => (
-    { rows: [], rowCount: (Array.isArray(p[1]) ? p[1].length : 1) }
-  ));
+  // Both writes RETURNING user_id; every id offered is reported written.
+  const wrote = (p) => {
+    const ids = Array.isArray(p[1]) ? p[1] : [p[1]];
+    return { rows: ids.map((user_id) => ({ user_id: Number(user_id) })), rowCount: ids.length };
+  };
+  on(/UPDATE flock_members SET status = 'invited'/, wrote);
+  on(/INSERT INTO flock_members/, wrote);
 }
 
 test('invite: the round trip count does not grow with the size of the list', async () => {

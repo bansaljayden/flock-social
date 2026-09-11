@@ -178,13 +178,13 @@ pool.query = async (text, params = []) => {
     // landed. ON CONFLICT DO NOTHING: an id that already has a row is not a new
     // row — unchanged, just applied to each id instead of to the only id.
     const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
-    let affected = 0;
+    const written = [];
     for (const uid of ids) {
       if (members.has(uid)) continue;
       members.set(uid, 'invited');
-      affected += 1;
+      written.push(uid);
     }
-    return { rows: [], rowCount: affected };
+    return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
   if (has("UPDATE flock_members SET status = 'invited'")) {
     // Honour the statement's own `AND status = 'declined'` guard, so the SQL
@@ -202,14 +202,14 @@ pool.query = async (text, params = []) => {
     if (Number(params[0]) !== FLOCK_ID) return { rows: [], rowCount: 0 };
     const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
     const guarded = /AND status = 'declined'/.test(flat);
-    let affected = 0;
+    const written = [];
     for (const uid of ids) {
       if (!members.has(uid)) continue;
       if (guarded && members.get(uid) !== 'declined') continue;
       members.set(uid, 'invited');
-      affected += 1;
+      written.push(uid);
     }
-    return { rows: [], rowCount: affected };
+    return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
 
   unknown.push(flat);

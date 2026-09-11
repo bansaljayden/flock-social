@@ -2292,7 +2292,8 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     reinvited = await pool.query(
       `UPDATE flock_members SET status = 'invited'
        WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'
-         AND EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))`,
+         AND EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
+       RETURNING user_id`,
       [flockId, reinviteIds]
     );
   }
@@ -2319,7 +2320,8 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
       `INSERT INTO flock_members (flock_id, user_id, status)
        SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
         WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
-       ON CONFLICT (flock_id, user_id) DO NOTHING`,
+       ON CONFLICT (flock_id, user_id) DO NOTHING
+       RETURNING user_id`,
       [flockId, newIds]
     );
   }
@@ -2342,6 +2344,19 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     if (st === 'completed' || st === 'cancelled') {
       return { invited: [], throttled: false, full: false, closed: true };
     }
+  }
+
+  // The people invited are the ones the database reports written, not the
+  // ones planned: a new id that conflicted with a concurrent invite was
+  // seated by that invite and has already been told, and a declined member
+  // who changed their mind before the re-invite landed was not re-invited.
+  // The announcements below, and the caller's answer, follow this list.
+  const landed = new Set([
+    ...(reinvited ? reinvited.rows : []),
+    ...(written ? written.rows : []),
+  ].map((r) => Number(r.user_id)));
+  for (let i = invited.length - 1; i >= 0; i -= 1) {
+    if (!landed.has(invited[i].user_id)) invited.splice(i, 1);
   }
 
   // Notify invited users via socket

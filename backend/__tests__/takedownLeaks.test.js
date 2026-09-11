@@ -330,7 +330,7 @@ test('flock_members_invited does not hand the inviter name to someone who blocke
   }));
   on(BLOCK_PAIRS, () => ({ rows: [] }));
   on(BLOCKED_BETWEEN, () => ({ rows: [] }));
-  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 77 }] }));
+  on(/INSERT INTO flock_members/, (p) => ({ rows: (p[1] || []).map((user_id) => ({ user_id: Number(user_id) })), rowCount: (p[1] || []).length }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(INVISIBLE_IDS, () => ({ rows: [{ id: 3 }] }));
 
@@ -361,7 +361,7 @@ test('flock_members_invited names only the people who really got a row', async (
   }));
   // 7 blocked the inviter. One row, one direction — that is all a block ever is.
   on(BLOCK_PAIRS, () => ({ rows: [{ blocker_id: 7, blocked_id: 1 }] }));
-  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 77 }] }));
+  on(/INSERT INTO flock_members/, (p) => ({ rows: (p[1] || []).map((user_id) => ({ user_id: Number(user_id) })), rowCount: (p[1] || []).length }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }] }));
   on(INVISIBLE_IDS, () => ({ rows: [] }));
 
