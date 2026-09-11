@@ -492,25 +492,49 @@ const OUTSTANDING_BILL_MESSAGE =
    settle the bill without the payer forgiving the share. So a member who
    still owes on this plan's bill settles first. A share where they are the
    payer is not owed to anyone. */
-async function memberOwesOn(flockId, userId, db = pool) {
+// Two ways to be tied to a bill: owing on it, or being the one everybody
+// owes. A payer who leaves strands the bill the other way round: the shares
+// point at a person who can no longer open the plan to mark them settled.
+// Answers null when the member is free to go, or the refusal to send. Runs
+// on the leave transaction's client, UNDER the flock row lock, because
+// POST /api/billing/:flockId/create takes that same lock before it reads the
+// roster and writes shares: a bill cannot be committed against this member
+// between this read and the DELETE below, which a read on the pool could not
+// promise.
+async function memberBoundToBill(flockId, userId, db = pool) {
   const { rows } = await db.query(
-    `SELECT EXISTS (
-       SELECT 1
-         FROM bill_split_shares bss
-         JOIN bill_splits bs ON bs.id = bss.bill_id
-        WHERE bs.flock_id = $1
-          AND bss.user_id = $2
-          AND bs.paid_by IS NOT NULL
-          AND bs.paid_by <> $2
-          AND bss.settled IS NOT TRUE
-     ) AS owed`,
+    `SELECT
+       EXISTS (
+         SELECT 1
+           FROM bill_split_shares bss
+           JOIN bill_splits bs ON bs.id = bss.bill_id
+          WHERE bs.flock_id = $1
+            AND bss.user_id = $2
+            AND bs.paid_by IS NOT NULL
+            AND bs.paid_by <> $2
+            AND bss.settled IS NOT TRUE
+       ) AS owes,
+       EXISTS (
+         SELECT 1
+           FROM bill_split_shares bss
+           JOIN bill_splits bs ON bs.id = bss.bill_id
+          WHERE bs.flock_id = $1
+            AND bs.paid_by = $2
+            AND bss.user_id <> $2
+            AND bss.settled IS NOT TRUE
+       ) AS owed`,
     [flockId, userId]
   );
-  return !!rows[0]?.owed;
+  const row = rows[0] || {};
+  if (row.owes) return { error: OWN_SHARE_UNSETTLED_MESSAGE, code: 'SHARE_UNSETTLED' };
+  if (row.owed) return { error: OWED_TO_YOU_MESSAGE, code: 'BILL_OWED_TO_YOU' };
+  return null;
 }
 
 const OWN_SHARE_UNSETTLED_MESSAGE =
   'You still owe money on this plan. Settle your share first, then you can leave.';
+const OWED_TO_YOU_MESSAGE =
+  'People still owe you on this plan\'s bill. Settle it first, then you can leave.';
 
 router.get('/', async (req, res) => {
   try {
@@ -2859,30 +2883,6 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       return undefined;
     }
 
-    // A member who still owes on the bill does not leave it behind. Decided
-    // BEFORE the fan-out below, not inside the transaction under it: the room
-    // is told "X left" before the row goes, and a refusal after that sentence
-    // would be one the room had already heard the opposite of.
-    if (await memberOwesOn(flockId, req.user.id)) {
-      return res.status(409).json({ error: OWN_SHARE_UNSETTLED_MESSAGE, code: 'SHARE_UNSETTLED' });
-    }
-
-    // Notify flock that member left (accepted members only — see above).
-    // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
-    // else in the app was never in that room and missed the count change. The
-    // DELETE is below, so the leaver still holds their accepted row and the
-    // roster read reaches the same set the room held. Guarded so a fan-out
-    // failure cannot 500 a leave that is about to succeed.
-    if (io && wasAccepted) {
-      // Block-aware, because this payload carries the leaver's NAME. Per-member
-      // fan-out reaches a blocker wherever they are in the app, where the old
-      // room broadcast only reached one who happened to have the flock screen
-      // open, so delivering it unfiltered would widen what a block leaks.
-      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
-        flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
-      }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
-    }
-
     // Remove the member and, if nobody accepted remains, the flock, in ONE
     // statement, the way the creator branch above is one cascading DELETE.
     // This used to be three autocommits: drop the membership, count who is
@@ -2913,6 +2913,29 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     try {
       await leaveClient.query('BEGIN');
       await leaveClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+      // A member tied to an open bill does not leave it behind. Decided under
+      // the lock (see memberBoundToBill) and BEFORE the fan-out, so the room is
+      // never told "X left" about a departure that is then refused.
+      const bound = await memberBoundToBill(flockId, req.user.id, leaveClient);
+      if (bound) {
+        await leaveClient.query('ROLLBACK');
+        return res.status(409).json(bound);
+      }
+      // Notify flock that member left (accepted members only — see above).
+      // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
+      // else in the app was never in that room and missed the count change. The
+      // DELETE is below, so the leaver still holds their accepted row and the
+      // roster read reaches the same set the room held. Guarded so a fan-out
+      // failure cannot 500 a leave that is about to succeed.
+      if (io && wasAccepted) {
+        // Block-aware, because this payload carries the leaver's NAME. Per-member
+        // fan-out reaches a blocker wherever they are in the app, where the old
+        // room broadcast only reached one who happened to have the flock screen
+        // open, so delivering it unfiltered would widen what a block leaks.
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
+          flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
+        }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
+      }
       left = await leaveClient.query(
         `WITH gone AS (
            DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1
