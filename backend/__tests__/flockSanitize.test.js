@@ -142,9 +142,9 @@ pool.query = async (text, params = []) => {
   if (has('SELECT f.event_time, f.venue_name')) {
     return { rows: [{ event_time: null, venue_name: null, going: 1 }], rowCount: 1 };
   }
-  if (has('SELECT id, name FROM flocks WHERE id = $1')) {
+  if (has('SELECT id, name, status FROM flocks WHERE id = $1')) {
     return Number(params[0]) === FLOCK_ID
-      ? { rows: [{ id: FLOCK_ID, name: 'Rooftop Friday' }], rowCount: 1 }
+      ? { rows: [{ id: FLOCK_ID, name: 'Rooftop Friday', status: 'planning' }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
   if (has('SELECT creator_id, name FROM flocks WHERE id = $1')) {

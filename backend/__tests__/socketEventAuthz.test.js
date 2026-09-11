@@ -131,9 +131,13 @@ function mockPool(routes, calls) {
   callLog = calls || null;
   pool.query = async (text, params) => {
     if (calls) calls.push({ text: String(text), params });
-    for (const [pattern, rows] of routes) {
+    for (const [pattern, rows, rowCount] of routes) {
       if (pattern.test(text)) {
-        return { rows: typeof rows === 'function' ? rows(params) : rows };
+        const resolved = typeof rows === 'function' ? rows(params) : rows;
+        return {
+          rows: resolved,
+          rowCount: rowCount === undefined ? resolved.length : rowCount,
+        };
       }
     }
     throw new Error(`unexpected query: ${String(text).replace(/\s+/g, ' ').slice(0, 90)}`);
@@ -481,7 +485,7 @@ test('select_venue refuses everyone but the creator and block-filters the announ
   const calls = [];
   const restore = mockPool([
     [/SELECT creator_id(, venue_name)? FROM flocks WHERE id = \$1/, [{ creator_id: 900, venue_name: null }]],
-    [/UPDATE flocks/, []],
+    [/UPDATE flocks/, [], 1],
     [INVISIBLE, [{ id: 905 }]],
   ], calls);
   try {
@@ -500,6 +504,76 @@ test('select_venue refuses everyone but the creator and block-filters the announ
     assert.strictEqual(announced.room, 'flock:4306');
     assert.deepStrictEqual(announced.excluded, ['user:905'],
       'a member who blocked the creator must not get the toast naming them');
+  } finally { restore(); }
+});
+
+test('vote_venue uses the REST closure reasons for completed and cancelled flocks', async () => {
+  __resetRateLimiters();
+  let status = 'completed';
+  const calls = [];
+  const restore = mockPool([
+    [MEMBERSHIP, [{ id: 1 }]],
+    [/SELECT status FROM flocks WHERE id = \$1/, () => [{ status }]],
+  ], calls);
+  try {
+    const cases = [
+      ['completed', 'This plan is finished, so its venue vote is closed'],
+      ['cancelled', 'This plan was cancelled, so its venue vote is closed'],
+    ];
+    for (const [nextStatus, message] of cases) {
+      status = nextStatus;
+      const s = fakeSocket(`vote-${nextStatus}`, { id: 210, name: 'Member' });
+      registerHandlers(fakeIo(), s);
+
+      await fire(s, 'vote_venue', { flockId: 4102, venue_name: 'Bar' });
+
+      assert.deepStrictEqual(errorsOf(s), [message]);
+    }
+    assert.strictEqual(calls.filter((c) => /SELECT status FROM flocks/.test(c.text)).length, 2);
+    assert.ok(!calls.some((c) => /INSERT INTO venue_votes/.test(c.text)),
+      'closed voting must be refused before the transaction starts');
+  } finally { restore(); }
+});
+
+test('select_venue rejects a malformed place id before reading or writing the flock', async () => {
+  __resetRateLimiters();
+  const calls = [];
+  const restore = mockPool([], calls);
+  try {
+    const s = fakeSocket('badplace', { id: 900, name: 'Creator' });
+    registerHandlers(fakeIo(), s);
+
+    await fire(s, 'select_venue', { flockId: 4306, venue_name: 'Bar', venue_id: 'abc' });
+
+    assert.deepStrictEqual(errorsOf(s), ['Invalid venue id']);
+    assert.deepStrictEqual(calls, [], 'an invalid venue id must be refused before any query');
+  } finally { restore(); }
+});
+
+test('select_venue cannot reopen a completed or cancelled flock', async () => {
+  __resetRateLimiters();
+  const calls = [];
+  const restore = mockPool([
+    [/SELECT creator_id(, venue_name)? FROM flocks WHERE id = \$1/, [{ creator_id: 900, venue_name: null }]],
+    [/UPDATE flocks/, [], 0],
+  ], calls);
+  try {
+    const io = fakeIo();
+    const s = fakeSocket('closed', { id: 900, name: 'Creator' }, io);
+    registerHandlers(io, s);
+
+    await fire(s, 'select_venue', {
+      flockId: 4306,
+      venue_name: 'Bar',
+      venue_id: 'ChIJvenue123456',
+    });
+
+    const update = calls.find((c) => /UPDATE flocks/.test(c.text));
+    assert.ok(update, 'the creator check must still reach the guarded update');
+    assert.match(update.text, /WHERE id = \$4 AND status NOT IN \('completed', 'cancelled'\)/);
+    assert.deepStrictEqual(errorsOf(s), ['This plan is finished and cannot be reopened']);
+    assert.strictEqual(io.emitted.some((e) => e.event === 'venue_selected'), false,
+      'a rejected update must not announce a venue selection');
   } finally { restore(); }
 });
 

@@ -116,6 +116,11 @@ async function dispatch(text, params = []) {
   }
 
   // ── routes/flocks.js POST /:id/invite-link ──
+  if (has('SELECT id, name, status FROM flocks WHERE id = $1')) {
+    return Number(params[0]) === flockRow.id
+      ? { rows: [{ id: flockRow.id, name: flockRow.name, status: flockRow.status }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
+  }
   if (has('UPDATE flock_invite_links SET revoked = true')) {
     let n = 0;
     for (const l of links) if (l.flock_id === Number(params[0])) { l.revoked = true; n += 1; }
