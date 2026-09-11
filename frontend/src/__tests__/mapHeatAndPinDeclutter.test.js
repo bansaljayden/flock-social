@@ -18,11 +18,12 @@
  *      low score renders visibly cool instead of invisible. No heat is ever
  *      fabricated where there is no scored venue.
  *
- *   3. PIN DECLUTTER. Overlapping pins are displaced deterministically
- *      around their shared centroid (Vogel spiral, members sorted by
- *      place_id) instead of stacking, hiding, or shrinking. Recomputed on
- *      zoomend only — never per frame — and a pin alone in its group snaps
- *      back to the venue's true location.
+ *   3. PIN OVERLAPS. A pin is drawn exactly on its venue at every zoom and
+ *      is never displaced. Where two would overlap on screen the one that
+ *      matters less fades out and the survivor carries a "+N"; the pass
+ *      re-runs as the map moves, throttled, and every marker is positioned
+ *      at subpixel precision. (This replaced a spiral that pushed pins off
+ *      their venues and re-laid them a frame after every zoom.)
  *
  * Source-scanning, like every other App.js suite here.
  *
@@ -103,17 +104,27 @@ describe('heat paint', () => {
   const paint = region('const VENUE_HEAT_PAINT = {', '\n};');
   const paintCode = codeOnly(paint);
 
-  it('radius and intensity follow zoom (field at city zoom, local at street zoom)', () => {
-    expect(paintCode).toContain("'heatmap-radius': ['interpolate', ['linear'], ['zoom']");
+  it('radius and intensity follow zoom', () => {
+    expect(paintCode).toContain("'heatmap-radius': ['interpolate', ['exponential', 1.75], ['zoom']");
     expect(paintCode).toContain("'heatmap-intensity': ['interpolate', ['linear'], ['zoom']");
   });
 
-  it('the radius shrinks as zoom grows, so hotspots localize', () => {
-    const m = paintCode.match(/'heatmap-radius': \['interpolate', \['linear'\], \['zoom'\],([^\]]+)\]/);
+  it('the pixel radius grows with zoom, so the field stays on the ground instead of collapsing into the pin', () => {
+    const m = paintCode.match(/'heatmap-radius': \['interpolate', \['exponential', 1\.75\], \['zoom'\],([^\]]+)\]/);
     expect(m).not.toBeNull();
     const stops = m[1].split(',').map((s) => parseFloat(s.trim()));
     const radii = stops.filter((_, i) => i % 2 === 1);
-    for (let i = 1; i < radii.length; i++) expect(radii[i]).toBeLessThan(radii[i - 1]);
+    for (let i = 1; i < radii.length; i++) expect(radii[i]).toBeGreaterThan(radii[i - 1]);
+  });
+
+  it('the heat hands over to the pins at street zoom', () => {
+    const m = paintCode.match(/'heatmap-opacity': \['interpolate', \['linear'\], \['zoom'\],([^\]]+)\]/);
+    expect(m).not.toBeNull();
+    const stops = m[1].split(',').map((s) => parseFloat(s.trim()));
+    const opacities = stops.filter((_, i) => i % 2 === 1);
+    expect(opacities[0]).toBeGreaterThan(0.5);
+    expect(opacities[opacities.length - 1]).toBe(0);
+    for (let i = 1; i < opacities.length; i++) expect(opacities[i]).toBeLessThan(opacities[i - 1]);
   });
 
   it('weights stay the real crowd score', () => {
@@ -137,55 +148,91 @@ describe('heat paint', () => {
 // 3. Pin declutter
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('pin declutter', () => {
-  const fn = region('function declutterMarkers(map, markerEntries)', '\nconst MapLibreMapView');
-  const fnCode = codeOnly(fn);
+describe('pin overlaps', () => {
+  const fn = codeOnly(region('function resolvePinOverlaps(', '\nfunction setPinHidden('));
+  const hide = codeOnly(region('function setPinHidden(', '\n// WHERE THE APP LOOKS'));
+  const appCode = codeOnly(APP);
 
-  it('offsets are deterministic: members sorted by place_id, laid on a spiral', () => {
-    expect(fnCode).toContain('.localeCompare(');
-    expect(fnCode).toContain('GOLDEN_ANGLE');
-    expect(fnCode).toContain('Math.sqrt(k)');
+  it('a pin is never moved off its venue: the resolver reads positions and writes none', () => {
+    expect(fn).toContain('map.project([venue.location.longitude, venue.location.latitude])');
+    expect(fn).not.toContain('setLngLat');
+    expect(fn).not.toContain('unproject');
+    expect(appCode).not.toContain('GOLDEN_ANGLE');
+    expect(appCode).not.toContain('declutterMarkers');
   });
 
-  it('a pin alone in its group sits exactly on the venue', () => {
-    expect(fnCode).toContain('marker.setLngLat([venue.location.longitude, venue.location.latitude])');
+  it('the active venue, then the owner, then the busier place keeps the spot', () => {
+    const pri = codeOnly(region('function pinPriority(', '\nfunction resolvePinOverlaps('));
+    const act = pri.indexOf('act(bv) - act(av)');
+    const own = pri.indexOf('own(bv) - own(av)');
+    const crowd = pri.indexOf('crowd(bv) - crowd(av)');
+    expect(act).toBeGreaterThan(-1);
+    expect(own).toBeGreaterThan(act);
+    expect(crowd).toBeGreaterThan(own);
+    expect(pri).toContain('.localeCompare(');
   });
 
-  it('pin size is untouched: displacement, not shrinking or hiding', () => {
-    expect(fnCode).not.toContain('display');
-    expect(fnCode).not.toContain('width');
-    // The marker builder still draws full size.
+  it('a covered pin fades through the marker, stops taking taps, and leaves the tree; the survivor counts it', () => {
+    expect(hide).toContain("marker.setOpacity('0')");
+    expect(hide).toContain("marker.setOpacity('1')");
+    expect(hide).toContain("el.style.pointerEvents = 'none'");
+    expect(hide).toContain("el.setAttribute('aria-hidden', 'true')");
+    expect(hide).toContain("badge.className = 'mlb-cluster-badge'");
+    expect(hide).toContain('const text = `+${behind}`;');
+    expect(APP).toContain('.mlb-cluster-badge {');
+    expect(APP).toContain('.mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }');
+  });
+
+  it('runs after markers are built, throttled while the map moves, and once more when it settles', () => {
+    expect(appCode).toContain('if (overlapPassRef.current) overlapPassRef.current();');
+    expect(appCode).toContain("map.on('move', scheduleOverlapPass);");
+    expect(appCode).toContain("map.on('moveend', overlapPass);");
+    expect(appCode).toContain('window.requestAnimationFrame(overlapPass)');
+    expect(appCode).toContain('PIN_OVERLAP_MIN_INTERVAL_MS - (performance.now() - lastOverlapAt)');
+  });
+
+  it('every marker is positioned at subpixel precision, so pins glide instead of stepping', () => {
+    const pinned = (APP.match(/subpixelPositioning: true/g) || []).length;
+    expect(pinned).toBeGreaterThanOrEqual(4);
+    // The venue pin, the flock pin, the member pin and the viewer's own dot.
+    expect(APP).toContain("new ml.Marker({ element: el, anchor, subpixelPositioning: true })");
+    expect(APP).toContain("new mlMod.Marker({ element: el, anchor: 'center', subpixelPositioning: true })");
+  });
+});
+
+describe('pin size and anchor', () => {
+  it('size follows zoom continuously through one CSS variable, not three tiers on a transition', () => {
+    const appCode = codeOnly(APP);
+    expect(appCode).toContain("container.style.setProperty('--pin-scale', scale.toFixed(3));");
+    expect(APP).toContain('.mlb-marker-inner { transform: scale(var(--pin-scale, 1)); }');
+    expect(APP).not.toContain('[data-zoom-tier="lo"] .mlb-marker-inner');
+    expect(APP).not.toContain('transition: transform 0.18s ease');
+    // The curve: full size by 14.5, PIN_SCALE_MIN at 12 and below.
+    expect(appCode).toContain('const PIN_SCALE_MIN = 0.62;');
+    expect(appCode).toContain('const PIN_SCALE_FROM = 12;');
+    expect(appCode).toContain('const PIN_SCALE_TO = 14.5;');
+  });
+
+  it('scales about the point pinned to the coordinate', () => {
+    expect(APP).toContain("inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';");
+    // The builder still draws full size; scale is a transform.
     expect(APP).toContain('const size = isActive ? 54 : 44;');
   });
 
-  it('a spiral slot that lands on another pin is skipped, not taken', () => {
-    // Within-group spacing was never the whole problem: a big group's outer
-    // arm reaches 40·√k px from its centroid, and verified live on a real
-    // 20-venue load it parked a pin 16px from a venue that was never in its
-    // group. Every placement is checked against every pin already placed —
-    // and singletons claim their spots FIRST, so an arm can never cover a
-    // lone pin standing exactly on its venue.
-    expect(fnCode).toContain('placedPts.some(');
-    expect(fnCode).toContain('placedPts.push(pts[idxs[0]])');
-    const singletonPass = fnCode.indexOf('placedPts.push(pts[idxs[0]])');
-    const spiralPass = fnCode.indexOf('multiGroups.forEach');
-    expect(singletonPass).toBeGreaterThan(-1);
-    expect(spiralPass).toBeGreaterThan(singletonPass);
-    // The slot cursor is shared across the group, so a slot skipped for a
-    // foreign collision stays skipped — the layout stays deterministic.
-    expect(fnCode).toMatch(/let k = 0;/);
+  it('the label and the owner chip sit outside the box MapLibre anchors', () => {
+    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {'));
+    expect(build).toContain("under.className = 'mlb-marker-under';");
+    expect(build).toContain('under.appendChild(label);');
+    expect(build).not.toContain('el.appendChild(label);');
+    expect(APP).toContain(".mlb-marker-under {");
+    expect(APP).toMatch(/\.mlb-marker-under \{\s*position: absolute;\s*top: 100%;/);
+    expect(codeOnly(APP)).toContain("(el.querySelector('.mlb-marker-under') || el).appendChild(chip);");
   });
 
-  it('runs when markers are (re)built and again when the zoom settles', () => {
-    expect(codeOnly(APP)).toContain('declutterMarkers(map, markersRef.current)');
-    expect(codeOnly(APP)).toContain("map.on('zoomend', () => declutterMarkers(map, markersRef.current))");
-  });
-
-  it('never runs per frame', () => {
-    const appCode = codeOnly(APP);
-    // The continuous events keep their existing single handlers; declutter is
-    // not among them.
-    expect(appCode).not.toMatch(/map\.on\('zoom',\s*\(\)\s*=>\s*declutterMarkers/);
-    expect(appCode).not.toMatch(/map\.on\('move(?:end)?',[^\n]*declutterMarkers/);
+  it('a photo pin waits behind a disc, not a teardrop, so nothing jumps when the photo lands', () => {
+    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {'));
+    const photoBranch = build.slice(build.indexOf('} else if (venue.photo_url) {'), build.indexOf('} else {', build.indexOf('} else if (venue.photo_url) {')));
+    expect(photoBranch).toContain('buildDiscSvg(isActive, venue.category)');
+    expect(photoBranch).not.toContain('buildPinSvg(');
   });
 });

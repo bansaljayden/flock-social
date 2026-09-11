@@ -2384,8 +2384,18 @@ const VENUE_HEAT_PAINT = {
      (score/100, set where the features are built) — coverage comes from
      radius, never from inflating what a venue actually says. */
   'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 5, 12, 4, 15, 3.2, 18, 2.6],
-  'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 120, 11, 95, 13, 72, 15, 55, 18, 40],
-  'heatmap-opacity': 0.85,
+  /* The radius is in SCREEN pixels, and a pixel covers half as much ground
+     with every zoom level. A radius that shrank in pixels as the zoom grew
+     (120px at 8, 40px at 18) therefore shrank on the ground by a factor of
+     several thousand across a zoom gesture: a kilometre of glow at city zoom
+     collapsed into the pin itself at street zoom, which is the "the heat
+     looks different every time" that was reported. The exponential curve
+     grows the pixel radius with zoom so the field stays roughly the size of
+     a block on the ground, and the opacity hands over to the pins past zoom
+     15, where each pin already carries its own crowd number and a
+     full-strength blob under a single pin said nothing the pin did not. */
+  'heatmap-radius': ['interpolate', ['exponential', 1.75], ['zoom'], 10, 24, 13, 55, 16, 170],
+  'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 13.5, 0.85, 15.5, 0.45, 17, 0],
   'heatmap-color': [
     'interpolate', ['linear'], ['heatmap-density'],
     0,    'rgba(0, 0, 0, 0)',
@@ -2467,17 +2477,42 @@ function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
   return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: {} };
 }
 
-/* Pins stacked on one point are one pin: only the top one is visible or
-   tappable, and hiding or shrinking the rest was ruled out. So overlapping
-   pins are displaced a few screen pixels around their shared centroid — every
-   venue keeps a full-size pin, at the cost of a little positional accuracy.
-   The offsets are deterministic (members sorted by place_id, laid out on a
-   Vogel spiral) so a pin sits in the same spot on every render instead of
-   jittering, and the whole pass re-runs on zoomend only: as the user zooms in
-   the true positions separate, groups dissolve, and each pin snaps back to
-   its real location. O(n²) over ≤ ~20 markers, so no per-frame work. */
+/* PINS NEVER LEAVE THEIR VENUE.
+
+   The old answer to two pins on one spot was to push them apart: overlapping
+   pins were displaced onto a spiral around their shared centroid, up to
+   40*sqrt(k) screen pixels from the venue, and the whole layout was recomputed
+   on every zoomend. Two things followed that a person sees at once. Every zoom
+   ended with pins jumping to freshly computed spots, a frame late, so the map
+   looked like it was still settling after the finger had stopped. And a pin
+   could stand on a venue that was not its own, which is the one thing a map
+   pin must not do.
+
+   Now a pin is drawn exactly on its venue at every zoom, and when two would
+   overlap on screen the one that matters less fades out while the survivor
+   wears a small "+N" for the pins behind it. Zooming in separates the true
+   positions and the hidden ones fade back. That is collision handling, which
+   is what every map people trust does with its labels and its pins, and it is
+   what MapLibre's own symbol layers do for theirs. The pass projects to screen
+   space, so it re-runs as the map moves, throttled to one pass per animation
+   frame and no more than one every PIN_OVERLAP_MIN_INTERVAL_MS; it is O(n^2)
+   over a few dozen venues, which is microseconds, and it never touches a
+   coordinate. */
 const PIN_OVERLAP_PX = 46; // pin body is 44px; closer than this and they stack
-const PIN_RING_PX = 40;    // spacing between displaced neighbours
+const PIN_OVERLAP_MIN_INTERVAL_MS = 90;
+
+/* HOW PINS SCALE WITH ZOOM. One continuous factor from PIN_SCALE_MIN at
+   PIN_SCALE_FROM to full size at PIN_SCALE_TO, written to a CSS variable on
+   the map container on every zoom frame and applied as a transform on each
+   pin. The old three tiers (lo/mid/hi) snapped the size at zoom 13 and 15
+   through a 180ms CSS transition, so a zoom gesture crossing a tier showed
+   every pin resizing on its own clock, out of step with the map underneath.
+   A transform is composited, so this costs one style write per frame. */
+const PIN_SCALE_MIN = 0.62;
+const PIN_SCALE_FROM = 12;
+const PIN_SCALE_TO = 14.5;
+const pinScaleForZoom = (z) => Math.max(PIN_SCALE_MIN, Math.min(1,
+  PIN_SCALE_MIN + (z - PIN_SCALE_FROM) * ((1 - PIN_SCALE_MIN) / (PIN_SCALE_TO - PIN_SCALE_FROM))));
 
 const venueMatchesCategory = (v, filterCategory) => {
   const t = (v.types || []).join(' ').toLowerCase();
@@ -2515,82 +2550,88 @@ const applyCategoryFilter = (map, markers, filterCategory, setFilterHidesAll) =>
   setFilterHidesAll(markers.length > 0 && visible === 0);
 };
 
-function declutterMarkers(map, markerEntries) {
-  if (!map) return;
-  const entries = markerEntries.filter(({ venue }) => venue.location?.latitude && venue.location?.longitude);
+/* WHICH PIN WINS A SPOT. The active venue always; then the owner's own pin on
+   the dashboard map; then the busier place; then the better-rated one; then
+   a stable name order, so two equal pins do not trade places between passes. */
+function pinPriority(a, b, activeId, ownerPlaceId) {
+  const av = a.venue;
+  const bv = b.venue;
+  const act = (v) => (activeId != null && v.id === activeId ? 1 : 0);
+  const own = (v) => (ownerPlaceId && v.place_id === ownerPlaceId ? 1 : 0);
+  const crowd = (v) => (Number.isFinite(v.crowd) ? v.crowd : -1);
+  const stars = (v) => Number(v.rating || v.stars) || 0;
+  return (act(bv) - act(av))
+    || (own(bv) - own(av))
+    || (crowd(bv) - crowd(av))
+    || (stars(bv) - stars(av))
+    || String(av.name || '').localeCompare(String(bv.name || ''));
+}
+
+function resolvePinOverlaps(map, markerEntries, { activeId = null, ownerPlaceId = null, scale = 1 } = {}) {
+  const entries = markerEntries.filter(({ el, venue }) => (
+    el.style.display !== 'none' && venue.location?.latitude && venue.location?.longitude
+  ));
   if (entries.length === 0) return;
   let pts;
   try {
     pts = entries.map(({ venue }) => map.project([venue.location.longitude, venue.location.latitude]));
-  } catch { return; } // container not measured yet — the next zoomend re-runs
-  // Union-find over pairs closer than one pin body.
-  const parent = entries.map((_, i) => i);
-  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  for (let i = 0; i < pts.length; i++) {
-    for (let j = i + 1; j < pts.length; j++) {
-      const dx = pts[i].x - pts[j].x;
-      const dy = pts[i].y - pts[j].y;
-      if (dx * dx + dy * dy < PIN_OVERLAP_PX * PIN_OVERLAP_PX) parent[find(j)] = find(i);
+  } catch { return; } // container not measured yet; the next move re-runs
+  const limit = PIN_OVERLAP_PX * scale;
+  const order = entries.map((_, i) => i)
+    .sort((i, j) => pinPriority(entries[i], entries[j], activeId, ownerPlaceId));
+  const kept = [];
+  const behind = new Map(); // kept index -> pins it stands for
+  for (const i of order) {
+    let coveredBy = -1;
+    for (const k of kept) {
+      const dx = pts[k].x - pts[i].x;
+      const dy = pts[k].y - pts[i].y;
+      if (dx * dx + dy * dy < limit * limit) { coveredBy = k; break; }
+    }
+    if (coveredBy === -1) {
+      kept.push(i);
+    } else {
+      behind.set(coveredBy, (behind.get(coveredBy) || 0) + 1);
+      setPinHidden(entries[i], true);
     }
   }
-  const groups = new Map();
-  entries.forEach((_, i) => {
-    const root = find(i);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(i);
-  });
-  const GOLDEN_ANGLE = 2.399963229728653;
-  /* Spiral slots are only spaced against their OWN group, but a big group's
-     outer arm reaches 40·√k px from its centroid — measured live, a
-     17-member downtown cluster parked a pin 16px from a venue 129px away
-     that was never in its group. So placement is checked against every pin
-     already placed, across groups. Singletons go first: they never move, so
-     they must be in the occupied set before any spiral slot is chosen near
-     them, and no arm can cover a lone pin standing exactly on its venue. */
-  const placedPts = [];
-  const multiGroups = [];
-  groups.forEach((idxs) => {
-    if (idxs.length === 1) {
-      // Alone again (or always was): the pin sits exactly where the venue is.
-      const { marker, venue } = entries[idxs[0]];
-      marker.setLngLat([venue.location.longitude, venue.location.latitude]);
-      placedPts.push(pts[idxs[0]]);
-      return;
+  for (const k of kept) setPinHidden(entries[k], false, behind.get(k) || 0);
+}
+
+/* A covered pin fades (the marker's own opacity, so MapLibre and this file
+   never fight over one style), stops taking taps, and leaves the
+   accessibility tree; a survivor with pins behind it carries their count. */
+function setPinHidden(entry, hidden, behind = 0) {
+  const { el, marker } = entry;
+  const was = el.dataset.covered === '1';
+  if (hidden) {
+    if (!was) {
+      el.dataset.covered = '1';
+      el.setAttribute('aria-hidden', 'true');
+      el.style.pointerEvents = 'none';
+      marker.setOpacity('0');
     }
-    multiGroups.push(idxs);
-  });
-  multiGroups.forEach((idxs) => {
-    // Deterministic member order — same venue, same offset, every render.
-    idxs.sort((a, b) => String(entries[a].venue.place_id || entries[a].venue.id).localeCompare(String(entries[b].venue.place_id || entries[b].venue.id)));
-    const cx = idxs.reduce((s, i) => s + pts[i].x, 0) / idxs.length;
-    const cy = idxs.reduce((s, i) => s + pts[i].y, 0) / idxs.length;
-    // One shared slot cursor per group: a slot skipped for landing on a
-    // foreign pin stays skipped, so the assignment stays deterministic.
-    // Within a group the spiral itself keeps neighbours >= PIN_RING_PX apart
-    // (k0→k1 is exactly PIN_RING_PX, strict < below admits it), so the
-    // occupancy test only ever rejects slots that hit OTHER pins. Bounded:
-    // the radius grows with every skip, so the arm always escapes a crowded
-    // patch; the guard is a hard stop, not the normal exit.
-    let k = 0;
-    // Parameterized so the loop below carries no closure over its own
-    // mutating coordinates (CRA builds with CI=true, where no-loop-func
-    // is fatal; Vercel deploy 2026-08-18 died on exactly that).
-    const collides = (qx, qy) => placedPts.some((p) => (p.x - qx) * (p.x - qx) + (p.y - qy) * (p.y - qy) < PIN_RING_PX * PIN_RING_PX);
-    idxs.forEach((i) => {
-      let x, y;
-      let guard = 0;
-      do {
-        const r = PIN_RING_PX * Math.sqrt(k); // k=0 holds the centroid
-        const a = k * GOLDEN_ANGLE;
-        x = cx + r * Math.cos(a);
-        y = cy + r * Math.sin(a);
-        k += 1;
-        guard += 1;
-      } while (guard < idxs.length + 60 && collides(x, y));
-      entries[i].marker.setLngLat(map.unproject([x, y]));
-      placedPts.push({ x, y });
-    });
-  });
+    return;
+  }
+  if (was) {
+    delete el.dataset.covered;
+    el.removeAttribute('aria-hidden');
+    el.style.pointerEvents = '';
+    marker.setOpacity('1');
+  }
+  let badge = el.querySelector('.mlb-cluster-badge');
+  if (behind > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'mlb-cluster-badge';
+      badge.setAttribute('aria-hidden', 'true');
+      el.appendChild(badge);
+    }
+    const text = `+${behind}`;
+    if (badge.textContent !== text) badge.textContent = text;
+  } else if (badge) {
+    badge.remove();
+  }
 }
 
 // WHERE THE APP LOOKS WHEN IT DOES NOT KNOW WHERE YOU ARE.
@@ -2612,7 +2653,15 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]); // [{ marker, el, venue }]
+  const markersRef = useRef([]);
+  // Read by the overlap pass and the zoom handler, which live outside React's
+  // render and must not go stale between renders.
+  const overlapPassRef = useRef(null);
+  const pinScaleRef = useRef(1);
+  const activeVenueIdRef = useRef(null);
+  const ownerPlaceIdRef = useRef(null);
+  activeVenueIdRef.current = activeVenue?.id ?? null;
+  ownerPlaceIdRef.current = ownerPlaceId; // [{ marker, el, venue }]
   const userMarkerRef = useRef(null);
   const userElRef = useRef(null);
   const memberMarkersRef = useRef({}); // userId -> { marker, popup }
@@ -2715,6 +2764,24 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       `</svg>`;
   }, [mapIsDark]);
 
+  // The same initial on a disc, for a venue whose photo is on its way. The
+  // photo that replaces it is round and the marker's anchor is the circle's
+  // centre; a teardrop drawn under that anchor sat with its tip below the
+  // venue until the photo arrived, then jumped up to the circle.
+  const buildDiscSvg = useCallback((isActive, category) => {
+    const body = mapIsDark
+      ? (isActive ? '#6d9ac3' : '#f1ede0')
+      : (isActive ? '#2d5a87' : '#1e293b');
+    const edge = mapIsDark ? '#0b1220' : '#f1ede0';
+    const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
+    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
+    return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">` +
+      `<defs><filter id="d" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
+      `<circle cx="22" cy="22" r="20" fill="${body}" stroke="${edge}" stroke-width="2.5" filter="url(#d)"/>` +
+      `<text x="22" y="28" text-anchor="middle" font-size="17" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${edge}">${initial}</text>` +
+      `</svg>`;
+  }, [mapIsDark]);
+
   // Circular photo pin via canvas (same trick as the old impl, returns dataURL)
   const buildPhotoPin = useCallback((photoUrl, isActive) => {
     const size = isActive ? 54 : 44;
@@ -2800,6 +2867,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     inner.style.width = size + 'px';
     inner.style.height = size + 'px';
     inner.style.display = 'block';
+    // The zoom scale (see PIN_SCALE_MIN) is a transform on this inner box,
+    // about the point MapLibre pins to the coordinate: the tip of a teardrop,
+    // the centre of a photo disc. Scaling about any other point would walk
+    // the pin off its venue as the zoom changed.
+    const roundPin = !!(photoCacheRef.current[venue.place_id] || venue.photo_url);
+    inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';
 
     const ring = categoryRingColor(venue.category);
     const applyPhotoStyle = () => {
@@ -2814,10 +2887,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       inner.style.backgroundImage = `url("${cached}")`;
       applyPhotoStyle();
     } else if (venue.photo_url) {
-      const svg = buildPinSvg(isActive, venue.category);
+      const svg = buildDiscSvg(isActive, venue.category);
       inner.innerHTML = svg;
       const svgEl = inner.querySelector('svg');
-      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
+      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', size); }
       /* resolveVenuePhoto, NOT the raw field. `photo_url` arrives from the
          backend as the RELATIVE path "/api/venues/photo?ref=..." and the API
          is a different origin from the web app in every environment we run
@@ -2877,10 +2950,20 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       ? `<span class="mlb-label-rating">${starSvgString(12)} ${escapeHtml(ratingValue.toFixed(1))}</span>`
       : '';
     label.innerHTML = `<span class="mlb-label-name">${escapeHtml(venue.name || '')}</span>${ratingHtml}`;
-    el.appendChild(label);
+    // OUT OF THE MARKER'S BOX. The label used to be laid out under the pin
+    // inside the element MapLibre positions, so that element was pin plus
+    // label tall, the anchor was measured on the taller box, and the pin sat
+    // above its venue by the label's height whenever the label was in the
+    // tree, then dropped onto it when the tier hid the label. Absolutely
+    // positioned below the pin, the box is the pin alone and the anchor (the
+    // teardrop's tip, the disc's centre) is on the coordinate at every zoom.
+    const under = document.createElement('div');
+    under.className = 'mlb-marker-under';
+    under.appendChild(label);
+    el.appendChild(under);
 
     return el;
-  }, [buildPinSvg, buildPhotoPin, categoryRingColor]);
+  }, [buildPinSvg, buildDiscSvg, buildPhotoPin, categoryRingColor]);
 
   // ---------- init map (once) ----------
   useEffect(() => {
@@ -3009,11 +3092,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const z = map.getZoom();
         const container = mapRef.current;
         if (!container) return;
-        // hi  → labels visible, full-size markers
-        // mid → no labels, full-size
-        // lo  → no labels, shrunk markers (zoomed-out density)
+        // hi  → labels visible
+        // mid / lo → no labels
+        // Size is no longer a tier: it is the continuous --pin-scale below.
         const tier = z >= 15 ? 'hi' : z >= 13 ? 'mid' : 'lo';
         if (container.dataset.zoomTier !== tier) container.dataset.zoomTier = tier;
+        const scale = pinScaleForZoom(z);
+        if (Math.abs(scale - pinScaleRef.current) > 0.002) {
+          pinScaleRef.current = scale;
+          container.style.setProperty('--pin-scale', scale.toFixed(3));
+        }
       };
 
       // Brighten native basemap POI labels (MapTiler's Streets v2 Dark dims them
@@ -3059,10 +3147,29 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       map.on('zoom', applyZoomTier);
 
-      // Re-space overlapping pins once the zoom settles (never per frame).
-      // Zooming in separates the true positions, so the displacement shrinks
-      // to zero on its own; zooming out regroups them.
-      map.on('zoomend', () => declutterMarkers(map, markersRef.current));
+      // Which pins are visible where two share a spot, re-decided as the view
+      // moves: at most one pass per animation frame and per
+      // PIN_OVERLAP_MIN_INTERVAL_MS while the map is in motion, and one more
+      // when it settles. Pins are never moved by this (see resolvePinOverlaps).
+      let overlapTimer = 0;
+      let lastOverlapAt = 0;
+      const overlapPass = () => {
+        overlapTimer = 0;
+        lastOverlapAt = performance.now();
+        resolvePinOverlaps(map, markersRef.current, {
+          activeId: activeVenueIdRef.current,
+          ownerPlaceId: ownerPlaceIdRef.current,
+          scale: pinScaleRef.current,
+        });
+      };
+      const scheduleOverlapPass = () => {
+        if (overlapTimer) return;
+        const wait = Math.max(0, PIN_OVERLAP_MIN_INTERVAL_MS - (performance.now() - lastOverlapAt));
+        overlapTimer = window.setTimeout(() => window.requestAnimationFrame(overlapPass), wait);
+      };
+      overlapPassRef.current = overlapPass;
+      map.on('move', scheduleOverlapPass);
+      map.on('moveend', overlapPass);
 
       // Click on empty map — clear active venue
       map.on('click', (e) => {
@@ -3177,7 +3284,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       userElRef.current = inner; // pulse helper writes to the inner div
       const ml = mapLibreRef.current;
       if (!ml) return;
-      userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).addTo(map);
+      userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center', subpixelPositioning: true }).setLngLat([lng, lat]).addTo(map);
     } else {
       userMarkerRef.current.setLngLat([lng, lat]);
     }
@@ -3260,7 +3367,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         chip.textContent = 'Your venue';
         chip.style.background = mapIsDark ? '#f1ede0' : '#1e293b';
         chip.style.color = mapIsDark ? '#1e293b' : '#f1ede0';
-        el.appendChild(chip);
+        (el.querySelector('.mlb-marker-under') || el).appendChild(chip);
       }
       el.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3269,7 +3376,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
       const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
       if (!shown) el.style.display = 'none';
-      const marker = new ml.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
+      const marker = new ml.Marker({ element: el, anchor, subpixelPositioning: true }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
       markersRef.current.push({ marker, el, venue: v });
     });
     setFilterHidesAll(venues.length > 0 && markersRef.current.every(({ el }) => el.style.display === 'none'));
@@ -3278,8 +3385,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const heatSrc = map.getSource('venue-heat');
     if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
 
-    // Space out any pins that landed on top of each other (zoomend re-runs this).
-    declutterMarkers(map, markersRef.current);
+    // Settle which pins are visible where two share a spot. The map's own
+    // move handler re-runs this as the view changes.
+    if (overlapPassRef.current) overlapPassRef.current();
 
     /* FRAME THE RESULTS. The map opened centred on the user at a fixed zoom,
        so a search could return 20 venues and show none of them: the chip said
@@ -3365,6 +3473,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   useEffect(() => {
     filterCategoryRef.current = filterCategory;
     applyCategoryFilter(mapInstanceRef.current, markersRef.current, filterCategory, setFilterHidesAll);
+    if (overlapPassRef.current) overlapPassRef.current();
   }, [filterCategory]);
 
   // ---------- external imperative API ----------
@@ -3439,7 +3548,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             const el = buildMarkerEl(tempVenue, true);
             el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); mapEase(map, { center: [fLng, fLat], zoom: 17 }); });
             const anchor = venuePhoto ? 'center' : 'bottom';
-            const marker = new ml.Marker({ element: el, anchor }).setLngLat([fLng, fLat]).addTo(map);
+            const marker = new ml.Marker({ element: el, anchor, subpixelPositioning: true }).setLngLat([fLng, fLat]).addTo(map);
             markersRef.current.push({ marker, el, venue: tempVenue });
           }
           setActiveVenue(tempVenue);
@@ -3517,7 +3626,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Hanken Grotesk,sans-serif">${initial}</text>
           </svg>`;
           const popup = new mlMod.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml);
-          const marker = new mlMod.Marker({ element: el, anchor: 'center' }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
+          const marker = new mlMod.Marker({ element: el, anchor: 'center', subpixelPositioning: true }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
           memberMarkersRef.current[uid] = { marker, popup };
         }
       });
@@ -3548,7 +3657,43 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .maplibregl-ctrl-attrib { font-size: 12px !important; opacity: 1; }
         .maplibregl-ctrl-attrib a { color: #33475e; }
         .maplibregl-ctrl-logo { display: none !important; }
-        .mlb-venue-marker { user-select: none; -webkit-user-select: none; }
+        .mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }
+        /* The zoom scale, about the point pinned to the coordinate (set per
+           pin: the teardrop's tip, the disc's centre). No transition: the map
+           moves under the finger and the pin has to move with it, not 180ms
+           behind it. */
+        .mlb-marker-inner { transform: scale(var(--pin-scale, 1)); }
+        /* Everything drawn under a pin lives outside the box MapLibre
+           measures, so the anchor is the pin and nothing else. */
+        .mlb-marker-under {
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          pointer-events: none;
+        }
+        /* The pins a survivor stands for, when two shared one spot. */
+        .mlb-cluster-badge {
+          position: absolute;
+          top: -4px;
+          right: -8px;
+          min-width: 18px;
+          height: 18px;
+          padding: 0 5px;
+          border-radius: 9px;
+          background: #f1ede0;
+          color: #1e293b;
+          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 18px;
+          text-align: center;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+          pointer-events: none;
+        }
         /* Markers must never bleed above overlay UI (venue cards, sheets, etc.) */
         .maplibregl-marker { z-index: 1; }
         .maplibregl-canvas-container { z-index: 0; }
@@ -3618,17 +3763,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           transform: translateY(0) scale(1);
         }
 
-        /* Shrink markers when zoomed out so the map doesn't get blanketed. */
-        [data-zoom-tier="lo"] .mlb-marker-inner {
-          transform: scale(0.65);
-          transform-origin: center center;
-          transition: transform 0.18s ease, width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease;
-        }
-        [data-zoom-tier="mid"] .mlb-marker-inner,
-        [data-zoom-tier="hi"] .mlb-marker-inner {
-          transform: scale(1);
-          transition: transform 0.18s ease, width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease;
-        }
+        /* Pin size follows --pin-scale continuously (see PIN_SCALE_MIN); the
+           tiers only decide whether labels show. */
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
