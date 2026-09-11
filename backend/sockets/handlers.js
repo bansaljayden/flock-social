@@ -1849,18 +1849,35 @@ function registerHandlers(io, socket) {
           'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
           [flockId, user.id, venue_name]
         );
-        await voteClient.query(
+        const voted = await voteClient.query(
           // Round 16: COALESCE, matching the REST route. Plain
           // `venue_id = EXCLUDED.venue_id` let a re-vote that arrived without a
           // place id (the client re-sends its current pick whenever the tally
           // changes) NULL out an id the row already had — which is how rows for
           // one venue ended up with mixed ids in the first place.
+          //
+          // WRITTEN ONLY WHILE THE PLAN IS OPEN. votingClosedReason ran before
+          // this transaction, on the pool, so a cancel landing between it and
+          // this statement still recorded a vote on a plan that had just
+          // closed. The write reads the plan's status in the same statement,
+          // so it decides for itself; an empty write is read back below.
           `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id)
-           VALUES ($1, $2, $3, $4)
+           SELECT $1::int, $2::int, $3::text, $4::text
+            WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
            ON CONFLICT (flock_id, user_id, venue_name)
            DO UPDATE SET venue_id = COALESCE(EXCLUDED.venue_id, venue_votes.venue_id)`,
           [flockId, user.id, venue_name, venue_id]
         );
+        if (voted.rowCount === 0) {
+          const closedNow = await votingClosedReason(flockId);
+          if (closedNow) {
+            // The DELETE above rolls back with it: a closed plan keeps the
+            // vote it had.
+            await voteClient.query('ROLLBACK');
+            socket.emit('error', { message: closedNow });
+            return;
+          }
+        }
         await voteClient.query('COMMIT');
       } catch (txErr) {
         await voteClient.query('ROLLBACK').catch(() => {});

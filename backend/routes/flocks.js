@@ -2054,7 +2054,7 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
 //   throttled the inviter's personal budget ran out mid-list
 //   full      the flock ran out of seats, or of rows
 // It never touches `res`; each route owns its own response shape.
-async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds }) {
+async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, refuseClosed = false }) {
   // Bound the flock itself, not just the caller — on BOTH of its ceilings
   // (see MAX_FLOCK_MEMBERSHIPS and MAX_FLOCK_ROWS). `n` is the seats:
   // declined rows do not hold one, because someone who said no is not
@@ -2300,12 +2300,28 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds }) 
     // INSERT ... VALUES) Postgres does NOT infer a parameter's type from the
     // target column, so an uncast $1 resolves to text and the insert fails on
     // the integer column at runtime.
-    await pool.query(
+    // WRITTEN ONLY WHILE THE PLAN IS OPEN. POST /:id/invite checks the plan's
+    // status before calling this, on the pool, so a cancel landing between
+    // that check and this statement still seated invitees on a plan that had
+    // just closed. The write reads the status in the same statement, so it
+    // decides for itself; an empty write is read back below.
+    const written = await pool.query(
       `INSERT INTO flock_members (flock_id, user_id, status)
        SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
+        WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
        ON CONFLICT (flock_id, user_id) DO NOTHING`,
       [flockId, newIds]
     );
+    // Only the door that checked the status asks why nothing was written:
+    // rerun and create seat people on a plan that is seconds old and cannot
+    // have closed, and their fixtures do not model this read.
+    if (refuseClosed && written.rowCount === 0) {
+      const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+      const st = now.rows[0] && now.rows[0].status;
+      if (!now.rows[0] || st === 'completed' || st === 'cancelled') {
+        return { invited: [], throttled: false, full: false, closed: true };
+      }
+    }
   }
 
   // Notify invited users via socket
@@ -2546,14 +2562,21 @@ router.post('/:id/invite',
       // Everything from the roster ceilings to the socket fan-out is the
       // shared pipeline — see inviteUsersToFlock above. POST /:id/rerun runs
       // the same function, so the rules cannot drift between the two doors.
-      const { invited, throttled, full } = await inviteUsersToFlock({
+      const { invited, throttled, full, closed } = await inviteUsersToFlock({
         io: req.app.get('io'),
         inviter: req.user,
         flockId,
         flockName: flockResult.rows[0].name,
         userIds: user_ids,
+        refuseClosed: true,
       });
 
+      if (closed) {
+        return res.status(409).json({
+          error: 'This plan is finished and cannot accept new invites',
+          code: 'FLOCK_CLOSED',
+        });
+      }
       if (invited.length === 0 && full) {
         return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
       }

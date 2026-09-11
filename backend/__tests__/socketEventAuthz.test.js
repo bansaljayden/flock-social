@@ -541,6 +541,45 @@ test('vote_venue uses the REST closure reasons for completed and cancelled flock
   } finally { restore(); }
 });
 
+test('vote_venue: a plan cancelled between the closure check and the write records nothing', async () => {
+  __resetRateLimiters();
+  let reads = 0;
+  const calls = [];
+  const restore = mockPool([
+    [MEMBERSHIP, [{ id: 1 }]],
+    // Open on the check before the transaction; cancelled by the time the
+    // write reads it back. The write itself carries the status rule, so the
+    // fixture answers it with nothing written.
+    [/SELECT status FROM flocks WHERE id = \$1/, () => [{ status: reads++ === 0 ? 'planning' : 'cancelled' }]],
+    [/DELETE FROM venue_votes/, []],
+    [/INSERT INTO venue_votes/, [], 0],
+  ], calls);
+  // The vote runs on a checked-out client (advisory lock), which mockPool
+  // does not cover; BEGIN, the lock and ROLLBACK are answered here.
+  const realConnect = pool.connect;
+  pool.connect = async () => ({
+    query: (text, params) => (/^\s*(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(text)
+      ? Promise.resolve({ rows: [] })
+      : pool.query(text, params)),
+    release: () => {},
+  });
+  try {
+    const io = fakeIo();
+    const s = fakeSocket('race-vote', { id: 211, name: 'Member' }, io);
+    registerHandlers(io, s);
+
+    await fire(s, 'vote_venue', { flockId: 4102, venue_name: 'Bar' });
+
+    assert.deepStrictEqual(errorsOf(s), ['This plan was cancelled, so its venue vote is closed']);
+    const insert = calls.find((c) => /INSERT INTO venue_votes/.test(c.text));
+    assert.ok(insert, 'the write is what decides, so it must run');
+    assert.match(insert.text, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+    assert.strictEqual(io.emitted.filter((e) => e.event === 'new_vote').length, 0,
+      'a vote that was not recorded must not be announced');
+    assert.ok(!calls.some((c) => /FROM venue_votes vv/.test(c.text)), 'no tally is read for a refused vote');
+  } finally { pool.connect = realConnect; restore(); }
+});
+
 test('select_venue rejects a malformed place id before reading or writing the flock', async () => {
   __resetRateLimiters();
   const calls = [];
