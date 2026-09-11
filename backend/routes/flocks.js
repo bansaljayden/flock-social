@@ -1815,12 +1815,24 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
                   NOW() + INTERVAL '14 days',
                   COALESCE(f.event_time AT TIME ZONE 'UTC', NOW()) + INTERVAL '7 days'
                 )
-         FROM flocks f WHERE f.id = $2
+         FROM flocks f
+          WHERE f.id = $2
+            AND f.status NOT IN ('completed', 'cancelled')
          RETURNING token`,
         [token, flockId, req.user.id]
       );
       if (inserted.rowCount === 0) {
-        return res.status(404).json({ error: 'Flock not found' });
+        // The write carries the closed-plan rule itself, so a cancel landing
+        // between the status check above and this statement mints nothing.
+        // Nothing inserted means the plan vanished or closed in that window;
+        // read back which, rather than assume: gone is 404, closed is the
+        // same 409 the check gives.
+        const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+        if (now.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
+        return res.status(409).json({
+          error: 'This plan is finished and cannot accept new invites',
+          code: 'FLOCK_CLOSED',
+        });
       }
     }
 
