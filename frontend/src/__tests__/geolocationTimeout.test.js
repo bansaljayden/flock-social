@@ -19,8 +19,12 @@ const NATIVE = {
    the plugin's answers and silences, not about the plugin. */
 // `mock`-prefixed so jest's module factory is allowed to close over it.
 let mockPluginBehaviour = () => new Promise(() => {});
+// The probe every request starts with. Granted here; the bridge-probe suite
+// covers the other answers and the silence.
+let mockProbe = () => Promise.resolve({ location: 'granted', coarseLocation: 'granted' });
 jest.mock('@capacitor/geolocation', () => ({
   Geolocation: {
+    checkPermissions: (...args) => mockProbe(...args),
     getCurrentPosition: (...args) => mockPluginBehaviour(...args),
   },
 }), { virtual: true });

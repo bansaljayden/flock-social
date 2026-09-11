@@ -33,6 +33,21 @@
  * A cosmetic change to a prompt is not worth a forced global sign-out. Do not
  * touch the origin.
  *
+ * ONE EXCEPTION, 2026-09-10: THE WEB API IS THE FALLBACK WHEN THE BRIDGE IS
+ * SILENT. On a device the plugin can fail to answer at all: not a denial, not
+ * a timeout from CoreLocation, but a call that never reaches native.
+ * ionic-team/capacitor-plugins#2525 describes exactly that on iOS 26, with
+ * every other plugin on the same bridge fine and the maintainers unable to
+ * reproduce it. From the user's side it is no permission sheet, a spinner,
+ * and "Could not get your location just now" on every try, with the
+ * permission granted the whole time. So before asking for a fix this module
+ * asks the plugin a question with no side effects, checkPermissions, and
+ * gives it PROBE_WINDOW to answer. Silence means the bridge is not delivering,
+ * and the request goes to navigator.geolocation instead, for the rest of the
+ * session or until the plugin answers something. WebKit's own sheet can appear
+ * on that path. A second sheet is the price of a location at all, and it is
+ * paid only where the alternative was none.
+ *
  * CONTRACT: this module is a drop-in for the three navigator.geolocation
  * methods App.js used, callbacks and all.
  *
@@ -86,6 +101,87 @@ const TIMEOUT = 3;
 // an unavailable fix: low accuracy, a twelve-second window, and a fix up to
 // five minutes old is fine. Exported so the test can pin it.
 export const COARSE_RETRY = Object.freeze({ enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
+
+// How long checkPermissions gets to answer before the bridge is judged silent
+// for this plugin. A live bridge answers in tens of milliseconds; three
+// seconds is a busy main thread on an old phone, not a working plugin.
+export const PROBE_WINDOW = 3000;
+// The clock on an attempt that will raise the system permission sheet. The
+// plugin's own timer, the caller's `timeout`, starts after the grant.
+export const PROMPT_WINDOW = 120000;
+
+// Set when the plugin failed to answer the probe. Cleared the moment it
+// answers anything, even late: a slow bridge is not a dead one.
+let bridgeSilent = false;
+
+/* checkPermissions, with a clock. Resolves to one of:
+     granted | prompt | denied  the plugin's answer
+     error                      the plugin rejected (Location Services off is 0007)
+     silent                     no answer inside PROBE_WINDOW
+     no-plugin                  the chunk did not load
+     unprobed                   a plugin build with no checkPermissions
+   Never rejects. */
+function probe() {
+  return new Promise((resolve) => {
+    let done = false;
+    const answer = (result) => {
+      if (done) return;
+      done = true;
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      bridgeSilent = true;
+      answer({ state: 'silent' });
+    }, PROBE_WINDOW);
+    load().then((Geolocation) => {
+      if (!Geolocation) {
+        clearTimeout(timer);
+        answer({ state: 'no-plugin' });
+        return;
+      }
+      if (typeof Geolocation.checkPermissions !== 'function') {
+        clearTimeout(timer);
+        answer({ state: 'unprobed' });
+        return;
+      }
+      const heard = () => { clearTimeout(timer); bridgeSilent = false; };
+      try {
+        Geolocation.checkPermissions().then((res) => {
+          heard();
+          const status = res && res.location;
+          answer({ state: status === 'granted' || status === 'denied' ? status : 'prompt' });
+        }, (err) => {
+          heard();
+          answer({ state: 'error', pluginErr: err });
+        });
+      } catch (err) {
+        heard();
+        answer({ state: 'error', pluginErr: err });
+      }
+    });
+  });
+}
+
+/* navigator.geolocation on a device: WebKit's API, which does not use the
+   Capacitor bridge. Errors carry where they came from in `detail` so a report
+   can tell a WebKit failure from a plugin one. */
+function webOnDevice(onSuccess, onError, options, reason) {
+  const geo = typeof navigator !== 'undefined' ? navigator.geolocation : null;
+  if (!geo) {
+    fail(onError, POSITION_UNAVAILABLE, 'Location is not available on this device.', reason);
+    return;
+  }
+  geo.getCurrentPosition(
+    (position) => { if (typeof onSuccess === 'function') onSuccess(position); },
+    (err) => {
+      const code = err && [PERMISSION_DENIED, POSITION_UNAVAILABLE, TIMEOUT].includes(err.code)
+        ? err.code
+        : POSITION_UNAVAILABLE;
+      fail(onError, code, (err && err.message) || 'Could not get a location.', 'webkit/' + reason);
+    },
+    options,
+  );
+}
 
 
 /* NO SEEDED LOCATION FOR THE RECORDING RIG. The Simulator that Maestro
@@ -189,21 +285,37 @@ export function getCurrentPosition(onSuccess, onError, options) {
     navigator.geolocation.getCurrentPosition(onSuccess, onError, options);
     return;
   }
-  /* THE `timeout` OPTION IS ENFORCED HERE BECAUSE THE PLUGIN DOES NOT ENFORCE
-     IT. On the web, `timeout` is part of the geolocation API's contract and the
-     browser fires the error callback with code 3 when it elapses. The native
-     path passes the same options object across the bridge, where CoreLocation
-     simply waits: a device that cannot get a fix produces no fix, no error and
-     no callback, forever.
+  /* THE `timeout` OPTION IS ENFORCED HERE, WHATEVER THE PLUGIN DOES WITH IT.
+     On the web, `timeout` is part of the geolocation API's contract and the
+     browser fires the error callback with code 3 when it elapses. Across the
+     bridge the number reaches @capacitor/geolocation 8.2.2, whose native
+     library (IONGeolocationLib 2.1.0) does run a timer of its own, but only
+     from the moment authorization is granted and only for a call that
+     reached it at all. A call the bridge never delivers, or one parked behind
+     the permission sheet, has no clock but this one. When this paragraph was
+     first written the plugin's timer did not exist yet, and a Simulator with
+     no location set produced no fix, no error and no callback, forever.
 
      The caller in App.js has always passed `timeout: 10000` and has always had
-     a code-3 branch written for it. Neither could ever run on a device. What
-     the user saw instead was the "Finding where you are" spinner and the
-     line under it, with nothing behind them and no way to a different answer.
-     A simulator with no location set reproduces it exactly, which is how the
-     demonstration recording found it: the vote panel's nearby list is fed by
-     the granted location, and it sat empty behind a request that never
-     finished.
+     a code-3 branch written for it. Neither could run on a device until this
+     clock existed. What the user saw instead was the "Finding where you are"
+     spinner and the line under it, with nothing behind them and no way to a
+     different answer. The demonstration recording found it: the vote panel's
+     nearby list is fed by the granted location, and it sat empty behind a
+     request that never finished.
+
+     THE BRIDGE IS ASKED A QUESTION BEFORE IT IS ASKED FOR A FIX. Every request
+     starts with checkPermissions, which has no side effect and no sheet, and
+     the answer decides the path: denied is answered at once with the words
+     the caller prints for code 1; not-yet-asked means the request will raise
+     the system sheet, so that attempt gets a two-minute window instead of
+     ten seconds, because a person reads a sheet at their own pace and the
+     short clock was firing underneath it, printing the failure and dropping
+     the fix that arrived when they tapped Allow; granted is the ordinary
+     attempt. And no answer inside PROBE_WINDOW means the bridge is not
+     delivering this plugin's calls (see the file header), in which case the
+     request goes to WebKit's navigator.geolocation instead, and so does every
+     later one until the plugin is heard from.
 
      First answer wins, per attempt and overall. A late fix arriving after the
      timeout must not call `onSuccess` on a caller that has already been told
@@ -221,6 +333,11 @@ export function getCurrentPosition(onSuccess, onError, options) {
      before the caller hears a failure. A refused permission is not retried:
      the answer would be the same and the words the caller prints for code 1
      are the right ones. */
+  if (bridgeSilent) {
+    webOnDevice(onSuccess, onError, options, 'bridge-silent');
+    return;
+  }
+
   let settled = false;
   const finish = (fn) => (...args) => {
     if (settled) return;
@@ -228,30 +345,34 @@ export function getCurrentPosition(onSuccess, onError, options) {
     fn(...args);
   };
   const succeed = finish((position) => { if (typeof onSuccess === 'function') onSuccess(position); });
-  const failFinal = finish((code, message, pluginErr, retried) => {
+  const failFinal = finish((code, message, pluginErr, retried, detail) => {
     if (pluginErr) failFromPlugin(onError, pluginErr, retried);
-    else fail(onError, code, message, code === TIMEOUT ? 'client-timer' : 'no-plugin', retried);
+    else fail(onError, code, message, detail || (code === TIMEOUT ? 'client-timer' : 'no-plugin'), retried);
   });
 
-  const attempt = (opts, onAttemptFail) => {
+  // One call across the bridge with a clock of its own. `windowMs` is this
+  // module's clock for the attempt, which is not the same number as the
+  // `timeout` inside `opts`: that one crosses the bridge and becomes the
+  // plugin's own timer, which only starts once authorization is granted.
+  const attempt = (opts, windowMs, timerDetail, onAttemptFail) => {
     let done = false;
     let timer = null;
-    const settle = (code, message, pluginErr) => {
+    const settle = (code, message, pluginErr, detail) => {
       if (done) return;
       done = true;
       if (timer) clearTimeout(timer);
-      onAttemptFail(code, message, pluginErr);
+      onAttemptFail(code, message, pluginErr, detail);
     };
     /* No timeout asked for, no timeout imposed: watchPosition-style callers
        that want to wait indefinitely keep that behaviour by passing nothing,
        which is also what the web API does with the option absent. */
-    const ms = Number(opts && opts.timeout);
+    const ms = Number(windowMs);
     timer = Number.isFinite(ms) && ms > 0
-      ? setTimeout(() => settle(TIMEOUT, 'Timed out getting your location.', null), ms)
+      ? setTimeout(() => settle(TIMEOUT, 'Timed out getting your location.', null, timerDetail), ms)
       : null;
     load().then((Geolocation) => {
       if (!Geolocation) {
-        settle(POSITION_UNAVAILABLE, 'Location is not available on this device.', null);
+        settle(POSITION_UNAVAILABLE, 'Location is not available on this device.', null, 'no-plugin');
         return;
       }
       // try/catch as well as the rejection handler: an SOS is one of the
@@ -275,12 +396,42 @@ export function getCurrentPosition(onSuccess, onError, options) {
   };
 
   const wantsPrecise = !!(options && options.enableHighAccuracy);
-  attempt(options, (code, message, pluginErr) => {
-    if (wantsPrecise && (code === TIMEOUT || code === POSITION_UNAVAILABLE)) {
-      attempt(COARSE_RETRY, (code2, message2, pluginErr2) => failFinal(code2, message2, pluginErr2, true));
+  const firstAttemptFailed = (code, message, pluginErr, detail) => {
+    // A sheet nobody answered is not a fix that failed; asking again would
+    // only queue a second request behind the same sheet.
+    const retryable = wantsPrecise && detail !== 'prompt-timer'
+      && (code === TIMEOUT || code === POSITION_UNAVAILABLE);
+    if (retryable) {
+      attempt(COARSE_RETRY, COARSE_RETRY.timeout, 'client-timer',
+        (code2, message2, pluginErr2, detail2) => failFinal(code2, message2, pluginErr2, true, detail2));
       return;
     }
-    failFinal(code, message, pluginErr);
+    failFinal(code, message, pluginErr, false, detail);
+  };
+
+  probe().then((answer) => {
+    switch (answer.state) {
+      case 'silent':
+        webOnDevice(onSuccess, onError, options, 'bridge-silent');
+        return;
+      case 'no-plugin':
+        webOnDevice(onSuccess, onError, options, 'no-plugin');
+        return;
+      case 'denied':
+        // The same words the plugin would have answered a request with, without
+        // spending a request on a question whose answer is already known.
+        failFinal(PERMISSION_DENIED, 'Location permission was denied.', null, false, 'probe-denied');
+        return;
+      case 'error':
+        // Location Services off device-wide is the usual one (0007).
+        failFinal(codeFor(answer.pluginErr), null, answer.pluginErr, false);
+        return;
+      case 'prompt':
+        attempt(options, PROMPT_WINDOW, 'prompt-timer', firstAttemptFailed);
+        return;
+      default:
+        attempt(options, options && options.timeout, 'client-timer', firstAttemptFailed);
+    }
   });
 }
 
@@ -300,16 +451,22 @@ export function getCurrentPosition(onSuccess, onError, options) {
  * leaves CoreLocation running for the life of the app.
  */
 export function watchPosition(onSuccess, onError, options) {
-  if (!isNative()) {
+  if (!isNative() || bridgeSilent) {
     return navigator.geolocation.watchPosition(onSuccess, onError, options);
   }
-  const handle = { id: null, cancelled: false };
+  const handle = { id: null, webId: null, cancelled: false };
   load().then((Geolocation) => {
+    if (handle.cancelled) return;
     if (!Geolocation) {
-      fail(onError, POSITION_UNAVAILABLE, 'Location is not available on this device.');
+      // Same fallback as getCurrentPosition: the chunk that did not load is
+      // not a reason to leave a person without a location WebKit can give.
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        handle.webId = navigator.geolocation.watchPosition(onSuccess, onError, options);
+      } else {
+        fail(onError, POSITION_UNAVAILABLE, 'Location is not available on this device.', 'no-plugin');
+      }
       return;
     }
-    if (handle.cancelled) return;
     Geolocation.watchPosition(options || {}, (position, err) => {
       if (handle.cancelled) return;
       if (err) { failFromPlugin(onError, err); return; }
@@ -344,5 +501,9 @@ export function clearWatch(watchId) {
     return;
   }
   watchId.cancelled = true;
+  if (typeof watchId.webId === 'number') {
+    navigator.geolocation.clearWatch(watchId.webId);
+    watchId.webId = null;
+  }
   stopNativeWatch(watchId);
 }
