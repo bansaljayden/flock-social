@@ -113,11 +113,13 @@ let unknown;   // statements the fixture did not model
 let vanishAfterOwnershipCheck; // see the flock-row lookup below
 let closeAfterStatusRead = null; // a flock id: closed right after its status is read (same lookup)
 let seatAfterMembershipRead = null; // a user id: invited by someone else right after the roster is read
+let closeAfterReopenCheck = null; // a flock id: closed right after PUT's own status read (the one before its write)
 
 function reset() {
   vanishAfterOwnershipCheck = false;
   closeAfterStatusRead = null;
   seatAfterMembershipRead = null;
+  closeAfterReopenCheck = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -255,6 +257,11 @@ async function dispatch(text, params = []) {
     // "Cancelled mid-request": the status check reads an open plan and the
     // plan is closed by the time the write lands. Same device, one row later.
     if (f && closeAfterStatusRead === Number(params[0])) { f.status = 'cancelled'; closeAfterStatusRead = null; }
+    // PUT reads the flock twice before writing (creator, then status); this
+    // hook waits for the second read, the last one before the write.
+    if (f && closeAfterReopenCheck === Number(params[0]) && /^SELECT status FROM flocks WHERE id = \$1$/.test(sql)) {
+      f.status = 'cancelled'; closeAfterReopenCheck = null;
+    }
     return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
   }
   if (has('FROM flocks f JOIN users u ON u.id = f.creator_id')) {
@@ -387,6 +394,13 @@ async function dispatch(text, params = []) {
   if (has('UPDATE flocks SET name = COALESCE($1, name)')) {
     const f = flocks.get(Number(params[10]));
     if (!f) return { rows: [], rowCount: 0 };
+    // The write refuses to reopen a closed plan on its own (the last clause
+    // of its WHERE); the fixture does what the clause does.
+    if (/\$10::text IS NULL OR \$10::text = status OR status IS NULL OR status NOT IN/.test(sql)) {
+      const want = params[9];
+      if (want !== null && want !== undefined && want !== f.status
+        && (f.status === 'completed' || f.status === 'cancelled')) return { rows: [], rowCount: 0 };
+    }
     const keys = ['name', 'venue_name', 'venue_address', 'venue_id', 'venue_latitude',
       'venue_longitude', 'venue_rating', 'venue_photo_url', 'event_time', 'status'];
     keys.forEach((k, i) => { if (params[i] !== null && params[i] !== undefined) f[k] = params[i]; });
@@ -884,6 +898,27 @@ test('update: a flock that vanishes between the ownership check and the write is
   const res = await call('PUT', '/api/flocks/10', 'alice', { name: 'Ghost' });
   assert.strictEqual(res.status, 404, 'a write that matched no row was reported as success');
   assert.deepStrictEqual(await res.json(), { error: 'Flock not found' });
+  assertQueriesUnderstood();
+});
+
+test('update: a plan cancelled between the reopen check and the write is not reopened', async () => {
+  // The check reads an open plan; the write lands on a cancelled one with
+  // status=planning in hand. The write carries the rule itself, so the plan
+  // stays cancelled and the caller hears what the check would have said.
+  closeAfterReopenCheck = 10;
+  try {
+    const before = queries.length;
+    const res = await call('PUT', '/api/flocks/10', 'alice', { status: 'planning' });
+    assert.strictEqual(res.status, 409);
+    assert.deepStrictEqual(await res.json(), { error: 'This plan is finished and cannot be reopened' });
+    assert.strictEqual(flocks.get(10).status, 'cancelled', 'a plan that had just closed was reopened');
+    const upd = queries.slice(before).find((q) => /UPDATE flocks SET name = COALESCE/.test(q.sql));
+    assert.ok(upd, 'the write is what decides, so it must run');
+    assert.match(upd.sql, /\$10::text IS NULL OR \$10::text = status OR status IS NULL OR status NOT IN \('completed', 'cancelled'\)/);
+  } finally {
+    closeAfterReopenCheck = null;
+    flocks.get(10).status = 'planning';
+  }
   assertQueriesUnderstood();
 });
 
