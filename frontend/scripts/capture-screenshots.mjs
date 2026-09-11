@@ -814,7 +814,20 @@ async function waitAppReady(page) {
   // is the proof the session landed.
   await mainNav(page).waitFor({ timeout: 30000 });
   await page.getByText('Loading...', { exact: true }).waitFor({ state: 'detached', timeout: 20000 }).catch(() => {});
+  await declineAnalyticsAsk(page);
   await settle(page);
+}
+
+// The analytics consent bar is up on a fresh profile. Every capture is a
+// marketing shot, so it must not be in frame, and until 2026-09-10 it also sat
+// over the tab bar, so the first tab tap timed out on it. Declining sends
+// nothing and is remembered for the rest of the session.
+async function declineAnalyticsAsk(page) {
+  const no = page.locator('.cb-wrap .cb-btn', { hasText: 'No thanks' });
+  if (await no.count()) {
+    await no.first().click();
+    await page.locator('.cb-wrap').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+  }
 }
 
 const tab = (page, name) => mainNav(page).getByRole('button', { name });
