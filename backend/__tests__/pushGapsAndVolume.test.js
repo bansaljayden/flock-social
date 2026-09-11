@@ -375,7 +375,7 @@ test('a member leaving takes the flock lock before the membership statement', as
   const order = [];
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
-  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owes: false, owed: false }] })); // the leaver is tied to no bill
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
@@ -383,6 +383,14 @@ test('a member leaving takes the flock lock before the membership statement', as
 
   const res = await call('POST', '/api/flocks/42/leave');
   assert.strictEqual(res.status, 200, res.text);
+  // The bill check runs UNDER the lock, between BEGIN and the delete: a read
+  // on the pool before the transaction could not see a bill committed in the
+  // window, and billing's own create takes this same lock.
+  const beginAt = log.findIndex((q) => /^BEGIN/.test(q.sql));
+  const billAt = log.findIndex((q) => /FROM bill_split_shares bss/.test(q.sql));
+  const deleteAt = log.findIndex((q) => /WITH gone AS/.test(q.sql));
+  assert.ok(beginAt > -1 && billAt > beginAt && billAt < deleteAt,
+    'the bill check must sit inside the transaction, after the lock and before the delete');
   assert.deepStrictEqual(order, ['lock', 'leave'],
     'the membership must be removed under the lock billing holds, not beside it');
   const begin = log.findIndex((q) => /^BEGIN/.test(q.sql));
@@ -450,7 +458,7 @@ test('the host is told when the last member leaves, and never told about the one
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
-  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owes: false, owed: false }] })); // the leaver is tied to no bill
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   // The leave is one statement now: membership out and, with nobody accepted
@@ -491,7 +499,7 @@ test('a member leaving a plan that survives does not interrupt the host', async 
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
-  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owes: false, owed: false }] })); // the leaver is tied to no bill
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   // Somebody accepted remains, so the statement removes the membership and
