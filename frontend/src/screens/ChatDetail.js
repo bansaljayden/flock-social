@@ -2944,7 +2944,7 @@ export default function ChatDetail({
                 {/* Budget disabled — direct to bill split */}
                 {!hasBudget && !showCreateBill && (!billSplit || billSplitIsShell) && (
                   <div>
-                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '16px' }}>Split the bill after the night out</p>
                     <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                   </div>
                 )}

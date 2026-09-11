@@ -662,7 +662,7 @@ export default function LandingPage() {
                 from inventing one. */}
             <p className="lp-lead">
               Ask Birdie the way you’d ask a friend who knows the city. It comes
-              back with real places near you, not a list it made up.
+              back with real places near you.
             </p>
             {/* FTC AI disclosure. The line above sells Birdie as a friend who
                 knows the city, which is the framing the FTC treats as

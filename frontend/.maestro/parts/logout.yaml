@@ -40,11 +40,11 @@ appId: com.flockcorp.flock
       - waitForAnimationToEnd
 - tapOn: "You"                                  # App.js tab table, label: 'You'
 - scrollUntilVisible:
-    element: "Log Out"                          # ProfileSettings.js:798
+    element: "Log out"                          # ProfileSettings.js:798
     direction: DOWN
     timeout: 15000
-- tapOn: "Log Out"
-# Log Out calls onLogout() directly, no confirm dialog (ProfileSettings.js:796).
+- tapOn: "Log out"
+# Log out calls onLogout() directly, no confirm dialog (ProfileSettings.js:796).
 - extendedWaitUntil:
     visible: "Welcome back"                     # LoginScreen.js:146, endSession sets authScreen to 'login'
     timeout: 15000
