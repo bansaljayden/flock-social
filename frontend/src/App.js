@@ -3067,6 +3067,24 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         }
       } catch { /* attribution stays where MapLibre put it */ }
       mapInstanceRef.current = map;
+      // RIG-ONLY INTROSPECTION. scripts/capture-screenshots.mjs sets this
+      // flag before the page loads so it can project each venue's coordinate
+      // and measure the pin standing on it, at rest and mid-zoom. Nothing in
+      // production sets the flag, so nothing in production reaches this.
+      if (typeof window !== 'undefined' && window.__FLOCK_MAP_DEBUG__) {
+        window.__flockMapDebug = {
+          getZoom: () => map.getZoom(),
+          zoomTo: (z, duration) => map.zoomTo(z, { duration, essential: true }),
+          project: (lng, lat) => { const p = map.project([lng, lat]); return { x: p.x, y: p.y }; },
+          container: () => mapRef.current,
+          markers: () => markersRef.current.map(({ venue, el }) => ({
+            id: venue.place_id || venue.id,
+            lng: venue.location.longitude,
+            lat: venue.location.latitude,
+            el,
+          })),
+        };
+      }
 
       // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
       if (map.scrollZoom) {
@@ -3670,6 +3688,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           top: 100%;
           left: 50%;
           transform: translateX(-50%);
+          /* Sized to its content, not to the 44px pin it hangs from: an
+             absolute box shrinks to fit its containing block, and with the
+             pin as that block every name wrapped to two letters. */
+          width: max-content;
           display: flex;
           flex-direction: column;
           align-items: center;
