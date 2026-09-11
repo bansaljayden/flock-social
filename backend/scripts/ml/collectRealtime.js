@@ -1052,7 +1052,26 @@ const HOLDOUT = (() => {
   return { city, hours, misconfigured, active: Boolean(city) && hours.includes(new Date().getUTCHours()) };
 })();
 
+// RUN WATCHDOG. On 2026-09-11 the 03:07Z run went quiet at 03:56Z, after a
+// string of slow BestTime answers, and never exited: the container sat alive
+// at idle CPU for four hours, and because Railway does not start a cron run
+// while the previous one is still alive, the 04:07 and 05:07 runs never
+// happened. No line in the venue loop logs a success, so from outside a hang
+// is indistinguishable from a slow hour. The fifty-minute call budget bounds
+// the CALLS; nothing bounded the PROCESS. A run still alive at MAX_RUN_MS
+// is ended with its own exit code so the next hour can collect. Everything
+// written so far is committed per venue, so nothing is lost but the tail of
+// one hour, which the previous behaviour lost along with every hour after it.
+// unref: the timer must never be the thing that keeps a finished run alive.
+const MAX_RUN_MS = 55 * 60 * 1000;
+const WATCHDOG_EXIT_CODE = 3;
+
 async function run() {
+  const watchdog = setTimeout(() => {
+    console.error(`[ML:Realtime] Watchdog: still running after ${Math.round(MAX_RUN_MS / 60000)} minutes; exiting so the next scheduled run can start.`);
+    process.exit(WATCHDOG_EXIT_CODE);
+  }, MAX_RUN_MS);
+  watchdog.unref();
   // try/finally, not a bare sequence: collectRealtime() can now REFUSE (the
   // provenance audit throws), and the old form skipped pool.end() on any throw,
   // leaving the process alive on an open pool with nothing left to do.
