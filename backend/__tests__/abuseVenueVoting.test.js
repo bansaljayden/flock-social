@@ -66,7 +66,13 @@ let log = [];
 let unknown = [];
 // "Cancelled mid-request": the closure check reads an open plan, and the plan
 // is closed by the time the write lands. The write carries the rule itself.
+// `true` cancels the plan after the read; any other non-false value is the
+// status the plan takes instead (null: a row whose status cannot be read).
 let closeAfterStatusRead = false;
+// A transaction's writes are staged: BEGIN keeps a copy of the vote rows,
+// ROLLBACK puts it back, COMMIT drops it. "A refused vote leaves the old one
+// in place" is only testable with real undo.
+let txnVotes = null;
 function assertQueriesUnderstood() {
   assert.deepStrictEqual(unknown, [], `unmodelled queries: ${JSON.stringify(unknown.slice(0, 3))}`);
 }
@@ -75,7 +81,13 @@ async function dispatch(sql, params) {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   log.push({ sql: flat, params });
   const p = params || [];
-  if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(flat)) return { rows: [], rowCount: 0 };
+  if (/^BEGIN/i.test(flat)) { txnVotes = world.votes.map((v) => ({ ...v })); return { rows: [], rowCount: 0 }; }
+  if (/^ROLLBACK/i.test(flat)) {
+    if (txnVotes) world.votes.splice(0, world.votes.length, ...txnVotes);
+    txnVotes = null;
+    return { rows: [], rowCount: 0 };
+  }
+  if (/^COMMIT/i.test(flat)) { txnVotes = null; return { rows: [], rowCount: 0 }; }
   if (/pg_advisory_xact_lock/.test(flat)) return { rows: [], rowCount: 0 };
 
   if (/^SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'$/.test(flat)) {
@@ -90,7 +102,10 @@ async function dispatch(sql, params) {
   // happens to answer nothing.
   if (/^SELECT status FROM flocks WHERE id = \$1$/.test(flat)) {
     const answer = world.flock ? { rows: [{ status: world.flock.status }], rowCount: 1 } : { rows: [], rowCount: 0 };
-    if (world.flock && closeAfterStatusRead) { world.flock.status = 'cancelled'; closeAfterStatusRead = false; }
+    if (world.flock && closeAfterStatusRead !== false) {
+      world.flock.status = closeAfterStatusRead === true ? 'cancelled' : closeAfterStatusRead;
+      closeAfterStatusRead = false;
+    }
     return answer;
   }
   if (/^SELECT blocker_id, blocked_id FROM user_blocks/.test(flat)) {
@@ -117,8 +132,11 @@ async function dispatch(sql, params) {
   if (/^INSERT INTO venue_votes/.test(flat)) {
     // The route's INSERT ... SELECT writes nothing for a closed plan (WHERE
     // EXISTS on the status); the fixture does what the WHERE does.
-    if (/WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(flat)
-      && (!world.flock || world.flock.status === 'completed' || world.flock.status === 'cancelled')) {
+    // `status NOT IN (...)` is true only for a readable, open status: a NULL
+    // status is neither, and the statement writes nothing for it.
+    const open = world.flock && typeof world.flock.status === 'string'
+      && world.flock.status !== 'completed' && world.flock.status !== 'cancelled';
+    if (/WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN/.test(flat) && !open) {
       return { rows: [], rowCount: 0 };
     }
     const [uid, name, vid] = [Number(p[1]), p[2], p[3]];
@@ -178,23 +196,48 @@ test.after(() => new Promise((resolve) => {
   pool.end?.().catch(() => {});
 }));
 
-test.beforeEach(() => { world = freshWorld(); log = []; unknown = []; closeAfterStatusRead = false; });
+test.beforeEach(() => {
+  world = freshWorld(); log = []; unknown = []; closeAfterStatusRead = false; txnVotes = null;
+});
 
 test('a vote on a plan cancelled between the closure check and the write records nothing', async () => {
   as(1, 'Ava'); as(2, 'Bo');
   world.members.push({ user_id: 1, status: 'accepted' }, { user_id: 2, status: 'accepted' });
-  world.votes.push({ user_id: 2, venue_name: 'Taqueria', venue_id: null });
+  // The caller's own earlier vote: the route deletes it before writing the
+  // new one, so a refused write must undo that delete too.
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
   as(1, 'Ava');
   closeAfterStatusRead = true;
 
   const r = await vote('Ramen');
   assert.strictEqual(r.status, 409, r.text);
   assert.match(r.body.error, /cancelled/);
-  assert.deepStrictEqual(world.votes.map((v) => [v.user_id, v.venue_name]), [[2, 'Taqueria']],
-    'a vote was recorded on a plan that had just closed');
+  assert.deepStrictEqual(world.votes.map((v) => [v.user_id, v.venue_name]), [[1, 'Taqueria']],
+    'the vote the caller had did not survive the refused one');
   const insert = log.find((q) => /^INSERT INTO venue_votes/.test(q.sql));
   assert.ok(insert, 'the write is what decides, so it must run');
   assert.match(insert.sql, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+  assert.ok(log.some((q) => /^ROLLBACK/i.test(q.sql)), 'a write that did not land must be rolled back');
+  assert.ok(!log.some((q) => /^COMMIT/i.test(q.sql)), 'and never committed');
+  assertQueriesUnderstood();
+});
+
+test('a plan whose status cannot be read as open gets no vote, keeps the old one, and says so', async () => {
+  // The closure check treats an unreadable status as open; the write's
+  // NOT IN treats it as not open and lands nothing. That disagreement must
+  // end in a rollback and a retry message, never in a committed delete of
+  // the caller's earlier vote with nothing in its place.
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
+  closeAfterStatusRead = null;
+
+  const r = await vote('Ramen');
+  assert.strictEqual(r.status, 409, r.text);
+  assert.match(r.body.error, /changed .* try again/i);
+  assert.deepStrictEqual(world.votes.map((v) => [v.user_id, v.venue_name]), [[1, 'Taqueria']]);
+  assert.ok(log.some((q) => /^ROLLBACK/i.test(q.sql)));
+  assert.ok(!log.some((q) => /^COMMIT/i.test(q.sql)));
   assertQueriesUnderstood();
 });
 

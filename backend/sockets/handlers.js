@@ -1869,14 +1869,19 @@ function registerHandlers(io, socket) {
           [flockId, user.id, venue_name, venue_id]
         );
         if (voted.rowCount === 0) {
-          const closedNow = await votingClosedReason(flockId);
-          if (closedNow) {
-            // The DELETE above rolls back with it: a closed plan keeps the
-            // vote it had.
-            await voteClient.query('ROLLBACK');
-            socket.emit('error', { message: closedNow });
-            return;
-          }
+          // Nothing written means the plan closed or vanished under the
+          // vote, or its status could not be read as open. Whatever the
+          // reason, a transaction whose write did not land is not
+          // committed: the DELETE above goes back with it, so the vote the
+          // caller had stays. The reason is read on this client rather than
+          // the pool, so a burst of refused votes cannot hold every
+          // connection while each waits for one more.
+          await voteClient.query('ROLLBACK');
+          const closedNow = await votingClosedReason(flockId, voteClient);
+          socket.emit('error', {
+            message: closedNow || 'The plan changed while your vote was being saved. Try again.',
+          });
+          return;
         }
         await voteClient.query('COMMIT');
       } catch (txErr) {

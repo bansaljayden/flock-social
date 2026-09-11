@@ -77,8 +77,8 @@ const VOTING_CLOSED = new Set(['completed', 'cancelled']);
 // it is not. Called AFTER verifyFlockMember on every write path, so a
 // non-member's 403 is still decided without consulting `flocks` and the route
 // stays the non-oracle it already was.
-async function votingClosedReason(flockId) {
-  const flock = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+async function votingClosedReason(flockId, db = pool) {
+  const flock = await db.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
   if (flock.rows.length === 0) return 'Flock not found';
   const status = flock.rows[0].status;
   if (!VOTING_CLOSED.has(status)) return null;
@@ -360,13 +360,19 @@ router.post('/:id/vote',
           [flockId, req.user.id, venue_name, venue_id || null]
         );
         if (upsert.rowCount === 0) {
-          const closedNow = await votingClosedReason(flockId);
+          // Nothing written means the plan closed or vanished under the
+          // vote, or its status could not be read as open. Whatever the
+          // reason, a transaction whose write did not land is not
+          // committed: the DELETE above goes back with it, so the vote the
+          // caller had stays. The reason is read on this client rather than
+          // the pool, so a burst of refused votes cannot hold every
+          // connection while each waits for one more.
+          await client.query('ROLLBACK');
+          const closedNow = await votingClosedReason(flockId, client);
           if (closedNow) {
-            // The DELETE above rolls back with it: a closed plan keeps the
-            // vote it had.
-            await client.query('ROLLBACK');
             return res.status(closedNow === 'Flock not found' ? 404 : 409).json({ error: closedNow });
           }
+          return res.status(409).json({ error: 'The plan changed while your vote was being saved. Try again.' });
         }
         await client.query('COMMIT');
         vote = upsert.rows[0];

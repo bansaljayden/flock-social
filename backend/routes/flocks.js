@@ -2224,6 +2224,11 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
   // The replay. Same order of decisions as the per-id loop, no I/O.
   const reinviteIds = [];
   const newIds = [];
+  // The two writes below each read the plan's status in the same statement;
+  // their results are kept so the door that checked the status can ask why
+  // one of them wrote nothing.
+  let reinvited = null;
+  let written = null;
   for (const uid of candidates) {
     const status = statusByUid.get(uid);
     if (status === 'accepted' || status === 'invited') continue;
@@ -2280,9 +2285,14 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     // a plan they had already joined. Batching WIDENS that window (the read
     // now happens once, at the top), which makes the clause more important,
     // not less: it is what makes the write safe to issue late.
-    await pool.query(
+    //
+    // WRITTEN ONLY WHILE THE PLAN IS OPEN, like the insert below: a declined
+    // member re-invited on a plan that closed after the status check would
+    // be back on a roster nobody can join, and would be told so.
+    reinvited = await pool.query(
       `UPDATE flock_members SET status = 'invited'
-       WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'`,
+       WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'
+         AND EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))`,
       [flockId, reinviteIds]
     );
   }
@@ -2305,22 +2315,32 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     // that check and this statement still seated invitees on a plan that had
     // just closed. The write reads the status in the same statement, so it
     // decides for itself; an empty write is read back below.
-    const written = await pool.query(
+    written = await pool.query(
       `INSERT INTO flock_members (flock_id, user_id, status)
        SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
         WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
        ON CONFLICT (flock_id, user_id) DO NOTHING`,
       [flockId, newIds]
     );
-    // Only the door that checked the status asks why nothing was written:
-    // rerun and create seat people on a plan that is seconds old and cannot
-    // have closed, and their fixtures do not model this read.
-    if (refuseClosed && written.rowCount === 0) {
-      const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
-      const st = now.rows[0] && now.rows[0].status;
-      if (!now.rows[0] || st === 'completed' || st === 'cancelled') {
-        return { invited: [], throttled: false, full: false, closed: true };
-      }
+  }
+
+  // Only the door that checked the status asks why nothing was written:
+  // rerun seats people on a plan that is seconds old and cannot have
+  // closed, and its fixtures do not model this read. Either write
+  // can come back empty for an innocent reason (every new id conflicted with
+  // a concurrent invite; the declined member changed their mind first), so
+  // the plan is read back rather than assumed closed.
+  const wroteNothing = (reinvited !== null && reinvited.rowCount === 0)
+    || (written !== null && written.rowCount === 0);
+  if (refuseClosed && wroteNothing) {
+    const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+    const st = now.rows[0] && now.rows[0].status;
+    // A plan that vanished is reported apart from one that closed, so the
+    // door can answer 404 for the one and 409 for the other, as the vote
+    // and invite-link doors do.
+    if (!now.rows[0]) return { invited: [], throttled: false, full: false, closed: true, gone: true };
+    if (st === 'completed' || st === 'cancelled') {
+      return { invited: [], throttled: false, full: false, closed: true };
     }
   }
 
@@ -2562,7 +2582,7 @@ router.post('/:id/invite',
       // Everything from the roster ceilings to the socket fan-out is the
       // shared pipeline — see inviteUsersToFlock above. POST /:id/rerun runs
       // the same function, so the rules cannot drift between the two doors.
-      const { invited, throttled, full, closed } = await inviteUsersToFlock({
+      const { invited, throttled, full, closed, gone } = await inviteUsersToFlock({
         io: req.app.get('io'),
         inviter: req.user,
         flockId,
@@ -2571,6 +2591,9 @@ router.post('/:id/invite',
         refuseClosed: true,
       });
 
+      if (gone) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
       if (closed) {
         return res.status(409).json({
           error: 'This plan is finished and cannot accept new invites',
