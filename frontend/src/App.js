@@ -5222,15 +5222,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     queueSync({ locationEnabled: enable ? 'true' : 'false' });
     if (enable) {
       if (geolocationAvailable()) {
+        // The wait is state, not silence: the Events gate shows it, and
+        // before this the tap there changed nothing on screen for the ten
+        // seconds a device can take to answer.
+        setLocationLoading(true);
         getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
+            setLocationLoading(false);
             setUserLocation({ lat: latitude, lng: longitude });
             localStorage.setItem('flock_user_lat', latitude.toString());
             localStorage.setItem('flock_user_lng', longitude.toString());
             setLocationError('');
           },
           (err) => {
+            setLocationLoading(false);
             trackLocationError(err, 'toggle');
             // Flipping the switch back on cannot conjure a permission the
             // device has refused. The banner that WAS explaining the empty map
@@ -8200,6 +8206,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .finally(() => { if (seq === featuredSeqRef.current) setFeaturedEventsLoading(false); });
   }, [userInterests]);
+
+  // "TURN ON LOCATION" ON THE EVENTS SCREEN WAS A DEAD END EVEN WHEN IT WORKED.
+  // It asked the device, the fix arrived, userLocation was set, and nothing
+  // then asked for events: the only reads are the Events button's own tap and
+  // the search box. The screen kept asking for a location over one it now
+  // had, and the tap looked like it did nothing. The list is
+  // read the moment a location exists while the view is open and no read has
+  // happened; a read that ran, is running, or failed is left alone.
+  useEffect(() => {
+    if (!showEventsView || !userLocation) return;
+    if (featuredEvents || featuredEventsLoading || featuredEventsError) return;
+    fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, eventsSearchQuery);
+  }, [showEventsView, userLocation, featuredEvents, featuredEventsLoading, featuredEventsError, eventsSearchQuery, fetchFeaturedEvents]);
 
   // pullSettings() broadcasts the account's stored settings once it has them.
   // Adopt the two this screen owns so a second device agrees with the first.
@@ -16264,10 +16283,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '40px 20px' }}>
                 <EmptyMark name="steps" height={96} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock to see what is on near you.</p>
+                {/* Three sentences, never one: the ask, the wait, the failure.
+                    A tap that asked the device and heard nothing back for ten
+                    seconds used to change nothing on this screen at all. The
+                    Discover banner's own words are not reused here because they
+                    talk about the map; only its denial-or-not is read. */}
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>
+                  {locationLoading
+                    ? 'Finding where you are. Events near you show up once that lands.'
+                    : locationError
+                      ? (/Settings/.test(locationError)
+                        ? 'Location is off for Flock on this phone. Turn it on in Settings, then come back.'
+                        : 'Could not get your location just now. Try again.')
+                      : 'Turn location on for Flock to see what is on near you.'}
+                </p>
                 {/* The sentence used to be the whole screen: a request with no
                     control. Same "Turn on" as the Discover banner. */}
-                <button className="hit44" onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Turn on location</button>
+                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Turn on location'}</button>
               </div>
             )}
             {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
