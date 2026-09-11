@@ -286,7 +286,7 @@ describe('empty AND error states carry a bird', () => {
       ['past flocks, failed read', '{pastFlocksError}'],
       ['past flocks, empty', 'A flock lands here once its night has been and gone.'],
       ['a person search that found nobody', 'No friends by that name'],
-      ['a flock that no longer exists', "This plan isn't open anymore"],
+      ['a flock that no longer exists', "This flock isn't open anymore"],
     ];
     for (const [label, anchor] of anchored) {
       const i = APP.indexOf(anchor);

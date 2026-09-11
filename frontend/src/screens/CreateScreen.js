@@ -220,8 +220,8 @@ export default function CreateScreen({
 
     const handleCreate = async () => {
       if (!flockName.trim()) {
-        setFlockNameError('Give the plan a name so your friends know what they are saying yes to.');
-        showToast('Name your plan first', 'error');
+        setFlockNameError('Give the flock a name so your friends know what they are saying yes to.');
+        showToast('Name your flock first', 'error');
         const input = document.getElementById('flock-name-input');
         if (input) { try { input.focus(); } catch { /* detached */ } }
         return;
@@ -341,7 +341,7 @@ export default function CreateScreen({
         setCurrentScreen('chatDetail');
         setIsLoading(false);
       } catch (err) {
-        if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That plan didn't get created. Try again.", 'error');
+        if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That flock didn't get created. Try again.", 'error');
         // The form is wiped before the request goes out so the screen feels
         // instant. That is fine when it works, and cruel when it does not: a
         // failed create used to leave the user staring at an empty form with

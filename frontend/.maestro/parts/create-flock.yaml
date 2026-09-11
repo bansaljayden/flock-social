@@ -101,7 +101,7 @@ appId: com.flockcorp.flock
 - waitForAnimationToEnd
 # Probes: which of these is on screen says what the tap did.
 - assertVisible:
-    text: "Name your plan first"                # CreateScreen.js handleCreate: name state was empty
+    text: "Name your flock first"                # CreateScreen.js handleCreate: name state was empty
     optional: true
 - assertVisible:
     text: "Movie night, dinner, party..."       # placeholder visible = the field is empty

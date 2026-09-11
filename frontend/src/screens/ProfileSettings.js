@@ -554,8 +554,8 @@ export default function ProfileSettings({
             {profileScreen === 'payment' && (
               <div>
                 <div style={styles.card}>
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 4px' }}>Payment Methods</h2>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a hangout</p>
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 4px' }}>Payment methods</h2>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a night out</p>
 
                   {/* Venmo */}
                   <div style={{ marginBottom: '16px' }}>
@@ -647,7 +647,7 @@ export default function ProfileSettings({
                 screen has. */}
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus(colors.navy, 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
-              <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add Friends</span>
+              <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add friends</span>
               {/* This used to drop "contacts" inside the iOS app, which was
                   right while the tab could not exist there and is a lie now
                   that it can. Contacts is reachable on every platform this
@@ -772,7 +772,7 @@ export default function ProfileSettings({
                       trackNotificationPermission(token ? 'granted' : getNotificationStatus(), 'settings');
                       // null = denied or registration failed — saying
                       // "enabled" without a registered token was a lie.
-                      if (token) { setNotifStatus('granted'); showToast('Notifications enabled!'); }
+                      if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
                       else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
                     }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Enable</button>
                 )}
@@ -830,7 +830,7 @@ export default function ProfileSettings({
             </button>
             <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
-              <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log Out</span>
+              <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log out</span>
             </button>
             {/* Your data, before you decide anything else about the account.
                 It sits above Delete on purpose: somebody who has come to this

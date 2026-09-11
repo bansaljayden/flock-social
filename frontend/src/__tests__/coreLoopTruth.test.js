@@ -63,7 +63,7 @@ test('a roster that could not be read says so, and the done step still opens the
   expect(app).toMatch(/\.catch\(\(\) => setRosterError\(true\)\);\s*loadFlockVotes\(selectedFlockId\);/);
   expect(detail).toMatch(/Couldn't load who's going\./);
   expect(detail).toMatch(/onClick=\{retryRoster\}/);
-  expect(app).toMatch(/showToast\('Marked done\. Open the plan again to mark who showed up\.'\);/);
+  expect(app).toMatch(/showToast\('Marked done\. Open the flock again to mark who showed up\.'\);/);
 });
 
 test('a member picking on Discover suggests; only the creator sets the venue', () => {

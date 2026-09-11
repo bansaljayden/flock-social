@@ -3903,6 +3903,7 @@ const NfcCheckinView = ({ placeId, sig, onViewVenue, onOpenApp }) => {
 
       {status === 'error' && (
         <>
+          <BirdieStill size={96} eager style={{ margin: '0 0 12px' }} />
           <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0' }}>Not checked in</h1>
           <p role="alert" style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 24px', maxWidth: '320px', lineHeight: 1.5 }}>{failureText}</p>
           {canRetry && <button className="hit44" onClick={() => setAttempt(n => n + 1)} style={btn}>Try again</button>}
@@ -5874,7 +5875,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // The header count only ever moved on boot and on the other person's
       // socket event, so accepting here left it a friend behind.
       getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
-      showToast('Friend request accepted!');
+      showToast('Friend request accepted.');
     } catch (err) {
       // The server's "confirm your email" refusal used to land here as a red
       // toast with no resend, beside a request that stayed on screen.
@@ -9103,7 +9104,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (typeof flockId !== 'number') return Promise.resolve();
     return setFlockStatus(flockId, 'completed')
       .then(async () => {
-        showToast('Flock marked as done!');
         // Reads the roster fresh inside openAttendanceSheet: `flocks` in a
         // closure was a stale snapshot and was also why this callback was
         // rebuilt on every flock state change.
@@ -9118,7 +9118,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, members } : f));
           if (openAttendanceSheet(flockId)) return;
         } catch (err) { /* said below */ }
-        showToast('Marked done. Open the plan again to mark who showed up.');
+        showToast('Marked done. Open the flock again to mark who showed up.');
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
@@ -11640,7 +11640,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     };
     reader.onerror = () => {
       console.error('[PhotoUpload] FileReader error:', reader.error);
-      showToast('Failed to read image', 'error');
+      showToast("That photo couldn't be read. Pick another.", 'error');
     };
     reader.readAsDataURL(file);
   }, [showToast]);
@@ -11692,7 +11692,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const data = await uploadProfileImage(file);
         const url = data.profile_image_url;
         setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
-        showToast('Profile picture updated!', 'success');
+        showToast('Profile picture updated.', 'success');
       } catch (err) {
         console.error('Profile pic upload failed:', err);
         showToast(err?.message || "That photo didn't upload. Try again.", 'error');
@@ -11720,7 +11720,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
     try {
       await saveProfileImageUrl(url);
-      showToast('Profile picture updated!', 'success');
+      showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Avatar save failed:', err);
       setProfilePic(previousPic);
@@ -12223,7 +12223,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setTrustedContacts(prev => prev.filter(c => c.id !== contactId));
       showToast('Contact removed');
     } catch (err) {
-      showToast('Failed to remove contact', 'error');
+      showToast('Could not remove that contact. Try again.', 'error');
     }
   }, [showToast]);
 
@@ -14629,7 +14629,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             }}>
               <EmptyMark name="crowd" />
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>{flocks.length > 0 ? 'Your past plans are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
+              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
               <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', maxWidth: '300px', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', letterSpacing: '-0.1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}>
                 {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
               </button>
@@ -17142,9 +17142,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>Opening your plan</h2>
       ) : (
         <>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This plan isn't open anymore</h2>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This flock isn't open anymore</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
-            It was either deleted or you are no longer in it. Your other plans are all still here.
+            It was either deleted or you are no longer in it. Your other flocks are all still here.
           </p>
           <button
             className="hit44"
@@ -19275,6 +19275,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             the top of an overflowing child instead of scrolling to it. The
             error message is the one string here with no length limit. */}
         <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
+          <BirdieStill size={96} eager style={{ margin: '0 0 12px' }} />
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
           </span>
@@ -19331,6 +19332,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
       >
         <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
+          <BirdieStill size={96} eager style={{ margin: '0 0 12px' }} />
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
           </span>
@@ -19890,7 +19892,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             )}
             {eventDetail.please_note && (
               <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '12px', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
-                <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E', margin: '0 0 4px' }}>Please Note</p>
+                <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E', margin: '0 0 4px' }}>Please note</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
               </div>
             )}
@@ -20431,7 +20433,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   had two people, the sentence comes first. A tag check-in this
                   client cannot see still gets through: the form stays. */}
               {showReviewForm && !flocks.some(f => String(f.venueId) === String(venueDetailModal.place_id) && (f.memberCount || 0) >= 2) && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>You can review a venue after you have been there with a flock. Reviews from a plan with at least two people are the ones that count.</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>You can review a venue after you have been there with a flock. Reviews from a flock with at least two people are the ones that count.</p>
               )}
               <div style={{ display: 'none' }}>
               </div>
@@ -21550,6 +21552,7 @@ const FlockApp = () => {
         }}>
           <div style={{ textAlign: 'center', maxWidth: '340px' }}>
             <div style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: '#f1ede0', letterSpacing: '-0.5px', marginBottom: '10px' }}>Flock</div>
+            <BirdieStill size={96} eager style={{ margin: '0 auto 12px' }} />
             <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: '#f1ede0', margin: '0 0 8px' }}>Couldn't reach Flock</h1>
             <p style={{ fontSize: 'var(--t-body)', color: 'rgba(241,237,224,0.7)', margin: '0 0 20px', lineHeight: 1.5 }}>You are still signed in. Check your connection and Flock will pick up where you left off. It keeps trying on its own.</p>
             <button
