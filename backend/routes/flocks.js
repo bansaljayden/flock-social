@@ -1386,9 +1386,10 @@ router.put('/:id',
              venue_rating = COALESCE($7, venue_rating),
              venue_photo_url = COALESCE($8, venue_photo_url),
              event_time = COALESCE($9, event_time),
-             status = COALESCE($10, status),
+             status = COALESCE($10::text, status),
              updated_at = NOW()
          WHERE id = $11
+           AND ($10::text IS NULL OR $10::text = status OR status IS NULL OR status NOT IN ('completed', 'cancelled'))
          RETURNING *`,
         [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, safePhotoUrl, event_time, status, flockId]
       );
@@ -1402,8 +1403,18 @@ router.put('/:id',
       // `{ flock: {} }` — reporting success for a write that matched nothing.
       // Same 404 the ownership check gives, which is also the honest answer:
       // by the time we finished, there was no such flock.
+      //
+      // The reopen check above is a separate statement too, so a plan that
+      // closed between it and this write would have been reopened by a
+      // request carrying a status. The write refuses that itself (the last
+      // clause of its WHERE), and matches nothing; which of the two happened
+      // is read back, and answered as the check would have.
       if (result.rowCount === 0) {
-        return res.status(404).json({ error: 'Flock not found' });
+        const now = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+        if (now.rows.length === 0) {
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        return res.status(409).json({ error: 'This plan is finished and cannot be reopened' });
       }
 
       // Notify flock members of the update
