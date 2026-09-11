@@ -1052,18 +1052,26 @@ const HOLDOUT = (() => {
   return { city, hours, misconfigured, active: Boolean(city) && hours.includes(new Date().getUTCHours()) };
 })();
 
-// RUN WATCHDOG. On 2026-09-11 the 03:07Z run went quiet at 03:56Z, after a
-// string of slow BestTime answers, and never exited: the container sat alive
-// at idle CPU for four hours, and because Railway does not start a cron run
-// while the previous one is still alive, the 04:07 and 05:07 runs never
-// happened. No line in the venue loop logs a success, so from outside a hang
-// is indistinguishable from a slow hour. The fifty-minute call budget bounds
-// the CALLS; nothing bounded the PROCESS. A run still alive at MAX_RUN_MS
-// is ended with its own exit code so the next hour can collect. Everything
-// written so far is committed per venue, so nothing is lost but the tail of
-// one hour, which the previous behaviour lost along with every hour after it.
-// unref: the timer must never be the thing that keeps a finished run alive.
-const MAX_RUN_MS = 55 * 60 * 1000;
+// RUN WATCHDOG. The fifty-minute budget bounds the CALLS; nothing bounded the
+// PROCESS, and a run that never exits costs every hour after it, because a
+// cron run does not start while the previous one is still alive. No line in
+// the venue loop logs a success, so from outside a hang is indistinguishable
+// from a slow hour. A run still alive at MAX_RUN_MS is ended with its own
+// exit code so the next hour can collect; everything written so far is
+// committed per venue.
+//
+// THREE HOURS, NOT FIFTY-FIVE MINUTES. The first version of this sat at 55
+// minutes, on the theory that a run is fifty minutes of calls plus a little
+// bookkeeping. The bookkeeping is not little: the baseline refresh rebuilds
+// every venue from 3.3M weekly rows inside one transaction, and a run
+// observed on 2026-09-11 was still in that phase more than five minutes after
+// its calls ended. A watchdog inside that window would have rolled the
+// refresh back every single hour, which is a far worse outcome than one
+// skipped tick. A genuine hang costs hours; a legitimately long run costs
+// one skipped tick and nothing else. So the line is drawn where nothing
+// legitimate can reach it. unref: the timer must never be the thing that
+// keeps a finished run alive.
+const MAX_RUN_MS = 3 * 60 * 60 * 1000;
 const WATCHDOG_EXIT_CODE = 3;
 
 async function run() {
