@@ -144,7 +144,7 @@ export default function AddFriends({
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
             <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0, flex: 1 }}>Add Friends</h1>
+            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0, flex: 1 }}>Add friends</h1>
             {pendingRequests.length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length} new</span>
             )}
@@ -385,7 +385,7 @@ export default function AddFriends({
                 {myFriendCode && (
                   <div style={{ marginTop: '14px' }}>
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied!'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied.'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
                   </div>
                 )}

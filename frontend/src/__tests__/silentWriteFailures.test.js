@@ -399,7 +399,7 @@ describe('an avatar that did not save', () => {
   test('success is claimed only after the write came back', () => {
     const fn = avatar();
     const awaited = fn.indexOf('await saveProfileImageUrl(url);');
-    const claimed = fn.indexOf("showToast('Profile picture updated!', 'success')");
+    const claimed = fn.indexOf("showToast('Profile picture updated.', 'success')");
     expect(awaited).toBeGreaterThan(-1);
     expect(claimed).toBeGreaterThan(awaited);
   });

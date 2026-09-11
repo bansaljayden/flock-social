@@ -159,7 +159,7 @@ appId: com.flockcorp.flock
 - waitForAnimationToEnd
 # Probes: which of these is on screen says what the tap did.
 - assertVisible:
-    text: "Name your plan first"                 # CreateScreen.js handleCreate: name state was empty
+    text: "Name your flock first"                 # CreateScreen.js handleCreate: name state was empty
     optional: true
 - assertVisible:
     text: "Movie night, dinner, party..."       # placeholder visible = the field is empty
@@ -858,12 +858,12 @@ appId: com.flockcorp.flock
     optional: true                              # end of the take: nothing after this may end the run
 - scrollUntilVisible:
     element:
-      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
+      text: "Add friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
     direction: DOWN
     timeout: 8000
     optional: true
 - tapOn:
-    text: "Add Friends.*"
+    text: "Add friends.*"
     optional: true
 - tapOn:
     text: "Contacts"                            # AddFriends.js:131 tab label
