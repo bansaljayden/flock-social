@@ -774,7 +774,9 @@ test('budget: concurrent double-submit from one user counts once and crosses the
   const winners = [a, b].filter((r) => r.status === 200);
   const losers = [a, b].filter((r) => r.status !== 200);
   assert.strictEqual(winners.length, 1, `both requests were accepted: ${a.text} / ${b.text}`);
-  assert.strictEqual(losers[0].status, 400, losers[0].text);
+  // 409, not 400: the request was well formed and the state is what refuses
+  // it, the same answer submit and lock give any late submission.
+  assert.strictEqual(losers[0].status, 409, losers[0].text);
   assert.match(losers[0].body.error, /locked/i);
   assert.strictEqual(winners[0].body.submissionCount, 4, 'a double-submit double-counted');
   assert.strictEqual(winners[0].body.isReady, true);
