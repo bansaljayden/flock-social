@@ -590,9 +590,17 @@ test('the level-to-score map is the one the leverage bound is derived from', () 
 // the model score is an input (stubbed), the calibration is the real thing.
 // ===========================================================================
 
+// The route calibrates against the wall clock, not the fixed NOW above, so
+// the rows it reads are re-dated from today with their ages kept. Dated from
+// NOW they aged out of the 28-day window on the 28th day after it and
+// switched calibration off, which is not what these tests are about.
 function scriptCrowd(feedbackRows) {
+  const skew = Date.now() - NOW;
+  const rows = feedbackRows.map((r) => (r.created_at instanceof Date
+    ? { ...r, created_at: new Date(r.created_at.getTime() + skew) }
+    : r));
   handlers = [
-    [/FROM venue_feedback/, () => ({ rows: feedbackRows })],
+    [/FROM venue_feedback/, () => ({ rows })],
     [/[\s\S]*/, () => ({ rows: [] })],
   ];
 }
