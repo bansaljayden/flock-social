@@ -44,7 +44,7 @@ import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet } from './lib/storage';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { trackScreenView, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
+import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
@@ -4834,6 +4834,7 @@ function getSosPosition(timeoutMs, maximumAge) {
       },
       (err) => {
         clearTimeout(guard);
+        trackLocationError(err, 'emergency');
         console.warn('[Emergency] Location error:', err.message);
         finish({ coords: null, denied: err.code === 1 });
       },
@@ -5230,6 +5231,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             setLocationError('');
           },
           (err) => {
+            trackLocationError(err, 'toggle');
             // Flipping the switch back on cannot conjure a permission the
             // device has refused. The banner that WAS explaining the empty map
             // disappears the instant locationEnabled flips, so without a
@@ -8563,6 +8565,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       },
       (err) => {
         console.warn('[Geo] Geolocation error:', err.code, err.message);
+        trackLocationError(err, 'discover');
         setLocationLoading(false);
         if (savedLat && savedLng && !forceRefresh) {
           // Already loaded from saved above
@@ -10339,6 +10342,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setSharingLocationForFlock(flockId);
       },
       (err) => {
+        trackLocationError(err, 'flock_share');
         showToast(err?.code === 1
           ? 'Flock needs location access to share where you are. Turn it on in Settings.'
           : "Couldn't get your location. Try again in a second.", 'error');
@@ -13665,6 +13669,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setDmSharingLocation(dmId);
       },
       (err) => {
+        trackLocationError(err, 'dm_share');
         showToast(err?.code === 1
           ? 'Flock needs location access to share where you are. Turn it on in Settings.'
           : "Couldn't get your location. Try again in a second.", 'error');

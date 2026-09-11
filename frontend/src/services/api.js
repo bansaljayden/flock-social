@@ -2478,6 +2478,30 @@ export function trackPushOpened(screen) {
   track('push_opened', { destination: pushDestination(screen) });
 }
 
+/* WHY A LOCATION REQUEST FAILED, and nothing about where the person is.
+   Added 2026-09-10: a phone with the permission granted kept printing "Could
+   not get your location just now" on Discover, and from here nothing could
+   say whether the plugin had timed out, reported unavailable, or been
+   refused. The service folds seven plugin outcomes into the three web codes
+   and the screen prints the same sentence for two of those, so the only way
+   to learn what the device did was to hold it. Four bounded values: the
+   mapped code (1 denied, 2 unavailable, 3 timeout, 0 for anything else), the
+   plugin's own identifier or the service's marker in `detail` (at most 24
+   characters; the free-text message is never sent), whether the low-accuracy
+   retry ran, and which screen asked, from a fixed list. A failure has no
+   coordinate to leak and this event does not wait for one. */
+const LOCATION_SOURCES = ['discover', 'toggle', 'flock_share', 'dm_share', 'emergency'];
+
+export function trackLocationError(err, source) {
+  const code = Number(err && err.code);
+  track('location_error', {
+    code: [1, 2, 3].includes(code) ? code : 0,
+    detail: String((err && err.detail) || '').slice(0, 24),
+    retried: !!(err && err.retried),
+    source: LOCATION_SOURCES.includes(source) ? source : 'other',
+  });
+}
+
 /* THE TWO EVENTS THAT BELONG TO A ROUTE, NOT TO A REQUEST
    index.js is the caller, for the same reason TapPage is the caller above:
    this file is the only place a capture may appear. It reaches them through a
