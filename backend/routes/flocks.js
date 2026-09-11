@@ -484,6 +484,34 @@ async function outstandingBillFor(flockId, db = pool) {
 const OUTSTANDING_BILL_MESSAGE =
   'Someone still owes money on this plan. Settle the bill first, then you can delete it.';
 
+/* THE LEAVER'S OWN DEBT. The creator's delete is refused above while anyone
+   owes, because the cascade would take the bill and every share with it. A
+   member leaving does not cascade, which is the quieter problem: their
+   unsettled share stays behind on a bill they can no longer open, the payer
+   keeps seeing "X owes" for someone who is gone, and the group can never
+   settle the bill without the payer forgiving the share. So a member who
+   still owes on this plan's bill settles first. A share where they are the
+   payer is not owed to anyone. */
+async function memberOwesOn(flockId, userId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM bill_split_shares bss
+         JOIN bill_splits bs ON bs.id = bss.bill_id
+        WHERE bs.flock_id = $1
+          AND bss.user_id = $2
+          AND bs.paid_by IS NOT NULL
+          AND bs.paid_by <> $2
+          AND bss.settled IS NOT TRUE
+     ) AS owed`,
+    [flockId, userId]
+  );
+  return !!rows[0]?.owed;
+}
+
+const OWN_SHARE_UNSETTLED_MESSAGE =
+  'You still owe money on this plan. Settle your share first, then you can leave.';
+
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
@@ -2817,6 +2845,14 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         }
       }
       return undefined;
+    }
+
+    // A member who still owes on the bill does not leave it behind. Decided
+    // BEFORE the fan-out below, not inside the transaction under it: the room
+    // is told "X left" before the row goes, and a refusal after that sentence
+    // would be one the room had already heard the opposite of.
+    if (await memberOwesOn(flockId, req.user.id)) {
+      return res.status(409).json({ error: OWN_SHARE_UNSETTLED_MESSAGE, code: 'SHARE_UNSETTLED' });
     }
 
     // Notify flock that member left (accepted members only — see above).
