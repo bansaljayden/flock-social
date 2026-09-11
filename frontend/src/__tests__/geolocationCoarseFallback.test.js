@@ -106,6 +106,10 @@ describe('a precise request that fails is retried once, coarsely', () => {
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0].code).toBe(3);
+    // The failure says which attempt decided it and that the retry ran, so a
+    // report from a device can tell this apart from a first-attempt refusal.
+    expect(onError.mock.calls[0][0].detail).toBe('client-timer');
+    expect(onError.mock.calls[0][0].retried).toBe(true);
   });
 
   test('a refused permission is not retried and reaches the caller as code 1', async () => {
@@ -124,6 +128,8 @@ describe('a precise request that fails is retried once, coarsely', () => {
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0].code).toBe(1);
+    expect(onError.mock.calls[0][0].detail).toBe('OS-PLUG-GLOC-0003');
+    expect(onError.mock.calls[0][0].retried).toBe(false);
   });
 
   test('a request that did not ask for precision is not retried', async () => {

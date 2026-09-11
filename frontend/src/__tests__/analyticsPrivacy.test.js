@@ -287,6 +287,7 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'invite_link_joined',
       'invite_link_opened',  // was the link the product spreads through opened
       'invite_sent',         // people added to a plan that already existed
+      'location_error',      // why a fix failed: code, plugin id, retry, screen. No coordinate, no message
       'login',
       'login_failed',        // locked out, or uninterested
       'nfc_tap',
@@ -310,6 +311,21 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       // invite token cannot ride in on the /i/<token> path.
       'web_vital',
     ]);
+  });
+
+  // The one diagnostic event. A device with the permission granted kept
+  // printing "Could not get your location just now", and nothing here could
+  // say why. It carries exactly four keys, each bounded in api.js: the mapped
+  // code, the plugin's own identifier (never the free-text message), whether
+  // the coarse retry ran, and which screen asked from a fixed list.
+  test('location_error carries four bounded keys and never the message', () => {
+    const calls = trackCalls().filter(([, name]) => name === 'location_error');
+    expect(calls).toHaveLength(1);
+    expect(propKeys(calls[0][2]).sort()).toEqual(['code', 'detail', 'retried', 'source']);
+    const api = readSrc('services', 'api.js');
+    expect(api).toContain("const LOCATION_SOURCES = ['discover', 'toggle', 'flock_share', 'dm_share', 'emergency'];");
+    expect(api).toContain("detail: String((err && err.detail) || '').slice(0, 24),");
+    expect(api).toContain("code: [1, 2, 3].includes(code) ? code : 0,");
   });
 
   // The age gate is the one refusal that must produce no event. See the long

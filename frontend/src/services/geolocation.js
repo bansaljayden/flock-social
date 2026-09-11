@@ -136,23 +136,36 @@ function codeFor(err) {
 
 /* A GeolocationPositionError in every way the app reads one. The three
    constants ride along because that is what the web type carries and something
-   downstream may one day compare against them instead of the literal. */
-function toPositionError(code, message) {
+   downstream may one day compare against them instead of the literal.
+
+   Two fields the web type does not have: `detail` is the plugin's own error
+   identifier (OS-PLUG-GLOC-0010) or, when the failure was decided here, which
+   decision ('client-timer' for the timeout this module enforces, 'no-plugin'
+   when the bridge could not be loaded); `retried` says the low-accuracy
+   second attempt ran before this answer. Both exist so a failure can be
+   reported from a device in four bounded values and no free text: the three
+   web codes fold seven plugin outcomes into three words, and the words on
+   screen are the same for two of them, so a report that carried only the
+   code could not say what the phone actually did. */
+function toPositionError(code, message, detail, retried) {
   return {
     code,
     message,
+    detail: detail || '',
+    retried: !!retried,
     PERMISSION_DENIED,
     POSITION_UNAVAILABLE,
     TIMEOUT,
   };
 }
 
-function fail(onError, code, message) {
-  if (typeof onError === 'function') onError(toPositionError(code, message));
+function fail(onError, code, message, detail, retried) {
+  if (typeof onError === 'function') onError(toPositionError(code, message, detail, retried));
 }
 
-function failFromPlugin(onError, err) {
-  fail(onError, codeFor(err), err?.message || 'Could not get a location.');
+function failFromPlugin(onError, err, retried) {
+  const detail = err && err.code != null ? String(err.code) : '';
+  fail(onError, codeFor(err), err?.message || 'Could not get a location.', detail, retried);
 }
 
 /**
@@ -215,9 +228,9 @@ export function getCurrentPosition(onSuccess, onError, options) {
     fn(...args);
   };
   const succeed = finish((position) => { if (typeof onSuccess === 'function') onSuccess(position); });
-  const failFinal = finish((code, message, pluginErr) => {
-    if (pluginErr) failFromPlugin(onError, pluginErr);
-    else fail(onError, code, message);
+  const failFinal = finish((code, message, pluginErr, retried) => {
+    if (pluginErr) failFromPlugin(onError, pluginErr, retried);
+    else fail(onError, code, message, code === TIMEOUT ? 'client-timer' : 'no-plugin', retried);
   });
 
   const attempt = (opts, onAttemptFail) => {
@@ -264,7 +277,7 @@ export function getCurrentPosition(onSuccess, onError, options) {
   const wantsPrecise = !!(options && options.enableHighAccuracy);
   attempt(options, (code, message, pluginErr) => {
     if (wantsPrecise && (code === TIMEOUT || code === POSITION_UNAVAILABLE)) {
-      attempt(COARSE_RETRY, (code2, message2, pluginErr2) => failFinal(code2, message2, pluginErr2));
+      attempt(COARSE_RETRY, (code2, message2, pluginErr2) => failFinal(code2, message2, pluginErr2, true));
       return;
     }
     failFinal(code, message, pluginErr);
