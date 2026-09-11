@@ -112,10 +112,12 @@ let queries;   // { sql, params } for every statement
 let unknown;   // statements the fixture did not model
 let vanishAfterOwnershipCheck; // see the flock-row lookup below
 let closeAfterStatusRead = null; // a flock id: closed right after its status is read (same lookup)
+let seatAfterMembershipRead = null; // a user id: invited by someone else right after the roster is read
 
 function reset() {
   vanishAfterOwnershipCheck = false;
   closeAfterStatusRead = null;
+  seatAfterMembershipRead = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -283,6 +285,15 @@ async function dispatch(text, params = []) {
     const want = new Set((params[1] || []).map(Number));
     const rows = rowsOf(params[0]).filter((m) => want.has(m.user_id))
       .map((m) => ({ user_id: m.user_id, status: m.status }));
+    // "Invited by someone else mid-request": the roster read sees no row,
+    // and a concurrent invite has seated the person by the time this one's
+    // INSERT runs, which then conflicts and writes nothing.
+    if (seatAfterMembershipRead !== null) {
+      const fid = Number(params[0]);
+      if (!members.has(fid)) members.set(fid, []);
+      members.get(fid).push({ user_id: seatAfterMembershipRead, status: 'invited', attendance: 'unmarked' });
+      seatAfterMembershipRead = null;
+    }
     return { rows, rowCount: rows.length };
   }
   if (has('AS total, COUNT(*)::int AS n FROM flock_members')) {
@@ -417,12 +428,13 @@ async function dispatch(text, params = []) {
       const f = flocks.get(Number(params[0]));
       if (!f || f.status === 'completed' || f.status === 'cancelled') return { rows: [], rowCount: 0 };
     }
-    let n = 0;
+    // RETURNING user_id: the rows the statement changed, as Postgres reports.
+    const written = [];
     for (const uid of params[1] || []) {
       const m = memberOf(params[0], uid);
-      if (m && m.status === 'declined') { m.status = 'invited'; n += 1; }
+      if (m && m.status === 'declined') { m.status = 'invited'; written.push(Number(uid)); }
     }
-    return { rows: [], rowCount: n };
+    return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
   if (has('INSERT INTO flock_members')) {
     const fid = Number(params[0]);
@@ -436,12 +448,16 @@ async function dispatch(text, params = []) {
     const list = members.get(fid);
     const status = /'accepted'/.test(sql) ? 'accepted' : 'invited';
     const ids = Array.isArray(params[1]) ? params[1] : [params[1]];
+    // RETURNING user_id: the rows actually inserted, as Postgres reports;
+    // an id that conflicted (ON CONFLICT DO NOTHING) is not among them.
+    const written = [];
     for (const raw of ids) {
       const uid = Number(raw);
       if (list.some((m) => m.user_id === uid)) continue;
       list.push({ user_id: uid, status, attendance: 'unmarked' });
+      written.push(uid);
     }
-    return { rows: [], rowCount: ids.length };
+    return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
   if (has('UPDATE flock_members SET attendance = t.mark')) {
     const [uids, marks, fid] = params;
@@ -1043,6 +1059,24 @@ test('direct invite: a plan that vanishes between the status check and the write
   } finally {
     vanishAfterOwnershipCheck = false;
     flocks.set(10, row);
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a person a concurrent invite seated first is not announced by this one', async () => {
+  // Both calls read no row for 4; the other call's INSERT lands first, this
+  // one's conflicts and writes nothing. The list of people invited is what
+  // the database reports written, so 4 is not in it and gets no second
+  // notification from here.
+  seatAfterMembershipRead = 4;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.deepStrictEqual(body.invited, [], 'an invite the other call wrote was announced by this one');
+    assert.strictEqual(memberOf(10, 4).status, 'invited', 'the seat the other call wrote must stay');
+  } finally {
+    seatAfterMembershipRead = null;
   }
   assertQueriesUnderstood();
 });

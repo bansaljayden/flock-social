@@ -165,7 +165,10 @@ pool.query = async (text, params = []) => {
     m.status = 'accepted';
     return { rows: [{ flock_id: FLOCK.id, user_id: m.user_id, status: 'accepted' }], rowCount: 1 };
   }
-  if (has('INSERT INTO flock_members')) return { rows: [], rowCount: 1 };
+  if (has('INSERT INTO flock_members')) {
+    const ids = Array.isArray(params[1]) ? params[1] : [params[1]];
+    return { rows: ids.map((user_id) => ({ user_id: Number(user_id) })), rowCount: ids.length };
+  }
   if (has('SELECT id, name FROM users WHERE id = $1')) {
     const u = USERS[params[0]];
     return { rows: u ? [{ id: u.id, name: u.name }] : [], rowCount: u ? 1 : 0 };

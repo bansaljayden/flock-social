@@ -258,7 +258,7 @@ pool.query = async (text, params = []) => {
     // UNNEST insert the create path uses.
     const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
     for (const id of ids) members.push({ user_id: id, status: 'invited' });
-    return { rows: [], rowCount: ids.length };
+    return { rows: ids.map((user_id) => ({ user_id })), rowCount: ids.length };
   }
   // The flock row lock POST /:id/join takes before its UPDATE, the same one
   // billing reads the accepted roster under. BEGIN and COMMIT are answered
@@ -282,14 +282,14 @@ pool.query = async (text, params = []) => {
   if (has("UPDATE flock_members SET status = 'invited'")) {
     // Two shapes, same rule per id: one row per call, or `user_id = ANY($2)`.
     const ids = Array.isArray(params[1]) ? params[1].map(Number) : [Number(params[1])];
-    let affected = 0;
+    const written = [];
     for (const id of ids) {
       const m = memberOf(id);
       if (!m) continue;
       m.status = 'invited';
-      affected += 1;
+      written.push(id);
     }
-    return { rows: [], rowCount: affected };
+    return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
 
   // utils/relationships.js
