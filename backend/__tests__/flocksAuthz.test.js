@@ -447,7 +447,14 @@ async function dispatch(text, params = []) {
   // bill_splits.flock_id and bill_split_shares.bill_id are ON DELETE CASCADE, so
   // the delete used to take the bill and every share row with it and there was
   // no way to get any of it back. This fixture has no bills, so nothing is owed.
-  if (has('FROM bill_split_shares bss')) return { rows: [{ owed: false }] };
+  if (has('FROM bill_split_shares bss')) {
+    // Two forms. The delete/creator form carries only the flock, and this
+    // fixture holds no bills for it. The member-leave form names the leaver
+    // as $2, and `owes` says whether that person still has an unsettled
+    // share on that plan.
+    const owed = params && params.length >= 2 ? owes.has(`${Number(params[0])}:${Number(params[1])}`) : false;
+    return { rows: [{ owed }] };
+  }
 
   unknown.push(sql);
   return { rows: [], rowCount: 0 };
@@ -492,6 +499,9 @@ function call(method, path, who, body) {
 function assertQueriesUnderstood() {
   assert.deepStrictEqual(unknown, [], 'fixture did not model a query the route ran');
 }
+// `${flockId}:${userId}` pairs that still owe on the plan's bill (see the
+// bill_split_shares rule in dispatch). Empty unless a test adds to it.
+const owes = new Set();
 const noWriteMatching = (frag) =>
   assert.ok(!writes.some((w) => w.sql.includes(frag)),
     `unexpected write matching ${frag}: ${JSON.stringify(writes.map((w) => w.sql))}`);
@@ -1087,6 +1097,32 @@ test('leave: leaving removes only the caller\'s own row', async () => {
   assert.strictEqual(memberOf(10, 2), undefined);
   assert.strictEqual(memberOf(10, 1).status, 'accepted', 'leave removed somebody else');
   assert.strictEqual(rowsOf(10).length, before - 1);
+  assertQueriesUnderstood();
+});
+
+test('leave: a member who still owes on the bill is refused, and keeps their row', async () => {
+  owes.add('10:6');
+  try {
+    const before = rowsOf(10).length;
+    const res = await call('POST', '/api/flocks/10/leave', 'erin');
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.strictEqual(body.code, 'SHARE_UNSETTLED');
+    assert.match(body.error, /Settle your share first/);
+    assert.strictEqual(memberOf(10, 6).status, 'accepted', 'a refused leave removed the row anyway');
+    assert.strictEqual(rowsOf(10).length, before);
+    noWriteMatching('flock_members');
+    noWriteMatching('DELETE FROM flocks');
+  } finally {
+    owes.delete('10:6');
+  }
+  assertQueriesUnderstood();
+});
+
+test('leave: a member whose share is settled, or who has none, leaves as before', async () => {
+  const res = await call('POST', '/api/flocks/10/leave', 'erin');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(memberOf(10, 6), undefined);
   assertQueriesUnderstood();
 });
 

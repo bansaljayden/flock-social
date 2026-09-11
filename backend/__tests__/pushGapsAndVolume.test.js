@@ -368,6 +368,7 @@ test('a member leaving takes the flock lock before the membership statement', as
   const order = [];
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
@@ -417,6 +418,7 @@ test('the host is told when the last member leaves, and never told about the one
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   // The leave is one statement now: membership out and, with nobody accepted
@@ -457,6 +459,7 @@ test('a member leaving a plan that survives does not interrupt the host', async 
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] })); // the leaver owes nothing here
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   // Somebody accepted remains, so the statement removes the membership and

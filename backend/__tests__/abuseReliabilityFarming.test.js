@@ -257,6 +257,10 @@ async function dispatch(sql, params) {
     return { rows: [], rowCount: 1 };
   }
 
+  // A member leaving is refused while they still owe on the plan's bill.
+  // This fixture holds no bills, so the answer is always no.
+  if (/FROM bill_split_shares bss/.test(flat)) return { rows: [{ owed: false }], rowCount: 1 };
+
   // hasMembershipRow (the 404-vs-403 gate)
   if (/^SELECT 1 FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/.test(flat)) {
     const fm = member(Number(p[0]), Number(p[1]));
