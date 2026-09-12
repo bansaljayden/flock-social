@@ -63,7 +63,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.6.0'
+VERSION = '1.7.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -91,6 +91,13 @@ DEFAULTS = {
     'SENSOR_DEVICE_ID': '',
     'PUSH_INTERVAL_SECONDS': '30',
     'DISPLAY_ENABLED': 'auto',
+    # The live thermal view on the demo unit's touchscreen: tap the panel and
+    # see what the camera sees. 1 is on, and it only ever does anything on a
+    # unit that has a screen, which means a demo unit. A venue box is headless.
+    # See README.md, The thermal view, before turning this on anywhere else:
+    # drawing the picture means holding a real thermal frame in memory, and the
+    # privacy policy's promise about venue sensors rests on that not happening.
+    'THERMAL_VIEW': '1',
     # The V4L2 node the Lepton's USB breakout came up on. /dev/video0 on a Pi
     # with nothing else plugged in; `v4l2-ctl --list-devices` says for certain.
     'THERMAL_DEVICE': '/dev/video0',
@@ -184,6 +191,7 @@ THERMAL_THRESHOLD_C = _cfg_number('THERMAL_THRESHOLD_C', float, 0.0, 100.0, 28.0
 THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
 THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
+THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
 
 # The bench measured the pair (4, 12) and nothing else, and the two settings are
 # not independent: a cell is bin x bin pixels, so the SAME 12 means 48 raw pixels
@@ -338,6 +346,12 @@ def display_should_run():
 
 DISPLAY_ON = display_should_run()
 
+# Both halves are required, and the display half is the one that matters: a
+# venue unit has no screen, so it never retains a frame no matter what its
+# config says. The setting exists so a demo unit can be turned into a venue
+# unit by editing one line rather than by trusting that nobody plugs a panel in.
+THERMAL_VIEW_ON = bool(DISPLAY_ON and THERMAL_VIEW)
+
 
 # ---------------------------------------------------------------------------
 # Shared state (thread-safe via _lock)
@@ -352,6 +366,13 @@ _state = {
     'noise_at': None,                       # Monotonic mark of the last GOOD read
     'noise_window': deque(maxlen=6),        # 6 samples x 5s = 30s
     'last_push_history': deque(maxlen=12),  # For the optional display chart
+    # The most recent thermal frame, and ONLY when THERMAL_VIEW_ON. On any unit
+    # without a screen this stays None for the life of the process, which is
+    # what keeps 'the grid is reduced to a count and thrown away' literally true
+    # of a venue sensor. It is never written to disk and never transmitted; the
+    # push payload is three integers and cannot carry it.
+    'thermal_frame': None,
+    'thermal_frame_at': None,
 }
 _stop = threading.Event()
 
@@ -1233,6 +1254,12 @@ def thermal_loop():
                 with _lock:
                     _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
                     _state['thermal_at'] = time.monotonic()
+                    # Inside the lock with the count it belongs to, so the
+                    # display cannot pair one frame with another frame's
+                    # timestamp. Only ever set on a unit with a screen.
+                    if THERMAL_VIEW_ON:
+                        _state['thermal_frame'] = frame
+                        _state['thermal_frame_at'] = time.monotonic()
         except Exception as e:
             failures += 1
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
@@ -1844,6 +1871,126 @@ def push_loop():
 DISPLAY_W, DISPLAY_H = 720, 1280
 
 
+# ---------------------------------------------------------------------------
+# The thermal view (demo units only)
+#
+# Tap the panel and it shows what the camera is looking at. This exists for the
+# pitch demo: a hand passed in front of the unit glows, which is the one moment
+# that makes an invisible sensor legible to somebody watching.
+#
+# It is the only place in this program that turns a frame into a picture, and it
+# is gated on THERMAL_VIEW_ON, which requires a physical screen. A venue sensor
+# has no screen, retains no frame, and so keeps the published promise exactly.
+# Both functions below are pure and take their input, so the whole conversion is
+# tested without a camera or a framebuffer.
+_THERMAL_RAMP = (
+    (8, 12, 28),      # cold: near black, faintly blue
+    (26, 40, 110),
+    (70, 40, 150),
+    (150, 44, 128),
+    (216, 66, 74),    # warm: red
+    (247, 140, 30),   # hot: orange
+    (255, 214, 92),   # hotter: yellow
+    (255, 255, 240),  # hottest: near white
+)
+
+
+def _thermal_palette():
+    """256 RGB steps, interpolated through the ramp above. Built once."""
+    out = []
+    spans = len(_THERMAL_RAMP) - 1
+    for i in range(256):
+        pos = (i / 255.0) * spans
+        lo = min(int(pos), spans - 1)
+        f = pos - lo
+        a, b = _THERMAL_RAMP[lo], _THERMAL_RAMP[lo + 1]
+        out.append(bytes((int(a[0] + (b[0] - a[0]) * f),
+                          int(a[1] + (b[1] - a[1]) * f),
+                          int(a[2] + (b[2] - a[2]) * f))))
+    return tuple(out)
+
+
+THERMAL_PALETTE = _thermal_palette()
+
+
+def thermal_frame_span(frame):
+    """The (low, high) temperatures to stretch the palette across.
+
+    Auto-ranged per frame off the 2nd and 98th percentile rather than min and
+    max, so one stuck pixel cannot wash the whole picture out, and so a hand
+    entering the frame visibly takes over the top of the scale. The floor on the
+    span stops an empty room of nearly uniform temperature from being amplified
+    into dramatic-looking noise, which would be a lie told to a judge.
+    """
+    if not frame:
+        return 0.0, 1.0
+    ordered = sorted(frame)
+    n = len(ordered)
+    lo = ordered[int(n * 0.02)]
+    hi = ordered[min(n - 1, int(n * 0.98))]
+    if hi - lo < 4.0:
+        mid = (hi + lo) / 2.0
+        lo, hi = mid - 2.0, mid + 2.0
+    return lo, hi
+
+
+def thermal_frame_rgb(frame, lo, hi):
+    """The frame as raw RGB bytes, ready for pygame.image.frombuffer."""
+    span = (hi - lo) or 1.0
+    palette = THERMAL_PALETTE
+    out = bytearray()
+    for t in frame:
+        i = int((t - lo) / span * 255.0)
+        out += palette[0 if i < 0 else 255 if i > 255 else i]
+    return bytes(out)
+
+def draw_thermal_view(pygame, screen, fonts, frame, count, live):
+    """Fill the panel with what the camera is looking at.
+
+    Takes pygame as an argument rather than importing it, because this program
+    has to run headless on a venue unit where pygame is not installed at all,
+    and an import at module scope would make the whole file unloadable there.
+    """
+    font_med, font_sm, font_xs = fonts
+    CREAM = (241, 237, 224)
+    MUTED = (160, 170, 180)
+    FAINT = (110, 120, 130)
+    screen.fill((10, 14, 24))
+    screen.blit(font_sm.render('WHAT THE SENSOR SEES', True, CREAM), (36, 24))
+
+    if not frame:
+        screen.blit(font_med.render('no frame yet', True, MUTED), (36, 300))
+        screen.blit(font_xs.render('tap to go back', True, FAINT), (36, DISPLAY_H - 60))
+        return
+
+    lo, hi = thermal_frame_span(frame)
+    surf = pygame.image.frombuffer(thermal_frame_rgb(frame, lo, hi),
+                                   (THERMAL_COLS, THERMAL_ROWS), 'RGB')
+    img_w = DISPLAY_W - 72
+    img_h = int(img_w * THERMAL_ROWS / float(THERMAL_COLS))
+    # smoothscale interpolates, which is what turns 160x120 into something that
+    # reads as thermal imagery rather than a grid of squares. It refuses some
+    # surface depths, so fall back rather than crash in front of a judge.
+    try:
+        surf = pygame.transform.smoothscale(surf, (img_w, img_h))
+    except Exception:
+        surf = pygame.transform.scale(surf, (img_w, img_h))
+    top = 110
+    screen.blit(surf, (36, top))
+    pygame.draw.rect(screen, (54, 66, 84), (36, top, img_w, img_h), 2)
+
+    y = top + img_h + 40
+    screen.blit(font_sm.render('In view now', True, MUTED), (36, y))
+    screen.blit(font_med.render(f'~{count}' if live else '--', True, CREAM), (36, y + 44))
+    screen.blit(font_sm.render('Warmest point', True, MUTED), (360, y))
+    screen.blit(font_med.render(f'{max(frame):.1f}C', True, CREAM), (360, y + 44))
+    # Say what the picture is, on the picture. A thermal image of a room reads as
+    # a camera to most people, and this is the one screen in the product where
+    # that misreading is easy to make and worth heading off out loud.
+    screen.blit(font_xs.render('Temperatures only. Nothing here is recorded or sent.',
+                               True, FAINT), (36, y + 150))
+    screen.blit(font_xs.render('tap to go back', True, FAINT), (36, DISPLAY_H - 60))
+
 def display_loop():
     try:
         os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon' if os.path.exists('/dev/fb0') else 'dummy')
@@ -1875,6 +2022,9 @@ def display_loop():
         BLOCK_H = 268
         BLOCK_TOP = HEADER_H + 24
 
+        # Which screen the panel is showing. Demo units only, always: a venue
+        # box has no screen, so this loop never runs there.
+        view = 'stats'
         while not _stop.is_set():
             with _lock:
                 ir = int(_state['ir_count'])
@@ -1882,6 +2032,7 @@ def display_loop():
                 therm_at = _state['thermal_at']
                 db = float(_state['noise_db'])
                 noise_at = _state['noise_at']
+                frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
 
             # Match what is actually being sent. A frozen number on the screen
@@ -1951,10 +2102,24 @@ def display_loop():
                     pygame.draw.rect(screen, CREAM,
                                      (PAD + i * slot, chart_bottom - h, bar_w, h))
 
+            if view == 'thermal':
+                # Drawn over the stats rather than instead of them. The stats pass
+                # is blits into an off-screen surface with no side effects and
+                # costs about a millisecond at this size, and overdrawing keeps
+                # this change from re-indenting sixty lines of working layout.
+                draw_thermal_view(pygame, screen, (font_med, font_sm, font_xs),
+                                  frame, therm, therm_live)
             pygame.display.flip()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
+                # A DSI touch panel reports through the mouse events under SDL's
+                # framebuffer driver on Raspberry Pi OS. FINGERDOWN is accepted too,
+                # because which one arrives depends on the driver, and a pitch is a
+                # bad place to discover you picked the wrong one.
+                if THERMAL_VIEW_ON and event.type in (pygame.MOUSEBUTTONDOWN,
+                                                      getattr(pygame, 'FINGERDOWN', -1)):
+                    view = 'thermal' if view == 'stats' else 'stats'
             # A quarter second, not two. The demo unit's one hero moment is a
             # hand through the IR slot and the counter ticking, and a two-second
             # redraw put up to two seconds between the hand and the tick, which
