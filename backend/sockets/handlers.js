@@ -2146,16 +2146,6 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      const flockResult = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
-      if (flockResult.rows.length === 0) return;
-      const flockName = flockResult.rows[0].name;
-      // A plan that has ended is not relayed as an invite: the card the
-      // phone builds from this event shows the plan open, and an invited
-      // row left on a cancelled plan is exactly the row this relay would
-      // otherwise vouch for.
-      const st = flockResult.rows[0].status;
-      if (st === 'completed' || st === 'cancelled') return;
-
       // Relay persisted state only (round 5): each target must actually hold
       // an 'invited' membership row — otherwise any member could spoof-flood
       // invite toasts to arbitrary user ids.
@@ -2166,6 +2156,17 @@ function registerHandlers(io, socket) {
         `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])`,
         [flockId, invitedUserIds.map(asId).filter((n) => n !== null)]
       );
+      // The plan is read LAST, right before the emits, so the answer is as
+      // fresh as it can be. A plan that has ended is not relayed as an
+      // invite: the card the phone builds from this event shows the plan
+      // open, and an invited row left on a cancelled plan is exactly the
+      // row this relay would otherwise vouch for.
+      const flockResult = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+      if (flockResult.rows.length === 0) return;
+      const flockName = flockResult.rows[0].name;
+      const st = flockResult.rows[0].status;
+      if (st === 'completed' || st === 'cancelled') return;
+
       for (const row of invitedRows.rows) {
         const uid = row.user_id;
         // Blocked users never see each other's invites

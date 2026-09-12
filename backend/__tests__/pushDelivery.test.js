@@ -338,6 +338,35 @@ test('an invited user still gets the invite that created their row', async () =>
   assert.match(membershipQuery.sql, /'accepted', 'invited'/);
 });
 
+test('an invite push for a plan that has ended is not visible, on whatever path delivers it', async () => {
+  // The doors that send an invite read the plan first, but a push can be
+  // held for quiet hours or retried and the plan can close in between. The
+  // visibility check is the one point every delivery path passes, so the
+  // invite type carries the status rule there.
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, (params, sql) => {
+    assert.match(sql, /f\.status NOT IN \('completed', 'cancelled'\)/, 'an invite asks whether the plan is still open');
+    return { rows: [{ is_banned: false, can_see: false }] };
+  });
+  const res = await pushHelper.pushIfOffline(offline, 1, 'Ava invited you', 'Friday', {
+    type: 'flock_invite', flockId: 7,
+  });
+  assert.strictEqual(res.reason, 'not-visible');
+  assert.strictEqual(sends.length, 0);
+});
+
+test('a message push does not carry the invite-only status rule', async () => {
+  // A finished plan still has its chat; only the invite must not reach a
+  // lock screen for a plan that has ended.
+  reset();
+  openWorld();
+  await pushHelper.pushIfOffline(offline, 1, 'Ava', 'hey', { type: 'message', flockId: 7 });
+  const membershipQuery = log.find((l) => /FROM users u/i.test(l.sql));
+  assert.ok(membershipQuery, 'the visibility check ran');
+  assert.doesNotMatch(membershipQuery.sql, /f\.status NOT IN/);
+});
+
 test('the flock check accepts the creator, who need not be in flock_members', async () => {
   reset();
   on(/FROM user_blocks/i, () => ({ rows: [] }));

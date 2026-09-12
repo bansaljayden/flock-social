@@ -23,6 +23,7 @@ test('both invite cards say whether the plan is finished, without leaking status
 
 test('the live invite from a new flock says when and where', () => {
   const i = flocks.indexOf("io.to(`user:${uid}`).emit('flock_invite_received', {");
-  const emit = flocks.slice(i, i + 600);
-  assert.match(emit, /eventTime: flock\.event_time \|\| null,\s*venueName: flock\.venue_name \|\| null,\s*goingCount: 1,/);
+  const emit = flocks.slice(i, i + 900);
+  assert.match(emit, /finished: false,[\s\S]{0,240}eventTime: flock\.event_time \|\| null,\s*venueName: flock\.venue_name \|\| null,\s*goingCount: 1,/,
+    'every producer of this event says whether the plan has ended');
 });
