@@ -867,6 +867,10 @@ router.post('/',
                 flockId: flock.id,
                 flockName: flock.name,
                 invitedBy: { userId: req.user.id, name: req.user.name },
+                // Just made, inside this transaction: open by construction.
+                // Every producer of this event says whether the plan has
+                // ended, so the phone never has to guess from a missing key.
+                finished: false,
                 // The card asks for a decision; it used to render TBD for
                 // both of these and 0 going on a live invite.
                 eventTime: flock.event_time || null,
@@ -2388,6 +2392,7 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     let venueName = null;
     let goingCount = null;
     let planStatus = null;
+    let planGone = false;
     try {
       const facts = await pool.query(
         `SELECT f.event_time, f.venue_name, f.status,
@@ -2399,8 +2404,16 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
       venueName = facts.rows[0]?.venue_name || null;
       goingCount = typeof facts.rows[0]?.going === 'number' ? facts.rows[0].going : null;
       planStatus = facts.rows[0]?.status ?? null;
+      planGone = facts.rows.length === 0;
     } catch (err) {
       // The invite is already written; the card does without.
+    }
+    // No row at all: the plan was deleted after the seats were written. The
+    // rows went with it (ON DELETE CASCADE), and an invite card for a plan
+    // that does not exist is worse than none. Gone, not closed, so the door
+    // can answer 404.
+    if (planGone) {
+      return { invited, throttled, full, closed: true, gone: true };
     }
     // Read at announcement time, this is the last word on whether the plan
     // is still open. A plan that closed since the write is announced to
@@ -2821,6 +2834,12 @@ router.post('/:id/rerun',
       // old roster, and the client must not display members nobody invited.
       // A plan that closed in the second between its creation and these
       // invites (a sweep, an admin) is said so, and nobody is pushed onto it.
+      if (outcome.gone) {
+        // The plan this rerun made was deleted before its invites landed.
+        // The same 404 the invite door gives, not a 201 with a snapshot of
+        // a plan that no longer exists.
+        return res.status(404).json({ error: 'Flock not found' });
+      }
       res.status(201).json({
         flock,
         invited_user_ids: outcome.invited.map((i) => i.user_id),

@@ -257,6 +257,14 @@ describe('past flocks screen', () => {
     expect(rerunCode).toContain('if (rerunningFlockId) return');
   });
 
+  it('a rerun the server reports closed is not opened as tonight\'s plan', () => {
+    // The server answers 201 with closed:true when the plan it just made
+    // ended before its invites landed. Opening that as voting would show a
+    // finished plan as open.
+    expect(rerunCode).toContain('if (data.closed) {');
+    expect(rerunCode.indexOf('if (data.closed) {')).toBeLessThan(rerunCode.indexOf('newlyCreatedFlockRef.current = f.id'));
+  });
+
   it('a rerun lands in the new chat exactly the way flock creation does', () => {
     expect(rerunCode).toContain('newlyCreatedFlockRef.current = f.id');
     expect(rerunCode).toContain('setFlocks(prev => [...prev, newFlock])');

@@ -117,6 +117,7 @@ let closeAfterReopenCheck = null; // a flock id: closed right after PUT's own st
 let closeAfterStatusReadTo = 'cancelled'; // what closeAfterStatusRead sets: 'cancelled', or null for a status nobody can read
 let closeAfterReinvite = null; // a flock id: cancelled right after the re-invite UPDATE landed, before the INSERT
 let closeAfterSeat = null; // a flock id: cancelled right after the new seat is written, before the announcement
+let vanishAfterSeat = null; // a flock id: deleted right after the new seat is written, before the announcement
 
 function reset() {
   vanishAfterOwnershipCheck = false;
@@ -126,6 +127,7 @@ function reset() {
   closeAfterStatusReadTo = 'cancelled';
   closeAfterReinvite = null;
   closeAfterSeat = null;
+  vanishAfterSeat = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -504,6 +506,11 @@ async function dispatch(text, params = []) {
       const f = flocks.get(fid);
       if (f) f.status = 'cancelled';
       closeAfterSeat = null;
+    }
+    // "Deleted right after the seat": the announcement's read finds no plan.
+    if (vanishAfterSeat === fid) {
+      flocks.delete(fid);
+      vanishAfterSeat = null;
     }
     return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
@@ -1230,6 +1237,24 @@ test('direct invite: both writes return the ids they wrote, and both people are 
     app.set('io', undefined);
     const dave = memberOf(10, 5);
     if (dave) dave.status = 'declined';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan deleted right after the seat is written announces nobody and is a 404', async () => {
+  const row = flocks.get(10);
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
+  vanishAfterSeat = 10;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    assert.strictEqual(res.status, 404);
+    assert.deepStrictEqual(await res.json(), { error: 'Flock not found' });
+    assert.deepStrictEqual(emitted, [], 'someone was announced onto a plan that no longer exists');
+  } finally {
+    app.set('io', undefined);
+    vanishAfterSeat = null;
+    flocks.set(10, row);
   }
   assertQueriesUnderstood();
 });
