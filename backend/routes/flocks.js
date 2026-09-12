@@ -2387,9 +2387,10 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     let eventTime = null;
     let venueName = null;
     let goingCount = null;
+    let planStatus = null;
     try {
       const facts = await pool.query(
-        `SELECT f.event_time, f.venue_name,
+        `SELECT f.event_time, f.venue_name, f.status,
                 (SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS going
            FROM flocks f WHERE f.id = $1`,
         [flockId]
@@ -2397,14 +2398,26 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
       eventTime = facts.rows[0]?.event_time || null;
       venueName = facts.rows[0]?.venue_name || null;
       goingCount = typeof facts.rows[0]?.going === 'number' ? facts.rows[0].going : null;
+      planStatus = facts.rows[0]?.status ?? null;
     } catch (err) {
       // The invite is already written; the card does without.
+    }
+    // Read at announcement time, this is the last word on whether the plan
+    // is still open. A plan that closed since the write is announced to
+    // nobody: the card would show it open, and the close's own fan-out has
+    // already reached the roster, the people who just landed included. The
+    // caller hears `closed` with the people who landed, and sends no
+    // pushes. The status rides on the event as well, so a phone that reads
+    // it after the close's own cleanup cannot recreate the plan as open.
+    if (planStatus === 'completed' || planStatus === 'cancelled') {
+      return { invited, throttled, full, closed: true };
     }
     for (const inv of invited) {
       io.to(`user:${inv.user_id}`).emit('flock_invite_received', {
         flockId,
         flockName,
         invitedBy: { userId: inviter.id, name: inviter.name },
+        status: planStatus,
         eventTime,
         venueName,
         goingCount,

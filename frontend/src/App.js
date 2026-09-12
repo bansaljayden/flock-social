@@ -10662,6 +10662,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for real-time flock invite notifications
   useEffect(() => {
     const unsubInvite = onFlockInviteReceived((data) => {
+      // The server reads the plan's status when it announces an invite. A
+      // plan that had already finished or been cancelled is not a card to
+      // build, and this is what keeps an event that lands after the
+      // close's own cleanup from recreating the plan as open.
+      if (data.status === 'completed' || data.status === 'cancelled') return;
       setPendingFlockInvites(prev => {
         if (prev.some(f => f.id === data.flockId)) return prev;
         return [...prev, {
