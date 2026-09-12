@@ -6366,6 +6366,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         note = `Invited ${sent} of ${asked}. This flock holds as many people as it can.`;
       } else if (res?.throttled) {
         note = `Invited ${sent} of ${asked}. You have invited a lot of people recently, so the rest did not go out.`;
+      } else if (res?.closed) {
+        // The plan closed between the server's two writes: whoever landed
+        // first is on it, the rest are not, and "already in this flock"
+        // would be the wrong reason.
+        note = `Invited ${sent} of ${asked}. The plan closed before the rest could be added.`;
       } else {
         note = `Invited ${sent} of ${asked}. The rest were already in this flock.`;
       }

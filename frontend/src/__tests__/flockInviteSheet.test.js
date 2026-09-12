@@ -266,9 +266,14 @@ describe('the success toast', () => {
     expect(send).not.toContain('Invited ${flockInviteSelected.length}');
   });
 
-  test('names the two partial-success flags the route sends back on a 200', () => {
+  test('names the three partial-success flags the route sends back on a 200', () => {
     expect(send).toContain('res?.full');
     expect(send).toContain('res?.throttled');
+    // A plan that closed between the server's two writes: the people who
+    // landed first are on it, the rest are not, and the default sentence
+    // ("already in this flock") would name the wrong reason.
+    expect(send).toContain('res?.closed');
+    expect(send).toContain('The plan closed before the rest could be added.');
   });
 
   test('a partial send says how many of how many', () => {

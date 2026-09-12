@@ -309,6 +309,14 @@ async function dispatch(text, params = []) {
     }
     return { rows, rowCount: rows.length };
   }
+  // The invite announcement's facts: the card asks for a decision, so the
+  // emit carries the time, the venue and how many are going.
+  if (has("(SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS going")) {
+    const f = flocks.get(Number(params[0]));
+    if (!f) return { rows: [], rowCount: 0 };
+    const going = rowsOf(params[0]).filter((m) => m.status === 'accepted').length;
+    return { rows: [{ event_time: f.event_time || null, venue_name: f.venue_name || null, going }], rowCount: 1 };
+  }
   if (has('AS total, COUNT(*)::int AS n FROM flock_members')) {
     const all = rowsOf(params[0]);
     return {
@@ -1129,19 +1137,29 @@ test('direct invite: a person a concurrent invite seated first is not announced 
   assertQueriesUnderstood();
 });
 
-test('direct invite: a plan cancelled between the re-invite and the new seat still announces the re-invite', async () => {
+test('direct invite: a plan cancelled between the re-invite and the new seat keeps the re-invite, says closed, announces nobody', async () => {
   // Dave (5) declined, 4 was never asked. The UPDATE lands while the plan is
-  // open; the plan cancels; the INSERT is refused. Dave's row changed, so
-  // Dave is announced and returned; 4 is not, and a retry will hear 409.
+  // open; the plan cancels; the INSERT is refused. Dave's row stays invited
+  // and is returned, 4 is not, and the caller is told the plan closed
+  // rather than left to assume 4 was already a member. Nobody is announced:
+  // an invite card for a cancelled plan would show it open, and the
+  // cancel's own fan-out already reached Dave.
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
   closeAfterReinvite = 10;
   try {
     const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5, 4] });
     const body = await res.json();
     assert.strictEqual(res.status, 200, JSON.stringify(body));
     assert.deepStrictEqual(body.invited.map((i) => i.user_id), [5]);
+    assert.strictEqual(body.closed, true, 'the caller was not told the plan closed');
+    assert.strictEqual(body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(body.flock, undefined, 'a snapshot taken before the close says the plan is open');
     assert.strictEqual(memberOf(10, 5).status, 'invited', 'a re-invite that landed was lost');
     assert.strictEqual(memberOf(10, 4), undefined, 'a seat was written on a plan that had just closed');
+    assert.deepStrictEqual(emitted, [], 'someone was announced onto a plan that had closed');
   } finally {
+    app.set('io', undefined);
     closeAfterReinvite = null;
     flocks.get(10).status = 'planning';
     const dave = memberOf(10, 5);
@@ -1170,21 +1188,32 @@ test('direct invite: a plan whose status cannot be read as open seats nobody and
   assertQueriesUnderstood();
 });
 
-test('direct invite: both writes return the ids they wrote', async () => {
+test('direct invite: both writes return the ids they wrote, and both people are announced', async () => {
   // The list of people invited is built from what the two writes return.
   // A write without RETURNING would come back with rows: [] from Postgres
   // and prune everyone, while a fixture that fabricates rows would not
-  // notice; the statements themselves are pinned here.
+  // notice; the statements themselves are pinned here. The announcement
+  // is checked on this open plan so that the closed test's silence is a
+  // finding and not a fixture with no socket.
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
   const before = queries.length;
-  const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5, 4] });
-  const body = await res.json();
-  assert.strictEqual(res.status, 200, JSON.stringify(body));
-  assert.deepStrictEqual(body.invited.map((i) => i.user_id), [5, 4]);
-  const writes = queries.slice(before).filter((q) => /UPDATE flock_members SET status = 'invited'|INSERT INTO flock_members/.test(q.sql));
-  assert.strictEqual(writes.length, 2, 'one UPDATE for the declined member, one INSERT for the new one');
-  for (const w of writes) assert.match(w.sql, /RETURNING user_id/);
-  const dave = memberOf(10, 5);
-  if (dave) dave.status = 'declined';
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [5, 4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.deepStrictEqual(body.invited.map((i) => i.user_id), [5, 4]);
+    assert.strictEqual(body.closed, undefined);
+    const writes = queries.slice(before).filter((q) => /UPDATE flock_members SET status = 'invited'|INSERT INTO flock_members/.test(q.sql));
+    assert.strictEqual(writes.length, 2, 'one UPDATE for the declined member, one INSERT for the new one');
+    for (const w of writes) assert.match(w.sql, /RETURNING user_id/);
+    const told = emitted.filter((e) => e.event === 'flock_invite_received').map((e) => e.room).sort();
+    assert.deepStrictEqual(told, ['user:4', 'user:5'], 'each person written is told once');
+  } finally {
+    app.set('io', undefined);
+    const dave = memberOf(10, 5);
+    if (dave) dave.status = 'declined';
+  }
   assertQueriesUnderstood();
 });
 
