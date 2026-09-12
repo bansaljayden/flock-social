@@ -85,6 +85,10 @@ function dispatch(text, params = []) {
     }
     if (/SELECT id FROM guest_rsvps WHERE guest_token/i.test(sql)) return Promise.resolve({ rows: [{ id: 7 }] });
     if (/UNION SELECT 1 FROM guest_votes/i.test(sql)) return Promise.resolve({ rows: [{ '?column?': 1 }] });
+    // The vote write reads the plan's status in its own statement and reports
+    // one row written; a plan this suite votes on is open.
+    if (/INSERT INTO guest_votes/i.test(sql)) return Promise.resolve({ rows: [], rowCount: 1 });
+    if (/SELECT status FROM flocks WHERE id = \$1/i.test(sql)) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
     if (/SUM\(c\)::int AS votes/i.test(sql)) return Promise.resolve({ rows: [{ venue_name: 'The Bar', votes: 3 }] });
     if (/MIN\(venue_id\) FILTER/i.test(sql)) {
       return Promise.resolve({ rows: [{ venue_name: 'The Bar', venue_id: 'abc', member_count: 2, voter_rows: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }] }] });

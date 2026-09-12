@@ -473,6 +473,25 @@ test('markup in a guest name is stripped before storage, broadcast, and push', a
   }
 });
 
+test('a plan that closes between the link check and the RSVP write seats no guest and announces nobody', async () => {
+  // The link resolved to an open plan; by the time the INSERT runs the plan
+  // has been cancelled. The write carries the rule itself and returns no
+  // row, and the guest hears the same refusal the check would have given.
+  // Registered first, so it answers before the helper's own INSERT stub.
+  on(/INSERT INTO guest_rsvps/, () => ({ rows: [], rowCount: 0 }));
+  scriptNewGuest();
+
+  const res = await call('POST', `/api/guest/${LEGACY_TOKEN}/rsvp`, { name: 'Bob', status: 'in' });
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error, 'This plan is no longer taking RSVPs');
+  const ins = ran(/INSERT INTO guest_rsvps/)[0];
+  assert.ok(ins, 'the write is what decides, so it must run');
+  assert.match(ins.sql, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+  assert.ok(ran(/^ROLLBACK/).length >= 1, 'a write that did not land is rolled back');
+  assert.strictEqual(ran(/^COMMIT/).length, 0, 'and never committed');
+  assert.strictEqual(emits.length, 0, 'nobody is told about a guest who was not seated');
+});
+
 test('a name that is nothing but markup is refused, not stored blank', async () => {
   scriptNewGuest();
   const res = await call('POST', `/api/guest/${LEGACY_TOKEN}/rsvp`, { name: '<b><i></i></b>', status: 'in' });
