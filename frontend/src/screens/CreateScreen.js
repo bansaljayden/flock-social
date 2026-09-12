@@ -101,6 +101,7 @@
  * online and pushInvitesToOffline for everyone else.
  */
 import React, { useEffect } from 'react';
+import { ChoiceChip, FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES, FormGroup, FormRow } from '../components/ui/FormBits';
 import { createFlock as apiCreateFlock, sendMessage as apiSendMessage } from '../services/api';
 import { hapticSuccess } from '../services/haptics';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -137,12 +138,7 @@ export default function CreateScreen({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, or are simply declared once
   // there, so they stay declared there and arrive here.
-  ChoiceChip,
   DialogBehavior,
-  FLOCK_DAY_CHOICES,
-  FLOCK_HOUR_CHOICES,
-  FormGroup,
-  FormRow,
   ListSkeleton,
   SearchInputLocal,
   formatEventTime,
