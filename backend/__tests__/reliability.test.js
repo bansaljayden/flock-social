@@ -237,6 +237,11 @@ async function dispatch(text, params = [], sink) {
   if (has("FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'")) {
     return { rows: [{ id: 1 }], rowCount: 1 };
   }
+  // The invite push asks the plan once more before it reaches a lock screen;
+  // it runs after the response, outside the transaction the counts below watch.
+  if (has('SELECT id, name, status FROM flocks WHERE id = $1')) {
+    return { rows: [{ id: Number(params[0]), name: 'Dinner', status: 'planning' }], rowCount: 1 };
+  }
   if (has('SELECT creator_id, name, budget_enabled, budget_locked FROM flocks')) {
     return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true, budget_locked: false }], rowCount: 1 };
   }
