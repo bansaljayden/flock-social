@@ -232,7 +232,7 @@
    would move the SCROLL but leave focus on the link and the next Tab would go
    straight back into the header. scroll-margin keeps the landing point clear
    of the sticky bar; tabindex="-1" is set in the markup. */
-#lp-main { scroll-margin-top: 72px; }
+#lp-main { scroll-margin-top: 76px; }
 #lp-main:focus { outline: none; }
 
 /* Five images on this page are wrapped in <picture> so a WebP source can be
@@ -650,11 +650,24 @@
    viewport's own top edge, so whatever it landed on was painted under the bar.
    That is WCAG 2.4.11 (Focus Not Obscured) for the keyboard case in
    particular: the pricing CTA and the venue mailto link both land at y≈20 when
-   tabbed to from below, i.e. two thirds hidden. scroll-padding on the scroll
-   container fixes all of those at once, because it is what "scroll into view"
-   measures against. PrivacyPolicy.css already reaches for html:has() the same
-   way, so the support floor is unchanged. */
-html:has(.lp) { scroll-padding-top: 76px; }
+   tabbed to from below, i.e. two thirds hidden.
+
+   This used to be scroll-padding-top on the root, which is what "scroll into
+   view" measures against and so covers every case at once. It also covered
+   the one case it must not: the sticky bar's own controls. Chrome measures
+   the corner block at y 0 to 64, sees it above a 76px padded edge, and
+   "centres" it, which scrolls the page up 501px. Every focus in the bar did
+   that: a mouse click on the corner block (the click focuses it), Tab
+   arriving at the wordmark, and the focus handed back when the menu closes.
+   Open the menu after reading the pricing and you came back half a screen
+   above where you were, twice over. scroll-margin on the things that get
+   scrolled TO, scoped to the page body and the footer, gives the same
+   clearance to every Tab stop, heading and anchor target and leaves the bar
+   alone, because nothing in the bar matches. The universal selector is
+   scoped to two landmarks and costs nothing at layout: scroll-margin is only
+   read when something is scrolled into view. */
+.lp main *,
+.lp footer * { scroll-margin-top: 76px; }
 
 /* Root-level horizontal clipping, and this page needs it more than a normal web
    page does. `.lp` already carries overflow-x: clip, but .lp is a DIV: anything
@@ -678,13 +691,13 @@ html:has(.lp),
 html:has(.lp) body { overflow-x: clip; }
 
 /* Anchor jumps from the menu land below the sticky bar, not under it. */
-.lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 72px; }
+.lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 76px; }
 /* The two anchor targets that are NOT .lp-sec, and both are linked from the
    page's own chrome: #get is where the App Store badge sends you before the
    app is approved, and #try is the menu's "Try it live". Without this they
    scrolled to a point 64px under an opaque sticky navbar, so the line you
    jumped for was the one thing you could not see. */
-.lp-cta, .lp-demo-proof { scroll-margin-top: 72px; }
+.lp-cta, .lp-demo-proof { scroll-margin-top: 76px; }
 /* The navy sections are the page's chapter breaks, so they get more air than
    the cream ones they interrupt — every section carrying identical top and
    bottom padding is the thing that makes a long page read as one undivided
