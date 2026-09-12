@@ -538,6 +538,15 @@ async function checkVisibility(userId, data = {}) {
     const actorClause = actorId
       ? 'COALESCE((SELECT COALESCE(a.is_banned, false) FROM users a WHERE a.id = $3), true)'
       : 'false';
+    // An invite is the one push whose whole message is "come to this plan",
+    // so it is the one push a finished or cancelled plan must never send.
+    // The doors that send it read the plan first, but a push can be held
+    // for quiet hours or retried, and the plan can close in between; this
+    // is where every delivery path passes. Same shape as the actor clause:
+    // a literal chosen by a boolean, never text from the payload.
+    const inviteClause = data?.type === 'flock_invite'
+      ? " AND f.status NOT IN ('completed', 'cancelled')"
+      : '';
     const r = await pool.query(
       `SELECT
          COALESCE(u.is_banned, false) AS is_banned,
@@ -546,7 +555,7 @@ async function checkVisibility(userId, data = {}) {
            SELECT 1 FROM flocks f
            LEFT JOIN flock_members m ON m.flock_id = f.id AND m.user_id = u.id
            WHERE f.id = $2
-             AND (f.creator_id = u.id OR m.status IN ('accepted', 'invited'))
+             AND (f.creator_id = u.id OR m.status IN ('accepted', 'invited'))${inviteClause}
          ) END AS can_see
        FROM users u
        WHERE u.id = $1`,

@@ -7097,6 +7097,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     try {
       const data = await rerunFlock(pf.id, { event_time: eventTime });
+      if (data.closed) {
+        // The plan closed in the second after it was made (a sweep for a
+        // time already past, an admin). Opening it as tonight's plan would
+        // show it open; the next load of the list shows it as what it is.
+        showToast('That plan closed as soon as it was made. Check the time and try again.', 'warning');
+        return;
+      }
       const f = data.flock || data;
       const newFlock = {
         id: f.id,
