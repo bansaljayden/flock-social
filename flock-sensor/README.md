@@ -94,17 +94,30 @@ Three numbers, every 30 seconds:
   count inside `count_thermal_clusters()` and discarded. It is never written to
   disk and never transmitted.
 
-  **Be careful how you say this one.** The old MLX90640 was 768 pixels, and
-  this section used to argue that a face was "a few warm blobs" at that
-  resolution. That argument does not survive the move to a 160x120 Lepton: a
-  person in one of these frames is a clear human silhouette. What is still
-  exactly true, and is the thing worth saying, is that no frame leaves the
-  function that counts it. There is no image library on the device to encode
-  one with, no file it is written to, and nothing in the payload but three
-  integers. `frontend/src/__tests__/legalPagesMatchCode.test.js` and
-  `test_main.py` both pin that: no capture library, no encoder, no frame
-  reaching a file. If someone adds a heatmap view (see Known gaps), the
-  argument changes and this paragraph has to change with it.
+  **Be careful how you say this one, and there are now two cases.** The old
+  MLX90640 was 768 pixels, and this section used to argue that a face was "a
+  few warm blobs" at that resolution. That argument does not survive the move
+  to a 160x120 Lepton: a person in one of these frames is a clear human
+  silhouette.
+
+  **On a venue sensor, which is every unit without a screen, no frame leaves
+  the function that counts it.** Nothing imports an image library, no file is
+  written, and the payload is three integers and cannot carry a picture. That
+  is the claim the published policy makes and it is exactly true.
+
+  **On a demo unit, which has a touchscreen, one frame at a time is held in
+  memory so the panel can draw it.** See "The thermal view" below. It is still
+  never written to disk and never transmitted, and no venue unit can do this,
+  because the view requires a framebuffer that a venue box does not have. If a
+  demo unit is ever installed somewhere as a venue sensor, set THERMAL_VIEW=0
+  and the retention stops.
+
+  One correction worth recording, because this file predicted otherwise.
+  `legalPagesMatchCode.test.js` and `test_main.py` were expected to fail on the
+  commit that added the view. They did not. They pin imports and file writes,
+  not whether a frame is held in memory, so they were never going to catch
+  this. The guard that does exist is THERMAL_VIEW_ON requiring a screen, and a
+  test that asserts it.
 - The microphone's samples become one RMS number every five seconds and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
   from a loudness reading taken every 5 seconds.
@@ -680,6 +693,38 @@ decide to do.
 
 ---
 
+---
+
+## The thermal view
+
+On a unit with a screen, tap the panel and it shows what the camera is looking
+at: the room in false colour, the count, and the warmest point in frame. Tap
+again to go back. This is step 6 of the pitch demo and it is the moment that
+makes an invisible sensor legible to somebody watching.
+
+It is the only place in this program that turns a frame into a picture, so it is
+fenced:
+
+- `THERMAL_VIEW_ON` requires **both** `THERMAL_VIEW=1` and a physical screen. A
+  venue sensor is headless, so it retains no frame whatever its config says, and
+  the published promise about venue sensors stays exactly true.
+- The frame is held in memory only. It is never written to disk and never
+  transmitted; the push payload is three integers and has nowhere to put one.
+- The picture carries the sentence "Temperatures only. Nothing here is recorded
+  or sent." A thermal image of a room reads as a camera to most people, and this
+  is the one screen in the product where that misreading is easy to make.
+
+Turn it off with `THERMAL_VIEW=0`, which is what to do if a unit that has a
+panel is ever installed at a venue.
+
+**How it draws.** The palette is stretched between the 2nd and 98th percentile
+of the frame rather than min and max, so one stuck pixel cannot wash the picture
+out and a hand entering frame visibly takes the top of the scale. The span has a
+4C floor, which stops a nearly uniform room being amplified into dramatic
+looking noise: sensor noise presented to a judge as structure would be a lie.
+160x120 is smoothscaled up to the panel, which is what makes it read as thermal
+imagery rather than a grid of squares.
+
 ## Known gaps
 
 Things that are still open, so nobody has to rediscover them.
@@ -721,17 +766,15 @@ Things that are still open, so nobody has to rediscover them.
    should show an offline state built from it instead of hiding the whole
    occupancy section when a unit stops reporting, and something should alert
    when a device that was reporting stops.
-8. **The demo unit's thermal heatmap view does not exist.** Step 6 of the locked
-   pitch choreography is "tap the touchscreen, see the heat signature of the
-   hand". `display_loop` handles no touch events and has no heatmap view, and
-   the frame it would draw is discarded inside `count_thermal_clusters` by
-   design. The Lepton is what makes that view worth building, and it is also
-   what makes it a bigger decision than it was: holding a 160x120 frame in
-   memory to draw it means holding a recognisable human silhouette, where the
-   old sensor's frame was warm smudges. It is a privacy-relevant change and
-   belongs in the policy discussion in "What it collects" before it belongs in
-   code, and the two tests named there will fail on the commit that tries it,
-   which is correct.
+8. **The demo unit's thermal view exists, and has never been drawn.** Step 6 of
+   the pitch choreography, "tap the touchscreen, see the heat signature of the
+   hand", is built: `draw_thermal_view` plus a tap handler in `display_loop`.
+   The conversion from frame to pixels is pure and tested, and the draw path is
+   exercised against a stub, but no part of `display_loop` has ever run on a
+   framebuffer, so the first time this meets a real panel expect the layout to
+   be wrong somewhere. The touch event is the other unknown: a DSI panel may
+   report MOUSEBUTTONDOWN or FINGERDOWN depending on the driver, and both are
+   accepted for that reason.
 9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C but a
    40-pin cellular HAT still covers the pins the break-beam and the mic's ADC
    need. See "The pin conflict, which is still open". the maintainer's decision, and it
