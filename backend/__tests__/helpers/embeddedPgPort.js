@@ -202,6 +202,14 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
   const libraryStop = pg.stop.bind(pg);
   pg.stop = async function stopWithSweep() {
     const pid = pg.process && pg.process.pid;
+    // The pipes are what keep this process alive when a forked child
+    // outlives the postmaster: they are this end of the child's stdio. They
+    // are taken before the stop, because the library forgets the process
+    // object once it has stopped, and closed after it, whatever the sweep
+    // below manages. With them closed the event loop has nothing left to
+    // wait on and the suite exits, orphan or no orphan; the orphan is then
+    // a leak to clean, not a hang.
+    const pipes = pg.process ? [pg.process.stdout, pg.process.stderr].filter(Boolean) : [];
     const family = descendantsOf(pid);
     let timer = null;
     try {
@@ -213,6 +221,9 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
       // A stop that throws still gets the sweep below.
     } finally {
       if (timer) clearTimeout(timer);
+      for (const pipe of pipes) {
+        try { pipe.destroy(); } catch (_) { /* already closed */ }
+      }
     }
     killPostgresPids(pid ? [pid, ...family] : family);
   };
@@ -265,7 +276,7 @@ function postgresProcessTable() {
     '-NoProfile', '-NonInteractive', '-Command',
     "Get-CimInstance Win32_Process -Filter \"name='postgres.exe'\" | " +
     'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
-  ], { encoding: 'utf8', timeout: 20000 });
+  ], { encoding: 'utf8', timeout: 60000 });
   if (probe.status !== 0) return parentOf;
   for (const line of String(probe.stdout || '').split(/\r?\n/)) {
     const m = line.trim().match(/^(\d+) (\d+)$/);
