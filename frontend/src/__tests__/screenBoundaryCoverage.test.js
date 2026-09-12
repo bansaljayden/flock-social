@@ -490,6 +490,17 @@ describe('the fallback is a way out, not a dead end', () => {
     expect(exploreFallbackSrc).toMatch(/Try again/);
   });
 
+  test('both in-app crash screens carry the bird game the root net and the 404 have', () => {
+    /* Collapsed behind its own button (FloppyBird ships that way), so the
+       failure and the ways out are read first. Imported statically for the
+       reason ErrorBoundary.js gives: the commonest crash is a chunk that did
+       not download, and a game in a second chunk would fail for exactly the
+       person it is for. */
+    expect(APP_CODE).toMatch(/^import FloppyBird from '\.\/components\/ui\/FloppyBird';/m);
+    expect(fallbackSrc).toContain('<FloppyBird />');
+    expect(exploreFallbackSrc).toContain('<FloppyBird />');
+  });
+
   test('Discover puts its own tab bar back too', () => {
     // The switch answers null for the Discover tab, so ExploreScreen is the
     // ONLY thing that draws the tab bar there. A fallback without this line
