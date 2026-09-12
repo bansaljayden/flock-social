@@ -54,6 +54,7 @@
  * the way across, and no defect was fixed in transit: this is a move.
  */
 import React from 'react';
+import { FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES } from '../components/ui/FormBits';
 import { submitVenueFeedback } from '../services/api';
 import { lsGet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -96,8 +97,6 @@ export default function FlockDetail({
   // are shared with screens other than this one, so they stay declared there
   // and arrive here.
   DialogBehavior,
-  FLOCK_DAY_CHOICES,
-  FLOCK_HOUR_CHOICES,
   MOMENTUM_STAGES,
   momentumStageKey,
   onVenuePhotoError,
