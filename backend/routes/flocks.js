@@ -2356,12 +2356,15 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
   // can come back empty for an innocent reason (every new id conflicted with
   // a concurrent invite; the declined member changed their mind first), so
   // the plan is read back rather than assumed closed. The two writes are
-  // separate statements, so a plan can close between them: the re-invite
-  // that landed while it was open is announced below like any other, and
-  // only a request that seated nobody at all is answered "closed".
+  // separate statements, so a plan can close between them: whoever landed
+  // before it closed keeps their row and goes back to the caller under
+  // `closed`, so the door can say which reason applies to the rest, and
+  // nobody is announced onto a plan that is finished. The invite card
+  // would show it open, and the close's own fan-out has already reached
+  // the roster, the person who landed included.
   const wroteNothing = (reinvited !== null && reinvited.rowCount === 0)
     || (written !== null && written.rowCount === 0);
-  if (refuseClosed && wroteNothing && invited.length === 0) {
+  if (refuseClosed && wroteNothing) {
     const now = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
     const st = now.rows[0] && now.rows[0].status;
     // A plan that vanished is reported apart from one that closed, so the
@@ -2369,9 +2372,9 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     // and invite-link doors do. A status that cannot be read is closed
     // here because the write already treated it so (NOT IN is not true
     // of NULL), and "closed" is the answer that seats nobody twice.
-    if (!now.rows[0]) return { invited: [], throttled: false, full: false, closed: true, gone: true };
+    if (!now.rows[0]) return { invited, throttled: false, full: false, closed: true, gone: true };
     if (typeof st !== 'string' || st === 'completed' || st === 'cancelled') {
-      return { invited: [], throttled: false, full: false, closed: true };
+      return { invited, throttled: false, full: false, closed: true };
     }
   }
 
@@ -2625,9 +2628,22 @@ router.post('/:id/invite',
       if (gone) {
         return res.status(404).json({ error: 'Flock not found' });
       }
-      if (closed) {
+      if (closed && invited.length === 0) {
         return res.status(409).json({
           error: 'This plan is finished and cannot accept new invites',
+          code: 'FLOCK_CLOSED',
+        });
+      }
+      if (closed) {
+        // The plan closed between the pipeline's two writes: the people who
+        // landed first are on it and the rest are not, and the caller is
+        // told that reason rather than left to assume the rest were already
+        // members. No flock snapshot here: the one in hand predates the
+        // close and would say the plan is open.
+        return res.json({
+          message: `Invited ${invited.length} user(s)`,
+          invited,
+          closed: true,
           code: 'FLOCK_CLOSED',
         });
       }
