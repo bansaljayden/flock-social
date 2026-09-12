@@ -20559,7 +20559,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </div>
 
             {/* Content */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            {/* THE ONE SCROLLING REGION, and it has to contain everything
+                between the photo and the buttons.
+
+                Only the details block used to scroll. Promotions and reviews
+                were written as SIBLINGS of it, so the sheet's column was
+                photo + scroller + promotions + reviews + footer, and the two
+                new blocks carried their own height with nothing to give: a
+                venue with a promotion and three reviews measured 810px of
+                children inside a 776px sheet, and the sheet clips what does
+                not fit. What did not fit was the footer, which is where Get
+                Directions and Add to Flock live. At 390 wide the buttons were
+                cut in half; at 320 the whole row was 321px past the bottom
+                edge, so the sheet's primary action could not be reached at
+                all on a small phone.
+
+                minHeight: 0 is load-bearing. A column flex item will not
+                shrink below its content without it, so the region would hold
+                its full height and push the footer straight back out. */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            <div style={{ padding: '16px' }}>
               {venueDetailModal.loading ? (
                 <div style={{ textAlign: 'center', padding: '30px 0' }}>
                   <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -20797,6 +20816,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               ) : !showReviewForm && (
                 <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No reviews yet. Be the first!" style={{ padding: '8px 4px' }} />
               )}
+            </div>
+            {/* end of the scrolling region opened above the details block */}
             </div>
 
             {/* Bottom action buttons */}

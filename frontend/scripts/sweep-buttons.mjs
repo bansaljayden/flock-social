@@ -16,9 +16,37 @@
  *     node scripts/sweep-buttons.mjs [--max=300] [--out=DIR]           (terminal 2)
  *
  * Output: DIR/report.json, DIR/report.md and DIR/shots/<root>/<n>-<slug>.png.
- * A button with "no visible effect" is a lead, not a verdict: some buttons are
- * legitimately inert in the demo data (nothing to show), and the screenshot
- * beside the row is how to tell.
+ *
+ * A button with "no visible effect" is a lead, not a verdict, and the
+ * screenshot beside the row is how to tell. Five classes come back inert on
+ * every run and were each checked against the code and the screenshot:
+ *
+ *   - A chip that is already selected. ChoiceChip and the calendar day cell
+ *     both carry aria-pressed, and pressing the selected one keeps it
+ *     selected rather than clearing it, because the field is required and
+ *     "no day" is not a state a plan can be in.
+ *   - The tab you are already on.
+ *   - A button whose whole job is to focus an input (Search, Search chats).
+ *     Focus is not part of the fingerprint below.
+ *   - My Location, which recentres the map. Map camera is not in the
+ *     fingerprint either.
+ *   - Continue with Google, which needs Google's script; it is not loaded
+ *     against a local stack.
+ *
+ * Anything else that reports no visible effect is worth opening.
+ *
+ * TWO CEILINGS THIS HARNESS RUNS INTO, both of them cost controls doing their
+ * job rather than faults to fix:
+ *
+ *   - The venue dashboard answers 429 after about thirty venue lookups,
+ *     because utils/placesBudget.js caps one owner at PER_USER_HOURLY Google
+ *     Places calls per rolling hour. A full pass over that dashboard spends
+ *     it, so the run's later screens come back empty and flagged. Sweep the
+ *     venue root on its own, expect partial coverage, and read the 429s as
+ *     the budget rather than as broken screens.
+ *   - Discover and the crowd screens spend real Places money per screen, so
+ *     their cap here is small on purpose and they are worth leaving out of a
+ *     re-run with --only.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +62,14 @@ const opt = (name, dflt) => {
 };
 const MAX_CLICKS = Number(opt('max', 300));
 const OUT = opt('out', path.join(os.tmpdir(), 'flock-button-sweep'));
+/* Which root screens to sweep, e.g. --only=messages,you,venue. The press
+   budget is shared across every root, and the Nest alone spends 150 of it
+   because it descends into each plan card, so a full pass needs either a
+   large budget or two runs. Discover is the one root worth leaving out of a
+   re-run on purpose: its screens perform live Places searches, and those
+   cost money per screen. */
+const ONLY = new Set(opt('only', '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+const wanted = (name) => ONLY.size === 0 || ONLY.has(name.toLowerCase());
 const SHOTS = path.join(OUT, 'shots');
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -171,7 +207,17 @@ async function enumerateButtons(page) {
       const name = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').replace(/\s+/g, ' ').trim();
       const id = `sw${n++}`;
       el.setAttribute('data-sweep', id);
-      out.push({ id, name: name || `(unnamed ${el.tagName.toLowerCase()})`, tag: el.tagName.toLowerCase() });
+      out.push({
+        id,
+        name: name || `(unnamed ${el.tagName.toLowerCase()})`,
+        tag: el.tagName.toLowerCase(),
+        // A tab in the main nav is a root of its own. It still gets pressed,
+        // to prove it navigates, but it is not descended into: the tab bar is
+        // on every screen, so descending would sweep every tab from every
+        // other tab. That is the same ground four times over, and on Discover
+        // it is the same ground four times over at Google Places prices.
+        isTab: !!el.closest('nav[aria-label="Main"]'),
+      });
     }
     return out;
   });
@@ -225,7 +271,7 @@ async function sweepScreen(page, sink, { root, reopen, depth, cap, shotDir }) {
     log(`${root} :: ${b.name} -> ${row.effect}${problems.length ? ` (${problems.length} problem(s))` : ''}`);
 
     // A screen that opened gets one level of its own sweep, then we go home.
-    if (!clickError && navigated && depth > 0) {
+    if (!clickError && navigated && depth > 0 && !b.isTab) {
       // Reopening the child means reopening the root and pressing the same
       // button again by name; the sweep ids are reassigned on every pass.
       const childReopen = async () => {
@@ -255,7 +301,7 @@ async function main() {
   const sink = [];
   try {
     // ── The signed-out door: the auth screen's own buttons.
-    {
+    if (wanted('auth')) {
       const ctx = await newContext(browser, { token: '', userMode: 'person' });
       const page = await ctx.newPage();
       watch(page, sink);
@@ -269,11 +315,11 @@ async function main() {
       await ctx.close();
     }
     // ── The person's app: each tab is a root.
-    {
+    const tabs = ['Nest', 'Discover', 'Plans', 'Messages', 'You'].filter(wanted);
+    if (tabs.length) {
       const ctx = await newContext(browser, { token: personToken, userMode: 'person' });
       const page = await ctx.newPage();
       watch(page, sink);
-      const tabs = ['Nest', 'Discover', 'Plans', 'Messages', 'You'];
       for (const t of tabs) {
         const reopen = async () => {
           await openApp(page);
@@ -293,7 +339,7 @@ async function main() {
       await ctx.close();
     }
     // ── The venue owner's dashboard.
-    {
+    if (wanted('venue')) {
       const ctx = await newContext(browser, { token: ownerToken, userMode: 'venue' });
       const page = await ctx.newPage();
       watch(page, sink);
