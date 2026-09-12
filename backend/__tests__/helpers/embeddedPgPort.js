@@ -219,23 +219,28 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     // process table names it by parent (this process) and its children by
     // creation order; elsewhere the pid alone is enough, because a POSIX
     // SIGKILL of the postmaster takes its children with it.
+    const t0 = Date.now();
     const table = process.platform === 'win32' ? postgresProcessTable() : null;
     const root = table ? ownedPostmaster(pid, table) : { pid, created: null };
     const family = table && root ? descendantsOf(root, table) : [];
+    const tProbe = Date.now() - t0;
     let timer = null;
+    let stopError = null;
     try {
       await Promise.race([
         libraryStop(),
         new Promise((resolve) => { timer = setTimeout(resolve, STOP_TIMEOUT_MS); timer.unref(); }),
       ]);
-    } catch (_) {
+    } catch (err) {
       // A stop that throws still gets the sweep below.
+      stopError = err;
     } finally {
       if (timer) clearTimeout(timer);
       for (const pipe of pipes) {
         try { pipe.destroy(); } catch (_) { /* already closed */ }
       }
     }
+    const tStop = Date.now() - t0;
     // Let the family leave on its own first; kill only what is still here
     // after the grace, which is the orphan this whole path exists for.
     const leftovers = await waitGone(root ? [root, ...family] : family, STOP_GRACE_MS);
@@ -245,15 +250,29 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
       // gone; the removal below has to wait for that moment, not race it.
       await waitGone(leftovers, STOP_GRACE_MS);
     }
+    const tGone = Date.now() - t0;
     // The library removes the data directory inside its own stop, without
     // retries, and a handle still closing makes that throw; the suites then
     // remove it again themselves, most of them without retries either. One
     // patient removal here means neither of those has anything left to trip
     // on.
-    if (databaseDir) {
-      try {
-        fs.rmSync(databaseDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
-      } catch (_) { /* the suite's own rm reports it if it is still there */ }
+    // rmSync's own maxRetries did not retry here: on this Node (25) and
+    // Windows the removal threw EPERM one millisecond after the postmaster
+    // exited, forty retries asked for and none taken (FLOCK_PG_DEBUG showed
+    // "rm 769ms" beside "stop 768ms"). The retry is done by hand, with a
+    // real wait between attempts, which is what a handle still closing
+    // needs.
+    const rmError = databaseDir ? await removeDirectoryPatiently(databaseDir, 40, 250) : null;
+    // FLOCK_PG_DEBUG=1 prints one line per stop, for the day a teardown
+    // misbehaves under load and the question is which step took the time.
+    if (process.env.FLOCK_PG_DEBUG) {
+      const still = Boolean(databaseDir && fs.existsSync(databaseDir));
+      const stopNote = stopError ? ' (threw ' + String((stopError && stopError.code) || stopError) + ')' : '';
+      const rmNote = rmError ? ' (rm threw ' + String(rmError.code) + ')' : '';
+      console.error('[pg-stop ' + suite + '] probe ' + tProbe + 'ms root=' + (root ? 'yes' : 'no')
+        + ' family=' + family.length + ' stop ' + tStop + 'ms' + stopNote
+        + ' gone ' + tGone + 'ms leftovers=' + leftovers.length
+        + ' rm ' + (Date.now() - t0) + 'ms' + rmNote + ' dir-still-there=' + still);
     }
   };
   return pg;
@@ -299,6 +318,25 @@ const STOP_TIMEOUT_MS = 30000;
 // suites the first time the sweep shipped). Only what is still alive after
 // this grace is an orphan.
 const STOP_GRACE_MS = 5000;
+
+// Remove a directory that a process may still be letting go of. Returns
+// null on success, the last error otherwise. Each attempt is a plain
+// rmSync; the waiting between them is ours, because rmSync's maxRetries
+// was seen taking no retries at all on Windows (see the call site).
+async function removeDirectoryPatiently(dir, attempts, delayMs) {
+  let last = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return null;
+    } catch (err) {
+      last = err;
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(err && err.code)) return err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  return last;
+}
 
 // Alive by the OS's word, not the process table probe: cheap enough to poll.
 // On Windows a permission error still means the process exists. This says
@@ -469,6 +507,7 @@ async function startEmbeddedPostgres(pg) {
 }
 
 module.exports = {
+  removeDirectoryPatiently,
   START_TIMEOUT_MS,
   STOP_TIMEOUT_MS,
   STOP_GRACE_MS,
