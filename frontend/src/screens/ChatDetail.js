@@ -217,7 +217,15 @@ const FLOCK_DRAFTS = new Map();
    there is nothing to get wrong. It is the useEvent RFC, in six lines.
 
    useLayoutEffect, not useEffect: the ref must be current before any child
-   effect can fire the handler in the same commit. */
+   effect can fire the handler in the same commit.
+
+   WHAT THAT DOES NOT COVER: a call made DURING RENDER. renderCard and
+   colourFor are called by MessageRow while it renders, and in the render
+   where a row first appears the ref still holds the previous render's
+   closure, because no layout effect has run yet. A render-time reader
+   therefore reads the row it is handed and never the screen's state; the
+   synthetic rows in the stream carry their card's data for exactly this
+   reason (search "EACH SYNTHETIC ROW"). */
 /* EXPORTED because screens/DmDetail.js has the identical problem and there is
    no sense in owning two copies of a hook whose entire job is identity. It
    already imports groupReactions from this file. */
@@ -1528,26 +1536,40 @@ export default function ChatDetail({
       return next;
     };
 
+    /* EACH SYNTHETIC ROW CARRIES WHAT ITS CARD DRAWS. renderCard reaches
+       MessageRow through useStableFn, whose ref is refreshed in a layout
+       effect, which is AFTER the render in which a row first appears. A row
+       that mounts in that render is drawn by the previous render's closure,
+       and in the previous render the thing it describes did not exist: the
+       nudge was null there, so `nudgeForCard.text` threw and the crash net
+       took the whole chat screen down. A sweep that pressed every button
+       reached it through Invite on a plan opened from the Nest, where the
+       nudge went away and came back across two renders. The same
+       one-commit lag sits under the bill, the poll and the who's-here row,
+       and any of the three would fail the same way. So the renderer
+       reads the ROW and never the screen: the row and its data are built
+       together here, and a closure one commit behind still draws exactly
+       what it is handed. */
     let streamRows = listRows;
     if (!searchActive) {
       if (pollForCard) {
-        streamRows = spliceByTime(streamRows, { id: POLL_ROW_ID, message_type: 'system' }, pollAnchorMs);
+        streamRows = spliceByTime(streamRows, { id: POLL_ROW_ID, message_type: 'system', poll: { rows: pollVoteRows, lockedName: pollLockedName } }, pollAnchorMs);
       }
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
-        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system' }, created);
+        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard }, created);
       }
       // Also on the end, and for the same reason as the nudge: this is the
       // state of the room right now, not a moment in the scrollback.
       if (whoIsHere) {
-        streamRows = spliceByTime(streamRows, { id: WHO_ROW_ID, message_type: 'system' }, NaN);
+        streamRows = spliceByTime(streamRows, { id: WHO_ROW_ID, message_type: 'system', who: whoIsHere }, NaN);
       }
       // The nudge goes last and carries no anchor, so it lands on the end. The
       // other two describe a moment in the scrollback; this one describes the
       // state of the plan right now, and a prompt about the present belongs
       // where the reader already is.
       if (nudgeForCard) {
-        streamRows = spliceByTime(streamRows, { id: NUDGE_ROW_ID, message_type: 'system' }, NaN);
+        streamRows = spliceByTime(streamRows, { id: NUDGE_ROW_ID, message_type: 'system', nudge: nudgeForCard }, NaN);
       }
     }
 
@@ -1700,16 +1722,23 @@ export default function ChatDetail({
          getPaymentLinks answers, and BillCard treats an unstated capability as
          unstated rather than as "no", which keeps the label honest instead of
          promising a cash-only night the server never described. */
+      /* THE ROW, NOT THE SCREEN, for every synthetic card below. The reason
+         is written where the rows are built (search "EACH SYNTHETIC ROW"):
+         this function reaches the list through a ref that is one commit
+         behind, so a value read from the closure can be the previous
+         render's, and null. */
       if (m.id === WHO_ROW_ID) {
+        const who = m.who;
+        if (!who) return null;
         return (
           <WhoIsHereCard
             /* Named only when the group has actually picked one. "3 near Kome"
                is a claim about a venue; without one the card says "3 nearby",
                which is still true. */
-            venueName={whoIsHere.hasVenue ? (flock.venue && flock.venue !== 'TBD' ? flock.venue : null) : null}
-            nearCount={whoIsHere.near}
-            onTheWayCount={whoIsHere.onTheWay}
-            members={whoIsHere.people}
+            venueName={who.hasVenue ? (flock.venue && flock.venue !== 'TBD' ? flock.venue : null) : null}
+            nearCount={who.near}
+            onTheWayCount={who.onTheWay}
+            members={who.people}
             onOpenMap={() => {
               leaveChatScreen();
               setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
@@ -1721,22 +1750,27 @@ export default function ChatDetail({
       }
 
       if (m.id === NUDGE_ROW_ID) {
+        const nudge = m.nudge;
+        if (!nudge) return null;
         return (
           <NudgeRow
-            text={nudgeForCard.text}
-            actionLabel={nudgeForCard.actionLabel}
+            text={nudge.text}
+            actionLabel={nudge.actionLabel}
             /* Acting does NOT dismiss. The nudge's condition is that nobody
                has picked a place, so voting clears it on its own and opening
                the sheet without voting leaves it true. Dismissing on the way
                in would hide a prompt whose reason had not gone away, which is
                the same lie as a banner that cannot be closed. */
             onAction={() => setShowVotePanel(true)}
-            onDismiss={() => dismissNudge(nudgeForCard.key)}
+            onDismiss={() => dismissNudge(nudge.key)}
           />
         );
       }
 
       if (m.id === POLL_ROW_ID) {
+        const poll = m.poll;
+        if (!poll) return null;
+        const pollRows = poll.rows || [];
         /* The footer's two figures are read separately on purpose. A vote
            total is not a voter total: a guest voting from an invite link adds
            to a row's count without adding a name, so the row counts and the
@@ -1744,9 +1778,9 @@ export default function ChatDetail({
            to guess one from the other. This is the same arithmetic the sheet
            does, from the same hoisted list, so the two surfaces cannot print
            different tallies for the same night. */
-        const voterNames = new Set(pollVoteRows.flatMap((v) => v.voters || []));
-        const guestVotes = pollVoteRows.reduce((sum, v) => sum + (v.guestCount || 0), 0);
-        const options = [...pollVoteRows]
+        const voterNames = new Set(pollRows.flatMap((v) => v.voters || []));
+        const guestVotes = pollRows.reduce((sum, v) => sum + (v.guestCount || 0), 0);
+        const options = [...pollRows]
           .sort((a, b) => voteTotal(b) - voteTotal(a))
           .map((v) => ({
             id: v.place_id || v.venue,
@@ -1765,7 +1799,7 @@ export default function ChatDetail({
             votedCount={voterNames.size + guestVotes}
             memberCount={flock.memberCount ?? (flock.members || []).length}
             isHost={!!flock.creatorId && String(flock.creatorId) === String(authUser?.id)}
-            lockedName={pollLockedName}
+            lockedName={poll.lockedName}
             /* Toggle, matching the venue card row on this same screen: a tap
                on the option you already picked takes the vote back. The
                sheet's quick vote returns early instead, because that surface
@@ -1785,15 +1819,17 @@ export default function ChatDetail({
       }
 
       if (m.id === BILL_ROW_ID) {
+        const bill = m.bill;
+        if (!bill) return null;
         const roster = {};
         for (const mem of flock.members || []) {
           if (mem && typeof mem === 'object' && mem.id != null) roster[mem.id] = { avatarUrl: mem.image || undefined };
         }
-        const isShell = billForCard.hasPayer === false;
-        const myShare = (billForCard.shares || []).find((s) => String(s.userId) === String(authUser?.id)) || null;
+        const isShell = bill.hasPayer === false;
+        const myShare = (bill.shares || []).find((s) => String(s.userId) === String(authUser?.id)) || null;
         return (
           <BillCard
-            bill={billForCard}
+            bill={bill}
             viewerId={authUser?.id}
             members={roster}
             estimatedShare={estimatedShare}
@@ -1804,7 +1840,7 @@ export default function ChatDetail({
                rather than shown and refused: the server answers 409 on both
                and a control that exists only to be rejected is a dead one. */
             onUndo={myShare && myShare.settled && !coveredByCredit(myShare)
-              && String(billForCard.paidBy?.id ?? '') !== String(authUser?.id ?? '')
+              && String(bill.paidBy?.id ?? '') !== String(authUser?.id ?? '')
               ? undoMySettle
               : undefined}
           />

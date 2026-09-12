@@ -63,6 +63,11 @@ import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'fram
 // The sweep still alternates the two rather than repeating one bird twenty
 // times.
 import BirdieBird, { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
+// The crash screens inside the app carry the same game the root crash net
+// and the 404 do. Static, for the reason ErrorBoundary.js gives: the most
+// common crash is a chunk that failed to download, and a game in a second
+// chunk would fail for exactly the person it is meant for.
+import FloppyBird from './components/ui/FloppyBird';
 import Icons, { starSvgString } from './components/ui/Icons';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
@@ -19561,6 +19566,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               Reference {eventId}
             </p>
           )}
+          {/* Something to do on a broken screen. Collapsed behind its own
+              button, so the failure and the two ways out are read first. */}
+          <FloppyBird />
         </div>
       </div>
       {BottomNav()}
@@ -19603,6 +19611,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
             {(error && error.message) || 'Unknown error'}
           </p>
+          <FloppyBird />
         </div>
       </div>
       {BottomNav()}

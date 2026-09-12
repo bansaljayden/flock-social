@@ -247,6 +247,9 @@ export default function FloppyBird({ className }) {
   if (!open) {
     return (
       <div className={className}>
+        {/* The button's rules live in the same sheet as the game's, and the
+            sheet has to be on the page for the button to look like one. */}
+        <style>{FLOPPY_CSS}</style>
         <button type="button" className="floppy-open" onClick={() => setOpen(true)}>
           Waiting? Fly the bird
         </button>
