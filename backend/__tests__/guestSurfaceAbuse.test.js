@@ -165,6 +165,11 @@ function scriptVote({ currentVotes = 0, currentVenue = null, countRows = null } 
     ? { rows: countRows }
     : { rows: [{ n: currentVotes, same: currentVenue === 'The Bar' ? 1 : 0 }] }));
   on(/UNION SELECT 1 FROM guest_votes/, () => ({ rows: [{ '?column?': 1 }] }));
+  // The vote write reads the plan's status in its own statement and reports
+  // one row written; the plan these tests vote on is open. A race test that
+  // wants the write to land nothing registers its own answers before this.
+  on(/INSERT INTO guest_votes/, () => ({ rows: [], rowCount: 1 }));
+  on(/SELECT status FROM flocks WHERE id = \$1/, () => ({ rows: [{ status: 'planning' }], rowCount: 1 }));
   on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
   on(/MIN\(venue_id\) FILTER/, () => ({ rows: [{ venue_name: 'The Bar', venue_id: 'abc', member_count: 2, voter_rows: [] }] }));
   on(/AS guest_count/, () => ({ rows: [{ venue_name: 'The Bar', guest_count: 1 }] }));
@@ -274,6 +279,28 @@ test('re-voting for the venue a guest already picked writes nothing and announce
   assert.strictEqual(poolCheckouts, 0, 'and no transaction is opened for it');
   assert.strictEqual(emits.filter((e) => e.event === 'new_vote').length, 0,
     'a repeat of the same vote must not re-notify every member');
+});
+
+test('a plan that closes between the link check and the vote write records nothing and announces nothing', async () => {
+  // Registered first, so they answer before the helper's own stubs: the
+  // INSERT lands nothing, and the read-back that follows finds the plan
+  // cancelled. The DELETE of the old vote rolls back with it.
+  on(/INSERT INTO guest_votes/, () => ({ rows: [], rowCount: 0 }));
+  on(/SELECT status FROM flocks WHERE id = \$1/, () => ({ rows: [{ status: 'cancelled' }], rowCount: 1 }));
+  scriptVote({ currentVotes: 1, currentVenue: 'Somewhere Else' });
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/vote`, {
+    guestToken: GUEST_TOKEN, venueName: 'The Bar',
+  });
+
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error, 'This plan is no longer taking votes');
+  const ins = ran(/INSERT INTO guest_votes/)[0];
+  assert.ok(ins, 'the write is what decides, so it must run');
+  assert.match(ins.sql, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+  assert.ok(ran(/^ROLLBACK/).length >= 1, 'the delete of the old vote goes back with the refused write');
+  assert.strictEqual(ran(/^COMMIT/).length, 0);
+  assert.strictEqual(emits.filter((e) => e.event === 'new_vote').length, 0, 'members are not told about a vote that was not recorded');
 });
 
 test('a guest CHANGING their vote still writes and still announces', async () => {

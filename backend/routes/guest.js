@@ -819,6 +819,7 @@ router.post('/:token/rsvp',
       let ins;
       let blockedByTakedown = false;
       let nameTaken = false;
+      let planOver = false;
       try {
         await client.query('BEGIN');
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
@@ -862,18 +863,34 @@ router.post('/:token/rsvp',
           nameTaken = true;
           await client.query('ROLLBACK');
         } else {
+          // WRITTEN ONLY WHILE THE PLAN IS OPEN. flockIsOver read the plan
+          // on the pool a moment ago; a cancel landing since then would seat
+          // a guest on a finished plan, and announce them to the roster. The
+          // write reads the status in the same statement, so it decides for
+          // itself; nothing written is the same 409 the check gives.
           ins = await client.query(
-            `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, $3)
+            `INSERT INTO guest_rsvps (flock_id, name, status)
+             SELECT $1::int, $2::text, $3::text
+              WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
              RETURNING id, guest_token, COALESCE(is_hidden, false) AS is_hidden`,
             [link.flock_id, name, status]
           );
-          await client.query('COMMIT');
+          if (ins.rows.length === 0) {
+            planOver = true;
+            await client.query('ROLLBACK');
+          } else {
+            await client.query('COMMIT');
+          }
         }
       } catch (txErr) {
         await client.query('ROLLBACK').catch(() => {});
         throw txErr;
       } finally {
         client.release();
+      }
+
+      if (planOver) {
+        return res.status(409).json({ error: 'This plan is no longer taking RSVPs' });
       }
 
       // Deliberately vague, and the same shape as any other refusal: a
@@ -992,6 +1009,7 @@ router.post('/:token/vote',
       );
       const cur = current.rows[0];
       const unchanged = !!cur && cur.n === 1 && cur.same === 1;
+      let planOver = false;
 
       if (!unchanged) {
         const client = await pool.connect();
@@ -1002,18 +1020,41 @@ router.post('/:token/vote',
             'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3',
             [link.flock_id, guestId, venueName]
           );
-          await client.query(
+          // WRITTEN ONLY WHILE THE PLAN IS OPEN, like the RSVP above: the
+          // check ran on the pool, the write reads the status itself. Nothing
+          // written is read back, because a twin of this vote landing first
+          // (ON CONFLICT) writes nothing too and is not a closed plan.
+          const voted = await client.query(
             `INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name)
-             VALUES ($1, $2, $3) ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
+             SELECT $1::int, $2::int, $3::text
+              WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
+             ON CONFLICT (flock_id, guest_rsvp_id, venue_name) DO NOTHING`,
             [link.flock_id, guestId, venueName]
           );
-          await client.query('COMMIT');
+          if (voted.rowCount === 0) {
+            const now = await client.query('SELECT status FROM flocks WHERE id = $1', [link.flock_id]);
+            const st = now.rows[0] && now.rows[0].status;
+            if (!now.rows[0] || st === 'completed' || st === 'cancelled') {
+              // The DELETE above goes back with it: a closed plan keeps the
+              // vote the guest had.
+              planOver = true;
+              await client.query('ROLLBACK');
+            } else {
+              await client.query('COMMIT');
+            }
+          } else {
+            await client.query('COMMIT');
+          }
         } catch (txErr) {
           await client.query('ROLLBACK').catch(() => {});
           throw txErr;
         } finally {
           client.release();
         }
+      }
+
+      if (planOver) {
+        return res.status(409).json({ error: 'This plan is no longer taking votes' });
       }
 
       const venues = await guestTalliesWeighted(link.flock_id);
