@@ -116,6 +116,7 @@ let seatAfterMembershipRead = null; // a user id: invited by someone else right 
 let closeAfterReopenCheck = null; // a flock id: closed right after PUT's own status read (the one before its write)
 let closeAfterStatusReadTo = 'cancelled'; // what closeAfterStatusRead sets: 'cancelled', or null for a status nobody can read
 let closeAfterReinvite = null; // a flock id: cancelled right after the re-invite UPDATE landed, before the INSERT
+let closeAfterSeat = null; // a flock id: cancelled right after the new seat is written, before the announcement
 
 function reset() {
   vanishAfterOwnershipCheck = false;
@@ -124,6 +125,7 @@ function reset() {
   closeAfterReopenCheck = null;
   closeAfterStatusReadTo = 'cancelled';
   closeAfterReinvite = null;
+  closeAfterSeat = null;
   flocks = new Map([[10, FLOCK_10()], [20, FLOCK_20()]]);
   members = new Map([
     [10, [
@@ -315,7 +317,7 @@ async function dispatch(text, params = []) {
     const f = flocks.get(Number(params[0]));
     if (!f) return { rows: [], rowCount: 0 };
     const going = rowsOf(params[0]).filter((m) => m.status === 'accepted').length;
-    return { rows: [{ event_time: f.event_time || null, venue_name: f.venue_name || null, going }], rowCount: 1 };
+    return { rows: [{ event_time: f.event_time || null, venue_name: f.venue_name || null, status: f.status, going }], rowCount: 1 };
   }
   if (has('AS total, COUNT(*)::int AS n FROM flock_members')) {
     const all = rowsOf(params[0]);
@@ -491,6 +493,13 @@ async function dispatch(text, params = []) {
       if (list.some((m) => m.user_id === uid)) continue;
       list.push({ user_id: uid, status, attendance: 'unmarked' });
       written.push(uid);
+    }
+    // "Cancelled right after the seat": the write lands, and the
+    // announcement's own read of the plan then finds it closed.
+    if (closeAfterSeat === fid) {
+      const f = flocks.get(fid);
+      if (f) f.status = 'cancelled';
+      closeAfterSeat = null;
     }
     return { rows: written.map((user_id) => ({ user_id })), rowCount: written.length };
   }
@@ -1207,12 +1216,36 @@ test('direct invite: both writes return the ids they wrote, and both people are 
     const writes = queries.slice(before).filter((q) => /UPDATE flock_members SET status = 'invited'|INSERT INTO flock_members/.test(q.sql));
     assert.strictEqual(writes.length, 2, 'one UPDATE for the declined member, one INSERT for the new one');
     for (const w of writes) assert.match(w.sql, /RETURNING user_id/);
-    const told = emitted.filter((e) => e.event === 'flock_invite_received').map((e) => e.room).sort();
-    assert.deepStrictEqual(told, ['user:4', 'user:5'], 'each person written is told once');
+    const told = emitted.filter((e) => e.event === 'flock_invite_received');
+    assert.deepStrictEqual(told.map((e) => e.room).sort(), ['user:4', 'user:5'], 'each person written is told once');
+    for (const e of told) assert.strictEqual(e.payload.status, 'planning', 'the event says whether the plan is open');
   } finally {
     app.set('io', undefined);
     const dave = memberOf(10, 5);
     if (dave) dave.status = 'declined';
+  }
+  assertQueriesUnderstood();
+});
+
+test('direct invite: a plan that closes right after the seat is written announces nobody and says closed', async () => {
+  // The seat lands on an open plan; the announcement then reads the plan
+  // and finds it cancelled. The person keeps the row (the cancel's own
+  // fan-out reaches them), nobody is announced, and the caller hears closed.
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
+  closeAfterSeat = 10;
+  try {
+    const res = await call('POST', '/api/flocks/10/invite', 'alice', { user_ids: [4] });
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.deepStrictEqual(body.invited.map((i) => i.user_id), [4]);
+    assert.strictEqual(body.closed, true, 'the caller was not told the plan closed');
+    assert.strictEqual(memberOf(10, 4).status, 'invited', 'the seat that landed must stay');
+    assert.deepStrictEqual(emitted, [], 'someone was announced onto a plan that had closed');
+  } finally {
+    app.set('io', undefined);
+    closeAfterSeat = null;
+    flocks.get(10).status = 'planning';
   }
   assertQueriesUnderstood();
 });
