@@ -6360,21 +6360,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const asked = userIds.length;
       const sent = Array.isArray(res?.invited) ? res.invited.length : asked;
       let note;
-      if (sent >= asked) {
+      if (res?.closed) {
+        // The plan closed while the server was seating people: whoever
+        // landed first is on it, the rest are not, and neither "Invited N
+        // friends." nor "already in this flock" would be the truth. Read
+        // before the all-sent branch, because everyone can have landed and
+        // the plan still be closed.
+        note = sent >= asked
+          ? `Invited ${sent} friend${sent === 1 ? '' : 's'}. The plan has since closed.`
+          : `Invited ${sent} of ${asked}. The plan closed before the rest could be added.`;
+      } else if (sent >= asked) {
         note = `Invited ${sent} friend${sent === 1 ? '' : 's'}.`;
       } else if (res?.full) {
         note = `Invited ${sent} of ${asked}. This flock holds as many people as it can.`;
       } else if (res?.throttled) {
         note = `Invited ${sent} of ${asked}. You have invited a lot of people recently, so the rest did not go out.`;
-      } else if (res?.closed) {
-        // The plan closed between the server's two writes: whoever landed
-        // first is on it, the rest are not, and "already in this flock"
-        // would be the wrong reason.
-        note = `Invited ${sent} of ${asked}. The plan closed before the rest could be added.`;
       } else {
         note = `Invited ${sent} of ${asked}. The rest were already in this flock.`;
       }
-      showToast(note, sent >= asked ? 'success' : 'warning');
+      showToast(note, sent >= asked && !res?.closed ? 'success' : 'warning');
       setShowFlockInviteModal(false);
       setFlockInviteSelected([]);
       setFlockInviteSearch('');
@@ -10662,11 +10666,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for real-time flock invite notifications
   useEffect(() => {
     const unsubInvite = onFlockInviteReceived((data) => {
-      // The server reads the plan's status when it announces an invite. A
-      // plan that had already finished or been cancelled is not a card to
-      // build, and this is what keeps an event that lands after the
-      // close's own cleanup from recreating the plan as open.
-      if (data.status === 'completed' || data.status === 'cancelled') return;
+      // The server reads the plan when it announces an invite and says
+      // whether it has ended. A plan that has is not a card to build, and
+      // this is what keeps an event that lands after the close's own
+      // cleanup from recreating the plan as open.
+      if (data.finished) return;
       setPendingFlockInvites(prev => {
         if (prev.some(f => f.id === data.flockId)) return prev;
         return [...prev, {

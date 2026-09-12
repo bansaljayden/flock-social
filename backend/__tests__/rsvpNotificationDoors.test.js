@@ -64,6 +64,10 @@ function dispatch(sql, params) {
   // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
   // this file is open and nobody holds an invite, so both default quietly.
   if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
+  // The invite push asks the plan once more before it reaches a lock screen.
+  if (/^SELECT id, name, status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) {
+    return Promise.resolve({ rows: [{ id: Number((params || [])[0]), name: 'Dinner', status: 'planning' }], rowCount: 1 });
+  }
   if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   // Matched against the COLLAPSED sql: these statements are written across
   // several lines in the routers, so a pattern spanning two of them would

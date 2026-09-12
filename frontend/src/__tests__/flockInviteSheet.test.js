@@ -274,6 +274,11 @@ describe('the success toast', () => {
     // ("already in this flock") would name the wrong reason.
     expect(send).toContain('res?.closed');
     expect(send).toContain('The plan closed before the rest could be added.');
+    // Everyone can have landed and the plan still have closed a moment
+    // later, so closed is read before the all-sent branch can call it a
+    // plain success.
+    expect(send.indexOf('res?.closed')).toBeLessThan(send.indexOf('sent >= asked'));
+    expect(send).toContain('The plan has since closed.');
   });
 
   test('a partial send says how many of how many', () => {
@@ -281,7 +286,7 @@ describe('the success toast', () => {
   });
 
   test('a partial send is not painted as a plain success', () => {
-    expect(send).toMatch(/showToast\(note, sent >= asked \? 'success' : 'warning'\)/);
+    expect(send).toMatch(/showToast\(note, sent >= asked && !res\?\.closed \? 'success' : 'warning'\)/);
   });
 
   test('the copy carries no em dash and no exclamation mark', () => {

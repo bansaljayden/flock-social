@@ -52,6 +52,7 @@ delete process.env.FIREBASE_SERVICE_ACCOUNT;
 const pool = require('../config/database');
 
 let unknownSql = [];
+let closedFlocks = new Set(); // flock ids the push's own read finds cancelled
 let BLOCKED_PAIRS = [];   // [[a, b]]
 let VISIBLE = true;       // what canNotify's roster lookup answers
 
@@ -62,6 +63,12 @@ pool.query = (sql, params) => {
   // scores it publishes so routes/feedback.js can verify predicted_score.
   // Fire-and-forget UPSERT, one per request; modelled so the fake stays strict.
   if (/INSERT INTO served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The invite push asks the plan once more before it reaches a lock screen;
+  // a plan in `closedFlocks` has ended since the invite was written.
+  if (/^SELECT id, name, status FROM flocks WHERE id = \$1$/.test(flat)) {
+    const id = Number((params || [])[0]);
+    return Promise.resolve({ rows: [{ id, name: 'Rooftop Friday', status: closedFlocks.has(id) ? 'cancelled' : 'planning' }], rowCount: 1 });
+  }
   if (/DELETE FROM served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   // The owner-slider read (migration 031): the batch route asks for every place
   // id in the body at once so a live "the bar says N" lands on the vote list as
@@ -509,6 +516,23 @@ test('N reruns inviting the same person from N different flocks produce ONE push
   assert.strictEqual(SENT.length, 1,
     'ten flocks, one victim: a flock-scoped debounce key mints a fresh key every time and never fires');
   assert.strictEqual(SENT[0].userId, 42);
+});
+
+test('an invite push for a plan that has ended since the invite was written is not sent', async () => {
+  resetPush();
+  closedFlocks = new Set([700]);
+  try {
+    await pushInvitesToOffline({
+      io: offlineIo,
+      inviter,
+      flockId: 700,
+      flockName: 'Rooftop Friday',
+      invited: [{ user_id: 21 }],
+    });
+    assert.deepStrictEqual(SENT, [], 'a lock screen was told about a plan that had already ended');
+  } finally {
+    closedFlocks = new Set();
+  }
 });
 
 test('the debounce is per recipient, so it never swallows a different persons invite', async () => {

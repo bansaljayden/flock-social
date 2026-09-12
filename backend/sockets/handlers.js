@@ -2146,9 +2146,15 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      const flockResult = await pool.query('SELECT id, name FROM flocks WHERE id = $1', [flockId]);
+      const flockResult = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
       if (flockResult.rows.length === 0) return;
       const flockName = flockResult.rows[0].name;
+      // A plan that has ended is not relayed as an invite: the card the
+      // phone builds from this event shows the plan open, and an invited
+      // row left on a cancelled plan is exactly the row this relay would
+      // otherwise vouch for.
+      const st = flockResult.rows[0].status;
+      if (st === 'completed' || st === 'cancelled') return;
 
       // Relay persisted state only (round 5): each target must actually hold
       // an 'invited' membership row — otherwise any member could spoof-flood
@@ -2168,6 +2174,7 @@ function registerHandlers(io, socket) {
           flockId,
           flockName,
           invitedBy: { userId: user.id, name: user.name },
+          finished: false,
         });
       }
 
