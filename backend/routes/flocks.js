@@ -2350,9 +2350,9 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     if (!landed.has(invited[i].user_id)) invited.splice(i, 1);
   }
 
-  // Only the door that checked the status asks why nothing was written:
-  // rerun seats people on a plan that is seconds old and cannot have
-  // closed, and its fixtures do not model this read. Either write
+  // Only a door that asked for it reads back why nothing was written:
+  // create seats people inside the transaction that makes the plan and
+  // never comes here; invite and rerun both ask. Either write
   // can come back empty for an innocent reason (every new id conflicted with
   // a concurrent invite; the declined member changed their mind first), so
   // the plan is read back rather than assumed closed. The two writes are
@@ -2407,8 +2407,11 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     // nobody: the card would show it open, and the close's own fan-out has
     // already reached the roster, the people who just landed included. The
     // caller hears `closed` with the people who landed, and sends no
-    // pushes. The status rides on the event as well, so a phone that reads
-    // it after the close's own cleanup cannot recreate the plan as open.
+    // pushes. Whether the plan has ended rides on the event as well, so a
+    // phone that reads it after the close's own cleanup cannot recreate the
+    // plan as open. Only that one fact: an invitee is not yet a member, and
+    // the plan's status is the members' business (see the DTO note above
+    // GET /:id), so the event carries `finished`, never the status itself.
     if (planStatus === 'completed' || planStatus === 'cancelled') {
       return { invited, throttled, full, closed: true };
     }
@@ -2417,7 +2420,7 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
         flockId,
         flockName,
         invitedBy: { userId: inviter.id, name: inviter.name },
-        status: planStatus,
+        finished: false,
         eventTime,
         venueName,
         goingCount,
@@ -2508,6 +2511,13 @@ async function pushInvitesToOffline({ io, inviter, flockId, flockName, invited }
   if (invited.length === 0) return;
   try {
     if (io) {
+      // The response has gone out and the announcement's read of the plan
+      // is a moment old. A push is the one thing here that reaches a phone
+      // that is not looking, so it asks once more: a plan that has ended
+      // since then gets no "you are invited" on a lock screen.
+      const plan = await pool.query('SELECT id, name, status FROM flocks WHERE id = $1', [flockId]);
+      const st = plan.rows[0] && plan.rows[0].status;
+      if (!plan.rows[0] || st === 'completed' || st === 'cancelled') return;
       const now = Date.now();
       sweepInvitePushes(now);
       await Promise.allSettled(
@@ -2802,21 +2812,30 @@ router.post('/:id/rerun',
             flockId: flock.id,
             flockName: flock.name,
             userIds: prior.rows.map((r) => r.user_id),
+            refuseClosed: true,
           })
         : { invited: [], throttled: false, full: false };
 
       // Same shape as POST /, and like POST / the id list is who actually got
       // a row — blocks or an exhausted budget can make it shorter than the
       // old roster, and the client must not display members nobody invited.
-      res.status(201).json({ flock, invited_user_ids: outcome.invited.map((i) => i.user_id) });
-
-      await pushInvitesToOffline({
-        io,
-        inviter: req.user,
-        flockId: flock.id,
-        flockName: flock.name,
-        invited: outcome.invited,
+      // A plan that closed in the second between its creation and these
+      // invites (a sweep, an admin) is said so, and nobody is pushed onto it.
+      res.status(201).json({
+        flock,
+        invited_user_ids: outcome.invited.map((i) => i.user_id),
+        ...(outcome.closed ? { closed: true } : {}),
       });
+
+      if (!outcome.closed) {
+        await pushInvitesToOffline({
+          io,
+          inviter: req.user,
+          flockId: flock.id,
+          flockName: flock.name,
+          invited: outcome.invited,
+        });
+      }
     } catch (err) {
       console.error('[Rerun] Error:', err.message, err.detail || '');
       if (!res.headersSent) res.status(500).json({ error: 'Failed to rerun flock' });

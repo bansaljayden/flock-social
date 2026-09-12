@@ -948,7 +948,7 @@ test('flock_invite requires membership and canonicalizes every id it touches', a
   const restore = mockPool([
     [/status = 'invited'/, [{ user_id: 42 }]],
     [MEMBERSHIP, () => memberRows],
-    [/SELECT id, name FROM flocks WHERE id = \$1/, [{ id: 4307, name: 'Trip' }]],
+    [/SELECT id, name, status FROM flocks WHERE id = \$1/, [{ id: 4307, name: 'Trip', status: 'planning' }]],
     [BLOCK_PAIR, []],
     [INVISIBLE, []],
   ], calls);
@@ -968,9 +968,34 @@ test('flock_invite requires membership and canonicalizes every id it touches', a
     const toast = io.emitted.find((e) => e.event === 'flock_invite_received');
     assert.strictEqual(toast.room, 'user:42');
     assert.strictEqual(toast.payload.flockId, 4307, 'string ids go out as the canonical integer');
+    assert.strictEqual(toast.payload.finished, false, 'the event says whether the plan has ended');
+    assert.strictEqual(toast.payload.status, undefined, 'and nothing more: an invitee is not yet a member');
     const echo = s.emitted.find((e) => e.event === 'flock_members_invited');
     assert.strictEqual(echo.target, 'flock:4307');
     assert.deepStrictEqual(echo.payload.invitedUserIds, [42], 'only the DB-confirmed list is echoed');
+  } finally { restore(); }
+});
+
+test('flock_invite relays nothing for a plan that has ended, whatever invited rows it left behind', async () => {
+  // A cancelled plan can keep its invited rows. The relay used to vouch for
+  // them, and the phone built an open card from the event.
+  __resetRateLimiters();
+  const restore = mockPool([
+    [/status = 'invited'/, [{ user_id: 42 }]],
+    [MEMBERSHIP, [{ id: 1 }]],
+    [/SELECT id, name, status FROM flocks WHERE id = \$1/, [{ id: 4308, name: 'Trip', status: 'cancelled' }]],
+    [BLOCK_PAIR, []],
+    [INVISIBLE, []],
+  ]);
+  try {
+    const io = fakeIo();
+    const s = fakeSocket('inviter-closed', { id: 1500, name: 'Host' }, io);
+    registerHandlers(io, s);
+    await fire(s, 'flock_invite', { flockId: 4308, invitedUserIds: [42] });
+    assert.strictEqual(io.emitted.filter((e) => e.event === 'flock_invite_received').length, 0,
+      'an invite was relayed for a plan that had ended');
+    assert.strictEqual(s.emitted.filter((e) => e.event === 'flock_members_invited').length, 0,
+      'and nothing was echoed to the room either');
   } finally { restore(); }
 });
 

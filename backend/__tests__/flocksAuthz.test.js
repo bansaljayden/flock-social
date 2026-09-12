@@ -317,7 +317,11 @@ async function dispatch(text, params = []) {
     const f = flocks.get(Number(params[0]));
     if (!f) return { rows: [], rowCount: 0 };
     const going = rowsOf(params[0]).filter((m) => m.status === 'accepted').length;
-    return { rows: [{ event_time: f.event_time || null, venue_name: f.venue_name || null, status: f.status, going }], rowCount: 1 };
+    // Postgres answers only the columns the statement names; a fixture that
+    // fabricated the status would hide a SELECT that stopped asking for it.
+    const row = { event_time: f.event_time || null, venue_name: f.venue_name || null, going };
+    if (/\bf\.status\b/.test(sql)) row.status = f.status;
+    return { rows: [row], rowCount: 1 };
   }
   if (has('AS total, COUNT(*)::int AS n FROM flock_members')) {
     const all = rowsOf(params[0]);
@@ -1218,7 +1222,10 @@ test('direct invite: both writes return the ids they wrote, and both people are 
     for (const w of writes) assert.match(w.sql, /RETURNING user_id/);
     const told = emitted.filter((e) => e.event === 'flock_invite_received');
     assert.deepStrictEqual(told.map((e) => e.room).sort(), ['user:4', 'user:5'], 'each person written is told once');
-    for (const e of told) assert.strictEqual(e.payload.status, 'planning', 'the event says whether the plan is open');
+    for (const e of told) {
+      assert.strictEqual(e.payload.finished, false, 'the event says whether the plan has ended');
+      assert.strictEqual(e.payload.status, undefined, 'and nothing more: an invitee is not yet a member');
+    }
   } finally {
     app.set('io', undefined);
     const dave = memberOf(10, 5);
