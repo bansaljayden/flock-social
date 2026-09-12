@@ -204,10 +204,23 @@ export default function LandingPage() {
 
     // Locking scroll removes the scrollbar, which would otherwise shove the
     // corner block sideways at the moment you click it. Hold its width.
-    const bar = window.innerWidth - document.documentElement.clientWidth;
-    const prevOverflow = document.body.style.overflow;
+    //
+    // The lock goes on the ROOT element, not on <body>. A body overflow is
+    // only handed to the viewport when the root's own overflow is visible,
+    // and the root carries overflow-x: clip (the horizontal clipping at the
+    // bottom of LandingPage.css). With the lock on <body>, <body> itself
+    // became the scroll container, the sticky bar started sticking to the
+    // top of the DOCUMENT instead of the top of the screen, and anyone who
+    // opened the menu after scrolling got a full-screen panel with the X
+    // scrolled thousands of pixels out of view and no way out but Escape;
+    // the page also jumped several hundred pixels on open. The root's
+    // overflow always reaches the viewport, so the bar keeps sticking and
+    // the corner X stays where the finger expects it.
+    const root = document.documentElement;
+    const bar = window.innerWidth - root.clientWidth;
+    const prevOverflow = root.style.overflow;
     const prevPad = document.body.style.paddingRight;
-    document.body.style.overflow = 'hidden';
+    root.style.overflow = 'hidden';
     if (bar > 0) {
       document.body.style.paddingRight = `${bar}px`;
       document.body.style.setProperty('--lp-scrollbar', `${bar}px`);
@@ -236,7 +249,7 @@ export default function LandingPage() {
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prevOverflow;
+      root.style.overflow = prevOverflow;
       document.body.style.paddingRight = prevPad;
       document.body.style.removeProperty('--lp-scrollbar');
     };
