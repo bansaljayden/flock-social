@@ -205,12 +205,41 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
  * expensive to diagnose, so this always throws a real Error naming the suite,
  * the port, and whether something is squatting on it.
  */
+// How long a start may take before it is called a hang. The library resolves
+// start() on the server's "ready to accept connections" line and rejects it
+// only when the server PROCESS closes. Twice on 2026-09-11 a full run sat for
+// twenty minutes in photoSpendLedger with neither: the postmaster was gone,
+// a forked `--forkchild="startup"` child of it was still alive with no parent,
+// and because that child had inherited the stderr pipe the library was
+// waiting on, "close" never fired. Killing the orphan by hand let the suite
+// go on within seconds. A cold start on this machine is two to five seconds,
+// so anything past ninety is that hang, and a legible failure after ninety
+// seconds costs the pre-push hook one retry instead of the evening.
+const START_TIMEOUT_MS = 90000;
+
 async function startEmbeddedPostgres(pg) {
   const suite = pg.__flockSuite || 'unknown suite';
   const port = pg.__flockPort;
+  let timer = null;
   try {
     await pg.initialise();
-    await pg.start();
+    await Promise.race([
+      pg.start(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          // Take the whole tree down, not just the postmaster the library
+          // knows about: the orphan that holds the pipe is a child of it.
+          const pid = pg.process && pg.process.pid;
+          if (pid && process.platform === 'win32') {
+            try { spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { timeout: 20000 }); } catch (_) { /* best effort */ }
+          } else if (pg.process) {
+            try { pg.process.kill('SIGKILL'); } catch (_) { /* best effort */ }
+          }
+          reject(new Error(`no "ready to accept connections" within ${START_TIMEOUT_MS / 1000}s`));
+        }, START_TIMEOUT_MS);
+        timer.unref();
+      }),
+    ]);
   } catch (err) {
     const occupied = port !== undefined && !isPortFree(port);
     const lines = [
@@ -247,10 +276,13 @@ async function startEmbeddedPostgres(pg) {
         : ((err && err.stack) || err)}`
     );
     throw new Error(lines.join('\n'));
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
 module.exports = {
+  START_TIMEOUT_MS,
   pickEmbeddedPgPort,
   isPortFree,
   createEmbeddedPostgres,
