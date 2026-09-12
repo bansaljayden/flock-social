@@ -202,7 +202,11 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
   // killed by pid.
   const libraryStop = pg.stop.bind(pg);
   pg.stop = async function stopWithSweep() {
-    const pid = pg.process && pg.process.pid;
+    // Nothing running: a second stop. The library's own exit hook calls
+    // stop() on every instance it ever made, so this is the normal way
+    // out, and it gets no probe to pay for on the way.
+    if (!pg.process) return libraryStop();
+    const pid = pg.process.pid;
     // The pipes are what keep this process alive when a forked child
     // outlives the postmaster: they are this end of the child's stdio. They
     // are taken before the stop, because the library forgets the process
@@ -210,8 +214,14 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     // below manages. With them closed the event loop has nothing left to
     // wait on and the suite exits, orphan or no orphan; the orphan is then
     // a leak to clean, not a hang.
-    const pipes = pg.process ? [pg.process.stdout, pg.process.stderr].filter(Boolean) : [];
-    const family = descendantsOf(pid);
+    const pipes = [pg.process.stdout, pg.process.stderr].filter(Boolean);
+    // Who is ours, read while the postmaster is still up. On Windows the
+    // process table names it by parent (this process) and its children by
+    // creation order; elsewhere the pid alone is enough, because a POSIX
+    // SIGKILL of the postmaster takes its children with it.
+    const table = process.platform === 'win32' ? postgresProcessTable() : null;
+    const root = table ? ownedPostmaster(pid, table) : { pid, created: null };
+    const family = table && root ? descendantsOf(root, table) : [];
     let timer = null;
     try {
       await Promise.race([
@@ -228,8 +238,8 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     }
     // Let the family leave on its own first; kill only what is still here
     // after the grace, which is the orphan this whole path exists for.
-    const leftovers = await waitGone(pid ? [pid, ...family] : family, STOP_GRACE_MS);
-    if (leftovers.length) killPostgresPids(leftovers);
+    const leftovers = await waitGone(root ? [root, ...family] : family, STOP_GRACE_MS);
+    if (leftovers.length) killPostgresProcesses(leftovers);
     // The library removes the data directory inside its own stop, without
     // retries, and a handle still closing makes that throw; the suites then
     // remove it again themselves, most of them without retries either. One
@@ -286,65 +296,95 @@ const STOP_TIMEOUT_MS = 30000;
 const STOP_GRACE_MS = 5000;
 
 // Alive by the OS's word, not the process table probe: cheap enough to poll.
-// On Windows a permission error still means the process exists.
+// On Windows a permission error still means the process exists. This says
+// only that SOME process has the pid; identity is checked again, by birth,
+// before anything is killed.
 function alivePid(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
 }
 
-async function waitGone(pids, ms) {
+// Entries are { pid, created }; the ones whose pid is still taken after `ms`.
+async function waitGone(entries, ms) {
   const end = Date.now() + ms;
-  let left = pids.filter(alivePid);
+  let left = entries.filter((e) => alivePid(e.pid));
   while (left.length && Date.now() < end) {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    left = left.filter(alivePid);
+    left = left.filter((e) => alivePid(e.pid));
   }
   return left;
 }
 
-// Every postgres.exe whose parent chain leads to `pid`, however many forks
-// deep. Read BEFORE the postmaster is told to stop: once it is gone its
-// children are re-parented and nothing links them to this suite any more.
-// The forked children carry no data dir or port on their command line
-// (`--forkchild="startup" 4320`), so the parent chain is the only handle.
-// Every postgres.exe on the machine, as pid -> parent pid. Windows only; an
-// empty map elsewhere, where the library's SIGINT reaches the whole group.
+// Every postgres.exe on the machine: pid -> { parent, created }. `created`
+// is the creation time in ticks, the second half of a process's identity:
+// Windows hands a dead process's pid to the next process quickly, and the
+// parent pid it records is the creator's pid whether or not that creator
+// is still alive, so a pid alone can name a stranger. Windows only; an
+// empty map elsewhere. The probe can fail (no PowerShell, a machine too
+// loaded to answer in a minute); it then answers empty, the sweep sweeps
+// nothing, and the pipes closed above still let the suite exit. That is a
+// leak to clean, not a hang.
 function postgresProcessTable() {
-  const parentOf = new Map();
-  if (process.platform !== 'win32') return parentOf;
+  const table = new Map();
+  if (process.platform !== 'win32') return table;
   const probe = spawnSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-Command',
     "Get-CimInstance Win32_Process -Filter \"name='postgres.exe'\" | " +
-    'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+    'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.Ticks)" }',
   ], { encoding: 'utf8', timeout: 60000 });
-  if (probe.status !== 0) return parentOf;
+  if (probe.status !== 0) return table;
   for (const line of String(probe.stdout || '').split(/\r?\n/)) {
-    const m = line.trim().match(/^(\d+) (\d+)$/);
-    if (m) parentOf.set(Number(m[1]), Number(m[2]));
+    const m = line.trim().match(/^(\d+) (\d+) (\d+)$/);
+    if (m) table.set(Number(m[1]), { parent: Number(m[2]), created: m[3] });
   }
-  return parentOf;
+  return table;
 }
 
-function descendantsOf(pid, table = postgresProcessTable()) {
-  const found = new Set();
-  if (!pid) return [];
+// The postmaster THIS process spawned: a postgres.exe at `pid` whose parent
+// is this process. Null when it is gone, or when the pid now belongs to
+// something else.
+function ownedPostmaster(pid, table) {
+  if (!pid) return null;
+  const row = table.get(pid);
+  return row && row.parent === process.pid ? { pid, created: row.created } : null;
+}
+
+// The postmaster's descendants, however many forks deep, each with its
+// birth. A child is never older than its parent, so a row that names the
+// postmaster's pid as parent but was created before the postmaster is a
+// stranger whose real parent died and whose pid the postmaster inherited.
+function descendantsOf(root, table) {
+  const found = new Map();
+  if (!root || !table) return [];
+  const createdOf = (p) => (p === root.pid ? root.created : (found.get(p) || {}).created);
   let grew = true;
   while (grew) {
     grew = false;
-    for (const [child, parent] of table) {
-      if (!found.has(child) && (parent === pid || found.has(parent))) { found.add(child); grew = true; }
+    for (const [pid, row] of table) {
+      if (pid === root.pid || found.has(pid)) continue;
+      if (row.parent !== root.pid && !found.has(row.parent)) continue;
+      const parentCreated = createdOf(row.parent);
+      if (parentCreated == null || BigInt(row.created) < BigInt(parentCreated)) continue;
+      found.set(pid, { pid, created: row.created });
+      grew = true;
     }
   }
-  return [...found];
+  return [...found.values()];
 }
 
-// Kill by pid, but only pids that are STILL a postgres.exe at this instant:
-// Windows hands a dead process's pid to the next process quickly, and a
-// sweep written against pids read a second ago must not reach one of those.
-function killPostgresPids(pids) {
-  const alive = postgresProcessTable();
-  for (const pid of pids) {
-    if (!alive.has(pid)) continue;
-    try { spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { timeout: 20000 }); } catch (_) { /* best effort */ }
+// Kill the listed processes, each checked against a fresh table just
+// before its own kill, by pid AND birth: the same pid with a different
+// birth is somebody else. Each is named on its own, without /t, so a kill
+// cannot cascade into pids the list does not know about. Elsewhere than
+// Windows the list holds the postmaster alone and SIGKILL reaches it.
+function killPostgresProcesses(entries) {
+  for (const e of entries) {
+    if (process.platform === 'win32') {
+      const now = postgresProcessTable().get(e.pid);
+      if (!now || now.created !== e.created) continue;
+      try { spawnSync('taskkill', ['/pid', String(e.pid), '/f'], { timeout: 20000 }); } catch (_) { /* best effort */ }
+    } else {
+      try { process.kill(e.pid, 'SIGKILL'); } catch (_) { /* gone already */ }
+    }
   }
 }
 
@@ -358,13 +398,24 @@ async function startEmbeddedPostgres(pg) {
       pg.start(),
       new Promise((_, reject) => {
         timer = setTimeout(() => {
-          // Take the whole tree down, not just the postmaster the library
-          // knows about: the orphan that holds the pipe is a child of it.
-          const pid = pg.process && pg.process.pid;
-          if (pid && process.platform === 'win32') {
-            try { spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { timeout: 20000 }); } catch (_) { /* best effort */ }
-          } else if (pg.process) {
-            try { pg.process.kill('SIGKILL'); } catch (_) { /* best effort */ }
+          // Take the tree down, but only the tree this process owns: the
+          // postmaster is the postgres.exe at this pid whose parent is this
+          // process, its children follow by creation order, and a pid that
+          // Windows has since handed to somebody else is left alone. The
+          // pipes are let go too, so a start that never came up cannot hold
+          // the suite open the way a stop once could.
+          const proc = pg.process;
+          const pid = proc && proc.pid;
+          if (process.platform === 'win32') {
+            const table = postgresProcessTable();
+            const root = ownedPostmaster(pid, table);
+            const family = root ? descendantsOf(root, table) : [];
+            killPostgresProcesses(root ? [root, ...family] : family);
+          } else if (pid) {
+            try { process.kill(pid, 'SIGKILL'); } catch (_) { /* gone already */ }
+          }
+          for (const pipe of proc ? [proc.stdout, proc.stderr] : []) {
+            try { if (pipe) pipe.destroy(); } catch (_) { /* already closed */ }
           }
           reject(new Error(`no "ready to accept connections" within ${START_TIMEOUT_MS / 1000}s`));
         }, START_TIMEOUT_MS);
@@ -417,8 +468,9 @@ module.exports = {
   STOP_TIMEOUT_MS,
   STOP_GRACE_MS,
   postgresProcessTable,
+  ownedPostmaster,
   descendantsOf,
-  killPostgresPids,
+  killPostgresProcesses,
   pickEmbeddedPgPort,
   isPortFree,
   createEmbeddedPostgres,
