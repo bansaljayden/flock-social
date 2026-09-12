@@ -989,72 +989,12 @@ const EmptyMark = ({ name, height = 160, style }) => (
   </picture>
 );
 
-// ---------------------------------------------------------------------------
-// FormGroup / FormRow: the shape a form screen is built out of.
-//
-// Written for the Create Flock rebuild (the maintainer, TestFlight build 26: "don't
-// just add the bird graphics, revamp the page so it follows DESIGN-STANDARD"). That
-// screen was one undifferentiated column of six controls stacked on the page
-// background, which is the failure DESIGN-STANDARD section S names: every row
-// carries identical weight, so the eye has nowhere to rest and the user reads
-// all of it to find one thing.
-//
-// The rules those two components encode, straight out of section S:
-//
-//   3. Groups are separated by the PAGE BACKGROUND, rows inside a group by
-//      inset hairlines. Never one card per row, which is the rounded-bubble
-//      tile grid A14 bans.
-//   4. The group label sits OUTSIDE the container, small and grey. It is a
-//      signpost, so giving it card chrome of its own doubles its weight for
-//      nothing.
-//
-// Deliberately not a card grid, not an icon in a rounded square, and not a
-// section that animates in. A hairline and a grey word do the whole job.
-// ---------------------------------------------------------------------------
-const FormGroup = ({ label, children, style }) => (
-  <section style={{ marginBottom: '18px', ...style }}>
-    {label && (
-      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px 4px', textTransform: 'uppercase', letterSpacing: '0.6px' }}>{label}</p>
-    )}
-    <div style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', boxShadow: 'var(--card-shadow-sm)' }}>
-      {children}
-    </div>
-  </section>
-);
-
-const FormRow = ({ children, divided = false, style }) => (
-  <div style={{ padding: '12px', borderTop: divided ? '1px solid var(--divider)' : 'none', ...style }}>{children}</div>
-);
-
-// A choice chip. One function for the day grid, the hour row and the budget
-// context row, because they were three hand-rolled versions of the same
-// control and two of them lit up GREEN with a coloured glow behind them on
-// selection. Green is not in the palette (cream, navy, steel) and a glow is
-// the ornament DESIGN-STANDARD keeps cutting. Selected is a filled steel chip with
-// white type: one channel of colour, one of weight, no shadow.
-const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
-  <button
-    type="button"
-    className="hit44"
-    aria-pressed={selected}
-    onClick={onClick}
-    style={{
-      padding: '9px 14px',
-      borderRadius: '10px',
-      border: selected ? '1.5px solid transparent' : '1.5px solid var(--border-default)',
-      backgroundColor: selected ? '#2d5a87' : 'var(--bg-card-solid)',
-      color: selected ? '#ffffff' : 'var(--text-primary)',
-      fontWeight: '600',
-      fontSize: 'var(--t-label)',
-      cursor: 'pointer',
-      transition: 'background-color 0.15s ease, color 0.15s ease',
-      ...style,
-    }}
-    {...rest}
-  >
-    {children}
-  </button>
-);
+/* FormGroup, FormRow and ChoiceChip live in components/ui/FormBits.js as of
+   2026-09-12, with FLOCK_DAY_CHOICES and FLOCK_HOUR_CHOICES, and the section-S
+   reasoning behind their shape went with them. App.js renders none of the
+   five: it declared them and passed them to CreateScreen and FlockDetail,
+   which are both lazy, so the definitions sat in the boot chunk to be drawn
+   from a split one. Those two screens import them directly now. */
 
 // ---------------------------------------------------------------------------
 // The rotating greeting above "Hey, <name>" on the Nest tab.
@@ -1689,8 +1629,8 @@ const memberCountLabel = (flock) => {
    the user is standing; .toISOString() hands the API the UTC instant it
    stores (backend/routes/flocks.js validates event_time with isISO8601).
    ═══════════════════════════════════════════════════════════════════ */
-const FLOCK_DAY_CHOICES = ['Tonight', 'Tomorrow', 'This Weekend', 'Next Week'];
-const FLOCK_HOUR_CHOICES = ['7 PM', '8 PM', '9 PM', '10 PM', '11 PM'];
+/* The two plan-time choice lists went to components/ui/FormBits.js with the
+   form primitives, for the same reason and to the same two readers. */
 
 const parseHourChoice = (label) => {
   const m = /^\s*(\d{1,2})\s*(AM|PM)\s*$/i.exec(String(label || ''));
@@ -18711,12 +18651,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // shorthand throughout, so a name here and the matching parameter over
       // there cannot drift apart.
       const createScreenProps = {
-        ChoiceChip,
         DialogBehavior,
-        FLOCK_DAY_CHOICES,
-        FLOCK_HOUR_CHOICES,
-        FormGroup,
-        FormRow,
         ListSkeleton,
         SearchInputLocal,
         formatEventTime,
@@ -18779,8 +18714,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // parameter over there cannot drift apart.
       const flockDetailProps = {
         DialogBehavior,
-        FLOCK_DAY_CHOICES,
-        FLOCK_HOUR_CHOICES,
         MOMENTUM_STAGES,
         momentumStageKey,
         onVenuePhotoError,
