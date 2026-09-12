@@ -239,7 +239,12 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     // Let the family leave on its own first; kill only what is still here
     // after the grace, which is the orphan this whole path exists for.
     const leftovers = await waitGone(root ? [root, ...family] : family, STOP_GRACE_MS);
-    if (leftovers.length) killPostgresProcesses(leftovers);
+    if (leftovers.length) {
+      killPostgresProcesses(leftovers);
+      // A killed process gives its file handles back a moment after it is
+      // gone; the removal below has to wait for that moment, not race it.
+      await waitGone(leftovers, STOP_GRACE_MS);
+    }
     // The library removes the data directory inside its own stop, without
     // retries, and a handle still closing makes that throw; the suites then
     // remove it again themselves, most of them without retries either. One
@@ -247,7 +252,7 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     // on.
     if (databaseDir) {
       try {
-        fs.rmSync(databaseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+        fs.rmSync(databaseDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 250 });
       } catch (_) { /* the suite's own rm reports it if it is still there */ }
     }
   };
