@@ -191,6 +191,31 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
   pg.__flockSuite = suite;
   pg.__flockPort = port;
   pg.__flockLog = log;
+
+  // stop(), with the tree taken down. The library's stop() sends
+  // `taskkill /t` to the postmaster, which reaches the children it still
+  // has; a child the postmaster had already lost (see STOP_TIMEOUT_MS above)
+  // survives it, keeps the stderr pipe, and keeps this process alive after
+  // its last test. The descendants are listed while the postmaster is
+  // still up, and whatever is left of them after the library's stop is
+  // killed by pid.
+  const libraryStop = pg.stop.bind(pg);
+  pg.stop = async function stopWithSweep() {
+    const pid = pg.process && pg.process.pid;
+    const family = descendantsOf(pid);
+    let timer = null;
+    try {
+      await Promise.race([
+        libraryStop(),
+        new Promise((resolve) => { timer = setTimeout(resolve, STOP_TIMEOUT_MS); timer.unref(); }),
+      ]);
+    } catch (_) {
+      // A stop that throws still gets the sweep below.
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    killPostgresPids(pid ? [pid, ...family] : family);
+  };
   return pg;
 }
 
@@ -207,15 +232,71 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
  */
 // How long a start may take before it is called a hang. The library resolves
 // start() on the server's "ready to accept connections" line and rejects it
-// only when the server PROCESS closes. Twice on 2026-09-11 a full run sat for
-// twenty minutes in photoSpendLedger with neither: the postmaster was gone,
-// a forked `--forkchild="startup"` child of it was still alive with no parent,
-// and because that child had inherited the stderr pipe the library was
-// waiting on, "close" never fired. Killing the orphan by hand let the suite
-// go on within seconds. A cold start on this machine is two to five seconds,
-// so anything past ninety is that hang, and a legible failure after ninety
-// seconds costs the pre-push hook one retry instead of the evening.
+// only when the server PROCESS closes, so a server that does neither would
+// hold the suite forever. A cold start on this machine is two to five
+// seconds; anything past ninety is not a slow start, and a legible failure
+// costs the pre-push hook one retry instead of the evening.
+//
+// This is NOT where the 2026-09-11 stalls were, though it was written on
+// that theory. Three full runs that evening sat for twenty minutes in an
+// embedded-Postgres suite whose tests had all PASSED: the postmaster was
+// gone, a `--forkchild="startup"` child of it was still alive with no
+// parent, and that child had inherited the stderr pipe the test process
+// held. An open pipe keeps a Node event loop alive, so the test process
+// could not exit, and the runner waited on it. Killing the orphan by hand
+// let the process exit within seconds and the run report every test green.
+// The fence for that is in the stop path below.
 const START_TIMEOUT_MS = 90000;
+
+// How long a stop may take before the tree is taken down by force.
+const STOP_TIMEOUT_MS = 30000;
+
+// Every postgres.exe whose parent chain leads to `pid`, however many forks
+// deep. Read BEFORE the postmaster is told to stop: once it is gone its
+// children are re-parented and nothing links them to this suite any more.
+// The forked children carry no data dir or port on their command line
+// (`--forkchild="startup" 4320`), so the parent chain is the only handle.
+// Every postgres.exe on the machine, as pid -> parent pid. Windows only; an
+// empty map elsewhere, where the library's SIGINT reaches the whole group.
+function postgresProcessTable() {
+  const parentOf = new Map();
+  if (process.platform !== 'win32') return parentOf;
+  const probe = spawnSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    "Get-CimInstance Win32_Process -Filter \"name='postgres.exe'\" | " +
+    'ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
+  ], { encoding: 'utf8', timeout: 20000 });
+  if (probe.status !== 0) return parentOf;
+  for (const line of String(probe.stdout || '').split(/\r?\n/)) {
+    const m = line.trim().match(/^(\d+) (\d+)$/);
+    if (m) parentOf.set(Number(m[1]), Number(m[2]));
+  }
+  return parentOf;
+}
+
+function descendantsOf(pid, table = postgresProcessTable()) {
+  const found = new Set();
+  if (!pid) return [];
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [child, parent] of table) {
+      if (!found.has(child) && (parent === pid || found.has(parent))) { found.add(child); grew = true; }
+    }
+  }
+  return [...found];
+}
+
+// Kill by pid, but only pids that are STILL a postgres.exe at this instant:
+// Windows hands a dead process's pid to the next process quickly, and a
+// sweep written against pids read a second ago must not reach one of those.
+function killPostgresPids(pids) {
+  const alive = postgresProcessTable();
+  for (const pid of pids) {
+    if (!alive.has(pid)) continue;
+    try { spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { timeout: 20000 }); } catch (_) { /* best effort */ }
+  }
+}
 
 async function startEmbeddedPostgres(pg) {
   const suite = pg.__flockSuite || 'unknown suite';
@@ -283,6 +364,10 @@ async function startEmbeddedPostgres(pg) {
 
 module.exports = {
   START_TIMEOUT_MS,
+  STOP_TIMEOUT_MS,
+  postgresProcessTable,
+  descendantsOf,
+  killPostgresPids,
   pickEmbeddedPgPort,
   isPortFree,
   createEmbeddedPostgres,
