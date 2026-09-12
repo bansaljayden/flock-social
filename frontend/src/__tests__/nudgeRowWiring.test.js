@@ -92,10 +92,44 @@ describe('dismissal', () => {
       chatDetailSrc.indexOf('if (m.id === POLL_ROW_ID)')
     );
     expect(branch).toMatch(/onAction=\{\(\) => setShowVotePanel\(true\)\}/);
-    expect(branch).toMatch(/onDismiss=\{\(\) => dismissNudge\(nudgeForCard\.key\)\}/);
+    expect(branch).toMatch(/onDismiss=\{\(\) => dismissNudge\(nudge\.key\)\}/);
     // The tell: onAction must not call dismissNudge.
     const onAction = branch.slice(branch.indexOf('onAction='), branch.indexOf('onDismiss='));
     expect(onAction).not.toMatch(/dismissNudge/);
+  });
+});
+
+describe('the row carries its own card', () => {
+  test('the renderer reads the row and never the screen, because the ref it is called through is one commit behind', () => {
+    /* renderCard reaches MessageRow via useStableFn, whose ref is refreshed
+       in a layout effect: after the render in which the nudge row first
+       appears. That render drew the row with the previous closure, where
+       nudgeForCard was null, and `nudgeForCard.text` threw inside the chat
+       screen. Pressing Invite on a plan opened from the Nest reached it: the
+       nudge went away and came back across two renders. */
+    const branch = chatDetailSrc.slice(
+      chatDetailSrc.indexOf('if (m.id === NUDGE_ROW_ID)'),
+      chatDetailSrc.indexOf('if (m.id === POLL_ROW_ID)')
+    );
+    expect(branch).toMatch(/const nudge = m\.nudge;\s*\n\s*if \(!nudge\) return null;/);
+    expect(branch).toMatch(/text=\{nudge\.text\}/);
+    expect(branch).not.toMatch(/nudgeForCard/);
+  });
+
+  test('the same rule holds for the bill, the poll and the who\'s-here row', () => {
+    const renderer = chatDetailSrc.slice(
+      chatDetailSrc.indexOf('const renderCard = (m) => {'),
+      chatDetailSrc.indexOf("if (m.message_type === 'venue_card' && m.venue_data) {")
+    );
+    expect(renderer).toMatch(/const who = m\.who;\s*\n\s*if \(!who\) return null;/);
+    expect(renderer).toMatch(/const poll = m\.poll;\s*\n\s*if \(!poll\) return null;/);
+    expect(renderer).toMatch(/const bill = m\.bill;\s*\n\s*if \(!bill\) return null;/);
+    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard']) {
+      expect(renderer).not.toContain(screenValue);
+    }
+    expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: POLL_ROW_ID, message_type: 'system', poll: \{ rows: pollVoteRows, lockedName: pollLockedName \} \}/);
   });
 });
 
@@ -103,11 +137,11 @@ describe('where it sits', () => {
   test('it lands on the end, with no anchor', () => {
     // The other two synthetic rows describe a moment in the scrollback. This
     // one describes the state of the plan right now.
-    expect(chatDetailSrc).toMatch(/spliceByTime\(streamRows, \{ id: NUDGE_ROW_ID, message_type: 'system' \}, NaN\)/);
+    expect(chatDetailSrc).toMatch(/spliceByTime\(streamRows, \{ id: NUDGE_ROW_ID, message_type: 'system', nudge: nudgeForCard \}, NaN\)/);
   });
 
   test('it passes the server-authored gate like the other synthetic rows', () => {
-    expect(chatDetailSrc).toMatch(/\{ id: NUDGE_ROW_ID, message_type: 'system' \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: NUDGE_ROW_ID, message_type: 'system', nudge: nudgeForCard \}/);
     expect(chatDetailSrc).toMatch(/if \(m\.message_type === 'system' && m\.system_kind\) \{/);
   });
 

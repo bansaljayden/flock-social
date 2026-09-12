@@ -74,7 +74,10 @@ describe('the ways this could lie about where people are', () => {
     // is what the card says. Naming a venue nobody chose would not be.
     expect(derivation).toMatch(/const hasVenue = Number\.isFinite\(Number\(flock\.venueLat\)\)/);
     expect(derivation).toMatch(/const isNear = hasVenue/);
-    expect(chatDetailSrc).toMatch(/venueName=\{whoIsHere\.hasVenue \? \(flock\.venue && flock\.venue !== 'TBD' \? flock\.venue : null\) : null\}/);
+    // `who` is the row's own copy of whoIsHere: the renderer reads the row it
+    // is handed, never the screen (see nudgeRowWiring, "the row carries its
+    // own card").
+    expect(chatDetailSrc).toMatch(/venueName=\{who\.hasVenue \? \(flock\.venue && flock\.venue !== 'TBD' \? flock\.venue : null\) : null\}/);
   });
 
   test('nothing to report means no card at all', () => {
@@ -100,11 +103,11 @@ describe('the radius', () => {
 describe('where it sits', () => {
   test('it lands on the end, like the nudge and unlike the poll', () => {
     // The state of the room right now, not a moment in the scrollback.
-    expect(chatDetailSrc).toMatch(/spliceByTime\(streamRows, \{ id: WHO_ROW_ID, message_type: 'system' \}, NaN\)/);
+    expect(chatDetailSrc).toMatch(/spliceByTime\(streamRows, \{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}, NaN\)/);
   });
 
   test('it passes the server-authored gate like every other synthetic row', () => {
-    expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system' \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}/);
     expect(chatDetailSrc).toMatch(/if \(m\.message_type === 'system' && m\.system_kind\) \{/);
   });
 });

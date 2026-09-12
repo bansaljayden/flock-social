@@ -93,8 +93,10 @@ describe('the card reaches the stream', () => {
        every local card in the stream and returns null for it. It swallowed the
        bill card exactly that way. */
     expect(chatDetailSrc).toMatch(/if \(m\.message_type === 'system' && m\.system_kind\) \{/);
+    // Each row also carries its card's data, which is the render-time rule
+    // nudgeRowWiring pins; the gate is what this test is about.
     for (const id of ['POLL_ROW_ID', 'BILL_ROW_ID']) {
-      expect(chatDetailSrc).toMatch(new RegExp(`\\{ id: ${id}, message_type: 'system' \\}`));
+      expect(chatDetailSrc).toMatch(new RegExp(`\\{ id: ${id}, message_type: 'system', `));
     }
   });
 });
@@ -143,7 +145,7 @@ describe('the numbers', () => {
       chatDetailSrc.indexOf('if (m.id === POLL_ROW_ID)'),
       chatDetailSrc.indexOf('if (m.id === BILL_ROW_ID)')
     );
-    expect(branch).toMatch(/new Set\(pollVoteRows\.flatMap\(\(v\) => v\.voters \|\| \[\]\)\)/);
+    expect(branch).toMatch(/new Set\(pollRows\.flatMap\(\(v\) => v\.voters \|\| \[\]\)\)/);
     expect(branch).toMatch(/reduce\(\(sum, v\) => sum \+ \(v\.guestCount \|\| 0\), 0\)/);
     expect(branch).toMatch(/votedCount=\{voterNames\.size \+ guestVotes\}/);
   });
