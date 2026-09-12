@@ -420,11 +420,22 @@ describe('LandingPage structure and keyboard operation', () => {
 
   test('browser-driven scrolls clear the sticky bar, not just anchor jumps', () => {
     // WCAG 2.4.11. Tab, find-in-page and screen-reader jumps all scroll to the
-    // viewport's top edge, where a 64px opaque sticky header sits.
+    // viewport's top edge, where a 64px opaque sticky header sits. The
+    // clearance is scroll-margin on everything inside the page body and the
+    // footer, so every Tab stop and heading lands below the bar.
     const css = readCss('LandingPage.css');
-    const rule = /html:has\(\.lp\)\s*\{[^}]*scroll-padding-top:\s*(\d+)px/.exec(css);
+    const rule = /\.lp main \*,\s*\.lp footer \*\s*\{[^}]*scroll-margin-top:\s*(\d+)px/.exec(css);
     expect(rule).not.toBeNull();
     expect(Number(rule[1])).toBeGreaterThanOrEqual(64);
+  });
+
+  test('the clearance is not scroll-padding on the root, which made every focus in the sticky bar scroll the page', () => {
+    // Chrome measures a focused control in the sticky bar at the top of the
+    // viewport, sees it inside the padded edge, and centres it: 501px of
+    // scroll on every click of the corner block, every Tab onto the wordmark,
+    // and the focus handed back when the menu closes.
+    const css = readCss('LandingPage.css');
+    expect(css).not.toMatch(/html:has\(\.lp\)[^{]*\{[^}]*scroll-padding-top/);
   });
 
   test('the menu traps focus, closes on Escape, and hands focus back', () => {
@@ -465,6 +476,24 @@ describe('LandingPage structure and keyboard operation', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(btn.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(btn);
+  });
+
+  test('the open menu locks scroll on the root element, never on body, so the sticky bar and its X stay on screen', () => {
+    // The root carries overflow-x: clip, so a body overflow is not handed to
+    // the viewport: a lock on <body> turned <body> into the scroll container,
+    // the sticky bar stuck to the top of the document instead of the screen,
+    // and opening the menu after scrolling left a full-screen panel whose
+    // only close control was thousands of pixels above the viewport.
+    const { container } = render(React.createElement(LandingPage));
+    const root = document.documentElement;
+    expect(root.style.overflow).toBe('');
+
+    fireEvent.click(container.querySelector('.lp-menu-btn'));
+    expect(root.style.overflow).toBe('hidden');
+    expect(document.body.style.overflow).not.toBe('hidden');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(root.style.overflow).toBe('');
   });
 
   test('the page behind the open menu is inert, so a virtual cursor cannot walk into it', () => {
