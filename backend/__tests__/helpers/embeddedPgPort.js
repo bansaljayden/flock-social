@@ -37,6 +37,7 @@
 // hardcoded 59xxx ports lived -- a second, quieter way for them to be stolen.
 // ---------------------------------------------------------------------------
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const PROBE = path.join(__dirname, 'probeFreePort.js');
@@ -225,7 +226,20 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
         try { pipe.destroy(); } catch (_) { /* already closed */ }
       }
     }
-    killPostgresPids(pid ? [pid, ...family] : family);
+    // Let the family leave on its own first; kill only what is still here
+    // after the grace, which is the orphan this whole path exists for.
+    const leftovers = await waitGone(pid ? [pid, ...family] : family, STOP_GRACE_MS);
+    if (leftovers.length) killPostgresPids(leftovers);
+    // The library removes the data directory inside its own stop, without
+    // retries, and a handle still closing makes that throw; the suites then
+    // remove it again themselves, most of them without retries either. One
+    // patient removal here means neither of those has anything left to trip
+    // on.
+    if (databaseDir) {
+      try {
+        fs.rmSync(databaseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+      } catch (_) { /* the suite's own rm reports it if it is still there */ }
+    }
   };
   return pg;
 }
@@ -261,6 +275,31 @@ const START_TIMEOUT_MS = 90000;
 
 // How long a stop may take before the tree is taken down by force.
 const STOP_TIMEOUT_MS = 30000;
+
+// How long the postmaster's children get to leave on their own after it is
+// told to stop, before any of them is killed. The library's `taskkill /t`
+// reaches them, and a checkpointer that is flushing takes a moment to close
+// its files; killing it mid-flush leaves handles on the data directory that
+// the suite's own rm then trips over (EPERM on the directory, seen on two
+// suites the first time the sweep shipped). Only what is still alive after
+// this grace is an orphan.
+const STOP_GRACE_MS = 5000;
+
+// Alive by the OS's word, not the process table probe: cheap enough to poll.
+// On Windows a permission error still means the process exists.
+function alivePid(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; }
+}
+
+async function waitGone(pids, ms) {
+  const end = Date.now() + ms;
+  let left = pids.filter(alivePid);
+  while (left.length && Date.now() < end) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    left = left.filter(alivePid);
+  }
+  return left;
+}
 
 // Every postgres.exe whose parent chain leads to `pid`, however many forks
 // deep. Read BEFORE the postmaster is told to stop: once it is gone its
@@ -376,6 +415,7 @@ async function startEmbeddedPostgres(pg) {
 module.exports = {
   START_TIMEOUT_MS,
   STOP_TIMEOUT_MS,
+  STOP_GRACE_MS,
   postgresProcessTable,
   descendantsOf,
   killPostgresPids,
