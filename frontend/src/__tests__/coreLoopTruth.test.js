@@ -83,12 +83,12 @@ test('the invite helper\'s live card says when, where and how many', () => {
   const i = flocks.indexOf('async function inviteUsersToFlock(');
   const helper = flocks.slice(i, i + 20000);
   expect(helper).toMatch(/SELECT f\.event_time, f\.venue_name, f\.status,/);
-  expect(helper).toMatch(/status: planStatus,\s*eventTime,\s*venueName,\s*goingCount,\s*\}\);/);
+  expect(helper).toMatch(/finished: false,\s*eventTime,\s*venueName,\s*goingCount,\s*\}\);/);
   // A plan that had ended by the time the invite is announced is announced
   // to nobody on the server, and the phone refuses the card on its own too,
   // so neither end can show a finished plan as open.
   expect(helper).toMatch(/if \(planStatus === 'completed' \|\| planStatus === 'cancelled'\) \{\s*return \{ invited, throttled, full, closed: true \};/);
-  expect(app).toMatch(/onFlockInviteReceived\(\(data\) => \{[\s\S]{0,500}if \(data\.status === 'completed' \|\| data\.status === 'cancelled'\) return;/);
+  expect(app).toMatch(/onFlockInviteReceived\(\(data\) => \{[\s\S]{0,500}if \(data\.finished\) return;/);
 });
 
 test('the invite link is claimed and routed', () => {
