@@ -1338,5 +1338,152 @@ class SceneBackgroundCounting(unittest.TestCase):
             masked = main.count_thermal_clusters(
                 frame, mask=scene.mask(cells, main._ambient(cells)))
             self.assertLessEqual(masked, main.count_thermal_clusters(frame))
+class _FakeSurface:
+    def __init__(self, size=(1, 1)):
+        self.size = size
+        self.blits = 0
+
+    def fill(self, _colour):
+        pass
+
+    def blit(self, _what, _where):
+        self.blits += 1
+
+
+class _FakeFont:
+    def render(self, text, _aa, _colour):
+        return _FakeSurface((len(text), 1))
+
+
+class _FakePygame:
+    """Just enough pygame to run draw_thermal_view on a machine without one.
+
+    It also records every call, which is how the no-file-written assertion below
+    is made: if a future version of the view ever reaches for image.save, this
+    stub is where it shows up.
+    """
+
+    MOUSEBUTTONDOWN = 1025
+    FINGERDOWN = 1792
+    QUIT = 256
+
+    def __init__(self):
+        self.calls = []
+        self.image = self._Image(self)
+        self.transform = self._Transform(self)
+        self.draw = self._Draw(self)
+
+    class _Image:
+        def __init__(self, outer):
+            self.outer = outer
+
+        def frombuffer(self, buf, size, fmt):
+            self.outer.calls.append(('frombuffer', len(buf), size, fmt))
+            return _FakeSurface(size)
+
+        def save(self, *a, **k):
+            self.outer.calls.append(('save',) + a)
+            raise AssertionError('the thermal view wrote an image to disk')
+
+    class _Transform:
+        def __init__(self, outer):
+            self.outer = outer
+
+        def smoothscale(self, surf, size):
+            self.outer.calls.append(('smoothscale', size))
+            return _FakeSurface(size)
+
+        def scale(self, surf, size):
+            self.outer.calls.append(('scale', size))
+            return _FakeSurface(size)
+
+    class _Draw:
+        def __init__(self, outer):
+            self.outer = outer
+
+        def rect(self, *a, **k):
+            self.outer.calls.append(('rect',))
+
+
+class ThermalView(unittest.TestCase):
+    """The demo unit's one hero screen, on code that has never met a framebuffer."""
+
+    @staticmethod
+    def frame(ambient=20.0, hand=33.0):
+        g = [ambient] * (main.THERMAL_ROWS * main.THERMAL_COLS)
+        for r in range(50, 70):
+            for c in range(70, 90):
+                g[r * main.THERMAL_COLS + c] = hand
+        return g
+
+    def test_the_palette_runs_cold_to_hot(self):
+        p = main.THERMAL_PALETTE
+        self.assertEqual(len(p), 256)
+        self.assertTrue(all(len(step) == 3 for step in p))
+        self.assertLess(sum(p[0]), sum(p[255]), 'the palette is not brighter at the hot end')
+
+    def test_a_hand_lands_at_the_top_of_the_scale_and_the_room_at_the_bottom(self):
+        f = self.frame()
+        lo, hi = main.thermal_frame_span(f)
+        rgb = main.thermal_frame_rgb(f, lo, hi)
+        self.assertEqual(len(rgb), main.THERMAL_ROWS * main.THERMAL_COLS * 3)
+        room = tuple(rgb[0:3])
+        i = (60 * main.THERMAL_COLS + 80) * 3
+        hand = tuple(rgb[i:i + 3])
+        self.assertGreater(sum(hand), sum(room),
+                           'the warm object is not brighter than the room')
+
+    def test_a_nearly_uniform_room_is_not_amplified_into_drama(self):
+        # Without the floor on the span, a room that is flat to a tenth of a
+        # degree gets stretched across the whole palette and a judge is shown
+        # sensor noise presented as structure.
+        flat = [21.0] * (main.THERMAL_ROWS * main.THERMAL_COLS)
+        lo, hi = main.thermal_frame_span(flat)
+        self.assertGreaterEqual(hi - lo, 4.0)
+
+    def test_one_stuck_pixel_does_not_wash_the_picture_out(self):
+        f = self.frame()
+        f[0] = 300.0
+        lo, hi = main.thermal_frame_span(f)
+        self.assertLess(hi, 100.0, 'the span is being set by a single outlier again')
+
+    def test_out_of_range_temperatures_cannot_walk_off_the_palette(self):
+        rgb = main.thermal_frame_rgb([-400.0, 500.0] * (main.THERMAL_ROWS * main.THERMAL_COLS // 2),
+                                     20.0, 30.0)
+        self.assertEqual(len(rgb), main.THERMAL_ROWS * main.THERMAL_COLS * 3)
+
+    def test_the_view_draws_without_a_framebuffer(self):
+        pg = _FakePygame()
+        screen = _FakeSurface()
+        fonts = (_FakeFont(), _FakeFont(), _FakeFont())
+        main.draw_thermal_view(pg, screen, fonts, self.frame(), 2, True)
+        self.assertGreater(screen.blits, 3)
+        self.assertTrue(any(c[0] == 'frombuffer' for c in pg.calls))
+
+    def test_it_survives_having_no_frame_yet(self):
+        # The first seconds after boot, and any venue unit that somehow has a
+        # screen. Crashing here drops the whole display thread.
+        pg = _FakePygame()
+        screen = _FakeSurface()
+        fonts = (_FakeFont(), _FakeFont(), _FakeFont())
+        main.draw_thermal_view(pg, screen, fonts, None, 0, False)
+        self.assertGreater(screen.blits, 0)
+
+    def test_nothing_in_the_view_writes_an_image(self):
+        pg = _FakePygame()
+        main.draw_thermal_view(pg, _FakeSurface(), (_FakeFont(), _FakeFont(), _FakeFont()),
+                               self.frame(), 1, True)
+        self.assertFalse([c for c in pg.calls if c[0] == 'save'],
+                         'a frame reached image.save, which the privacy policy forbids')
+
+    def test_the_view_cannot_be_on_without_a_screen(self):
+        # The whole privacy argument rests on this: a venue sensor is headless,
+        # so it retains no frame whatever its config file says.
+        self.assertEqual(main.THERMAL_VIEW_ON, bool(main.DISPLAY_ON and main.THERMAL_VIEW))
+        if not main.DISPLAY_ON:
+            self.assertFalse(main.THERMAL_VIEW_ON)
+
+    def test_a_headless_unit_holds_no_frame(self):
+        self.assertIsNone(main._state['thermal_frame'])
 if __name__ == '__main__':
     unittest.main()
