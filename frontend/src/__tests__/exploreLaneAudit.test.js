@@ -25,10 +25,14 @@ test('a calm venue asks for no alternatives, on both paths', () => {
 });
 
 test('the dot and ring leave with Location', () => {
-  const app = read('App.js');
-  expect(app).toContain("    if (!userLocation) {\n      // Location switched off");
-  expect(app).toContain("userMarkerRef.current.remove();\n        userMarkerRef.current = null;\n        userElRef.current = null;");
-  expect(app).toContain("if (ring) ring.setData({ type: 'FeatureCollection', features: [] });");
+  /* The blue dot, the accuracy ring and the effect that tears both down are
+     the map component's, and the map is components/map/MapLibreMapView.js
+     since 2026-09-13, so this reads the file that draws them rather than
+     silently finding nothing in App.js. */
+  const map = read('components/map/MapLibreMapView.js');
+  expect(map).toContain("    if (!userLocation) {\n      // Location switched off");
+  expect(map).toContain("userMarkerRef.current.remove();\n        userMarkerRef.current = null;\n        userElRef.current = null;");
+  expect(map).toContain("if (ring) ring.setData({ type: 'FeatureCollection', features: [] });");
 });
 
 test('scores carry fetchedAt and expire, and an owner reading is not printed past its expiry', () => {
@@ -62,9 +66,16 @@ test('a failed crowd read, a map that cannot load, and a show that started are a
   // It is drawn on the card a map pin opens, which has had its own file since
   // 2026-09-13, so that sentence is read there and the map ones stay here.
   const card = read('components/venue/ConsumerVenueCard.js');
+  // And the three map sentences are read in components/map/MapLibreMapView.js,
+  // which is where the map has been drawn since 2026-09-13.
+  const map = read('components/map/MapLibreMapView.js');
   expect(card).toContain("{noEstimate && !isClosed ? (");
-  expect(app).toContain("The map could not load. Search still works.");
-  expect(app).toContain("setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);");
-  expect(app).toContain("{!mapReady && !mapFailed && (");
-  expect(app).toContain(".filter(event => !event.datetime_utc || Date.parse(event.datetime_utc) > Date.now()).map(event => {");
+  expect(map).toContain("The map could not load. Search still works.");
+  expect(map).toContain("setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);");
+  expect(map).toContain("{!mapReady && !mapFailed && (");
+  /* And the Live Events list is the Discover screen's, and Discover is
+     screens/ExploreScreen.js since 2026-09-13, so the show-has-started filter
+     is read there rather than silently finding nothing in App.js. */
+  const explore = read('screens/ExploreScreen.js');
+  expect(explore).toContain(".filter(event => !event.datetime_utc || Date.parse(event.datetime_utc) > Date.now()).map(event => {");
 });

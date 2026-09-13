@@ -305,14 +305,20 @@ describe('the map stylesheet is loaded on demand', () => {
     // nothing, so name the two files that must carry the dynamic form.
     const dynamic = /import\(\s*['"]maplibre-gl\/dist\/maplibre-gl\.css['"]\s*\)/;
     const carriers = CODE.filter((f) => dynamic.test(f.body)).map((f) => f.rel).sort();
-    expect(carriers).toEqual([path.normalize('App.js'), path.normalize('website/LiveDemo.js')]);
+    // The app's map call site is components/map/MapLibreMapView.js since
+    // 2026-09-13; the whole component moved out of App.js into its own chunk,
+    // and the engine and its stylesheet went with it unchanged.
+    expect(carriers).toEqual([
+      path.normalize('components/map/MapLibreMapView.js'),
+      path.normalize('website/LiveDemo.js'),
+    ]);
   });
 
   test('the sheet is awaited before a map is constructed', () => {
     // Loading it late is only correct if the map waits for it. Without the
     // await, maplibre paints its controls and attribution as bare DOM for
     // however long the chunk takes.
-    for (const rel of ['App.js', path.join('website', 'LiveDemo.js')]) {
+    for (const rel of [path.join('components', 'map', 'MapLibreMapView.js'), path.join('website', 'LiveDemo.js')]) {
       const body = CODE.find((f) => f.rel === rel).body;
       expect(body).toMatch(/await\s+styleSheetReady/);
     }

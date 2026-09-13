@@ -161,11 +161,14 @@ describe('every new tab is opened without an opener', () => {
 });
 
 describe('the map marker label cannot be built from a prototype property', () => {
-  const app = readSrc('App.js');
+  // The map is components/map/MapLibreMapView.js since 2026-09-13, and the pin
+  // builder that does this lookup went with it. Read there, because a pattern
+  // pointed at App.js would now match nothing and report a clean sink.
+  const map = readSrc('components', 'map', 'MapLibreMapView.js');
 
   test('the category initial is an own-property lookup', () => {
     // The result is interpolated into an innerHTML string, and
     // `initialMap['constructor']` answers with the source of a native function.
-    expect(app).toMatch(/Object\.prototype\.hasOwnProperty\.call\(initialMap, category\)/);
+    expect(map).toMatch(/Object\.prototype\.hasOwnProperty\.call\(initialMap, category\)/);
   });
 });

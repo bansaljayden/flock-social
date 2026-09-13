@@ -55,7 +55,18 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // second copy of the card. APPENDED, not inserted before App.js: the regions
   // below walk forward from a marker, and a file ahead of it would cut them
   // short.
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8')
+  // And the map itself on the same day, for components/map/MapLibreMapView.js:
+  // the owner pin, the chip on it and the follow-the-phone guard the dashboard
+  // switches off are all drawn there now. Appended last, for the same reason the
+  // card is appended rather than inserted.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8')
+  // And Discover itself left App.js on the same day for
+  // screens/ExploreScreen.js. The shared render function is still App.js's and
+  // arrives there as a prop; the ONE Discover call site went with the screen,
+  // so that file is read here or the call site scan below finds nothing and
+  // passes on it.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreScreen.js'), 'utf8');
 
 // The card body on its own. It used to be a region of App.js bounded by the
 // declaration and the Explore screen below it; it is a module now, so the file

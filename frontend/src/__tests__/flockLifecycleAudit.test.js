@@ -27,7 +27,11 @@ test('faces on the card follow joins and leaves', () => {
 });
 
 test('reordering while searching keeps the hidden plans in the order', () => {
-  const app = read('App.js');
+  // The Messages tab moved to screens/ChatListScreen.js on 2026-09-13 and is a
+  // fetched chunk now. The reorder is the list's own, so it went with it; read
+  // App.js here and every assertion below would be looking at a file that no
+  // longer holds the subject.
+  const app = read('screens/ChatListScreen.js');
   expect(app).toContain("const swapInFullOrder = (flockId, otherId) => {\n      const full = sortedFlocks.map(f => f.id);");
   expect(app).toContain("swapInFullOrder(flockId, visible[idx - 1]);");
   expect(app).toContain("swapInFullOrder(flockId, visible[idx + 1]);");

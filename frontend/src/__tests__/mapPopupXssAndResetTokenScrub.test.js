@@ -35,7 +35,17 @@ const path = require('path');
 // So a source-scanning test on Windows always reads CRLF, and the `\n\n`
 // paragraph breaks in the region() markers below matched nothing, which took
 // both popup assertions red while the code they guard was fine.
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+//
+// The map left App.js on 2026-09-13 for components/map/MapLibreMapView.js, and
+// both sinks section 1 is about - the marker label and the member popup - went
+// with it, as did escapeHtml, which had no other reader. The two files are read
+// as one source in the order they used to be one file, so every marker pair
+// below still spans what it spanned. Section 2 is App.js's and finds its
+// markers first, because App.js is still read first.
+const APP = (
+  fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8')
+).replace(/\r\n/g, '\n');
 
 function codeOnly(src) {
   return src

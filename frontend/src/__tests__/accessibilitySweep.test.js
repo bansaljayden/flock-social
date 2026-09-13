@@ -88,9 +88,16 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // The create screen left on the same day for screens/CreateScreen.js,
 // carrying the plan name field, the day and hour chips, the invite search
 // and the Remove-a-friend buttons this file names, so it is read too.
+// The Plans tab left on the same day for screens/CalendarScreen.js, carrying
+// the two month arrows this file names by their onClick, the aria-pressed
+// day cells and the remove-an-event button, so it is read too.
+// The Messages tab left on the same day for screens/ChatListScreen.js,
+// carrying the New message, Search chats, Reorder, Accept and Decline buttons
+// this file names by their onClick and the pin toggle whose aria-pressed it
+// checks, so it is read too.
 const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
   + read('screens/ProfileSettings.js') + read('screens/FlockDetail.js') + read('screens/CreateScreen.js')
-  + read('screens/PastFlocksScreen.js')
+  + read('screens/PastFlocksScreen.js') + read('screens/CalendarScreen.js') + read('screens/ChatListScreen.js')
   // Both pay sheets left on 2026-09-13 for components/PaymentSheets.js,
   // carrying the wallet rows, the Close buttons and the two DialogBehaviors
   // this file sweeps, so that file is read too.
@@ -116,6 +123,12 @@ const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDet
   // buttons and the noise readout this file counts, so that file is read too.
   // APPENDED, like the four above it, for the same reason.
   + read('components/venue/ConsumerVenueCard.js')
+  // The Discover tab left on the same day for screens/ExploreScreen.js,
+  // carrying the Features toggle this file names by its aria-expanded, the
+  // Recenter, Events and Friends buttons behind it, the venue and people
+  // search fields and the Live Events drawer. APPENDED, like the five above
+  // it, for the same reason.
+  + read('screens/ExploreScreen.js')
   + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
 // THE CHAT STREAM AND THE CHAT COMPOSER LEFT BOTH SCREENS AT ONCE, for
 // components/chat/. The message row, the scroller, the status line, the input
@@ -637,7 +650,7 @@ const stripComments = (src) => {
 const APP_FILES = [
   'App.js', 'screens/ChatDetail.js', 'screens/DmDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
   'screens/ProfileSettings.js', 'screens/FlockDetail.js', 'screens/CreateScreen.js',
-  'screens/PastFlocksScreen.js',
+  'screens/PastFlocksScreen.js', 'screens/CalendarScreen.js', 'screens/ChatListScreen.js',
   'components/EditProfileForm.js', 'components/NewDmModal.js', 'components/VerifyEmailSheet.js',
   // The wrap-up sheet, lazily fetched since 2026-09-13. It is in this list for
   // the same reason NewDmModal is: the overlay scan below is derived from
@@ -675,6 +688,12 @@ const APP_FILES = [
   // teasers swept above, and unnaming it would drop about 970 lines of JSX out
   // of every derived scan in this file. APPENDED for the same reason.
   'components/venue/ConsumerVenueCard.js',
+  // And the Discover screen, lazily fetched since the same day. It carries
+  // the one collapsing container the scan below is derived from, the parked
+  // events panel and its conditional DialogBehavior, so unnaming it would
+  // leave three assertions here looking at an empty set. APPENDED for the
+  // same reason.
+  'screens/ExploreScreen.js',
 ];
 const code = APP_FILES.map((f) => stripComments(read(f))).join('\n');
 
@@ -928,7 +947,15 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // import is pinned where it is now used and the provider half is pinned in
     // App.js. Both halves are in `code`, and the next test refuses the full
     // `motion` component in either of them.
-    expect(code).toMatch(/import \{ AnimatePresence, MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
+    //
+    // AnimatePresence left the App.js import on the same day, with the
+    // Discover tab: the presence wrapper around the venue card was the last
+    // one in the file, and it is screens/ExploreScreen.js's now. Pinned as
+    // two named imports rather than one, because a single line that merged
+    // them again would be asserting on a file layout rather than on the
+    // property, which is that every framer-motion import here is a lean one.
+    expect(code).toMatch(/import \{ MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
+    expect(code).toMatch(/import \{ AnimatePresence \} from 'framer-motion';/);
     expect(code).toMatch(/import \{ m \} from 'framer-motion';/);
     expect(code).toMatch(/<MotionConfig reducedMotion="user">/);
   });
