@@ -79,9 +79,16 @@ const readSource = (...p) =>
 // screens/ProfileSettings.js, and the Venmo, Cash App and Zelle entry fields
 // went with it, so that file is read too. paymentRoutes, evaluated below, is
 // module scope in App.js and stayed there.
+// Both pay sheets left App.js on 2026-09-13 for components/PaymentSheets.js,
+// to get 171 lines of JSX that only a tap on Settle Up can reach off the boot
+// chunk. The region sliced below, its empty state and its wallet rows all
+// moved verbatim, so that file is read too and every assertion here still
+// reads the same text. It is read LAST, after the two screens, because the
+// slices above it anchor inside ChatDetail and must keep resolving there.
 const APP = readSource('frontend', 'src', 'App.js')
   + readSource('frontend', 'src', 'screens', 'ChatDetail.js')
-  + readSource('frontend', 'src', 'screens', 'ProfileSettings.js');
+  + readSource('frontend', 'src', 'screens', 'ProfileSettings.js')
+  + readSource('frontend', 'src', 'components', 'PaymentSheets.js');
 const BILLING = readSource('backend', 'routes', 'billing.js');
 
 // ───────────────────────────────────────────────────────────────────────────

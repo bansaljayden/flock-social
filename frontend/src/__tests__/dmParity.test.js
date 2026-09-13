@@ -37,11 +37,29 @@ test('a DM venue pin persists over REST AND puts the old pin back when it fails'
      this file's history that a shape assertion outlived the behaviour it was
      standing in for; prefer the property. */
   const a = read('App.js');
+  /* The second of the two call sites is the venue sheet's footer, which left
+     App.js on 2026-09-13 for components/overlays/VenueDetailSheet.js and takes
+     the helper as a prop. Both files are searched for the call, because the
+     property is that BOTH sites go through one helper: counting only App.js
+     would let the moved site drift back to its own inline copy unseen, which is
+     the exact regression this test's history is about. */
+  const sheet = read('components/overlays/VenueDetailSheet.js');
+  /* The FIRST of the two is the card a map pin opens, which left App.js on the
+     same day for components/venue/ConsumerVenueCard.js and takes the helper as a
+     prop for the same reason, so it is searched too. Both call sites are outside
+     App.js now, and the helper they both reach is still in it. */
+  const card = read('components/venue/ConsumerVenueCard.js');
+  const callSites = a + sheet + card;
 
   // One helper, used by both call sites, rather than the expression twice.
   expect(a).toMatch(/const pinDmVenueNow = useCallback\(async \(userId, venue\) => \{/);
-  expect((a.match(/pinDmVenueNow\(selectedDmId, v\);/g) || []).length).toBe(2);
-  expect(a).not.toMatch(/if \(!dmPinVenue\(selectedDmId, v\)\) pinDmVenue/);
+  expect((callSites.match(/pinDmVenueNow\(selectedDmId, v\);/g) || []).length).toBe(2);
+  expect(callSites).not.toMatch(/if \(!dmPinVenue\(selectedDmId, v\)\) pinDmVenue/);
+  // The sheet and the card reach the helper rather than keeping a copy of it.
+  expect(sheet).not.toMatch(/const pinDmVenueNow\s*=/);
+  expect(sheet).toMatch(/pinDmVenueNow,/);
+  expect(card).not.toMatch(/const pinDmVenueNow\s*=/);
+  expect(card).toMatch(/pinDmVenueNow,/);
 
   // Socket first, REST only when the emit could not happen.
   const body = a.slice(a.indexOf('const pinDmVenueNow'));

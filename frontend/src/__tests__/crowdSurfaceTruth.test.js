@@ -12,6 +12,17 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const app = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'App.js'), 'utf8');
 const detail = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'screens', 'FlockDetail.js'), 'utf8');
 const alerts = fs.readFileSync(path.join(REPO, 'backend', 'services', 'crowdAlerts.js'), 'utf8');
+// The full-screen results list moved to components/SearchResultsOverlay.js on
+// 2026-09-13. It is the browse surface this file's percentage rule was written
+// about, so the rule is read there now as well as here.
+const searchResults = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'SearchResultsOverlay.js'), 'utf8');
+// The card a map pin opens left App.js on the same day for
+// components/venue/ConsumerVenueCard.js: the dial, the LIVE chip, the nearby
+// list and the crowd reality check are all drawn there. Each assertion below
+// reads whichever file holds the line it is about, and every negative reads
+// both, so nothing this file forbids became sayable by moving one file across.
+const card = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
+const appAndCard = app + card;
 
 test('the pre-peak push hedges, because the engine behind it is a category curve', () => {
   // crowdAlerts imports crowdEngine and never mlPredictor, so every crowd push
@@ -50,9 +61,9 @@ test('a venue with no reading is not the quietest place nearby', () => {
   // venuesToMapPins sets crowd to null on purpose. `v.crowd < score` coerces
   // null to 0, so every unscored venue passed "quieter than this" and sorted to
   // the front, each captioned "No reading yet".
-  expect((app.match(/typeof v\.crowd === 'number' && typeof score === 'number' && v\.crowd < score/g) || []).length).toBe(1);
-  expect(app).toMatch(/typeof score === 'number' && allVenues\.filter\(v => v\.id !== activeVenue\.id && v\.category === activeVenue\.category && typeof v\.crowd === 'number' && v\.crowd < score/);
-  expect(app).not.toMatch(/v\.category === activeVenue\.category && v\.crowd < score/);
+  expect((card.match(/typeof v\.crowd === 'number' && typeof score === 'number' && v\.crowd < score/g) || []).length).toBe(1);
+  expect(card).toMatch(/typeof score === 'number' && allVenues\.filter\(v => v\.id !== activeVenue\.id && v\.category === activeVenue\.category && typeof v\.crowd === 'number' && v\.crowd < score/);
+  expect(appAndCard).not.toMatch(/v\.category === activeVenue\.category && v\.crowd < score/);
 });
 
 test('LIVE means the model produced the number, not that the reply is new', () => {
@@ -61,28 +72,32 @@ test('LIVE means the model produced the number, not that the reply is new', () =
   // including one with no baseline whose number is the category curve. The card
   // then drew a pulsing LIVE eight rows above "An estimate from typical
   // patterns for this kind of place".
-  expect(app).toMatch(/const method = String\(cd\.predictionMethod \|\| ''\);/);
-  expect(app).toMatch(/if \(!method \|\| method\.startsWith\('rule_engine'\)\) return false;/);
+  expect(card).toMatch(/const method = String\(cd\.predictionMethod \|\| ''\);/);
+  expect(card).toMatch(/if \(!method \|\| method\.startsWith\('rule_engine'\)\) return false;/);
 });
 
 test('the venue-relative index is never printed as a percentage', () => {
   // The sheet renders "Steady · 62". The list rendered "Steady 62%" for the
   // same venue, which reads as 62% full and is not what the number means.
-  expect(app).toMatch(/`\$\{crowdLabel\} \$\{crowdScore\}`/);
-  expect(app).not.toMatch(/\$\{crowdScore\}%/);
+  // The list card is components/SearchResultsOverlay.js since 2026-09-13, so
+  // the line that prints the pair is read there. The "no percent sign" half
+  // stays on both files, because either of them is somewhere it could come back.
+  expect(searchResults).toMatch(/`\$\{crowdLabel\} \$\{crowdScore\}`/);
+  expect(appAndCard).not.toMatch(/\$\{crowdScore\}%/);
+  expect(searchResults).not.toMatch(/\$\{crowdScore\}%/);
 });
 
 test('the reality check offers the words the ladder actually uses', () => {
   // The ladder was re-cut on 2026-08-28 and gained Packed. Somebody looking at
   // a card reading "Packed 91" tapped Rate the crowd and was offered
   // Quiet / Moderate / Very Busy: no option matched the word on their screen.
-  expect(app).toMatch(/\{ level: 2, label: 'Steady' \}/);
-  expect(app).toMatch(/\{ level: 3, label: 'Packed' \}/);
+  expect(card).toMatch(/\{ level: 2, label: 'Steady' \}/);
+  expect(card).toMatch(/\{ level: 3, label: 'Packed' \}/);
   expect(detail).toMatch(/\{ level: 2, label: 'Steady',/);
   expect(detail).toMatch(/\{ level: 3, label: 'Packed',/);
   // Only the words moved. `level` is what travels and what the training export
   // reads, so the stored data is untouched.
-  expect(app).toMatch(/\{ level: 1, label: 'Quiet' \}/);
+  expect(card).toMatch(/\{ level: 1, label: 'Quiet' \}/);
   expect(detail).toMatch(/\{ level: 1, label: 'Quiet',/);
 });
 
@@ -94,8 +109,8 @@ test('a venue that set its own number says so in the nearby list', () => {
   // the surface where the conflict of interest is sharpest and the one place
   // the attribution was missing; services/ownerReports.js says the source is
   // labelled on every surface.
-  expect(app).toMatch(/\{v\.confidenceBasis === 'owner_report' && \(/);
-  expect(app).toMatch(/`The \$\{v\.ownerReport\?\.noun \|\| 'venue'\} says so`/);
+  expect(card).toMatch(/\{v\.confidenceBasis === 'owner_report' && \(/);
+  expect(card).toMatch(/`The \$\{v\.ownerReport\?\.noun \|\| 'venue'\} says so`/);
 });
 
 test('the owner slider names the scale it is asking about', () => {

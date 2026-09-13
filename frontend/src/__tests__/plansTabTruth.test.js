@@ -5,6 +5,13 @@ const path = require('path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const app = read('App.js');
 const create = read('screens/CreateScreen.js');
+// The event detail overlay left App.js on 2026-09-13 for
+// components/EventDetailOverlay.js, lazily fetched. The three assertions below
+// about the detail sheet are about that JSX, so they read it where it lives:
+// two of them would otherwise have passed on prose in an App.js comment and on
+// the event card's own fetch, which is a test that holds its shape while the
+// thing it describes is gone.
+const eventDetailOverlay = read('components/EventDetailOverlay.js');
 const events = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'events.js'), 'utf8');
 const calendar = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'calendar.js'), 'utf8');
 
@@ -30,9 +37,17 @@ test('a Ticketmaster failure is the list failing, and an older answer cannot ove
 });
 
 test('the detail sheet says when the rest did not load, and keeps the distance', () => {
+  // The state still lives in App.js; the sheet that reads it does not.
   expect(app).toMatch(/const \[eventDetailError, setEventDetailError\] = useState\(''\);/);
+  expect(eventDetailOverlay).toMatch(/\{eventDetailError\}/);
+  // The retry merge keeps a distance the detail call did not return. Pinned in
+  // both places deliberately: the overlay's Try again and the card's own fetch
+  // in App.js each do this merge, and a distance that survives one but not the
+  // other is the bug this line is here for.
   expect(app).toMatch(/distance_miles: data\?\.event\?\.distance_miles \?\? prev\?\.distance_miles \?\? null/);
-  expect(app).toMatch(/km away/);
+  expect(eventDetailOverlay).toMatch(/distance_miles: data\?\.event\?\.distance_miles \?\? prev\?\.distance_miles \?\? null/);
+  expect(eventDetailOverlay).toMatch(/km away/);
+  expect(eventDetailOverlay).not.toMatch(/miles away/);
   expect(app).not.toMatch(/miles away/);
 });
 

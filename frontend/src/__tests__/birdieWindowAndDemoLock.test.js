@@ -33,6 +33,8 @@ const fs = require('fs');
 const path = require('path');
 
 const APP_PATH = path.resolve(__dirname, '../App.js');
+const BIRDIE_PANEL_PATH = path.resolve(__dirname, '../components/birdie/BirdiePanel.js');
+const CARD_PATH = path.resolve(__dirname, '../components/venue/ConsumerVenueCard.js');
 const DEMO_PATH = path.resolve(__dirname, '../website/LiveDemo.js');
 const AI_ROUTE_PATH = path.resolve(__dirname, '../../../backend/routes/ai.js');
 const SERVER_PATH = path.resolve(__dirname, '../../../backend/server.js');
@@ -42,7 +44,19 @@ const SERVER_PATH = path.resolve(__dirname, '../../../backend/server.js');
 // which is a failure that says nothing about the code.
 const readSource = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
-const appSource = readSource(APP_PATH);
+// THE PANEL ITSELF LEFT App.js ON 2026-09-13 for
+// components/birdie/BirdiePanel.js: the header and its three controls, the
+// transcript with the memory marker, the suggestion chips and the composer are
+// all in that file now, while the handlers, the meter and the trimming stayed
+// in FlockAppInner. Nothing asserted below changed. appSource is the two files
+// in the order they used to be one, App.js FIRST because the slices below walk
+// forward from a marker in it and a file ahead of it would cut them short.
+// AND THE CARD A MAP PIN OPENS LEFT ON THE SAME DAY for
+// components/venue/ConsumerVenueCard.js, which is where the Busiest Hours tile
+// below is drawn, so it is the third file here. Appended for the same reason
+// the panel is: the slices walk forward from a marker, and only App.js may be
+// first.
+const appSource = readSource(APP_PATH) + readSource(BIRDIE_PANEL_PATH) + readSource(CARD_PATH);
 const demoSource = readSource(DEMO_PATH);
 const aiRouteSource = readSource(AI_ROUTE_PATH);
 const serverSource = readSource(SERVER_PATH);

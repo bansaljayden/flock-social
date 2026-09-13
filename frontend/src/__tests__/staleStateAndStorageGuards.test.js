@@ -65,6 +65,13 @@ function region(src, startMarker, endMarker) {
 }
 
 const APP = codeOnly(read('App.js'));
+// The card a map pin opens left App.js on 2026-09-13 for
+// components/venue/ConsumerVenueCard.js. The two checks below are about the
+// card, so they read that file, and every negative among them reads both: a
+// write that forgets its place tag must not become sayable by moving one file
+// across.
+const CARD = codeOnly(read('components', 'venue', 'ConsumerVenueCard.js'));
+const APP_AND_CARD = `${APP}\n${CARD}`;
 const CHAT = codeOnly(read('screens', 'ChatDetail.js'));
 const FLOCK_DETAIL = codeOnly(read('screens', 'FlockDetail.js'));
 const ONBOARDING = codeOnly(read('screens', 'VenueOnboarding.js'));
@@ -152,7 +159,7 @@ describe('lib/storage answers a blocked storage with a value, never a throw', ()
 
 describe('the map card reads only its own crowd data', () => {
   it('every crowdData write is null, a restored snapshot, or tagged with its place id', () => {
-    const writes = APP.match(/setCrowdData\(([^;]*)\);/g) || [];
+    const writes = APP_AND_CARD.match(/setCrowdData\(([^;]*)\);/g) || [];
     expect(writes.length).toBeGreaterThanOrEqual(8);
     writes.forEach((w) => {
       const ok = w === 'setCrowdData(null);'
@@ -166,14 +173,14 @@ describe('the map card reads only its own crowd data', () => {
   });
 
   it('the card gates the shared state on its own place id and treats a non-finite score as no estimate', () => {
-    const card = region(APP, 'const cdTagged = crowdData && crowdData.forPlaceId === activeVenue.place_id ? crowdData : null;', 'const score = cd ? cd.score : (activeVenue.crowd || 0);');
+    const card = region(CARD, 'const cdTagged = crowdData && crowdData.forPlaceId === activeVenue.place_id ? crowdData : null;', 'const score = cd ? cd.score : (activeVenue.crowd || 0);');
     expect(card).toContain('const cd = cdTagged && Number.isFinite(cdTagged.score) ? cdTagged : null;');
     expect(card).toContain('const noEstimate = crowdFetchFailed || (!!cdTagged && !cd);');
-    expect(APP).not.toContain('const cd = crowdData;');
+    expect(APP_AND_CARD).not.toContain('const cd = crowdData;');
     // The dial's no-estimate branch and the sentence beside it both key off it.
-    expect(APP).toContain(') : (!cd && noEstimate) ? (');
-    expect(APP).toContain('{noEstimate && !isClosed ? (');
-    expect(APP).not.toContain(') : (!cd && crowdFetchFailed) ? (');
+    expect(CARD).toContain(') : (!cd && noEstimate) ? (');
+    expect(CARD).toContain('{noEstimate && !isClosed ? (');
+    expect(APP_AND_CARD).not.toContain(') : (!cd && crowdFetchFailed) ? (');
   });
 });
 

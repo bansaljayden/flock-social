@@ -8,6 +8,12 @@ const app = read('App.js');
 const chat = read('screens/ChatDetail.js');
 const detail = read('screens/FlockDetail.js');
 const create = read('screens/CreateScreen.js');
+// The venue detail sheet left App.js on 2026-09-13 for
+// components/overlays/VenueDetailSheet.js, and the Discover footer that decides
+// between suggesting a venue and setting it went with it. Nothing asserted
+// below changed; the three lines that traced that footer read the file it is in
+// now.
+const venueSheet = read('components/overlays/VenueDetailSheet.js');
 const flocks = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'flocks.js'), 'utf8');
 const aasa = fs.readFileSync(path.join(__dirname, '..', '..', 'api', 'apple-app-site-association.js'), 'utf8');
 
@@ -67,9 +73,9 @@ test('a roster that could not be read says so, and the done step still opens the
 });
 
 test('a member picking on Discover suggests; only the creator sets the venue', () => {
-  expect(app).toMatch(/const pickerIsCreator = !picked \|\| String\(picked\.creatorId\) === String\(meRef\.current\?\.id\);/);
-  expect(app).toMatch(/shareVenueToChat\(pickingVenueForFlockId, pickedVenue\);/);
-  expect(app).toMatch(/'Suggest to flock' : 'Add to Flock'/);
+  expect(venueSheet).toMatch(/const pickerIsCreator = !picked \|\| String\(picked\.creatorId\) === String\(meRef\.current\?\.id\);/);
+  expect(venueSheet).toMatch(/shareVenueToChat\(pickingVenueForFlockId, pickedVenue\);/);
+  expect(venueSheet).toMatch(/'Suggest to flock' : 'Add to Flock'/);
 });
 
 test('the create screen caps invitees at the server\'s ceiling and counts what the server kept', () => {

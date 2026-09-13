@@ -34,6 +34,13 @@ const readSource = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
 const appSource = readSource(APP_PATH);
 const engineSource = readSource(CROWD_ENGINE_PATH);
+// The trend arrow moved to components/venue/ConsumerVenueCard.js on 2026-09-13
+// with the card a map pin opens, so the arrow block is read from there. The
+// constant stays declared in App.js and reaches the card as a prop, which is
+// why the mirror test below still reads App.js for it, and why the card must
+// declare none of its own.
+const CARD_PATH = path.resolve(__dirname, '../components/venue/ConsumerVenueCard.js');
+const cardSource = readSource(CARD_PATH);
 
 const declaredGap = (src) => {
   const m = src.match(/const HOUR_ORDERING_MIN_GAP = (\d+);/);
@@ -49,13 +56,17 @@ describe('the hour-ordering floor', () => {
     const client = declaredGap(appSource);
     expect(client).not.toBeNull();
     expect(client).toBe(declaredGap(engineSource));
+    // And the card that draws the arrow declares none of its own: the value
+    // arrives as a prop, so there is still exactly one client number to keep
+    // in step with the server.
+    expect(declaredGap(cardSource)).toBeNull();
   });
 
   test('the trend arrow decides on the named constant, never on a literal', () => {
     // The block between the heading and the bar chart.
-    const start = appSource.indexOf('Expected Crowd by Hour');
+    const start = cardSource.indexOf('Expected Crowd by Hour');
     expect(start).toBeGreaterThan(-1);
-    const block = appSource.slice(start, start + 3000);
+    const block = cardSource.slice(start, start + 3000);
     const arrow = block.slice(0, block.indexOf("{arrow} {label}"));
     expect(arrow).toContain('diff >= HOUR_ORDERING_MIN_GAP');
     expect(arrow).toContain('diff <= -HOUR_ORDERING_MIN_GAP');
@@ -64,8 +75,8 @@ describe('the hour-ordering floor', () => {
   });
 
   test('the dead zone is never justified by the level error again', () => {
-    const start = appSource.indexOf('Expected Crowd by Hour');
-    const block = appSource.slice(start, start + 3000);
+    const start = cardSource.indexOf('Expected Crowd by Hour');
+    const block = cardSource.slice(start, start + 3000);
     const arrow = block.slice(0, block.indexOf("{arrow} {label}"));
     // The old comment read "model's MAE is ~5pts so use that as the dead-zone
     // threshold". An ordering claim may not cite a level statistic.

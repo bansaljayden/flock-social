@@ -33,7 +33,12 @@ const APP_SOURCE = read('frontend', 'src', 'App.js')
   + read('frontend', 'src', 'screens', 'ChatDetail.js')
   + read('frontend', 'src', 'screens', 'DmDetail.js')
   + read('frontend', 'src', 'screens', 'ProfileSettings.js')
-  + read('frontend', 'src', 'screens', 'FlockDetail.js');
+  + read('frontend', 'src', 'screens', 'FlockDetail.js')
+  // The venue detail sheet left App.js on 2026-09-13 for
+  // components/overlays/VenueDetailSheet.js, and the only two report entry
+  // points for a venue review and a venue promotion in the whole app went with
+  // it, so that file is read here too.
+  + read('frontend', 'src', 'components', 'overlays', 'VenueDetailSheet.js');
 const exists = (...p) => fs.existsSync(path.join(REPO, ...p));
 
 const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');

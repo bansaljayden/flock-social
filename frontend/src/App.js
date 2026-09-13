@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -45,7 +45,7 @@ import { lsGet, lsSet } from './lib/storage';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
-import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
+import { AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
 // the cream bird; the default is cobalt Birdie. Both are used deliberately:
@@ -62,7 +62,12 @@ import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'fram
 // screens/VenueDashboard.js, which held the last reading of it in this file.
 // The sweep still alternates the two rather than repeating one bird twenty
 // times.
-import BirdieBird, { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
+// The ANIMATED BirdieBird is no longer imported here. Both of its mounts, the
+// empty-state bird and the whisper behind the transcript, were inside Birdie's
+// panel, and they went to components/birdie/BirdiePanel.js with it on
+// 2026-09-13, which imports the default for itself. The still bird, BirdNote
+// and WARM_BIRD all still have readers in this file.
+import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 // The crash screens inside the app carry the same game the root crash net
 // and the 404 do. Static, for the reason ErrorBoundary.js gives: the most
 // common crash is a chunk that failed to download, and a game in a second
@@ -172,7 +177,7 @@ const TAB_SCROLL = new Map();
 // The screen crash boundary catches the rejection and offers "Try again". With
 // a single lazy that button could never work: reset re-renders, the payload is
 // still rejected, it throws again instantly, and the owner is back on the same
-/* THE SEVEN SCREENS THAT USED TO RIDE THE BOOT CHUNK.
+/* THE EIGHT SCREENS THAT USED TO RIDE THE BOOT CHUNK.
    Each of these carried a comment arguing it should be a static import,
    because a chunk fetch in front of a screen people open immediately costs a
    round trip and saves only kilobytes. That argument is right about a bare
@@ -194,14 +199,260 @@ const TAB_SCROLL = new Map();
    one failed chunk fetch on a flaky connection would leave chat permanently
    dead. A dead button on the core screen of the product is worth far more than
    the bytes this saves, so the machinery that was already here now covers all
-   nine screens rather than two. */
+   ten screens rather than two. */
 let AddFriends = React.lazy(() => import('./screens/AddFriends'));
 let ChatDetail = React.lazy(() => import('./screens/ChatDetail'));
 let CreateScreen = React.lazy(() => import('./screens/CreateScreen'));
 let DmDetail = React.lazy(() => import('./screens/DmDetail'));
 let FlockDetail = React.lazy(() => import('./screens/FlockDetail'));
+let PastFlocksScreen = React.lazy(() => import('./screens/PastFlocksScreen'));
 let ProfileSettings = React.lazy(() => import('./screens/ProfileSettings'));
 let VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
+
+/* THE WRAP-UP SHEET, and the first lazy thing in this file that is not a
+   screen. It is 6.7 KB of JSX that only a host closing out a plan they created
+   ever opens, so it had no business in the chunk every account downloads
+   before the Nest paints. It lives in
+   components/overlays/AttendanceModal.js and arrives the first time
+   showAttendanceModal turns true.
+
+   THE CATCH IS LOAD-BEARING, not tidiness. All ten lazy screens in this file
+   are mounted inside the `screen:` ErrorBoundary. This sheet is mounted beside
+   that boundary, more than a thousand lines below it, with nothing between it
+   and the root, and React.lazy rethrows a rejected import during render. So one
+   failed chunk fetch on bad signal would replace the whole app with index.js's
+   reload card and cost the host the socket, the session and the loaded flocks,
+   for a sheet. Resolving to a sheet that says the download failed keeps the
+   damage the size of the sheet, which is what it was while this JSX was
+   inline: the tap did nothing. */
+const loadAttendanceModal = () => import('./components/overlays/AttendanceModal')
+  .catch((err) => {
+    console.warn('Attendance sheet chunk did not load', err);
+    return { default: AttendanceSheetUnavailable };
+  });
+let AttendanceModal = React.lazy(loadAttendanceModal);
+
+/* THE EVENT DETAIL SCREEN, the second lazy thing in this file that is not a
+   screen in screens/. It is the full-bleed overlay a tap on "Details" on an
+   event card opens, 132 lines of JSX nothing else in the app can reach, so
+   inline it was boot weight in every session that never taps Details. It lives
+   in components/EventDetailOverlay.js and arrives the first time eventDetail
+   holds an event.
+
+   THE CHUNK NAME IS WHAT MAKES IT PAY. On its own this is ~1.5 KB gzipped off
+   the blocking chunk, which does not buy its own round trip. Named, it shares
+   one chunk with the other overlays leaving this file, so the name has to match
+   at every import() of the module, including the idle warm below.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH loadAttendanceModal carries. This
+   overlay is mounted beside the screen ErrorBoundary rather than inside it,
+   with nothing between it and the root, and React.lazy rethrows a rejected
+   import during render. So one failed chunk fetch on bad signal would replace
+   the whole app with index.js's reload card and cost the session, the socket
+   and the loaded flocks, for an overlay. Resolving to a panel that says the
+   download failed keeps the damage the size of the overlay, which is the size
+   it was while this JSX was inline: the tap did nothing. */
+const loadEventDetailOverlay = () => import(/* webpackChunkName: "overlays" */ './components/EventDetailOverlay')
+  .catch((err) => {
+    console.warn('Event detail chunk did not load', err);
+    return { default: EventDetailUnavailable };
+  });
+let EventDetailOverlay = React.lazy(loadEventDetailOverlay);
+
+/* RE-ARMING JUST THIS ONE. rearmLazyScreens below rebuilds every lazy in the
+   file, which is right where it is called from: a screen that has already
+   crashed, with nothing mounted worth keeping. A failed overlay chunk is a
+   different situation. The app behind the overlay is alive, the events view
+   that opened it is mounted, and rebuilding the lazy of a live screen changes
+   its element type, which unmounts it and takes its scroll position and any
+   half-typed text with it. So the overlay's own way out re-arms the overlay and
+   nothing else. */
+const rearmEventDetailOverlay = () => {
+  EventDetailOverlay = React.lazy(loadEventDetailOverlay);
+};
+
+/* THE TWO MONEY SHEETS, the third lazy thing in this file that is not a
+   screen. The pay picker a payer sees after tapping Settle Up, and the sheet
+   that explains a wallet handoff that never happened, are 171 lines of JSX
+   that only one control in the flock chat screen can reach. Inline they were
+   parsed on every launch and re-rendered on every state change out here, for
+   the small share of sessions that split a bill. They live in
+   components/PaymentSheets.js and arrive the first time one of them is wanted.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH the wrap-up sheet and the event
+   overlay carry, and it matters more here than in either: these sheets are
+   mounted in this component's root JSX, beside the screen ErrorBoundary rather
+   than inside it, and React.lazy rethrows a rejected import during render. A
+   chunk that fails to download on bad signal would therefore replace the whole
+   app with index.js's reload card and cost the payer the socket, the session
+   and the open chat, in the middle of settling a bill. Resolving to a sheet
+   that says the download failed keeps the damage the size of the sheet, which
+   is the size it was while this JSX was inline: the tap did nothing.
+
+   A full ErrorBoundary here would be the wrong tool and was rejected: its
+   default fallback is a 100vh crash card with no position, so it would inject
+   a screen-height panel into the app shell's normal flow between the camera
+   viewfinder and the venue sheet, and with no way to clear it the panel would
+   outlive the tap that caused it for the life of the page. */
+const loadPaymentSheets = () => import('./components/PaymentSheets')
+  .catch((err) => {
+    console.warn('Payment sheets chunk did not load', err);
+    return { default: PaymentSheetsUnavailable };
+  });
+let PaymentSheets = React.lazy(loadPaymentSheets);
+
+/* RE-ARMING JUST THIS ONE, for the same reason the event overlay has its own
+   narrow helper. A payer who taps Settle Up is standing in a live flock chat
+   screen with a scroll position and possibly a half-typed message, and
+   rearmLazyScreens below rebuilds the lazy of every screen in the file, which
+   changes ChatDetail's element type and unmounts it. So the sheet's own way
+   out re-arms the sheet and nothing else. */
+const rearmPaymentSheets = () => {
+  PaymentSheets = React.lazy(loadPaymentSheets);
+};
+
+/* THE FULL-SCREEN SEARCH RESULTS LIST, the fourth lazy thing in this file that
+   is not a screen. It is the 232-line panel behind "See All Results" under the
+   search dropdown and the "All N results" pill on the map: the search field,
+   the Map button, the three sort chips and a card per venue. showSearchResults
+   starts false and only those two taps set it true, so inline those lines were
+   boot weight in every session that never asks for the whole list. They live in
+   components/SearchResultsOverlay.js and arrive the first time somebody does.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH the three above carry, and where
+   this one is mounted is what makes it matter most: the panel is the last
+   child of the Discover container, a SIBLING of both screen ErrorBoundaries
+   rather than inside either, so the nearest boundary above it is index.js's
+   app-root. A chunk that fails to download on bad signal would therefore
+   replace the whole signed-in app with the reload card and cost the session,
+   the socket, the loaded flocks and the typed query, for a list. Resolving to a
+   panel that says the download failed keeps the damage the size of the list,
+   which is the size it was while this JSX was inline: the tap did nothing. */
+const loadSearchResultsOverlay = () => import('./components/SearchResultsOverlay')
+  .catch((err) => {
+    console.warn('Search results chunk did not load', err);
+    return { default: SearchResultsUnavailable };
+  });
+let SearchResultsOverlay = React.lazy(loadSearchResultsOverlay);
+
+/* RE-ARMING JUST THIS ONE, for the same reason the event overlay and the pay
+   sheets have their own narrow helpers. Somebody reading this list is standing
+   on a live Discover screen with a loaded map behind it and a query in the
+   field, and rearmLazyScreens below rebuilds the lazy of every screen in the
+   file: rebuilding this one while the list is open would hand React a new
+   element type, which remounts the panel and takes its scroll position and the
+   focus in its field with it. So the panel's own way out re-arms the panel and
+   nothing else. */
+const rearmSearchResultsOverlay = () => {
+  SearchResultsOverlay = React.lazy(loadSearchResultsOverlay);
+};
+
+/* THE VENUE DETAIL SHEET, the fifth lazy thing in this file that is not a
+   screen and the largest of them by a wide margin. It is the 427-line overlay
+   behind a tap on a venue: the photo carousel, the stats row, the crowd
+   reality check, the deals, the Flock Reviews list, the review form, and the
+   footer carrying Get Directions and Add to Flock. Inline it was 38,471 raw
+   bytes of the blocking boot chunk, the biggest single overlay on the way to
+   first paint, and nothing can reach it until somebody taps a venue, a map
+   pin, a venue card in a chat or a venue deep link. It lives in
+   components/overlays/VenueDetailSheet.js and arrives the first time
+   venueDetailModal turns truthy.
+
+   ITS OWN CHUNK, not the "overlays" chunk the event detail overlay named. At
+   38 KB it pays for its own round trip several times over, and sharing a chunk
+   name with a 1.5 KB overlay would make a tap on Details drag this sheet down
+   with it, which is the opposite of what either split is for.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH the four lazies above carry, and it
+   protects more here than in any of them because this is the most tapped
+   overlay in the product. The sheet is mounted in this component's root JSX,
+   beside the screen ErrorBoundary rather than inside it, and React.lazy
+   rethrows a rejected import during render: a chunk that failed on bad signal
+   would therefore replace the whole signed-in app with index.js's reload card
+   and cost the session, the socket and the loaded flocks, for one venue card.
+   Resolving to a sheet that says the download failed keeps the damage the size
+   of the sheet, which is the size it was while this JSX was inline: the tap
+   did nothing. */
+const loadVenueDetailSheet = () => import('./components/overlays/VenueDetailSheet')
+  .catch((err) => {
+    console.warn('Venue detail chunk did not load', err);
+    return { default: VenueDetailUnavailable };
+  });
+let VenueDetailSheet = React.lazy(loadVenueDetailSheet);
+
+/* RE-ARMING JUST THIS ONE, for the same reason the three overlays above have
+   their own narrow helpers, and with more to lose than any of them. Somebody
+   reading a venue may have a half-written review in the form and a scroll
+   position in the one region that scrolls, and rearmLazyScreens below rebuilds
+   the lazy of every screen in the file: rebuilding this one while the sheet is
+   open hands React a new element type, which remounts the sheet, runs
+   DialogBehavior's focus restore mid-word and takes the typed review with it.
+   So the sheet's own way out re-arms the sheet and nothing else. */
+const rearmVenueDetailSheet = () => {
+  VenueDetailSheet = React.lazy(loadVenueDetailSheet);
+};
+
+/* BIRDIE'S PANEL, the sixth lazy thing in this file that is not a screen, and
+   the only one of the six that is not an overlay over a screen. It is the
+   460-line assistant surface behind the bubble on the Nest and the Ask Birdie
+   tile in the chat composer: the panel and the fullscreen sheet, the
+   transcript, the cards a turn can stage, the suggestion chips and the
+   composer. aiChatMode starts at 'bubble' and nothing reads a stored value or
+   a URL into it, so there is no first-paint path into any of it, which is what
+   makes this a real React.lazy candidate rather than a file split. It lives in
+   components/birdie/BirdiePanel.js and arrives the first time somebody asks
+   for Birdie.
+
+   ITS OWN CHUNK, not the "overlays" chunk the event detail overlay named. At
+   40 KB raw it pays for its own round trip several times over, and sharing a
+   chunk name with a 1.5 KB overlay would make a tap on Details drag the whole
+   assistant down with it.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH the five lazies above carry, and
+   the mount site is what makes it matter here. The panel is a sibling of
+   <main> in this component's root JSX, outside both screen ErrorBoundaries, so
+   the nearest boundary above it is index.js's app-root, and React.lazy
+   rethrows a rejected import during render. A stale hashed chunk after a
+   deploy, or a failed fetch on bad signal, would therefore replace the whole
+   signed-in app with the reload card and cost the session, the socket and the
+   loaded flocks, for a chat bubble. Resolving to a panel that says the
+   download failed keeps the damage the size of the panel, which is the size it
+   was while this JSX was inline: the tap did nothing. */
+const loadBirdiePanel = () => import('./components/birdie/BirdiePanel')
+  .catch((err) => {
+    console.warn('Birdie panel chunk did not load', err);
+    return { default: BirdiePanelUnavailable };
+  });
+let BirdiePanel = React.lazy(loadBirdiePanel);
+
+/* RE-ARMING JUST THIS ONE, for the same reason the four overlays above have
+   their own narrow helpers. The "did not load" panel's own Close calls this,
+   so the next tap on the bubble is a real second request rather than a replay
+   of a resolved fallback, and it rebuilds this lazy without changing the
+   element type of any live screen. rearmLazyScreens goes through here rather
+   than reassigning the binding itself, because re-arming while the panel is
+   OPEN hands React a new element type and remounts it: the composer is
+   uncontrolled, so the one thing that remount could have lost is the typed
+   question, which is why the box in BirdiePanel.js seeds itself from
+   aiInputValueRef instead of from an empty string. */
+const rearmBirdiePanel = () => {
+  BirdiePanel = React.lazy(loadBirdiePanel);
+};
+
+/* AND THE VENUE CARD A MAP PIN OPENS, the seventh thing in this file that is
+   fetched rather than shipped and the only one of them that is not opened by a
+   control the user can see. It is the card that slides up on Discover when a
+   pin is tapped and the card the venue dashboard reuses in its Map tab, about
+   1,300 lines with the crowd dial, the reality check and the group admission
+   helper it is the only reader of. activeVenue is null at boot and nothing sets
+   it until a tap, so none of that is on the first paint path.
+
+   A PLAIN LAZY, not the load/catch pair the six above use, because the card
+   mounts inside a screen rather than beside the root tree: a rejected chunk is
+   rethrown into the screen ErrorBoundary, which already has a "Try again" that
+   calls rearmLazyScreens, and the re-arm line there is what makes that button
+   able to work. Same `let` and the same reason as the screens above. */
+let ConsumerVenueCard = React.lazy(() => import('./components/venue/ConsumerVenueCard'));
 
 /* WARM THEM WHILE NOBODY IS WAITING.
    webpack caches a module once any import() for it resolves, so these calls
@@ -223,7 +474,7 @@ const warmScreenChunks = () => {
   const go = () => {
     /* CHAT AND THE DM THREAD FIRST, and the order is load-bearing. They are the
        two screens somebody opens from the Nest and the two biggest of the
-       seven; on one connection, warming them ahead of the other four is the
+       eight; on one connection, warming them ahead of the other five is the
        difference between beating a tap and losing to it. */
     import('./screens/ChatDetail').catch(() => {});
     import('./screens/DmDetail').catch(() => {});
@@ -231,6 +482,63 @@ const warmScreenChunks = () => {
     import('./screens/ProfileSettings').catch(() => {});
     import('./screens/CreateScreen').catch(() => {});
     import('./screens/AddFriends').catch(() => {});
+    /* LAST ON PURPOSE. Past flocks is the smallest chunk of the eight and
+       the least opened, so it must not compete for the connection with
+       chat, the DM thread or flock detail. */
+    import('./screens/PastFlocksScreen').catch(() => {});
+    /* AFTER EVERY SCREEN IN THIS LIST, and warmed at all only because the sheet it
+       fetches opens on a tap with nothing behind it: its Suspense fallback is
+       null, so an unwarmed chunk is a host tapping "Mark it" and watching the
+       plan screen do nothing for the length of the round trip. 6.7 KB is small
+       enough to be last and still land. */
+    import('./components/overlays/AttendanceModal').catch(() => {});
+    /* AND THE EVENT DETAIL OVERLAY, warmed for a reason the sheet above does
+       not have. Its Suspense fallback is null and everything that makes the
+       overlay dismissible travelled into the chunk, so until it resolves there
+       is no Back button and no Escape binding: an unwarmed chunk is a tap on
+       Details that does nothing for a round trip. Same chunk name as the lazy
+       above, so this is the same request rather than a second one. */
+    import(/* webpackChunkName: "overlays" */ './components/EventDetailOverlay').catch(() => {});
+    /* AND THE TWO MONEY SHEETS, warmed last of all because Settle Up is the
+       rarest of these taps and the smallest of these chunks, so it must not
+       compete with chat for the connection. Warmed at all because the tap in
+       front of it already waited once, for getPaymentLinks: an unwarmed chunk
+       makes the payer wait a second time, on the slowest screen in the app to
+       have reached. */
+    import('./components/PaymentSheets').catch(() => {});
+    /* AND THE RESULTS LIST, after the money sheets for the reason they are
+       after the screens: it is one tap off Discover and wants to open in the
+       same commit, but nothing reaches it before the Nest has painted. Warmed
+       at all because its Suspense fallback is a skeleton, and a skeleton that
+       stands in for a list already held in memory is a round trip nobody
+       needed to wait through. */
+    import('./components/SearchResultsOverlay').catch(() => {});
+    /* AND THE VENUE SHEET, after every screen and both sheets above it and
+       deliberately that late. It is the most
+       tapped overlay in the product, which argues for warming it early, and at
+       38 KB it is also the biggest chunk in this list, which decides it: the
+       numbers above were measured with chat and the DM thread winning the
+       connection, and a request this size issued alongside them takes
+       bandwidth share from the two that were measured. Warmed at all because
+       openVenueDetail puts a loading card in state in the tap's own commit, so
+       an unwarmed chunk replaces that card with a bare scrim for the length of
+       a round trip on the busiest control in Discover. */
+    import('./components/overlays/VenueDetailSheet').catch(() => {});
+    /* AND THE VENUE CARD, straight after the sheet that opens from it, because a
+       pin tap is the most common interaction on Discover and this is the chunk
+       that tap needs. Lazy without warming buys boot bytes by charging a round
+       trip at the exact moment the card is supposed to appear, and its Suspense
+       fallback is null, so an unwarmed tap shows nothing at all until the chunk
+       lands. Ahead of Birdie below because nothing on the core loop waits on
+       him, and this is the core loop. */
+    import('./components/venue/ConsumerVenueCard').catch(() => {});
+    /* AND BIRDIE, last in this list, because he is
+       the one surface here that is not a screen and not an overlay over one:
+       nothing on the core loop waits on him. Warmed at all because the bubble
+       sits on the Nest, so a tap is reachable seconds in, and his Suspense
+       fallback is null, which makes an unwarmed chunk a tap that shows nothing
+       at all for the length of a round trip. */
+    import('./components/birdie/BirdiePanel').catch(() => {});
   };
   // VenueOnboarding is deliberately NOT warmed: only a venue login ever
   // reaches it, and spending a consumer's bandwidth on an owner signup screen
@@ -299,7 +607,7 @@ let RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
 const rearmLazyScreens = () => {
   VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
   RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
-  // The seven that joined them. All nine, because "Try again" cannot know
+  // The eight that joined them. All ten, because "Try again" cannot know
   // which chunk failed and a fresh lazy for a module already in the cache
   // costs one element type and no request.
   AddFriends = React.lazy(() => import('./screens/AddFriends'));
@@ -307,9 +615,232 @@ const rearmLazyScreens = () => {
   CreateScreen = React.lazy(() => import('./screens/CreateScreen'));
   DmDetail = React.lazy(() => import('./screens/DmDetail'));
   FlockDetail = React.lazy(() => import('./screens/FlockDetail'));
+  PastFlocksScreen = React.lazy(() => import('./screens/PastFlocksScreen'));
   ProfileSettings = React.lazy(() => import('./screens/ProfileSettings'));
   VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
+  // The wrap-up sheet is here for a slightly different reason than the ten
+  // screens. Its loader RESOLVES, to the "did not load" sheet, rather than
+  // rejecting, and React.lazy keeps whatever it resolved for the life of the
+  // page: without this line the next "Mark it", minutes later and back on wifi,
+  // would paint that same sheet again without asking the network. That sheet's
+  // own Close button is what calls this.
+  AttendanceModal = React.lazy(loadAttendanceModal);
+  // And the event detail overlay, for the same reason as the sheet above: its
+  // loader RESOLVES, to the "did not load" panel, rather than rejecting, so
+  // without a re-arm the next tap on Details would paint that panel again
+  // without asking the network. Through the narrow helper, so that this one
+  // line cannot quietly become the thing that remounts a live screen.
+  rearmEventDetailOverlay();
+  // And the pay sheets, for the same reason again: their loader RESOLVES, to
+  // the "did not load" sheet, so without a re-arm the next Settle Up would
+  // paint that sheet again without asking the network. Through their own narrow
+  // helper, so this line cannot become the thing that unmounts a live chat.
+  rearmPaymentSheets();
+  // And the results list, for the same reason a third time: its loader
+  // RESOLVES, to the "did not load" panel, so without a re-arm the next tap on
+  // See All Results would paint that panel again without asking the network.
+  // Through its own narrow helper, so this line cannot become the thing that
+  // remounts a list somebody is reading.
+  rearmSearchResultsOverlay();
+  // And the venue sheet, for the same reason a fourth time: its loader
+  // RESOLVES, to the "did not load" sheet, so without a re-arm the next tap on
+  // a venue would paint that sheet again without asking the network. Through
+  // its own narrow helper, so this line cannot become the thing that remounts
+  // a sheet somebody is writing a review in.
+  rearmVenueDetailSheet();
+  // And Birdie, for the same reason a fifth time: his loader RESOLVES, to the
+  // "did not load" panel, so without a re-arm the next tap on the bubble would
+  // paint that panel again without asking the network. Through his own narrow
+  // helper, which is also what keeps a remount of an open panel to one findable
+  // line rather than a side effect of a screen crash.
+  rearmBirdiePanel();
+  // And the venue card a pin opens. A plain binding rather than a helper,
+  // because its loader REJECTS rather than resolving to a fallback: the failure
+  // arrives in the screen ErrorBoundary that calls this, so there is no open
+  // surface this line could remount out from under anybody.
+  ConsumerVenueCard = React.lazy(() => import('./components/venue/ConsumerVenueCard'));
 };
+
+/* WHAT THE HOST SEES IF THE WRAP-UP CHUNK CANNOT BE FETCHED, which is the
+   other half of loadAttendanceModal's catch. Same geometry and the same
+   DialogBehavior as the real sheet, so Escape, Tab and focus restore behave the
+   way they do in every other overlay in the stack, and it states the one fact
+   that decides what the host does next: nothing was recorded. Closing re-arms
+   the lazy, so the next tap is a real second request. */
+const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) => {
+  const close = () => { rearmLazyScreens(); setShowAttendanceModal(false); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+      <DialogBehavior onClose={close} label="Attendance did not load" />
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The attendance sheet could not be downloaded, so nobody has been marked yet. Close this, check your connection and tap Mark it again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT A TAP ON DETAILS SHOWS IF THE OVERLAY CHUNK CANNOT BE FETCHED, the
+   other half of loadEventDetailOverlay's catch. It keeps the one thing a
+   full-bleed overlay must never lose, a way out: the same DialogBehavior as the
+   real screen, so Escape, Tab and focus restore behave the way they do
+   everywhere else in the stack, and a Close that re-arms the lazy so the next
+   tap is a real second request rather than a replay of the stored rejection.
+   It is handed the whole overlay prop bag and reads two of it. */
+const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
+  const close = () => { rearmEventDetailOverlay(); setEventDetail(null); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '16px' }}>
+      <DialogBehavior onClose={close} label="Event did not load" />
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The event page could not be downloaded. Close this, check your connection and tap Details again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT THE PAYER SEES IF THE PAY SHEETS CHUNK CANNOT BE FETCHED, the other
+   half of loadPaymentSheets's catch. It is handed the whole sheet prop bag and
+   reads three of it. It states the one fact that decides what the payer does
+   next, which is that no money has moved, and it closes BOTH gates, because
+   either one of them is what mounted this. Closing re-arms the lazy through
+   the narrow helper, so the next Settle Up is a real second request rather
+   than a replay of a resolved fallback. */
+const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPaymentFallback }) => {
+  const close = () => { rearmPaymentSheets(); setShowPaymentPicker(false); setPaymentFallback(null); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
+      <DialogBehavior onClose={close} label="Payment options did not load" />
+      <div role="alert" onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
+        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h3>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The payment options could not be downloaded, so nothing has been paid and nothing has been marked. Close this, check your connection and tap Settle Up again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT THE SEARCHER SEES IF THE RESULTS CHUNK CANNOT BE FETCHED, the other
+   half of loadSearchResultsOverlay's catch. Same geometry as the real panel,
+   inside the Discover container rather than over the whole app, and the same
+   modal={false} DialogBehavior the panel carries, so Escape and focus restore
+   behave the way they do when the list does load. It states the one fact that
+   decides what to do next, which is that the map behind it still has every pin
+   on it. It is handed the whole overlay prop bag and reads two of it. Closing
+   re-arms the lazy through the narrow helper, so the next tap is a real second
+   request rather than a replay of a resolved fallback. */
+const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults }) => {
+  const close = () => { rearmSearchResultsOverlay(); setShowSearchResults(false); };
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', padding: '16px' }}>
+      <DialogBehavior modal={false} onClose={close} label="Results did not load" />
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', border: '1px solid var(--border-default)' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The full list of results could not be downloaded. The map behind this still has every pin on it, so go back, check your connection and ask for the list again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to map</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT A TAP ON A VENUE SHOWS IF THE SHEET CHUNK CANNOT BE FETCHED, the other
+   half of loadVenueDetailSheet's catch. The same full-screen scrim, the same
+   zIndex and the same DialogBehavior as the real sheet, so Escape, a tap on
+   the backdrop, Tab and focus restore behave the way they do when the sheet
+   does load, and it states the one fact that decides what to do next: nothing
+   was lost, the pin is still on the map behind this. It is handed the whole
+   sheet prop bag and reads two of it. Closing re-arms the lazy through the
+   narrow helper, so the next tap is a real second request rather than a replay
+   of a resolved fallback. */
+const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal }) => {
+  const close = () => { rearmVenueDetailSheet(); setVenueDetailModal(null); };
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <DialogBehavior onClose={close} label="Venue did not load" />
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The venue page could not be downloaded. Close this, check your connection and tap the venue again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT A TAP ON THE BUBBLE SHOWS IF BIRDIE'S CHUNK CANNOT BE FETCHED, the
+   other half of loadBirdiePanel's catch. The panel's own geometry is not worth
+   copying here; what it must not lose is a way out, so this carries the same
+   DialogBehavior the real panel does and Escape, a tap outside, Tab and focus
+   restore behave the way they do when Birdie does load. It states the one fact
+   that decides what to do next, which is that nothing was asked and nothing
+   was sent. It is handed the whole panel prop bag and reads two of it. Closing
+   re-arms the lazy through the narrow helper, so the next tap is a real second
+   request rather than a replay of a resolved fallback. */
+const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
+  const close = () => { rearmBirdiePanel(); closeAiChat(); };
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <DialogBehavior onClose={close} label="Birdie did not load" />
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', marginBottom: '24px' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          Birdie could not be downloaded, so nothing was asked and nothing was sent. Close this, check your connection and tap him again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT STANDS IN WHILE THE RESULTS CHUNK IS ON THE WIRE. Absolutely positioned
+   in the panel's own place, because the real one is position:absolute inset:0
+   inside the Discover container: a fallback in normal flow would push the map
+   down for a round trip instead of covering it, which is why this is not
+   ScreenChunkFallback, whose height:100% box belongs in a screen slot. A
+   skeleton and not a spinner (SLOP-AUDIT rule 10), in the shape the list is
+   about to take, so the panel settles instead of appearing. The sentence is a
+   real text node in an sr-only paragraph, the pattern VenueDashboardSkeleton
+   uses, because a role="status" carrying nothing but an aria-label is announced
+   inconsistently; the cards are drawn here rather than handed to ListSkeleton
+   so that this fallback has one status region and not two. */
+const SearchResultsSkeleton = () => (
+  <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
+    <p className="sr-only" role="status">Loading results.</p>
+    <div style={{ backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', padding: '10px 12px' }}>
+      <div className="skeleton" style={{ height: '44px', borderRadius: '14px' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
+        <div className="skeleton" style={{ width: '54px', height: '20px', borderRadius: '8px' }} />
+        <div style={{ flex: 1 }} />
+        <div className="skeleton" style={{ width: '72px', height: '22px', borderRadius: '8px' }} />
+        <div className="skeleton" style={{ width: '88px', height: '22px', borderRadius: '8px' }} />
+      </div>
+    </div>
+    <div style={{ flex: 1, overflow: 'hidden', padding: '4px 12px 80px' }}>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: '16px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
+          <div className="skeleton" style={{ width: '72px', height: '72px', borderRadius: '10px', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0, paddingTop: '4px' }}>
+            <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
+            <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
+            <div className="skeleton" style={{ width: '80%', height: '10px', borderRadius: '4px' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 // What stands in while that chunk arrives. A skeleton, not a spinner
 // (SLOP-AUDIT rule 10): the navy header, the tab strip and the cards are
@@ -376,177 +907,6 @@ const RevenueScreenSkeleton = ({ colors }) => (
     </div>
   </div>
 );
-
-// Animated crowd dial — fills from 0 to target score with counting number.
-// Perf notes: caches getComputedStyle (was called every frame), pre-renders the
-// static track to an offscreen canvas, and keeps the parent drop-shadow filter
-// on a SIBLING glow div so the canvas itself isn't re-rasterized 60×/sec.
-const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
-  const textRef = React.useRef(null);
-  const canvasRef = React.useRef(null);
-
-  React.useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const cssSize = 60;
-    const size = Math.round(cssSize * dpr);
-    const center = size / 2;
-    const radius = Math.round(26 * dpr);
-    const lineWidth = Math.round(6 * dpr);
-    canvas.width = size;
-    canvas.height = size;
-
-    const ctx = canvas.getContext('2d');
-
-    // Cache the track color ONCE (was a getComputedStyle call per frame — expensive style recalc)
-    const trackColor = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
-
-    // Pre-render the static gray ring to an offscreen canvas — drawn once, blitted each frame.
-    const trackCanvas = document.createElement('canvas');
-    trackCanvas.width = size;
-    trackCanvas.height = size;
-    const tctx = trackCanvas.getContext('2d');
-    tctx.beginPath();
-    tctx.arc(center, center, radius, 0, Math.PI * 2);
-    tctx.strokeStyle = trackColor;
-    tctx.lineWidth = lineWidth;
-    tctx.stroke();
-
-    let raf;
-    const start = performance.now();
-    const ease = t => 1 - Math.pow(1 - t, 3);
-
-    const draw = (val) => {
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(trackCanvas, 0, 0);
-      if (val > 0) {
-        ctx.beginPath();
-        ctx.arc(center, center, radius, -Math.PI / 2, -Math.PI / 2 + (val / 100) * Math.PI * 2);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lineWidth;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-      }
-    };
-
-    const tick = now => {
-      const t = Math.min((now - start) / 1200, 1);
-      const val = ease(t) * score;
-      draw(val);
-      if (textRef.current) textRef.current.textContent = `${Math.round(val)}%`;
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-
-    draw(0);
-    if (textRef.current) textRef.current.textContent = '0%';
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [score, color]);
-
-  return (
-    <div style={{ width: '60px', height: '60px', position: 'relative', flexShrink: 0 }}>
-      {/* Glow lives on a SIBLING div — not on a parent of the canvas. Otherwise every
-          canvas frame would force the browser to re-rasterize the drop-shadow. */}
-      <div aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: '50%', boxShadow: `0 4px 12px rgba(0,0,0,0.3), 0 0 8px ${color}30`, pointerEvents: 'none' }} />
-      <canvas ref={canvasRef} style={{ width: '60px', height: '60px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
-      <div style={{ position: 'absolute', inset: '6px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <span ref={textRef} style={{ fontSize: 'var(--t-body)', fontWeight: '600', color, lineHeight: 1 }}>0%</span>
-      </div>
-    </div>
-  );
-});
-
-// One-tap reality check under the crowd forecast: a report from someone at the
-// venue becomes a dated training row (venue_feedback) AND calibrates the live
-// score for everyone else. Self-contained state; remount per venue via key.
-const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted, ownerAsserted }) {
-  const [open, setOpen] = useState(false);
-  const [sent, setSent] = useState(null); // 'verified' | 'unverified'
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  if (!placeId) return null;
-  if (sent) {
-    // The forecast only learns from a report the server could verify (a
-    // check-in by tag, or a plan with two people here). The old line promised
-    // every report sharpened it, which was false for nearly all of them.
-    return (
-      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>
-        {sent === 'verified'
-          ? 'Thanks. Real reports sharpen the forecast for everyone.'
-          : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.'}
-      </p>
-    );
-  }
-  if (!open) {
-    return (
-      <button className="hit44"
-        onClick={() => setOpen(true)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
-      >
-        {/* When the number on screen is the bar's own claim, the check is the
-            counterweight: reports from people in the room outrank the owner
-            once three agree, and this button is where those reports come from. */}
-        {ownerAsserted ? 'There now? Does this look right?' : 'There now? Rate the crowd'}
-      </button>
-    );
-  }
-  const opts = [
-    // The words the score ladder actually uses (crowdLabelFor: Quiet, Not Busy,
-    // Steady, Busy, Packed), narrowed to the three buckets this control has.
-    //
-    // The comment here used to claim these WERE the ladder's words and that
-    // 'Packed' appeared nowhere else in the product. Both stopped being true on
-    // 2026-08-28, when the ladder was re-cut and gained Packed. So somebody
-    // looking at a card reading "Packed 91" tapped "There now? Rate the crowd"
-    // and was offered Quiet / Moderate / Very Busy: no option matched the word
-    // on their screen and two of the three were words nothing else in the app
-    // says (backend/routes/badge.js calls them legacy aliases).
-    //
-    // Only the WORDS change. `level` is what travels to the server and what the
-    // training export reads, so the stored data is untouched.
-    { level: 1, label: 'Quiet' },
-    { level: 2, label: 'Steady' },
-    { level: 3, label: 'Packed' },
-  ];
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px', animation: 'fadeSlideIn 0.25s ease-out' }}>
-      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>
-        How busy is it actually:
-      </span>
-      {opts.map(o => (
-        <button className="hit44"
-          key={o.level}
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setFailed(false);
-            try {
-              const saved = await submitVenueFeedback({
-                venue_place_id: placeId,
-                venue_name: venueName,
-                crowd_level: o.level,
-                predicted_score: typeof predicted === 'number' ? Math.round(predicted) : null,
-              });
-              setSent(saved && saved.verified ? 'verified' : 'unverified');
-            } catch (err) {
-              console.error('[RealityCheck] submit failed:', err);
-              // Was console-only: the buttons came back with no word.
-              setFailed(true);
-              setBusy(false);
-            }
-          }}
-          style={{ padding: '4px 12px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer' }}
-        >
-          {o.label}
-        </button>
-      ))}
-      {failed && (
-        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '500' }}>That did not send. Try again.</span>
-      )}
-    </div>
-  );
-});
 
 // =============================================================================
 // Offline screen with a playable minigame. Reviewers open apps in Airplane
@@ -4167,170 +4527,6 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
 // eslint-disable-next-line no-unused-vars
 const styles = makeStyles(colorsLight, false);
 
-// Group admission likelihood — venue-type, size, and time-aware.
-//
-// ── WHOSE CLOCK, AND WHICH HOUR ──────────────────────────────────────────────
-// This used to read `new Date().getHours()` and `new Date().getDay()`: the
-// PHONE's clock. Every other crowd surface was moved off the device years of
-// bugs ago — migration 023, crowdEngine.venueLocalNow, the whole
-// ML_BASELINE_AXIS_VERIFIED pass — because how busy a place is, is a fact about
-// that place's night. Someone in California opening a Philadelphia bar at 10 PM
-// Friday was asking about 1 AM Saturday there, and this function answered for
-// Friday evening: weekend-evening peak pressure on a room that has already
-// emptied out.
-//
-// Two things follow, and they are one rule:
-//   * `clock` is REQUIRED. There is no device-clock fallback in here, so this
-//     function cannot silently regress to the phone. The caller resolves the
-//     venue's clock the same way the chart does (cd.venueClock, falling back to
-//     the caller's clock only when the SERVER did — `venueClock.local === false`).
-//   * `clock` is the hour the CARD IS SHOWING, not "now". `crowdScore` and
-//     `clock.hour` have to describe the same instant: a forecast strip that
-//     puts a different bar on screen must pass THAT bar's score with THAT
-//     bar's hour and day, or the verdict describes an hour nobody asked about.
-// Without a clock there is no honest answer, so it returns none.
-function getGroupAdmission(crowdScore, partySize, venue, clock) {
-  if (!crowdScore && crowdScore !== 0) return null;
-  if (!clock || !Number.isFinite(clock.hour) || !Number.isFinite(clock.day)) return null;
-  const size = partySize || 1;
-  const types = venue?.types || [];
-  const reviews = venue?.user_ratings_total || venue?.review_count || 0;
-  const hour = ((Math.trunc(clock.hour) % 24) + 24) % 24;
-  const day = ((Math.trunc(clock.day) % 7) + 7) % 7;
-  const isWeekendEvening = (day === 5 || day === 6) && hour >= 17;
-  const isPeakDinner = hour >= 18 && hour <= 20;
-  const isPeakLunch = hour >= 11 && hour <= 13;
-  const has = (...tags) => types.some(t => tags.includes(t));
-
-  // Venue size factor from reviews (more reviews = bigger venue = groups easier)
-  const sizeFactor = reviews > 3000 ? 0.5 : reviews > 1000 ? 0.7 : reviews > 300 ? 0.85 : reviews > 100 ? 1.0 : 1.3;
-
-  // Classify venue — group impact per person depends on how capacity-constrained it is
-  let perPersonImpact;
-  let category;
-
-  // Open / unlimited capacity — group size doesn't matter
-  if (has('park', 'amusement_park', 'zoo', 'aquarium', 'beach', 'campground',
-    'national_park', 'dog_park', 'hiking_area', 'playground', 'ski_resort',
-    'stadium', 'arena', 'shopping_mall', 'shopping_center', 'outlet_mall',
-    'market', 'flea_market', 'farmers_market', 'tourist_attraction',
-    'convention_center', 'fairground', 'water_park', 'theme_park')) {
-    category = 'open';
-    perPersonImpact = 0;
-  }
-  // Ticketed / assigned seating — group size barely matters
-  else if (has('movie_theater', 'performing_arts_theater', 'concert_hall',
-    'opera_house', 'live_music_venue', 'comedy_club', 'theater',
-    'museum', 'art_gallery', 'science_museum', 'planetarium',
-    'escape_room', 'go_kart_track', 'mini_golf')) {
-    category = 'ticketed';
-    perPersonImpact = 0.5;
-  }
-  // Large casual — high capacity, groups are easy
-  else if (has('fast_food_restaurant', 'meal_takeaway', 'food_court',
-    'gym', 'fitness_center', 'spa', 'bowling_alley', 'pool_hall',
-    'casino', 'supermarket', 'grocery_store', 'department_store',
-    'book_store', 'library', 'laundry', 'car_wash')) {
-    category = 'large_casual';
-    perPersonImpact = 0.8;
-  }
-  // Bars / breweries — standing room helps, but tables for groups are limited.
-  //
-  // BAR IS TESTED BEFORE ENTERTAINMENT, and the order is the fix. Google types
-  // a lot of rooms both `bar` and `night_club` (or `bar` and `karaoke`), and
-  // `night_club` lives in the entertainment branch below. With entertainment
-  // first, one such venue got a NIGHTCLUB reading here while the same card's
-  // score and wait estimate — genHourly and getWait, both `['bar',
-  // 'night_club'].includes(t)`, bar wins in each — were reading it as a bar. One
-  // card, one venue, two different rooms. Whatever the answer is, the three have
-  // to agree, so this now resolves the ambiguity the same way they do: a venue
-  // carrying a bar tag is a bar. A room typed `night_club` alone carries no bar
-  // tag and still falls through to entertainment, unchanged.
-  //
-  // The related item in DEFERRED.md §3 was NOT this one and was fixed straight
-  // after, the same way: crowdEngine.estimateCapacity tested `night_club`
-  // BEFORE `isBarLike` and published nightclub capacity for a venue its own
-  // score and wait called a bar. Bar wins there now too.
-  else if (has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
-    'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
-    category = 'bar';
-    perPersonImpact = 1.5;
-  }
-  // Entertainment — moderate impact
-  else if (has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
-    'karaoke', 'billiard_hall', 'hookah_bar', 'lounge',
-    'dance_club', 'night_club', 'batting_cage', 'rock_climbing_gym')) {
-    category = 'entertainment';
-    perPersonImpact = 1.2;
-  }
-  // Regular restaurants — table-based, groups need bigger tables
-  else if (has('restaurant', 'diner', 'buffet_restaurant', 'steakhouse',
-    'seafood_restaurant', 'pizza_restaurant', 'hamburger_restaurant',
-    'american_restaurant', 'italian_restaurant', 'mexican_restaurant',
-    'chinese_restaurant', 'japanese_restaurant', 'indian_restaurant',
-    'thai_restaurant', 'korean_restaurant', 'vietnamese_restaurant',
-    'mediterranean_restaurant', 'greek_restaurant', 'turkish_restaurant',
-    'bbq_restaurant', 'ramen_restaurant', 'sushi_restaurant',
-    'sandwich_shop', 'breakfast_restaurant', 'brunch_restaurant',
-    'family_restaurant', 'food')) {
-    category = 'restaurant';
-    perPersonImpact = 2.0;
-  }
-  // Small / cozy — limited seating, groups take up a lot of space
-  else if (has('cafe', 'coffee_shop', 'tea_house', 'juice_shop',
-    'smoothie_shop', 'bakery', 'dessert_shop', 'ice_cream_shop',
-    'donut_shop', 'patisserie', 'creperie', 'bubble_tea')) {
-    category = 'small';
-    perPersonImpact = 2.5;
-  }
-  // Fine dining — reservations are the norm, groups are hard
-  else if (has('fine_dining_restaurant') || (venue?.price_level >= 3 && has('restaurant'))) {
-    category = 'fine_dining';
-    perPersonImpact = 3.0;
-  }
-  // Default — treat like a regular restaurant
-  else {
-    category = 'default';
-    perPersonImpact = 1.5;
-  }
-
-  // Open venues — group size doesn't matter
-  if (category === 'open') {
-    return { text: 'No issues for groups', color: '#22C55E', icon: 'check' };
-  }
-
-  // Time pressure — peak hours make groups harder to seat
-  let timeMult = 1.0;
-  if (category === 'bar' || category === 'entertainment') {
-    // Bars/clubs peak later
-    if (isWeekendEvening && hour >= 21) timeMult = 1.5;
-    else if (isWeekendEvening) timeMult = 1.3;
-    else if (hour >= 21) timeMult = 1.2;
-  } else {
-    if (isWeekendEvening) timeMult = 1.4;
-    else if (isPeakDinner) timeMult = 1.25;
-    else if (isPeakLunch) timeMult = 1.1;
-  }
-
-  // Large group penalty — non-linear, 7+ is way harder than 4
-  const groupPenalty = size <= 2 ? size : size <= 4 ? size * 1.1 : size * 1.4;
-
-  const effectiveLoad = crowdScore + (groupPenalty * perPersonImpact * sizeFactor * timeMult);
-
-  // Ticketed venues — simpler messaging
-  if (category === 'ticketed') {
-    if (size >= 6) return { text: 'Book ahead for group', color: '#F59E0B', icon: 'clock' };
-    return { text: 'Buy tickets anytime', color: '#22C55E', icon: 'check' };
-  }
-
-  if (effectiveLoad < 40) return { text: 'Walk right in', color: '#22C55E', icon: 'check' };
-  if (effectiveLoad < 55) return { text: 'Should be fine', color: '#22C55E', icon: 'check' };
-  if (effectiveLoad < 70) return { text: 'Might wait briefly', color: '#F59E0B', icon: 'clock' };
-  if (effectiveLoad < 85) return { text: 'Expect a wait', color: '#F59E0B', icon: 'clock' };
-  if (effectiveLoad < 95) return { text: category === 'fine_dining' || size >= 5 ? 'Reservation needed' : 'Call ahead recommended', color: '#EF4444', icon: 'alert' };
-  return { text: 'Reservation needed', color: '#EF4444', icon: 'alert' };
-}
-
 // ─── ISOLATED MODAL COMPONENTS ────────────────────────────────────────────
 // These manage their own local state so typing doesn't re-render the parent.
 // Only onSave and onCancel callbacks escape.
@@ -7223,7 +7419,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [zelleIdentifier, setZelleIdentifier] = useState('');
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentOptions, setPaymentOptions] = useState(null);
-  const [showPaymentPicker, setShowPaymentPicker] = useState(false);
+  const [showPaymentPicker, setPaymentPickerOpen] = useState(false);
+  /* OPENING THE PICKER WARMS ITS OWN CHUNK, and this wrapper exists only so
+     that it can. The payer taps Settle Up, waits for getPaymentLinks, and
+     would then wait a second time for components/PaymentSheets.js with a bare
+     scrim on screen. Firing the loader with the state change makes that second
+     wait a cache hit instead. The idle warm above covers most sessions already;
+     this covers the ones it skips, which are save-data and 2g, the only
+     connections where the second wait is long enough to feel.
+
+     Through loadPaymentSheets rather than a bare import(), so a failure is
+     already caught: a speculative fetch must never be an unhandled rejection,
+     and the same call is what the lazy itself uses, so this is one request.
+
+     NAMED setShowPaymentPicker, and the raw setter renamed instead, because
+     chatDetailProps is shorthand-only by contract and the chat screen is the
+     one caller. A renamed key there would pass the prop and fail that test. */
+  const setShowPaymentPicker = useCallback((open) => {
+    if (open) loadPaymentSheets();
+    setPaymentPickerOpen(open);
+  }, []);
   // The wallet app did not come to the foreground, or there was never one to
   // open (Zelle). Shape: { method, routes, reason, payTo, amount }.
   const [paymentFallback, setPaymentFallback] = useState(null);
@@ -8473,29 +8688,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus the input only when there is already a conversation to continue.
-  //
-  // ON A REAL DEVICE THIS EFFECT WAS THE WHOLE "BIRDIE DOES NOT OPEN RIGHT"
-  // BUG (TestFlight, 2026-09-08). It focused unconditionally 200 ms after the
-  // panel appeared, so tapping Birdie raised the keyboard immediately, iOS
-  // shifted and scaled the viewport to keep the caret in view, and the panel
-  // read as "zooming in" the instant it was tapped.
-  //
-  // What the keyboard covered is the point: the empty state IS the greeting
-  // (see aiMessages, "Birdie himself + prompt chips"). Opening Birdie for the
-  // first time showed a keyboard over the one screen that explains what he can
-  // do, which is why it looked like it had not popped out properly.
-  //
-  // Coming back to an existing thread is the opposite case: the greeting is
-  // long gone, the person is there to type, and the keyboard is what they
-  // want. Hence the length check rather than removing the focus outright.
-  useEffect(() => {
-    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen')
-        && aiMessages.length > 0
-        && aiInputRef.current) {
-      setTimeout(() => aiInputRef.current?.focus(), 200);
-    }
-  }, [aiChatMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // BIRDIE'S OPEN-THE-BOX FOCUS MOVED to components/birdie/BirdiePanel.js with
+  // the panel on 2026-09-13, and the whole of its reasoning went with it,
+  // including what the keyboard covered on the TestFlight build of 2026-09-08.
+  // It could not stay here once the panel was fetched rather than inline: it
+  // guards on aiInputRef.current, and the commit that flips aiChatMode does not
+  // contain the input, warm chunk or cold, because React.lazy suspends on the
+  // first render of a fresh lazy element and React flushes the fallback commit's
+  // effects before it retries. Out here it would have run once, found null, and
+  // never run again. It runs on the panel's own mount now. The refs themselves
+  // stay here with the rest of the Birdie state.
 
 
   // Birdie is a helper for the screen you are on, not a follower. Its bubble
@@ -9460,15 +9662,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     };
   }, [currentScreen, currentTab, userLocation, selectedFlockId, flocks, activeVenue]);
 
-  // Auto-scroll AI chat to bottom when messages change
+  // THE AUTO-SCROLL THAT PINNED THE TRANSCRIPT TO ITS NEWEST MESSAGE MOVED to
+  // components/birdie/BirdiePanel.js with the panel on 2026-09-13, for the
+  // reason the focus effect above it did: it reads aiChatEndRef.current, and
+  // the commit that flips aiChatMode no longer contains the subtree that ref
+  // points into. The counter stays here, handed over as a prop, so that what
+  // the reader has already seen survives closing and reopening Birdie.
   const aiMsgCountRef = useRef(0);
-  useEffect(() => {
-    if ((aiChatMode === 'panel' || aiChatMode === 'fullscreen') && aiChatEndRef.current) {
-      const isNew = aiMessages.length !== aiMsgCountRef.current;
-      aiMsgCountRef.current = aiMessages.length;
-      requestAnimationFrame(() => aiChatEndRef.current?.scrollIntoView({ behavior: isNew ? 'auto' : 'auto' }));
-    }
-  }, [aiMessages, aiTyping, aiChatMode]);
 
   // Auto-scroll chat to bottom when messages change
   const selectedFlock = useMemo(
@@ -14001,465 +14201,87 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const openBirdie = useCallback(() => setAiChatMode('panel'), []);
   const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
 
+  /* BIRDIE'S PANEL IS components/birdie/BirdiePanel.js AS OF 2026-09-13. Its
+     460 lines are the whole assistant surface: the backdrop, the panel and the
+     fullscreen sheet, the header with its new-chat, expand and close controls,
+     the empty state with the AI disclosure, the transcript and its
+     memory-window line, the venue, draft-flock and vote cards a turn can
+     carry, the typing indicator, the suggestion chips, the composer, and the
+     venue share picker nested inside it. aiChatMode starts at 'bubble' and
+     nothing reads a stored value or a URL into it, so no first-paint path
+     reached any of this and every visitor who never opened Birdie was paying
+     to parse it. The gate stays here because the gate is what makes it lazy: a
+     component mounted unconditionally is a chunk fetched on first paint, which
+     is the whole saving. The 46 values the block closed over travel as
+     birdiePanelProps, all shorthand, so the name here and the parameter there
+     cannot drift apart, which is the substitution extractionEquivalence.test.js
+     polices. Same treatment as the form primitives that moved to
+     components/ui/FormBits.js. The ai* state, the refs and the handlers stay
+     here, because closing Birdie must not lose a thread, a half-typed question
+     or the free-tier counter, and because most of those handlers are reachable
+     from somewhere that is not this panel. */
+  const birdiePanelProps = {
+    AI_CHAT_MAX_MESSAGES,
+    AI_CHAT_MAX_MESSAGE_CHARS,
+    DialogBehavior,
+    aiChatEndRef,
+    aiInputHasText,
+    aiInputHasTextRef,
+    aiInputRef,
+    aiInputValueRef,
+    aiMemoryCut,
+    aiMessages,
+    aiMsgCountRef,
+    aiRemaining,
+    aiResetsAt,
+    aiShareVenue,
+    aiSuggestedQuestions,
+    aiTyping,
+    birdieActionBusy,
+    birdieCorner,
+    canSendAi,
+    closeAiChat,
+    colors,
+    confirmBirdieDraft,
+    confirmBirdieVoteStage,
+    entitlements,
+    fabDockBottom,
+    fillAiInput,
+    flocks,
+    formatEventTime,
+    isAiFullscreen,
+    isAiPanel,
+    isDark,
+    isPro,
+    loadTrustedContacts,
+    memberCountLabel,
+    openVenueDetail,
+    sendAiMessage,
+    setAiInputHasText,
+    setAiShareVenue,
+    setCurrentScreen,
+    setCurrentTab,
+    setProfileScreen,
+    setSelectedFlockId,
+    setSelectedVenueForCreate,
+    startNewAiChat,
+    toggleAiFullscreen,
+    transmitFlockMessage,
+  };
+  /* fallback null rather than a skeleton, the same call every other overlay in
+     this file makes. In panel mode the backdrop is transparent and keeps
+     pointerEvents 'none', so there is nothing for a stand-in to stand in for:
+     the screen underneath stays usable while the chunk lands, and a skeleton of
+     a panel that arrives in one round trip reads as a flash. warmScreenChunks
+     has already fetched it in the ordinary case. On save-data or 2g it has not,
+     by the same rule that keeps the login video off a metered connection, and
+     there a cold tap waits out one round trip, the same beat the wrap-up
+     sheet's own warm comment names. A chunk that cannot be fetched at all
+     resolves to BirdiePanelUnavailable rather than throwing at the root. */
   const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
-      <div onClick={(e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={{
-        /* Birdie used to follow you across every tab, sitting over 55% of the
-           screen with no keyboard way out. It now closes when you navigate
-           (see the effect next to aiChatMode) and DialogBehavior below adds
-           Escape. The panel keeps pointerEvents 'none' on the backdrop so the
-           screen underneath is still usable while it is open. */
-        position: 'absolute',
-        inset: 0,
-        backgroundColor: isAiFullscreen ? 'rgba(0,0,0,0.8)' : 'transparent',
-        display: 'flex',
-        alignItems: isAiFullscreen ? 'flex-end' : 'flex-end',
-        justifyContent: isAiPanel ? 'flex-start' : 'stretch',
-        zIndex: 50,
-        pointerEvents: isAiPanel ? 'none' : 'auto',
-        transition: 'background-color 0.3s ease',
-      }}>
-        <div style={{
-          backgroundColor: 'var(--bg-card-solid)',
-          borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px',
-          width: isAiFullscreen ? '100%' : 'calc(100% - 24px)',
-          maxWidth: isAiPanel ? '360px' : '100%',
-          height: isAiFullscreen ? '85%' : '55%',
-          minHeight: isAiPanel ? '380px' : undefined,
-          maxHeight: isAiPanel ? '520px' : undefined,
-          display: 'flex',
-          flexDirection: 'column',
-          position: isAiPanel ? 'absolute' : 'relative',
-          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? fabDockBottom : undefined) : 0,
-          top: isAiPanel ? (birdieCorner.startsWith('top') ? '60px' : undefined) : undefined,
-          left: isAiPanel ? (birdieCorner.includes('left') ? '12px' : undefined) : undefined,
-          right: isAiPanel ? (birdieCorner.includes('right') ? '12px' : undefined) : undefined,
-          boxShadow: isAiPanel ? '0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.12)' : 'none',
-          border: isAiPanel ? '1px solid var(--border-subtle)' : 'none',
-          pointerEvents: 'auto',
-          transition: 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          animation: 'birdieExpand 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          overflow: 'hidden',
-        }}>
-          <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
-          {/* Header */}
-          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: colors.navyMidBg, borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            {/* minWidth 0 and a one-line subtitle. The header gained a third
-                button, and without these the title block refuses to shrink: at
-                320px the tagline wrapped to three lines and pushed the header
-                down into a panel that is only 55% of the screen tall. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
-              <div style={{ position: 'relative', flexShrink: 0 }}>
-                <div style={{ width: isAiPanel ? '34px' : '40px', height: isAiPanel ? '34px' : '40px', borderRadius: '50%', background: isDark ? '#162046' : '#e8eaf0', overflow: 'hidden', boxShadow: '0 4px 12px rgba(30,58,92,0.35)', border: '2px solid rgba(45,90,135,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>Birdie</h2>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>knows what's good tonight</p>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-              {/* New chat. The way out of a thread the server will not take,
-                  and the only reset there was ever a way to ask for. Shown
-                  once there is something to clear, and held closed while a
-                  turn is in flight so an outstanding answer cannot land in a
-                  thread that no longer has its question. */}
-              {aiMessages.length > 0 && (
-                <button
-                  className="hit44"
-                  aria-label="Start a new chat"
-                  title="New chat"
-                  onClick={startNewAiChat}
-                  disabled={aiTyping}
-                  style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease, opacity 0.2s ease' }}
-                >
-                  {Icons.plus('white', 14)}
-                </button>
-              )}
-              {/* Expand/Collapse toggle */}
-              <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
-              >
-                {isAiFullscreen ? (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-                ) : (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-                )}
-              </button>
-              {/* Close */}
-              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
-              >{Icons.x('white', 14)}</button>
-            </div>
-          </div>
-
-          {/* Messages */}
-          <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
-            {/* Once the chat starts he steps aside: a whisper behind the
-                thread rather than a second thing to read. */}
-            {aiMessages.length > 0 && (
-              <div style={{ position: 'absolute', inset: 0, zIndex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: isDark ? 0.12 : 0.07, pointerEvents: 'none' }}>
-                <BirdieBird size={isAiPanel ? 148 : 200} dark={isDark} />
-              </div>
-            )}
-
-            {/* Empty state: Birdie, then the greeting, then the chips — one
-                stack in normal flow so nothing overlaps him. */}
-            {aiMessages.length === 0 && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
-                <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
-                <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
-                <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
-                {/* THE AI DISCLOSURE, IN THE PRODUCT.
-                    Terms sec.7 and the privacy policy both name Google's Gemini
-                    and say Birdie's answers are generated and can be wrong, but
-                    neither reaches a user who never opens a legal page. An app
-                    was rejected by App Review for exactly that gap. This is the
-                    one screen a first-time user reads before typing, so it says
-                    it here, in the same words as the Terms so the two cannot
-                    drift. */}
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', maxWidth: '280px', lineHeight: 1.45 }}>Birdie is an assistant built on Google's Gemini. Its answers are generated and can be wrong.</p>
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
-                  {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
-                    <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      {q.icon(colors.navy, 12)}
-                      {q.text}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {aiMessages.map((msg, i) => (
-              <React.Fragment key={i}>
-              {/* Where Birdie's memory starts. The server takes the last 24
-                  messages and this client sends exactly that, so past 24 the
-                  oldest of the thread stop being read. Losing the start of a
-                  long conversation without a word is the kind of quiet
-                  dishonesty that makes an assistant feel broken instead of
-                  bounded, so the boundary is drawn where it actually falls and
-                  the transcript above it is still there to scroll. */}
-              {/* FUTURE TENSE, DELIBERATELY. aiMemoryCutIndex marks the oldest
-                  message that survives the NEXT send, so at exactly 24 messages
-                  the line appears while all 24 are still being read. "is out of
-                  view" would be false at that moment and true one message
-                  later; "drops out on your next question" is true at every
-                  length, and it warns before the loss instead of reporting it
-                  afterwards. */}
-              {aiMemoryCut > 0 && i === aiMemoryCut && (
-                <div style={{ position: 'relative', zIndex: 2, margin: '2px 0 12px', paddingTop: '8px', borderTop: '1px solid var(--divider)' }}>
-                  <p style={{ margin: 0, fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.45 }}>
-                    Birdie reads the last {AI_CHAT_MAX_MESSAGES} messages. Everything above this line drops out of view on your next question.
-                  </p>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
-                  {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                </div>
-                <div style={{ maxWidth: '78%' }}>
-                  <div style={{ borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.10)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
-                    {msg.text}
-                  </div>
-                  {/* Venue Cards from AI */}
-                  {/* Navigation button from AI */}
-                  {msg.navigate && (
-                    <button className="hit44" onClick={() => {
-                      const nav = msg.navigate;
-                      if (nav.screen) setCurrentScreen(nav.screen);
-                      else setCurrentScreen('main');
-                      // 'chats' was the tab id Birdie's tool contract taught
-                      // and no such tab exists (the real id is 'chat'), so
-                      // "take me to Messages" landed on the Nest with nothing
-                      // selected. The server strings are fixed; this clamp
-                      // keeps an already-cached model answer working too.
-                      if (nav.tab) setCurrentTab(nav.tab === 'chats' ? 'chat' : nav.tab);
-                      if (nav.profile_section === 'safety') { setProfileScreen('safety'); loadTrustedContacts(); }
-                      else if (nav.profile_section === 'payment') setProfileScreen('payment');
-                      else if (nav.profile_section === 'edit') setProfileScreen('edit');
-                      closeAiChat();
-                    }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
-                      {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
-                    </button>
-                  )}
-                  {msg.flockDraft && (
-                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
-                      <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.flockDraft.name}</p>
-                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                        {msg.flockDraft.event_time ? formatEventTime(msg.flockDraft.event_time) : 'Time still open'}
-                        {msg.flockDraft.venue ? ` \u00b7 ${msg.flockDraft.venue.name}` : ''}
-                      </p>
-                      {/* Nothing exists until this tap: the model only staged
-                          the card (routes/ai.js draft_flock, validation only),
-                          and this button calls the same create route the
-                          create screen calls. */}
-                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
-                        {birdieActionBusy ? 'Starting\u2026' : 'Start this flock'}
-                      </button>
-                    </div>
-                  )}
-                  {msg.voteStage && (
-                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
-                      <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.voteStage.venue.name}</p>
-                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Your vote in {msg.voteStage.flock_name} goes to this spot. One vote each, so it replaces any vote you already cast there.</p>
-                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieVoteStage(msg.voteStage)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
-                        {birdieActionBusy ? 'Voting\u2026' : 'Vote for it'}
-                      </button>
-                    </div>
-                  )}
-                  {msg.venues && msg.venues.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
-                      {msg.venues.map((v, vi) => {
-                        // Real crowd data only. When Birdie hasn't checked this
-                        // venue, the card simply has no crowd row; a number
-                        // derived from the venue's name is a lie, not a design.
-                        const crowd = typeof v.crowd === 'number' ? v.crowd : null;
-                        const crowdColor = crowd == null ? null : crowd > 84 ? 'var(--accent-red-text)' : crowd > 39 ? '#B45309' : 'var(--accent-green-text)';
-                        const crowdBar = crowd == null ? null : crowd > 84 ? '#EF4444' : crowd > 39 ? '#F59E0B' : '#22C55E';
-                        // photo_url is a proxy ref path from the backend — the
-                        // old place-id URL never resolved (proxy takes ?ref=).
-                        const photoUrl = v.photo_url ? `${BASE_URL}${v.photo_url}` : null;
-                        return (
-                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: '280px', animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
-                          {photoUrl && (
-                            <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
-                          )}
-
-                          <div style={{ padding: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                              <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, lineHeight: 1.25 }}>{v.name}</h4>
-                              {v.is_open != null && (
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 7px', borderRadius: '999px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0 }}>{v.is_open ? 'Open' : 'Closed'}</span>
-                              )}
-                            </div>
-
-                            {/* One meta line: price · rating · street */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0 }}>
-                              {v.price_level > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>{'$'.repeat(v.price_level)}</span>}
-                              {v.rating && (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>
-                                  {Icons.starFilled('#d97706', 12)}{v.rating}
-                                </span>
-                              )}
-                              {v.address && (
-                                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',')[0]}</span>
-                              )}
-                            </div>
-
-                            {/* Crowd row — only when Birdie actually checked */}
-                            {crowd != null && (
-                              <div style={{ marginTop: '10px' }}>
-                                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{v.crowd_label || 'Crowd right now'}</span>
-                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{crowd}%</span>
-                                </div>
-                                <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
-                                  <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdBar, borderRadius: '2px', transition: 'width 0.5s cubic-bezier(0.22,1,0.36,1)' }} />
-                                </div>
-                              </div>
-                            )}
-
-                            <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
-                              {v.place_id && (
-                                <button className="hit44 fab-press" onClick={() => {
-                                  openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating });
-                                }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                                  Details
-                                </button>
-                              )}
-                              <button className="hit44 fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                                {Icons.send('white', 12)} Share
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-              </React.Fragment>
-            ))}
-
-            {aiTyping && (
-              <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 1, animation: 'fadeSlideIn 0.3s ease-out' }}>
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1.5px solid rgba(45,90,135,0.4)' }}>
-                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-hover)', borderRadius: '16px', borderTopLeftRadius: '4px', padding: '10px 16px', display: 'flex', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="6" cy="12" r="3" fill={isDark ? '#e8e4df' : '#9a958f'} opacity="0.9">
-                      <animate id="b1" begin="0;b3.end+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="0;b3.end+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                    <circle cx="16" cy="12" r="3" fill={isDark ? '#d5d0c9' : '#8a857f'} opacity="0.9">
-                      <animate begin="b1.begin+0.1s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="b1.begin+0.1s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                    <circle cx="26" cy="12" r="3" fill={isDark ? '#c2bdb6' : '#7a756f'} opacity="0.9">
-                      <animate id="b3" begin="b1.begin+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="b1.begin+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                  </svg>
-                </div>
-              </div>
-            )}
-            <div ref={aiChatEndRef} />
-          </div>
-
-          {/* Suggested Questions — mid-conversation only; the empty state
-              carries its own chips under the bird */}
-          {!aiTyping && aiMessages.length > 0 && (
-            <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
-              {isAiFullscreen && <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
-                  <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {q.icon(colors.navy, isAiPanel ? 10 : 12)}
-                    {q.text}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Input */}
-          <div style={{ padding: '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
-            <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
-              {/* Text input row */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
-                {/* maxLength is the server's own per-message ceiling. Without
-                    it a pasted essay 400'd as "Message too long", stayed in the
-                    transcript, and then failed EVERY later send in the thread,
-                    because the cap applies to the history too. */}
-                <input aria-label="Ask me anything" ref={aiInputRef} type="text" defaultValue="" maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
-                {/* `!aiInputHasText && !aiTyping` left this ENABLED for the
-                    whole time Birdie was answering, including over an empty
-                    box, where pressing it did nothing; and it was drawn at 0.4
-                    opacity the entire time, so it looked disabled and was not.
-                    One value now drives both the look and the behaviour. */}
-                <button aria-label="Send" className="hit44 fab-press" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'scale(1)' : 'scale(0.85)', opacity: canSendAi ? 1 : 0.4, boxShadow: canSendAi ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
-                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'translateY(-1px)' : 'translateY(0)' }}>
-                    <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-                  </svg>
-                </button>
-              </div>
-              {/* Action buttons row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 4px 0', borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '6px' }}>
-                {[
-                  { icon: Icons.search, label: 'Search', prefix: 'Find me ', color: 'var(--accent-steel, #2d5a87)' },
-                  { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
-                  { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
-                ].map((action, i) => (
-                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-                  >
-                    {action.icon('currentColor', 13)}
-                    <span>{action.label}</span>
-                  </button>
-                ))}
-                <div style={{ flex: 1 }} />
-                {/* Free-tier meter surfaces only when it's about to matter.
-                    The else branch is the AI disclosure: "Birdie AI" alone is a
-                    label, not a disclosure, and this is the only line rendered
-                    under EVERY turn, so it carries the generated-output caveat
-                    for anyone who scrolled past the empty state. */}
-                {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
-                  <span style={{ fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
-                    {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
-                  </span>
-                ) : (
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI &middot; answers are generated and can be wrong</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Venue Share Picker */}
-          {aiShareVenue && (
-            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: '24px 24px 0 0' }}>
-              <DialogBehavior onClose={() => setAiShareVenue(null)} label="Share this venue" />
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: '60%', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
-                      Send {aiShareVenue.name}
-                    </h3>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
-                      {aiShareVenue._shareToDm ? 'Choose a friend' : 'Choose a flock'}
-                    </p>
-                  </div>
-                  <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-                  {aiShareVenue._shareToDm ? (
-                    /* DM — navigate to DM tab with venue in clipboard */
-                    <div style={{ padding: '20px', textAlign: 'center' }}>
-                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '12px' }}>Open your DMs to share <strong>{aiShareVenue.name}</strong></p>
-                      <button className="hit44" onClick={() => {
-                        setAiShareVenue(null);
-                        closeAiChat();
-                        setCurrentTab('chat');
-                        setCurrentScreen('main');
-                      }} style={{ padding: '10px 24px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
-                        Go to DMs
-                      </button>
-                    </div>
-                  ) : (
-                    /* Flocks list. This filtered on status 'active', which the
-                       client never produces (getFlocks maps the server's
-                       'planning' to 'voting'), so the sheet was always empty. */
-                    (() => {
-                      const shareable = flocks.filter(f => f.status !== 'completed' && f.status !== 'cancelled');
-                      // Birdie's venue-card sender, the third one in the file.
-                      // It used to post straight to apiSendMessage inside
-                      // `try { } catch {}`, so a refusal (rate limit,
-                      // moderation, no signal) was swallowed whole and the user
-                      // was walked into a chat with no card in it and nothing
-                      // said. It takes the same reconciled path the in-chat
-                      // share does now, which gives it the optimistic bubble,
-                      // the socket transport, and a failed state with
-                      // tap-to-retry.
-                      return shareable.length > 0 ? shareable.map(f => (
-                      <button className="hit44" key={f.id} onClick={() => {
-                        const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
-                        transmitFlockMessage(f.id, `Check out ${aiShareVenue.name}!`, { message_type: 'venue_card', venue_data: venueData });
-                        setAiShareVenue(null);
-                        closeAiChat();
-                        setSelectedFlockId(f.id);
-                        setCurrentScreen('chatDetail');
-                      }} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
-                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {Icons.users('white', 16)}
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', display: 'block' }}>{f.title || f.name}</span>
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{memberCountLabel(f)}{f.time && f.time !== 'TBD' ? ` · ${f.time}` : ''}</span>
-                        </div>
-                      </button>
-                      )) : (
-                        <div style={{ padding: '24px 20px', textAlign: 'center' }}>
-                          <BirdieStill bird={WARM_BIRD} size={80} style={{ margin: '0 auto 10px' }} />
-                          <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>No flocks to send this to yet</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Start a flock and this venue can go straight into the chat.</p>
-                          <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
-                            Start a flock here
-                          </button>
-                        </div>
-                      );
-                    })()
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+    <React.Suspense fallback={null}>
+      <BirdiePanel {...birdiePanelProps} />
+    </React.Suspense>
   );
 
   // Mode Selection Handler
@@ -14906,114 +14728,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   );
   };
 
-  // PAST FLOCKS SCREEN — completed and cancelled plans, each one tap from
-  // happening again. Reached from the Your Flocks header on Home.
-  const PastFlocksScreen = () => {
-    const currentYear = new Date().getFullYear();
-    const formatPastDate = (iso) => {
-      if (!iso) return null;
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return null;
-      const opts = { month: 'short', day: 'numeric' };
-      if (d.getFullYear() !== currentYear) opts.year = 'numeric';
-      return d.toLocaleDateString('en-US', opts);
-    };
-    return (
-      <div key="past-flocks-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-        <DialogBehavior modal={false} onClose={() => setCurrentScreen('main')} />
-        <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-          <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Past flocks</h1>
-        </div>
-
-        <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
-          {pastFlocksLoading && !pastFlocks && <ListSkeleton label="Loading past flocks" />}
-
-          {!pastFlocksLoading && pastFlocksError && (
-            <div style={{ ...styles.card, marginBottom: '10px' }}>
-              {/* A bird beside a failure, not instead of one. The copy still
-                  says the read failed and the retry is still the action; the
-                  bird is company. */}
-              <BirdNote
-                layout="row"
-                size={48}
-                bird={WARM_BIRD}
-                role="alert"
-                title={pastFlocksError}
-                body="Nothing has been lost. Your finished flocks are still there."
-                action={<button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
-              />
-            </div>
-          )}
-
-          {/* A claim about the user's history, so it waits for a fetch that
-              actually landed (pastFlocks stays null until one does). */}
-          {!pastFlocksLoading && !pastFlocksError && pastFlocks && pastFlocks.length === 0 && (
-            <BirdNote
-              size={96}
-              bird={WARM_BIRD}
-              title="Nothing here yet"
-              body="A flock lands here once its night has been and gone."
-              style={{ marginTop: '36px' }}
-            />
-          )}
-
-          {/* Not gated on the error flag: a failed refresh must not delete the
-              list on screen. The error card above says the refresh missed. */}
-          {pastFlocks && pastFlocks.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {pastFlocks.map(pf => {
-                const dateLabel = formatPastDate(pf.event_time);
-                const members = Array.isArray(pf.members) ? pf.members : [];
-                const busy = rerunningFlockId === pf.id;
-                const cancelled = pf.status === 'cancelled';
-                return (
-                  <div key={pf.id} style={{ padding: '14px 16px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, lineHeight: 1.2 }}>{pf.name}</h3>
-                        {pf.venue_name && (
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {pf.venue_name}</p>
-                        )}
-                      </div>
-                      <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                        {cancelled ? Icons.x('var(--text-secondary)', 12) : Icons.check('var(--text-secondary)', 12)} {cancelled ? 'Cancelled' : 'Happened'}
-                      </span>
-                    </div>
-                    {/* flexWrap: at 320px a full avatar stack + date + button
-                        cannot share one line; the button wraps under instead
-                        of pushing the card into horizontal overflow. */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                        <div style={{ display: 'flex', flexShrink: 0 }}>
-                          {members.slice(0, 4).map((m, j) => (
-                            <div key={m.id ?? j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginLeft: j > 0 ? '-6px' : 0 }}>
-                              {m.profile_image_url
-                                ? <img src={m.profile_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>{m.name?.[0]?.toUpperCase() || '?'}</span>}
-                            </div>
-                          ))}
-                          {members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{members.length - 4}</div>}
-                        </div>
-                        {dateLabel && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy, whiteSpace: 'nowrap' }}>{dateLabel}</span>}
-                      </div>
-                      <button
-                        className="hit44 glass-btn glass-navy"
-                        aria-label={`Do ${pf.name} again`}
-                        disabled={busy}
-                        onClick={() => handleRerunFlock(pf)}
-                        style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
-                      >{busy ? 'Starting…' : 'Do it again'}</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
+  // The past flocks screen was declared here, as an arrow function inside
+  // this component, and it was CALLED rather than mounted. It lives in
+  // ./screens/PastFlocksScreen.js now, and unlike the create screen it is
+  // fetched on demand: currentScreen never starts at 'pastFlocks' and nothing
+  // routes here from a URL, so the block was boot-chunk weight for everyone
+  // who never taps Past flocks. The state and the loader behind it did not
+  // move, because FlockAppInner does not unmount when the user leaves the
+  // screen, so a loaded history and a rerun already in flight survive the
+  // trip. Everything the screen reads is handed to it as a prop; see the
+  // pastFlocksProps object in renderScreen below.
+  //
+  // The one thing the split costs: on a tap the idle prefetch did not beat
+  // (save-data, 2g, or the first second after boot) ScreenChunkFallback
+  // stands in, and it mounts no DialogBehavior, so for the length of that
+  // fetch there is no back arrow and Escape does nothing.
 
   // The create screen was declared here, as an arrow function inside this
   // component, and it was CALLED rather than mounted. It lives in
@@ -15036,983 +14765,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // links, invite cards); restore this screen only WITH a real join route.
 
   // EXPLORE SCREEN
-  // ONE venue card for every map surface. This is the card a tapped pin
-  // opens on Discover, extracted so the venue dashboard's Map tab can render
-  // the exact same thing: same data, same copy, same attribution labels.
-  // With venueOwnerView the informational card is identical; only
-  // consumer ACTIONS are left out (start a flock, check in, the crowd reality
-  // check, nearby navigation), because a venue account acting on those would
-  // either dead-end into consumer-only screens or write user-shaped crowd
-  // signals a venue must never write.
+  // THE VENUE CARD A MAP PIN OPENS lives in
+  // components/venue/ConsumerVenueCard.js as of 2026-09-13, and AnimatedDial,
+  // CrowdRealityCheck and getGroupAdmission went with it, because this card was
+  // the only reader of all three. Same move and the same reason as the form
+  // primitives in components/ui/FormBits.js, with more weight behind it: about
+  // 1,300 lines and 57 KB of comment-free source that no first paint can reach,
+  // because activeVenue is null at boot and nothing mounts this card until a pin
+  // tap, an openVenueDetail call or the window.__flockPanToVenue bridge. It is a
+  // fetched chunk now, warmed on idle in warmScreenChunks so the first tap does
+  // not pay for the round trip, and rebuilt in rearmLazyScreens because
+  // React.lazy remembers a rejected fetch for the life of the page. Everything
+  // the body read arrives as a prop under the name it already had, which is what
+  // keeps the moved code a verbatim copy of the lines that were here.
   const renderConsumerVenueCard = ({ venueOwnerView = false } = {}) => {
+    // THE NULL GUARD STAYS HERE, not only inside the module. Discover renders
+    // the card inside <AnimatePresence>, which animates the exit only when the
+    // child LEAVES the tree, so a wrapper that always returned an element whose
+    // body rendered null would leave a child mounted for ever and
+    // exit={{ y: 40, opacity: 0 }} would never run.
     if (!activeVenue) return null;
+    const consumerVenueCardProps = {
+      CROWD_FRESH_MS, HOUR_ORDERING_MIN_GAP, crowdColorFor, crowdInkFor, resolveVenuePhoto,
+      activeVenue, allVenues, checkinJustSaved, checkinSaving, colors, confirmClick,
+      crowdAlternatives, crowdData, crowdFetchFailed, crowdLoading, handleCheckIn, lastCheckinAt,
+      openVenueDetail, partySize, pickingVenueForCreate, pickingVenueForDm, pickingVenueForFlockId,
+      pinDmVenueNow, selectedDmId, sensorData, sensorHistory, setActiveVenue, setCrowdAlternatives,
+      setCrowdData, setCurrentScreen, setCurrentTab, setPartySize, setPaywallTrigger,
+      setPickingVenueForCreate, setPickingVenueForDm, setPickingVenueForFlockId, setSelectedDmId,
+      setSelectedFlockId, setSelectedVenueForCreate, setVenueDetailHistory, setVenueDetailReturnTo,
+      skipCrowdFetchRef, updateFlockVenue, venueDetailHistory, venueDetailReturnTo,
+    };
+    // Shorthand on purpose, so the name at this call site and the parameter in
+    // the module cannot drift apart. All forty of the FlockAppInner names are
+    // const, so none of them can be reassigned later in the same render and
+    // read stale through this object.
+    //
+    // THE KEY SITS ON THE ELEMENT AnimatePresence SEES. It used to sit on the
+    // root m.div because that div WAS the direct child. Mounted as a component
+    // behind a boundary, a key left only on the inner div would put every venue
+    // in the same presence slot: tapping a different pin would stop remounting
+    // the card, and the card being replaced would never play its exit.
+    //
+    // THE SUSPENSE IS HERE rather than at the Discover call site because the
+    // owner dashboard reaches this same function through venueDashboardProps and
+    // needs a boundary too. The fallback is null, so an unwarmed first tap shows
+    // nothing for the length of the fetch, which is what the idle warm exists to
+    // prevent.
     return (
-          <m.div
-            key={activeVenue.id || activeVenue.place_id}
-            initial={{ y: 60, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 40, opacity: 0 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            {/* THE CARD THAT HAD THE PHOTO AND NEVER SHOWED IT. This is the
-                primary consumer venue card, the one the map opens on a pin tap
-                and the one the venue dashboard's map tab reuses, and until
-                2026-08-20 it rendered the name, the type, the stars, the
-                address, the crowd forecast and the actions with no image
-                anywhere in it. The photo was already in hand the whole time:
-                venuesToMapPins puts photo_url on every pin, and this card only
-                ever read that field to pass it somewhere else. */}
-            {activeVenue.photo_url && (
-              <img
-                src={resolveVenuePhoto(activeVenue.photo_url)}
-                alt={activeVenue.name || ''}
-                style={{ width: '100%', height: '104px', objectFit: 'cover', display: 'block' }}
-                /* Fall back to the shared placeholder rather than vanishing. A
-                   failed load used to be the one case where the layout silently
-                   changed shape under the reader. */
-                onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
-              />
-            )}
-            <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
-              <button aria-label="Close" className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
-              <m.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
-                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.name}</h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{(() => {
-                    const types = activeVenue.types || [];
-                    if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                    return activeVenue.type || 'Place';
-                  })()}{activeVenue.price ? ` • ${activeVenue.price}` : ''}</span>
-                  {/* Google returns no rating for plenty of places. Unguarded,
-                      this printed the literal word "undefined" next to a star. */}
-                  {activeVenue.stars != null && (
-                    /* A star rating drawn with the party-popper glyph: every
-                       other rating chip in the app pairs the number with
-                       starFilled, and a popper next to "4.6" says nothing. */
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                      {Icons.starFilled('#fbbf24', 12)}
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
-                    </div>
-                  )}
-                </div>
-              </m.div>
-              {activeVenue.addr && (
-                <m.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  {Icons.mapPin(colors.textSecondary, 12)}
-                  <span>{activeVenue.addr}</span>
-                </m.div>
-              )}
-
-              {/* AI Crowd Forecast Widget */}
-              {(() => {
-                // Only this venue's read. The detail modal writes the same
-                // state for whichever place it has open, and an untagged read
-                // put venue A's score and chart on venue B's card.
-                const cdTagged = crowdData && crowdData.forPlaceId === activeVenue.place_id ? crowdData : null;
-                // A read without a finite score is a read with no estimate:
-                // the dial drew it as "NaN%".
-                const cd = cdTagged && Number.isFinite(cdTagged.score) ? cdTagged : null;
-                const noEstimate = crowdFetchFailed || (!!cdTagged && !cd);
-                const score = cd ? cd.score : (activeVenue.crowd || 0);
-                // One vocabulary, one set of cut points, shared with the
-                // backend and the site. The old local ladder had three bands
-                // against the backend's five, so a 65 the server called "Busy"
-                // this sheet called "Moderate".
-                const label = cd ? cd.label : crowdLabelFor(score);
-                const crowdColor = crowdColorFor(score, colors) || '#22C55E';
-
-                // ── Whose clock? ────────────────────────────────────────────
-                // How busy a place is, is a fact about that place's night. The
-                // backend scores on the venue's clock and returns venueClock
-                // (5e5c2c8). Labelling the bars from the phone instead would
-                // offset the whole chart by the timezone difference: at 11 PM in
-                // Bethlehem an LA bar is at 8 PM and only starting to fill.
-                // `local: false` means the server could not resolve the venue's
-                // offset and used the caller's clock, so we do the same.
-                const vClock = cd?.venueClock?.local ? cd.venueClock : null;
-                const deviceHour = new Date().getHours();
-                const nowHour = vClock ? vClock.hour : deviceHour;
-                const nowDay = vClock ? vClock.day : new Date().getDay();
-                // Only worth surfacing when the two clocks actually disagree.
-                const venueLocalTime = (vClock && vClock.hour !== deviceHour)
-                  ? (() => {
-                      const h = ((vClock.hour % 24) + 24) % 24;
-                      return h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`;
-                    })()
-                  : null;
-
-                // Generate client-side hourly forecast when API data is unavailable
-                const fmtH = (h24) => { const hh = ((h24 % 24) + 24) % 24; if (hh === 0) return '12 AM'; if (hh < 12) return `${hh} AM`; if (hh === 12) return '12 PM'; return `${hh - 12} PM`; };
-                const genHourly = () => {
-                  const now = nowHour;
-                  const types = activeVenue.types || [];
-                  const isBar = types.some(t => ['bar', 'night_club'].includes(t));
-                  const isCafe = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
-                  const isDiner = types.some(t => ['diner', 'breakfast_restaurant', 'brunch_restaurant'].includes(t));
-                  const isMall = types.some(t => t === 'shopping_mall');
-                  const isGym = types.some(t => ['gym', 'fitness_center'].includes(t));
-                  const isLibrary = types.some(t => ['library', 'museum'].includes(t));
-                  const day = nowDay;
-                  const wkend = day === 5 || day === 6;
-                  return Array.from({ length: 12 }, (_, i) => {
-                    const h = now + i;
-                    const h24 = ((h % 24) + 24) % 24;
-                    // "Now" always matches the actual score
-                    if (i === 0) return { hour: fmtH(h), score };
-                    let s = score;
-                    if (isBar) {
-                      if (wkend && h24 >= 21) s = score + 25;
-                      else if (h24 >= 21) s = score + 18;
-                      else if (wkend && h24 >= 18) s = score + 10;
-                      else if (h24 >= 18) s = score + 5;
-                      else if (h24 >= 14) s = score - 20;
-                      else s = score - 30;
-                    } else if (isDiner) {
-                      if (h24 >= 7 && h24 <= 9) s = score + 18;
-                      else if (h24 >= 10 && h24 <= 11) s = score + 12;
-                      else if (h24 >= 11 && h24 <= 13) s = score + 10;
-                      else if (h24 >= 14 && h24 <= 16) s = score - 10;
-                      else if (h24 >= 17 && h24 <= 20) s = score - 5;
-                      else s = score - 20;
-                    } else if (isCafe) {
-                      if (h24 >= 7 && h24 <= 9) s = score + 15;
-                      else if (h24 >= 10 && h24 <= 11) s = score + 5;
-                      else if (h24 >= 12 && h24 <= 14) s = score - 5;
-                      else if (h24 >= 15 && h24 <= 19) s = score - 15;
-                      else s = score - 30;
-                    } else if (isMall) {
-                      if (wkend && h24 >= 12 && h24 <= 17) s = score + 18;
-                      else if (wkend && h24 >= 10 && h24 <= 11) s = score + 10;
-                      else if (h24 >= 12 && h24 <= 14) s = score + 10;
-                      else if (h24 >= 15 && h24 <= 17) s = score + 5;
-                      else if (h24 >= 18 && h24 <= 20) s = score + 3;
-                      else s = score - 15;
-                    } else if (isGym) {
-                      if (!wkend && h24 >= 17 && h24 <= 19) s = score + 18;
-                      else if (!wkend && h24 >= 6 && h24 <= 8) s = score + 12;
-                      else if (wkend && h24 >= 9 && h24 <= 11) s = score + 10;
-                      else if (h24 >= 12 && h24 <= 14) s = score + 3;
-                      else s = score - 15;
-                    } else if (isLibrary) {
-                      if (wkend && h24 >= 11 && h24 <= 15) s = score + 12;
-                      else if (h24 >= 11 && h24 <= 14) s = score + 8;
-                      else if (h24 >= 15 && h24 <= 17) s = score + 3;
-                      else s = score - 15;
-                    } else {
-                      // Restaurant / default
-                      if (h24 >= 18 && h24 <= 20) s = score + 15;
-                      else if (h24 >= 11 && h24 <= 13) s = score + 10;
-                      else if (h24 >= 21 && h24 <= 22) s = wkend ? score + 5 : score - 5;
-                      else if (h24 >= 14 && h24 <= 17) s = score - 15;
-                      else s = score - 25;
-                    }
-                    return { hour: fmtH(h), score: Math.round(Math.max(5, Math.min(95, s))) };
-                  });
-                };
-
-                const hourlyData = cd?.hourly || genHourly();
-
-                // Extract real hours: prefer crowd API, fall back to venue search opening_hours
-                const venueOH = activeVenue.opening_hours;
-
-                // Find the period that actually contains "now". Handles two failure modes
-                // we kept hitting on overnight venues:
-                //   1. Sites like halal grills with 10AM-3AM hours — Google emits a separate
-                //      Saturday early-morning period (12AM-3AM, leftover from Friday) AND the
-                //      main Saturday 10AM-3AM period. Naively picking the first day=6 entry
-                //      grabs the leftover, gives openHour=0, and greys 10AM-11PM.
-                //   2. The backend cd.openHour was sometimes set from the wrong period, so
-                //      we now do this client-side and override cd.openHour entirely.
-                // Handles both legacy format (open.time = "1000") and new format (open.hour = 10).
-                const activePeriod = (() => {
-                  const periods = venueOH?.periods;
-                  if (!periods || !periods.length) return null;
-                  const getHour = (t) => (
-                    t == null ? null
-                      : typeof t.hour === 'number' ? t.hour
-                      : (typeof t.time === 'string' && t.time.length >= 4) ? parseInt(t.time.slice(0, 2), 10)
-                      : null
-                  );
-                  const getMin = (t) => (
-                    t == null ? 0
-                      : typeof t.minute === 'number' ? t.minute
-                      : (typeof t.time === 'string' && t.time.length >= 4) ? parseInt(t.time.slice(2, 4), 10)
-                      : 0
-                  );
-                  const now = new Date();
-                  // minute-of-week (0..10079)
-                  const nowMOW = now.getDay() * 1440 + now.getHours() * 60 + now.getMinutes();
-                  for (const p of periods) {
-                    if (!p.open) continue;
-                    const oH = getHour(p.open);
-                    if (oH == null) continue;
-                    const cH = getHour(p.close);
-                    const oMOW = (p.open.day ?? 0) * 1440 + oH * 60 + getMin(p.open);
-                    let cMOW = p.close
-                      ? ((p.close.day ?? 0) * 1440 + (cH ?? 0) * 60 + getMin(p.close))
-                      : oMOW + 24 * 60; // 24/7 venues sometimes omit close
-                    if (cMOW <= oMOW) cMOW += 7 * 1440; // wrap to next week
-                    let n = nowMOW;
-                    if (n < oMOW) n += 7 * 1440;
-                    if (n >= oMOW && n < cMOW) return { openHour: oH, closeHour: (cH === 0 ? 24 : cH) };
-                  }
-                  // No period contains "now" — fall back to today's first period
-                  const today = now.getDay();
-                  const tp = periods.find(pd => pd.open?.day === today);
-                  if (!tp) return null;
-                  const oH = getHour(tp.open);
-                  const cH = getHour(tp.close);
-                  return { openHour: oH, closeHour: cH === 0 ? 24 : cH };
-                })();
-
-                const venueOpenHour = activePeriod?.openHour ?? cd?.openHour ?? null;
-                const venueCloseHour = activePeriod?.closeHour ?? cd?.closeHour ?? null;
-
-                // Compute isOpen — prefer explicit API signal, fall back to today's hours, then null
-                const computedIsOpen = (venueOpenHour != null && venueCloseHour != null)
-                  ? (venueCloseHour > venueOpenHour
-                      ? (nowHour >= venueOpenHour && nowHour < venueCloseHour)       // normal hours e.g. 9–18
-                      : (nowHour >= venueOpenHour || nowHour < venueCloseHour))      // overnight e.g. 17–02
-                  : null;
-                const realIsOpen = cd?.isOpen ?? venueOH?.openNow ?? computedIsOpen;
-                const isOpen = realIsOpen;
-                const isClosed = isOpen === false;
-
-                // Closed all day = venue is closed AND we have no opening window for today
-                const closedAllDay = isClosed && venueOpenHour == null;
-
-                // Wait estimate — only show actual wait if busy (70%+). Under 70% = no meaningful wait.
-                const getWait = () => {
-                  if (isClosed) return 'Closed';
-                  if (cd && cd.waitEstimate) return cd.waitEstimate;
-                  if (score < 70) return 'No wait';
-                  const types = activeVenue.types || [];
-                  const isBarType = types.some(t => ['bar', 'night_club'].includes(t));
-                  const isCafeType = types.some(t => ['cafe', 'juice_shop', 'smoothie_shop', 'juice_bar', 'tea_house', 'coffee_shop'].includes(t));
-                  if (isBarType) return score <= 85 ? '5-10 min' : '10-15 min';
-                  if (isCafeType) return score <= 85 ? '5-10 min' : '10-15 min';
-                  return score <= 85 ? '10-20 min' : '20-35 min';
-                };
-                const waitText = getWait();
-
-                // Peak and best-time come from the server or they do not exist.
-                // There used to be a ~55 line client fallback here that
-                // synthesised a whole 24-hour curve from the single current
-                // score and a type guess, then named a 'best time' off it.
-                // Two problems: the invented recommendation was unconstrained
-                // by the real forecast, and `bestTime: null` is exactly what the
-                // Pro gate sends when the forecast is locked, so the client sat
-                // there fabricating the one thing the paywall had withheld.
-                const peakText = cd?.peak || null;
-                // A closed venue can never be 'Now is good'. Say nothing rather
-                // than guess a replacement hour.
-                const bestText = (isClosed && cd?.bestTime === 'Now is good') ? null : (cd?.bestTime || null);
-
-                // LIVE means recent, not "a weather object came back". The chip
-                // used to read `weather != null`, so a ten minute old cached
-                // response still claimed LIVE. lastUpdated is on the response
-                // and was read nowhere in this file.
-                //
-                // AND recent is not enough either. `lastUpdated` is stamped when
-                // the route BUILDS the payload, so on any uncached request it is
-                // seconds old and this was true for every venue in the product,
-                // including one with no baseline whose number came from the
-                // category curve. The card then drew a pulsing green LIVE over
-                // an attribution line eight rows below reading "An estimate from
-                // typical patterns for this kind of place". The route ships
-                // predictionMethod for exactly this question, so ask it: only a
-                // number the model actually produced may call itself live.
-                const isLiveNow = (() => {
-                  if (!cd?.lastUpdated) return false;
-                  const method = String(cd.predictionMethod || '');
-                  if (!method || method.startsWith('rule_engine')) return false;
-                  const t = Date.parse(cd.lastUpdated);
-                  return Number.isFinite(t) && (Date.now() - t) < CROWD_FRESH_MS;
-                })();
-
-                // Per-bar openness computed once; the chart then runs only as
-                // long as the venue's hours do — trailing closed hours are
-                // trimmed instead of rendering a dead gray tail after close.
-                const chartBars = (() => {
-                  // Per-bar openness now comes from the server. crowd.js ships
-                  // `hourly[i].open` (Google's openNow wins for the Now bar) and
-                  // `hoursToday`, so the client no longer re-derives it. The two
-                  // local tests this replaces disagreed with each other by an
-                  // hour, one inclusive and one exclusive, on top of a ~35 line
-                  // ladder of per-type guesses. Only the client-generated
-                  // fallback curve still needs the Google window.
-                  const apiHourly = !!cd?.hourly;
-                  const infos = hourlyData.map((h, i) => {
-                    const isNow = i === 0;
-                    const parsedH = ((nowHour + i) % 24 + 24) % 24;
-                    // A live score for Now means the venue is open now, whatever
-                    // the posted hours claim.
-                    const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
-                    const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (
-                      apiHourly
-                        ? h.open === false
-                        : (venueOpenHour != null && venueCloseHour != null)
-                          ? (venueCloseHour > venueOpenHour
-                              ? (parsedH < venueOpenHour || parsedH >= venueCloseHour)
-                              : (parsedH >= venueCloseHour && parsedH < venueOpenHour))
-                          : (isClosed && isNow)
-                    ));
-                    // Defend against null / NaN scores; the 'Now' bar mirrors the
-                    // live header score so the chart and dial never disagree.
-                    const liveScoreForNow = (isNow && Number.isFinite(score) && score > 0) ? score : null;
-                    const safeScore = liveScoreForNow != null
-                      ? liveScoreForNow
-                      : (Number.isFinite(h.score) ? h.score : 0);
-                    // The server names which bar its best-time sentence means, so
-                    // the chart marks the same hour instead of guessing one.
-                    const isBest = cd?.bestIndex === i && !cd?.bestIsNow;
-                    return { h, isNow, hourClosed, safeScore, isBest };
-                  });
-                  let end = infos.length;
-                  while (end > 1 && infos[end - 1].hourClosed) end--;
-                  return infos.slice(0, end);
-                })();
-
-                return (
-              <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px', gap: '8px' }}>
-                  {/* Game night, sharing the row with the LIVE chip (the maintainer,
-                      2026-08-30: in line with it, chip stays in the right
-                      corner). A schedule FACT, never a crowd claim: the
-                      same-day ablation measured no lift the model could stand
-                      behind, so this states who plays and stops. The server
-                      applies the same 60km market gate the training features
-                      used and decides everything; this only prints. The empty
-                      span keeps the chip right-aligned on non-game days. */}
-                  {cd?.gameNight?.teams?.length > 0 ? (
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {cd.gameNight.homeGame && cd.gameNight.homeGame.distanceKm <= 10 && cd.gameNight.homeGame.venueName
-                        ? `${cd.gameNight.homeGame.team} home game tonight at ${cd.gameNight.homeGame.venueName}`
-                        : `${cd.gameNight.teams.length === 1
-                            ? cd.gameNight.teams[0]
-                            : cd.gameNight.teams.slice(0, -1).join(', ') + ' and ' + cd.gameNight.teams[cd.gameNight.teams.length - 1]} play tonight`}
-                    </span>
-                  ) : <span />}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                    {crowdLoading ? (
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</span>
-                    ) : (
-                      <>
-                        {/* The dot is decorative so it keeps the vivid hue; the LABEL
-                            has to be readable on the pale card. #22C55E measured
-                            1.85:1 and colors.amber 1.64:1 on --bg-tertiary. The
-                            accent-*-text tokens are theme-aware and clear 4.5:1. */}
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: isLiveNow ? '#22C55E' : colors.amber, animation: isLiveNow ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                        <span style={{ fontSize: 'var(--t-meta)', color: isLiveNow ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontWeight: '500' }}>{isLiveNow ? 'LIVE' : 'ESTIMATED'}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                {/* The venue's own number. When the published score IS the
-                    owner's live reading, the user must be able to tell — "the
-                    {venue-type} says" is a different claim from "we think",
-                    and the label is the whole deal that makes an owner-set
-                    number honest. Server decides `applied` AND the words
-                    (ownerReport.noun, category-derived in utils/venueLabel.js);
-                    this only prints them. */}
-                {cd?.ownerReport?.applied && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600' }}>
-                      The {cd.ownerReport.noun || 'venue'} says it's at {cd.score}% right now
-                    </span>
-                    {(() => {
-                      const mins = Math.round((Date.now() - Date.parse(cd.ownerReport.reportedAt)) / 60000);
-                      return Number.isFinite(mins) && mins >= 0
-                        ? <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{mins <= 1 ? 'set just now' : `set ${mins} min ago`}</span>
-                        : null;
-                    })()}
-                  </div>
-                )}
-                {/* Calibration indicator */}
-                {cd?.calibration?.feedbackUsed && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>Calibrated from {cd.calibration.reportCount} user report{cd.calibration.reportCount !== 1 ? 's' : ''}</span>
-                    {/* The owner's figure when real reports outranked it —
-                        shown as information, never as the number. The two
-                        disagreeing in public is the honest state. */}
-                    {cd?.ownerReport && !cd.ownerReport.applied && (
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>The {cd.ownerReport.noun || 'venue'} says {cd.ownerReport.percent}%.</span>
-                    )}
-                    {Math.abs(cd.calibration.predictionDrift) > 15 && (
-                      <span style={{ fontSize: 'var(--t-meta)', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '500' }}>
-                        {cd.calibration.predictionDrift > 0 ? 'Trending busier than expected' : 'Trending quieter than expected'}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Crowd Meter */}
-                <m.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, type: 'spring', damping: 18, stiffness: 260 }} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-                  {isClosed ? (
-                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
-                      </div>
-                    </div>
-                  ) : (!cd && noEstimate) ? (
-                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
-                    </div>
-                  ) : !cd ? (
-                    <div className="skeleton" style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0 }} />
-                  ) : (
-                    /* `score`, not a second variable for the same number. A
-                       separate `dialScore` let the dial and the sentence beside
-                       it quote different figures; the `!cd` branch above already
-                       covers the "no data yet" case. */
-                    <AnimatedDial score={score} color={crowdColor} />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {noEstimate && !isClosed ? (
-                      /* The dial and the chart already say a failed read; this
-                         column pulsed forever (Explore audit, 2026-09-05). */
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No crowd read for this spot right now.</p>
-                    ) : !cd && !isClosed ? (
-                      <>
-                        <div className="skeleton" style={{ width: '55%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
-                        <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '8px' }} />
-                        <div className="skeleton" style={{ width: '70%', height: '11px', borderRadius: '4px' }} />
-                      </>
-                    ) : isClosed ? (
-                      <>
-                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.redText, margin: 0 }}>{closedAllDay ? 'Closed Today' : 'Currently Closed'}</p>
-                        {!closedAllDay && (cd?.forecastAccess?.locked || bestText) && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
-                            {Icons.clock(colors.steel, 12)}
-                            {cd?.forecastAccess?.locked ? (
-                              <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                                Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>Best time to visit: {bestText}</span>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: crowdInkFor(score, colors) || crowdColor, margin: 0 }}>{label} <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{'·'} {score}</span></p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
-                        {(cd?.forecastAccess?.locked || bestText) && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {Icons.clock(colors.steel, 12)}
-                          {cd?.forecastAccess?.locked ? (
-                            <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                              Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
-                            </button>
-                          ) : (
-                            <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>Least crowded: {bestText}</span>
-                          )}
-                        </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </m.div>
-
-                {/* Where the number came from. Every published figure carries
-                    confidenceBasis from the server; nothing renders
-                    unattributed. Four sources, four sentences. */}
-                {!isClosed && !!cd && (
-                  <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
-                    {cd.confidenceBasis === 'owner_report' ? `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`
-                      : cd.confidenceBasis === 'user_reports' ? 'From the crowd model, adjusted by people who are there.'
-                      : cd.predictionMethod === 'ml' ? 'From the Flock crowd model.'
-                      : 'An estimate from typical patterns for this kind of place.'}
-                  </p>
-                )}
-
-                {/* One-tap crowd reality check (open venues, after the score loads) */}
-                {!isClosed && !!cd && !venueOwnerView && (
-                  <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} ownerAsserted={!!cd?.ownerReport?.applied} />
-                )}
-
-                {/* Group Admission */}
-                <m.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  {partySize === null ? (
-                    <>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>Group:</span>
-                      <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
-                        {[1, 2, 3, 4, 5, 6, '7+'].map(n => (
-                          <button className="hit44" key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
-                            style={{ flex: 1, padding: '3px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s ease' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(45,90,135,0.14)'; e.currentTarget.style.borderColor = '#2d5a87'; e.currentTarget.style.color = '#2d5a87'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card-solid)'; e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-primary)'; }}>
-                            {n}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  ) : (() => {
-                    // The score and the hour, together, or the verdict is about
-                    // an hour nobody is looking at. `score` is the Now bar, so
-                    // the hour it belongs to is the venue's own current hour —
-                    // nowHour/nowDay, the same pair the chart labels its bars
-                    // with, which fall back to the phone only where the SERVER
-                    // fell back (venueClock.local === false). Anything that puts
-                    // a different bar on this card passes that bar's score and
-                    // that bar's hour here as one pair.
-                    const admission = getGroupAdmission(score, partySize, activeVenue, { hour: nowHour, day: nowDay });
-                    if (!admission) return null;
-                    return (
-                      <>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: admission.color, flexShrink: 0 }} />
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: admission.color }}>{admission.text}</span>
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({partySize})</span>
-                        <button className="hit44" onClick={() => setPartySize(null)} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', marginLeft: 'auto' }}>Change</button>
-                      </>
-                    );
-                  })()}
-                </m.div>
-
-                {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
-                <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    {/* The hours are the venue's, not the phone's. Say so only
-                        when the two clocks differ, so someone in Pennsylvania
-                        reading an LA bar knows why the chart starts at 8 PM. */}
-                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>
-                      Expected Crowd by Hour{venueLocalTime ? <span style={{ fontWeight: '500', textTransform: 'none' }}> · {venueLocalTime} there</span> : ''}
-                    </p>
-                    {(() => {
-                      if (!cd && !isClosed) return null; // no trend claims while loading
-                      // Trend arrow: compare "Now" to next-hour prediction.
-                      // Skip if the next hour is closed or unknown.
-                      //
-                      // The dead zone is HOUR_ORDERING_MIN_GAP, the measured
-                      // hour-ordering floor. It used to be 5, justified in this
-                      // comment by the model's level MAE being about 5 points,
-                      // and that was a level argument licensing an ordering
-                      // claim: "Rising" says the next hour OUTRANKS this one,
-                      // and inside ten points that call is a coin flip
-                      // (HOUR-RANKING-EVAL.md). Every server-side hour
-                      // comparison refuses below the same number, so this arrow
-                      // stopped being the one surface willing to name a
-                      // direction the best-time sentence beside it refuses to.
-                      const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
-                      const next = Number.isFinite(hourlyData[1]?.score) ? hourlyData[1].score : null;
-                      if (cur == null || next == null || next <= 0) return null;
-                      const diff = next - cur;
-                      const rising = diff >= HOUR_ORDERING_MIN_GAP;
-                      const falling = diff <= -HOUR_ORDERING_MIN_GAP;
-                      const arrow = rising ? '↗' : falling ? '↘' : '→';
-                      const label = rising ? 'Rising' : falling ? 'Falling' : 'Steady';
-                      const color = rising ? colors.red : falling ? colors.steel : 'var(--text-secondary)';
-                      return (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
-                      );
-                    })()}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
-                    {/* Skeleton bars while the prediction loads — never fake colored data */}
-                    {(!cd && crowdFetchFailed) ? (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, alignSelf: 'center', width: '100%', textAlign: 'center' }}>No crowd read for this spot right now.</p>
-                    ) : (!cd && !isClosed) ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
-                      <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
-                        <div className="skeleton" style={{ width: '100%', height: `${hgt}px`, borderRadius: '3px 3px 1px 1px' }} />
-                      </div>
-                    )) : chartBars.map((b, i) => {
-                      const barColor = b.hourClosed ? 'var(--text-tertiary)' : (crowdColorFor(b.safeScore, colors) || '#22C55E');
-                      // 56px chart height. The open-bar floor used to be 16px, which
-                      // on a 0.5 scale meant every score at or below 32 drew the same
-                      // height and a dead 8% morning looked exactly like a 32% one.
-                      // 4px is enough to stay visible without flattening the low end.
-                      const barH = b.hourClosed ? 10 : Math.max(Math.min(b.safeScore, 100) * 0.5, 4);
-                      return (
-                      <div key={i} style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', minWidth: 0, height: '100%' }}>
-                        {/* Faint track behind every slot so chart structure reads even when bars are short */}
-                        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '100%', backgroundColor: 'var(--border-subtle, rgba(148,163,184,0.12))', borderRadius: '3px', opacity: 0.5 }} />
-                        <div style={{
-                          position: 'relative',
-                          width: '100%',
-                          height: `${barH}px`,
-                          borderRadius: '3px 3px 1px 1px',
-                          backgroundColor: barColor,
-                          opacity: b.hourClosed ? 0.55 : b.isNow ? 1 : 0.9,
-                          boxShadow: 'none',
-                          transformOrigin: 'bottom',
-                          animation: `barRise 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.04}s both`,
-                          transition: `height 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.035}s`,
-                          flexShrink: 0,
-                        }} />
-                        {/* The hour the best-time sentence names, marked so the
-                            chart and the sentence point at the same bar. */}
-                        {b.isBest && <div aria-hidden style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: '4px', height: '4px', borderRadius: '2px', backgroundColor: colors.steel }} />}
-                      </div>
-                      );
-                    })}
-                  </div>
-                  <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
-                    {(!cd && !isClosed) ? null : chartBars.map((b, i) => (
-                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 'var(--t-meta)', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '500' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
-                    ))}
-                  </div>
-                  {/* The server sent a crowd read with no hour-by-hour curve, so
-                      the bars above are the client's category shape (genHourly).
-                      They used to draw under the same ESTIMATED chip as a real
-                      model curve, indistinguishable from one. */}
-                  {cd && !cd.hourly && !crowdFetchFailed && (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                      Typical for {activeVenue.category ? `a ${String(activeVenue.category).toLowerCase()}` : 'a place like this'} at these hours, not a read of this spot.
-                    </p>
-                  )}
-                </m.div>
-
-                {/* Busiest Hours & Wait */}
-                <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      {Icons.trendingUp(colors.red, 12)}
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
-                    </div>
-                    {/* `peak` is one of the fields the forecast gate withholds
-                        (routes/crowd.js LOCKED_FORECAST_FIELDS), so under the
-                        paywall this tile printed the words BUSIEST HOURS over
-                        nothing at all: an empty box that reads as a broken
-                        card, not as a boundary. Same blurred stand-in and same
-                        tap target as the best-time line above it. */}
-                    {closedAllDay ? (
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.redText }}>Closed Today</span>
-                    ) : cd?.forecastAccess?.locked ? (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                        <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
-                      </button>
-                    ) : (
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{peakText}</span>
-                    )}
-                  </div>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      {Icons.zap(colors.amber, 12)}
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
-                    </div>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
-                  </div>
-                </m.div>
-
-                {/* Quieter Options */}
-                {/* `v.crowd < score` used to do the filtering, and
-                    venuesToMapPins sets crowd to NULL for a venue with no
-                    reading, on purpose. A relational comparison coerces null to
-                    0, so every unscored venue passed "quieter than this" and
-                    `a.crowd - b.crowd` sorted them to the front as the quietest
-                    places nearby, each captioned "No reading yet". The outer
-                    condition also only checked the CATEGORY filter, so the
-                    heading could render over an empty row. Both now ask the same
-                    question, and both require two real numbers. */}
-                {!venueOwnerView && (crowdAlternatives.length > 0 || (!cd && typeof score === 'number' && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).length > 0)) && (
-                <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
-                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && typeof score === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
-                      <button key={v.placeId || v.id || i} className="hit44 glass-btn glass-secondary" onClick={() => {
-                        const pid = v.placeId || v.place_id;
-                        if (pid) {
-                          setVenueDetailHistory(prev => [...prev, { activeVenue, crowdData: cd, crowdAlternatives }]);
-                          openVenueDetail(pid, { name: v.name, place_id: pid }, { panMap: true });
-                        } else {
-                          setActiveVenue(v);
-                        }
-                      }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
-                        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{v.name}</p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
-                          <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColorFor(v.score ?? v.crowd, colors) || 'var(--border-mid)' }} />
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{v.label || crowdLabelFor(v.score ?? v.crowd) || 'No reading yet'}</span>
-                        </div>
-                        {/* WHOSE NUMBER IT IS. The nearby list applies the owner
-                            override to every row and RANKS by it, and this cell
-                            printed a name, a dot and a label, so a venue whose
-                            owner had set their own slider to 10 appeared here as
-                            "Quiet", indistinguishable from a Flock reading and
-                            recommended over the venue the person was looking at.
-                            services/ownerReports.js says the source is labelled
-                            on every surface; this was the surface where it was
-                            not, and it is the one where the conflict of interest
-                            is sharpest. Same noun the card uses. */}
-                        {v.confidenceBasis === 'owner_report' && (
-                          <span style={{ display: 'block', fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                            {`The ${v.ownerReport?.noun || 'venue'} says so`}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </m.div>
-                )}
-
-                {/* Back to previous venue button */}
-                {venueDetailHistory.length > 0 && (
-                  <button onClick={() => {
-                    const prev = venueDetailHistory[venueDetailHistory.length - 1];
-                    setVenueDetailHistory(h => h.slice(0, -1));
-                    if (prev.activeVenue) {
-                      skipCrowdFetchRef.current = prev.crowdData?.lastUpdated || true;
-                      setActiveVenue(prev.activeVenue);
-                      setCrowdData(prev.crowdData);
-                      setCrowdAlternatives(prev.crowdAlternatives || []);
-                      if (window.__flockPanToVenue && prev.activeVenue.place_id) {
-                        const loc = prev.activeVenue.location;
-                        window.__flockPanToVenue({ place_id: prev.activeVenue.place_id, lat: loc?.latitude, lng: loc?.longitude, name: prev.activeVenue.name, address: prev.activeVenue.addr || prev.activeVenue.formatted_address, rating: prev.activeVenue.stars || prev.activeVenue.rating, photo_url: prev.activeVenue.photo_url });
-                      }
-                    }
-                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '10px', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                    {Icons.arrowLeft(colors.navy, 14)} Back to {venueDetailHistory[venueDetailHistory.length - 1]?.activeVenue?.name || 'Previous Venue'}
-                  </button>
-                )}
-              </m.div>
-                );
-              })()}
-
-              {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
-              {sensorData && !sensorData.sensor_data && sensorData.recent_checkins > 0 && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-                  {/* NOT "by tag". routes/sensors.js counts every row in
-                      venue_checkins for the hour with no checkin_source filter,
-                      and the app's own Check in button writes 'manual'. So one
-                      person tapping a button in a venue with no tag at all made
-                      this card claim a tag had been tapped. routes/checkin.js
-                      refuses to record a manual tap as 'nfc' for that exact
-                      reason, and this sentence undid the distinction. The
-                      number is right; the four words about how it was collected
-                      were not. */}
-                  {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} here in the last hour
-                </p>
-              )}
-              {sensorData?.sensor_data && (() => {
-                const sd = sensorData.sensor_data;
-                // Number first. A `== null` check alone let a non-numeric
-                // reading through, and every comparison below is false against
-                // NaN, so a garbage value was labelled "Loud" and printed
-                // "NaN dB" beside it.
-                const noiseDb = Number(sd.noise_db);
-                const noiseLabel = !Number.isFinite(noiseDb) ? null
-                  // `color` paints the 6px dot, `ink` paints the word. They
-                  // differ because the saturated hue is correct as a fill and
-                  // unreadable as 12px type on a light card: amber measures
-                  // 2.15:1 there and orange 2.80:1.
-                  : noiseDb < 50 ? { text: 'Quiet', color: colors.steel, ink: colors.steel }
-                  : noiseDb < 70 ? { text: 'Moderate', color: colors.amber, ink: colors.amberText }
-                  : noiseDb < 85 ? { text: 'Lively', color: colors.food, ink: colors.foodText }
-                  : { text: 'Loud', color: colors.red, ink: colors.redText };
-                const ageMin = sd.recorded_at
-                  ? Math.max(0, Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000))
-                  : null;
-                const ageStr = ageMin == null ? '' : ageMin === 0 ? 'just now' : ageMin === 1 ? '1 min ago' : `${ageMin} min ago`;
-                // Backend returns one row per hour (date_trunc); match buckets by
-                // hour-truncated timestamp. Empty hours render as placeholder bars
-                // so the chart structure is always legible.
-                const hourMs = (ts) => { const d = new Date(ts); d.setMinutes(0, 0, 0); return d.getTime(); };
-                const now = new Date();
-                const slotMs = 60 * 60 * 1000;
-                const currentHour = hourMs(now);
-                const slots = Array.from({ length: 12 }, (_, idx) => {
-                  const slotTs = currentHour - (11 - idx) * slotMs;
-                  const reading = sensorHistory.find(r => hourMs(r.recorded_at) === slotTs) || null;
-                  return { hour: new Date(slotTs).getHours(), reading };
-                });
-                const maxHeads = Math.max(1, ...slots.map(s => s.reading?.thermal_headcount || 0));
-                return (
-                  <m.div
-                    initial={{ opacity: 0, y: 14 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 1.05, duration: 0.4, ease: 'easeOut' }}
-                    style={{
-                      backgroundColor: 'var(--bg-card-solid)',
-                      border: '1px solid var(--border-default)',
-                      borderRadius: '14px',
-                      padding: '14px 16px',
-                      boxShadow: 'var(--card-shadow)',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                        <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-                        <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
-                      </div>
-                      {ageStr && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
-                      <span style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
-                      {/* "in view", not "right now": the count is one doorway
-                          camera's field of view, uncalibrated against the
-                          room. Same honesty rule as the noise band below,
-                          and the same words the sensor's own display uses. */}
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>people in view</span>
-                    </div>
-
-                    {/* The band, and only the band. The figure that used to sit
-                        beside it read "72 dB", but no microphone in this project
-                        has ever been calibrated against a sound meter, so what
-                        the sensor reports is a relative index and printing it
-                        with a real unit was a measurement the build cannot make
-                        (SLOP-AUDIT rule 5). The word is what the reading can
-                        honestly support, and it is also the only part anybody
-                        was going to act on. The sensor's own display says
-                        "level" for the same reason. */}
-                    {noiseLabel && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: noiseLabel.ink }}>{noiseLabel.text}</span>
-                      </div>
-                    )}
-
-                    <div>
-                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
-                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
-                        {slots.map((s, i) => {
-                          const val = s.reading?.thermal_headcount;
-                          if (val == null) {
-                            return <div key={i} style={{ flex: 1, height: '4px', background: 'repeating-linear-gradient(45deg, var(--border-subtle), var(--border-subtle) 2px, transparent 2px, transparent 4px)', borderRadius: '2px', opacity: 0.5 }} />;
-                          }
-                          const h = Math.max(2, Math.round((val / maxHeads) * 32));
-                          return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
-                        })}
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{slots[0].hour === 0 ? '12 AM' : slots[0].hour < 12 ? `${slots[0].hour} AM` : slots[0].hour === 12 ? '12 PM' : `${slots[0].hour - 12} PM`}</span>
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>now</span>
-                      </div>
-                    </div>
-
-                    {sensorData.recent_checkins > 0 && (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0' }}>
-                        {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} in the last hour
-                      </p>
-                    )}
-                  </m.div>
-                );
-              })()}
-
-              {/* Consumer actions. Never rendered on the owner's map view:
-                  a venue account starting a flock or checking in would
-                  either dead-end into consumer-only screens or write
-                  user-shaped signals a venue must not write. */}
-              {!venueOwnerView && (
-              <m.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {pickingVenueForCreate ? (
-                  <button onClick={(e) => {
-                    confirmClick(e);
-                    const venueData = { ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude };
-                    if (pickingVenueForDm) {
-                      const v = { name: venueData.name, addr: venueData.addr, place_id: venueData.place_id, rating: venueData.stars || venueData.rating, photo_url: venueData.photo_url };
-                      pinDmVenueNow(selectedDmId, v);
-                      setActiveVenue(null);
-                      setPickingVenueForCreate(false);
-                      setPickingVenueForDm(false);
-                      setCurrentTab('chat');
-                      setCurrentScreen('dmDetail');
-                    } else if (pickingVenueForFlockId) {
-                      updateFlockVenue(pickingVenueForFlockId, venueData);
-                      setActiveVenue(null);
-                      setPickingVenueForCreate(false);
-                      setSelectedFlockId(pickingVenueForFlockId);
-                      setPickingVenueForFlockId(null);
-                      setCurrentTab('chat');
-                      setCurrentScreen('chatDetail');
-                    } else {
-                      setSelectedVenueForCreate(venueData);
-                      setActiveVenue(null);
-                      setPickingVenueForCreate(false);
-                      setCurrentScreen('create');
-                    }
-                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
-                ) : venueDetailReturnTo ? (
-                  /* BACK TO CHAT IS NAVIGATION, SO IT IS DRAWN AS NAVIGATION.
-                     It used to be the loudest thing on this sheet: full width,
-                     14px padding, 12px radius, --t-body type and a 16px arrow,
-                     all in solid navy, which made a roughly 48px slab sitting
-                     directly on top of a 10px outlined "Check In". the maintainer saw it
-                     on device and the first words were that it was way too big.
-                     He was right about the size and the size was the smaller
-                     half of the problem: this control only undoes the tap that
-                     opened the sheet, and it was shouting over the one action a
-                     person standing outside the venue actually came to press.
-                     Weight follows consequence, so it now wears exactly the
-                     "Details" treatment two rows down (10px padding, 10px
-                     radius, --t-meta, 1.5px hairline, 14px glyph). Nothing here
-                     invents a size. .hit44 still lays a 44x44 target over it, so
-                     the smaller paint costs no reachability, which is the whole
-                     reason that class exists. */
-                  <button onClick={() => {
-                    setVenueDetailHistory([]);
-                    const ret = venueDetailReturnTo;
-                    setVenueDetailReturnTo(null);
-                    setActiveVenue(null);
-                    setCurrentTab(ret.tab);
-                    setCurrentScreen(ret.screen);
-                    if (ret.flockId) setSelectedFlockId(ret.flockId);
-                    if (ret.dmId) setSelectedDmId(ret.dmId);
-                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to Chat</button>
-                ) : (
-                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
-                )}
-                {activeVenue.place_id && (() => {
-                  const lastCheckin = lastCheckinAt(activeVenue.place_id);
-                  const checkedIn = !!lastCheckin && (Date.now() - lastCheckin < 2 * 60 * 60 * 1000);
-                  const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
-                  const disabled = checkedIn || checkinSaving;
-                  // EXACTLY ONE FILLED BUTTON IN THIS STACK, AND IT IS THE ONE
-                  // THAT DOES SOMETHING. The slot above renders a solid navy
-                  // primary in two of its three branches ("Select Venue" while
-                  // picking, "Start Flock Here" by default), and in those cases
-                  // Check In is correctly the quieter of the two. The third
-                  // branch is the one you reach by tapping a venue card in a
-                  // chat: venueDetailReturnTo is set, the venue is already the
-                  // plan's venue so there is nothing to start, and the slot
-                  // holds a back button. That branch used to leave the sheet
-                  // with its heaviest paint on the control that just retraces
-                  // your last tap, and its real action outlined underneath.
-                  // So when the slot above is carrying navigation rather than
-                  // an action, Check In takes the primary paint. Same box as
-                  // before, only the fill changes, because the geometry here is
-                  // already the one "Start Flock Here" uses and re-sizing a
-                  // device-tested button to signal priority is how the mess
-                  // above got started. Disabled stays muted: "Checked In" is a
-                  // receipt, not an invitation, and a filled slab you cannot
-                  // press is worse than a quiet one.
-                  const isTopAction = !pickingVenueForCreate && !!venueDetailReturnTo && !disabled;
-                  return (
-                    <button className={isTopAction ? 'hit44 glass-btn glass-navy' : 'hit44'}
-                      onClick={() => handleCheckIn(activeVenue.place_id)}
-                      disabled={disabled}
-                      style={{
-                        width: '100%',
-                        padding: '10px',
-                        borderRadius: '10px',
-                        border: isTopAction ? 'none' : '1.5px solid var(--border-default)',
-                        backgroundColor: isTopAction ? colors.navyBg : disabled ? 'var(--bg-tertiary)' : 'var(--bg-card-solid)',
-                        color: isTopAction ? 'white' : disabled ? 'var(--text-tertiary)' : colors.navy,
-                        cursor: disabled ? 'default' : 'pointer',
-                        fontWeight: '600',
-                        fontSize: 'var(--t-meta)',
-                        opacity: checkinSaving ? 0.6 : 1,
-                        transition: 'opacity 0.3s ease, background-color 0.2s ease',
-                      }}
-                    >
-                      {checkinSaving ? 'Checking in...' : label}
-                    </button>
-                  );
-                })()}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {activeVenue.place_id && (
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
-                  )}
-                  {/* No "Add to Calendar" here. It saved "Visit <venue>" for today at
-                      8 PM whatever the plan, which is a calendar entry nobody made.
-                      The plan path is the button above: start a flock here, and
-                      the flock's real time lands on the calendar by itself. */}
-                </div>
-              </m.div>
-              )}
-            </div>
-          </m.div>
+      <React.Suspense key={activeVenue.id || activeVenue.place_id} fallback={null}>
+        <ConsumerVenueCard venueOwnerView={venueOwnerView} {...consumerVenueCardProps} />
+      </React.Suspense>
     );
   };
 
@@ -18707,7 +17510,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </React.Suspense>
       );
     }
-    if (currentScreen === 'pastFlocks') return PastFlocksScreen();
+    if (currentScreen === 'pastFlocks') {
+      // Every value the past flocks screen reads, named once and in one place.
+      // Object shorthand throughout, so a name here and the matching parameter
+      // over there cannot drift apart.
+      const pastFlocksProps = {
+        DialogBehavior,
+        ListSkeleton,
+        colors,
+        handleRerunFlock,
+        loadPastFlocks,
+        pastFlocks,
+        pastFlocksError,
+        pastFlocksLoading,
+        rerunningFlockId,
+        setCurrentScreen,
+        styles,
+      };
+      return (
+        <React.Suspense fallback={<ScreenChunkFallback />}>
+          <PastFlocksScreen {...pastFlocksProps} />
+        </React.Suspense>
+      );
+    }
     if (currentScreen === 'detail') {
       // Every value the flock detail screen reads, named once and in one
       // place. Object shorthand throughout, so a name here and the matching
@@ -19585,6 +18410,94 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     suggestedUsers,
   };
 
+  // The thirteen values the wrap-up sheet used to close over. `colors` has to
+  // travel, because this component's useMemo SHADOWS the module scope
+  // `const colors = colorsLight`: a sheet that imported a palette instead would
+  // compile, pass, and paint the light gradient over dark mode. DialogBehavior
+  // and readReliability travel because neither is exported, and readReliability
+  // carries the rule that a reliability of exactly 0 is a score, which must
+  // have one definition rather than a second copy that drifts.
+  const attendanceModalProps = {
+    DialogBehavior,
+    colors,
+    attendanceMembers,
+    attendanceChecks,
+    setAttendanceChecks,
+    attendanceSubmitting,
+    setAttendanceSubmitting,
+    attendanceFlockId,
+    setShowAttendanceModal,
+    setFlocks,
+    setReliabilityScore,
+    readReliability,
+    showToast,
+  };
+
+  // THE EVENT DETAIL OVERLAY'S FOURTEEN. Built here rather than in renderScreen
+  // for the same reason verifyEmailSheetProps and newDmModalProps are: it is an
+  // overlay, mounted from the root tree at the bottom of this component, not a
+  // screen mounted from renderScreen. Object shorthand throughout and no
+  // defaults, the same contract the ten screens keep, so the name here and the
+  // parameter in the module cannot drift apart and a missing prop is a crash
+  // rather than a plausible looking wrong value.
+  //
+  // eventDetailLoading and eventDetailError have no other reader left in
+  // App.js, so this object is also what keeps their useState lines from being
+  // unused variables, which under react-scripts is a build error.
+  const eventDetailOverlayProps = {
+    DialogBehavior,
+    colors,
+    fmtMoney,
+    httpUrl,
+    openExternal,
+    eventDetail,
+    eventDetailError,
+    eventDetailLoading,
+    setCurrentScreen,
+    setEventDetail,
+    setEventDetailError,
+    setEventDetailLoading,
+    setSelectedVenueForCreate,
+    setShowEventsView,
+  };
+
+  // THE RESULTS LIST'S TWENTY-THREE. Built here rather than in renderScreen for
+  // the same reason eventDetailOverlayProps is: it is an overlay mounted from
+  // this component's own tree, not a screen mounted from renderScreen. Object
+  // shorthand throughout and no defaults, the contract the ten screens keep, so
+  // the name here and the parameter in the module cannot drift apart and a
+  // missing prop is a crash rather than a plausible looking wrong value.
+  //
+  // The first six are module-level definitions in this file rather than state.
+  // They are shared with surfaces that are not this list, so they stay declared
+  // here and travel as props: a copy inside the module would be a second
+  // definition free to drift from the one every other surface draws.
+  const searchResultsOverlayProps = {
+    DialogBehavior,
+    EmptyMark,
+    ListSkeleton,
+    crowdColorFor,
+    crowdInkFor,
+    ownerReportShown,
+    allVenues,
+    budgetFilteredVenues,
+    colors,
+    crowdPredictions,
+    handleVenueQueryChange,
+    openVenueDetail,
+    searchResultsInputRef,
+    searchResultsSort,
+    setSearchResultsSort,
+    setShowSearchDropdown,
+    setShowSearchResults,
+    setVenueQuery,
+    setVenueResults,
+    userLocation,
+    venueLoadError,
+    venueQuery,
+    venueSearching,
+  };
+
   return (
     <div style={fullBleed
       // Real device: the wrapper IS the screen. No padding, no centering, no
@@ -19751,375 +18664,53 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             onUpgraded={confirmUpgrade}
           />
 
-          {/* Full-screen venue search results overlay */}
-          {showSearchResults && (() => {
-            const calcDist = (vLoc) => {
-              if (!userLocation || !vLoc) return null;
-              const dLat = (vLoc.latitude - userLocation.lat) * Math.PI / 180;
-              const dLng = (vLoc.longitude - userLocation.lng) * Math.PI / 180;
-              const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(vLoc.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-              return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            };
+          {/* THE FULL-SCREEN RESULTS LIST IS components/SearchResultsOverlay.js
+              AS OF 2026-09-13. Its 232 lines are the panel behind "See All
+              Results" under the search dropdown and the "All N results" pill on
+              the map: the search field, the Map button, the three sort chips and
+              a card per venue. Those two taps are the only ways in, so inline it
+              was boot weight in every session that never asked for the whole
+              list, and it is fetched on the first ask now and warmed at idle
+              before that. The twenty-three values it closed over travel as
+              searchResultsOverlayProps above; the state, the setters and the
+              chosen sort stay in this component, so a list closed and reopened is
+              the same list.
 
-            const filtered = budgetFilteredVenues;
-            const sorted = [...filtered].sort((a, b) => {
-              if (searchResultsSort === 'rating') return (b.stars || 0) - (a.stars || 0);
-              if (searchResultsSort === 'distance') {
-                const dA = calcDist(a.location);
-                const dB = calcDist(b.location);
-                if (dA == null && dB == null) return 0;
-                if (dA == null) return 1;
-                if (dB == null) return -1;
-                return dA - dB;
-              }
-              // 'recommended' - AI interest matching (coming soon), using weighted score for now
-              // No crowd score yet ranks neutral rather than as a mid-busy venue.
-              const scoreA = (a.stars || 0) * 20 - (typeof a.crowd === 'number' ? a.crowd : 50) + (a.topRated ? 30 : 0);
-              const scoreB = (b.stars || 0) * 20 - (typeof b.crowd === 'number' ? b.crowd : 50) + (b.topRated ? 30 : 0);
-              return scoreB - scoreA;
-            });
-
-            return (
-              <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
-                {/* modal={false} because this is a push over Discover rather
-                    than an overlay on top of everything: the bottom tab bar
-                    is still on screen beside it, so trapping Tab would take
-                    a control the eye can see away from the keyboard. What it
-                    buys is focus-in, Escape, and focus back where it was. */}
-                <DialogBehavior modal={false} onClose={() => setShowSearchResults(false)} />
-                {/* Search bar header */}
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-                  <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ flex: 1, position: 'relative' }}>
-                      <input aria-label="Search venues"
-                        ref={searchResultsInputRef}
-                        type="text"
-                        value={venueQuery}
-                        onChange={(e) => handleVenueQueryChange(e.target.value)}
-                        placeholder="Search restaurants, bars, venues..."
-                        /* NO autoFocus. Both doors into this list are "View
-                           all" / "All N results" buttons: the person tapped to
-                           SEE the results, and on a phone focusing this field
-                           raised the keyboard over the bottom two thirds of
-                           the list they had just asked for. A field they can
-                           tap is a field they can still search with. */
-                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }}
-                        autoComplete="off"
-                      />
-                      <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
-                      {venueQuery && (
-                        <button aria-label="Clear search" className="hit44" onClick={() => { setShowSearchResults(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 16)}</button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Back to map + count + sort */}
-                  <div style={{ padding: '0 12px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button className="hit44" onClick={() => setShowSearchResults(false)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', flexShrink: 0 }}>
-                      {Icons.arrowLeft(colors.navy, 14)}
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>Map</span>
-                    </button>
-                    <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--pill-bg)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)', flexShrink: 0 }}>{sorted.length} result{sorted.length !== 1 ? 's' : ''}</span>
-                    <div style={{ flex: 1 }} />
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      {[
-                        { id: 'rating', label: 'Best Rated' },
-                        { id: 'recommended', label: 'Recommended' },
-                        { id: 'distance', label: 'Closest' },
-                      ].map(s => (
-                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
-                          {s.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Results list */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 80px' }}>
-                  {/* Skeleton cards while searching, matching the real card layout */}
-                  {venueSearching && <ListSkeleton count={4} thumb={72} thumbRadius={10} label="Searching venues" />}
-                  {!venueSearching && sorted.length === 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 20px 40px' }}>
-                      <EmptyMark name="crowd" />
-                      {/* Same split as the dropdown: a search that failed must
-                          not be reported as a search that found nothing. */}
-                      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>{venueLoadError ? 'Search is not answering' : 'No venues found'}</h3>
-                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || (allVenues.length > 0 && budgetFilteredVenues.length === 0 ? `All ${allVenues.length} spots here are above your group's budget, so none show. The search worked.` : 'Try a different search or location.')}</p>
-                    </div>
-                  ) : !venueSearching && sorted.map((venue) => {
-                    const dist = calcDist(venue.location);
-                    const prediction = crowdPredictions[venue.place_id];
-                    const crowdScore = prediction ? prediction.score : venue.crowd;
-                    const crowdColor = crowdColorFor(crowdScore) || 'var(--border-mid)';
-                    const crowdInk = crowdInkFor(crowdScore, colors) || 'var(--text-secondary)';
-                    const crowdLabel = prediction ? prediction.label : crowdLabelFor(crowdScore);
-                    // The 12 hour sparkline that used to sit here was built from a
-                    // hand-written table of hour offsets applied to the current
-                    // score. The detail card for the same venue, one tap away,
-                    // renders the server's real forecast, so the two disagreed
-                    // about one venue inches apart in the flow. Deleted rather
-                    // than reconciled: the list has no real hourly data to draw.
-
-                    return (
-                      <button className="hit44"
-                        key={venue.place_id || venue.id}
-                        onClick={() => {
-                          setShowSearchResults(false);
-                          if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id || venue);
-                          openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url });
-                        }}
-                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'opacity 0.2s' }}
-                      >
-                        {/* Photo + overlay info */}
-                        <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
-                          {venue.photo_url && (
-                            <>
-                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
-                              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
-                              {venue.topRated && (
-                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  {Icons.flame('var(--accent-amber-text)', 12)}
-                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top Rated</span>
-                                </div>
-                              )}
-                              {crowdScore != null && (
-                              /* THE FIGURE IS DRAWN, THE MEANING IS SPOKEN.
-                                 This pill was a coloured dot and a bare number,
-                                 so a screen reader met "43" with no scale and
-                                 no unit attached to it: 43 of what, out of
-                                 what, high or low. The chat module's CrowdDial
-                                 already settled this exact question and says
-                                 so in its own header, so this follows it
-                                 rather than inventing a second answer.
-
-                                 role="img" makes the pill one leaf with this
-                                 name, instead of an unnamed group whose
-                                 aria-label a screen reader is free to ignore,
-                                 and it stops the number being announced twice.
-
-                                 "out of 100" and not "percent", deliberately.
-                                 A BestTime score is relative busyness on a
-                                 0-100 ladder, not a share of capacity, and
-                                 calling it a percentage would be a claim about
-                                 how full the room is that nothing here can
-                                 support. */
-                              <div
-                                role="img"
-                                aria-label={ownerReportShown(prediction)
-                                  ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`
-                                  : `Crowd level ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`}
-                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {/* An owner-asserted number carries its source
-                                    even at list size — "{venue-type} says" is
-                                    the label that keeps it honest (noun is
-                                    category-derived server-side), and the
-                                    detail card one tap away says the rest. */}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{ownerReportShown(prediction) ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
-                              </div>
-                              )}
-                            </>
-                          )}
-                        </div>
-
-                        {/* Content */}
-                        <div style={{ padding: '12px 14px' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
-                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
-                            </div>
-                            {venue.stars && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
-                                {Icons.starFilled('#F59E0B', 12)}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E' }}>{venue.stars}</span>
-                              </div>
-                            )}
-                          </div>
-
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                            {dist != null && (
-                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                {Icons.mapPin(colors.steel, 12)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
-                              </span>
-                            )}
-                            {!venue.photo_url && crowdScore != null && (
-                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {ownerReportShown(prediction) ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
-                              </span>
-                            )}
-                            {/* Photo cards carry the bare percentage in their
-                                overlay, so this names it. Photo-less cards
-                                already printed "{label} {score}%" one span to
-                                the left, so here this line said the same word
-                                twice on one row. */}
-                            {crowdLabel && (venue.photo_url || crowdScore == null) && (
-                            <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                              {/* ESTIMATE FRAMING ON THE BROWSE SURFACE. The venue
-                                  DETAIL sheet carries a LIVE/ESTIMATED chip and a
-                                  four-way attribution line naming where the number
-                                  came from; the list card printed a bare label. An
-                                  app was rejected by App Review for showing model
-                                  output it could not source, and a crowd forecast
-                                  is exactly that shape. Owner-reported readings are
-                                  already labelled as the venue's own word, so only
-                                  the model's own guess needs the qualifier. */}
-                              {Icons.clock(colors.navy, 12)} {ownerReportShown(prediction) ? crowdLabel : `${crowdLabel} (est.)`}
-                            </span>
-                            )}
-                          </div>
-
-                          {venue.addr && (
-                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.addr}</p>
-                          )}
-
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
+              THE GATE STAYS HERE BECAUSE THE GATE IS WHAT MAKES IT LAZY. React
+              asks for a lazy chunk when the element first renders, so moving the
+              showSearchResults test inside the module would fetch it on first
+              paint and throw the whole saving away. */}
+          {showSearchResults && (
+            <React.Suspense fallback={<SearchResultsSkeleton />}>
+              <SearchResultsOverlay {...searchResultsOverlayProps} />
+            </React.Suspense>
+          )}
         </div>
       </div>
-      {/* Event Detail Overlay */}
+      {/* THE EVENT DETAIL OVERLAY IS components/EventDetailOverlay.js AS OF
+          2026-09-13. Its 132 lines are the full-bleed screen behind the Details
+          button on an event card: the hero, the date and price cards, the venue
+          block, the seat map, the retry line and the bar with Start Flock and
+          Tickets. eventDetail starts null and only that button sets it, so
+          inline those lines were boot weight for a screen most sessions never
+          open. They are part of the "overlays" chunk now. The gate stays here
+          because the gate is what makes it lazy: a component mounted
+          unconditionally is a chunk fetched on first paint, which is the whole
+          saving. The fourteen values it used to close over travel as
+          eventDetailOverlayProps above.
+          fallback={null} rather than a skeleton, which is the opposite of the
+          call VenueDashboard makes, for a concrete reason: the Details handler
+          puts the card's own fields in state BEFORE it fetches anything, so the
+          real overlay paints a full screen in the tap's own commit. A skeleton
+          here would stand in for data already in hand and cover the tapped
+          button with a screen that has no way out of it. Shortening that beat
+          is what the idle warm in warmScreenChunks is for, and a chunk that
+          cannot be fetched at all resolves to EventDetailUnavailable rather
+          than throwing at the root. */}
       {eventDetail && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* An opaque full-bleed overlay with the whole app still tabbable
-              behind it. Focus-in, Escape and focus-return, same as every
-              other sheet. */}
-          <DialogBehavior onClose={() => setEventDetail(null)} label={eventDetail.name || 'Event'} />
-          {/* Header image. position:fixed escapes the app shell, so this overlay
-              covers the Dynamic Island and the home indicator itself and has to
-              carry both insets (SAFE-AREA CONTRACT in index.css). The image grows
-              by the top inset rather than shifting down, so it still bleeds into
-              the status bar the way a native hero header does. */}
-          <div style={{ position: 'relative', height: 'calc(220px + var(--safe-top))', flexShrink: 0, backgroundColor: colors.navyBg }}>
-            {(eventDetail.photos?.[0] || eventDetail.image_url) && (
-              <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
-            )}
-            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 30%, rgba(0,0,0,0.8) 100%)' }} />
-            <button aria-label="Back" className="hit44" onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
-            {eventDetail.status === 'onsale' && (
-              <div style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>On Sale</span>
-              </div>
-            )}
-            <div style={{ position: 'absolute', bottom: '14px', left: '14px', right: '14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                {(() => { const cc = { concert: '#4a7ba7', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: 'white' }; return (
-                  <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: cc[eventDetail.category] || 'white', textTransform: 'uppercase', letterSpacing: '1px' }}>{eventDetail.segment || eventDetail.category}</span>
-                ); })()}
-                {eventDetail.genre && <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)' }}>{eventDetail.genre}{eventDetail.subgenre && eventDetail.subgenre !== eventDetail.genre ? ` / ${eventDetail.subgenre}` : ''}</span>}
-              </div>
-              <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', margin: 0, fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', lineHeight: '1.2' }}>{eventDetail.name}</h1>
-            </div>
-          </div>
-
-          {/* Loading */}
-          {eventDetailLoading && (
-            <div style={{ padding: '20px', textAlign: 'center' }}>
-              <div style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            </div>
-          )}
-
-          {/* Content */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-            {/* Date & Time */}
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-              {eventDetail.date && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', flex: 1, minWidth: '140px' }}>
-                  {Icons.calendar(colors.navy, 18)}
-                  <div>
-                    <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{new Date(eventDetail.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` – ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</p>}
-                  </div>
-                </div>
-              )}
-              {eventDetail.price_range && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)' }}>
-                  {Icons.dollar(colors.navy, 18)}
-                  <div>
-                    <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${fmtMoney(eventDetail.price_range.min)}{eventDetail.price_range.max ? ` – $${fmtMoney(eventDetail.price_range.max)}` : '+'}</p>
-                    <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Venue info */}
-            {(eventDetail.venue_details || eventDetail.venue_name) && (
-              <div style={{ padding: '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                  {Icons.mapPin(colors.navy, 18)}
-                  <div style={{ flex: 1 }}>
-                    <p style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy }}>{eventDetail.venue_details?.name || eventDetail.venue_name}</p>
-                    <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{eventDetail.venue_details ? [eventDetail.venue_details.address, eventDetail.venue_details.city, eventDetail.venue_details.state, eventDetail.venue_details.postal_code].filter(Boolean).join(', ') : eventDetail.venue_address}</p>
-                    {eventDetail.venue_details?.upcoming_events > 0 && (
-                      <p style={{ margin: '4px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{eventDetail.venue_details.upcoming_events} upcoming events at this venue</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Seatmap */}
-            {eventDetail.seatmap_url && (
-              <div style={{ marginBottom: '16px' }}>
-                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Seat Map</p>
-                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.target.style.display = 'none'; }} />
-              </div>
-            )}
-
-            {/* Info / Notes */}
-            {eventDetail.info && (
-              <div style={{ marginBottom: '16px' }}>
-                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>About</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: '1.5', margin: 0 }}>{eventDetail.info}</p>
-              </div>
-            )}
-            {eventDetail.please_note && (
-              <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '12px', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
-                <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E', margin: '0 0 4px' }}>Please note</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
-              </div>
-            )}
-
-
-            {eventDetailError && (
-              <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
-                {eventDetailError}{' '}
-                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null }))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
-              </p>
-            )}
-            {/* Distance */}
-            {eventDetail.distance_miles != null && Number.isFinite(Number(eventDetail.distance_miles)) && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {(Number(eventDetail.distance_miles) * 1.609).toFixed(1)} km away</p>
-            )}
-          </div>
-
-          {/* Bottom action bar. Sits on the physical screen edge (fixed overlay),
-              so it carries the home-indicator inset. */}
-          <div style={{ padding: '12px 16px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
-            <button className="hit44" onClick={() => {
-              setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name , event_date: eventDetail.date || null, event_time: eventDetail.time || null, event_datetime_utc: eventDetail.datetime_utc || null});
-              setEventDetail(null);
-              setShowEventsView(false);
-              setCurrentScreen('create');
-            }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              {Icons.users('white', 16)} Start Flock
-            </button>
-            {httpUrl(eventDetail.url) && (
-              <button className="hit44" onClick={() => openExternal(eventDetail.url)} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                Tickets {Icons.arrowRight(colors.navy, 14)}
-              </button>
-            )}
-          </div>
-        </div>
+        <React.Suspense fallback={null}>
+          <EventDetailOverlay {...eventDetailOverlayProps} />
+        </React.Suspense>
       )}
 
       {/* The toast live region. Unstyled and always mounted: its only job is to
@@ -20223,605 +18814,134 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
       )}
 
-      {/* THE PAY SURFACE. One sheet, whatever the payee has saved.
+      {/* THE TWO MONEY SHEETS MOVED TO components/PaymentSheets.js, to get 171
+          lines of JSX off the boot chunk. They were declared here and rendered
+          from this root JSX, so every launch parsed them and every state change
+          out here re-rendered them, for the small share of sessions that split a
+          bill. Nothing can reach either one before a tap on Settle Up inside the
+          flock chat screen, so the chunk is fetched then, and warmed at idle
+          before that. Same move as the form primitives that went to
+          components/ui/FormBits.js, for the same reason.
 
-          It used to be a stack of 40px rounded squares, each filled with that
-          wallet's brand GRADIENT and holding a single letter (V, $, Z). That
-          is two banned patterns in one control: the icon-in-rounded-square
-          card formula (SLOP-AUDIT A14) and a blue gradient (H2/M). It also
-          only ever appeared when the payee had two or more handles saved, so
-          the two states that matter most (exactly one handle, and none at all)
-          had no design at all.
+          THIS GATE ONLY DECIDES WHETHER THE CHUNK IS WANTED AT ALL. Both sheets
+          kept their own internal conditions, so the gate repeats them rather
+          than replacing them: with neither open there is no reason to hold the
+          module, and React.lazy would otherwise be asked to resolve on first
+          paint, which is the whole cost being removed.
 
-          What replaces it is what the maintainer asked for: a plain link to their
-          Venmo, and if they have not got one, a bird saying so.
+          THE FALLBACK IS A SCRIM, NOT NULL, and that is not decoration. Today a
+          tap on Settle Up commits the blocking overlay in the same render as the
+          state change, so the next tap lands on the scrim and does nothing. With
+          nothing painted while the chunk arrives, a second tap would re-enter
+          startSettleUp and fire a second getPaymentLinks, with two writes to
+          paymentOptions racing. The scrim keeps the tap swallowed, as it is now.
 
-          The wallet rows are REAL anchors carrying the audited web link, so a
-          long press copies something true and the row survives its own click
-          handler never running. The click is intercepted so it still goes
-          through startPaymentHandoff, which is the whole audited race: deep
-          link first, and the fallback sheet when the wallet app never comes to
-          the foreground. Nothing about that machinery changed here.
+          WHAT STAYED BEHIND, deliberately: paymentRoutes, paymentWebHost,
+          PAYMENT_HANDOFF_MS, attemptPaymentHandoff and startPaymentHandoff. The
+          handoff race is reached from the boot chunk, so importing it into this
+          module would pull the module back into the boot graph and buy nothing.
+          Those four module-scope names are passed as props instead, because this
+          file exports none of them. */}
+      {((showPaymentPicker && paymentOptions) || paymentFallback) && (
+        <React.Suspense fallback={<div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999 }} />}>
+          <PaymentSheets
+            showPaymentPicker={showPaymentPicker}
+            setShowPaymentPicker={setShowPaymentPicker}
+            paymentOptions={paymentOptions}
+            paymentFallback={paymentFallback}
+            setPaymentFallback={setPaymentFallback}
+            startPaymentHandoff={startPaymentHandoff}
+            showToast={showToast}
+            colors={colors}
+            styles={styles}
+            DialogBehavior={DialogBehavior}
+            paymentRoutes={paymentRoutes}
+            paymentWebHost={paymentWebHost}
+            openExternal={openExternal}
+          />
+        </React.Suspense>
+      )}
 
-          Zelle is a BUTTON, not an anchor. backend/routes/billing.js builds it
-          with deepLink and webLink null on purpose (Zelle lives inside each
-          bank's own app and has no shared scheme), so there is no destination
-          to put in an href and a link with nowhere to go is the dead control
-          this file has been removing all week. It opens the instructions sheet
-          through the same entry point. */}
-      {showPaymentPicker && paymentOptions && (() => {
-        const methods = paymentOptions.methods || [];
-        const payee = typeof paymentOptions.payTo === 'string' && paymentOptions.payTo.trim()
-          ? paymentOptions.payTo.trim()
-          : null;
-        const close = () => setShowPaymentPicker(false);
-        // A handle with nothing readable in it is not a handle. The route
-        // builds the display string ('@' + username), so a stored value of
-        // nothing but punctuation or spaces arrives here as a bare '@'.
-        const readableHandle = (h) => {
-          const t = typeof h === 'string' ? h.trim() : '';
-          return /[a-zA-Z0-9]/.test(t) ? t : null;
-        };
-        const noHandleLine = payee
-          ? `${payee} has not added a Venmo, Cash App, or Zelle handle.`
-          : 'They have not added a Venmo, Cash App, or Zelle handle.';
-        return (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
-          <DialogBehavior onClose={close} label={`Pay ${payee || 'them'}`} />
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
-            {/* The money is the same whether or not there is a link to open. */}
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
-            {methods.length > 0 ? methods.map((m, i) => {
-              const r = paymentRoutes(m);
-              // The first saved handle leads. The rest are real rows under it,
-              // quieter and ruled off, rather than a row of equal-weight tiles
-              // that makes the payer read three identical things.
-              const lead = i === 0;
-              const handle = readableHandle(m.handle);
-              const rowStyle = {
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
-                width: '100%', boxSizing: 'border-box', padding: lead ? '2px 0 13px' : '13px 0',
-                border: 'none', borderTop: lead ? 'none' : '1px solid var(--divider)',
-                backgroundColor: 'transparent', textAlign: 'left', cursor: 'pointer',
-              };
-              const body = (
-                <>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: lead ? 'var(--t-body)' : 'var(--t-label)', fontWeight: lead ? '700' : '600', color: colors.navy, textDecoration: r.webUrl ? 'underline' : 'none', textUnderlineOffset: '3px' }}>
-                      {r.webUrl ? `Pay on ${m.label}` : `Pay with ${m.label}`}
-                    </span>
-                    {handle && (
-                      <span style={{ display: 'block', marginTop: '2px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>{handle}</span>
-                    )}
-                  </span>
-                  <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                    {r.webUrl ? Icons.externalLink('var(--text-tertiary)', 16) : Icons.chevronRight('var(--text-tertiary)', 16)}
-                  </span>
-                </>
-              );
-              return r.webUrl ? (
-                <a
-                  className="hit44"
-                  key={m.method}
-                  href={r.webUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => {
-                    // The href is the honest destination and the fallback of
-                    // last resort. The handler is the better route: try the
-                    // wallet app first, and raise the audited sheet when the
-                    // phone does nothing.
-                    e.preventDefault();
-                    startPaymentHandoff(m, paymentOptions);
-                    close();
-                  }}
-                  style={rowStyle}
-                >
-                  {body}
-                </a>
-              ) : (
-                <button className="hit44" type="button" key={m.method} onClick={() => {
-                  startPaymentHandoff(m, paymentOptions);
-                  close();
-                }} style={rowStyle}>
-                  {body}
-                </button>
-              );
-            }) : (
-              // Nothing to link to, so nothing that looks like a control. The
-              // app cannot make somebody add a handle, so it does not pretend
-              // to offer that; it says the true thing and stops. Marking the
-              // debt paid another way is on the screen behind this sheet.
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '2px 0 4px' }}>
-                <BirdieStill size={64} style={{ flexShrink: 0 }} />
-                <p style={{ margin: 0, fontSize: 'var(--t-label)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{noHandleLine}</p>
-              </div>
-            )}
-            <button className="hit44" type="button" onClick={close} style={{ width: '100%', padding: '12px', border: 'none', borderTop: '1px solid var(--divider)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '10px' }}>Close</button>
-          </div>
-        </div>
-        );
-      })()}
+      {/* THE VENUE DETAIL SHEET MOVED TO components/overlays/VenueDetailSheet.js
+          on 2026-09-13, to get 427 lines and 38,471 bytes of JSX off the boot
+          chunk. It was written inline inside an IIFE in this root JSX, so every
+          launch parsed the largest overlay in the product and every state change
+          out here re-ran it, for the share of sessions that never tap a venue.
+          Nothing can reach it before a tap on a venue, a map pin, a venue card
+          in a chat or a venue deep link, so the chunk is fetched then and warmed
+          at idle before that. Same move as the form primitives that went to
+          components/ui/FormBits.js, for the same reason. The 49 values it used
+          to close over travel as props, and the note at the top of that file
+          says why four of them cannot become imports instead.
 
-      {/* The wallet app never came to the foreground, or there was never one to
-          open. Either way the payer is owed an explanation and a route that
-          works, instead of a tap that did nothing. See attemptPaymentHandoff. */}
-      {paymentFallback && (() => {
-        const { method: fm, routes: fr, reason, payTo, amount } = paymentFallback;
-        const label = fm?.label || 'that app';
-        const host = paymentWebHost(fr?.webUrl);
-        const close = () => setPaymentFallback(null);
-        return (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
-            <DialogBehavior onClose={close} label={`Pay ${payTo || 'them'} with ${label}`} />
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>
-                {reason === 'instructions' ? `Pay ${payTo || 'them'} with ${label}` : `${label} did not open`}
-              </h3>
-              <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>
-                {reason === 'instructions'
-                  ? (fr?.instructions || `Send ${fm?.handle || payTo} the money in ${label}, then come back here.`)
-                  : `Nothing happened when your phone tried to open ${label}. That usually means it is not installed on this device.`}
-              </p>
-              {typeof amount === 'number' && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>
-                  You owe ${amount.toFixed(2)}{fm?.handle ? ` to ${fm.handle}` : ''}.
-                </p>
-              )}
-              {fr?.webUrl && (
-                <button className="hit44 glass-btn glass-primary" onClick={() => {
-                  // A fresh tap, so this window.open is inside a user gesture
-                  // and WKWebView will hand it to the system. That is the whole
-                  // reason the fallback is a prompt and not an automatic
-                  // redirect on the timeout.
-                  openExternal(fr.webUrl);
-                  close();
-                  showToast('After paying, tap "Mark as paid"');
-                }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
-                  {host ? `Pay on ${host}` : `Pay ${label} in your browser`}
-                </button>
-              )}
-              {!fr?.webUrl && reason === 'no-handoff' && (
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>
-                  Install {label}, or pay {fm?.handle || payTo} another way and mark it paid below.
-                </p>
-              )}
-              <button className="hit44" onClick={close} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
-                Close
-              </button>
-            </div>
-          </div>
-        );
-      })()}
+          THIS GATE IS WHAT MAKES IT LAZY. A component mounted unconditionally
+          and left to return null is a chunk fetched on first paint, which is the
+          whole saving. The sheet keeps its own early return as a seatbelt, not
+          as a licence to drop this line.
 
-      {/* Venue Details Modal */}
-      {venueDetailModal && (() => {
-        const closeVenueDetail = () => { setVenueDetailModal(null); };
-        const returnToChat = () => {
-          setVenueDetailModal(null);
-          setVenueDetailHistory([]);
-          const ret = venueDetailReturnTo;
-          if (ret) {
-            setVenueDetailReturnTo(null);
-            setCurrentTab(ret.tab);
-            setCurrentScreen(ret.screen);
-            if (ret.flockId) setSelectedFlockId(ret.flockId);
-            if (ret.dmId) setSelectedDmId(ret.dmId);
-          }
-        };
-        // THE FOOTER'S FILL BELONGS TO WHATEVER THE ROW ACTUALLY DOES.
-        // The bottom row is [Get Directions][primary], and the primary's label
-        // is a four-way ternary: "Pin to DM", "Back to Chat", "Suggest to
-        // flock", "Add to Flock". Three of those four are things that happen to
-        // the world, so the fill is theirs and the row was always right. The
-        // fourth is not an action at all. It appears when you reached this card
-        // by tapping a venue in a chat, and all it does is put you back in that
-        // chat, which is the one thing in the row nobody needs help finding.
-        // The map sheet had the identical inversion and the maintainer caught it there
-        // first, in stronger words, so this is the same fix before he has to
-        // report it twice: when the primary slot is only carrying a way out,
-        // Get Directions takes the fill and the way out takes the outline that
-        // Get Directions was already wearing. Both treatments are the ones this
-        // footer already ships, so the row swaps paint and not geometry.
-        //
-        // The directions link is conditional, and that is the whole reason for
-        // the second flag. The card opens on a seed object while Places is
-        // still answering, and one caller (a push deep link) has no seed at
-        // all, so there is a real moment with no google_maps_url and no
-        // place_id and therefore no left-hand button. Demoting the primary in
-        // that moment would leave a row of one outlined control and nothing
-        // filled anywhere. A lone button is not competing with anything, so it
-        // keeps the fill. The rule is that the loudest control is the most
-        // consequential one present, not that back buttons are always quiet.
-        //
-        // One mechanical note for whoever edits the row next: the demoted state
-        // has to drop the glass-primary CLASS as well as the inline colors.
-        // That class sets background, border and color with !important, so
-        // leaving it on paints a solid navy slab straight over every outlined
-        // value in the style object and the change looks like it silently did
-        // not apply. Plain glass-btn keeps the press-scale and the blur, which
-        // carry no color of their own, and .hit44 keeps the 44pt target in both
-        // states. The two paints also keep the same 2px border box rather than
-        // swapping one side to `border: none`, so promoting or demoting never
-        // moves the row by four pixels.
-        const footerReturnsToChat = !pickingVenueForDm && !!venueDetailReturnTo;
-        const footerHasDirections = !!(httpUrl(venueDetailModal.google_maps_url) || venueDetailModal.place_id);
-        const directionsIsPrimary = footerReturnsToChat && footerHasDirections;
-        return (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          onClick={(e) => { if (e.target === e.currentTarget) closeVenueDetail(); }}
-        >
-          {/* The busiest overlay in the product had no dialog behaviour at
-              all: focus stayed on whatever opened it, Escape did nothing,
-              and Tab walked straight out of the card into the Discover map
-              underneath while the card covered the screen. */}
-          <DialogBehavior onClose={closeVenueDetail} label={venueDetailModal.name || 'Venue'} />
-          <div style={{ width: '100%', maxWidth: '420px', maxHeight: '92vh', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            {/* Photo area */}
-            <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
-              {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
-                <>
-                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
-                  {venueDetailModal.photos.length > 1 && (
-                    <>
-                      <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
-                      <button aria-label="Next" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
-                      <div style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '5px' }}>
-                        {venueDetailModal.photos.map((_, i) => (
-                          <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: i === venueDetailPhotoIdx ? 'white' : 'rgba(255,255,255,0.4)', transition: 'background-color 0.2s' }} />
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </>
-              ) : venueDetailModal.photo_url ? (
-                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
-              ) : (
-                <div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>
-              )}
-              {/* Overlay gradient */}
-              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
-              {/* Close button */}
-              <button aria-label="Close" className="hit44" onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
-              {/* Name overlay */}
-              <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name}</h2>
-                {venueDetailModal.formatted_address && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 'var(--t-meta)', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
-              </div>
-            </div>
-
-            {/* Content */}
-            {/* THE ONE SCROLLING REGION, and it has to contain everything
-                between the photo and the buttons.
-
-                Only the details block used to scroll. Promotions and reviews
-                were written as SIBLINGS of it, so the sheet's column was
-                photo + scroller + promotions + reviews + footer, and the two
-                new blocks carried their own height with nothing to give: a
-                venue with a promotion and three reviews measured 810px of
-                children inside a 776px sheet, and the sheet clips what does
-                not fit. What did not fit was the footer, which is where Get
-                Directions and Add to Flock live. At 390 wide the buttons were
-                cut in half; at 320 the whole row was 321px past the bottom
-                edge, so the sheet's primary action could not be reached at
-                all on a small phone.
-
-                minHeight: 0 is load-bearing. A column flex item will not
-                shrink below its content without it, so the region would hold
-                its full height and push the footer straight back out. */}
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <div style={{ padding: '16px' }}>
-              {venueDetailModal.loading ? (
-                <div style={{ textAlign: 'center', padding: '30px 0' }}>
-                  <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0' }}>Loading details...</p>
-                </div>
-              ) : (
-                <>
-                  {/* Stats row */}
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                    {venueDetailModal.rating && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', marginBottom: '2px' }}>
-                          {Icons.starFilled('#F59E0B', 16)}
-                          <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>{venueDetailModal.rating}</span>
-                        </div>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
-                      </div>
-                    )}
-                    {venueDetailModal.price_level > 0 && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level)}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Price</p>
-                      </div>
-                    )}
-                    {venueDetailModal.opening_hours && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, 18)}</div>
-                        <p style={{ fontSize: 'var(--t-meta)', color: venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, fontWeight: '500', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Hours */}
-                  {venueDetailModal.opening_hours?.weekdayDescriptions && (
-                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                      <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Hours</h4>
-                      {venueDetailModal.opening_hours.weekdayDescriptions.map((day, i) => {
-                        const today = new Date().getDay();
-                        const isToday = i === (today === 0 ? 6 : today - 1);
-                        return <p key={i} style={{ fontSize: 'var(--t-meta)', color: isToday ? colors.navy : colors.textSecondary, fontWeight: isToday ? '500' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: '6px' }}>{day}</p>;
-                      })}
-                    </div>
-                  )}
-
-                  {/* Contact */}
-                  {(venueDetailModal.formatted_phone_number || venueDetailModal.website) && (
-                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                      <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Contact</h4>
-                      {venueDetailModal.formatted_phone_number && (
-                        <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
-                          {Icons.phone(colors.navy, 16)}
-                          <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
-                        </a>
-                      )}
-                      {httpUrl(venueDetailModal.website) && (
-                        <a href={httpUrl(venueDetailModal.website)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none' }}>
-                          {Icons.externalLink(colors.navy, 16)}
-                          <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Website</span>
-                        </a>
-                      )}
-                    </div>
-                  )}
-
-                  {/* View Menu */}
-                  {!venueDetailModal.loading && (
-                    <a href={httpUrl(venueDetailModal.menu_url) || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
-                      <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
-                      <div style={{ flex: 1 }}>
-                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>View Menu</span>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{venueDetailModal.menu_url ? 'Official menu' : 'Search online'}</p>
-                      </div>
-                      {Icons.externalLink(colors.textTertiary, 14)}
-                    </a>
-                  )}
-
-                  {/* Types/Tags */}
-                  {venueDetailModal.types && venueDetailModal.types.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
-                      {venueDetailModal.types.slice(0, 6).map((t, i) => (
-                        <span key={i} style={{ fontSize: 'var(--t-meta)', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', border: '1px solid var(--border-subtle)' }}>{t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Active Promotions */}
-            {venueDetailPromos.length > 0 && (
-              <div style={{ padding: '0 16px 12px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals & Promotions</h4>
-                {venueDetailPromos.map(p => (
-                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-                      <p style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
-                      {/* A promotion is owner-typed UGC served to every user who
-                          opens this card, it is a reportable content type the
-                          queue can already action (routes/moderation.js
-                          VALID_CONTENT_TYPES, routes/admin.js TAKEDOWN_TARGETS),
-                          and ModerationSheet has carried the noun for it all
-                          along. The only missing piece was the control, so the
-                          one public surface that shows a promotion had no way
-                          to report one. No userId: /public-promotions does not
-                          serve the owner's id and does not need to, because the
-                          report route reads venue_user_id off the row itself.
-                          The sheet then offers report without block, exactly as
-                          it already does for a guest RSVP. */}
-                      <button aria-label="Report promotion" className="hit44" onClick={() => setModerationTarget({ userName: 'this venue', contentType: 'venue_promotion', contentId: p.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report promotion">{Icons.flag('currentColor', 13)}</button>
-                    </div>
-                    {p.description && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Flock Reviews */}
-            <div style={{ padding: '0 16px 12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews{venueDetailReviews ? ` (${venueDetailReviewTotal ?? venueDetailReviews.length})` : ''}</h4>
-                {!showReviewForm && (
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
-                    Write Review
-                  </button>
-                )}
-              </div>
-              {/* The server refuses a review from anyone who has not been here
-                  with a flock (or checked in by tag), and it used to say so only
-                  AFTER the review was written. If no plan of yours at this place
-                  had two people, the sentence comes first. A tag check-in this
-                  client cannot see still gets through: the form stays. */}
-              {showReviewForm && !flocks.some(f => String(f.venueId) === String(venueDetailModal.place_id) && (f.memberCount || 0) >= 2) && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>You can review a venue after you have been there with a flock. Reviews from a flock with at least two people are the ones that count.</p>
-              )}
-              <div style={{ display: 'none' }}>
-              </div>
-
-              {/* Review Form */}
-              {showReviewForm && (
-                <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '8px' }}>
-                  <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
-                  <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
-                    {/* Two things were wrong here, and this is the rating INPUT,
-                        so both cost more than they do on a display row.
-                        Unselected stars were colors.disabled (#e5e7eb) on
-                        --bg-tertiary (#e8e0d5): 1.1:1, invisible, so before you
-                        tapped anything there was no visible five-star scale to
-                        aim at — the control looked empty. --star-empty is barely
-                        better on this particular surface, so the unselected
-                        state uses --text-tertiary, which is a real outline.
-                        And all five buttons were labelled "Rate", so a screen
-                        reader offered five identical buttons and no way to pick
-                        a number. */}
-                    {[1, 2, 3, 4, 5].map(s => (
-                      <button aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`} aria-pressed={reviewRating === s} className="hit44" key={s} onClick={() => setReviewRating(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
-                        {s <= reviewRating ? Icons.starFilled(colors.amber, 22) : Icons.star('var(--text-tertiary)', 22)}
-                      </button>
-                    ))}
-                  </div>
-                  <SearchInputLocal aria-label="Your review" as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-                    <button className="hit44 glass-btn glass-primary" disabled={!reviewRating || reviewSubmitting} onClick={async () => {
-                      setReviewSubmitting(true);
-                      try {
-                        await submitVenueReview(venueDetailModal.place_id, reviewRating, reviewText);
-                        const updated = await getPublicReviews(venueDetailModal.place_id);
-                        setVenueDetailReviews(updated.reviews || []);
-                        setVenueDetailReviewTotal(Number.isFinite(updated.total) ? updated.total : null);
-                        setShowReviewForm(false);
-                      } catch (e) {
-                        // The server refuses this for reasons the reviewer can
-                        // act on — no verified visit to this venue, one review
-                        // per person, the text failed the profanity screen —
-                        // and every one of them used to be a console line. The
-                        // button spun, said "Submitting...", and then sat back
-                        // down with the review still in the box and no reason.
-                        showToast(e?.message || "That review didn't post. Try again.", 'error');
-                      }
-                      setReviewSubmitting(false);
-                    }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
-                      {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
-                    </button>
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {/* Review List */}
-              {venueDetailReviews && venueDetailReviews.length > 0 ? venueDetailReviews.slice(0, 5).map(r => (
-                <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                        {(r.name || '?').charAt(0).toUpperCase()}
-                      </div>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {/* Same invisible-empty-star defect as the venue
-                          dashboard's own review list: colors.disabled is
-                          #e5e7eb, 1.2:1 on this card, so a 2-star review read
-                          as a 2-star scale. --star-empty, 12px floor, and one
-                          label for the row rather than five silent glyphs. */}
-                      <div role="img" aria-label={`${r.rating} out of 5 stars`} style={{ display: 'flex', gap: '1px' }}>
-                        {[1, 2, 3, 4, 5].map(s => <React.Fragment key={s}>{s <= r.rating ? Icons.starFilled(colors.amber, 12) : Icons.star('var(--star-empty)', 12)}</React.Fragment>)}
-                      </div>
-                      <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report review">{Icons.flag('currentColor', 13)}</button>
-                    </div>
-                  </div>
-                  {r.text && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
-                  {/* Owner reply. No 2px side stripe — banned pattern
-                      (project documentation, SLOP-AUDIT.md). The reply is set apart
-                      by its own surface and an indent instead. */}
-                  {r.venue_reply && (
-                    <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
-                    </div>
-                  )}
-                </div>
-              )) : venueDetailReviewsError ? (
-                /* A read that failed, never an empty venue. "Be the first!" is
-                   a claim about everyone who has been here, and it is not this
-                   card's to make when the request did not come back. */
-                <BirdNote
-                  layout="row"
-                  size={48}
-                  role="alert"
-                  body={venueDetailReviewsError}
-                  style={{ padding: '8px 4px' }}
-                  action={<button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
-                />
-              ) : !venueDetailReviews ? (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>Loading reviews...</p>
-              ) : !showReviewForm && (
-                <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No reviews yet. Be the first!" style={{ padding: '8px 4px' }} />
-              )}
-            </div>
-            {/* end of the scrolling region opened above the details block */}
-            </div>
-
-            {/* Bottom action buttons */}
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, display: 'flex', gap: '8px' }}>
-              {httpUrl(venueDetailModal.google_maps_url) ? (
-                <a href={httpUrl(venueDetailModal.google_maps_url)} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
-                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
-                </a>
-              ) : venueDetailModal.place_id ? (
-                <a href={`https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
-                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
-                </a>
-              ) : null}
-              <button onClick={(e) => {
-                confirmClick(e);
-                const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
-                if (pickingVenueForDm) {
-                  const v = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl };
-                  pinDmVenueNow(selectedDmId, v);
-                  setVenueDetailModal(null);
-                  setPickingVenueForCreate(false);
-                  setPickingVenueForDm(false);
-                  setCurrentTab('chat');
-                  setCurrentScreen('dmDetail');
-                } else if (pickingVenueForFlockId) {
-                  // Only the creator may set the venue (the route is creator-only,
-                  // and a member used to get a 403 toast and a revert). A member
-                  // puts it on the table instead: a venue card in the chat, with
-                  // their vote on it.
-                  const picked = flocksRef.current.find(f => f.id === pickingVenueForFlockId);
-                  const pickerIsCreator = !picked || String(picked.creatorId) === String(meRef.current?.id);
-                  const pickedVenue = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, photo_url: photoUrl, location: venueDetailModal.geometry?.location ? { latitude: venueDetailModal.geometry.location.lat, longitude: venueDetailModal.geometry.location.lng } : undefined, type: venueDetailModal.category || null };
-                  if (pickerIsCreator) {
-                  updateFlockVenue(pickingVenueForFlockId, { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
-                  } else {
-                    shareVenueToChat(pickingVenueForFlockId, pickedVenue);
-                    const current = picked.votes || [];
-                    updateFlockVotes(pickingVenueForFlockId, [
-                      ...current.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })),
-                      { venue: pickedVenue.name, type: pickedVenue.type, place_id: pickedVenue.place_id || null, voters: ['You'] },
-                    ]);
-                    showToast(`${pickedVenue.name} is on the table, with your vote.`);
-                  }
-                  setVenueDetailModal(null);
-                  setPickingVenueForCreate(false);
-                  setSelectedFlockId(pickingVenueForFlockId);
-                  setPickingVenueForFlockId(null);
-                  setCurrentTab('chat');
-                  setCurrentScreen('chatDetail');
-                } else if (venueDetailReturnTo) {
-                  returnToChat();
-                } else {
-                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: (typeof crowdData?.score === 'number' ? crowdData.score : null), crowdLabel: crowdData?.label || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
-                  setVenueDetailModal(null);
-                  setCurrentScreen('create');
-                }
-              }} className={directionsIsPrimary ? 'hit44 glass-btn' : 'hit44 glass-btn glass-primary'} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navy : colors.navyBg}`, background: directionsIsPrimary ? 'var(--bg-card-solid)' : colors.navyBg, color: directionsIsPrimary ? colors.navy : 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: directionsIsPrimary ? 'none' : '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
-                {/* THE GLYPH FOLLOWS THE SAME TEST AS THE WORDS. It used to key on
-                    venueDetailReturnTo alone while the label below checks
-                    pickingVenueForDm first, so a card opened from a chat WHILE
-                    picking a venue for a DM drew a back arrow next to the words
-                    "Pin to DM": the icon said leave and the label said pin, on the
-                    same button. Both read the branches in the same order now, so
-                    they cannot disagree. */}
-                {pickingVenueForDm ? Icons.pin(directionsIsPrimary ? colors.navy : 'white', 16) : venueDetailReturnTo ? Icons.arrowLeft(directionsIsPrimary ? colors.navy : 'white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
-              </button>
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+          THE FALLBACK IS THE SHEET'S OWN SCRIM, NOT NULL, and that is not
+          decoration. openVenueDetail puts { loading: true } in state before it
+          fetches anything, so today the scrim and the "Loading details..." card
+          commit in the tap's own render. With nothing painted while the chunk
+          arrives, the map would keep panning under an app that believes a sheet
+          is open: a second tap would re-enter openVenueDetail, the tab bar would
+          stay live, and Escape would do nothing. The scrim holds the tap the way
+          it is held now. */}
+      {venueDetailModal && (
+        <React.Suspense fallback={<div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998 }} />}>
+          <VenueDetailSheet
+            DialogBehavior={DialogBehavior}
+            SearchInputLocal={SearchInputLocal}
+            httpUrl={httpUrl}
+            colors={colors}
+            venueDetailModal={venueDetailModal}
+            setVenueDetailModal={setVenueDetailModal}
+            venueDetailPhotoIdx={venueDetailPhotoIdx}
+            setVenueDetailPhotoIdx={setVenueDetailPhotoIdx}
+            venueDetailPlaceId={venueDetailPlaceId}
+            venueDetailPromos={venueDetailPromos}
+            venueDetailReviews={venueDetailReviews}
+            setVenueDetailReviews={setVenueDetailReviews}
+            venueDetailReviewTotal={venueDetailReviewTotal}
+            setVenueDetailReviewTotal={setVenueDetailReviewTotal}
+            venueDetailReviewsError={venueDetailReviewsError}
+            loadVenueDetailReviews={loadVenueDetailReviews}
+            venueDetailReturnTo={venueDetailReturnTo}
+            setVenueDetailReturnTo={setVenueDetailReturnTo}
+            setVenueDetailHistory={setVenueDetailHistory}
+            showReviewForm={showReviewForm}
+            setShowReviewForm={setShowReviewForm}
+            reviewRating={reviewRating}
+            setReviewRating={setReviewRating}
+            reviewText={reviewText}
+            setReviewText={setReviewText}
+            reviewSubmitting={reviewSubmitting}
+            setReviewSubmitting={setReviewSubmitting}
+            pickingVenueForDm={pickingVenueForDm}
+            setPickingVenueForDm={setPickingVenueForDm}
+            pickingVenueForFlockId={pickingVenueForFlockId}
+            setPickingVenueForFlockId={setPickingVenueForFlockId}
+            setPickingVenueForCreate={setPickingVenueForCreate}
+            setSelectedVenueForCreate={setSelectedVenueForCreate}
+            selectedDmId={selectedDmId}
+            setSelectedDmId={setSelectedDmId}
+            setSelectedFlockId={setSelectedFlockId}
+            setCurrentTab={setCurrentTab}
+            setCurrentScreen={setCurrentScreen}
+            flocks={flocks}
+            flocksRef={flocksRef}
+            meRef={meRef}
+            crowdData={crowdData}
+            confirmClick={confirmClick}
+            showToast={showToast}
+            setModerationTarget={setModerationTarget}
+            pinDmVenueNow={pinDmVenueNow}
+            updateFlockVenue={updateFlockVenue}
+            updateFlockVotes={updateFlockVotes}
+            shareVenueToChat={shareVenueToChat}
+          />
+        </React.Suspense>
+      )}
 
       {/* SOMEBODY ON YOUR PLAN PRESSED SOS.
           Rendered above the SOS sheet and outside every screen, because it has
@@ -20871,79 +18991,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
       )}
       {SOSModal()}
+      {/* THE WRAP-UP SHEET IS components/overlays/AttendanceModal.js AS OF
+          2026-09-13. It asks the host which of the accepted members actually
+          turned up, and it is 6.7 KB of JSX nobody else ever opens, so inline it
+          rode the blocking chunk every account downloads before the Nest paints
+          for nothing. It is its own chunk now. The gate stays here because the
+          gate is what makes it lazy: mounting the sheet unconditionally and
+          letting it return null would fetch that chunk during boot and buy
+          nothing. The thirteen values it used to close over travel as
+          attendanceModalProps above.
+          fallback={null} rather than a skeleton: this opens over a screen that
+          is already painted, and a skeleton sheet that turns into a real sheet
+          reads worse than a beat of nothing. Shortening that beat is what the
+          idle warm in warmScreenChunks is for. */}
       {showAttendanceModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
-            <DialogBehavior onClose={() => setShowAttendanceModal(false)} label="Who showed up" />
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', maxHeight: '80vh', overflow: 'auto' }}>
-            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 4px' }}>Who showed up?</h2>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Updates everyone's reliability score</p>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-              {attendanceMembers.map(m => (
-                <button className="hit44" key={m.id} aria-pressed={!!attendanceChecks[m.id]} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
-                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(45,90,135,0.45)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(45,90,135,0.08)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0 }}>
-                    {(m.name || '?')[0].toUpperCase()}
-                  </div>
-                  <span style={{ flex: 1, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
-                  <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.steel : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.steel : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {attendanceChecks[m.id] && <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
-                  </div>
-                </button>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button disabled={attendanceSubmitting} onClick={async () => {
-                setAttendanceSubmitting(true);
-                try {
-                  const saved = await submitAttendance(attendanceFlockId, attendanceMembers.map(m => ({ userId: m.id, attended: !!attendanceChecks[m.id] })));
-                  // The server names back anybody it could not score, which is
-                  // anybody who left the flock between this screen loading and
-                  // Confirm. It has done that for a while and this handler
-                  // dropped it, so the host was told a clean success about a
-                  // no-show that was never written anywhere.
-                  const missed = Array.isArray(saved?.unrecorded) ? saved.unrecorded.map(String) : [];
-                  const missedNames = attendanceMembers
-                    .filter(m => missed.includes(String(m.id)))
-                    .map(m => m.name)
-                    .filter(Boolean);
-                  // "A and B and C" is not a sentence anybody writes. Commas
-                  // until the last name, which takes the and.
-                  const namesRead = missedNames.length > 2
-                    ? `${missedNames.slice(0, -1).join(', ')} and ${missedNames[missedNames.length - 1]}`
-                    : missedNames.join(' and ');
-                  showToast(missedNames.length
-                    ? `Saved. ${namesRead} left the flock, so there was nothing to mark for them.`
-                    : 'Attendance recorded');
-                  // Write the answer into the roster this screen already holds.
-                  // Without this `attendanceOwed` on the plan screen stays true
-                  // (it tests for 'unmarked') and the "Who showed up?" banner
-                  // sits there after a save, inviting the second tap that the
-                  // seeding fix above now makes harmless but still confusing.
-                  // Anybody the server could not score keeps their old value.
-                  setFlocks(prev => prev.map(f => (f.id !== attendanceFlockId ? f : {
-                    ...f,
-                    members: Array.isArray(f.members) ? f.members.map(m => (
-                      (m && typeof m === 'object' && m.id in attendanceChecks && !missed.includes(String(m.id)))
-                        ? { ...m, attendance: attendanceChecks[m.id] ? 'attended' : 'no_show' }
-                        : m
-                    )) : f.members,
-                  })));
-                  getUserStats().then(d => setReliabilityScore(readReliability(d.reliabilityScore))).catch(() => {});
-                  // Only a saved list closes the sheet. The close used to sit
-                  // in `finally`, so a failed save threw away every checkbox
-                  // the host had just ticked and left them nothing to retry.
-                  setShowAttendanceModal(false);
-                } catch (err) { showToast(err?.message || "That didn't save. Try again.", 'error'); }
-                finally { setAttendanceSubmitting(false); }
-              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
-                {attendanceSubmitting ? 'Saving...' : 'Confirm'}
-              </button>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Skip</button>
-            </div>
-          </div>
-        </div>
+        <React.Suspense fallback={null}>
+          <AttendanceModal {...attendanceModalProps} />
+        </React.Suspense>
       )}
       {CheckinModal()}
       {ProfilePicModal()}

@@ -1,9 +1,28 @@
 // Five things the venue sheet said that were not so, from the consumer
 // venue-card trace of 2026-09-04. Source contracts.
+//
+// THE SHEET ITSELF LEFT App.js ON 2026-09-13 for
+// components/overlays/VenueDetailSheet.js, so that 427 lines of the most
+// tapped overlay in the product are fetched on the tap that opens it instead
+// of riding the boot chunk. Nothing asserted below changed, including the
+// footer geometry this file pins: the app source is simply in two files now
+// and both are read, in the order they used to be one. App.js stays FIRST
+// because the slices below walk forward from a marker, and a file ahead of it
+// would cut them short.
 const fs = require('fs');
 const path = require('path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8')
+  // The venue card a Birdie turn carries, which is where the price row this
+  // file pins is drawn, left App.js on the same day with the rest of the
+  // assistant panel, so components/birdie/BirdiePanel.js is read too. Appended,
+  // for the same reason App.js stays first.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'birdie', 'BirdiePanel.js'), 'utf8')
+  // The crowd reality check under the forecast left App.js on the same day with
+  // the venue card a map pin opens, so components/venue/ConsumerVenueCard.js is
+  // read too. Appended, for the same reason App.js stays first.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 test('a free venue does not read as "$"', () => {
   expect(app).toMatch(/\{venueDetailModal\.price_level > 0 && \(/);

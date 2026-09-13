@@ -34,8 +34,18 @@ const path = require('path');
 // tab), which left App.js on 2026-08-27 for screens/ProfileSettings.js. The bio
 // state it seeds from (profileBio) stayed in App.js, so both files are read: the
 // state resolves in the first, the mount in the second.
+// The past flocks screen left App.js for screens/PastFlocksScreen.js on
+// 2026-09-13, fetched on demand because nothing can land on it at first
+// paint. The state, the loader and the rerun handler behind it stayed in
+// App.js, so both files are read here as well: the state and the switch arm
+// resolve in the first, the screen in the second.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'PastFlocksScreen.js'), 'utf8');
+const PAST_FLOCKS = fs.readFileSync(
+  path.join(__dirname, '..', 'screens', 'PastFlocksScreen.js'),
+  'utf8'
+);
 const API = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'
@@ -58,6 +68,18 @@ function region(startMarker, endMarker) {
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return APP.slice(start, end);
+}
+
+/** THE SCREEN ITSELF. It used to be sliced out of App.js between its own
+ *  declaration and the next screen's banner, and that end marker rotted
+ *  once already when the create screen moved out from underneath it. The
+ *  screen is its own file now, screens/PastFlocksScreen.js, which holds
+ *  nothing but this screen, so the region is that file from its export
+ *  declaration down. Same shape as flockDetailRebuild.test.js. */
+function screenRegion() {
+  const start = PAST_FLOCKS.indexOf('export default function PastFlocksScreen(');
+  expect(start).toBeGreaterThan(-1);
+  return PAST_FLOCKS.slice(start);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -189,19 +211,31 @@ describe('person card bio', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('past flocks screen', () => {
-  // The end marker was `// CREATE SCREEN`, the banner over the next
-  // declaration in App.js. The create screen left for screens/CreateScreen.js
-  // on 2026-09-01 and took its banner with it, so the region ends at the first
-  // line of the comment that records the move, which begins at the offset the
-  // banner began at.
-  const screen = region('const PastFlocksScreen = () =>', '// The create screen was declared here');
+  const screen = screenRegion();
   const screenCode = codeOnly(screen);
   const loader = region('const [pastFlocks, setPastFlocks] = useState(null)', 'const handleRerunFlock');
   const rerun = region('const handleRerunFlock = useCallback', '// Load trusted contacts on mount');
   const rerunCode = codeOnly(rerun);
 
   it('the screen is wired into the boundaried switch', () => {
-    expect(APP).toContain("if (currentScreen === 'pastFlocks') return PastFlocksScreen();");
+    // MOUNTED, not called. The screen is a lazy chunk now, so the arm names
+    // every value it reads in one prop bag and renders it as an element
+    // inside a Suspense boundary. Calling it would bundle it back into the
+    // boot chunk and would put its body inside FlockAppInner's own render.
+    const arm = region("if (currentScreen === 'pastFlocks') {", "if (currentScreen === 'detail') {");
+    expect(arm).toContain('const pastFlocksProps = {');
+    expect(arm).toContain('<React.Suspense fallback={<ScreenChunkFallback />}>');
+    expect(arm).toContain('<PastFlocksScreen {...pastFlocksProps} />');
+    expect(APP).not.toContain('return PastFlocksScreen();');
+  });
+
+  it('the chunk is re-armable, so one failed fetch is not permanent', () => {
+    // React.lazy remembers a rejected import for ever, so a `const` binding
+    // would leave Past flocks dead for the life of the page after one bad
+    // fetch. The binding is a `let` and the crash fallback's re-arm rebuilds
+    // it.
+    expect(APP).toContain("let PastFlocksScreen = React.lazy(() => import('./screens/PastFlocksScreen'));");
+    expect(APP).toContain("  PastFlocksScreen = React.lazy(() => import('./screens/PastFlocksScreen'));");
   });
 
   it('Home links to it from the list header and from the empty state', () => {
