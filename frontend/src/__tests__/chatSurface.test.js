@@ -259,8 +259,19 @@ describe('scrollback', () => {
     // changed AND the list has to have grown, so a page going in above the
     // reader is not new traffic and neither is an optimistic row taking the
     // server's id.
+    //
+    // BOTH HALVES NOW READ THE MESSAGES IN THE LIST RATHER THAN ITS ROWS,
+    // and that is the same property stated over the right set. The flock
+    // stream carries rows its screen invents (the bill, the vote, the nudge,
+    // who is here), two of which are appended with no anchor: one appearing
+    // grew the array and changed its last id, so a reader scrolled up was
+    // offered "1 new message" for a row nobody sent. `messages` is the list
+    // minus the ids the screen declares synthetic, and with none declared it
+    // IS the list, which is what keeps the DM thread on exactly this rule.
     expect(messageListSource).toMatch(/lastId !== prev\.lastId/);
-    expect(messageListSource).toMatch(/list\.length > prev\.count/);
+    expect(messageListSource).toMatch(/messages\.length > prev\.count/);
+    expect(messageListSource).toMatch(/syntheticSet \? list\.filter\(\(m\) => !syntheticSet\.has\(m && m\.id\)\) : list/);
+    expect(flockScreenSource).toMatch(/syntheticIds=\{SYNTHETIC_ROW_IDS\}/);
     expect(appSource).not.toMatch(/chatMsgCountRef|dmMsgCountRef/);
     expect(messageListSource).not.toMatch(/msgCountRef/);
   });

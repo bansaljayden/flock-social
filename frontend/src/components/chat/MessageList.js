@@ -56,6 +56,12 @@ import './chat.css';
  *
  * PROPS
  *   rows          the flat message array, oldest first
+ *   syntheticIds  ids of rows the SCREEN invents rather than reads off the
+ *                 server: a bill card, a vote, a prompt, a who-is-here
+ *                 line. They are drawn like any other row and are invisible
+ *                 to the arrival rules above, because one appearing is not
+ *                 a message arriving. Keep the array identity stable (a
+ *                 module-level constant) or this recomputes every render
  *   threadKey     the flock id or DM id. Changing it resets the scroll state
  *   myId          the viewer's id, for deciding whose run is whose
  *   ownName       what the viewer's own runs are called. Default 'You'
@@ -164,6 +170,7 @@ function scrollToBottom(el, smooth) {
 
 export default function MessageList({
   rows,
+  syntheticIds,
   threadKey,
   myId = null,
   ownName = 'You',
@@ -189,6 +196,32 @@ export default function MessageList({
   now,
 }) {
   const list = Array.isArray(rows) ? rows : NO_ROWS;
+  /* WHICH OF THOSE ROWS ARE MESSAGES, and why the scroll rules ask.
+
+     The flock stream carries rows its screen invents: a bill card, the
+     vote, a nudge, a who-is-here line. Two of those are appended with no
+     anchor, so they land at the END of the array, and the arrival test
+     below is "the last id changed and the array grew". A nudge that
+     appears the moment somebody stops typing therefore read as traffic:
+     the array grew by one and its last id became the nudge, so a reader
+     scrolled up was offered "1 new message" for a row nobody sent, and
+     tapping it took them to a prompt. A first location share did the same
+     with the who-is-here row.
+
+     So every count the pill stands on is taken over the MESSAGES, and the
+     screen says which ids are not messages. The cards are still drawn in
+     place, and a reader already at the bottom is still carried down to one
+     that appears (see the last branch below); what they never get is a
+     claim that something arrived.
+
+     A caller that passes no ids keeps the old behaviour exactly, which is
+     what the DM thread wants: every row in it is a message. */
+  const syntheticSet = useMemo(() => (
+    Array.isArray(syntheticIds) && syntheticIds.length > 0 ? new Set(syntheticIds) : null
+  ), [syntheticIds]);
+  const messages = useMemo(() => (
+    syntheticSet ? list.filter((m) => !syntheticSet.has(m && m.id)) : list
+  ), [list, syntheticSet]);
   const scrollerRef = useRef(null);
   /* The scroller is held twice: here, for the scroll rules, and by whoever
      asked for it. Both writes happen in one callback ref rather than in an
@@ -207,7 +240,7 @@ export default function MessageList({
   }, [registerScroller]);
   const nearBottomRef = useRef(true);
   const mountedRef = useRef(false);
-  const prevRef = useRef({ firstId: null, lastId: null, height: 0, count: 0 });
+  const prevRef = useRef({ firstId: null, lastId: null, height: 0, count: 0, rows: 0 });
   const [newCount, setNewCount] = useState(0);
   /* The same reading as nearBottomRef, kept as state because the pill is
      rendered from it. The ref is what the layout effect reads before paint,
@@ -261,7 +294,7 @@ export default function MessageList({
      thread at its newest message. */
   useLayoutEffect(() => {
     mountedRef.current = false;
-    prevRef.current = { firstId: null, lastId: null, height: 0, count: 0 };
+    prevRef.current = { firstId: null, lastId: null, height: 0, count: 0, rows: 0 };
     nearBottomRef.current = true;
     setOffBottom(false);
     setNewCount(0);
@@ -271,9 +304,22 @@ export default function MessageList({
     const el = scrollerRef.current;
     if (!el) return;
     const prev = prevRef.current;
-    const firstId = list.length ? list[0].id : null;
-    const lastRow = list.length ? list[list.length - 1] : null;
+    const firstId = messages.length ? messages[0].id : null;
+    const lastRow = messages.length ? messages[messages.length - 1] : null;
     const lastId = lastRow ? lastRow.id : null;
+    /* Catching up, written once because two branches below do it. Following
+       the tail IS catching up, so the pill has nothing left to say on either
+       of its two grounds. Clearing both here rather than waiting for the
+       scroll event matters: a programmatic scroll does not always raise one,
+       and a pill left behind at the bottom of the thread is a control with
+       nowhere to go. */
+    const catchUp = () => {
+      beginSettle();
+      scrollToBottom(el, true);
+      nearBottomRef.current = true;
+      setOffBottom(false);
+      setNewCount(0);
+    };
 
     if (!mountedRef.current) {
       // Opening a thread lands at the newest message with no animation. A
@@ -281,10 +327,10 @@ export default function MessageList({
       // nobody asked for.
       mountedRef.current = true;
       scrollToBottom(el, false);
-    } else if (list.length > 0) {
+    } else if (messages.length > 0) {
       const prepended = prev.firstId != null
         && firstId !== prev.firstId
-        && list.some((m) => m.id === prev.firstId);
+        && messages.some((m) => m.id === prev.firstId);
 
       if (prev.count === 0) {
         /* The first page landing on an empty list is the thread OPENING, not
@@ -296,34 +342,41 @@ export default function MessageList({
         // Rule 3. Correct by the exact height that appeared above.
         const grew = el.scrollHeight - prev.height;
         if (grew > 0) el.scrollTop = el.scrollTop + grew;
-      } else if (lastId !== prev.lastId && list.length > prev.count) {
-        /* A row landed at the end. Length has to have grown as well as the id
-           changed: an optimistic row swapping its temporary id for the
+      } else if (lastId !== prev.lastId && messages.length > prev.count) {
+        /* A MESSAGE landed at the end. The count has to have grown as well as
+           the id changed: an optimistic row swapping its temporary id for the
            server's is not a new message, and treating it as one would raise
-           a "1 new message" pill for a message the reader wrote. */
+           a "1 new message" pill for a message the reader wrote. Both halves
+           read the messages rather than the rows, so a card the screen
+           invented cannot be mistaken for traffic. */
         if (isMineRow(lastRow) || nearBottomRef.current) {
-          beginSettle();
-          scrollToBottom(el, true);
-          /* Following the tail IS catching up, so the pill has nothing left
-             to say, on either of its two grounds. Clearing both here rather
-             than waiting for the scroll event matters: a programmatic scroll
-             does not always raise one, and a pill left behind at the bottom
-             of the thread is a control with nowhere to go. */
-          nearBottomRef.current = true;
-          setOffBottom(false);
-          setNewCount(0);
+          catchUp();
         } else {
-          const at = list.findIndex((m) => m.id === prev.lastId);
-          const arrived = at >= 0 ? (list.length - 1 - at) : 1;
+          const at = messages.findIndex((m) => m.id === prev.lastId);
+          const arrived = at >= 0 ? (messages.length - 1 - at) : 1;
           setNewCount((c) => c + arrived);
         }
+      } else if (list.length > prev.rows && nearBottomRef.current) {
+        /* ONE OF THE SCREEN'S OWN CARDS APPEARED and no message came with it.
+           A reader already at the bottom is taken down to it, because a card
+           that lands under the fold is a card nobody sees, and that is what
+           the old length test did for these rows as a side effect of calling
+           them traffic. A reader who is scrolled up is left exactly where
+           they are and is told nothing, which is the half that was wrong. */
+        catchUp();
       }
     }
 
-    prevRef.current = { firstId, lastId, height: el.scrollHeight, count: list.length };
+    prevRef.current = {
+      firstId,
+      lastId,
+      height: el.scrollHeight,
+      count: messages.length,
+      rows: list.length,
+    };
     // beginSettle is a useCallback with no deps, so it is stable and this
     // list still changes only when the rows or the ownership test do.
-  }, [list, isMineRow, beginSettle]);
+  }, [list, messages, isMineRow, beginSettle]);
 
   const onScroll = (e) => {
     const c = e.currentTarget;
