@@ -28,23 +28,50 @@ const fs = require('fs');
 const path = require('path');
 
 const RAW = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').split('\r').join('');
+// Door 2 and door 3 are inside the map component, and the map is
+// components/map/MapLibreMapView.js since 2026-09-13. Door 1 and the prop that
+// carries the switch to the map are still App.js's. Each slice below names the
+// file that holds the door it is about; a slice left pointed at App.js would
+// have failed on a missing anchor, which is the one thing this helper refuses
+// to let pass quietly.
+const MAP_RAW = fs.readFileSync(
+  path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'),
+  'utf8',
+).split('\r').join('');
+// And the Discover screen itself is screens/ExploreScreen.js since 2026-09-13,
+// which is where the banner that states the setting, its Turn on control and
+// the prop that hands the switch to the map are drawn. The switch, the
+// toggle and the boot effect are still App.js's. Same rule as the map above:
+// each slice names the file that holds the door it is about.
+const EXPLORE_RAW = fs.readFileSync(
+  path.join(__dirname, '..', 'screens', 'ExploreScreen.js'),
+  'utf8',
+).split('\r').join('');
 
 /** Line comments removed, string literals kept. */
-const APP = RAW
+const stripLineComments = (src) => src
   .split('\n')
   .map((line) => line.replace(/(^|[^:])\/\/[^\n]*$/, '$1'))
   .join('\n');
 
-function slice(from, to, min = 80, max = 4000) {
-  const a = APP.indexOf(from);
+const APP = stripLineComments(RAW);
+const MAP = stripLineComments(MAP_RAW);
+const EXPLORE = stripLineComments(EXPLORE_RAW);
+
+function sliceIn(source, from, to, min = 80, max = 4000) {
+  const a = source.indexOf(from);
   expect(a).toBeGreaterThan(-1);
-  const b = APP.indexOf(to, a);
+  const b = source.indexOf(to, a);
   expect(b).toBeGreaterThan(a);
-  const src = APP.slice(a, b);
+  const src = source.slice(a, b);
   expect(src.length).toBeGreaterThan(min);
   expect(src.length).toBeLessThan(max);
   return src;
 }
+
+const slice = (from, to, min, max) => sliceIn(APP, from, to, min, max);
+const sliceMap = (from, to, min, max) => sliceIn(MAP, from, to, min, max);
+const sliceExplore = (from, to, min, max) => sliceIn(EXPLORE, from, to, min, max);
 
 describe('the stripper is doing its job', () => {
   it('removes a line comment and keeps the code beside it', () => {
@@ -74,7 +101,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
   it('the map skips its own geolocation call when the switch is off', () => {
     // The map is the second door and the one that survives a tab switch,
     // because it stays mounted once Discover has been opened.
-    const init = slice('const located = ', 'const userLoc =');
+    const init = sliceMap('const located = ', 'const userLoc =');
     expect(init).toContain('locationAllowed');
   });
 
@@ -86,7 +113,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     // gated on mapReady and followUser only, and followUser is a different
     // question: it asks whether THIS map is the one that follows you, which a
     // venue dashboard map answers no to whatever the switch says.
-    const watch = slice(
+    const watch = sliceMap(
       'watchIdRef.current = watchPosition(',
       'const src = map.getSource',
       200,
@@ -94,7 +121,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     );
     expect(watch.length).toBeGreaterThan(200);
     // The guard sits above the call, in the same effect.
-    const guard = slice(
+    const guard = sliceMap(
       'if (!mapReady || !followUser',
       'watchIdRef.current = watchPosition(',
       20,
@@ -112,7 +139,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     // this effect: the stripper above deletes line comments, so a comment
     // marker finds nothing and the slice helper reports it as a missing
     // anchor rather than as a missing dependency.
-    const deps = slice(
+    const deps = sliceMap(
       'watchIdRef.current = watchPosition(',
       'venuesRef.current = venues;',
       200,
@@ -123,7 +150,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
 
   it('the switch is actually handed to the map, not just accepted by it', () => {
     // A defaulted prop nobody passes is a gate that is always open.
-    const render = slice('<MapLibreMapView', '/>');
+    const render = sliceExplore('<MapLibreMapView', '/>');
     expect(render).toContain('locationAllowed={locationEnabled}');
   });
 
@@ -137,11 +164,11 @@ describe('the state is visible on the screen the setting governs', () => {
   it('Discover says location is off rather than just showing a generic map', () => {
     // Without this the map opens somewhere generic with no user pin and nothing
     // explaining why, which reads as a broken map rather than a chosen setting.
-    expect(APP).toMatch(/Location services are off/);
+    expect(EXPLORE).toMatch(/Location services are off/);
   });
 
   it('and offers a way back on, without a trip to Settings', () => {
-    const band = slice('Location services are off', '</div>', 80, 3000);
+    const band = sliceExplore('Location services are off', '</div>', 80, 3000);
     expect(band).toContain('toggleLocation(true)');
   });
 
@@ -149,6 +176,6 @@ describe('the state is visible on the screen the setting governs', () => {
     // The error banner is about a location attempt that failed. With the switch
     // off there is no attempt, so showing both would be two explanations for
     // one blank map.
-    expect(APP).toContain('!locationLoading && locationEnabled && (locationError || venueLoadError)');
+    expect(EXPLORE).toContain('!locationLoading && locationEnabled && (locationError || venueLoadError)');
   });
 });

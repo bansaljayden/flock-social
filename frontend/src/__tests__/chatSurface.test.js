@@ -49,6 +49,11 @@ const apiPath = path.join(__dirname, '..', 'services', 'api.js');
 const appSource = fs.readFileSync(appPath, 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
+  // The Messages list left on 2026-09-13 for screens/ChatListScreen.js, taking
+  // the flock row that reads the server unread count. The badge is still server
+  // truth and the assertion on it is unchanged; the row that draws it is simply
+  // in a fourth file now.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatListScreen.js'), 'utf8')
   // Both pay sheets left App.js on 2026-09-13 for components/PaymentSheets.js,
   // and one of the two unbreakable-string sites the wrap rule below counts went
   // with them: the wallet handle, which is user-supplied and has no spaces in

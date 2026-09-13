@@ -76,7 +76,19 @@ const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // behind them (loadVenueDetailReviews, getPublicPromotions and the state they
   // write) did not move, so App.js is still what the state assertions read and
   // this file is appended for the call sites.
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8')
+  // The Plans tab left App.js on 2026-09-13 for screens/CalendarScreen.js, and
+  // the X on a calendar row went with it. removeCalendarEvent and
+  // deleteSavedCalendarEvent, the two handlers this section is really about,
+  // stayed in App.js, so App.js is still what the handler assertions read and
+  // this file is appended for the one call-site check.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CalendarScreen.js'), 'utf8')
+  // And the Discover tab on the same day, for screens/ExploreScreen.js. The two
+  // event-list calls counted below stayed in App.js inside fetchFeaturedEvents;
+  // the states drawn from their answers went with the screen, so that file is
+  // read here too. Appended last, so no window sliced below starts later than
+  // it used to.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreScreen.js'), 'utf8');
 
 /**
  * Comments dropped, so prose describing a fix cannot pass for the fix. Line

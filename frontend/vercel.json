@@ -37,7 +37,7 @@
       ]
     },
     {
-      "source": "/(og-image.png|favicon.ico|logo192.png|logo512.png|apple-touch-icon.png|appstore-icon-1024.png|flock-logo.png|birdie-avatar.png|birdie-avatar-light.png|birdie-head.png|bg-city.mp4|bg-city-venue.mp4|bg-city-poster.jpg|bg-city-venue-poster.jpg)",
+      "source": "/(og-image.png|favicon.ico|logo192.png|logo512.png|apple-touch-icon.png|appstore-icon-1024.png|flock-logo.png|birdie-avatar.png|birdie-avatar-light.png|bg-city.mp4|bg-city-poster.jpg)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
       ]

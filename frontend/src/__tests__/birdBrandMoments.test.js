@@ -110,7 +110,13 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // components/overlays/VenueDetailSheet.js and took both of its birds with it:
   // the warm one beside a reviews read that failed, and the one on a venue
   // nobody has reviewed yet.
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8')
+  // The Discover tab left App.js on 2026-09-13 for screens/ExploreScreen.js and
+  // took eight of the swept states with it: the location and venue-load banner,
+  // the search that failed, the search that found nothing, the events list that
+  // failed, the events that need a location, no events nearby, the person search
+  // that failed and the person search that found nobody.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreScreen.js'), 'utf8');
 // The crash nets live outside the app tree and are read on their own: a bird
 // counted in APP would not prove the error page has one.
 const ERROR_BOUNDARY_SRC = fs.readFileSync(path.join(__dirname, '..', 'components', 'ErrorBoundary.js'), 'utf8');

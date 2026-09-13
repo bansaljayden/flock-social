@@ -50,7 +50,11 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // it, so that file is read too: unnamed, all eleven would drop out of the
   // floor sweep below. Appended, because the slices in this file walk forward
   // from markers in App.js.
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8')
+  // The map left on the same day for components/map/MapLibreMapView.js, taking
+  // the marker label with it. Unnamed, the star check below would look at a file
+  // that no longer draws a label and pass on nothing. Appended, same reason.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
 const ICONS = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
@@ -120,8 +124,10 @@ describe('no raw star glyph renders a rating anywhere in App.js', () => {
     expect(i).toBeGreaterThan(-1);
     const block = codeOnly(APP.slice(i, i + 700));
     expect(block).toContain('starSvgString(12)');
-    // And the import actually reaches it.
-    expect(APP).toContain("import Icons, { starSvgString } from './components/ui/Icons'");
+    // And the import actually reaches it. It is the map module's import since
+    // 2026-09-13: the label moved there and App.js had no other reader, so the
+    // named import went with it and only the default Icons stayed behind.
+    expect(APP).toContain("import { starSvgString } from '../ui/Icons';");
   });
 
   it('starSvgString is the same drawing as Icons.star, not a second star', () => {

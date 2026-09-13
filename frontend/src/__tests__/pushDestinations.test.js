@@ -37,6 +37,11 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 // written with \n would pass on one checkout convention and fail on the other.
 const readSource = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').replace(/\r\n/g, '\n');
 const APP = readSource('frontend', 'src', 'App.js');
+// The Messages tab moved to screens/ChatListScreen.js on 2026-09-13 and is a
+// fetched chunk now. The intent that sets highlightedInviteId is still App.js's;
+// the card that reads it and calls itself out is in the list, so the pin on the
+// card reads this file.
+const CHAT_LIST = readSource('frontend', 'src', 'screens', 'ChatListScreen.js');
 const FIREBASE_SERVICE = readSource('backend', 'services', 'firebaseService.js');
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -81,7 +86,7 @@ describe('a tapped invite lands on the invite', () => {
   });
 
   test('the card the tap meant is called out on the list', () => {
-    expect(APP).toMatch(/const tapped = highlightedInviteId === f\.id;/);
+    expect(CHAT_LIST).toMatch(/const tapped = highlightedInviteId === f\.id;/);
     expect(APP).toMatch(/setHighlightedInviteId/);
   });
 });

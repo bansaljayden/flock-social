@@ -4,6 +4,10 @@ const path = require('path');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const app = read('App.js');
+// The Messages tab moved to screens/ChatListScreen.js on 2026-09-13 and is a
+// fetched chunk now. The DM row in that list, and the unread badge on it, went
+// with it; the DM thread state and the missing-conversation panel did not.
+const chatList = read('screens/ChatListScreen.js');
 const modal = read('components/NewDmModal.js');
 const messages = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'messages.js'), 'utf8');
 const handlers = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'sockets', 'handlers.js'), 'utf8');
@@ -59,6 +63,6 @@ test('the person row shows something the server actually returns', () => {
 });
 
 test('the DM unread badge is capped and announced', () => {
-  expect(app).toMatch(/\{dm\.unread > 99 \? '99\+' : dm\.unread\}<span className="sr-only"> unread messages<\/span>/);
-  expect(app).toMatch(/minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient\(135deg, #EF4444, #DC2626\)'/);
+  expect(chatList).toMatch(/\{dm\.unread > 99 \? '99\+' : dm\.unread\}<span className="sr-only"> unread messages<\/span>/);
+  expect(chatList).toMatch(/minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient\(135deg, #EF4444, #DC2626\)'/);
 });

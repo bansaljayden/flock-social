@@ -35,6 +35,16 @@ const fs = require('fs');
 const path = require('path');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The map moved to components/map/MapLibreMapView.js on 2026-09-13 and is a
+// fetched chunk now. Defect 1 below is App.js's: the venue list, the batch
+// scorer and the write-back effect all still live there, because FlockAppInner
+// owns that state. Defects 2 and 3 are the map's own drawing and moved with it.
+// Both files are read, and each assertion points at the one that answers it, so
+// nothing here can go green by looking at a file that no longer draws the thing.
+const MAP = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
+// Both at once, for the negatives only: a pin displacement scheme that came
+// back is a regression wherever it is written.
+const BOTH = `${APP}\n${MAP}`;
 
 function codeOnly(src) {
   return src
@@ -45,12 +55,15 @@ function codeOnly(src) {
     .join('\n');
 }
 
-function region(startMarker, endMarker) {
-  const start = APP.indexOf(startMarker);
-  const end = APP.indexOf(endMarker, start);
+// The source is a parameter now that the map is a second file. It still
+// defaults to App.js, and it still fails loudly on a missing anchor rather than
+// slicing an empty string every assertion would pass against.
+function region(startMarker, endMarker, source = APP) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
-  return APP.slice(start, end);
+  return source.slice(start, end);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -101,7 +114,7 @@ describe('first-load heat', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('heat paint', () => {
-  const paint = region('const VENUE_HEAT_PAINT = {', '\n};');
+  const paint = region('const VENUE_HEAT_PAINT = {', '\n};', MAP);
   const paintCode = codeOnly(paint);
 
   it('radius and intensity follow zoom', () => {
@@ -131,8 +144,8 @@ describe('heat paint', () => {
     expect(paintCode).toContain("'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5]");
     // Features carry score/100 and exist ONLY for venues with a real score —
     // both places that build them gate on typeof crowd === 'number'.
-    expect(APP).toContain('properties: { weight: v.crowd / 100 }');
-    const gates = APP.match(/typeof v\.crowd === 'number'/g) || [];
+    expect(MAP).toContain('properties: { weight: v.crowd / 100 }');
+    const gates = MAP.match(/typeof v\.crowd === 'number'/g) || [];
     expect(gates.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -149,20 +162,25 @@ describe('heat paint', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('pin overlaps', () => {
-  const fn = codeOnly(region('function resolvePinOverlaps(', '\nfunction setPinHidden('));
-  const hide = codeOnly(region('function setPinHidden(', '\n// WHERE THE APP LOOKS'));
-  const appCode = codeOnly(APP);
+  const fn = codeOnly(region('function resolvePinOverlaps(', '\nfunction setPinHidden(', MAP));
+  // The end anchor is the component below it. It used to be the comment above
+  // NO_LOCATION_VIEW, which stayed in App.js when the map left: FlockAppInner
+  // loads venues around the same point, so that constant has two readers and
+  // only one declaration.
+  const hide = codeOnly(region('function setPinHidden(', '\nconst MapLibreMapView = React.memo(', MAP));
+  const mapCode = codeOnly(MAP);
+  const bothCode = codeOnly(BOTH);
 
   it('a pin is never moved off its venue: the resolver reads positions and writes none', () => {
     expect(fn).toContain('map.project([venue.location.longitude, venue.location.latitude])');
     expect(fn).not.toContain('setLngLat');
     expect(fn).not.toContain('unproject');
-    expect(appCode).not.toContain('GOLDEN_ANGLE');
-    expect(appCode).not.toContain('declutterMarkers');
+    expect(bothCode).not.toContain('GOLDEN_ANGLE');
+    expect(bothCode).not.toContain('declutterMarkers');
   });
 
   it('the active venue, then the owner, then the busier place keeps the spot', () => {
-    const pri = codeOnly(region('function pinPriority(', '\nfunction resolvePinOverlaps('));
+    const pri = codeOnly(region('function pinPriority(', '\nfunction resolvePinOverlaps(', MAP));
     const act = pri.indexOf('act(bv) - act(av)');
     const own = pri.indexOf('own(bv) - own(av)');
     const crowd = pri.indexOf('crowd(bv) - crowd(av)');
@@ -179,63 +197,63 @@ describe('pin overlaps', () => {
     expect(hide).toContain("el.setAttribute('aria-hidden', 'true')");
     expect(hide).toContain("badge.className = 'mlb-cluster-badge'");
     expect(hide).toContain('const text = `+${behind}`;');
-    expect(APP).toContain('.mlb-cluster-badge {');
-    expect(APP).toContain('.mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }');
+    expect(MAP).toContain('.mlb-cluster-badge {');
+    expect(MAP).toContain('.mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }');
   });
 
   it('runs after markers are built, throttled while the map moves, and once more when it settles', () => {
-    expect(appCode).toContain('if (overlapPassRef.current) overlapPassRef.current();');
-    expect(appCode).toContain("map.on('move', scheduleOverlapPass);");
-    expect(appCode).toContain("map.on('moveend', overlapPass);");
-    expect(appCode).toContain('window.requestAnimationFrame(overlapPass)');
-    expect(appCode).toContain('PIN_OVERLAP_MIN_INTERVAL_MS - (performance.now() - lastOverlapAt)');
+    expect(mapCode).toContain('if (overlapPassRef.current) overlapPassRef.current();');
+    expect(mapCode).toContain("map.on('move', scheduleOverlapPass);");
+    expect(mapCode).toContain("map.on('moveend', overlapPass);");
+    expect(mapCode).toContain('window.requestAnimationFrame(overlapPass)');
+    expect(mapCode).toContain('PIN_OVERLAP_MIN_INTERVAL_MS - (performance.now() - lastOverlapAt)');
   });
 
   it('every marker is positioned at subpixel precision, so pins glide instead of stepping', () => {
-    const pinned = (APP.match(/subpixelPositioning: true/g) || []).length;
+    const pinned = (MAP.match(/subpixelPositioning: true/g) || []).length;
     expect(pinned).toBeGreaterThanOrEqual(4);
     // The venue pin, the flock pin, the member pin and the viewer's own dot.
-    expect(APP).toContain("new ml.Marker({ element: el, anchor, subpixelPositioning: true })");
-    expect(APP).toContain("new mlMod.Marker({ element: el, anchor: 'center', subpixelPositioning: true })");
+    expect(MAP).toContain("new ml.Marker({ element: el, anchor, subpixelPositioning: true })");
+    expect(MAP).toContain("new mlMod.Marker({ element: el, anchor: 'center', subpixelPositioning: true })");
   });
 });
 
 describe('pin size and anchor', () => {
   it('size follows zoom continuously through one CSS variable, not three tiers on a transition', () => {
-    const appCode = codeOnly(APP);
-    expect(appCode).toContain("container.style.setProperty('--pin-scale', scale.toFixed(3));");
-    expect(APP).toContain('.mlb-marker-inner { transform: scale(var(--pin-scale, 1)); }');
-    expect(APP).not.toContain('[data-zoom-tier="lo"] .mlb-marker-inner');
-    expect(APP).not.toContain('transition: transform 0.18s ease');
+    const mapCode = codeOnly(MAP);
+    expect(mapCode).toContain("container.style.setProperty('--pin-scale', scale.toFixed(3));");
+    expect(MAP).toContain('.mlb-marker-inner { transform: scale(var(--pin-scale, 1)); }');
+    expect(MAP).not.toContain('[data-zoom-tier="lo"] .mlb-marker-inner');
+    expect(MAP).not.toContain('transition: transform 0.18s ease');
     // The curve: full size by 14.5, PIN_SCALE_MIN at 12 and below.
-    expect(appCode).toContain('const PIN_SCALE_MIN = 0.62;');
-    expect(appCode).toContain('const PIN_SCALE_FROM = 12;');
-    expect(appCode).toContain('const PIN_SCALE_TO = 14.5;');
+    expect(mapCode).toContain('const PIN_SCALE_MIN = 0.62;');
+    expect(mapCode).toContain('const PIN_SCALE_FROM = 12;');
+    expect(mapCode).toContain('const PIN_SCALE_TO = 14.5;');
   });
 
   it('scales about the point pinned to the coordinate', () => {
-    expect(APP).toContain("inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';");
+    expect(MAP).toContain("inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';");
     // The builder still draws full size; scale is a transform.
-    expect(APP).toContain('const size = isActive ? 54 : 44;');
+    expect(MAP).toContain('const size = isActive ? 54 : 44;');
   });
 
   it('the label and the owner chip sit outside the box MapLibre anchors', () => {
-    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {'));
+    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {', MAP));
     expect(build).toContain("under.className = 'mlb-marker-under';");
     expect(build).toContain('under.appendChild(label);');
     expect(build).not.toContain('el.appendChild(label);');
-    expect(APP).toContain(".mlb-marker-under {");
-    expect(APP).toMatch(/\.mlb-marker-under \{\s*position: absolute;\s*top: 100%;/);
-    expect(codeOnly(APP)).toContain("(el.querySelector('.mlb-marker-under') || el).appendChild(chip);");
+    expect(MAP).toContain(".mlb-marker-under {");
+    expect(MAP).toMatch(/\.mlb-marker-under \{\s*position: absolute;\s*top: 100%;/);
+    expect(codeOnly(MAP)).toContain("(el.querySelector('.mlb-marker-under') || el).appendChild(chip);");
     // Sized to its content: an absolute box shrinks to its containing block,
     // and with the 44px pin as that block every venue name wrapped to two
     // letters ("Th.", "Mo.") on the first street-zoom capture.
-    const under = APP.slice(APP.indexOf('.mlb-marker-under {'), APP.indexOf('.mlb-marker-under {') + 700);
+    const under = MAP.slice(MAP.indexOf('.mlb-marker-under {'), MAP.indexOf('.mlb-marker-under {') + 700);
     expect(under).toContain('width: max-content;');
   });
 
   it('a photo pin waits behind a disc, not a teardrop, so nothing jumps when the photo lands', () => {
-    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {'));
+    const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {', MAP));
     const photoBranch = build.slice(build.indexOf('} else if (venue.photo_url) {'), build.indexOf('} else {', build.indexOf('} else if (venue.photo_url) {')));
     expect(photoBranch).toContain('buildDiscSvg(isActive, venue.category)');
     expect(photoBranch).not.toContain('buildPinSvg(');

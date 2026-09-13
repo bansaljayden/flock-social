@@ -15,6 +15,16 @@ const searchResults = fs.readFileSync(path.join(__dirname, '..', 'components', '
 // gone green on a comment that happens to quote it rather than on the card
 // still saying it.
 const card = fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
+// And the map itself moved to components/map/MapLibreMapView.js on the same
+// day, carrying the category predicate, the pins and the heat it drives. The
+// filter contract below is read from there for the same reason as the two
+// above: pointed at App.js it would go green on nothing at all.
+const map = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
+// And the Discover screen itself moved to screens/ExploreScreen.js on the same
+// day, carrying the banners drawn above the map. The empty-map sentence and the
+// quota-refusal retry are read from there for the reason the three above are:
+// pointed at App.js they would go green on nothing at all.
+const explore = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreScreen.js'), 'utf8');
 
 test('a failed crowd read ends the skeleton and says so', () => {
   expect(app).toMatch(/const \[crowdFetchFailed, setCrowdFetchFailed\] = useState\(false\);/);
@@ -28,20 +38,20 @@ test('a search that found nothing or failed clears the last city\'s pins', () =>
 });
 
 test('zero venues nearby is said, and the budget cap is named', () => {
-  expect(app).toMatch(/No venues on Flock's map right here yet\. Search a place by name, or move the map\./);
+  expect(explore).toMatch(/No venues on Flock's map right here yet\. Search a place by name, or move the map\./);
   expect(searchResults).toMatch(/spots here are above your group's budget, so none show\. The search worked\./);
 });
 
 test('the category filter drives pins, heat and an empty sentence from one predicate', () => {
-  expect(app).toMatch(/^const venueMatchesCategory = \(v, filterCategory\) => \{/m);
-  expect(app).toMatch(/applyCategoryFilter\(mapInstanceRef\.current, markersRef\.current, filterCategory, setFilterHidesAll\);/);
-  expect(app).toMatch(/const shown = venueMatchesCategory\(v, filterCategoryRef\.current\);/);
-  expect(app).toMatch(/if \(shown && typeof v\.crowd === 'number'\)/);
-  expect(app).toMatch(/spots on this map\. Pick another filter or move the map\./);
+  expect(map).toMatch(/^const venueMatchesCategory = \(v, filterCategory\) => \{/m);
+  expect(map).toMatch(/applyCategoryFilter\(mapInstanceRef\.current, markersRef\.current, filterCategory, setFilterHidesAll\);/);
+  expect(map).toMatch(/const shown = venueMatchesCategory\(v, filterCategoryRef\.current\);/);
+  expect(map).toMatch(/if \(shown && typeof v\.crowd === 'number'\)/);
+  expect(map).toMatch(/spots on this map\. Pick another filter or move the map\./);
 });
 
 test('a quota refusal that names its window does not offer a retry that cannot work', () => {
-  expect(app).toMatch(/\{!\/again in \\d\+\/i\.test\(venueLoadError \|\| ''\) && <button className="hit44" onClick=\{\(\) => \{ setLocationError\(''\); setVenueLoadError\(''\);/);
+  expect(explore).toMatch(/\{!\/again in \\d\+\/i\.test\(venueLoadError \|\| ''\) && <button className="hit44" onClick=\{\(\) => \{ setLocationError\(''\); setVenueLoadError\(''\);/);
 });
 
 test('a category-shaped hourly curve says so under the bars', () => {

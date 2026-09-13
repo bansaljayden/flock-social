@@ -5,6 +5,11 @@ const path = require('path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 const profile = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
+// The Messages tab moved to screens/ChatListScreen.js on 2026-09-13 and is a
+// fetched chunk now. The badge and the spoken label are still App.js's, in the
+// bottom nav; the invite CARD that has to carry the when, the where and the who
+// went with the list, so that one line is asserted against this file.
+const chatList = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatListScreen.js'), 'utf8');
 
 test('a reload keeps the members, votes and messages this session already read', () => {
   expect(app).toMatch(/const fresh = mapped\.filter\(f => f\.memberStatus === 'accepted'\);\s*setFlocks\(prev => fresh\.map\(\(f\) => \{/);
@@ -38,7 +43,7 @@ test('a waiting invite is said on the badge and on the Nest, with when, where an
   expect(app).toMatch(/messagesTabInvites === 1 \? 'invite' : 'invites'/);
   expect(app).toMatch(/`Messages, \$\{messagesTabParts\.join\(' and '\)\}`/);
   expect(app).toMatch(/\? '1 invite waiting' : `\$\{pendingFlockInvites\.length\} invites waiting`/);
-  expect(app).toMatch(/\{f\.time && f\.time !== 'TBD' \? f\.time : 'Time still open'\} · \{f\.venue && f\.venue !== 'TBD' \? f\.venue : 'Venue still open'\} · \{f\.memberCount \|\| 1\} going/);
+  expect(chatList).toMatch(/\{f\.time && f\.time !== 'TBD' \? f\.time : 'Time still open'\} · \{f\.venue && f\.venue !== 'TBD' \? f\.venue : 'Venue still open'\} · \{f\.memberCount \|\| 1\} going/);
   expect(app).toMatch(/time: data\.eventTime \? formatEventTime\(data\.eventTime\) : 'TBD',/);
   expect(app).toMatch(/status: invite\.status \|\| 'voting' \}\]\);/);
 });

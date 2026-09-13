@@ -5,6 +5,18 @@ const path = require('path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const app = read('App.js');
 const signup = read('components/auth/SignupScreen.js');
+// The Plans tab left App.js on 2026-09-13 for screens/CalendarScreen.js,
+// lazily fetched, and the empty-day state below went with it. A slice of
+// App.js for a marker that is no longer in App.js is an empty window, and
+// every assertion against an empty window is one that cannot fail, so the
+// empty-calendar test reads the file that holds the state now.
+const calendarScreen = read('screens/CalendarScreen.js');
+// The Discover tab left App.js on 2026-09-13 for screens/ExploreScreen.js,
+// lazily fetched, and the Live Events drawer with its location gate went
+// with it. Same reason as the line above: a slice of App.js for a marker
+// App.js no longer holds is an empty window, and nothing asserted against
+// an empty window can fail.
+const exploreScreen = read('screens/ExploreScreen.js');
 
 test('confirming the email in Safari has a way back into the app', () => {
   expect(signup).toMatch(/const me = await getCurrentUser\(\);/);
@@ -21,10 +33,10 @@ test('a fresh native install opens on account creation', () => {
 test('every ask for location on a first run carries the control', () => {
   // The window is wide enough for the three-sentence gate (the ask, the
   // wait, the failure) that sits between the heading and the control.
-  const events = app.slice(app.indexOf('Events need your location'), app.indexOf('Events need your location') + 2400);
+  const events = exploreScreen.slice(exploreScreen.indexOf('Events need your location'), exploreScreen.indexOf('Events need your location') + 2400);
   expect(events).toMatch(/if \(!locationEnabled\) toggleLocation\(true\); else requestUserLocation\(true\);/);
   expect(events).toMatch(/Turn on location/);
-  expect(app).toMatch(/Finding where you are\. Venues near you show up once that lands\./);
+  expect(exploreScreen).toMatch(/Finding where you are\. Venues near you show up once that lands\./);
 });
 
 test('the events gate reads the list once a location lands, and says what it is doing', () => {
@@ -33,7 +45,7 @@ test('the events gate reads the list once a location lands, and says what it is 
   // for the ten seconds a device can take to answer, nothing on the screen
   // said a request was running.
   expect(app).toMatch(/if \(!showEventsView \|\| !userLocation\) return;\s*if \(featuredEvents \|\| featuredEventsLoading \|\| featuredEventsError\) return;\s*fetchFeaturedEvents\(`\$\{userLocation\.lat\},\$\{userLocation\.lng\}`, eventsSearchQuery\);/);
-  const events = app.slice(app.indexOf('Events need your location'), app.indexOf('Events need your location') + 2400);
+  const events = exploreScreen.slice(exploreScreen.indexOf('Events need your location'), exploreScreen.indexOf('Events need your location') + 2400);
   expect(events).toMatch(/Finding where you are\. Events near you show up once that lands\./);
   expect(events).toMatch(/Could not get your location just now\. Try again\./);
   expect(events).toMatch(/Turn it on in Settings, then come back\./);
@@ -46,7 +58,10 @@ test('the events gate reads the list once a location lands, and says what it is 
 });
 
 test('the empty calendar has a next action', () => {
-  const plans = app.slice(app.indexOf('Nothing on this day'), app.indexOf('Nothing on this day') + 900);
+  // Asserted before the slice: indexOf returning -1 would make the window an
+  // empty string, and an empty window passes nothing rather than failing loudly.
+  expect(calendarScreen).toContain('Nothing on this day');
+  const plans = calendarScreen.slice(calendarScreen.indexOf('Nothing on this day'), calendarScreen.indexOf('Nothing on this day') + 900);
   expect(plans).toMatch(/setCurrentTab\('home'\); setCurrentScreen\('create'\);/);
   expect(plans).toMatch(/Start a flock/);
 });

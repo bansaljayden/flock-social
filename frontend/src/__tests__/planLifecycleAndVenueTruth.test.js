@@ -70,7 +70,19 @@ const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // components/overlays/AttendanceModal.js now. Appended last for the same
   // reason as the three above, so no marker pair spans a boundary it did not
   // span when the source was one file.
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'AttendanceModal.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'AttendanceModal.js'), 'utf8')
+  // And the Discover map on the same day: the camera the fallback city opens,
+  // and the guard that keeps that city a view rather than an identity, live in
+  // components/map/MapLibreMapView.js now. Appended last for the same reason as
+  // the four above, so no marker pair spans a boundary it did not span when the
+  // source was one file.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8')
+  // And the Discover screen itself on the same day: the banner that says why
+  // the map is empty, its retry, and the two empty-versus-failed search arms
+  // live in screens/ExploreScreen.js now. Appended last for the same reason as
+  // the five above, so no marker pair spans a boundary it did not span when the
+  // source was one file.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreScreen.js'), 'utf8');
 const API_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'

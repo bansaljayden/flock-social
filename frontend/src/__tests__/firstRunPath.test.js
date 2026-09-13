@@ -51,6 +51,16 @@ const SRC = path.join(__dirname, '..');
 const REPO = path.join(SRC, '..', '..');
 
 const APP = fs.readFileSync(path.join(SRC, 'App.js'), 'utf8');
+// The map component moved to components/map/MapLibreMapView.js on 2026-09-13
+// and is a fetched chunk now. The LATCH that decides when it mounts is still
+// App.js's, which is the half of this file's subject that matters most, so the
+// two are read separately: the latch from App.js, the init effect from here.
+const MAP = fs.readFileSync(path.join(SRC, 'components', 'map', 'MapLibreMapView.js'), 'utf8');
+// The Messages tab moved to screens/ChatListScreen.js on 2026-09-13 and is a
+// fetched chunk now. The loaders and their error flags are still App.js's, so
+// only the last block below, which asserts on what the LIST renders from them,
+// reads this instead.
+const CHAT_LIST = fs.readFileSync(path.join(SRC, 'screens', 'ChatListScreen.js'), 'utf8');
 const AUTH_ROUTES = fs.readFileSync(path.join(REPO, 'backend', 'routes', 'auth.js'), 'utf8');
 const INDEX = fs.readFileSync(path.join(SRC, 'index.js'), 'utf8');
 
@@ -89,7 +99,12 @@ describe('the location prompt waits for a map to be on screen', () => {
     const shell = codeOnly(region(
       APP,
       'const isExploreVisible =',
-      '<ScreenSlot render={ExploreScreen} />'
+      // The Discover tab left App.js on 2026-09-13 for screens/ExploreScreen.js
+      // and is a fetched chunk now, so the layer mounts it as a lazy component
+      // behind a Suspense boundary instead of handing a builder to ScreenSlot.
+      // The LATCH this test is about did not move, and this anchor is only
+      // here to close the region at the same place it always closed.
+      '<ExploreScreen {...exploreScreenProps} />'
     ));
 
     // The latch itself: set the first time Discover is visible, never cleared.
@@ -108,7 +123,7 @@ describe('the location prompt waits for a map to be on screen', () => {
     // asking, opening Discover shows a map of the whole country and no fix has
     // been made, it has been moved.
     const init = codeOnly(region(
-      APP,
+      MAP,
       'const MapLibreMapView = React.memo(',
       'const rehydrateAfterStyleSwap'
     ));
@@ -233,7 +248,7 @@ describe('a failed list read is not an empty account', () => {
   });
 
   it('the Messages empty state is gated on both reads', () => {
-    const list = codeOnly(region(APP, 'const conversationsError =', "'No conversations yet'"));
+    const list = codeOnly(region(CHAT_LIST, 'const conversationsError =', "'No conversations yet'"));
     expect(list).toMatch(/const conversationsError = flocksError \|\| dmsError/);
     expect(list).toMatch(/!conversationsLoading && conversationsError &&/);
     expect(list).toMatch(/!conversationsLoading && !conversationsError && filteredDms\.length === 0/);

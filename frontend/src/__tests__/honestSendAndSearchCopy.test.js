@@ -206,6 +206,10 @@ const SEARCH_FILES = [
   ['components/NewDmModal.js', read('components', 'NewDmModal.js')],
   ['screens/AddFriends.js', read('screens', 'AddFriends.js')],
   ['screens/CreateScreen.js', read('screens', 'CreateScreen.js')],
+  // The Find Your People panel left App.js on 2026-09-13 with the Discover
+  // tab, for screens/ExploreScreen.js. It is the third of the people search
+  // boxes this file is about, so the no-email rule is swept there too.
+  ['screens/ExploreScreen.js', read('screens', 'ExploreScreen.js')],
 ];
 
 describe('the comment stripper is doing its job', () => {
@@ -238,12 +242,16 @@ describe('nothing offers an email lookup the server cannot do', () => {
   });
 
   it('all three people search boxes are still labelled, by name', () => {
-    // One in App.js (the Find Your People panel), one in the create screen
-    // (the flock invite field, which went to screens/CreateScreen.js on
-    // 2026-09-01) and one in the New Message sheet. Counted over the two
-    // files the first two now live in, so the total is still two and removing
-    // a label rather than fixing it does not read as a pass.
-    const app = codeOnly(read('App.js')) + codeOnly(read('screens', 'CreateScreen.js'));
+    // One on Discover (the Find Your People panel, which went to
+    // screens/ExploreScreen.js on 2026-09-13), one in the create screen (the
+    // flock invite field, which went to screens/CreateScreen.js on
+    // 2026-09-01) and one in the New Message sheet. Counted over the files
+    // the first two now live in, so the total is still two and removing a
+    // label rather than fixing it does not read as a pass. App.js stays in
+    // the sum: it is now expected to hold NEITHER, so a box that reappears
+    // there unlabelled pushes the count off rather than going unseen.
+    const app = codeOnly(read('App.js')) + codeOnly(read('screens', 'CreateScreen.js'))
+      + codeOnly(read('screens', 'ExploreScreen.js'));
     const dm = codeOnly(read('components', 'NewDmModal.js'));
     expect((app.match(/aria-label="Search people by name"/g) || []).length).toBe(2);
     expect((app.match(/placeholder="Search by name\.\.\."/g) || []).length).toBe(2);
@@ -252,7 +260,7 @@ describe('nothing offers an email lookup the server cannot do', () => {
   });
 
   it('the empty state does not send anyone looking for an email either', () => {
-    const app = codeOnly(read('App.js'));
+    const app = codeOnly(read('screens', 'ExploreScreen.js'));
     expect(app).toContain('>Find friends by name<');
   });
 

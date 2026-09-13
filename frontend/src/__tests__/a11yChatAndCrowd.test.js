@@ -37,6 +37,9 @@ const path = require('path');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
 const APP = read('App.js');
+/* The Discover map is components/map/MapLibreMapView.js since 2026-09-13. The
+   reduced-motion camera guard below travelled with it. */
+const MAP = read('components', 'map', 'MapLibreMapView.js');
 const CHAT = read('screens', 'ChatDetail.js');
 const DM = read('screens', 'DmDetail.js');
 /* THE MESSAGE ROW AND THE SCROLLER ARE `components/chat` NOW. Both screens
@@ -51,6 +54,16 @@ const ROW = read('components', 'chat', 'MessageRow.js');
    2026-09-13 with the sheet that draws them, so the 2026-08-27 audit fix is
    read where it lives rather than dropped. */
 const ATTENDANCE = read('components', 'overlays', 'AttendanceModal.js');
+/* THE PLANS TAB IS ITS OWN FILE NOW. The calendar day cells whose pressed
+   state is pinned below moved to screens/CalendarScreen.js on 2026-09-13 with
+   the tab that draws them, so the 2026-08-27 audit fix is read where it lives
+   rather than against an App.js that no longer holds it. */
+const CALENDAR = read('screens', 'CalendarScreen.js');
+/* AND THE MESSAGES TAB, on the same day, for screens/ChatListScreen.js. The
+   flock row and the DM row whose unread badges are pinned below went with it,
+   so the sr-only suffix is read where it is drawn rather than against an
+   App.js that no longer holds either row. */
+const CHAT_LIST = read('screens', 'ChatListScreen.js');
 const LIST = read('components', 'chat', 'MessageList.js');
 /* THE FULL-SCREEN RESULTS LIST IS ITS OWN FILE NOW. The search cards whose
    crowd ink and whose Top Rated chip are pinned below moved to
@@ -181,26 +194,32 @@ describe('crowd readings are readable text, not saturated swatch hues', () => {
 
 describe('reduced motion reaches the map camera', () => {
   test('mapEase exists and every flyTo call site rides through it', () => {
-    expect(APP).toMatch(/const mapEase = \(map, opts\) => \{/);
-    expect(APP).toContain("window.matchMedia('(prefers-reduced-motion: reduce)')");
+    /* The helper and every call site moved to components/map/MapLibreMapView.js
+       with the camera they steer on 2026-09-13, so the count is taken there.
+       App.js is checked for ZERO, which is the half of the property that could
+       otherwise rot quietly: a new flyTo written back into App.js would find no
+       mapEase beside it and no test looking at it. */
+    expect(MAP).toMatch(/const mapEase = \(map, opts\) => \{/);
+    expect(MAP).toContain("window.matchMedia('(prefers-reduced-motion: reduce)')");
     // Exactly one bare map.flyTo left: the helper's own else-branch. Every
     // call SITE rides through mapEase, so the tween, the one animation the
     // global CSS reduced-motion collapse cannot reach, honors the setting.
-    expect((APP.match(/map\.flyTo\(/g) || []).length).toBe(1);
+    expect((MAP.match(/map\.flyTo\(/g) || []).length).toBe(1);
+    expect((APP.match(/map\.flyTo\(/g) || []).length).toBe(0);
   });
 });
 
 describe('small state announcements', () => {
   test('attendance rows and calendar days carry pressed state', () => {
     expect(ATTENDANCE).toMatch(/aria-pressed=\{!!attendanceChecks\[m\.id\]\}/);
-    expect(APP).toMatch(/aria-pressed=\{isSelected\}/);
+    expect(CALENDAR).toMatch(/aria-pressed=\{isSelected\}/);
   });
 
   test('the flock-row unread badge has words, and the bill paid check does too', () => {
     // The dot became a count pill with the migration 056 server cursor: the
     // visible number plus this sr-only suffix read together as, say,
     // "3 unread messages", which is more announcement, not less.
-    expect(APP).toContain('<span className="sr-only"> unread messages</span>');
+    expect(CHAT_LIST).toContain('<span className="sr-only"> unread messages</span>');
     expect(CHAT).toContain('<span className="sr-only">Paid</span>');
   });
 
