@@ -936,7 +936,33 @@ router.get('/reviews', async (req, res) => {
       // the client from a null timestamp, because a null timestamp next to a
       // non-null reply is exactly the kind of implicit state a client gets
       // wrong.
-      `SELECT vr.*, u.name, u.profile_image_url,
+      //
+      // NAMED COLUMNS, AND NO AVATAR.
+      //
+      // `vr.*` shipped every column of the row to build a list that reads seven
+      // fields (screens/VenueDashboard.js maps id, name, rating, text,
+      // created_at, venue_reply and reply_needs_review, and nothing else): the
+      // place id repeated on every row of a response already keyed by it, the
+      // author's user_id, and is_hidden, which the WHERE clause below has already
+      // decided for every row it returns. Worse than the bytes, `*` is a standing
+      // decision to publish whatever column venue_reviews gains next without
+      // anybody choosing to — the same reasoning the `RETURNING *` note on the
+      // reply route below states, applied to the read.
+      //
+      // `u.profile_image_url` goes because NO review UI draws a photo. The owner
+      // tab does not map it at all and the public card renders a letter in a
+      // coloured circle, while the column is an uncapped base64 data URL that
+      // users.js allows up to MAX_AVATAR_DATA_URL_BYTES — so this read shipped up
+      // to 600 KB per row, limit + 1 rows at a time, for an image nothing renders.
+      // Every other avatar read in the codebase at least caps it at 12,000 bytes;
+      // the right cap for a column with no consumer is to not select it.
+      //
+      // vr.user_id STAYS. It is an integer, so it is not what made this read
+      // heavy, and it is the column the self-dealing check reads to prove an
+      // owner is not reviewing their own venue. Dropping it alongside the
+      // avatar turned a payload saving into a behaviour change.
+      `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at,
+              vr.created_at, vr.user_id, u.name,
               (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
@@ -1378,7 +1404,12 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
                 JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
                 WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
               ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
-              vr.created_at, vr.user_id, u.name, u.profile_image_url
+              -- No avatar column: the card draws (name || '?').charAt(0) in a
+              -- circle, never an image, and this one is an uncapped base64 data
+              -- URL up to MAX_AVATAR_DATA_URL_BYTES on a page of up to
+              -- REVIEW_PAGE_MAX rows. vr.user_id stays: the report control on
+              -- each review row is addressed to it.
+              vr.created_at, vr.user_id, u.name
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
@@ -1674,6 +1705,41 @@ const cacheSet = (k, data) => {
   }
 };
 
+// ─── THE CLOCK IN THE KEY ────────────────────────────────────────────────────
+//
+// Both /intelligence and /strip publish a CURRENT-HOUR reading beside their slow
+// halves: `now: { score, label }` on one, `you.score` and every competitor's
+// `score` on the other, each of them a predictBusyness scored at that venue's
+// current local hour. Keyed on the place id alone, a 60-minute entry minted at
+// 10:59 answered an 11:58 request with the 10:00 prediction — the one number on
+// this screen an owner acts on immediately, published under the wrong hour
+// rather than merely a few minutes late. The slow halves (the six-day week, the
+// competitor set, their peaks) do not move inside an hour, which is why the TTL
+// is not the thing that was wrong.
+//
+// SO THE KEY CARRIES THE HOUR AND THE TTL STAYS WHERE IT IS. The TTL is the
+// ceiling on what these two routes spend at Google — fetchVenueBasics and
+// searchNearby are both charged, against a per-owner allowance of
+// PER_USER_HOURLY — so cutting it to the consumer card's ten minutes would
+// multiply a paying customer's own budget usage by six to fix a staleness the
+// key can fix for nothing. Hour-keying costs at most one extra refresh in an
+// hour, on the request that arrives just after the clock rolls over.
+//
+// THE SERVER'S HOUR, NOT THE VENUE'S, for exactly the reason routes/crowd.js
+// gives at its own cache key: the venue's clock arrives as utcOffsetMinutes from
+// the paid lookup this cache exists to avoid, so it cannot be read before the
+// key is built. On a whole-hour offset the two roll together; where they do not,
+// the entry is keyed on a number that does not describe the venue, which costs a
+// duplicate entry rather than a wrong answer. Nothing in the key is chosen by
+// the caller, which is the other half of why crowd.js keys this way.
+//
+// Read ONCE per request and used for both the get and the set, so an hour that
+// rolls over mid-request cannot file this hour's answer under the next one.
+const cacheClock = () => {
+  const d = new Date();
+  return `${d.getHours()}:${d.getDay()}`;
+};
+
 // Returned instead of a venue when the shared Places budget is spent, so the
 // route can answer 429 rather than pretend Google was unreachable.
 const BUDGET_EXCEEDED = Symbol('places_budget_exceeded');
@@ -1789,7 +1855,10 @@ router.get('/intelligence', requirePremium, async (req, res) => {
       return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so forecasts are off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
-    const cached = cacheGet(`intel:${ctx.google_place_id}`);
+    // The hour is in the key because `now` below is an hour-granular score:
+    // see THE CLOCK IN THE KEY above cacheClock.
+    const clockKey = cacheClock();
+    const cached = cacheGet(`intel:${ctx.google_place_id}:${clockKey}`);
     if (cached) return res.json(cached);
 
     const venue = await fetchVenueBasics(ctx.google_place_id, req.user.id);
@@ -1819,15 +1888,50 @@ router.get('/intelligence', requirePremium, async (req, res) => {
     const scoreTime = new Date(venueBase);
     scoreTime.setHours(localHour, 0, 0, 0);
 
-    const current = await mlPredictor.predictBusyness(venue, weather, scoreTime);
-    // Full day today (6 AM start), then evening curves for the next 6 days.
-    const todayHourly = await mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase);
-    const week = [];
+    // THE TWO HALVES OF TODAY, TOGETHER. Same venue, same weather object, and
+    // neither reads the other — `current` becomes the dial and `todayHourly` the
+    // bars, and the response object below is the first thing that touches
+    // either. predictHourlyForecast internally awaits init(), a weather forecast,
+    // an event prefetch and eighteen per-hour predictions, so awaiting the
+    // single-hour score in front of it put a whole prediction pass on this
+    // route's response time for no ordering anybody needs. The /strip route in
+    // this same file already runs exactly this pair under one Promise.all (see
+    // scoreOne).
+    const [current, todayHourly] = await Promise.all([
+      mlPredictor.predictBusyness(venue, weather, scoreTime),
+      // Full day today, 6 AM start.
+      mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase),
+    ]);
+
+    // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
+    // `day` from venueBase and read nothing from the iteration before it, so six
+    // independent forecast passes — each one an init(), a weather read, an event
+    // prefetch and seven per-hour predictions — were awaited strictly one after
+    // another on the one path that pays the whole cold-cache cost of this route.
+    // The days are six disjoint date windows, so the event prefetch buys the same
+    // six lookups either way, and weatherService coalesces its forecast by key.
+    //
+    // AFTER the pair above, deliberately. By the time these six start, that pair
+    // has warmed every per-venue cache they share — the whole-week baseline
+    // curve, the feedback average, the venue's own baselines, the neighbour box —
+    // so the six passes run off warm entries. Six cold passes starting at once
+    // would each miss those caches and turn one read into six: the sequencing
+    // here is what makes the concurrency free, and hoisting this batch above the
+    // pair would undo it.
+    const days = [];
     for (let d = 1; d <= 6; d++) {
       const day = new Date(venueBase);
       day.setDate(day.getDate() + d);
       day.setHours(17, 0, 0, 0);
-      const evening = await mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day);
+      days.push(day);
+    }
+    const evenings = await Promise.all(
+      days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day))
+    );
+    // Mapped over `days` rather than pushed from the resolved order, so the week
+    // the owner reads stays in date order whatever order the six settled in.
+    const week = days.map((day, i) => {
+      const evening = evenings[i];
       // WHICH evening hour is the peak is an ordering question, and ordering
       // is not the model's job any more: on within-night hour pairs the
       // trained delta layer scores 62.7% against the popular-times curve's
@@ -1841,13 +1945,13 @@ router.get('/intelligence', requirePremium, async (req, res) => {
       const peak = evening.length
         ? evening.reduce((a, b) => (rank(b) > rank(a) ? b : a), evening[0])
         : null;
-      week.push({
+      return {
         date: day.toISOString().slice(0, 10),
         weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
         peakScore: peak ? (peak.score ?? null) : null,
         peakHour: peak ? (peak.hour ?? null) : null,
-      });
-    }
+      };
+    });
 
     const result = {
       available: true,
@@ -1863,7 +1967,7 @@ router.get('/intelligence', requirePremium, async (req, res) => {
       model: current.modelVersion || null,
       generatedAt: new Date().toISOString(),
     };
-    cacheSet(`intel:${ctx.google_place_id}`, result);
+    cacheSet(`intel:${ctx.google_place_id}:${clockKey}`, result);
     res.json(result);
   } catch (err) {
     console.error('Venue intelligence error:', err);
@@ -1880,7 +1984,13 @@ router.get('/strip', requirePremium, async (req, res) => {
       return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the strip view is off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
-    const cached = cacheGet(`strip:${ctx.google_place_id}`);
+    // The hour is in the key because `you` and every competitor row below
+    // carry a current-hour score: see THE CLOCK IN THE KEY above cacheClock.
+    // `clockKey`, not `clock`: scoreOne below binds its own `clock` for the
+    // venue's wall clock, and two different clocks under one name in one route
+    // is how the wrong one gets read.
+    const clockKey = cacheClock();
+    const cached = cacheGet(`strip:${ctx.google_place_id}:${clockKey}`);
     if (cached) return res.json(cached);
     if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
 
@@ -2033,7 +2143,7 @@ router.get('/strip', requirePremium, async (req, res) => {
       orderingMinGap: STRIP_ORDERING_MIN_GAP,
       generatedAt: new Date().toISOString(),
     };
-    cacheSet(`strip:${ctx.google_place_id}`, result);
+    cacheSet(`strip:${ctx.google_place_id}:${clockKey}`, result);
     res.json(result);
   } catch (err) {
     console.error('Venue strip error:', err);

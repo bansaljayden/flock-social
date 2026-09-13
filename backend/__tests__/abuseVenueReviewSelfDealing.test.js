@@ -220,8 +220,14 @@ async function dispatch(sql, params) {
       rowCount: 1,
     };
   }
-  // public-reviews list
-  if (/^SELECT vr\.id, vr\.rating, vr\.text,/.test(flat)) {
+  // public-reviews list. `END AS venue_reply` is what makes this the PUBLIC read
+  // and not the owner's: the card gets the reply through a CASE, because it is
+  // published only while the claim behind it is verified and the reply is still
+  // live. The owner list below opens with the same first three columns now that
+  // it names them instead of selecting `vr.*`, so the prefix alone answers for
+  // either read, and whichever matcher sat first would have quietly served the
+  // other statement a page built under the wrong rules.
+  if (/^SELECT vr\.id, vr\.rating, vr\.text,/.test(flat) && /END AS venue_reply,/.test(flat)) {
     const limit = Number(p[2]);
     const gated = /vp\.verified = true/.test(flat);
     // A reply is published only while it is live. The route retires one whose
@@ -235,8 +241,10 @@ async function dispatch(sql, params) {
         venue_reply: shown ? r.venue_reply : null,
         venue_replied_at: (!gated || hasVerifiedProfile(r.google_place_id)) ? r.venue_replied_at : null,
         created_at: new Date(r.created_at).toISOString(),
+        // No profile_image_url: the statement stopped selecting it, the card
+        // draws a letter in a circle, and a fake that keeps returning a column
+        // the read does not ask for is how the column creeps back unnoticed.
         name: world.users.get(r.user_id)?.name || null,
-        profile_image_url: null,
       };
     });
     return { rows, rowCount: rows.length };
@@ -254,12 +262,26 @@ async function dispatch(sql, params) {
       rowCount: 1,
     };
   }
-  // owner dashboard list
-  if (/^SELECT vr\.\*, u\.name, u\.profile_image_url/.test(flat)) {
+  // owner dashboard list. Named columns, not `vr.*`: the star was shipping
+  // u.profile_image_url, an uncapped base64 data URL, on every row of a list
+  // that draws no photograph. vr.user_id is still selected, which matters here
+  // because it is the column the self-dealing rule is read through (finding I2
+  // checks whose reviews the owner's own tab counts).
+  //
+  // Matched on the owner read's plain `vr.venue_reply, vr.venue_replied_at`
+  // projection, which the public list above cannot have: it computes both
+  // through a CASE. So neither matcher can answer the other's statement, in
+  // either order.
+  if (/^SELECT vr\.id, vr\.rating, vr\.text, vr\.venue_reply, vr\.venue_replied_at,/.test(flat)) {
     const flags = /\(vr\.venue_reply IS NOT NULL AND vr\.venue_replied_at IS NULL\) AS reply_needs_review/.test(flat);
     const rows = visibleReviews(p[0], flat).slice(0, Number(p[1])).map((r) => ({
-      ...r,
+      id: r.id,
+      rating: r.rating,
+      text: r.text,
+      venue_reply: r.venue_reply,
+      venue_replied_at: r.venue_replied_at,
       created_at: new Date(r.created_at).toISOString(),
+      user_id: r.user_id,
       name: world.users.get(r.user_id)?.name || null,
       ...(flags ? { reply_needs_review: r.venue_reply !== null && r.venue_replied_at === null } : {}),
     }));

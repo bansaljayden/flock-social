@@ -43,7 +43,15 @@ test('moderation and friends: a block keeps the decline cooldown, cancel is not 
   const fr = read('routes/friends.js');
   assert.match(fr, /if \(masked\.rows\.length > 0\) return res\.json\(\{ message: 'Removed' \}\);/);
   const msgs = read('routes/messages.js');
-  assert.match(msgs, /if \(\(await getInvisibleUserIds\(req\.user\.id\)\)\.some\(\(id\) => Number\(id\) === otherUserId\)\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
+  // Same guard, asked a cheaper way: the thread read puts the ban question to
+  // the ONE counterparty instead of pulling the product's whole invisible set
+  // back to Node to scan it. What is pinned is the answer the banned pair
+  // still gets, so the call site is identified by its json body — the receipt
+  // route calls the same helper and refuses with a 403 instead.
+  assert.match(msgs, /if \(await counterpartyIsBanned\(req\.user\.id, otherUserId\)\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
+  // And the helper has to READ the ban rather than assume it, or the guard
+  // above is a call into a stub that always answers "not banned".
+  assert.match(msgs, /async function counterpartyIsBanned\(viewerId, otherUserId\) \{[\s\S]{0,240}SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/);
   const venues = read('routes/venues.js');
   assert.match(venues, /JOIN users u ON u\.id = vv\.user_id AND u\.is_banned IS NOT TRUE/);
 });

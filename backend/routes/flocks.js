@@ -1012,6 +1012,8 @@ router.get('/activity', async (req, res) => {
 // is { id, name, status, event_time, venue_name, venue_address, venue_place_id,
 // members: [{ id, name, profile_image_url }] }. venue_place_id is flocks.venue_id
 // under the name the client-side venue code uses everywhere else.
+// profile_image_url is null for any avatar over the 12,000-byte cap the other
+// roster reads apply, which a client has to handle on those reads already.
 //
 // ONE roster subquery per flock via json_agg rather than a per-flock members
 // query — the N+1 shape is the one GET / already refuses. Blocks are handled
@@ -1026,7 +1028,24 @@ router.get('/history', async (req, res) => {
               (SELECT COALESCE(json_agg(json_build_object(
                         'id', hu.id,
                         'name', hu.name,
-                        'profile_image_url', hu.profile_image_url)
+                        -- The >12000 guard every other avatar read carries
+                        -- (GET / member_previews, GET /:id's roster, GET
+                        -- /:id/members, and the same column in messages.js,
+                        -- friends.js, availability.js and moderation.js). This
+                        -- read shipped without it, and it is the read where the
+                        -- omission costs the most, because the roster is nested
+                        -- PER FLOCK: one member with an uploaded photo who
+                        -- appears in N of the caller's finished flocks ships N
+                        -- FULL COPIES of it, and users.profile_image_url is a
+                        -- base64 data URL accepted up to 600 KB
+                        -- (MAX_AVATAR_DATA_URL_BYTES in routes/users.js). 50
+                        -- flocks times a roster each has no ceiling worth
+                        -- naming, and gzip buys nothing on base64 JPEG. The
+                        -- guard bounds every copy at 12 KB; an over-cap member
+                        -- arrives with a null avatar, which is the same thing
+                        -- the client already renders initials for.
+                        'profile_image_url', CASE WHEN LENGTH(hu.profile_image_url) > 12000
+                                                  THEN NULL ELSE hu.profile_image_url END)
                         ORDER BY hm.joined_at, hu.id), '[]'::json)
                  FROM flock_members hm
                  JOIN users hu ON hu.id = hm.user_id
@@ -1130,21 +1149,80 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
       });
     }
 
-    const membersResult = await pool.query(
-      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
-       FROM flock_members fm
-       JOIN users u ON u.id = fm.user_id
-       WHERE fm.flock_id = $1
-       ORDER BY fm.joined_at ASC`,
-      [flockId]
-    );
-
-    // Guest-link RSVPs. Nothing in this file read this table before, so a guest
-    // who answered the share link appeared NOWHERE for the host: not in the
-    // roster, not in the counts, not in momentum. They come back as their own
-    // array (tagged is_guest, string ids) rather than mixed into `members`,
-    // where a guest id would leak into member-only, integer-keyed paths.
-    const guestsResult = await pool.query(GUEST_RSVP_SELECT, [flockId]);
+    // THE FIVE INDEPENDENT READS OF THIS BRANCH, IN ONE ROUND TRIP.
+    //
+    // These were five separate awaits spread down the handler: the roster, the
+    // guest RSVPs, the member vote tally, the guest vote tally, and the
+    // caller's block set (which sat 120 lines below, beside the filter that
+    // consumes it). Not one of them reads another's result — four take only
+    // flockId and the block set takes only the caller's id — and every
+    // consumer of them (combineRsvpCounts, uniqueVoters, visibleMembers) ran
+    // after all five had resolved anyway. So the most-opened authenticated
+    // screen in the app paid five serial round trips for one round trip's
+    // worth of work.
+    //
+    // They stay FIVE STATEMENTS. Folding them into one would be the wrong
+    // fix: the roster is a row per member and each tally is a single row, so a
+    // join would multiply the roster by the tallies, and the two
+    // COUNT(DISTINCT)s are over disjoint tables. The only thing that changed
+    // is that they are in flight together.
+    //
+    // The pool carries it: max is 20 (config/database.js), and five
+    // connections held for the length of the SLOWEST of these reads is fewer
+    // connection-seconds per request than one connection held for the sum of
+    // all five. The peak per request goes from one to five; the occupancy goes
+    // down.
+    //
+    // THE ORDERING ABOVE IS LOAD-BEARING AND IS UNCHANGED. The membership gate
+    // and the flock row still run first, and alone: a read route is only as
+    // safe as its ordering, and reading flock data before the membership
+    // question is answered turns a revocation landing mid-request into a leak.
+    // Nothing in this batch may be hoisted above that gate.
+    //
+    // Promise.all and not allSettled: if any one of these fails the response
+    // would be WRONG rather than partial, so it must reach the handler's catch
+    // and become the same 500 the serial version returned. Promise.all also
+    // attaches a handler to every promise in the array, so a second rejection
+    // arriving after the first is still handled and cannot escape the process
+    // as an unhandled rejection.
+    //
+    // budgetResult below is deliberately NOT in here: it is conditional on
+    // flock.budget_enabled, which comes from flockResult, so it stays its own
+    // await and stays unasked when the flock has no budget.
+    const [membersResult, guestsResult, votesResult, guestVotesResult, invisibleIds] = await Promise.all([
+      pool.query(
+        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
+         FROM flock_members fm
+         JOIN users u ON u.id = fm.user_id
+         WHERE fm.flock_id = $1
+         ORDER BY fm.joined_at ASC`,
+        [flockId]
+      ),
+      // Guest-link RSVPs. Nothing in this file read this table before, so a
+      // guest who answered the share link appeared NOWHERE for the host: not in
+      // the roster, not in the counts, not in momentum. They come back as their
+      // own array (tagged is_guest, string ids) rather than mixed into
+      // `members`, where a guest id would leak into member-only, integer-keyed
+      // paths.
+      pool.query(GUEST_RSVP_SELECT, [flockId]),
+      // The two venue-vote tallies. Both are scored at `uniqueVoters` below,
+      // where the note on the guest-inclusive denominator lives.
+      pool.query(
+        'SELECT COUNT(DISTINCT user_id) AS voters FROM venue_votes WHERE flock_id = $1',
+        [flockId]
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT gv.guest_rsvp_id) AS voters
+         FROM guest_votes gv
+         JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
+         WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false`,
+        [flockId]
+      ),
+      // The caller's block set, applied at `visibleMembers` at the bottom of
+      // the handler. The long note there is what explains why the filter is in
+      // JS and not in the roster query, and it has not moved.
+      getInvisibleUserIds(req.user.id),
+    ]);
     const guests = guestsResult.rows.map(toGuestEntry);
 
     // ── Momentum Meter calculation ──
@@ -1173,21 +1251,11 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     const hasVenue = flock.venue_name && flock.venue_name !== 'TBD';
     if (hasVenue) score += 20;
 
-    // Venue votes cast (0-10 pts). Guests vote too (routes/guest.js), and the
-    // denominator below now includes them, so counting only member voters would
-    // have made every guest RSVP push this score DOWN. Hidden guests are
-    // excluded here exactly as they are in routes/venues.js and routes/guest.js.
-    const votesResult = await pool.query(
-      'SELECT COUNT(DISTINCT user_id) AS voters FROM venue_votes WHERE flock_id = $1',
-      [flockId]
-    );
-    const guestVotesResult = await pool.query(
-      `SELECT COUNT(DISTINCT gv.guest_rsvp_id) AS voters
-       FROM guest_votes gv
-       JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-       WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false`,
-      [flockId]
-    );
+    // Venue votes cast (0-10 pts), from the two tallies read in the batch
+    // above. Guests vote too (routes/guest.js), and the denominator below now
+    // includes them, so counting only member voters would have made every
+    // guest RSVP push this score DOWN. Hidden guests are excluded in the guest
+    // tally exactly as they are in routes/venues.js and routes/guest.js.
     const uniqueVoters =
       parseInt(votesResult.rows[0].voters || 0) + parseInt(guestVotesResult.rows[0].voters || 0);
     if (accepted > 0) {
@@ -1257,7 +1325,13 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     // score — and the list route's member_count (a plain COUNT) would disagree
     // with the detail route's on the same screen. A head count is not identity;
     // the name and the face are, and those are what stop being served.
-    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    //
+    // The SET is built here; the READ happens in the batch at the top of this
+    // branch. getInvisibleUserIds takes only the caller's id, so it never had
+    // a reason to wait behind the roster and the tallies, and it is the
+    // heaviest of the five (a three-leg UNION whose third leg scans users for
+    // is_banned).
+    const invisible = new Set(invisibleIds);
     const visibleMembers = members.filter((m) => !invisible.has(m.id));
 
     res.json({

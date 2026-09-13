@@ -759,17 +759,51 @@ router.get('/:placeId',
       clientTime.setHours(localHour, 0, 0, 0);
 
       // Same event-budget identity as the batch route below. This path is the
-      // bigger per-request event fan-out of the two — the 24-hour forecast on
-      // the next line is up to 24 more Ticketmaster calls for a cold venue,
+      // bigger per-request event fan-out of the two — the 24-hour forecast in
+      // the pair below is up to 24 more Ticketmaster calls for a cold venue,
       // one per UTC hour slot — so it is charged to the caller too.
-      const crowdResult = await mlPredictor.predictBusyness(venue, weather, clientTime, { userId: req.user.id });
-
-      // Round 13: this 24-hour forecast used to start at 6 AM, so "best time"
-      // could name an hour that already happened and "now" was read off the
-      // 6 AM entry instead of the score on screen. It starts at the current
-      // hour and runs forward now, and the hourly strip is its first 12 entries
-      // so the chart and the recommendation can never disagree.
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id });
+      //
+      // BOTH PREDICTIONS START IN THE SAME TICK, because neither reads the
+      // other. These were two back-to-back awaits: the card's own single-hour
+      // score, and then the 24-hour strip. Same venue, same weather object,
+      // same clientTime, and nothing between them — the score is not consumed
+      // until the calibration seed below and the strip not until the slice on
+      // the line after, so the cheap half of the card queued behind the
+      // expensive half for nothing. predictHourlyForecast is the heaviest call
+      // on this route (one hourly weather fetch, one wide event prefetch, then
+      // 24 per-hour predictions), and this card is the screen people open most.
+      //
+      // UPSTREAM SPEND IS UNCHANGED, which is the only thing that would have
+      // made the serial order worth keeping. Both halves already charge the
+      // same caller, and the call COUNT is the same either way:
+      // predictBusyness buys the current hour's events, and the strip's
+      // prefetchEventRange buys the rest in one wide call, skipping only slots
+      // ALREADY in the event cache — so it was never going to ride on the
+      // card's single-slot lookup whichever order the two ran in. Inside
+      // services/mlPredictor.js the pieces that could collide are written for
+      // concurrency already: init() hands every caller the same load promise,
+      // getNearbyEvents coalesces in-flight misses per cache key, and
+      // weatherService coalesces its own fetches. What genuinely changes is
+      // which of the two buys the current hour when the event budget has one
+      // unit left, and both sides answer a refusal as "not observed" rather
+      // than as an empty street, so neither ordering publishes a wrong number.
+      //
+      // Promise.all attaches a handler to BOTH promises, so a throw on one side
+      // cannot escape as an unhandled rejection while the other is still in
+      // flight; it lands in this route's own catch as the same 500 it did
+      // before. routes/venueDashboard.js scoreOne already runs this exact pair
+      // under one Promise.all, and the batch route below already scores many
+      // venues concurrently. This route was the straggler.
+      //
+      // Round 13, unchanged: the 24-hour forecast used to start at 6 AM, so
+      // "best time" could name an hour that already happened and "now" was read
+      // off the 6 AM entry instead of the score on screen. It starts at the
+      // current hour and runs forward, and the hourly strip is its first 12
+      // entries so the chart and the recommendation can never disagree.
+      const [crowdResult, fullDay] = await Promise.all([
+        mlPredictor.predictBusyness(venue, weather, clientTime, { userId: req.user.id }),
+        mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id }),
+      ]);
       const hourly = fullDay.slice(0, 12);
       // Peak comes off the same 12 hours the forecast meter draws, so it names
       // a rush the user can see rather than tomorrow evening.
