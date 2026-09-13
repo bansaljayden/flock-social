@@ -18,6 +18,12 @@ const REPO = path.join(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
 const APP = read('frontend', 'src', 'App.js');
+// The banner the flag gates is drawn on Discover, and the Discover tab left
+// App.js on 2026-09-13 for screens/ExploreScreen.js. The flag itself is still
+// declared and read in App.js, so the two halves are asserted against the two
+// files: pointed at App.js alone the render half would look for a line that is
+// not there any more and go red on a move rather than on a regression.
+const EXPLORE = read('frontend', 'src', 'screens', 'ExploreScreen.js');
 const THEME = read('frontend', 'src', 'context', 'ThemeContext.js');
 const INDEX = read('frontend', 'src', 'index.js');
 const CODEMAGIC = read('codemagic.yaml');
@@ -28,7 +34,7 @@ describe('the recording-only build flags', () => {
     const reads = APP.match(/process\.env\.REACT_APP_REVIEW_HIDE_LOCATION_BANNER/g) || [];
     expect(reads).toHaveLength(1);
     expect(APP).toContain("const REVIEW_HIDE_LOCATION_BANNER = process.env.REACT_APP_REVIEW_HIDE_LOCATION_BANNER === 'true';");
-    expect(APP).toContain('(locationError || venueLoadError) && !REVIEW_HIDE_LOCATION_BANNER && (');
+    expect(EXPLORE).toContain('(locationError || venueLoadError) && !REVIEW_HIDE_LOCATION_BANNER && (');
   });
 
   test('the light flag short-circuits the clock in both places the clock lives', () => {

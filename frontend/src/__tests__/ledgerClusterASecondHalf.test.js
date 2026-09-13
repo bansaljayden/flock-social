@@ -43,6 +43,10 @@ const ADD_FRIENDS = codeOnly(readRaw('screens', 'AddFriends.js'));
 // and the flock invite search field went with it, so the A11 invite
 // assertions read this rather than App.js.
 const CREATE = codeOnly(readRaw('screens', 'CreateScreen.js'));
+// The Discover tab left App.js for screens/ExploreScreen.js on 2026-09-13,
+// and the Find Your People panel went with it, so the A11 connect
+// assertions read this rather than App.js.
+const EXPLORE = codeOnly(readRaw('screens', 'ExploreScreen.js'));
 const NEW_DM = codeOnly(readRaw('components', 'NewDmModal.js'));
 const EDIT_PROFILE = codeOnly(readRaw('components', 'EditProfileForm.js'));
 // The reaction PILL left both chat screens for the chat module: one MessageRow
@@ -239,14 +243,15 @@ describe('A11: a failed people search shows the error, not "No users found"', ()
 
   it('the create screen and App.js render the invite and connect errors and gate the empty states behind them', () => {
     // The invite field draws in screens/CreateScreen.js since 2026-09-01 and
-    // the Find Your People connect field is still in App.js, so each half of
-    // the rule is asserted against the file that now draws the control.
+    // the Find Your People connect field in screens/ExploreScreen.js since
+    // 2026-09-13, so each half of the rule is asserted against the file that
+    // now draws the control.
     expect(CREATE).toContain('{inviteSearchError}');
-    expect(APP).toContain('{connectSearchError}');
+    expect(EXPLORE).toContain('{connectSearchError}');
     // The "Nobody by that name" / "No users found" empty states do not draw
     // over an error.
     expect(CREATE).toContain('!inviteSearchError && inviteSearch');
-    expect(APP).toContain('!connectSearchError && connectSearch');
+    expect(EXPLORE).toContain('!connectSearchError && connectSearch');
   });
 
   it('the Add Friends screen renders its error in place of "No users found"', () => {

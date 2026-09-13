@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -45,7 +45,10 @@ import { lsGet, lsSet } from './lib/storage';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
-import { AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
+// AnimatePresence is NOT imported here any more. Its last mount in this file
+// was the presence wrapper around the venue card on Discover, and that went to
+// screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
+import { MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
 // the cream bird; the default is cobalt Birdie. Both are used deliberately:
@@ -73,7 +76,7 @@ import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 // common crash is a chunk that failed to download, and a game in a second
 // chunk would fail for exactly the person it is meant for.
 import FloppyBird from './components/ui/FloppyBird';
-import Icons, { starSvgString } from './components/ui/Icons';
+import Icons from './components/ui/Icons';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -152,8 +155,10 @@ const TAB_SCROLL = new Map();
 // runtime blocks the group's promise on. `import('./App')` could not resolve
 // until a stylesheet for a widget that was not on screen, and for most people
 // never would be, had been downloaded and parsed. On venue wifi that is dead
-// time in front of a blank app. It is loaded next to the engine now. See the
-// note at the `import('maplibre-gl')` call, and
+// time in front of a blank app. It is loaded next to the engine now. Both of
+// those calls, and the note at them, are in components/map/MapLibreMapView.js
+// since 2026-09-13, which is where the map went; this line stays because a
+// static import here is what the regression looks like. See
 // `__tests__/bundleWeightManifest.test.js`, which fails if it comes back.
 
 // The venue owner dashboard is 2,018 lines of a product that is sold to bars,
@@ -208,6 +213,77 @@ let FlockDetail = React.lazy(() => import('./screens/FlockDetail'));
 let PastFlocksScreen = React.lazy(() => import('./screens/PastFlocksScreen'));
 let ProfileSettings = React.lazy(() => import('./screens/ProfileSettings'));
 let VenueOnboarding = React.lazy(() => import('./screens/VenueOnboarding'));
+
+/* AND THE PLANS TAB, which followed the eight above on 2026-09-13 for the
+   same reason and with the same machinery. It carried the month grid, the
+   weather module, the add-an-event form and the seven-day look-ahead, and
+   none of it can be on screen at first paint: currentTab starts at 'home'
+   and nothing routes here from a URL. The argument a bottom tab has against
+   a bare lazy is the one ProfileSettings makes above, and the idle warm
+   below is the answer to it: the chunk is fetched once the Nest has painted,
+   so the tap that opens Plans resolves from the module cache and renders in
+   the same commit.
+
+   `let`, and re-armed in rearmLazyScreens, for the reason the ten screens
+   around it are: React.lazy remembers a rejected import for ever, so one
+   failed chunk fetch on a flaky connection would leave the tab permanently
+   dead. */
+let CalendarScreen = React.lazy(() => import('./screens/CalendarScreen'));
+
+/* AND THE MESSAGES TAB, which followed the Plans tab on the same day and by
+   the same argument. It carried the DM rows, the pending invites, the flock
+   list with its pin-and-reorder edit mode and the declined plans, and none of
+   it can be on screen at first paint: currentTab starts at 'home' and nothing
+   routes here from a URL.
+
+   THE TAP COMES SOONER THAN ANY OTHER TAB, which is the one thing that made
+   this a harder call than Plans: Messages is opened within seconds of signing
+   in, so a bare lazy would still be on the wire when it lands. The answer is
+   the warm list above, where this chunk goes FIRST, ahead of the flock chat
+   and the DM thread it is the door to.
+
+   `let`, and re-armed in rearmLazyScreens, for the reason the eleven screens
+   around it are: React.lazy remembers a rejected import for ever, so one
+   failed chunk fetch on a flaky connection would leave the tab permanently
+   dead. */
+let ChatListScreen = React.lazy(() => import('./screens/ChatListScreen'));
+
+/* AND THE DISCOVER TAB, the last screen in this file to move out and the one
+   with the strongest case against a lazy, which turns out not to hold. It
+   carried the venue search box and its dropdown, the Features rail, the
+   location and empty-map banners, the map layer, the Find Your People panel,
+   the Live Events drawer and the category filter bar.
+
+   THE SCREEN IS MOUNTED FOR THE WHOLE SESSION, which is what made this look
+   like first-paint code. It is not: the mount is latched behind
+   exploreEverVisibleRef, so nothing here exists until somebody opens
+   Discover, and currentTab starts at 'home' with nothing routing here from a
+   URL. The chunk is warmed on idle below, so the tap that opens Discover
+   resolves from the module cache.
+
+   A LOADER THAT RECORDS ITS OWN REJECTION, like the map inside this screen
+   and unlike the ten screens above it, and the flag is what makes the re-arm
+   safe. Every other lazy in this file is rebuilt unconditionally by
+   rearmLazyScreens, because the surface behind it is either already crashed
+   or closed. This one is neither: once Discover has been visited the layer is
+   mounted for the rest of the session and only hidden, so a fresh React.lazy
+   is a fresh element type, and a fresh element type remounts the screen and
+   takes the MapLibre instance and the camera with it. React.lazy only ever
+   NEEDS re-arming when it is remembering a rejection, so the flag records
+   whether it is, and a screen that downloaded is left alone. */
+let exploreChunkRejected = false;
+const loadExploreScreen = () => import('./screens/ExploreScreen')
+  .catch((err) => {
+    exploreChunkRejected = true;
+    throw err;
+  });
+let ExploreScreen = React.lazy(loadExploreScreen);
+
+const rearmExploreScreen = () => {
+  if (!exploreChunkRejected) return;
+  exploreChunkRejected = false;
+  ExploreScreen = React.lazy(loadExploreScreen);
+};
 
 /* THE WRAP-UP SHEET, and the first lazy thing in this file that is not a
    screen. It is 6.7 KB of JSX that only a host closing out a plan they created
@@ -454,6 +530,44 @@ const rearmBirdiePanel = () => {
    able to work. Same `let` and the same reason as the screens above. */
 let ConsumerVenueCard = React.lazy(() => import('./components/venue/ConsumerVenueCard'));
 
+/* AND THE DISCOVER MAP, the eighth thing in this file that is fetched rather
+   than shipped and the largest of all of them. It is the MapLibre view behind
+   the Discover tab and behind the venue dashboard Map tab: the basemap, the
+   pins and their photos, the crowd heat, the blue dot and the map controls,
+   about 1,530 lines with the constants and pin helpers it is the only reader
+   of. It lives in components/map/MapLibreMapView.js and arrives the first time
+   somebody opens Discover; the full reasoning is at the top of that file.
+
+   A PLAIN LOADER THAT REJECTS, like the venue card above and unlike the six
+   overlays, because the map mounts inside a screen rather than beside the root
+   tree. The Discover layer carries its own ErrorBoundary (exploreCrashFallback
+   below) and the dashboard sits inside the screen one, so a rejected chunk
+   lands in a boundary that already draws a way out.
+
+   AND THE FLAG IS WHAT MAKES THE RE-ARM SAFE. Every other lazy in this file is
+   rebuilt unconditionally by rearmLazyScreens, because the surface behind it
+   is either already crashed or closed. This one is neither: once Discover has
+   been visited the map layer is mounted for the rest of the session and only
+   hidden, so a fresh React.lazy is a fresh element type, and a fresh element
+   type unmounts the MapLibre instance and takes the camera with it. That must
+   not happen because some unrelated screen crashed and its "Try again" ran the
+   blanket re-arm. React.lazy only ever NEEDS re-arming when it is remembering
+   a rejection, so the flag records whether it is, and a map that downloaded is
+   left alone. */
+let mapChunkRejected = false;
+const loadMapLibreMapView = () => import(/* webpackChunkName: "maplibre-view" */ './components/map/MapLibreMapView')
+  .catch((err) => {
+    mapChunkRejected = true;
+    throw err;
+  });
+let MapLibreMapChunk = React.lazy(loadMapLibreMapView);
+
+const rearmMapLibreMapView = () => {
+  if (!mapChunkRejected) return;
+  mapChunkRejected = false;
+  MapLibreMapChunk = React.lazy(loadMapLibreMapView);
+};
+
 /* WARM THEM WHILE NOBODY IS WAITING.
    webpack caches a module once any import() for it resolves, so these calls
    are what make the lazies above resolve from memory instead of over the
@@ -472,17 +586,41 @@ const warmScreenChunks = () => {
   if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return;
 
   const go = () => {
-    /* CHAT AND THE DM THREAD FIRST, and the order is load-bearing. They are the
-       two screens somebody opens from the Nest and the two biggest of the
-       eight; on one connection, warming them ahead of the other five is the
-       difference between beating a tap and losing to it. */
+    /* THE MESSAGES LIST BEFORE EITHER OF THEM. It is the tab people open
+       first, within seconds of signing in, so it is the one request here
+       that has to beat a tap rather than merely arrive before one. It can
+       go in front of the two below at no cost to them: it is a fraction of
+       their size, and both of them are reached THROUGH this list, so the
+       order here is the order a person actually walks. */
+    import('./screens/ChatListScreen').catch(() => {});
+    /* CHAT AND THE DM THREAD NEXT, behind the Messages list above them and
+       nothing else, and the order is load-bearing. They are the two screens
+       somebody opens from the Nest and the two biggest of the nine; on one
+       connection, warming them ahead of the other five is the difference
+       between beating a tap and losing to it. */
     import('./screens/ChatDetail').catch(() => {});
     import('./screens/DmDetail').catch(() => {});
     import('./screens/FlockDetail').catch(() => {});
     import('./screens/ProfileSettings').catch(() => {});
     import('./screens/CreateScreen').catch(() => {});
     import('./screens/AddFriends').catch(() => {});
-    /* LAST ON PURPOSE. Past flocks is the smallest chunk of the eight and
+    /* THE PLANS TAB, behind the six screens above it and ahead of past
+       flocks. It is a bottom tab, so it is one tap from the Nest and has to
+       beat that tap; it sits behind those six rather than in front of them
+       because the tab bar sends far more people to chat and to You than to
+       Plans, and a request issued here must not take bandwidth from the two
+       screens the order above was measured on. */
+    import('./screens/CalendarScreen').catch(() => {});
+    /* AND DISCOVER, behind the Plans tab and ahead of the four chunks it is
+       the door to: the results list, the venue sheet, the venue card and the
+       map, all further down this list. It is a bottom tab, so it is one tap
+       from the Nest and has to beat that tap, and the tap lands on a layer
+       that is mounted once and kept, so losing the race costs a blank
+       Discover rather than a slow one. It sits behind the six chat and
+       profile screens for the reason Plans does: a request issued here must
+       not take bandwidth from the two the order above was measured on. */
+    import('./screens/ExploreScreen').catch(() => {});
+    /* LAST ON PURPOSE. Past flocks is the smallest chunk of the nine and
        the least opened, so it must not compete for the connection with
        chat, the DM thread or flock detail. */
     import('./screens/PastFlocksScreen').catch(() => {});
@@ -532,6 +670,15 @@ const warmScreenChunks = () => {
        lands. Ahead of Birdie below because nothing on the core loop waits on
        him, and this is the core loop. */
     import('./components/venue/ConsumerVenueCard').catch(() => {});
+    /* AND THE DISCOVER MAP, the last surface on the core loop and ahead of
+       Birdie only. It is the biggest chunk in this list, which is why it goes
+       behind the two smaller Discover chunks rather than in front of them: no
+       pin tap can happen until the map is already on screen, and the map's own
+       first paint waits on `import('maplibre-gl')` and a tile round trip
+       either way. Warmed at all because an unwarmed first visit to Discover
+       pays a round trip for this module and only then starts the one for the
+       engine, which is two waits deep on the screen the product is about. */
+    import(/* webpackChunkName: "maplibre-view" */ './components/map/MapLibreMapView').catch(() => {});
     /* AND BIRDIE, last in this list, because he is
        the one surface here that is not a screen and not an overlay over one:
        nothing on the core loop waits on him. Warmed at all because the bubble
@@ -607,10 +754,12 @@ let RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
 const rearmLazyScreens = () => {
   VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
   RevenueScreen = React.lazy(() => import('./screens/RevenueScreen'));
-  // The eight that joined them. All ten, because "Try again" cannot know
+  // The nine that joined them. All eleven, because "Try again" cannot know
   // which chunk failed and a fresh lazy for a module already in the cache
   // costs one element type and no request.
   AddFriends = React.lazy(() => import('./screens/AddFriends'));
+  CalendarScreen = React.lazy(() => import('./screens/CalendarScreen'));
+  ChatListScreen = React.lazy(() => import('./screens/ChatListScreen'));
   ChatDetail = React.lazy(() => import('./screens/ChatDetail'));
   CreateScreen = React.lazy(() => import('./screens/CreateScreen'));
   DmDetail = React.lazy(() => import('./screens/DmDetail'));
@@ -659,6 +808,22 @@ const rearmLazyScreens = () => {
   // arrives in the screen ErrorBoundary that calls this, so there is no open
   // surface this line could remount out from under anybody.
   ConsumerVenueCard = React.lazy(() => import('./components/venue/ConsumerVenueCard'));
+  // And the Discover map, through a helper that is a NO-OP unless the chunk
+  // actually failed to download. The lines above rebuild unconditionally
+  // because nothing they touch is on screen when this runs. The map is: it is
+  // mounted permanently and only hidden once Discover has been visited, so an
+  // unconditional rebuild here would hand React a new element type and remount
+  // MapLibre - losing the city, the zoom and the open pin - every time some
+  // other screen's "Try again" was tapped. See loadMapLibreMapView.
+  // And the Discover screen itself, through a helper that is a NO-OP unless
+  // its chunk actually failed to download, for the reason the map below it
+  // needs one: the layer is mounted permanently and only hidden once Discover
+  // has been visited, so an unconditional rebuild here would hand React a new
+  // element type, remount the screen and take MapLibre down with it - losing
+  // the city, the zoom and the open pin - every time some other screen's "Try
+  // again" was tapped. See loadExploreScreen.
+  rearmExploreScreen();
+  rearmMapLibreMapView();
 };
 
 /* WHAT THE HOST SEES IF THE WRAP-UP CHUNK CANNOT BE FETCHED, which is the
@@ -1427,17 +1592,12 @@ const resolveVenuePhoto = (u) => (typeof u === 'string' && u.startsWith('/api/')
 /* Both moved to src/lib/venuePhoto.js so the chat module can reach the
    placeholder too. Imported above. */
 
-// HTML-escape a user-derived string before it is interpolated into any raw
-// HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
-// be safe on its own — do NOT rely on upstream stripHtml on the write path.
-// Escapes the five characters that can break out of text or an attribute.
-const escapeHtml = (s) =>
-  String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+// escapeHtml moved to components/map/MapLibreMapView.js on 2026-09-13, with
+// the two raw HTML sinks it existed for. It escaped a user-derived string
+// before it was interpolated into innerHTML, and the only sinks in this file
+// were the MapLibre marker label and the member popup, both of which went with
+// the component. A helper whose last reader leaves is boot weight for a
+// surface that is no longer here.
 
 // A link we did not write, before it becomes an href or a window.open.
 //
@@ -2250,16 +2410,10 @@ const crowdInkFor = (score, c) => {
   return 'var(--accent-green-text)';
 };
 
-// Reduced motion, honored on the one animation CSS cannot reach: MapLibre's
-// camera. The global stylesheet collapses every CSS animation when the user
-// asks for stillness, but flyTo is a JS tween. jumpTo lands the same place
-// with no flight.
-const mapEase = (map, opts) => {
-  const still = typeof window !== 'undefined' && window.matchMedia
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (still) map.jumpTo({ center: opts.center, zoom: opts.zoom });
-  else map.flyTo(opts);
-};
+// mapEase moved to components/map/MapLibreMapView.js on 2026-09-13, with the
+// camera it was written for. It is the reduced-motion guard on flyTo, the one
+// animation the global stylesheet cannot reach, and every call site it ever
+// had was inside that component.
 
 // The heavy weight, for a surface that fills a large area with the colour
 // rather than tinting a dot or a word with it. The crowd scale above has
@@ -2630,314 +2784,22 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, voted = false, col
 });
 
 // =============================================================================
-// MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
-// Prefers MapTiler Streets v2 Dark when REACT_APP_MAPTILER_KEY is set
-// (denser POIs, road hierarchies, neighborhood labels). Falls back to
-// CARTO Dark Matter (free, no key) when the env var is missing.
+// THE DISCOVER MAP moved to components/map/MapLibreMapView.js on 2026-09-13,
+// and the basemap constants, the overlay layer builders and the pin helpers
+// that lived under this banner went with it, because nothing outside the map
+// ever read one of them. Same move and the same reason as the form primitives
+// in components/ui/FormBits.js, with more weight behind it than any other
+// block taken out of this file: 1,229 lines of component and 310 of map
+// helpers, boot chunk for every user, for a surface that is not mounted until
+// somebody opens Discover.
+//
+// It is a fetched chunk named "maplibre-view" now, warmed on idle in
+// warmScreenChunks and mounted through the wrapper below, which is what lets
+// both call sites - the Discover layer here, and the venue dashboard Map tab,
+// which is handed the wrapper in venueDashboardProps - stay the lines they
+// were. escapeHtml and mapEase went with it too: every reader either had was
+// inside those lines.
 // =============================================================================
-const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-// basic-v2 instead of streets-v2 (2026-08-12): streets renders every POI,
-// transit stop, and neighborhood label Google-style, which buried Flock's own
-// venue markers in basemap noise. Basic keeps roads/water/districts legible
-// and lets OUR pins be the loudest thing on the map.
-const DARK_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${MAPTILER_KEY}`
-  : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-// Light-mode basemap (2026-07 redesign): the always-dark map read as a "weird
-// overlay" inside the cream app. Basic light in light mode; positron fallback.
-const LIGHT_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`
-  : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
-const isAppDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-// Pass `dark` explicitly when you have it from React state; omit it to read the
-// live <html data-theme> (used at map construction, before any effect runs).
-const ROADMAP_STYLE = (dark) => ((dark === undefined ? isAppDark() : dark) ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
-// Satellite: MapTiler "hybrid" (imagery + roads + place labels overlaid), and
-// ONLY that. Null when there is no key, which is what SATELLITE_AVAILABLE below
-// reads to hide the toggle rather than offer a button that cannot answer.
-//
-// WHY THERE IS NO KEYLESS FALLBACK ANY MORE. This used to fall back to raster
-// tiles from server.arcgisonline.com, requested with no API key and no Esri
-// account. Esri's basemaps are not free for commercial use, so that was a
-// licensing exposure before it was ever a billing one — and it was the only
-// outbound host in the app with that shape (which is why it needed its own CSP
-// allowlist entry). It was already dead in every build that ships: Vercel and
-// Codemagic both set REACT_APP_MAPTILER_KEY, so the MapTiler branch always won
-// and the Esri branch had not served a tile in production. What it did still do
-// was ship unlicensed-request code in a repository, where anyone who clones
-// Flock without a MapTiler key and taps the satellite toggle starts making them
-// against Esri's servers under their own IP. Removing the branch costs
-// production nothing and stops handing that to contributors.
-//
-// The roadmap basemap keeps its keyless CARTO fallback — CARTO's Dark Matter and
-// Positron are openly licensed for this, which is exactly the property Esri's
-// imagery lacks. There is no comparable free satellite source, so the honest
-// keyless answer is "no satellite", not "someone else's imagery".
-const SATELLITE_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`
-  : null;
-const SATELLITE_AVAILABLE = !!SATELLITE_STYLE;
-
-// AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
-// MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
-const VENUE_HEAT_PAINT = {
-  'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
-  /* Radius and intensity follow zoom so the heat reads as one continuous
-     field over the area instead of isolated blobs. At city zoom the points
-     are pushed wide enough to merge; street zoom pulls them back in so a hot
-     venue localizes to its block. The WEIGHTS stay the real crowd scores
-     (score/100, set where the features are built) — coverage comes from
-     radius, never from inflating what a venue actually says. */
-  'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 5, 12, 4, 15, 3.2, 18, 2.6],
-  /* The radius is in SCREEN pixels, and a pixel covers half as much ground
-     with every zoom level. A radius that shrank in pixels as the zoom grew
-     (120px at 8, 40px at 18) therefore shrank on the ground by a factor of
-     several thousand across a zoom gesture: a kilometre of glow at city zoom
-     collapsed into the pin itself at street zoom, which is the "the heat
-     looks different every time" that was reported. The exponential curve
-     grows the pixel radius with zoom so the field stays roughly the size of
-     a block on the ground, and the opacity hands over to the pins past zoom
-     15, where each pin already carries its own crowd number and a
-     full-strength blob under a single pin said nothing the pin did not. */
-  'heatmap-radius': ['interpolate', ['exponential', 1.75], ['zoom'], 10, 24, 13, 55, 16, 170],
-  'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 13.5, 0.85, 15.5, 0.45, 17, 0],
-  'heatmap-color': [
-    'interpolate', ['linear'], ['heatmap-density'],
-    0,    'rgba(0, 0, 0, 0)',
-    /* A quiet venue used to vanish below the 0.1 stop; low scores now stay
-       visibly cool instead of invisible. */
-    0.03, 'rgba(34, 197, 94, 0.4)',
-    0.1,  'rgba(34, 197, 94, 0.6)',
-    0.2,  'rgba(34, 197, 94, 0.7)',
-    0.3,  'rgba(160, 220, 40, 0.75)',
-    0.4,  'rgba(250, 204, 21, 0.8)',
-    0.5,  'rgba(251, 191, 36, 0.82)',
-    0.6,  'rgba(245, 158, 11, 0.85)',
-    0.7,  'rgba(249, 115, 22, 0.88)',
-    0.8,  'rgba(239, 68, 68, 0.9)',
-    0.9,  'rgba(220, 38, 38, 0.94)',
-    1,    'rgba(185, 28, 28, 0.97)',
-  ],
-};
-
-// Add accuracy ring + venue heatmap + 3D buildings.
-// Inserts heat UNDER the first symbol layer so road/place labels stay readable
-// on top of the heat. 3D building extrusion uses the basemap's existing
-// building vector tiles (free, no extra fetch) — gives the map Snap-Map-style
-// city depth when zoomed in.
-function addOverlayLayers(map) {
-  const layers = map.getStyle().layers || [];
-  const firstSymbolId = layers.find(l => l.type === 'symbol')?.id;
-
-  if (!map.getSource('user-accuracy')) {
-    map.addSource('user-accuracy', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    map.addLayer({ id: 'user-accuracy-fill', type: 'fill', source: 'user-accuracy', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.1 } }, firstSymbolId);
-    map.addLayer({ id: 'user-accuracy-line', type: 'line', source: 'user-accuracy', paint: { 'line-color': '#3b82f6', 'line-opacity': 0.3, 'line-width': 1 } }, firstSymbolId);
-  }
-  if (!map.getSource('venue-heat')) {
-    map.addSource('venue-heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    map.addLayer({ id: 'venue-heat', type: 'heatmap', source: 'venue-heat', paint: VENUE_HEAT_PAINT }, firstSymbolId);
-  }
-
-  // 3D building extrusion. Reuses whichever building source-layer the basemap
-  // exposes (CARTO/OMT call it 'building'). Skipped when basemap doesn't ship
-  // building geometry (e.g. raster satellite style).
-  if (!map.getLayer('flock-3d-buildings')) {
-    const buildingLayer = layers.find(l => l['source-layer'] === 'building' && (l.type === 'fill' || l.type === 'fill-extrusion'));
-    if (buildingLayer) {
-      try {
-        map.addLayer({
-          id: 'flock-3d-buildings',
-          source: buildingLayer.source,
-          'source-layer': 'building',
-          type: 'fill-extrusion',
-          minzoom: 14,
-          paint: {
-            'fill-extrusion-color': '#243651',
-            'fill-extrusion-height': [
-              'interpolate', ['linear'], ['zoom'],
-              14, 0,
-              16, ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
-            ],
-            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
-            'fill-extrusion-opacity': 0.75,
-          },
-        }, firstSymbolId);
-      } catch {}
-    }
-  }
-}
-
-// True-meters circle as a GeoJSON polygon for the user's accuracy ring
-function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
-  const coords = [];
-  const earthR = 6378137;
-  const latRad = (lat * Math.PI) / 180;
-  for (let i = 0; i <= points; i++) {
-    const angle = (i / points) * Math.PI * 2;
-    const dLat = (radiusMeters * Math.cos(angle)) / earthR;
-    const dLng = (radiusMeters * Math.sin(angle)) / (earthR * Math.cos(latRad));
-    coords.push([lng + (dLng * 180) / Math.PI, lat + (dLat * 180) / Math.PI]);
-  }
-  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: {} };
-}
-
-/* PINS NEVER LEAVE THEIR VENUE.
-
-   The old answer to two pins on one spot was to push them apart: overlapping
-   pins were displaced onto a spiral around their shared centroid, up to
-   40*sqrt(k) screen pixels from the venue, and the whole layout was recomputed
-   on every zoomend. Two things followed that a person sees at once. Every zoom
-   ended with pins jumping to freshly computed spots, a frame late, so the map
-   looked like it was still settling after the finger had stopped. And a pin
-   could stand on a venue that was not its own, which is the one thing a map
-   pin must not do.
-
-   Now a pin is drawn exactly on its venue at every zoom, and when two would
-   overlap on screen the one that matters less fades out while the survivor
-   wears a small "+N" for the pins behind it. Zooming in separates the true
-   positions and the hidden ones fade back. That is collision handling, which
-   is what every map people trust does with its labels and its pins, and it is
-   what MapLibre's own symbol layers do for theirs. The pass projects to screen
-   space, so it re-runs as the map moves, throttled to one pass per animation
-   frame and no more than one every PIN_OVERLAP_MIN_INTERVAL_MS; it is O(n^2)
-   over a few dozen venues, which is microseconds, and it never touches a
-   coordinate. */
-const PIN_OVERLAP_PX = 46; // pin body is 44px; closer than this and they stack
-const PIN_OVERLAP_MIN_INTERVAL_MS = 90;
-
-/* HOW PINS SCALE WITH ZOOM. One continuous factor from PIN_SCALE_MIN at
-   PIN_SCALE_FROM to full size at PIN_SCALE_TO, written to a CSS variable on
-   the map container on every zoom frame and applied as a transform on each
-   pin. The old three tiers (lo/mid/hi) snapped the size at zoom 13 and 15
-   through a 180ms CSS transition, so a zoom gesture crossing a tier showed
-   every pin resizing on its own clock, out of step with the map underneath.
-   A transform is composited, so this costs one style write per frame. */
-const PIN_SCALE_MIN = 0.62;
-const PIN_SCALE_FROM = 12;
-const PIN_SCALE_TO = 14.5;
-const pinScaleForZoom = (z) => Math.max(PIN_SCALE_MIN, Math.min(1,
-  PIN_SCALE_MIN + (z - PIN_SCALE_FROM) * ((1 - PIN_SCALE_MIN) / (PIN_SCALE_TO - PIN_SCALE_FROM))));
-
-const venueMatchesCategory = (v, filterCategory) => {
-  const t = (v.types || []).join(' ').toLowerCase();
-  const nm = (v.name || '').toLowerCase();
-  let show = true;
-  if (filterCategory && filterCategory !== 'All') {
-    if (filterCategory === 'Food') {
-      show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
-    } else if (filterCategory === 'Nightlife') {
-      show = t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || t.includes('lounge') || v.category === 'Nightlife';
-    } else if (filterCategory === 'Live Music') {
-      show = t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || nm.includes('jazz') || v.category === 'Live Music';
-    } else if (filterCategory === 'Sports') {
-      show = t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness') || nm.includes('sport') || v.category === 'Sports';
-    }
-  }
-  return show;
-};
-
-const applyCategoryFilter = (map, markers, filterCategory, setFilterHidesAll) => {
-  let visible = 0;
-  const heatFeatures = [];
-  markers.forEach(({ el, venue: v }) => {
-    const show = venueMatchesCategory(v, filterCategory);
-    el.style.display = show ? '' : 'none';
-    if (!show) return;
-    visible += 1;
-    const loc = v.location;
-    if (loc?.latitude && loc?.longitude && typeof v.crowd === 'number') {
-      heatFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] }, properties: { weight: v.crowd / 100 } });
-    }
-  });
-  const heatSrc = map && map.getSource ? map.getSource('venue-heat') : null;
-  if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
-  setFilterHidesAll(markers.length > 0 && visible === 0);
-};
-
-/* WHICH PIN WINS A SPOT. The active venue always; then the owner's own pin on
-   the dashboard map; then the busier place; then the better-rated one; then
-   a stable name order, so two equal pins do not trade places between passes. */
-function pinPriority(a, b, activeId, ownerPlaceId) {
-  const av = a.venue;
-  const bv = b.venue;
-  const act = (v) => (activeId != null && v.id === activeId ? 1 : 0);
-  const own = (v) => (ownerPlaceId && v.place_id === ownerPlaceId ? 1 : 0);
-  const crowd = (v) => (Number.isFinite(v.crowd) ? v.crowd : -1);
-  const stars = (v) => Number(v.rating || v.stars) || 0;
-  return (act(bv) - act(av))
-    || (own(bv) - own(av))
-    || (crowd(bv) - crowd(av))
-    || (stars(bv) - stars(av))
-    || String(av.name || '').localeCompare(String(bv.name || ''));
-}
-
-function resolvePinOverlaps(map, markerEntries, { activeId = null, ownerPlaceId = null, scale = 1 } = {}) {
-  const entries = markerEntries.filter(({ el, venue }) => (
-    el.style.display !== 'none' && venue.location?.latitude && venue.location?.longitude
-  ));
-  if (entries.length === 0) return;
-  let pts;
-  try {
-    pts = entries.map(({ venue }) => map.project([venue.location.longitude, venue.location.latitude]));
-  } catch { return; } // container not measured yet; the next move re-runs
-  const limit = PIN_OVERLAP_PX * scale;
-  const order = entries.map((_, i) => i)
-    .sort((i, j) => pinPriority(entries[i], entries[j], activeId, ownerPlaceId));
-  const kept = [];
-  const behind = new Map(); // kept index -> pins it stands for
-  for (const i of order) {
-    let coveredBy = -1;
-    for (const k of kept) {
-      const dx = pts[k].x - pts[i].x;
-      const dy = pts[k].y - pts[i].y;
-      if (dx * dx + dy * dy < limit * limit) { coveredBy = k; break; }
-    }
-    if (coveredBy === -1) {
-      kept.push(i);
-    } else {
-      behind.set(coveredBy, (behind.get(coveredBy) || 0) + 1);
-      setPinHidden(entries[i], true);
-    }
-  }
-  for (const k of kept) setPinHidden(entries[k], false, behind.get(k) || 0);
-}
-
-/* A covered pin fades (the marker's own opacity, so MapLibre and this file
-   never fight over one style), stops taking taps, and leaves the
-   accessibility tree; a survivor with pins behind it carries their count. */
-function setPinHidden(entry, hidden, behind = 0) {
-  const { el, marker } = entry;
-  const was = el.dataset.covered === '1';
-  if (hidden) {
-    if (!was) {
-      el.dataset.covered = '1';
-      el.setAttribute('aria-hidden', 'true');
-      el.style.pointerEvents = 'none';
-      marker.setOpacity('0');
-    }
-    return;
-  }
-  if (was) {
-    delete el.dataset.covered;
-    el.removeAttribute('aria-hidden');
-    el.style.pointerEvents = '';
-    marker.setOpacity('1');
-  }
-  let badge = el.querySelector('.mlb-cluster-badge');
-  if (behind > 0) {
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'mlb-cluster-badge';
-      badge.setAttribute('aria-hidden', 'true');
-      el.appendChild(badge);
-    }
-    const text = `+${behind}`;
-    if (badge.textContent !== text) badge.textContent = text;
-  } else if (badge) {
-    badge.remove();
-  }
-}
 
 // WHERE THE APP LOOKS WHEN IT DOES NOT KNOW WHERE YOU ARE.
 //
@@ -2952,1237 +2814,54 @@ function setPinHidden(entry, hidden, behind = 0) {
 // and the comments at requestUserLocation explain why in full.
 // The label rides along with the coordinate so no screen can name a different
 // city than the one it is actually showing.
+// It reaches the map as a prop now that the map is its own module, handed down
+// by the wrapper below: still one declaration, still both readers, and still
+// nothing either of them could drift from.
 const NO_LOCATION_VIEW = { lat: 39.9526, lng: -75.1652, zoom: 11.5, label: 'Philadelphia' };
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true }) => {
-  const mapRef = useRef(null);
-  const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
-  const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]);
-  // Read by the overlap pass and the zoom handler, which live outside React's
-  // render and must not go stale between renders.
-  const overlapPassRef = useRef(null);
-  const pinScaleRef = useRef(1);
-  const activeVenueIdRef = useRef(null);
-  const ownerPlaceIdRef = useRef(null);
-  activeVenueIdRef.current = activeVenue?.id ?? null;
-  ownerPlaceIdRef.current = ownerPlaceId; // [{ marker, el, venue }]
-  const userMarkerRef = useRef(null);
-  const userElRef = useRef(null);
-  const memberMarkersRef = useRef({}); // userId -> { marker, popup }
-  const photoCacheRef = useRef({}); // place_id -> dataURL
-  const prevActiveRef = useRef(null);
-  const watchIdRef = useRef(null);
-  const mapLibreRef = useRef(null); // holds the maplibre-gl module after dynamic import
-  const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
-  const fittedKeyRef = useRef(null); // result set the viewport was last framed to
-  const [mapReady, setMapReady] = useState(false);
-  // A rejected tile key or a style that never loads used to be an endless
-  // spinner (Explore audit, 2026-09-05).
-  const [mapFailed, setMapFailed] = useState(false);
-  const mapLoadedRef = useRef(false);
-  // The category filter hid every pin on the map. Rendered as a sentence,
-  // because an empty map reads as broken.
-  const [filterHidesAll, setFilterHidesAll] = useState(false);
-  const filterCategoryRef = useRef(filterCategory);
-  // Same guard as the map constructor below: a stored 'hybrid' is only honoured
-  // while there is a satellite style to honour it with.
-  const [mapType, setMapType] = useState(() => (
-    SATELLITE_AVAILABLE && lsGet('flock_map_type') === 'hybrid' ? 'hybrid' : 'roadmap'
-  ));
-  /* The basemap follows the app theme. It used to be chosen ONCE, at map
-     construction, so flipping to dark mode left three quarters of Discover as a
-     bright blue-and-cream rectangle under navy chrome. The style is now swapped
-     whenever the theme changes, and every marker colour below is read from the
-     matching palette instead of the module-level light-mode constant. */
-  const { isDark: mapIsDark } = useTheme();
-  const mapPalette = mapIsDark ? colorsDark : colorsLight;
-  const appliedDarkRef = useRef(null);
+/* THE GROUND A MAP IS PAINTED ON BEFORE IT HAS ONE. The component's own
+   loading state fills its box with this colour and puts a spinner on it while
+   `import('maplibre-gl')` and the first tiles land, so the chunk fetch in
+   front of that has to paint the same thing: a fallback in the app's own
+   colours would open Discover on cream and then go dark. aria-hidden and no
+   role, because the loading state behind it is the one that announces itself
+   and two live regions for one wait is two announcements. */
+const MapChunkFallback = () => (
+  <div aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundColor: '#1a2a3a' }} />
+);
 
-  const DEFAULT_ZOOM = 12;
+/* THE MAP, AS BOTH CALL SITES STILL SPELL IT. A wrapper rather than the lazy
+   binding itself, for three reasons that all point the same way.
 
-  // ---------- helpers ----------
-  // Resolves null when we do not know where the user is, and null means null.
-  // Both branches used to resolve a fixed point in Bethlehem, Pennsylvania, so
-  // a phone that declined the permission opened a map centred confidently on a
-  // town it had never been to. An unknown location now opens the wide view
-  // below, and the map re-pans the moment permission is granted.
-  const getUserLocation = () => new Promise((resolve) => {
-    if (geolocationAvailable()) {
-      getCurrentPosition(
-        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
-        () => resolve(null),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-      );
-    } else {
-      resolve(null);
-    }
-  });
+   THE SUSPENSE HAS TO BE HERE. The Discover layer mounts this directly and the
+   venue owner dashboard is handed it in venueDashboardProps, so a boundary at
+   either call site would leave the other one throwing its promise at whatever
+   sits above it. For the dashboard that is the screen Suspense, which would
+   swap the whole dashboard for a chunk fallback and remount it when the map
+   arrived, in front of an owner who tapped one tab.
 
-  // Where the map opens when nothing knows where the user is.
-  //
-  // This was the whole United States at zoom 3.2, chosen so it could not read
-  // as a claim about where you are standing. It succeeded at that and failed at
-  // everything else: a continent with no venues on it is not a screen anybody
-  // can use, and it is the first thing a new install shows.
-  //
-  // Philadelphia instead, at city zoom. What makes that safe is the thing the
-  // old fixed point in Bethlehem got wrong, and it is worth being precise about
-  // the difference, because the comments elsewhere in this file are right and
-  // this is not a reversal of them:
-  //
-  //   - `located` stays NULL. No blue dot is drawn, so nothing says you are
-  //     here.
-  //   - Nothing is written to flock_user_lat/lng, so the guess cannot outlive
-  //     the session or bias a later search. The Bethlehem bug was permanent.
-  //   - No distance is computed from it. "1.2 km away" needs a real origin and
-  //     still refuses without one.
-  //   - The location banner stays up and says which city is on screen.
-  //
-  // So it opens somewhere real and searchable rather than nowhere, and it still
-  // does not pretend to know where you are. Philadelphia because that is where
-  // the crowd corpus actually has coverage, so the pins carry live scores
-  // instead of the "Usually busy" hedge.
-  const UNKNOWN_LOCATION_VIEW = NO_LOCATION_VIEW;
+   IT SUSPENDS EXACTLY ONCE, on the first mount, which is the first time
+   Discover is visible, when there is no map on screen for the fallback to
+   flash over. After that the lazy is resolved and this boundary never shows
+   the fallback again; React keeps already-mounted children alive behind a
+   re-suspend rather than unmounting them, so even a later one could not cost
+   the camera.
 
-  // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
-  // on dark tiles was a hole in the map.
-  const buildPinSvg = useCallback((isActive, category) => {
-    const body = mapIsDark
-      ? (isActive ? '#6d9ac3' : '#f1ede0')
-      : (isActive ? '#2d5a87' : '#1e293b');
-    const edge = mapIsDark ? '#0b1220' : '#f1ede0';
-    const disc = mapIsDark ? '#0f172a' : '#ffffff';
-    const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
-    // Own-property lookup only. `initialMap[category]` answers 'constructor'
-    // and '__proto__' off Object.prototype with something truthy, and the
-    // result is interpolated straight into the innerHTML string below, so a
-    // venue whose category arrived as one of those names drew a pin labelled
-    // with the source of a native function. Same rule, same reason as `own()`
-    // in website/ModerationDashboard.js.
-    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
-    return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
-      `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
-      `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${body}" stroke="${edge}" stroke-width="2" filter="url(#s)"/>` +
-      `<circle cx="16" cy="14.5" r="9" fill="${disc}"/>` +
-      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${body}">${initial}</text>` +
-      `</svg>`;
-  }, [mapIsDark]);
-
-  // The same initial on a disc, for a venue whose photo is on its way. The
-  // photo that replaces it is round and the marker's anchor is the circle's
-  // centre; a teardrop drawn under that anchor sat with its tip below the
-  // venue until the photo arrived, then jumped up to the circle.
-  const buildDiscSvg = useCallback((isActive, category) => {
-    const body = mapIsDark
-      ? (isActive ? '#6d9ac3' : '#f1ede0')
-      : (isActive ? '#2d5a87' : '#1e293b');
-    const edge = mapIsDark ? '#0b1220' : '#f1ede0';
-    const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
-    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
-    return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">` +
-      `<defs><filter id="d" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
-      `<circle cx="22" cy="22" r="20" fill="${body}" stroke="${edge}" stroke-width="2.5" filter="url(#d)"/>` +
-      `<text x="22" y="28" text-anchor="middle" font-size="17" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${edge}">${initial}</text>` +
-      `</svg>`;
-  }, [mapIsDark]);
-
-  // Circular photo pin via canvas (same trick as the old impl, returns dataURL)
-  const buildPhotoPin = useCallback((photoUrl, isActive) => {
-    const size = isActive ? 54 : 44;
-    const border = isActive ? 3.5 : 2.5;
-    const borderColor = isActive ? (mapIsDark ? '#6d9ac3' : '#2d5a87') : '#f1ede0';
-    return new Promise((resolve) => {
-      const canvas = document.createElement('canvas');
-      const dpr = 2;
-      canvas.width = size * dpr;
-      canvas.height = size * dpr;
-      const ctx = canvas.getContext('2d');
-      ctx.scale(dpr, dpr);
-      const r = size / 2;
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        ctx.beginPath();
-        ctx.arc(r, r, r - 0.5, 0, Math.PI * 2);
-        ctx.fillStyle = borderColor;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(r, r, r - border, 0, Math.PI * 2);
-        ctx.clip();
-        const aspect = img.width / img.height;
-        let sx = 0, sy = 0, sw = img.width, sh = img.height;
-        if (aspect > 1) { sx = (img.width - img.height) / 2; sw = img.height; }
-        else { sy = (img.height - img.width) / 2; sh = img.width; }
-        ctx.drawImage(img, sx, sy, sw, sh, border, border, size - border * 2, size - border * 2);
-        resolve(canvas.toDataURL('image/png'));
-      };
-      img.onerror = () => resolve(null);
-      img.src = photoUrl;
-    });
-  }, [mapIsDark]);
-
-  // Category ring colour. This used to read the module-level `colors`, which is
-  // the LIGHT palette regardless of theme — so on the dark basemap the rings
-  // were navy on near-black and the pins lost their edge entirely.
-  const categoryRingColor = useCallback((cat) => {
-    switch (cat) {
-      case 'Food': return mapPalette.food;
-      case 'Nightlife': return mapPalette.nightlife;
-      case 'Live Music': return mapPalette.music;
-      case 'Sports': return mapPalette.sports;
-      default: return mapPalette.steel;
-    }
-  }, [mapPalette]);
-
-  // Build a marker DOM element (pin or photo). The OUTER el is owned by MapLibre
-  // (it sets transform every frame), so all visual styling + transitions live on
-  // an INNER div. Touching transform on the outer el causes pin lag / wrong position.
-  const buildMarkerEl = useCallback((venue, isActive) => {
-    const el = document.createElement('div');
-    el.className = 'mlb-venue-marker';
-    el.style.cursor = 'pointer';
-    // A NAME, so the pin exists to anything that is not a pointer. Markers are
-    // built by hand outside React and had no role and no label, which made
-    // every pin invisible to VoiceOver: the whole map read as an empty region
-    // with a list button in the corner. The name carries the crowd number when
-    // there is one, because that number is what the pin is showing.
-    //
-    // ON THIS OUTER ELEMENT, NOT THE CIRCLE. One build moved the role onto the
-    // inner circle so the accessible frame would be the pin alone, and the
-    // tree then exposed no pin at all (build 50 of the demonstration
-    // recording found nothing matching "<venue>, crowd <n>"). This element is
-    // the one WebKit hands to the accessibility tree; its frame includes the
-    // label laid out under the circle, which is a known imprecision, not an
-    // absence.
-    el.setAttribute('role', 'button');
-    el.setAttribute('aria-label', Number.isFinite(venue.crowd)
-      ? `${venue.name}, crowd ${Math.round(venue.crowd)}`
-      : `${venue.name}`);
-    el.style.display = 'flex';
-    el.style.flexDirection = 'column';
-    el.style.alignItems = 'center';
-    // No transition / transform on the outer el — MapLibre owns it.
-
-    const inner = document.createElement('div');
-    inner.className = 'mlb-marker-inner';
-    inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease';
-    inner.style.willChange = 'auto';
-    const size = isActive ? 54 : 44;
-    inner.style.width = size + 'px';
-    inner.style.height = size + 'px';
-    inner.style.display = 'block';
-    // The zoom scale (see PIN_SCALE_MIN) is a transform on this inner box,
-    // about the point MapLibre pins to the coordinate: the tip of a teardrop,
-    // the centre of a photo disc. Scaling about any other point would walk
-    // the pin off its venue as the zoom changed.
-    const roundPin = !!(photoCacheRef.current[venue.place_id] || venue.photo_url);
-    inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';
-
-    const ring = categoryRingColor(venue.category);
-    const applyPhotoStyle = () => {
-      inner.style.backgroundSize = 'cover';
-      inner.style.backgroundPosition = 'center';
-      inner.style.borderRadius = '50%';
-      inner.style.boxShadow = `0 0 0 3px ${ring}, 0 4px 14px rgba(0,0,0,0.35)`;
-    };
-
-    const cached = photoCacheRef.current[venue.place_id];
-    if (cached) {
-      inner.style.backgroundImage = `url("${cached}")`;
-      applyPhotoStyle();
-    } else if (venue.photo_url) {
-      const svg = buildDiscSvg(isActive, venue.category);
-      inner.innerHTML = svg;
-      const svgEl = inner.querySelector('svg');
-      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', size); }
-      /* resolveVenuePhoto, NOT the raw field. `photo_url` arrives from the
-         backend as the RELATIVE path "/api/venues/photo?ref=..." and the API
-         is a different origin from the web app in every environment we run
-         (flockcorp.com against Railway in production, :3410 against :5210 in
-         the screenshot capture). Assigned raw to img.src it resolves against
-         the WEB origin, 404s, fires onerror, and buildPhotoPin resolves null,
-         so the marker keeps the lettered category fallback for ever. Every
-         other consumer of photo_url in this file already goes through the
-         resolver; these two map-pin calls were the only ones that did not,
-         which is why venue photos showed on cards and never on pins. */
-      buildPhotoPin(resolveVenuePhoto(venue.photo_url), isActive).then(dataUrl => {
-        if (dataUrl) {
-          photoCacheRef.current[venue.place_id] = dataUrl;
-          inner.innerHTML = '';
-          inner.style.backgroundImage = `url("${dataUrl}")`;
-          applyPhotoStyle();
-        }
-      });
-    } else {
-      const svg = buildPinSvg(isActive, venue.category);
-      inner.innerHTML = svg;
-      const svgEl = inner.querySelector('svg');
-      if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
-    }
-    el.appendChild(inner);
-
-    // Name + rating label (Apple-Maps-style). Hidden by default; CSS shows it
-    // when the map container reaches data-zoom-tier="hi".
-    //
-    // BOTH INTERPOLATED VALUES GO THROUGH escapeHtml, and neither used to.
-    //
-    // The name was `.replace(/[<>]/g, '')`. Stripping is not escaping: it
-    // leaves `&`, `"` and `'` alone, so a venue whose name contains `&amp;` or
-    // `&copy;` is DISPLAYED decoded (the innerHTML parser resolves the
-    // reference), i.e. the label shows a character the business does not have
-    // in its name. escapeHtml, defined near the top of this file, is what the
-    // other two innerHTML sinks here use, and its comment says why: "This must
-    // be safe on its own — do NOT rely on upstream stripHtml".
-    //
-    // The rating was worse, and it is the reason this is a change rather than
-    // a tidy-up: the old ternary called `.toFixed(1)` only when the value HAD
-    // a toFixed, and interpolated it VERBATIM when it did not. A rating that
-    // arrives as a string rather than a number — which is what every non-Google
-    // path in this app hands us, `venue.stars` included — was raw HTML in an
-    // innerHTML sink with no filter of any kind in front of it. It is coerced
-    // to a number here so the non-numeric branch cannot exist, and escaped
-    // anyway.
-    const label = document.createElement('div');
-    label.className = 'mlb-marker-label';
-    // The outer element already says the name; the label under the pin would
-    // say it a second time.
-    label.setAttribute('aria-hidden', 'true');
-    // System star via starSvgString, not a raw glyph: the label is innerHTML
-    // so JSX cannot reach it, but the geometry must still be the icon set's.
-    const ratingValue = Number(venue.rating || venue.stars);
-    const ratingHtml = Number.isFinite(ratingValue) && ratingValue > 0
-      ? `<span class="mlb-label-rating">${starSvgString(12)} ${escapeHtml(ratingValue.toFixed(1))}</span>`
-      : '';
-    label.innerHTML = `<span class="mlb-label-name">${escapeHtml(venue.name || '')}</span>${ratingHtml}`;
-    // OUT OF THE MARKER'S BOX. The label used to be laid out under the pin
-    // inside the element MapLibre positions, so that element was pin plus
-    // label tall, the anchor was measured on the taller box, and the pin sat
-    // above its venue by the label's height whenever the label was in the
-    // tree, then dropped onto it when the tier hid the label. Absolutely
-    // positioned below the pin, the box is the pin alone and the anchor (the
-    // teardrop's tip, the disc's centre) is on the coordinate at every zoom.
-    const under = document.createElement('div');
-    under.className = 'mlb-marker-under';
-    under.appendChild(label);
-    el.appendChild(under);
-
-    return el;
-  }, [buildPinSvg, buildDiscSvg, buildPhotoPin, categoryRingColor]);
-
-  // ---------- init map (once) ----------
-  useEffect(() => {
-    if (!mapRef.current || mapInstanceRef.current) return;
-    let cancelled = false;
-    let resizeObs = null;
-    const init = async () => {
-      // The stylesheet travels with the engine, not with App.js. Both requests
-      // start together so the CSS costs no extra round trip, and the map is
-      // only built once the styles have landed: maplibre draws its controls,
-      // attribution and popups as bare DOM, so constructing it first would
-      // paint an unstyled control stack for however long the sheet took.
-      //
-      // Its failure is swallowed on purpose. A chunk that will not load is a
-      // reason to show a map with plain controls, never a reason to show no
-      // map, and the attribution stays legible either way. Order relative to
-      // index.css is unchanged by this: an async CSS chunk is appended to
-      // <head> after the entry stylesheet whichever import fetched it, so the
-      // two `.maplibregl-ctrl-attrib` overrides in index.css still resolve
-      // exactly as they did.
-      const styleSheetReady = import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
-      const maplibregl = (await import('maplibre-gl')).default;
-      await styleSheetReady;
-      mapLibreRef.current = maplibregl;
-      if (cancelled) return;
-      // A caller that already knows where the map should open (the venue
-      // dashboard passes the venue itself) skips the geolocation prompt.
-      //
-      // So does a person who turned Location services off in Settings. That
-      // switch used to write a flag, print "Location is turned off" on its own
-      // row, and change nothing: this effect asked anyway, and so did the
-      // Discover tab. A switch that reports a state it does not enforce is
-      // worse than no switch, because the person believes they have already
-      // handled it. UNKNOWN_LOCATION_VIEW is the same fallback a denied prompt
-      // gets, so the map opens rather than sitting blank.
-      const located = (initialCenter || !locationAllowed)
-        ? (initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : null)
-        : await getUserLocation();
-      const userLoc = located || UNKNOWN_LOCATION_VIEW;
-      if (cancelled) return;
-      // Same expression as the mapType useState above, and it has to stay the
-      // same one: a stored 'hybrid' from a build that HAD a MapTiler key must
-      // not construct the map with a null style in one that does not.
-      // localStorage outlives the env var.
-      const savedMapType = SATELLITE_AVAILABLE && localStorage.getItem('flock_map_type') === 'hybrid'
-        ? 'hybrid' : 'roadmap';
-
-      // A remote basemap style (bad/missing MapTiler key, network, 403) must
-      // NOT take the whole app down. A synchronous failure constructing the map
-      // is caught here; the async style/tile fetch failures are swallowed by the
-      // 'error' listener below. Either way Discover degrades to an empty map
-      // instead of throwing up to the root error boundary.
-      let map;
-      try {
-        map = new maplibregl.Map({
-          container: mapRef.current,
-          style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
-          center: [userLoc.lng, userLoc.lat],
-          zoom: located ? DEFAULT_ZOOM : UNKNOWN_LOCATION_VIEW.zoom,
-          minZoom: 3,
-          maxZoom: 18,
-          // Attribution added manually below at bottom-left (compact) so it
-          // never collides with the View-All pill anchored bottom-right.
-          attributionControl: false,
-          // Snap-style smoothness
-          fadeDuration: 200,
-          antialias: true,
-        });
-      } catch (err) {
-        console.warn('[Map] Failed to initialize basemap:', err?.message || err);
-        return;
-      }
-      // Without a listener, MapLibre surfaces style/tile load errors (bad key,
-      // network) rather than failing quietly. Swallow them so a broken basemap
-      // leaves Discover usable.
-      map.on('error', (e) => {
-        console.warn('[Map]', e?.error?.message || e?.error || e);
-        const status = Number(e?.error?.status);
-        if (!mapLoadedRef.current && (status === 401 || status === 403)) setMapFailed(true);
-      });
-      setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
-      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
-
-      // KEYBOARD ORDER. MapLibre injects its control containers as the FIRST
-      // children of the map element, and the map element is the first child of
-      // this screen — so the attribution disclosure and its two credit links
-      // were the first three tab stops a keyboard user hit, ahead of every
-      // Flock control, every time the map was on screen. The credit still has
-      // to be reachable (OSM's licence requires it), so it is moved rather than
-      // removed: the container becomes the LAST child of the component root, so
-      // it is the last tab stop instead of the first. It is absolutely
-      // positioned bottom-left against a full-bleed parent either way, so it
-      // does not move on screen. The compact disclosure toggle itself is
-      // purely visual, so it drops out of the tab sequence (still clickable).
-      try {
-        const attrib = mapRef.current && mapRef.current.querySelector('.maplibregl-ctrl-bottom-left');
-        if (attrib && mapRootRef.current) {
-          mapRootRef.current.appendChild(attrib);
-          const toggle = attrib.querySelector('.maplibregl-ctrl-attrib-button');
-          if (toggle) toggle.setAttribute('tabindex', '-1');
-        }
-      } catch { /* attribution stays where MapLibre put it */ }
-      mapInstanceRef.current = map;
-      // RIG-ONLY INTROSPECTION. scripts/capture-screenshots.mjs sets this
-      // flag before the page loads so it can project each venue's coordinate
-      // and measure the pin standing on it, at rest and mid-zoom. Nothing in
-      // production sets the flag, so nothing in production reaches this.
-      if (typeof window !== 'undefined' && window.__FLOCK_MAP_DEBUG__) {
-        window.__flockMapDebug = {
-          getZoom: () => map.getZoom(),
-          zoomTo: (z, duration) => map.zoomTo(z, { duration, essential: true }),
-          project: (lng, lat) => { const p = map.project([lng, lat]); return { x: p.x, y: p.y }; },
-          container: () => mapRef.current,
-          markers: () => markersRef.current.map(({ venue, el }) => ({
-            id: venue.place_id || venue.id,
-            lng: venue.location.longitude,
-            lat: venue.location.latitude,
-            el,
-          })),
-        };
-      }
-
-      // Snappier scroll-wheel zoom — default 1/300 feels sluggish vs Snap Map.
-      if (map.scrollZoom) {
-        map.scrollZoom.setZoomRate(1 / 100);   // 3× faster per pixel
-        map.scrollZoom.setWheelZoomRate(1 / 80); // 5× faster per wheel notch
-      }
-
-      // Track container size — MapLibre locks canvas dimensions at construction,
-      // so if the parent flex layout settles AFTER init the canvas stays short
-      // (leaves a navy gap below the map). ResizeObserver fixes that for good
-      // and also handles orientation changes / window resize.
-      if (typeof ResizeObserver !== 'undefined') {
-        resizeObs = new ResizeObserver(() => { try { map.resize(); } catch {} });
-        resizeObs.observe(mapRef.current);
-      } else {
-        // Fallback: nudge once after layout settles
-        setTimeout(() => { try { map.resize(); } catch {} }, 0);
-      }
-
-      // Tier the map's container by zoom so CSS can scale + label markers
-      // without re-rendering the React tree on every wheel notch.
-      const applyZoomTier = () => {
-        const z = map.getZoom();
-        const container = mapRef.current;
-        if (!container) return;
-        // hi  → labels visible
-        // mid / lo → no labels
-        // Size is no longer a tier: it is the continuous --pin-scale below.
-        const tier = z >= 15 ? 'hi' : z >= 13 ? 'mid' : 'lo';
-        if (container.dataset.zoomTier !== tier) container.dataset.zoomTier = tier;
-        const scale = pinScaleForZoom(z);
-        if (Math.abs(scale - pinScaleRef.current) > 0.002) {
-          pinScaleRef.current = scale;
-          container.style.setProperty('--pin-scale', scale.toFixed(3));
-        }
-      };
-
-      // Brighten native basemap POI labels (MapTiler's Streets v2 Dark dims them
-      // hard, which is why the map feels emptier than Apple's). We bump opacity
-      // and lower the minzoom so cafés/restaurants show earlier.
-      const boostNativePoiLabels = () => {
-        if (!isAppDark()) return; // pale-label boost is tuned for the dark basemap only
-        const style = map.getStyle && map.getStyle();
-        if (!style?.layers) return;
-        for (const layer of style.layers) {
-          if (layer.type !== 'symbol') continue;
-          const id = layer.id || '';
-          const sl = layer['source-layer'] || '';
-          const looksPoi = /poi|place_label/i.test(id) || /poi|place/i.test(sl);
-          if (!looksPoi) continue;
-          try {
-            map.setLayoutProperty(layer.id, 'visibility', 'visible');
-            // Lower the zoom at which labels appear (default ~14 → 12.5)
-            if (typeof layer.minzoom === 'number' && layer.minzoom > 12.5) {
-              map.setLayerZoomRange(layer.id, 12.5, layer.maxzoom ?? 24);
-            }
-            map.setPaintProperty(layer.id, 'text-opacity', 0.95);
-            map.setPaintProperty(layer.id, 'text-color', '#e2e8f0');
-            map.setPaintProperty(layer.id, 'text-halo-color', 'rgba(15,23,42,0.85)');
-            map.setPaintProperty(layer.id, 'text-halo-width', 1.4);
-          } catch { /* layer may not support a property — ignore */ }
-        }
-      };
-
-      map.on('load', () => {
-        addOverlayLayers(map);
-        applyZoomTier();
-        boostNativePoiLabels();
-        mapLoadedRef.current = true;
-        setMapReady(true);
-      });
-
-      // Re-apply both on style swap (roadmap ↔ satellite)
-      map.on('styledata', () => {
-        applyZoomTier();
-        boostNativePoiLabels();
-      });
-
-      map.on('zoom', applyZoomTier);
-
-      // Which pins are visible where two share a spot, re-decided as the view
-      // moves: at most one pass per animation frame and per
-      // PIN_OVERLAP_MIN_INTERVAL_MS while the map is in motion, and one more
-      // when it settles. Pins are never moved by this (see resolvePinOverlaps).
-      let overlapTimer = 0;
-      let lastOverlapAt = 0;
-      const overlapPass = () => {
-        overlapTimer = 0;
-        lastOverlapAt = performance.now();
-        resolvePinOverlaps(map, markersRef.current, {
-          activeId: activeVenueIdRef.current,
-          ownerPlaceId: ownerPlaceIdRef.current,
-          scale: pinScaleRef.current,
-        });
-      };
-      const scheduleOverlapPass = () => {
-        if (overlapTimer) return;
-        const wait = Math.max(0, PIN_OVERLAP_MIN_INTERVAL_MS - (performance.now() - lastOverlapAt));
-        overlapTimer = window.setTimeout(() => window.requestAnimationFrame(overlapPass), wait);
-      };
-      overlapPassRef.current = overlapPass;
-      map.on('move', scheduleOverlapPass);
-      map.on('moveend', overlapPass);
-
-      // Click on empty map — clear active venue
-      map.on('click', (e) => {
-        if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
-        setActiveVenue(null);
-      });
-
-      // Re-pan when geolocation permission flips to granted
-      if (followUser && navigator.permissions) {
-        navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
-          perm.addEventListener('change', () => {
-            if (perm.state === 'granted') {
-              getCurrentPosition(
-                (pos) => mapEase(map, { center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
-                () => {},
-                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-              );
-            }
-          });
-        }).catch(() => {});
-      }
-    };
-    init();
-    return () => { cancelled = true; if (resizeObs) resizeObs.disconnect(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* setStyle throws away every source and layer the app added, so anything
-     Flock owns has to go back on afterwards. Shared by the satellite toggle and
-     the light/dark swap below. (HTML markers survive a style swap; sources and
-     layers do not.) */
-  const rehydrateAfterStyleSwap = useCallback((map) => {
-    addOverlayLayers(map);
-    // Re-feed accuracy data
-    if (userLocation) {
-      const src = map.getSource('user-accuracy');
-      if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
-    }
-    // Re-feed heatmap data from current venues
-    const heatSrc = map.getSource('venue-heat');
-    if (heatSrc) {
-      const features = (venuesRef.current || [])
-        .filter(v => typeof v.crowd === 'number' && v.location?.latitude && v.location?.longitude)
-        .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
-      heatSrc.setData({ type: 'FeatureCollection', features });
-    }
-  }, [userLocation]);
-
-  // ---------- map type toggle (vector dark <-> satellite) ----------
-  const toggleMapType = useCallback(async () => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    // No satellite style, no swap. The button is hidden in this case, so this is
-    // the belt to that braces.
-    if (!SATELLITE_AVAILABLE) return;
-    const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
-    setMapType(newType);
-    localStorage.setItem('flock_map_type', newType);
-    queueSync({ mapType: newType });
-    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE);
-    map.once('styledata', () => rehydrateAfterStyleSwap(map));
-  }, [mapType, mapIsDark, rehydrateAfterStyleSwap]);
-
-  // ---------- basemap follows the app theme ----------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!mapReady || !map) return;
-    // First pass records the theme the map was constructed with; only a real
-    // change after that costs a style fetch.
-    if (appliedDarkRef.current === null) { appliedDarkRef.current = mapIsDark; return; }
-    if (appliedDarkRef.current === mapIsDark) return;
-    appliedDarkRef.current = mapIsDark;
-    if (mapType !== 'roadmap') return; // satellite imagery has no light/dark twin
-    map.setStyle(ROADMAP_STYLE(mapIsDark));
-    map.once('styledata', () => rehydrateAfterStyleSwap(map));
-  }, [mapIsDark, mapReady, mapType, rehydrateAfterStyleSwap]);
-
-  // ---------- user blue dot + accuracy ring ----------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!mapReady || !map) return;
-    if (!userLocation) {
-      // Location switched off: the dot and its ring go too, or the banner
-      // says the map does not show where you are while it plainly does
-      // (Explore audit, 2026-09-05).
-      if (userMarkerRef.current) {
-        userMarkerRef.current.remove();
-        userMarkerRef.current = null;
-        userElRef.current = null;
-      }
-      const ring = map.getSource('user-accuracy');
-      if (ring) ring.setData({ type: 'FeatureCollection', features: [] });
-      return;
-    }
-    const lng = userLocation.lng, lat = userLocation.lat;
-    const acc = userLocation.accuracy || 50;
-
-    // Blue dot — outer el is owned by MapLibre; pulse animations target the inner div.
-    if (!userMarkerRef.current) {
-      const el = document.createElement('div');
-      el.style.width = '20px';
-      el.style.height = '20px';
-      const inner = document.createElement('div');
-      inner.className = 'mlb-user-dot-inner';
-      inner.style.width = '20px';
-      inner.style.height = '20px';
-      inner.style.borderRadius = '50%';
-      inner.style.background = '#3b82f6';
-      inner.style.border = '3px solid #fff';
-      inner.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
-      inner.style.transition = 'box-shadow 0.4s ease';
-      el.appendChild(inner);
-      userElRef.current = inner; // pulse helper writes to the inner div
-      const ml = mapLibreRef.current;
-      if (!ml) return;
-      userMarkerRef.current = new ml.Marker({ element: el, anchor: 'center', subpixelPositioning: true }).setLngLat([lng, lat]).addTo(map);
-    } else {
-      userMarkerRef.current.setLngLat([lng, lat]);
-    }
-
-    // Accuracy circle data
-    const src = map.getSource('user-accuracy');
-    if (src) {
-      src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(lat, lng, acc)] });
-    }
-  }, [userLocation, mapReady]);
-
-  // Live position tracking.
-  //
-  // THE THIRD DOOR INTO THE OS LOCATION PROMPT, and the one the Settings switch
-  // did not close. watchPosition asks the device exactly as getCurrentPosition
-  // does, so with "Location services" turned off this effect ran the moment the
-  // map was ready and the prompt arrived anyway, over a map the person had
-  // already told the app not to locate them on. The init effect above and the
-  // Discover tab both check the switch; this one was written before it existed
-  // and nothing pointed it at the flag.
-  //
-  // Same gate, same name, so the three doors are one rule rather than three
-  // similar ones. followUser stays in the condition: it is the separate
-  // question of whether THIS map is the one that follows you, and a venue
-  // dashboard map answers no to it whatever the switch says.
-  useEffect(() => {
-    if (!mapReady || !followUser || !locationAllowed || !geolocationAvailable()) return;
-    if (watchIdRef.current !== null) clearWatch(watchIdRef.current);
-    watchIdRef.current = watchPosition(
-      (pos) => {
-        const map = mapInstanceRef.current;
-        if (!map) return;
-        const lat = pos.coords.latitude, lng = pos.coords.longitude;
-        if (userMarkerRef.current) userMarkerRef.current.setLngLat([lng, lat]);
-        const src = map.getSource('user-accuracy');
-        if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(lat, lng, pos.coords.accuracy || 50)] });
-      },
-      () => {},
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
-    );
-    return () => { if (watchIdRef.current !== null) clearWatch(watchIdRef.current); };
-  }, [mapReady, followUser, locationAllowed]);
-
-  // ---------- venue markers ----------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!mapReady || !map) return;
-
-    const ml = mapLibreRef.current;
-    if (!ml) return;
-    venuesRef.current = venues;
-
-    // Clear previous markers
-    markersRef.current.forEach(({ marker }) => marker.remove());
-    markersRef.current = [];
-
-    const heatFeatures = [];
-    venues.forEach(v => {
-      const loc = v.location;
-      if (!loc?.latitude || !loc?.longitude) return;
-      const shown = venueMatchesCategory(v, filterCategoryRef.current);
-
-      // Heatmap point — weighted by crowd score (0-100 → 0-1)
-      if (shown && typeof v.crowd === 'number') {
-        heatFeatures.push({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] },
-          properties: { weight: v.crowd / 100 },
-        });
-      }
-
-      const isActive = activeVenue?.id === v.id;
-      const el = buildMarkerEl(v, isActive);
-      if (ownerPlaceId && v.place_id === ownerPlaceId) {
-        // The dashboard map marks the owner's own pin with a permanent chip
-        // so they can spot themselves without zooming to the label tier.
-        el.style.zIndex = '2';
-        const chip = document.createElement('div');
-        chip.className = 'mlb-owner-chip';
-        chip.textContent = 'Your venue';
-        chip.style.background = mapIsDark ? '#f1ede0' : '#1e293b';
-        chip.style.color = mapIsDark ? '#1e293b' : '#f1ede0';
-        (el.querySelector('.mlb-marker-under') || el).appendChild(chip);
-      }
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setActiveVenue(v);
-        mapEase(map, { center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
-      });
-      const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
-      if (!shown) el.style.display = 'none';
-      const marker = new ml.Marker({ element: el, anchor, subpixelPositioning: true }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
-      markersRef.current.push({ marker, el, venue: v });
-    });
-    setFilterHidesAll(venues.length > 0 && markersRef.current.every(({ el }) => el.style.display === 'none'));
-
-    // Push heat data to the source
-    const heatSrc = map.getSource('venue-heat');
-    if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
-
-    // Settle which pins are visible where two share a spot. The map's own
-    // move handler re-runs this as the view changes.
-    if (overlapPassRef.current) overlapPassRef.current();
-
-    /* FRAME THE RESULTS. The map opened centred on the user at a fixed zoom,
-       so a search could return 20 venues and show none of them: the chip said
-       "All 20 results" over what looked like an empty map. Fit the viewport to
-       the pins whenever the RESULT SET changes (not on every render, or a
-       pan would snap back under the user's finger). maxZoom keeps a single
-       result from diving to street level. */
-    const key = venues.map(v => v.place_id || v.id).join(',');
-    if (key === fittedKeyRef.current) return;
-    fittedKeyRef.current = key;
-
-    const points = venues
-      .filter(v => v.location?.latitude && v.location?.longitude)
-      .map(v => [v.location.longitude, v.location.latitude]);
-    if (points.length === 0) return;
-
-    /* Places sometimes returns one result on the other side of the country
-       (a search around Bethlehem PA came back with a shop in California).
-       Fitting to the raw extent then zooms out to the whole continent, which
-       is a worse empty map than the one this is fixing. So fit to the CLUSTER:
-       take the median point and drop anything absurdly far from it. The
-       outlier keeps its pin and its place in the list; it just does not get
-       to decide the viewport. */
-    const sortedLng = points.map(p => p[0]).slice().sort((a, b) => a - b);
-    const sortedLat = points.map(p => p[1]).slice().sort((a, b) => a - b);
-    const midLng = sortedLng[sortedLng.length >> 1];
-    const midLat = sortedLat[sortedLat.length >> 1];
-    const kmFromMid = ([lng, lat]) => Math.hypot(
-      (lng - midLng) * 111 * Math.cos(midLat * Math.PI / 180),
-      (lat - midLat) * 111,
-    );
-    const sortedDist = points.map(kmFromMid).sort((a, b) => a - b);
-    const medianDist = sortedDist[sortedDist.length >> 1] || 0;
-    const limitKm = Math.max(15, medianDist * 4);
-    let core = points.filter(p => kmFromMid(p) <= limitKm);
-    if (core.length < 2) core = points;
-
-    const bounds = core.reduce(
-      (b, p) => b.extend(p),
-      new ml.LngLatBounds(core[0], core[0]),
-    );
-    try {
-      map.fitBounds(bounds, {
-        padding: { top: 90, bottom: 190, left: 40, right: 40 }, // search bar above, venue cards below
-        maxZoom: 15,
-        duration: 600,
-      });
-    } catch { /* container not measured yet — the next result set re-fits */ }
-  }, [venues, mapReady, buildMarkerEl, ownerPlaceId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ---------- active venue highlight (only resize the 2 changed markers) ----------
-  useEffect(() => {
-    const prevId = prevActiveRef.current;
-    const newId = activeVenue?.id;
-    if (prevId === newId) return;
-    prevActiveRef.current = newId;
-    markersRef.current.forEach(({ el, venue }) => {
-      if (venue.id !== prevId && venue.id !== newId) return;
-      const isActive = venue.id === newId;
-      const size = isActive ? 54 : 44;
-      const inner = el.querySelector('.mlb-marker-inner') || el;
-      inner.style.width = size + 'px';
-      inner.style.height = size + 'px';
-      // Tiny z-index range — the venue card overlay must always sit above markers.
-      // (Active = 3, top rated = 2, normal = 1.)
-      el.style.zIndex = isActive ? '3' : (venue.topRated ? '2' : '1');
-      const svgEl = inner.querySelector('svg');
-      if (svgEl) {
-        svgEl.setAttribute('width', size);
-        svgEl.setAttribute('height', Math.round(size * 1.32));
-      } else if (photoCacheRef.current[venue.place_id] && isActive && venue.photo_url) {
-        buildPhotoPin(resolveVenuePhoto(venue.photo_url), true).then(dataUrl => {
-          if (dataUrl) {
-            photoCacheRef.current[venue.place_id] = dataUrl;
-            inner.style.backgroundImage = `url("${dataUrl}")`;
-          }
-        });
-      }
-    });
-  }, [activeVenue, buildPhotoPin]);
-
-  // ---------- category filter (toggle visibility) ----------
-  useEffect(() => {
-    filterCategoryRef.current = filterCategory;
-    applyCategoryFilter(mapInstanceRef.current, markersRef.current, filterCategory, setFilterHidesAll);
-    if (overlapPassRef.current) overlapPassRef.current();
-  }, [filterCategory]);
-
-  // ---------- external imperative API ----------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-
-    window.__flockOpenVenue = (placeId) => {
-      const v = venues.find(venue => venue.place_id === placeId);
-      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url });
-    };
-
-    window.__flockPanToVenue = (target) => {
-      if (!map) return;
-      const placeId = typeof target === 'string' ? target : target?.place_id;
-      const fLat = typeof target === 'object' ? parseFloat(target?.lat) : NaN;
-      const fLng = typeof target === 'object' ? parseFloat(target?.lng) : NaN;
-
-      const entry = placeId ? markersRef.current.find(e => e.venue.place_id === placeId) : null;
-      if (entry) {
-        const loc = entry.venue.location;
-        mapEase(map, { center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
-        setActiveVenue(entry.venue);
-        // Bounce — animate the INNER div's top offset (outer transform is MapLibre's)
-        const inner = entry.el.querySelector('.mlb-marker-inner');
-        if (inner) {
-          inner.style.transition = 'top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
-          inner.style.position = 'relative';
-          inner.style.top = '-12px';
-          setTimeout(() => { inner.style.top = '0px'; }, 250);
-          setTimeout(() => { inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease'; inner.style.position = ''; inner.style.top = ''; }, 700);
-        }
-      } else if (!isNaN(fLat) && !isNaN(fLng)) {
-        mapEase(map, { center: [fLng, fLat], zoom: 17, duration: 700 });
-        const nearby = markersRef.current.find(e => {
-          const loc = e.venue.location;
-          if (!loc) return false;
-          const d = Math.sqrt(Math.pow(loc.latitude - fLat, 2) + Math.pow(loc.longitude - fLng, 2)) * 111000;
-          return d < 100;
-        });
-        if (nearby) {
-          setActiveVenue(nearby.venue);
-        } else {
-          // Drop a temp pin
-          const venueName = target?.name || 'Venue';
-          const venueAddr = target?.address || '';
-          // A rating only exists if Google gave us one. It used to default to
-          // 4.0, which renders next to a star as if it were measured.
-          const venueRating = target?.rating ? parseFloat(target.rating) : null;
-          const venuePhoto = target?.photo_url || null;
-          // Crowd, price and "best time" were all derived from the first
-          // character of the venue name plus its latitude. That is the third
-          // instance of the invented-number pattern in this file; the other two
-          // carry comments saying so. Nothing here is measured, so nothing here
-          // gets a number. The real score arrives with the crowd fetch.
-          const tempVenue = {
-            id: 'temp_nav_' + Date.now(),
-            place_id: placeId || null,
-            name: venueName,
-            addr: venueAddr,
-            type: target?.types?.[0] ? target.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Place',
-            category: (() => { const tt = (target?.types || []).join(' ').toLowerCase(); if (tt.includes('bar') || tt.includes('night_club')) return 'Nightlife'; if (tt.includes('restaurant') || tt.includes('cafe') || tt.includes('food') || tt.includes('diner') || tt.includes('juice')) return 'Food'; return 'Food'; })(),
-            price: null,
-            stars: venueRating,
-            crowd: null,
-            topRated: false,
-            photo_url: venuePhoto,
-            location: { latitude: fLat, longitude: fLng },
-            types: [],
-          };
-          const ml = mapLibreRef.current;
-          if (ml) {
-            const el = buildMarkerEl(tempVenue, true);
-            el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); mapEase(map, { center: [fLng, fLat], zoom: 17 }); });
-            const anchor = venuePhoto ? 'center' : 'bottom';
-            const marker = new ml.Marker({ element: el, anchor, subpixelPositioning: true }).setLngLat([fLng, fLat]).addTo(map);
-            markersRef.current.push({ marker, el, venue: tempVenue });
-          }
-          setActiveVenue(tempVenue);
-          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto });
-        }
-      }
-    };
-
-    window.__flockGoToMyLocation = () => {
-      if (!map) return;
-      if (userMarkerRef.current) {
-        const ll = userMarkerRef.current.getLngLat();
-        mapEase(map, { center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
-        // Pulse the dot — box-shadow on the inner div only (transform is owned by MapLibre on the outer)
-        if (userElRef.current) {
-          userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
-          setTimeout(() => {
-            if (userElRef.current) userElRef.current.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.25)';
-          }, 500);
-        }
-        return;
-      }
-      const center = map.getCenter();
-      if (center) mapEase(map, { center: [center.lng, center.lat], zoom: 15 });
-    };
-
-    return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
-  }, [venues, openVenueDetail, setActiveVenue, buildMarkerEl]);
-
-  // ---------- flock member live location markers ----------
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!mapReady || !map || !flockMemberLocations) return;
-    const ml = mapLibreRef.current;
-    if (!ml) return;
-    const run = (mlMod) => {
-      const currentIds = new Set(Object.keys(flockMemberLocations));
-      // Remove gone
-      Object.keys(memberMarkersRef.current).forEach(uid => {
-        if (!currentIds.has(uid)) {
-          memberMarkersRef.current[uid].marker.remove();
-          delete memberMarkersRef.current[uid];
-        }
-      });
-      Object.entries(flockMemberLocations).forEach(([uid, loc]) => {
-        const lng = loc.lng, lat = loc.lat;
-        const initial = escapeHtml((loc.name || '?')[0].toUpperCase());
-        const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
-        const age = Math.round((Date.now() - loc.timestamp) / 1000);
-        const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
-        const popupHtml = `<div style="font-family:'Hanken Grotesk',-apple-system,system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
-          <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#1e293b,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${escapeHtml(loc.name)}</div>
-            <div style="display:flex;align-items:center;gap:4px">
-              <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
-              <span style="font-size: 12px;color:#4b5563;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
-            </div>
-          </div>
-        </div>`;
-
-        if (memberMarkersRef.current[uid]) {
-          memberMarkersRef.current[uid].marker.setLngLat([lng, lat]);
-          if (memberMarkersRef.current[uid].popup) memberMarkersRef.current[uid].popup.setHTML(popupHtml);
-        } else {
-          const el = document.createElement('div');
-          el.style.width = '40px';
-          el.style.height = '40px';
-          el.style.cursor = 'pointer';
-          el.innerHTML = `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-            <circle cx="20" cy="20" r="18" fill="#1e293b" stroke="white" stroke-width="3"/>
-            <circle cx="20" cy="20" r="18" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4 4" opacity="0.6"/>
-            <text x="20" y="26" text-anchor="middle" fill="white" font-size="16" font-weight="bold" font-family="Hanken Grotesk,sans-serif">${initial}</text>
-          </svg>`;
-          const popup = new mlMod.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml);
-          const marker = new mlMod.Marker({ element: el, anchor: 'center', subpixelPositioning: true }).setLngLat([lng, lat]).setPopup(popup).addTo(map);
-          memberMarkersRef.current[uid] = { marker, popup };
-        }
-      });
-    };
-    run(ml);
-  }, [mapReady, flockMemberLocations, userLocation, calcDistance]);
-
-  // ---------- render ----------
-  return (
-    <div ref={mapRootRef} style={{ position: 'absolute', inset: 0 }}>
-      {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
-        <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
-      )}
-      {!mapReady && mapFailed && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
-          <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>The map could not load. Search still works.</p>
-        </div>
-      )}
-      {!mapReady && !mapFailed && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>Loading map...</p>
-        </div>
-      )}
-      <style>{`
-        /* opacity 0.4 on top of grey-on-white put the legally-required credit
-           well under 4.5:1. Full opacity; MapLibre's own colours are readable. */
-        .maplibregl-ctrl-attrib { font-size: 12px !important; opacity: 1; }
-        .maplibregl-ctrl-attrib a { color: #33475e; }
-        .maplibregl-ctrl-logo { display: none !important; }
-        .mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }
-        /* The zoom scale, about the point pinned to the coordinate (set per
-           pin: the teardrop's tip, the disc's centre). No transition: the map
-           moves under the finger and the pin has to move with it, not 180ms
-           behind it. */
-        .mlb-marker-inner { transform: scale(var(--pin-scale, 1)); }
-        /* Everything drawn under a pin lives outside the box MapLibre
-           measures, so the anchor is the pin and nothing else. */
-        .mlb-marker-under {
-          position: absolute;
-          top: 100%;
-          left: 50%;
-          transform: translateX(-50%);
-          /* Sized to its content, not to the 44px pin it hangs from: an
-             absolute box shrinks to fit its containing block, and with the
-             pin as that block every name wrapped to two letters. */
-          width: max-content;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          pointer-events: none;
-        }
-        /* The pins a survivor stands for, when two shared one spot. */
-        .mlb-cluster-badge {
-          position: absolute;
-          top: -4px;
-          right: -8px;
-          min-width: 18px;
-          height: 18px;
-          padding: 0 5px;
-          border-radius: 9px;
-          background: #f1ede0;
-          color: #1e293b;
-          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
-          font-size: 11px;
-          font-weight: 800;
-          line-height: 18px;
-          text-align: center;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.35);
-          pointer-events: none;
-        }
-        /* Markers must never bleed above overlay UI (venue cards, sheets, etc.) */
-        .maplibregl-marker { z-index: 1; }
-        .maplibregl-canvas-container { z-index: 0; }
-
-        /* ---- Apple-Maps-style name label under each pin ---- */
-        .mlb-marker-label {
-          margin-top: 4px;
-          padding: 3px 7px;
-          border-radius: 8px;
-          background: rgba(15,23,42,0.78);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-          color: #f1f5f9;
-          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
-          font-size: 12px;
-          font-weight: 700;
-          letter-spacing: -0.1px;
-          line-height: 1.15;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06);
-          opacity: 0;
-          transform: translateY(-4px) scale(0.85);
-          transition: opacity 0.18s ease, transform 0.18s ease;
-          pointer-events: none;
-          max-width: 180px;
-          display: flex;
-          align-items: center;
-          gap: 5px;
-        }
-        .mlb-label-name {
-          /* Allow up to 2 lines on long names; ellipsize if it still overflows. */
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          word-break: break-word;
-        }
-        .mlb-label-rating {
-          color: #fbbf24;
-          font-weight: 800;
-          font-size: 12px;
-          letter-spacing: 0;
-          display: inline-flex;
-          align-items: center;
-          gap: 3px;
-        }
-
-        /* The owner's own pin on the dashboard map: a chip that is never
-           zoom-gated, because spotting yourself should not require zooming.
-           Colours are set inline (theme-inverted, same rule as the pins). */
-        .mlb-owner-chip {
-          margin-top: 3px;
-          padding: 2px 8px;
-          border-radius: 8px;
-          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: -0.1px;
-          white-space: nowrap;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-          pointer-events: none;
-        }
-
-        /* Show labels only when zoomed in enough to read them. */
-        [data-zoom-tier="hi"] .mlb-marker-label {
-          opacity: 1;
-          transform: translateY(0) scale(1);
-        }
-
-        /* Pin size follows --pin-scale continuously (see PIN_SCALE_MIN); the
-           tiers only decide whether labels show. */
-      `}</style>
-      <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
-
-      {/* My Location button. Hidden when the map is not following the
-          viewer (venue dashboard): with no tracked position it could only
-          ever re-center on nothing, and a button that cannot succeed does
-          not render. */}
-      {followUser && (
-      <button aria-label="My Location" className="hit44"
-        onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
-        style={{
-          position: 'absolute', bottom: '80px', right: '12px',
-          width: '44px', height: '44px', borderRadius: '22px',
-          border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 5, transition: 'transform 0.2s ease',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-        title="My Location"
-      >
-        <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
-        </svg>
-      </button>
-      )}
-
-      {/* Zoom controls */}
-      <div style={{
-        position: 'absolute', bottom: '184px', right: '12px',
-        display: 'flex', flexDirection: 'column',
-        borderRadius: '22px', overflow: 'hidden',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
-      }}>
-        <button aria-label="Zoom in" className="hit44"
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomIn({ duration: 150 })}
-          style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          title="Zoom in"
-        >
-          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </button>
-        <div style={{ height: '1px', background: 'var(--border-default)' }} />
-        <button aria-label="Zoom out" className="hit44"
-          onClick={() => mapInstanceRef.current && mapInstanceRef.current.zoomOut({ duration: 150 })}
-          style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          title="Zoom out"
-        >
-          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </button>
-      </div>
-
-      {/* Map / Satellite toggle. Hidden outright when there is no MapTiler key,
-          because MapTiler hybrid is now the only satellite imagery Flock is
-          licensed to draw — a button that swaps to nothing is worse than no
-          button. Every shipping build sets the key, so this renders in all of
-          them. */}
-      {SATELLITE_AVAILABLE && (
-      <button className="hit44"
-        aria-label={mapType === 'roadmap' ? 'Switch to satellite view' : 'Switch to map view'}
-        onClick={toggleMapType}
-        style={{
-          position: 'absolute', bottom: '132px', right: '12px',
-          width: '44px', height: '44px', borderRadius: '22px',
-          border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 5, transition: 'transform 0.2s ease',
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-        title={mapType === 'roadmap' ? 'Switch to Satellite' : 'Switch to Map'}
-      >
-        {mapType === 'roadmap' ? (
-          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
-          </svg>
-        ) : (
-          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
-          </svg>
-        )}
-      </button>
-      )}
-    </div>
-  );
-});
+   AND THE FOUR NAMES THE MODULE COULD NOT TAKE WITH IT are passed from here,
+   so neither call site has to carry props for declarations it does not use.
+   All four are module-scope consts, so they are stable across renders and the
+   React.memo inside the module still bails out exactly as it did inline. */
+const MapLibreMapView = (props) => (
+  <React.Suspense fallback={<MapChunkFallback />}>
+    <MapLibreMapChunk
+      {...props}
+      colorsDark={colorsDark}
+      colorsLight={colorsLight}
+      resolveVenuePhoto={resolveVenuePhoto}
+      NO_LOCATION_VIEW={NO_LOCATION_VIEW}
+    />
+  </React.Suspense>
+);
 
 // Brand Colors
 // Base colors (light mode defaults — used outside components too)
@@ -14819,1271 +13498,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     );
   };
 
-  const ExploreScreen = () => (
-    <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
-      {/* Discover's title is the map itself, so there was no h1 at all here and
-          a screen-reader user landed on a page with no name. */}
-      <h1 className="sr-only">Discover</h1>
-      {pickingVenueForCreate && (
-        <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
-          <span style={{ color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
-        </div>
-      )}
+  /* The Discover tab lives in screens/ExploreScreen.js as of 2026-09-13, and
+     it is fetched on demand rather than bundled. It was 588 lines declared
+     here, the largest screen left in the file and the last one to move: the
+     venue search box and its dropdown, the Features rail, the location and
+     empty-map banners, the map layer, the live-location strip, the Find Your
+     People panel, the Live Events drawer and the category filter bar all rode
+     the boot chunk for every account, including the ones that never leave the
+     Nest. Everything it reads stays declared here and arrives as props from
+     exploreScreenProps below, so the search text, the open rail, the category
+     filter, the people results and the events drawer still survive leaving
+     the tab.
 
-      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
-        <div style={{ flex: 1, position: 'relative' }}>
-          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
-          {venueQuery && (
-            <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          {/* Collapsed means gone. Same fix as the flock chat header: without
-              it, Tab from the venue search box landed on "Recenter the map on
-              me", "Events" and "Friends" while all three were painted at zero
-              width behind a "Features" pill. */}
-          <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, visibility: discoverNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${discoverNavOpen ? '0s' : '0.3s'}` }}>
-            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
-            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
-            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
-          </div>
-          <button aria-label="Features" aria-expanded={discoverNavOpen} className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Features</span>}</button>
-        </div>
-      </div>
+     THE PERMANENT MOUNT IS UNCHANGED. The layer below is still latched on by
+     exploreEverVisibleRef and never unmounted after that, so the camera still
+     survives a tab switch; the Suspense boundary sits inside the layer and
+     resolves once. The re-arm is guarded for the same reason the map's is,
+     which is why loadExploreScreen carries a flag. The full reasoning is at
+     the top of the file it moved to. */
 
-      {/* Location loading overlay */}
-      {locationLoading && !mapVenuesLoaded && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '16px 0', textAlign: 'center' }}>
-          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.steel, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
-        </div>
-      )}
+  /* The Plans tab lives in screens/CalendarScreen.js as of 2026-09-13, and it
+     is fetched on demand rather than bundled. It was 279 lines declared here
+     and CALLED rather than mounted, so the month grid, the weather module,
+     the events on the day, the add-an-event form and the seven-day look-ahead
+     rode the boot chunk for every account, including the ones that never
+     leave the Nest. Everything it reads stays declared here and arrives as
+     props from the screen switch below, so the month you had scrolled to, the
+     day you had selected and a half-typed event still survive leaving the
+     tab. The full reasoning is at the top of the file it moved to. */
 
-      {/* Why the map is empty, when it is. Two separate facts, because they
-          have two separate fixes: the app does not know where you are, and the
-          venue search is not answering. Both used to be silent, one covered by
-          a default city and the other by eight invented venues. */}
-      {/* Location services is off, said on the screen the setting governs.
-          Without this the map simply opens somewhere generic with no user pin
-          and nothing explaining why, which reads as a broken map rather than as
-          a setting the person chose. The button turns it back on here rather
-          than sending them to Settings to find the row again. */}
-      {/* Before the first answer the map behind the permission sheet was the
-          whole country with no pins and no sentence. */}
-      {locationLoading && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Finding where you are. Venues near you show up once that lands.</p>
-        </div>
-      )}
-      {!locationLoading && !locationEnabled && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Location services are off, so venues are not sorted by distance and the map does not show where you are. Search still works.</p>
-          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Turn on</button>
-        </div>
-      )}
-
-      {/* Zero venues nearby used to be an empty map with nothing on it, which
-          reads as broken. Say what it is and what to do. */}
-      {!locationLoading && locationEnabled && !locationError && !venueLoadError && mapVenuesLoaded && allVenues.length === 0 && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <BirdieStill size={48} style={{ flexShrink: 0 }} />
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>No venues on Flock's map right here yet. Search a place by name, or move the map.</p>
-        </div>
-      )}
-
-      {!locationLoading && locationEnabled && (locationError || venueLoadError) && !REVIEW_HIDE_LOCATION_BANNER && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <BirdieStill size={48} style={{ flexShrink: 0 }} />
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
-          {!/again in \d+/i.test(venueLoadError || '') && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
-        </div>
-      )}
-
-      {/* Search Results Overlay */}
-      {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
-        <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
-          {/* A list is loading, so it gets the list skeleton — the bare spinner
-              that used to sit here told you nothing about what was coming. */}
-          {venueSearching && (
-            <div style={{ padding: '8px 12px 4px' }}>
-              <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
-            </div>
-          )}
-          {!venueSearching && venueResults.length > 0 && (
-            <div style={{ padding: '4px 12px 8px' }}>
-              {/* View All — first thing you see */}
-              <button
-                className="hit44 glass-btn glass-navy"
-                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
-              >
-                {Icons.filter('white', 13)}
-                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>See All Results ({venueResults.length})</span>
-                {Icons.arrowRight('white', 14)}
-              </button>
-              {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
-                <button
-                  key={venue.place_id}
-                  onClick={() => {
-                    setShowSearchDropdown(false);
-                    // Pan map to this venue if it's in our markers
-                    if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
-                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
-                  }}
-                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
-                >
-                  {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
-                  ) : (
-                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
-                      {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
-                      {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
-                      {venue.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
-                      {userLocation && venue.location && (() => {
-                        const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
-                        const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
-                        const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-                        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                        return <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
-                      })()}
-                    </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
-                  </div>
-                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {Icons.chevronRight(colors.navyMid, 16)}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-          {/* A failed search and an empty search are different things and now
-              say different words. This block used to render "Try a different
-              search" for both, so a 500 from a missing Places key read as the
-              user having spelled a bar's name wrong. */}
-          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && venueLoadError && (
-            <BirdNote layout="row" size={48} role="alert" body={venueLoadError} style={{ padding: '12px 16px' }} />
-          )}
-          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && !venueLoadError && (
-            <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No venues found. Try a different search." style={{ padding: '12px 16px' }} />
-          )}
-        </div>
-      )}
-
-
-      {/* Premium Map */}
-      <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
-        <MapLibreMapView
-          venues={allVenues}
-          filterCategory={category}
-          userLocation={userLocation}
-          activeVenue={activeVenue}
-          setActiveVenue={setActiveVenue}
-          getCategoryColor={getCategoryColor}
-          pickingVenueForCreate={pickingVenueForCreate}
-          setPickingVenueForCreate={setPickingVenueForCreate}
-          setSelectedVenueForCreate={setSelectedVenueForCreate}
-          setCurrentScreen={setCurrentScreen}
-          openVenueDetail={openVenueDetail}
-          flockMemberLocations={flockMemberLocations}
-          calcDistance={calcDistance}
-          locationAllowed={locationEnabled}
-        />
-
-        {/* Live location sharing indicator on map */}
-        {sharingLocationForFlock && (
-          <div style={{
-            position: 'absolute', top: '8px', left: '8px', right: '8px',
-            padding: '8px 12px', borderRadius: '14px',
-            background: 'linear-gradient(135deg, #059669, #047857)',
-            display: 'flex', alignItems: 'center', gap: '8px',
-            zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
-          }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
-            <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
-              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
-            </p>
-            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
-          </div>
-        )}
-
-        {/* Floating "See All Results" on map. It moved from the bottom-right to
-            the top-right: the bottom-right band is the map's own control rail
-            (zoom, satellite, locate) plus the OSM attribution plus the docked
-            SOS button, and there is not 52px of clear height left in it. Under
-            the search bar is also where a result count belongs. It steps down
-            while the live-location banner is up so the two never stack.
-            No `glass-secondary` here. That class is `background: rgba(255,255,
-            255,0.07) !important` in dark, i.e. all but transparent, which is
-            fine over an app surface and invisible over the dark basemap — and
-            the !important beat any inline colour. This chip floats on tiles, so
-            it carries its own opaque face: cream with navy text in dark, the
-            same inversion the pins use. `glass-btn` (blur + press only) stays. */}
-        {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
-          <button
-            className="hit44 glass-btn"
-            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
-          >
-            All {allVenues.length} results
-          </button>
-        )}
-
-        {/* Find Your People Panel */}
-        {showConnectPanel && (
-          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>See All</button>
-                <button aria-label="Close" className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
-              </div>
-            </div>
-
-            {/* Search input */}
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
-              <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name"
-                  type="text"
-                  value={connectSearch}
-                  onChange={(e) => handleConnectSearch(e.target.value)}
-                  placeholder="Search by name..."
-                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
-                  autoComplete="off"
-                />
-                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
-                {connectSearch && (
-                  <button aria-label="Clear search" className="hit44" onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
-                )}
-              </div>
-            </div>
-
-            {/* Results */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
-              {connectSearching && (
-                <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
-                </div>
-              )}
-
-              {/* A failed search, said in the server's own words, rather than as
-                  "No users found" over a lookup that never completed. */}
-              {!connectSearching && connectSearchError && (
-                <BirdNote layout="row" size={48} role="status" body={connectSearchError} style={{ padding: '16px 8px' }} />
-              )}
-
-              {!connectSearching && !connectSearchError && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
-                <BirdNote size={64} title={`No users found for "${connectSearch}"`} />
-              )}
-
-              {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
-                const status = friendStatuses[user.id] || 'none';
-                return (
-                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
-                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                    </button>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                      {status === 'accepted' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
-                      ) : status === 'pending' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
-                      ) : (
-                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
-                      )}
-                      <button className="hit44 glass-btn glass-secondary" onClick={() => {
-                        setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
-                        startNewDmWithUser(user);
-                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Message</button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!connectSearching && connectSearch.trim().length === 0 && (
-                <div style={{ textAlign: 'center', padding: '24px 16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
-                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Venue Popup with AI Crowd Forecast */}
-        <AnimatePresence>
-        {!showConnectPanel && renderConsumerVenueCard()}
-        </AnimatePresence>
-      </div>
-
-      {/* Live Events Panel, sliding in from the right.
-          `pointerEvents: none` and a negative z-index stop a FINGER. They do
-          nothing to a keyboard or to VoiceOver: with the panel closed and
-          parked at translateX(100%), Tab still walked into its back arrow,
-          its "Search events" box and every event row, all of them painted
-          past the right edge of the phone. `visibility: hidden` is the one
-          property that takes the subtree out of both the tab order and the
-          accessibility tree, and the delay lets the 0.35s slide out finish
-          before it applies. */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: showEventsView ? 45 : -1, pointerEvents: showEventsView ? 'auto' : 'none', visibility: showEventsView ? undefined : 'hidden', transition: `visibility 0s linear ${showEventsView ? '0s' : '0.35s'}` }}>
-        {/* Conditional, because the wrapper is mounted for the whole session
-            and an unconditional marker would grab focus at app start.
-            modal={false}: this is a push with the tab bar still beside it. */}
-        {showEventsView && <DialogBehavior modal={false} onClose={() => { setShowEventsView(false); setEventsSearchQuery(''); }} />}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', transform: showEventsView ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)', willChange: 'transform' }}>
-          {/* Events header */}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
-            <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button aria-label="Back" className="hit44" onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
-                {Icons.arrowLeft(colors.navy, 18)}
-              </button>
-              <div style={{ flex: 1, position: 'relative' }}>
-                <input aria-label="Search events"
-                  type="text"
-                  placeholder={userLocation ? 'Search concerts, games, shows...' : 'Turn on location to search events'}
-                  disabled={!userLocation}
-                  value={eventsSearchQuery}
-                  onChange={(e) => {
-                    setEventsSearchQuery(e.target.value);
-                    if (e.target.value.length >= 2 && userLocation) {
-                      clearTimeout(eventsSearchTimerRef.current);
-                      const typed = e.target.value;
-                      eventsSearchTimerRef.current = setTimeout(() => {
-                        fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, typed);
-                      }, 400);
-                    } else if (e.target.value.length === 0 && userLocation) {
-                      fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
-                    }
-                  }}
-                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'opacity 0.2s' }}
-                  autoComplete="off"
-                />
-                <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
-                {eventsSearchQuery && (
-                  <button aria-label="Clear search" className="hit44" onClick={() => {
-                    setEventsSearchQuery('');
-                    if (userLocation) fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
-                  }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 14)}</button>
-                )}
-              </div>
-            </div>
-            {/* Header label */}
-            <div style={{ padding: '0 14px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                {Icons.zap('#F59E0B', 16)}
-                <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>Live Events</span>
-              </div>
-              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{eventsSearchQuery ? 'Search results' : 'This week nearby'}</span>
-            </div>
-          </div>
-
-          {/* Events list */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 80px' }}>
-            {featuredEventsLoading && (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <div style={{ display: 'inline-block', width: '24px', height: '24px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0', fontWeight: '500' }}>Finding events near you...</p>
-              </div>
-            )}
-            {/* Three answers, never one. A read that failed says so and keeps
-                the retry here rather than sending the user off to search for
-                something the app never managed to ask about. */}
-            {!featuredEventsLoading && featuredEventsError && (
-              <div role="alert" style={{ textAlign: 'center', padding: '40px 20px' }}>
-                <BirdieStill size={80} style={{ margin: '0 auto' }} />
-                <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>{featuredEventsError}</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing is wrong with your plans. This is the events list only.</p>
-                {userLocation && (
-                  <button className="hit44 glass-btn glass-navy" onClick={() => fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, eventsSearchQuery)} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
-                )}
-              </div>
-            )}
-            {/* No read has landed yet and none is running: the screen was
-                opened before there was a location to ask about. */}
-            {!featuredEventsLoading && !featuredEventsError && !featuredEvents && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '40px 20px' }}>
-                <EmptyMark name="steps" height={96} />
-                <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
-                {/* Three sentences, never one: the ask, the wait, the failure.
-                    A tap that asked the device and heard nothing back for ten
-                    seconds used to change nothing on this screen at all. The
-                    Discover banner's own words are not reused here because they
-                    talk about the map; only its denial-or-not is read. */}
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>
-                  {locationLoading
-                    ? 'Finding where you are. Events near you show up once that lands.'
-                    : locationError
-                      ? (/Settings/.test(locationError)
-                        ? 'Location is off for Flock on this phone. Turn it on in Settings, then come back.'
-                        : 'Could not get your location just now. Try again.')
-                      : 'Turn location on for Flock to see what is on near you.'}
-                </p>
-                {/* The sentence used to be the whole screen: a request with no
-                    control. Same "Turn on" as the Discover banner. */}
-                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Turn on location'}</button>
-              </div>
-            )}
-            {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-                <BirdieStill bird={WARM_BIRD} size={80} style={{ margin: '0 auto' }} />
-                <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>No events found nearby</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Try searching for a specific event or artist</p>
-              </div>
-            )}
-            {!featuredEventsLoading && (featuredEvents || []).filter(event => !event.datetime_utc || Date.parse(event.datetime_utc) > Date.now()).map(event => {
-              const eventDate = event.date ? new Date(event.date + 'T' + (event.time || '00:00:00')) : null;
-              const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
-              const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
-              const categoryColors = { concert: '#4a7ba7', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: colors.navy };
-              const catColor = categoryColors[event.category] || colors.navy;
-              // Only an absolute http(s) URL with no quote or bracket may reach
-              // the CSS url() below, so a hostile or malformed vendor string
-              // cannot close the url() and inject a second declaration.
-              const headerArt = typeof event.image_url === 'string'
-                && /^https?:\/\//i.test(event.image_url)
-                && !/["'()\\\s]/.test(event.image_url)
-                ? event.image_url
-                : null;
-              const dist = event.location && userLocation ? (() => {
-                const dLat = (event.location.latitude - userLocation.lat) * Math.PI / 180;
-                const dLng = (event.location.longitude - userLocation.lng) * Math.PI / 180;
-                const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(event.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-                return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-              })() : null;
-
-              return (
-                <div
-                  key={event.id}
-                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}
-                >
-                  {/* Event header.
-                      This used to be an <img> whose onError set the image to
-                      display:none and its own parent to height:0. The badges
-                      inside that parent were absolutely positioned, so
-                      collapsing the box did not remove them: they landed on the
-                      title underneath and clipped it. Every Ticketmaster image
-                      was failing that way, because the CDN was missing from the
-                      img-src allowlist, so the broken case was the only case
-                      anyone ever saw.
-                      A background image has no error event and no zero-height
-                      state. The box keeps its height whatever happens to the
-                      picture, an unreachable URL simply leaves the category tint
-                      showing, and the badges cannot escape their container. The
-                      header renders for every event now, with or without art,
-                      so the layout is one shape rather than two. */}
-                  <div style={{
-                    position: 'relative',
-                    height: '132px',
-                    backgroundColor: catColor,
-                    backgroundImage: headerArt
-                      ? `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.62)), url("${headerArt}")`
-                      : `linear-gradient(140deg, ${catColor} 0%, ${colors.navy} 100%)`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'space-between',
-                    gap: '8px',
-                    padding: '10px',
-                  }}>
-                    <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
-                    {dateStr && (
-                      <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
-                    )}
-                  </div>
-                  {/* Event details */}
-                  <div style={{ padding: '12px 14px' }}>
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px', lineHeight: '1.3' }}>{event.name}</h3>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                      {event.venue_name && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          {Icons.mapPin('var(--text-tertiary)', 12)} {event.venue_name}
-                        </span>
-                      )}
-                      {dist != null && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      {timeStr && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          {Icons.clock(colors.navy, 12)} {timeStr}
-                        </span>
-                      )}
-                      {event.genre && event.genre !== event.category && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
-                      )}
-                      {event.price_range && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>
-                          {event.price_range.min === 0 && !event.price_range.max ? 'Free' : `$${fmtMoney(event.price_range.min)}${event.price_range.max ? `\u2013$${fmtMoney(event.price_range.max)}` : '+'}`}
-                        </span>
-                      )}
-                    </div>
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                      <button className="hit44 glass-btn glass-navy" onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name, event_date: event.date || null, event_time: event.time || null, event_datetime_utc: event.datetime_utc || null });
-                        setShowEventsView(false);
-                        setCurrentScreen('create');
-                      }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                        {Icons.users('white', 13)} Start Flock
-                      </button>
-                      <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
-                        e.stopPropagation();
-                        setEventDetailLoading(true);
-                        setEventDetailError('');
-                        setEventDetail({ ...event, photos: [], venue_details: null });
-                        getEventDetails(event.id)
-                          // Merge, and keep the list's distance: the single-event
-                          // payload has none, so the miles line used to vanish.
-                          .then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null })))
-                          .catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.'))
-                          .finally(() => setEventDetailLoading(false));
-                      }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                        {Icons.eye(colors.navy, 13)} Details
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-
-      {/* Categories — expandable filter bar (matches Features button pattern) */}
-      <div style={{ padding: '6px 12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: categoryExpanded ? 'flex-start' : 'center', overflow: 'hidden' }}>
-          {categoryExpanded && (
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch', flex: 1, minWidth: 0 }}>
-              {['All', 'Food', 'Nightlife', 'Live Music', 'Sports'].map(c => (
-                <button key={c} className="hit44 glass-btn glass-secondary" onClick={() => {
-                  setActiveVenue(null); setCategoryExpanded(false);
-                  if (c === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
-                  setCategory(c);
-                }} style={{
-                  padding: '6px 12px', borderRadius: '14px', border: 'none',
-                  backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
-                  color: category === c ? colors.cream : 'var(--text-primary)',
-                  fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', whiteSpace: 'nowrap',
-                  flexShrink: 0, animation: 'fadeSlideIn 0.2s ease-out both',
-                }}>
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
-          <button className="hit44" onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
-            height: '36px', minWidth: categoryExpanded ? '36px' : 'auto', width: categoryExpanded ? '36px' : '100%',
-            borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-            padding: categoryExpanded ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)',
-            flexShrink: 0, transition: 'all 0.3s ease',
-          }}>
-            {categoryExpanded ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Filters{category !== 'All' ? ` · ${category}` : ''}</span>}
-          </button>
-        </div>
-      </div>
-
-      {SafetyButton()}
-      {BottomNav()}
-    </div>
-  );
-
-  // CALENDAR SCREEN (simplified)
-  const CalendarScreen = () => {
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const dayNames = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-    const daysInMonth = getDaysInMonth(calendarMonth);
-    const firstDay = getFirstDayOfMonth(calendarMonth);
-    const selectedDateStr = formatDateStr(selectedDate);
-    const eventsOnSelected = getEventsForDate(selectedDateStr);
-    const today = new Date();
-    const todayStr = formatDateStr(today);
-    const isToday = (dateStr) => dateStr === todayStr;
-
-    // Event categories
-    const eventCategories = [
-      { id: 'social', label: 'Social', color: colors.navy, icon: Icons.users },
-      { id: 'dining', label: 'Dining', color: colors.foodText, icon: Icons.pizza },
-      { id: 'nightlife', label: 'Nightlife', color: colors.nightlife, icon: Icons.cocktail },
-      { id: 'music', label: 'Music', color: colors.music, icon: Icons.music },
-    ];
-
-    // Upcoming events (next 7 days)
-    const getUpcomingEvents = () => {
-      const upcoming = [];
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(today);
-        d.setDate(today.getDate() + i);
-        const events = getEventsForDate(formatDateStr(d));
-        events.forEach(e => upcoming.push({ ...e, dayLabel: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-US', { weekday: 'short' }) }));
-      }
-      return upcoming.slice(0, 4);
-    };
-
-    // Weather data — live for today, forecast for future dates
-    const isSelectedToday = selectedDateStr === todayStr;
-    const forecastForDate = weatherForecast.find(f => f.date === selectedDateStr);
-    const weatherData = isSelectedToday ? liveWeather : forecastForDate;
-    const weatherReady = !!weatherData;
-    const isLive = isSelectedToday && !!liveWeather;
-
-    return (
-      <div key="calendar-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-        {/* Header */}
-        <div style={{ padding: '12px', background: colors.navyBg, flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-            <button aria-label="Previous month" className="hit44" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 16)}</button>
-            <div style={{ textAlign: 'center' }}>
-              <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>{monthNames[calendarMonth.getMonth()]}</h1>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.6)', margin: 0 }}>{calendarMonth.getFullYear()}</p>
-            </div>
-            <button aria-label="Next month" className="hit44" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowRight('white', 16)}</button>
-          </div>
-          {/* TODAY QUICK JUMP, drawn only when it has somewhere to jump to.
-              The Plans tab opens with calendarMonth and selectedDate both set
-              to `new Date()`, so in the DEFAULT state this full-width control
-              offered to take you to the day you were already looking at. Its
-              translucent fill reads as disabled besides, so the first thing on
-              the screen was a large grey bar that appeared dead and, if
-              tapped, did nothing observable.
-
-              Hidden rather than disabled or restyled, which is the rule this
-              app already follows elsewhere: BillCard withholds its undo
-              control instead of drawing one the server would refuse, because
-              "a control that exists only to be rejected is a dead one".
-
-              The row is kept as the wrapper so the header's spacing does not
-              move when the button appears; only the button goes. */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {(calendarMonth.getMonth() !== today.getMonth()
-              || calendarMonth.getFullYear() !== today.getFullYear()
-              || selectedDate.toDateString() !== today.toDateString()) && (
-            <button className="hit44 glass-btn glass-secondary" onClick={() => { setCalendarMonth(today); setSelectedDate(today); }} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-              {Icons.zap('#F59E0B', 12)}
-              Jump to Today
-            </button>
-            )}
-          </div>
-        </div>
-
-        {/* Day names header */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', padding: '8px', backgroundColor: 'var(--bg-card-solid)' }}>
-          {dayNames.map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{d}</div>)}
-        </div>
-
-        {/* Calendar grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', padding: '0 8px 8px', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          {[...Array(firstDay)].map((_, i) => <div key={`e-${i}`} style={{ height: '40px' }} />)}
-          {[...Array(daysInMonth)].map((_, i) => {
-            const day = i + 1;
-            const dateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            const events = getEventsForDate(dateStr);
-            const isSelected = dateStr === selectedDateStr;
-            const isTodayDate = isToday(dateStr);
-            const isBusy = events.length >= 2;
-            return (
-              <button className="hit44" key={day} aria-pressed={isSelected} aria-label={`${day}${events.length > 0 ? ', has plans' : ''}${isTodayDate ? ', today' : ''}`} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: isTodayDate || isSelected ? '500' : '500' }}>{day}</span>
-                {events.length > 0 && (
-                  <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
-                    {events.slice(0, 3).map((e, idx) => <div key={idx} style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isSelected ? 'white' : e.color }} />)}
-                  </div>
-                )}
-                {isBusy && !isSelected && <div style={{ position: 'absolute', top: '2px', right: '4px', width: '6px', height: '6px', borderRadius: '3px', backgroundColor: colors.amber }} />}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Events section */}
-        <div ref={feedScroll.calendar.ref} onScroll={feedScroll.calendar.onScroll} style={{ flex: 1, padding: '12px', overflowY: 'auto' }}>
-          {/* Weather module */}
-          {weatherReady ? (() => {
-            const w = weatherData;
-            const cond = (w.conditions || '').toLowerCase();
-            const isRainy = cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm');
-            const isCloudy = cond.includes('cloud') || cond.includes('overcast') || cond.includes('mist') || cond.includes('fog');
-            const isSnowy = cond.includes('snow');
-            const isCold = w.temp < 45;
-            const isHot = w.temp > 90;
-            const weatherIcon = isSnowy ? Icons.cloud : isRainy ? Icons.cloud : isCloudy ? Icons.cloud : isCold ? Icons.cloud : Icons.sun;
-            const weatherColor = isSnowy ? '#93c5fd' : isRainy ? '#60a5fa' : isCloudy ? '#94a3b8' : isCold ? '#64748b' : isHot ? '#ef4444' : '#F59E0B';
-            const conditionText = w.conditions ? w.conditions.charAt(0).toUpperCase() + w.conditions.slice(1) : 'Clear';
-            return (
-              <div style={{ ...styles.card, marginBottom: '12px', padding: 0, overflow: 'hidden', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
-                <div style={{ padding: '14px 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    {weatherIcon(weatherColor, 36)}
-                    <div>
-                      <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: 0, lineHeight: 1 }}>{Math.round(w.temp)}°</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', fontWeight: '500' }}>{conditionText}</p>
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: isLive ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)' }}>
-                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6' }} />
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels Like</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
-                  </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{w.humidity}%</p>
-                  </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Wind</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}> mph</span></p>
-                  </div>
-                </div>
-                {(isRainy || isSnowy || w.windSpeed > 20) && (
-                  <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: isDark ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)' }}>
-                    {Icons.zap('#f59e0b', 12)}
-                    <span style={{ fontSize: 'var(--t-meta)', color: '#b45309', fontWeight: '500' }}>
-                      {isRainy ? 'Rain expected. Indoor spots are the move' : isSnowy ? 'Snow expected. Plan around it' : 'High winds. Outdoor plans may suffer'}
-                    </span>
-                  </div>
-                )}
-              </div>
-            );
-          })() : (
-          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '14px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-            </div>
-          </div>
-          )}
-
-          {/* Selected date events header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.calendar(colors.navy, 14)}
-              {isToday(selectedDateStr) ? 'Today' : selectedDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-            </h2>
-            <button className="hit44 glass-btn glass-navy" onClick={() => setShowAddEvent(true)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              {Icons.plus('white', 12)} Add
-            </button>
-          </div>
-
-          {/* Events list */}
-          {eventsOnSelected.length > 0 ? eventsOnSelected.map(event => (
-            <div key={event.id} style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: `linear-gradient(135deg, ${event.color}, ${event.color}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {Icons.party('white', 20)}
-              </div>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{event.title}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.clock(colors.textSecondary, 12)} {event.time}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {event.venue}</span>
-                </div>
-                {event.members > 1 && <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}>{Icons.users(colors.textSecondary, 12)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{event.members} going</span></div>}
-              </div>
-              {event.derived ? (
-                <button aria-label={`Open ${event.title}`} className="hit44 glass-btn glass-secondary" onClick={() => { setSelectedFlockId(event.flockId); setCurrentScreen('detail'); }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>Open</button>
-              ) : (
-                <button aria-label={`Remove ${event.title}`} className="hit44" onClick={() => removeCalendarEvent(event)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
-              )}
-            </div>
-          )) : (flocksLoading || calendarLoading) ? (
-            /* Plans is built from flocks + saved calendar events, both fetched.
-               "No events scheduled" waits for them. */
-            <ListSkeleton label="Loading your plans" thumb={44} thumbRadius={10} />
-          ) : (calendarError || flocksError) ? (
-            <div style={{ ...styles.card, margin: '8px 0' }}>
-              <BirdNote
-                layout="row"
-                size={48}
-                bird={WARM_BIRD}
-                role="alert"
-                title={calendarError || flocksError}
-                body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
-                action={<button className="hit44 glass-btn glass-navy" onClick={() => { loadFlocks(); loadCalendar(); }} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '16px 20px 24px' }}>
-              {/* 120, not the default 160: steps is nearly 3:1, so at this
-                  width object-fit already renders the birds ~110px tall and a
-                  160px box just adds letterbox that pushes the copy off screen
-                  under the calendar. The birds are the same size either way. */}
-              <EmptyMark name="steps" height={120} />
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>Nothing on this day</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>Flocks you join land here automatically.</p>
-              <button className="hit44" onClick={() => { setCurrentTab('home'); setCurrentScreen('create'); }} style={{ marginTop: '10px', minHeight: '44px', padding: '10px 14px', background: 'none', border: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Start a flock</button>
-            </div>
-          )}
-
-          {/* Add event form */}
-          {showAddEvent && (
-            <div style={{ ...styles.card, marginTop: '12px', border: `2px solid ${colors.navy}` }}>
-              <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.plus(colors.navy, 14)} New Event</h4>
-              <SearchInputLocal aria-label="Event title" key="event-title" id="event-title" type="text" maxLength={120} initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
-              <SearchInputLocal aria-label="Venue (optional)" key="event-venue" id="event-venue" type="text" maxLength={200} initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', flexShrink: 0 }}>Time</span>
-                <input aria-label="Time" type="time" value={newEventTime} onChange={(e) => setNewEventTime(e.target.value)} style={{ flex: 1, padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border-default)', fontSize: 'var(--t-body)', outline: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
-              </div>
-              {/* Event categories */}
-              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', marginBottom: '6px' }}>Category</p>
-              <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
-                {eventCategories.map(cat => (
-                  <button className="hit44" key={cat.id} onClick={() => setNewEventCategory(cat.id)} style={{ padding: '6px 10px', borderRadius: '10px', border: newEventCategory === cat.id ? `2px solid ${cat.color}` : '1px solid var(--border-default)', backgroundColor: newEventCategory === cat.id ? `${cat.color}18` : 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: cat.color, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {cat.icon(cat.color, 12)} {cat.label}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Cancel</button>
-                <button className="hit44 glass-btn glass-navy" disabled={!newEventTitle.trim()} aria-disabled={!newEventTitle.trim()} onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
-              </div>
-            </div>
-          )}
-
-          {/* Upcoming events preview */}
-          {!showAddEvent && getUpcomingEvents().length > 0 && (
-            <div style={{ marginTop: '16px' }}>
-              <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.trendingUp(colors.navy, 12)} Coming Up</h4>
-              {getUpcomingEvents().map((event, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <div style={{ width: '4px', height: '32px', borderRadius: '2px', backgroundColor: event.color }} />
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{event.title}</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{event.dayLabel} at {event.time}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {SafetyButton()}
-        {BottomNav()}
-      </div>
-    );
-  };
-
-  // CHAT LIST SCREEN — redesigned with pin & reorder
-  const ChatListScreen = () => {
-    const totalConversations = flocks.length + directMessages.length;
-    // Both lists on this screen fetch on mount. Until they answer, the screen
-    // shows skeleton rows rather than "No conversations yet".
-    const conversationsLoading = (flocksLoading || dmsLoading) && totalConversations === 0;
-    // And if either read FAILED, the screen has not learned that this inbox is
-    // empty, so it may not say so. One card covers both, because a user does
-    // not care which of two fetches missed, and the retry runs whichever did.
-    const conversationsError = flocksError || dmsError;
-    const retryConversations = () => {
-      if (flocksError) loadFlocks();
-      if (dmsError) loadDmConversations();
-    };
-
-    // Sort flocks: pinned first, then by custom order, then default
-    const sortedFlocks = [...flocks].sort((a, b) => {
-      const aPinned = pinnedFlockIds.includes(a.id);
-      const bPinned = pinnedFlockIds.includes(b.id);
-      if (aPinned && !bPinned) return -1;
-      if (!aPinned && bPinned) return 1;
-      const aOrder = flockOrder.indexOf(a.id);
-      const bOrder = flockOrder.indexOf(b.id);
-      if (aOrder !== -1 && bOrder !== -1) return aOrder - bOrder;
-      if (aOrder !== -1) return -1;
-      if (bOrder !== -1) return 1;
-      return 0;
-    });
-
-    const filteredDms = directMessages.filter(dm => !chatSearch || dm.name.toLowerCase().includes(chatSearch.toLowerCase()));
-    const filteredFlocks = sortedFlocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
-    const filteredDeclinedInvites = declinedFlockInvites.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
-
-    // The swap happens between the two VISIBLE neighbours but is written into
-    // the full order; writing the filtered list as the order threw away every
-    // plan the search had hidden, on every device (lifecycle audit,
-    // 2026-09-05).
-    const swapInFullOrder = (flockId, otherId) => {
-      const full = sortedFlocks.map(f => f.id);
-      const i = full.indexOf(flockId);
-      const j = full.indexOf(otherId);
-      if (i === -1 || j === -1) return;
-      [full[i], full[j]] = [full[j], full[i]];
-      setFlockOrder(full);
-    };
-
-    const moveFlockUp = (flockId) => {
-      const visible = filteredFlocks.map(f => f.id);
-      const idx = visible.indexOf(flockId);
-      if (idx <= 0) return;
-      // Only swap within the same group (pinned/unpinned)
-      const isPinned = pinnedFlockIds.includes(flockId);
-      const aboveIsPinned = pinnedFlockIds.includes(visible[idx - 1]);
-      if (isPinned !== aboveIsPinned) return;
-      swapInFullOrder(flockId, visible[idx - 1]);
-    };
-
-    const moveFlockDown = (flockId) => {
-      const visible = filteredFlocks.map(f => f.id);
-      const idx = visible.indexOf(flockId);
-      if (idx === -1 || idx >= visible.length - 1) return;
-      const isPinned = pinnedFlockIds.includes(flockId);
-      const belowIsPinned = pinnedFlockIds.includes(visible[idx + 1]);
-      if (isPinned !== belowIsPinned) return;
-      swapInFullOrder(flockId, visible[idx + 1]);
-    };
-
-    const togglePin = (flockId) => {
-      setPinnedFlockIds(prev => prev.includes(flockId) ? prev.filter(id => id !== flockId) : [...prev, flockId]);
-    };
-
-    return (
-      <div key="chat-list-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-        {/* Header */}
-        <div style={{ padding: '20px 16px 16px', background: colors.navyBg, flexShrink: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', margin: 0, letterSpacing: '-0.005em' }}>Messages</h1>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
-            </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button aria-label="Reorder your flocks" className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
-                {Icons.gripVertical('white', 16)}
-              </button>
-              <button aria-label="New message" className="hit44" onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                {Icons.plus(colors.navy, 16)}
-              </button>
-              <button aria-label="Search chats" className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
-                {Icons.search('white', 16)}
-              </button>
-            </div>
-          </div>
-
-          {/* Search bar */}
-          {showChatSearch && (
-            <div style={{ marginTop: '12px', position: 'relative' }}>
-              <SearchInputLocal aria-label="Search conversations" inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: 'var(--t-label)', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
-              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
-            </div>
-          )}
-
-          {/* Edit mode banner */}
-          {editingFlockList && (
-            <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.9)', fontWeight: '500', flex: 1 }}>Tap arrows to reorder, pin to keep on top</span>
-              <button className="hit44" onClick={() => setEditingFlockList(false)} style={{ background: 'none', border: 'none', color: colors.cream, cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', padding: '2px 8px' }}>Done</button>
-            </div>
-          )}
-        </div>
-
-        <div ref={feedScroll.chat.ref} onScroll={feedScroll.chat.onScroll} style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 12px' }}>
-          {/* Direct Messages section */}
-          {filteredDms.length > 0 && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct Messages</span>
-                <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-              </div>
-              {filteredDms.map((dm) => {
-                // GET /api/dm returns the stored body and no message_type, so a
-                // conversation whose last message was a photo arrives with an
-                // empty string. `hadContent` is what tells the preview that an
-                // empty body here is a real message, not an empty inbox.
-                const lastMsg = dm.messages?.length > 0
-                  ? dm.messages[dm.messages.length - 1]
-                  : (dm.lastMessage || dm.lastMessageTime
-                      ? { text: dm.lastMessage || '', sender: dm.lastMessageIsYou ? 'You' : dm.name, hadContent: true }
-                      : null);
-                const lastMsgPreview = messagePreview(lastMsg);
-                return (
-                  <button className="hit44" key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
-                    <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
-                        {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: '23px', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
-                      </div>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
-                        <h2 style={{ fontSize: 'var(--t-body)', fontWeight: dm.unread ? '600' : '600', color: colors.navy, margin: 0 }}>{dm.name}</h2>
-                        {dm.lastMessageTime && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{conversationStamp(dm.lastMessageTime)}</span>}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                <p style={{ fontSize: 'var(--t-meta)', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsgPreview && lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsgPreview || 'Start a conversation'}</p>
-                      </div>
-                    </div>
-                    {dm.unread > 0 && (
-                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {dm.unread > 99 ? '99+' : dm.unread}<span className="sr-only"> unread messages</span>
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </>
-          )}
-
-          {/* Pending Flock Invites */}
-          {pendingFlockInvites.length > 0 && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending Invites</span>
-                <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: '#F59E0B', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
-              </div>
-              {pendingFlockInvites.map((f) => {
-                // A notification tap for this invite lands on this list, so the
-                // card it meant is called out and scrolled to. Without it the
-                // tap drops you on a list and leaves you to work out which row
-                // the buzz was about.
-                const tapped = highlightedInviteId === f.id;
-                return (
-                <div
-                  key={`invite-${f.id}`}
-                  ref={tapped ? (el) => { if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } : undefined}
-                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: tapped ? '2px solid #F59E0B' : '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: tapped ? '0 0 0 4px rgba(245,158,11,0.18)' : '0 2px 12px rgba(245,158,11,0.08)' }}
-                >
-                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(245,158,11,0.2)', flexShrink: 0 }}>
-                    {Icons.mail('white', 20)}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <h2 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
-                    {/* An invite can arrive from someone you have never met and
-                        whose flock you cannot see yet, so this name was the one
-                        place in the app with a person and no way to act on
-                        them. Tapping it opens the person card. */}
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-                      Invited by{' '}
-                      {f.hostId != null ? (
-                        <button
-                          aria-label={`About ${f.host}`}
-                          onClick={() => openUserProfile({ id: f.hostId, name: f.host })}
-                          style={{ background: 'none', border: 'none', padding: 0, fontSize: 'inherit', fontFamily: 'inherit', fontWeight: '600', color: colors.navy, textDecoration: 'underline', cursor: 'pointer' }}
-                        >
-                          {f.host}
-                        </button>
-                      ) : f.host}
-                    </p>
-                    {/* A decision needs the when, the where and the who. */}
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {f.time && f.time !== 'TBD' ? f.time : 'Time still open'} · {f.venue && f.venue !== 'TBD' ? f.venue : 'Venue still open'} · {f.memberCount || 1} going
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button aria-label="Decline invite" className="hit44" onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {Icons.x(colors.textTertiary, 14)}
-                    </button>
-                    <button aria-label="Accept invite" className="hit44" onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {Icons.check('white', 14)}
-                    </button>
-                  </div>
-                </div>
-                );
-              })}
-            </>
-          )}
-
-          {/* Flocks section */}
-          {filteredFlocks.length > 0 && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Flocks</span>
-                <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{filteredFlocks.length}</span>
-              </div>
-              {filteredFlocks.map((f, idx) => {
-                const isPinned = pinnedFlockIds.includes(f.id);
-                const lastMsg = f.messages[f.messages.length - 1];
-                // A photo posted to a flock has no text, so the row said
-                // "You: " and stopped. One line gets one label.
-                const lastMsgPreview = messagePreview(lastMsg);
-                // Server-backed since migration 056: unread_count seeds this
-                // on every list load, the socket handler increments it live,
-                // and opening the chat zeroes it and advances the cursor.
-                // flockSeen is only the PUT watermark now, not the badge.
-                const hasUnread = (f.unread || 0) > 0;
-                const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
-                // statusColor is the DOT (decorative, keeps the vivid hue). The chip
-                // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
-                // versions measured 2.02:1 ("Voting") to 2.28:1. These tokens are
-                // theme-aware and clear 4.5:1 on both the light and dark card.
-                const statusTextColor = f.status === 'completed' ? 'var(--accent-blue-text)' : f.status === 'confirmed' ? 'var(--accent-green-text)' : f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-purple-text)';
-                const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
-
-                return (
-                  <div key={`flock-${f.id}`} style={{ display: 'flex', alignItems: 'stretch', gap: '0', marginBottom: '6px' }}>
-                    {/* Edit controls */}
-                    {editingFlockList && (
-                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px', paddingRight: '6px', flexShrink: 0 }}>
-                        <button aria-label="Move up" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === 0 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
-                          {Icons.chevronUp(colors.navy, 14)}
-                        </button>
-                        <button aria-label="Move down" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
-                          {Icons.chevronDown(colors.navy, 14)}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Flock card */}
-                    <button className="hit44" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
-                      {/* Tile — the flock's venue photo if it has picked one,
-                          otherwise its initial on a colour keyed to its id. */}
-                      <div style={{ position: 'relative', flexShrink: 0 }}>
-                        {(() => {
-                          const swatch = flockTileSwatch(f.id);
-                          return (
-                            <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              {f.venuePhoto ? (
-                                <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
-                              ) : (
-                                <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: swatch.fg, lineHeight: 1, letterSpacing: '-0.01em' }}>{flockTileInitial(f.name)}</span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {/* Status dot */}
-                        <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: statusColor, border: '2px solid var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {f.status === 'confirmed' && <span style={{ fontSize: 'var(--t-meta)', color: 'white', fontWeight: '500' }}>&#10003;</span>}
-                        </div>
-                      </div>
-
-                      {/* Content */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
-                            {isPinned && <span style={{ flexShrink: 0 }}>{Icons.pinFilled(colors.navy, 12)}</span>}
-                            <h2 style={{ fontSize: 'var(--t-body)', fontWeight: hasUnread ? '600' : '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
-                          </div>
-                          <span style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : '#b0b0b0', fontWeight: hasUnread ? '500' : '400', flexShrink: 0, marginLeft: '8px' }}>{getRelativeTime(lastMsg?.time)}</span>
-                        </div>
-
-                        {/* Venue + status row */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: statusTextColor, backgroundColor: `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
-                          {f.venue && f.venue !== 'TBD' && (
-                            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
-                          )}
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 12)}</span>
-                        </div>
-
-                        {/* Last message. Only drawn when there IS one to draw.
-                            Flocks arrive from GET /api/flocks with no messages
-                            attached and the history is fetched per chat on
-                            entry, so on a cold start every row here said "No
-                            messages yet", including flocks holding hundreds.
-                            The row still carries the name, the stage, the venue
-                            and the headcount, so an absent line is quieter than
-                            a wrong sentence. */}
-                        {lastMsg && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <p style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsgPreview}`}</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Pin button (edit mode) or unread badge */}
-                      {editingFlockList ? (
-                        <button aria-label={isPinned ? 'Unpin' : 'Pin'} aria-pressed={isPinned} className="hit44" onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
-                          {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
-                        </button>
-                      ) : hasUnread && (
-                        <div style={{ minWidth: '20px', height: '20px', borderRadius: '10px', padding: '0 6px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          {f.unread > 99 ? '99+' : f.unread}
-                          <span className="sr-only"> unread messages</span>
-                        </div>
-                      )}
-                    </button>
-                  </div>
-                );
-              })}
-            </>
-          )}
-
-          {/* Declined — plans this person said no to. Kept so a no on Tuesday
-              has a way back when Friday frees up, following the server, which
-              still returns these on every load. Never folded into the main
-              flock list above: re-joining is one deliberate tap. */}
-          {filteredDeclinedInvites.length > 0 && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Declined</span>
-                <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-              </div>
-              {filteredDeclinedInvites.map((f) => (
-                <div key={`declined-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-secondary)', lineHeight: 1 }}>{flockTileInitial(f.name)}</span>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <h2 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>You said you could not make it{f.host ? `. From ${f.host}` : ''}</p>
-                  </div>
-                  <button aria-label={`Join ${f.name}`} className="hit44 glass-btn glass-navy" onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Join</button>
-                </div>
-              ))}
-            </>
-          )}
-
-          {/* Loading */}
-          {conversationsLoading && <ListSkeleton label="Loading conversations" />}
-
-          {/* Failed read. Never suppressed by a search box: a search over a
-              list that did not load is not a search that found nothing. */}
-          {!conversationsLoading && conversationsError && (
-            <div style={{ ...styles.card, marginBottom: '10px' }}>
-              <BirdNote
-                layout="row"
-                size={48}
-                bird={WARM_BIRD}
-                role="alert"
-                title={conversationsError}
-                body="Nothing has been deleted. This is the list failing to load."
-                action={<button className="hit44 glass-btn glass-navy" onClick={retryConversations} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
-              />
-            </div>
-          )}
-
-          {/* Empty state */}
-          {!conversationsLoading && !conversationsError && filteredDms.length === 0 && filteredFlocks.length === 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '8px 20px 24px', minHeight: chatSearch ? '0' : 'calc(100vh - 300px)' }}>
-              {/* The mark belongs to the true-empty inbox. A search that found
-                  nothing is a different state and gets the small icon. */}
-              {chatSearch ? <BirdieStill bird={WARM_BIRD} size={72} /> : <EmptyMark name="crowd" />}
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: chatSearch ? 'var(--t-title)' : 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>{chatSearch ? 'No results found' : 'No conversations yet'}</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{chatSearch ? 'Try a different search.' : 'Every flock gets its own chat. Start one and it shows up here.'}</p>
-              {!chatSearch && (
-                <button className="hit44" onClick={() => { setCurrentTab('home'); setCurrentScreen('create'); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 14px', background: 'none', border: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Start a flock</button>
-              )}
-            </div>
-          )}
-        </div>
-        {SafetyButton()}
-        {BottomNav()}
-      </div>
-    );
-  };
+  /* The Messages tab lives in screens/ChatListScreen.js as of 2026-09-13, and
+     it is fetched on demand rather than bundled. It was 395 lines declared
+     here and CALLED rather than mounted, so the DM rows, the pending invites,
+     the flock list with its pin-and-reorder edit mode, the declined plans and
+     the states under them all rode the boot chunk for every account, whether
+     or not that account ever opened Messages. Everything it reads stays
+     declared here and arrives as props from the screen switch below, so the
+     pins, the custom order, edit mode and a half-typed search still survive
+     leaving the tab. It is warmed FIRST in warmScreenChunks above, ahead of
+     the two chat screens it is the door to, because it is opened within
+     seconds of signing in. The full reasoning is at the top of the file it
+     moved to. */
 
   // The flock chat screen was declared here, as an arrow function inside this
   // component, and it was CALLED rather than mounted. It lives in
@@ -18085,8 +15540,121 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     switch (currentTab) {
       case 'explore': return null; // Rendered persistently below
-      case 'calendar': return CalendarScreen();
-      case 'chat': return ChatListScreen();
+      case 'calendar': {
+        // Every value the Plans tab reads, named once and in one place. Object
+        // shorthand throughout, so a name here and the matching parameter over
+        // there cannot drift apart. Built inside this branch rather than beside
+        // the old declaration so the object is not rebuilt on every render of
+        // every other screen.
+        const calendarScreenProps = {
+          EmptyMark,
+          ListSkeleton,
+          SearchInputLocal,
+          BottomNav,
+          SafetyButton,
+          addEventToCalendar,
+          calendarError,
+          calendarLoading,
+          calendarMonth,
+          colors,
+          confirmClick,
+          feedScroll,
+          flocksError,
+          flocksLoading,
+          formatDateStr,
+          getDaysInMonth,
+          getEventsForDate,
+          getFirstDayOfMonth,
+          isDark,
+          liveWeather,
+          loadCalendar,
+          loadFlocks,
+          newEventCategory,
+          newEventTime,
+          newEventTitle,
+          newEventVenue,
+          removeCalendarEvent,
+          selectedDate,
+          setCalendarMonth,
+          setCurrentScreen,
+          setCurrentTab,
+          setNewEventCategory,
+          setNewEventTime,
+          setNewEventTitle,
+          setNewEventVenue,
+          setSelectedDate,
+          setSelectedFlockId,
+          setShowAddEvent,
+          showAddEvent,
+          styles,
+          weatherForecast,
+        };
+        return (
+          <React.Suspense fallback={<ScreenChunkFallback />}>
+            <CalendarScreen {...calendarScreenProps} />
+          </React.Suspense>
+        );
+      }
+      case 'chat': {
+        // Every value the Messages tab reads, named once and in one place.
+        // Object shorthand throughout, so a name here and the matching
+        // parameter over there cannot drift apart. Built inside this branch
+        // rather than beside the old declaration so the object is not rebuilt
+        // on every render of every other screen.
+        const chatListScreenProps = {
+          EmptyMark,
+          ListSkeleton,
+          SearchInputLocal,
+          messagePreview,
+          conversationStamp,
+          flockTileInitial,
+          flockTileSwatch,
+          BottomNav,
+          SafetyButton,
+          chatListSearchRef,
+          chatSearch,
+          colors,
+          declinedFlockInvites,
+          directMessages,
+          dmsError,
+          dmsLoading,
+          editingFlockList,
+          feedScroll,
+          flockOrder,
+          flocks,
+          flocksError,
+          flocksLoading,
+          getRelativeTime,
+          handleAcceptFlockInvite,
+          handleDeclineFlockInvite,
+          handleRejoinDeclinedFlock,
+          highlightedInviteId,
+          loadDmConversations,
+          loadFlocks,
+          openUserProfile,
+          pendingFlockInvites,
+          pinnedFlockIds,
+          setChatSearch,
+          setCurrentScreen,
+          setCurrentTab,
+          setDirectMessages,
+          setEditingFlockList,
+          setFlockOrder,
+          setPinnedFlockIds,
+          setSelectedDmId,
+          setSelectedFlockId,
+          setShowChatSearch,
+          setShowNewDmModal,
+          showChatSearch,
+          simulateTyping,
+          styles,
+        };
+        return (
+          <React.Suspense fallback={<ScreenChunkFallback />}>
+            <ChatListScreen {...chatListScreenProps} />
+          </React.Suspense>
+        );
+      }
       case 'profile': {
         // Every value the You tab reads, named once and in one place. Object
         // shorthand throughout, so a name here and the matching parameter over
@@ -18361,7 +15929,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <button
             type="button"
             className="hit44"
-            onClick={reset}
+            /* THE RE-ARM IS WHAT MAKES THIS BUTTON ABLE TO WORK when the crash
+               was the map chunk failing to download: React.lazy remembers a
+               rejection for the life of the page, so a bare reset rethrows the
+               stored error before it asks the network again. A no-op for every
+               other crash, because the helper only rebuilds a poisoned lazy.
+               Two of them now: the screen chunk and the map chunk inside it can
+               each fail on their own, and this button is the only way back into
+               either. */
+            onClick={() => { rearmExploreScreen(); rearmMapLibreMapView(); reset(); }}
             style={{ padding: '13px 20px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
           >
             Try again
@@ -18498,6 +16074,106 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueSearching,
   };
 
+  // THE DISCOVER TAB'S EIGHTY-FIVE. Built here rather than in renderScreen
+  // because Discover is not part of the switch: its layer is mounted from this
+  // component's own tree, below, and kept alive rather than rebuilt on every
+  // tab change. Object shorthand throughout and no defaults, the contract the
+  // other screens keep, so the name here and the parameter in the module
+  // cannot drift apart and a missing prop is a crash rather than a plausible
+  // looking wrong value.
+  //
+  // The first six are module-level definitions in this file rather than state,
+  // shared with surfaces that are not this screen, so they stay declared here
+  // and travel: a copy inside the module would be a second definition free to
+  // drift from the one every other surface draws.
+  const exploreScreenProps = {
+    DialogBehavior,
+    EmptyMark,
+    ListSkeleton,
+    MapLibreMapView,
+    REVIEW_HIDE_LOCATION_BANNER,
+    fmtMoney,
+    BottomNav,
+    SafetyButton,
+    activeVenue,
+    allVenues,
+    budgetStatus,
+    calcDistance,
+    category,
+    categoryExpanded,
+    colors,
+    confirmClick,
+    connectResults,
+    connectSearch,
+    connectSearchError,
+    connectSearching,
+    discoverNavOpen,
+    eventsSearchQuery,
+    eventsSearchTimerRef,
+    featuredEvents,
+    featuredEventsError,
+    featuredEventsLoading,
+    fetchFeaturedEvents,
+    flockMemberLocations,
+    friendStatuses,
+    getCategoryColor,
+    getMaxPriceLevel,
+    handleConnectSearch,
+    handleSendFriendRequest,
+    handleVenueQueryChange,
+    isDark,
+    loadVenuesAtLocation,
+    locationEnabled,
+    locationError,
+    locationLoading,
+    mapVenuesLoaded,
+    openUserProfile,
+    openVenueDetail,
+    pickingVenueForCreate,
+    pickingVenueForDm,
+    pickingVenueForFlockId,
+    renderConsumerVenueCard,
+    requestUserLocation,
+    setActiveVenue,
+    setCategory,
+    setCategoryExpanded,
+    setConnectResults,
+    setConnectSearch,
+    setCurrentScreen,
+    setCurrentTab,
+    setDiscoverNavOpen,
+    setEventDetail,
+    setEventDetailError,
+    setEventDetailLoading,
+    setEventsSearchQuery,
+    setLocationError,
+    setMapVenuesLoaded,
+    setPickingVenueForCreate,
+    setPickingVenueForDm,
+    setPickingVenueForFlockId,
+    setSelectedFlockId,
+    setSelectedVenueForCreate,
+    setShowConnectPanel,
+    setShowEventsView,
+    setShowSearchDropdown,
+    setShowSearchResults,
+    setVenueLoadError,
+    setVenueQuery,
+    setVenueResults,
+    sharingLocationForFlock,
+    showConnectPanel,
+    showEventsView,
+    showSearchDropdown,
+    startNewDmWithUser,
+    stopLocationSharing,
+    toggleLocation,
+    userLocation,
+    venueLoadError,
+    venueQuery,
+    venueResults,
+    venueSearching,
+  };
+
   return (
     <div style={fullBleed
       // Real device: the wrapper IS the screen. No padding, no centering, no
@@ -18532,11 +16208,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         <div style={styles.content}>
           {/* Persistent map layer. Mounted on the first visit to Discover and
               never unmounted after that; see exploreMounted above for why it is
-              no longer mounted at boot. */}
+              no longer mounted at boot.
+
+              THE SUSPENSE IS INSIDE THE LAYER, not around it, so the layer
+              itself is what stays mounted. Once the chunk has resolved, that
+              element never suspends again, and the map inside it is mounted
+              for the rest of the session exactly as it was when the screen
+              was built inline. The fallback is null because the idle warm is
+              what this tap resolves from; an unwarmed first visit draws
+              nothing for the length of the fetch, which is the same deal the
+              map, the venue card and the results list inside it already
+              take. */}
           {exploreMounted && (
             <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
               <ErrorBoundary label="screen:explore" resetKey={screenKey} fallback={exploreCrashFallback}>
-                <ScreenSlot render={ExploreScreen} />
+                <React.Suspense fallback={null}>
+                  <ExploreScreen {...exploreScreenProps} />
+                </React.Suspense>
               </ErrorBoundary>
             </div>
           )}

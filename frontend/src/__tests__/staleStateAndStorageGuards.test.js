@@ -72,6 +72,10 @@ const APP = codeOnly(read('App.js'));
 // across.
 const CARD = codeOnly(read('components', 'venue', 'ConsumerVenueCard.js'));
 const APP_AND_CARD = `${APP}\n${CARD}`;
+// The Discover map left on the same day for components/map/MapLibreMapView.js,
+// and the saved basemap choice went with it. It is read here so the boot-path
+// list below still covers every site it covered, in the file that now holds it.
+const MAP = codeOnly(read('components', 'map', 'MapLibreMapView.js'));
 const CHAT = codeOnly(read('screens', 'ChatDetail.js'));
 const FLOCK_DETAIL = codeOnly(read('screens', 'FlockDetail.js'));
 const ONBOARDING = codeOnly(read('screens', 'VenueOnboarding.js'));
@@ -123,7 +127,10 @@ describe('lib/storage answers a blocked storage with a value, never a throw', ()
 
   it('every listed boot-path site in App.js goes through the helper', () => {
     expect(APP).toContain("import { lsGet, lsSet } from './lib/storage';");
-    expect(APP).toContain("lsGet('flock_map_type') === 'hybrid'");
+    // The basemap choice is read in the map module now, so both halves of the
+    // property are pinned there: the helper is imported, and the read uses it.
+    expect(MAP).toContain("import { lsGet } from '../../lib/storage';");
+    expect(MAP).toContain("lsGet('flock_map_type') === 'hybrid'");
     const userMode = region(APP, 'const [userMode, setUserMode] = useState(() => {', '});');
     expect(userMode).toContain("const saved = lsGet('flockUserMode');");
     expect(userMode).toContain("lsSet('flockUserMode', 'user');");

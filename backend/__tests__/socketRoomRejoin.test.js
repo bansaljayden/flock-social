@@ -41,9 +41,15 @@ const SOCKET_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'services', 'socket.js'
 // promotion list with its report control went with it. A suite that reads
 // App.js alone would slice an empty region here and pass on nothing, so the
 // sheet is concatenated too. Same repair, same reason, third file to need it.
+// The Plans tab left App.js on 2026-09-13, the same way those two did: it is
+// its own lazily loaded chunk now (screens/CalendarScreen.js), and the whole
+// month grid went with it. The "no hardcoded This Week calendar" check below is
+// a negative, and a negative against a file that no longer holds the subject
+// passes on nothing, so the screen is concatenated too.
 const APP_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'App.js'), 'utf8')
   + fs.readFileSync(path.join(CLIENT_DIR, 'screens', 'VenueDashboard.js'), 'utf8')
-  + fs.readFileSync(path.join(CLIENT_DIR, 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
+  + fs.readFileSync(path.join(CLIENT_DIR, 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8')
+  + fs.readFileSync(path.join(CLIENT_DIR, 'screens', 'CalendarScreen.js'), 'utf8');
 
 // --- load the real module --------------------------------------------------
 //

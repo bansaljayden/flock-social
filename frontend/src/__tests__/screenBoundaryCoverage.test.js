@@ -370,10 +370,21 @@ describe('App.js routes every screen through a boundary', () => {
   });
 
   test('Discover gets its own boundary, because its map layer never unmounts', () => {
-    expect(count(APP_CODE, /ExploreScreen/g)).toBe(2);
+    // Discover left App.js on 2026-09-13 for screens/ExploreScreen.js and is a
+    // fetched chunk now, so it is MOUNTED as a lazy component rather than
+    // handed to ScreenSlot as a builder. That is the same fix ScreenSlot is:
+    // the JSX is built one component deeper, inside the boundary's subtree,
+    // which is the only place React can catch a throw. Counting the name is
+    // no longer the way to say "one render site", because the name also
+    // appears in the loader, the lazy, the re-arm and the idle warm, so the
+    // mount itself is counted instead.
+    expect(count(APP_CODE, /<ExploreScreen\b/g)).toBe(1);
     expect(APP_CODE).toMatch(
-      /<ErrorBoundary label="screen:explore" resetKey=\{screenKey\} fallback=\{exploreCrashFallback\}>\s*\n\s*<ScreenSlot render=\{ExploreScreen\} \/>/
+      /<ErrorBoundary label="screen:explore" resetKey=\{screenKey\} fallback=\{exploreCrashFallback\}>\s*\n\s*<React\.Suspense fallback=\{null\}>\s*\n\s*<ExploreScreen \{\.\.\.exploreScreenProps\} \/>/
     );
+    // And the layer it is mounted inside is still the latched, never
+    // unmounted one: the boundary and the Suspense sit INSIDE it.
+    expect(APP_CODE).toMatch(/\{exploreMounted && \(/);
   });
 
   test('no screen builder is called straight into the tree any more', () => {
@@ -404,7 +415,11 @@ describe('App.js routes every screen through a boundary', () => {
     const topLevelJsx = codeOnly(APP.slice(start, end));
 
     expect(topLevelJsx.match(/\b[A-Za-z]\w*Screen\(\)/g)).toBeNull();
-    expect(count(topLevelJsx, /<ScreenSlot render=\{/g)).toBe(2);
+    // Two screen render sites, two boundaries, and every site is one of the
+    // two shapes that put the build inside a boundary: the switch through
+    // ScreenSlot, and Discover as a mounted lazy component.
+    expect(count(topLevelJsx, /<ScreenSlot render=\{/g)).toBe(1);
+    expect(count(topLevelJsx, /<ExploreScreen \{\.\.\.exploreScreenProps\} \/>/g)).toBe(1);
     expect(count(topLevelJsx, /<ErrorBoundary/g)).toBe(2);
   });
 
