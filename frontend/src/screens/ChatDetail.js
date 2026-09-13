@@ -160,6 +160,7 @@
  * so the affordances are connected to something real.
  */
 import React from 'react';
+import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
 import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
@@ -203,37 +204,18 @@ import useKeyboardComposer from '../hooks/useKeyboardComposer';
    thread. Cleared for a flock when its draft is sent or emptied. */
 const FLOCK_DRAFTS = new Map();
 
-/* STABLE IDENTITY, LATEST CLOSURE.
-   MessageGroup and MessageRow are React.memo, and MessageGroup's header says
-   what that needs: memoised runs and stable callbacks. Every handler this
-   screen passed down was a fresh arrow, so the shallow compare failed on every
-   row, every render — and because the composer's draft lives in this
-   component, that meant a full re-render of the thread on each keystroke.
+/* STABLE IDENTITY, LATEST CLOSURE: components/chat/useStableFn.js, with the
+   whole explanation of what it is for and what it does NOT cover.
 
-   A plain useCallback would need a dep array over flock, search state, reply
-   state and viewer state, and one missing entry is a stale closure: a
-   correctness bug traded for a speed win. This keeps the identity fixed for
-   the component's life and always calls the newest closure through a ref, so
-   there is nothing to get wrong. It is the useEvent RFC, in six lines.
-
-   useLayoutEffect, not useEffect: the ref must be current before any child
-   effect can fire the handler in the same commit.
-
-   WHAT THAT DOES NOT COVER: a call made DURING RENDER. renderCard and
-   colourFor are called by MessageRow while it renders, and in the render
-   where a row first appears the ref still holds the previous render's
-   closure, because no layout effect has run yet. A render-time reader
-   therefore reads the row it is handed and never the screen's state; the
-   synthetic rows in the stream carry their card's data for exactly this
-   reason (search "EACH SYNTHETIC ROW"). */
-/* EXPORTED because screens/DmDetail.js has the identical problem and there is
-   no sense in owning two copies of a hook whose entire job is identity. It
-   already imports groupReactions from this file. */
-export function useStableFn(fn) {
-  const ref = React.useRef(fn);
-  React.useLayoutEffect(() => { ref.current = fn; });
-  return React.useCallback((...args) => ref.current(...args), []);
-}
+   It moved out of this file on 2026-09-12. DmDetail needs the identical hook
+   and was importing it from here, and a cross-screen import makes one lazy
+   chunk a hard dependency of the other's group: opening a DM could not
+   resolve until this 146 KB screen had arrived too, for eighteen lines.
+   Re-exported below because this file's own tests and readers name it here. */
+export { useStableFn } from '../components/chat/useStableFn';
+// Named again as a local binding: the re-export above publishes it, it does
+// not bring it into this module's scope, and this screen is its heaviest user.
+const useStableFn = useStableFnShared;
 
 /* THE DAY SEPARATORS LEFT THIS FILE. `dayKeyOf`, `dayLabelOf` and
    `daySeparatorFor` were declared here and mirrored verbatim in DmDetail.js:
