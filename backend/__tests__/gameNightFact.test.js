@@ -132,7 +132,13 @@ test('bad coordinates mean null before any query runs', async () => {
 // ---------------------------------------------------------------------------
 const SERVICE = fs.readFileSync(path.join(__dirname, '..', 'services', 'gameNights.js'), 'utf8');
 const CROWD = fs.readFileSync(path.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
-const APP = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'App.js'), 'utf8');
+// The venue card a map pin opens left App.js on 2026-09-13 and became its own
+// lazily loaded module, and the game-night chip went with it. This suite slices
+// around `cd?.gameNight?.teams` to prove the chip never says "busier", so it
+// has to read the file the chip is actually in; App.js alone would make the
+// indexOf fail and the guard vanish rather than fail loudly.
+const APP = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 test('tonight is the market calendar day, not UTC', () => {
   assert.match(SERVICE, /timeZone: 'America\/New_York'/,
