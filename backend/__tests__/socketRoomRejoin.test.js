@@ -36,8 +36,14 @@ const SOCKET_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'services', 'socket.js'
 // loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
 // this file scans went with it. Nothing asserted below changed. The app source
 // is simply in two files, so both are read, in the order they used to be one.
+// The venue detail sheet left App.js on 2026-09-13, the same way the owner
+// dashboard did: it is its own lazily loaded module now, and the public
+// promotion list with its report control went with it. A suite that reads
+// App.js alone would slice an empty region here and pass on nothing, so the
+// sheet is concatenated too. Same repair, same reason, third file to need it.
 const APP_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(CLIENT_DIR, 'screens', 'VenueDashboard.js'), 'utf8');
+  + fs.readFileSync(path.join(CLIENT_DIR, 'screens', 'VenueDashboard.js'), 'utf8')
+  + fs.readFileSync(path.join(CLIENT_DIR, 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
 
 // --- load the real module --------------------------------------------------
 //
