@@ -305,11 +305,118 @@ const parseWeekDays = (entries) => {
   return days;
 };
 
+// ── The cards survive the tab strip above them ───────────────────────────────
+//
+// This card is mounted behind `venueTab === 'analytics'` on the dashboard, so
+// every trip to Settings, Reviews, Promotions or the map unmounts it and the
+// trip back mounts a new one. The payload used to live only in component
+// state, which meant each of those flips re-issued GET
+// /api/venue/advisor/cards from nothing. That is the expensive read in this
+// product: the route builds the whole fact pack per call (a forecast pass,
+// aggregates over the venue's own rows, and up to a week of budgeted event and
+// weather probes), which is why its client deadline is the long one and not
+// the default. An owner who glanced at their reviews and came back paid for
+// all of it a second time, and the refusals on this very screen send them to
+// Settings by name, so that round trip is a flow the product asks for rather
+// than an odd thing to do.
+//
+// So the last good payload waits here in module scope with the time it landed,
+// the way VenueAdvisorChat's threadStore holds the conversation below this
+// card. Memory, not storage: a reload starts clean and nothing about the venue
+// is written to disk.
+let cardsStore = { key: null, at: 0, payload: null };
+
+// WHOSE FACTS THESE ARE IS PART OF THE KEY, AND AN UNNAMED SESSION HOLDS
+// NOTHING.
+//
+// `flockToken` is a shared localStorage key: a second tab signing in as
+// another owner overwrites it under this one's feet. A payload held with no
+// identity beside it would be drawn for whoever mounted this card next, which
+// means one venue's footfall and revenue numbers on another owner's screen. So
+// the store carries the tail of the token the request went out under (the
+// suffix, never the whole token), a read under a different key DROPS what is
+// held rather than merely declining to draw it, and a session that cannot be
+// named holds nothing at all: no token, or a realm whose storage throws on
+// every access, both mean there is no identity to key this to. That costs
+// nothing in production, where this tab is only reachable by a signed-in
+// owner, and it is why the suite never sees a held payload: jsdom has no
+// token.
+const sessionKey = () => {
+  try {
+    return (window.localStorage.getItem('flockToken') || '').slice(-32) || null;
+  } catch (e) {
+    return null;
+  }
+};
+
+// HOW LONG A HELD PAYLOAD MAY STAND IN FOR A FRESH ONE.
+//
+// The window is sized for the trip to another tab and back, which takes
+// seconds. It is not sized for freshness: these facts move on the scale of a
+// day and every one of them prints its own date underneath. What it must not
+// outlive is an edit the owner makes while they are away, because most cards
+// here refuse by asking for a value in venue settings, and an owner who goes
+// and enters it has to come back to an answer rather than to the refusal they
+// just answered. A minute covers a glance at another tab and is shorter than
+// most trips that involve typing into a form and saving it, but a window alone
+// cannot promise that, so it is not the only guard: the door at the foot of a
+// card drops the payload outright when it is pressed, and clearAdvisorCards is
+// exported so the dashboard can drop it on a settings save, which is the one
+// path to Settings this file cannot see.
+const CARDS_HOLD_MS = 60 * 1000;
+
+// Drops the held payload. The suite can call it between tests so one venue's
+// facts cannot leak into the next, which is the job clearAdvisorThread does for
+// the conversation below this card.
+export const clearAdvisorCards = () => { cardsStore = { key: null, at: 0, payload: null }; };
+
+// What a fresh mount may draw before it asks for anything: null whenever the
+// store is empty, past the window, or another account's.
+const restoreCards = () => {
+  if (!cardsStore.payload) return null;
+  if (cardsStore.key !== sessionKey()) {
+    clearAdvisorCards();
+    return null;
+  }
+  if (Date.now() - cardsStore.at > CARDS_HOLD_MS) {
+    clearAdvisorCards();
+    return null;
+  }
+  return cardsStore.payload;
+};
+
+// Hands one payload to the next mount. `issuedUnder` is the identity read
+// BEFORE the request went out and it has to still be the live one: stamping
+// whoever happens to be signed in when a response lands is how one account's
+// answers get relabelled as the next account's.
+//
+// Two payloads are deliberately not held. A response that says
+// `available: false` (no linked listing, not verified yet) is a state the owner
+// is actively working to change, the route answers it early without building a
+// single card, so holding one would go on saying "not verified yet" for a
+// minute after they requested verification. And a response with no cards has
+// nothing to draw, so holding it would only suppress the read that might have
+// some. Every finished read writes this store, so the newest answer is always
+// the one held.
+const holdCards = (issuedUnder, payload) => {
+  const holdable = !!issuedUnder && issuedUnder === sessionKey()
+    && !!payload && payload.available !== false
+    && Array.isArray(payload.cards) && payload.cards.length;
+  cardsStore = holdable
+    ? { key: issuedUnder, at: Date.now(), payload }
+    : { key: null, at: 0, payload: null };
+};
+
 const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now }) => {
   const navy = colors?.navy || 'var(--text-primary)';
+  // What the last mount left behind, read once. A payload still inside the
+  // window is drawn on this very render: no skeleton, no request. It is kept in
+  // state rather than re-read further down because the effect that decides
+  // whether to fetch has to agree with what this render already drew.
+  const [held] = useState(restoreCards);
   // 'loading' | 'ready' | 'locked' | 'error'
-  const [state, setState] = useState('loading');
-  const [payload, setPayload] = useState(null);
+  const [state, setState] = useState(held ? 'ready' : 'loading');
+  const [payload, setPayload] = useState(held);
   const [lockedReason, setLockedReason] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [noteDismissed, setNoteDismissed] = useState(() => {
@@ -329,13 +436,24 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   const load = useCallback(async () => {
     if (typeof fetchCards !== 'function') return;
     setState('loading');
+    // Read who is asking before the request leaves, and compare it again when
+    // the answer lands. See holdCards.
+    const issuedUnder = sessionKey();
     try {
       const data = await fetchCards();
+      // Held BEFORE the alive check on purpose. A read that lands after the
+      // owner has flipped to another tab is still this venue's newest answer,
+      // and dropping it on the floor is exactly what made the flip back cost
+      // another one.
+      holdCards(issuedUnder, data || null);
       if (!alive.current) return;
       setPayload(data || null);
       setState('ready');
     } catch (err) {
       if (!alive.current) return;
+      // A plan refusal or a failed read is the server's newest word about this
+      // account, so nothing older is left standing behind it.
+      clearAdvisorCards();
       if (err?.status === 403) {
         // The server said which plan serves these; repeat it rather than
         // guessing. Dormant while VENUE_BILLING_ENABLED is unset.
@@ -347,7 +465,10 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
     }
   }, [fetchCards]);
 
-  useEffect(() => { load(); }, [load]);
+  // One read per mount, and none at all on a mount that inherited a payload.
+  // `held` is fixed for the life of this mount, and `load` never changes its
+  // identity, so this stays the mount effect it has always been.
+  useEffect(() => { if (!held) load(); }, [held, load]);
 
   const clock = now instanceof Date ? now : new Date();
   const todayStr = localDateStr(clock);
@@ -389,6 +510,16 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   const dismissNote = () => {
     setNoteDismissed(true);
     try { window.localStorage.setItem(NOTE_SEEN_KEY, '1'); } catch { /* storage blocked */ }
+  };
+
+  // The door to Settings is also notice that these facts are about to change.
+  // The refusal that grew this button asked the owner for a value and the tab
+  // it opens is where they type it, so the held payload goes before they get
+  // there and the trip back is a real read. Without this the window alone
+  // decides, and a fast save would come back to the refusal it just answered.
+  const openSettings = () => {
+    clearAdvisorCards();
+    if (typeof onOpenSettings === 'function') onOpenSettings();
   };
 
   if (typeof fetchCards !== 'function') return null;
@@ -575,7 +706,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
         {typeof onOpenSettings === 'function' && pointsAtSettings(entries) && (
           <button
             className="hit44"
-            onClick={onOpenSettings}
+            onClick={openSettings}
             style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
           >
             Open venue settings
