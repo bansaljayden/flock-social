@@ -71,7 +71,69 @@ function evictIpHits(now) {
   }
 }
 
+// WHOSE 20 REQUESTS THESE ARE, AND WHY IN PRODUCTION THEY ARE NOT ONE
+// VISITOR'S.
+//
+// req.ip is the LAST entry in X-Forwarded-For: server.js sets `trust proxy` to
+// 1, so Express trusts exactly one hop, and the last entry is the one our own
+// proxy appended — the only entry a caller cannot write, which is the same
+// rule socketClientIp and forwardedProtocol in server.js read that header
+// family by. For a request that reaches Railway directly, that entry is the
+// visitor and this gate means what it says.
+//
+// THE MARKETING PAGE DOES NOT REACH RAILWAY DIRECTLY. In production the demo
+// fetches same-origin /relay/public/*, which vercel.json rewrites to this
+// backend server-side (frontend/src/website/LiveDemo.js picks the relay in
+// production only, because school and work filters block *.railway.app). The
+// chain is therefore browser -> Vercel -> Railway proxy -> here, so the entry
+// our proxy appended is VERCEL'S egress address, and every visitor arriving
+// through one Vercel POP shares a single bucket of IP_LIMIT per rolling hour:
+// the 21st uncached area search in that hour answers DEMO_BUSY_MSG to all of
+// them. The cache hides most of it (allowDemo is consulted only on a MISS, and
+// a miss is a ~1km bucket for 20 minutes), which is why the demo does not look
+// broken — but the per-address gate is not metering addresses.
+//
+// WHY THE LEFTMOST ENTRY IS NOT THE FIX ON ITS OWN, AND WHY THIS FILE STILL
+// KEYS ON req.ip. Keying on the FIRST X-Forwarded-For entry would read the
+// visitor for relayed traffic and would read whatever any caller cares to type
+// for everything else: every entry left of our proxy's own is client-written,
+// and relayed and direct requests arrive through the same Railway edge, so
+// nothing in this process can tell them apart. One request header would then
+// mint a fresh allowance on demand, and one address could walk the entire
+// 600/day ceiling this gate exists to keep a single actor away from. That is
+// the round-15 mistake above in a new costume: a defence that gets weaker the
+// harder it is pushed. A shared bucket refuses honest visitors; a spoofable
+// key refuses nobody.
+//
+// WHAT ACTUALLY CLOSES IT is a value only the relay can produce — the Vercel
+// side forwarding the visitor's address, or an HMAC of it, in a header keyed by
+// a shared secret, with req.ip as the fallback for anything arriving without
+// it. vercel.json's `headers` block sets RESPONSE headers, so that is a new
+// piece of relay code plus the matching read here, and the relay half is not in
+// this file. Until both land the chain is reported rather than guessed at: the
+// reading above depends on Railway APPENDING to X-Forwarded-For rather than
+// replacing it, which is what the socketClientIp comment already assumes, and
+// one line from a deploy's logs settles it.
+//
+// Hop COUNTS only, never addresses, and once per process: the two facts the fix
+// needs are how many hops the chain carries and whether req.ip is the last of
+// them. Silent when no forwarding header is present, which is also what keeps
+// the abuse tests (they call allowDemo with a bare { ip }) quiet.
+let forwardingShapeLogged = false;
+function reportForwardingShape(req) {
+  if (forwardingShapeLogged) return;
+  const xff = req.headers && req.headers['x-forwarded-for'];
+  if (!xff) return;
+  forwardingShapeLogged = true;
+  const hops = String(xff).split(',').map((s) => s.trim()).filter(Boolean);
+  const ipIsLastHop = req.ip === hops[hops.length - 1];
+  console.warn(`[PublicDemo] forwarding chain on the demo gate: ${hops.length} hop(s), req.ip is the last hop: ${ipIsLastHop}`);
+}
+
 function allowDemo(req) {
+  // Measured from the gate rather than from either route, so both endpoints
+  // feed the one report above.
+  reportForwardingShape(req);
   const today = new Date().toISOString().slice(0, 10);
   if (today !== dayKey) { dayKey = today; dayCount = 0; }
   if (dayCount >= 600) return false;
@@ -236,7 +298,10 @@ async function buildCard(v, weather, clock, preScored, place) {
     // The card had every fact about the venue except what it looks like. The
     // pin row has carried a photo ref all along; the card was built from the
     // venue shape, which does not include one, so nothing reached the page.
-    // 400 is the card size the photo proxy snaps to, 160 is the pin size.
+    // 400 is the size the photo proxy snaps a card request to, and the area
+    // search's pin row asks for 400 too. The width is half of photoCacheKey
+    // (services/photoStore.js), so holding both to ONE width makes the pin and
+    // the card one purchase for one photograph instead of two.
     photo_url: place?.photos?.[0]?.name
       ? `/api/venues/photo?ref=${encodeURIComponent(place.photos[0].name)}&maxwidth=400`
       : null,
@@ -528,8 +593,27 @@ router.get('/demo/venues',
             lat: v.location.latitude,
             lng: v.location.longitude,
             is_open: v.isOpen,
-            // The photo proxy takes a Google photo resource ref, not a place id
-            photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=160` : null,
+            // The photo proxy takes a Google photo resource ref, not a place id.
+            //
+            // 400, NOT THE 160 A 46px PIN NEEDS, BECAUSE THE WIDTH IS HALF THE
+            // CACHE KEY. photoCacheKey is sha256(`${photoRef}|${maxWidth}`)
+            // (services/photoStore.js), so a pin at 160 and a card at 400 were
+            // two keys, two places_photo_cache rows and two billable Google
+            // /media fetches for one photograph — and this demo shows the same
+            // venue at both sizes by construction: the featured card below is
+            // built from a place object that already has a pin here, and tapping
+            // any other pin opens GET /demo/venue/:placeId, whose card asks 400.
+            // Every venue a visitor actually looked at was bought twice.
+            //
+            // Nothing on the page changes: the pin draws as a 46px CSS
+            // background (.lpd-pin-photo, background-size: cover), so a wider
+            // source scales into the same circle. It transfers about 40 KB
+            // instead of about 12 KB, once per viewer per 30 days, since
+            // sendPhoto answers Cache-Control public, max-age=2592000,
+            // immutable — and Google bills the /media fetch, not the pixels.
+            // routes/venueSearch.js photoUrl carries this same rule for the app:
+            // never mint a second width for a photo already paid for.
+            photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
             score: scored.score,
             label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
             confidence_basis: describePredictionSupport(scored.predictionMethod, 0).basis,

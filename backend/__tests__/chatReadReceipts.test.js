@@ -396,11 +396,18 @@ test('the open watermark is a different column from the unread cursor of 056', (
 // 5. DMs
 // ═════════════════════════════════════════════════════════════════════════════
 
-function scriptDmThread({ rows, invisible = [] }) {
+function scriptDmThread({ rows, bannedCounterparts = [] }) {
   on(/FROM user_blocks WHERE \(blocker_id = \$1 AND blocked_id = \$2\)/, () => ({ rows: [], rowCount: 0 }));
-  on(/blocked_id AS id FROM user_blocks/, () => ({
-    rows: invisible.map((id) => ({ id })), rowCount: invisible.length,
-  }));
+  // The thread read's ban gate. It asks about the ONE person in the URL — one
+  // row for one id — rather than reading back every banned account in the
+  // product to scan for that id, so the fixture answers per id. Anchored to the
+  // whole statement, because a loose `FROM users` would also catch reads that
+  // have nothing to do with bans and hand them a ban verdict.
+  on(/^SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE$/, (p) => (
+    bannedCounterparts.map(Number).includes(Number(p[0]))
+      ? { rows: [{ '?column?': 1 }], rowCount: 1 }
+      : { rows: [], rowCount: 0 }
+  ));
   on(/FROM direct_messages dm JOIN users u/, () => ({ rows: rows.slice().reverse(), rowCount: rows.length }));
   on(/FROM dm_emoji_reactions dr/, () => ({ rows: [], rowCount: 0 }));
   on(/^UPDATE direct_messages SET read_status = TRUE/, () => ({ rows: [], rowCount: 0 }));
@@ -455,7 +462,11 @@ test('reading a DM thread marks delivery, tells the sender, and marks no open', 
 test('PUT /dm/:userId/opened is the only thing that sets an open receipt', async () => {
   let openSql = null;
   on(/FROM user_blocks WHERE \(blocker_id = \$1 AND blocked_id = \$2\)/, () => ({ rows: [], rowCount: 0 }));
-  on(/blocked_id AS id FROM user_blocks/, () => ({ rows: [], rowCount: 0 }));
+  // Neither gate fires for this pair: not blocked, and the counterparty is not
+  // banned. The route asks the second one about user 2 alone now, so this says
+  // "no such banned row" for the id it is actually given rather than for the
+  // whole product.
+  on(/^SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE$/, () => ({ rows: [], rowCount: 0 }));
   on(/^UPDATE direct_messages SET opened_at = NOW\(\)/, (p, sql) => {
     openSql = sql;
     assert.deepStrictEqual(p, [1, 2, 41]);
@@ -487,12 +498,20 @@ test('a blocked pair receipts nothing in either direction', async () => {
 
 test('a banned counterpart receipts nothing either', async () => {
   on(/FROM user_blocks WHERE \(blocker_id = \$1 AND blocked_id = \$2\)/, () => ({ rows: [], rowCount: 0 }));
-  // getInvisibleUserIds folds banned accounts in alongside blocks.
-  on(/blocked_id AS id FROM user_blocks/, () => ({ rows: [{ id: 2 }], rowCount: 1 }));
+  // The ban is stated the way the route now asks for it: user 2 is banned, as a
+  // pair question about user 2. It used to be stated by handing back a whole
+  // invisible set with 2 in it, which is the same fact through a statement this
+  // route no longer runs. Deliberately keyed on the id, so a route that asked
+  // about the WRONG person — the caller, say — would get "not banned", write the
+  // receipt, and fail this test instead of passing it by accident.
+  on(/^SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE$/, (p) => (
+    Number(p[0]) === 2 ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 }
+  ));
   on(/^UPDATE direct_messages/, () => { throw new Error('a banned counterpart must not write a receipt'); });
 
   const res = await call('PUT', '/api/dm/2/opened', { lastMessageId: 41 });
   assert.strictEqual(res.status, 403, res.text);
+  assert.strictEqual(emits.length, 0, 'and nothing was announced to either side');
 });
 
 test('the marker refuses a blocked pair even when a caller forgets to check', async () => {

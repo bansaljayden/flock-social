@@ -609,13 +609,67 @@ const intakeAsOf = (profile) =>
 // curve: the cache entry mlPredictor writes carries the anchoring row's
 // provenance, and priming from a curve that did not read those columns would
 // blank the freshness label the advisor publishes.
-async function fetchBaselineCurve(placeId) {
-  const { rows } = await pool.query(
-    `SELECT day_of_week, hour, baseline, source, updated_at
-       FROM ml_venue_baselines
-      WHERE google_place_id = $1`,
-    [placeId]
-  );
+//
+// ONE READ PER REQUEST, MEMOISED ON THE REQUEST'S OWN CONTEXT.
+//
+// Four builders want the same venue's whole-week curve, and GET
+// /api/advisor/cards runs them one after another inside a single request:
+// buildWeekAhead, buildAroundYou, buildListingReadBack and
+// advisorCohort.buildCohortStanding all resolve their place id from
+// ctx.profile, so the identical read of up to 168 rows ran up to four times,
+// serially, on the request path, rebuilding the same structure in memory four
+// times. POST /api/advisor/ask paid it twice on every intent that reaches the
+// listing builder, because that one awaits the week builder first, and the
+// Monday digest sweep paid it three times per venue.
+//
+// WHY THE MEMO HANGS OFF ctx AND NOT OFF THIS MODULE. This file's header
+// records that there is deliberately no module-scope cache here, and that is a
+// promise about more than taste: every module-scope Map in this backend owes a
+// row in utils/cacheKeyInventory.js arguing what a caller-forced miss costs,
+// and per-process state quietly multiplies the day a second instance exists
+// (the one-server note in project documentation). A Map on the context object the request
+// already carries needs neither. It is created on first use, it dies with the
+// response, and it cannot serve a stale curve: nothing in this module writes to
+// that table, and one request is not long enough for the collector to move it
+// underneath us. It is non-enumerable, so anything that walks, serialises or
+// spreads ctx never sees it.
+//
+// A caller that passes no ctx reads the table exactly as it did before.
+// advisorCohort is handed ctx and passes this function the place id alone, so
+// its read stays a read until that file is changed; a missing memo is one extra
+// query, never a different answer.
+const CURVE_MEMO = '__baselineCurveByPlaceId';
+function curveMemo(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null;
+  if (!ctx[CURVE_MEMO]) {
+    try {
+      Object.defineProperty(ctx, CURVE_MEMO, {
+        value: new Map(), enumerable: false, writable: false, configurable: true,
+      });
+    } catch {
+      // A context somebody else sealed is a context we do not own. Read the
+      // table rather than throwing inside a fact builder.
+      return null;
+    }
+  }
+  return ctx[CURVE_MEMO] || null;
+}
+
+async function fetchBaselineCurve(placeId, ctx = null) {
+  const memo = curveMemo(ctx);
+  // A venue with no rows has an empty curve, which is a real answer, and `[]`
+  // is truthy: a memoised empty week is a hit rather than a second read.
+  let rows = memo ? memo.get(placeId) : null;
+  if (!rows) {
+    const read = await pool.query(
+      `SELECT day_of_week, hour, baseline, source, updated_at
+         FROM ml_venue_baselines
+        WHERE google_place_id = $1`,
+      [placeId]
+    );
+    rows = read.rows;
+    if (memo) memo.set(placeId, rows);
+  }
 
   // THE CURVE IS THE WHOLE WEEK, AND THE LOOPS BELOW ASK FOR IT AN HOUR AT A
   // TIME. buildWeekAhead calls this, then walks every open hour of all seven
@@ -631,6 +685,15 @@ async function fetchBaselineCurve(placeId) {
   // (buildWeekAhead, buildAroundYou, advisorCohort) have the same shape: fetch
   // the curve, then score hours out of it. A caller that only wants the curve
   // pays nothing for the prime — it is a loop over rows already in memory.
+  //
+  // THE PRIME RUNS ON A MEMO HIT TOO, and that is deliberate rather than an
+  // oversight. It is the only reason those seventy to a hundred and sixty-eight
+  // per-slot lookups are cache hits, and the entries it writes live in a
+  // BOUNDED map inside mlPredictor, so an entry primed for the first builder
+  // can be evicted before the third one scores its hours. Re-priming from rows
+  // already in memory costs one loop and no round trip, while skipping it to
+  // save that loop would hand the saving straight back as per-slot queries,
+  // which is the exact cost this function exists to avoid.
   mlPredictor.primeBaselineCache(placeId, rows);
 
   return rows
@@ -707,7 +770,9 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
     venue.location.latitude, venue.location.longitude, { userId }
   ).catch(() => null);
   const base = venueBaseDate(venue.utcOffsetMinutes, now);
-  const curve = await fetchBaselineCurve(ctx.profile.google_place_id);
+  // Cards 2 and 3 read this same curve later in the same request. ctx carries
+  // the memo that makes all of that one query.
+  const curve = await fetchBaselineCurve(ctx.profile.google_place_id, ctx);
   const openByDay = openHoursByDay(curve);
   const out = [];
 
@@ -879,7 +944,9 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
   // is only the fallback when no curve hour exists for that weekday.
   let probeHourByDay = Array.from({ length: 7 }, () => null);
   try {
-    probeHourByDay = busiestHourByDay(await fetchBaselineCurve(ctx.profile.google_place_id));
+    // Card 1 has normally read this venue's curve already in this request, so
+    // ctx answers from the memo instead of reading the week a second time.
+    probeHourByDay = busiestHourByDay(await fetchBaselineCurve(ctx.profile.google_place_id, ctx));
   } catch { /* no curve is fine; the fallback hour covers it */ }
 
   // Events, one probe per day. Rides mlPredictor's shared event cache and
@@ -1136,7 +1203,9 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     });
     out.push(beliefFact);
     if (!gateReason) {
-      const means = dayMeans(await fetchBaselineCurve(p.google_place_id));
+      // The same curve cards 1 and 2 read, answered from the memo on ctx. `p`
+      // is ctx.profile, so this is this venue's own week, not a neighbour's.
+      const means = dayMeans(await fetchBaselineCurve(p.google_place_id, ctx));
       if (means.length) {
         const best = Math.max(...means.map((r) => r.mean));
         const curveDays = means

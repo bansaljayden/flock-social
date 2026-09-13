@@ -71,10 +71,13 @@ function resetTables() {
     { id: 601, venue_user_id: 1, google_place_id: 'PLACE_A', title: 'A trivia night', event_date: null, event_time: null, capacity: 50, is_hidden: false, owner_deleted_at: null, open_report: false },
     { id: 602, venue_user_id: 2, google_place_id: 'PLACE_B', title: 'B secret gala', event_date: null, event_time: null, capacity: 50, is_hidden: false, owner_deleted_at: null, open_report: false },
   ];
+  // created_at is here because the owner list names its columns now and asks for
+  // it by name; a row without it would make the fake answer a column the route
+  // selects with undefined.
   REVIEWS = [
-    { id: 701, google_place_id: 'PLACE_B', user_id: 9, rating: 2, text: 'meh', is_hidden: false, venue_reply: null, venue_replied_at: null },
-    { id: 702, google_place_id: 'PLACE_A', user_id: 9, rating: 5, text: 'great', is_hidden: false, venue_reply: null, venue_replied_at: null },
-    { id: 703, google_place_id: 'PLACE_A', user_id: 9, rating: 1, text: 'hidden harassment', is_hidden: true, venue_reply: null, venue_replied_at: null },
+    { id: 701, google_place_id: 'PLACE_B', user_id: 9, rating: 2, text: 'meh', is_hidden: false, venue_reply: null, venue_replied_at: null, created_at: '2026-08-01T20:00:00.000Z' },
+    { id: 702, google_place_id: 'PLACE_A', user_id: 9, rating: 5, text: 'great', is_hidden: false, venue_reply: null, venue_replied_at: null, created_at: '2026-08-02T20:00:00.000Z' },
+    { id: 703, google_place_id: 'PLACE_A', user_id: 9, rating: 1, text: 'hidden harassment', is_hidden: true, venue_reply: null, venue_replied_at: null, created_at: '2026-08-03T20:00:00.000Z' },
   ];
   FLOCK_ROWS = [
     { id: 31, venue_id: 'PLACE_A', title: 'A crew', event_time: null, status: 'active', member_count: 4 },
@@ -209,11 +212,30 @@ function dispatch(rawSql, params = []) {
     const dist = (k) => visible.filter((r) => r.rating === k).length;
     return { rows: [{ total: n, average: avg, r1: dist(1), r2: dist(2), r3: dist(3), r4: dist(4), r5: dist(5) }] };
   }
-  if (/^SELECT vr\.\*, u\.name/.test(sql)) {
+  // The owner list, which names its columns instead of selecting `vr.*` (the
+  // star was shipping an uncapped base64 avatar no review card draws). Matched on
+  // the owner read's own projection, `vr.venue_reply, vr.venue_replied_at` as
+  // plain columns: the PUBLIC reviews list opens with the same three columns and
+  // then computes its reply through a CASE, so the shorter
+  // `SELECT vr.id, vr.rating, vr.text` prefix identifies neither read on its own.
+  if (/^SELECT vr\.id, vr\.rating, vr\.text, vr\.venue_reply, vr\.venue_replied_at/.test(sql)) {
     const p = pidx(sql, /google_place_id = \$(\d+)/);
+    // Answer exactly the columns asked for. The route no longer returns
+    // google_place_id, is_hidden or the avatar, and a fake that keeps handing
+    // them over would hide the next such leak instead of catching it.
     const rows = REVIEWS
       .filter((r) => (p === null || r.google_place_id === params[p]) && !r.is_hidden)
-      .map((r) => ({ ...r, name: 'Reviewer', profile_image_url: null }));
+      .map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        text: r.text,
+        venue_reply: r.venue_reply,
+        venue_replied_at: r.venue_replied_at,
+        created_at: r.created_at,
+        user_id: r.user_id,
+        name: 'Reviewer',
+        reply_needs_review: r.venue_reply !== null && r.venue_replied_at === null,
+      }));
     return { rows };
   }
 

@@ -57,8 +57,14 @@ async function dispatch(sql, params) {
       return out === undefined ? { rows: [], rowCount: 0 } : out;
     }
   }
-  // The direct thread read filters banned counterparts (hardening review round 3, 2026-09-05).
-  if (/blocked_id AS id FROM user_blocks/.test(flat)) return { rows: [], rowCount: 0 };
+  // There used to be a catch-all here answering the whole-invisible-set UNION
+  // with zero rows, for the direct thread read's ban filter. The thread read
+  // does not ask that question any more — it asks about the one counterparty in
+  // the URL, and scriptDmThread answers it — so the catch-all had stopped
+  // covering anything and had become the bad shape instead: a blanket "nobody
+  // is invisible" that any future route could land on and pass against. The
+  // strict throw below is the whole point of this dispatcher, so a read that
+  // wants an invisible set says so in its own script.
   throw new Error(`unscripted query: ${flat.slice(0, 160)}`);
 }
 
@@ -208,8 +214,18 @@ function scriptFlockHistory(corpus, { invisibleIds = [] } = {}) {
 }
 
 // GET /api/dm/:userId — same treatment for the DM thread.
-function scriptDmThread(corpus, { blockedPair = false } = {}) {
+function scriptDmThread(corpus, { blockedPair = false, bannedCounterpart = false } = {}) {
   on(/SELECT 1 FROM user_blocks/, () => (blockedPair ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 }));
+
+  // The thread read's second gate. It asks about the ONE counterparty in the
+  // URL — one row for one id — where it used to pull back every banned account
+  // in the product and scan the list in Node. Anchored to the entire statement
+  // so it answers that question and nothing else that reads `users`, and
+  // answered from the option so a banned pair can still be stated here: a
+  // fixture that returned no rows unconditionally would report "nobody is
+  // banned" and quietly retire the gate.
+  on(/^SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE$/,
+    () => (bannedCounterpart ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 }));
 
   // Reply-preview hydration FIRST: it also matches "FROM direct_messages dm
   // JOIN users u", so it must be distinguished by its ANY($1) shape.
@@ -541,6 +557,22 @@ test('DM thread: a hidden message is gone, and a reply POINTING at it carries no
   const reactionsQ = log.find((q) => /FROM dm_emoji_reactions/.test(q.sql));
   assert.ok(!(reactionsQ.params[0] || []).map(Number).includes(11),
     'the hidden DM\'s reaction rows must never be read back out');
+});
+
+test('DM thread: a banned counterpart hands back an empty thread, and the history query never runs', async () => {
+  // The gate the thread read applies after the pair block check. It is asked of
+  // the one counterparty now rather than of the product's whole ban list, so the
+  // fixture states the ban that way too — and the property worth holding is not
+  // the statement but this: a banned account's thread comes back empty and
+  // flagged, and no row of it is read in the first place.
+  scriptDmThread(dmThreadCorpus(), { bannedCounterpart: true });
+
+  const res = await call('GET', '/api/dm/2?limit=50');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.messages, []);
+  assert.strictEqual(res.body.blocked, true);
+  assert.ok(!log.some((q) => /FROM direct_messages dm JOIN users u/.test(q.sql)),
+    'the thread was read anyway and only filtered afterwards');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

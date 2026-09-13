@@ -1620,36 +1620,89 @@ router.get('/stats', async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Friend count
-    const friendResult = await pool.query(
-      `SELECT COUNT(*) FROM friendships WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'`,
-      [userId]
-    );
+    // -----------------------------------------------------------------------
+    // SEVEN ROUND TRIPS, PAID ONE AFTER ANOTHER, FOR ONE SMALL JSON OBJECT.
+    // -----------------------------------------------------------------------
+    // Every read below is parameterised on nothing but the caller's own id, and
+    // not one of them consumes another's result: the only code that used to sit
+    // between them was the parseInt unwrapping, and both the XP arithmetic and
+    // the streak walk run after the last of them returns. Awaiting them one at
+    // a time therefore bought nothing and charged the profile screen seven
+    // sequential Postgres round trips, stacked end to end. Issued together the
+    // route waits for the slowest instead of the sum.
+    //
+    // The statements are unchanged, character for character, and the destructure
+    // is in the same order as the array, so every value the client receives is
+    // the one it received before. The activity literal keeps its original inner
+    // indentation for the same reason: the text going to Postgres must not move
+    // just because the call is nested one level deeper.
+    //
+    // NOT FOLDED INTO ONE STATEMENT. The five counts would collapse into a
+    // single SELECT of scalar subqueries, but the reliability row cannot join
+    // them safely: `rows[0] || {}` further down is what makes an account deleted
+    // between the token check and this read answer nulls, and a folded statement
+    // returns no row at all in that case, which would turn every counter into
+    // NaN. Seven short concurrent statements against a pool of 20 is the
+    // cheaper trade than a response shape that changes when a row is missing.
+    //
+    // Promise.all attaches a handler to all seven before any can settle, so a
+    // failure rejects here and lands in the catch below as the same 500 the
+    // serial version produced. Nothing escapes as an unhandled rejection.
+    const [
+      friendResult,
+      flockResult,
+      flockMsgResult,
+      dmMsgResult,
+      createdResult,
+      activityResult,
+      reliabilityResult,
+    ] = await Promise.all([
+      // Friend count
+      pool.query(
+        `SELECT COUNT(*) FROM friendships WHERE (requester_id = $1 OR addressee_id = $1) AND status = 'accepted'`,
+        [userId]
+      ),
+      // Flock count
+      pool.query(
+        `SELECT COUNT(*) FROM flock_members WHERE user_id = $1 AND status = 'accepted'`,
+        [userId]
+      ),
+      // Messages sent (flock + DM)
+      pool.query(
+        `SELECT COUNT(*) FROM messages WHERE sender_id = $1`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT COUNT(*) FROM direct_messages WHERE sender_id = $1`,
+        [userId]
+      ),
+      // Flocks created
+      pool.query(
+        `SELECT COUNT(*) FROM flocks WHERE creator_id = $1`,
+        [userId]
+      ),
+      // Streak: the distinct days with activity (messages or flock joins), most
+      // recent first. The consecutive-day walk over them is below.
+      pool.query(
+        `SELECT DISTINCT DATE(created_at AT TIME ZONE 'UTC') AS d FROM (
+        SELECT created_at FROM messages WHERE sender_id = $1
+        UNION ALL
+        SELECT created_at FROM direct_messages WHERE sender_id = $1
+        UNION ALL
+        SELECT joined_at AS created_at FROM flock_members WHERE user_id = $1
+      ) AS activity ORDER BY d DESC LIMIT 60`,
+        [userId]
+      ),
+      // Reliability score
+      pool.query(
+        'SELECT reliability_score, total_plans_joined, total_plans_attended FROM users WHERE id = $1',
+        [userId]
+      ),
+    ]);
+
     const friendCount = parseInt(friendResult.rows[0].count);
-
-    // Flock count
-    const flockResult = await pool.query(
-      `SELECT COUNT(*) FROM flock_members WHERE user_id = $1 AND status = 'accepted'`,
-      [userId]
-    );
     const flockCount = parseInt(flockResult.rows[0].count);
-
-    // Messages sent (flock + DM)
-    const flockMsgResult = await pool.query(
-      `SELECT COUNT(*) FROM messages WHERE sender_id = $1`,
-      [userId]
-    );
-    const dmMsgResult = await pool.query(
-      `SELECT COUNT(*) FROM direct_messages WHERE sender_id = $1`,
-      [userId]
-    );
     const messageCount = parseInt(flockMsgResult.rows[0].count) + parseInt(dmMsgResult.rows[0].count);
-
-    // Flocks created
-    const createdResult = await pool.query(
-      `SELECT COUNT(*) FROM flocks WHERE creator_id = $1`,
-      [userId]
-    );
     const flocksCreated = parseInt(createdResult.rows[0].count);
 
     // Calculate XP: 50 per flock created, 20 per flock joined, 5 per message, 10 per friend
@@ -1657,16 +1710,6 @@ router.get('/stats', async (req, res) => {
     const level = Math.floor(xp / 100) + 1;
 
     // Streak: count consecutive days with activity (messages or flock joins) going back from today
-    const activityResult = await pool.query(
-      `SELECT DISTINCT DATE(created_at AT TIME ZONE 'UTC') AS d FROM (
-        SELECT created_at FROM messages WHERE sender_id = $1
-        UNION ALL
-        SELECT created_at FROM direct_messages WHERE sender_id = $1
-        UNION ALL
-        SELECT joined_at AS created_at FROM flock_members WHERE user_id = $1
-      ) AS activity ORDER BY d DESC LIMIT 60`,
-      [userId]
-    );
     let streak = 0;
     if (activityResult.rows.length > 0) {
       const today = new Date();
@@ -1688,11 +1731,9 @@ router.get('/stats', async (req, res) => {
       }
     }
 
-    // Reliability score
-    const reliabilityResult = await pool.query(
-      'SELECT reliability_score, total_plans_joined, total_plans_attended FROM users WHERE id = $1',
-      [userId]
-    );
+    // Reliability score, read in the batch above. The `|| {}` stays: an account
+    // deleted between the token check and this read returns no row, and the
+    // nulls below are the honest answer for one.
     const rel = reliabilityResult.rows[0] || {};
 
     res.json({
@@ -1847,7 +1888,31 @@ router.get('/search',
       // lower() has no pattern semantics, so it needs no escaping and cannot be
       // turned into a match-everything by what somebody types.
       const result = await pool.query(
-        `SELECT id, name, profile_image_url
+        // AVATARS ARE CAPPED HERE, like every other list read in the codebase.
+        // `profile_image_url` is a base64 data URL bounded only by
+        // MAX_AVATAR_DATA_URL_BYTES (600 KB), and this is twenty rows drawn at
+        // 44 px by every people-search box in the product, refetched on a
+        // debounced keystroke. Selecting the column raw meant one broad term
+        // could detoast and transmit megabytes of image per keypress to paint
+        // thumbnails nothing could use at that size.
+        //
+        // The >12000 guard is the house convention, not a new rule. Grep for
+        // it rather than trusting a line number, which is this repo's standing
+        // rule about citations and the reason this comment carries none:
+        //   grep -rn "profile_image_url) > 12000" backend
+        // It answers in friends.js, flocks.js, messages.js, availability.js
+        // and moderation.js, and sockets/handlers.js enforces the same ceiling
+        // in JS. An oversized
+        // legacy avatar comes back NULL, which the consumers already handle --
+        // AddFriends.js and NewDmModal.js both draw the first letter of the name
+        // when the url is absent. Everything written since the upload path
+        // started resizing is well under the ceiling and is unaffected.
+        //
+        // What the guard buys is the wire and the heap, not the read: LENGTH
+        // still has to decompress the value to measure it. That is the same
+        // trade the flock and DM history reads made, and it is the half that
+        // hurts on a route the client calls on a keystroke.
+        `SELECT id, name, CASE WHEN LENGTH(profile_image_url) > 12000 THEN NULL ELSE profile_image_url END AS profile_image_url
          FROM users
          WHERE name ILIKE $1 AND id != $2
            AND COALESCE(is_banned, FALSE) = FALSE
@@ -1881,7 +1946,20 @@ router.get('/search',
 router.get('/suggested', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
+      // Same >12000 avatar guard as GET /search above and as the sibling list
+      // reads, for the same reason: ten rows of base64 to paint ten 44 px
+      // circles.
+      //
+      // AND THE BLOB IS NO LONGER A GROUPING KEY. This was
+      // `GROUP BY u.id, u.name, u.profile_image_url`, which made Postgres hash
+      // or sort the whole 600 KB data URL as part of the group key for every
+      // candidate row -- work inside the database that trimming the response
+      // would not have removed. `users.id` is the primary key, so every other
+      // u column is functionally dependent on it and Postgres allows them in
+      // the select list and the ORDER BY when the group is the key alone. Same
+      // groups, same rows, same order; the image is carried along instead of
+      // being sorted on.
+      `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
        FROM flock_members fm1
        JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
        JOIN users u ON u.id = fm2.user_id
@@ -1892,7 +1970,7 @@ router.get('/suggested', async (req, res) => {
            WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
               OR (b.blocker_id = u.id AND b.blocked_id = $1)
          )
-       GROUP BY u.id, u.name, u.profile_image_url
+       GROUP BY u.id
        ORDER BY shared_flocks DESC, u.name ASC
        LIMIT 10`,
       [req.user.id]

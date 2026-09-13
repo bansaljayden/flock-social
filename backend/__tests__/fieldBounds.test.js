@@ -249,6 +249,13 @@ const accountRow = () => ({
   profile_image_url: null, token_version: 0,
 });
 
+// The one directory row GET /api/users/search is answered with. It is a NAMED
+// row rather than an empty list on purpose: an empty list is also what this
+// file's dispatcher returns when nothing matched, so a fixture key that goes
+// stale is indistinguishable from a working one until something asserts on the
+// rows. The search case below does.
+const SEARCH_HIT = { id: 2, name: 'Bea', profile_image_url: null };
+
 function DEFAULT_HANDLERS() {
   return [
     [/^SELECT \* FROM users WHERE id = \$1$/i, () => ({ rows: [accountRow()] })],
@@ -259,7 +266,17 @@ function DEFAULT_HANDLERS() {
     [/^SELECT id FROM users WHERE/i, () => ({ rows: [] })],
     [/FROM user_settings/i, () => ({ rows: [] })],
     [/INSERT INTO user_settings/i, () => ({ rows: [{ settings: {} }] })],
-    [/^SELECT id, name, profile_image_url/i, () => ({ rows: [] })],
+    // GET /api/users/search, keyed on the predicate it scans with. This read
+    // `/^SELECT id, name, profile_image_url/` until the avatar column was
+    // wrapped in the house `CASE WHEN LENGTH(profile_image_url) > 12000 THEN
+    // NULL` guard the other list reads carry, which moved the statement out
+    // from under a start-anchored match on the select list. Nothing went red:
+    // the statement simply fell through to the dispatcher's empty default,
+    // which answers every unmodelled query the same way. A projection is tuned
+    // whenever somebody trims what a list read puts on the wire, so key on the
+    // WHERE instead: `name ILIKE $1` is the backend's only leading-wildcard
+    // match and it names this route alone.
+    [/FROM users WHERE name ILIKE \$1 AND id != \$2/i, () => ({ rows: [SEARCH_HIT] })],
     [/FROM venue_profiles WHERE google_place_id/i, () => ({ rows: [] })],
     [/^UPDATE venue_profiles SET/i, () => ({ rows: [{ id: 3, business_name: 'Bar' }] })],
     [/^INSERT INTO venue_profiles/i, () => ({ rows: [{ id: 3 }] })],
@@ -592,6 +609,12 @@ test('the search term is capped at the width of the column it is matched against
   const at = await call('GET', `/api/users/search?q=${pad(U.SEARCH)}`);
   assert.equal(at.status, 200, at.text);
   assert.equal(wrote(/FROM users/i).length, 1, 'a term at the ceiling must still be searched for');
+  // The fixture's own row, not merely a 200 with a list in it. A 200 carrying
+  // `{users: []}` is what a fall-through to the dispatcher's empty default
+  // looks like, so asserting the row is what makes a stale fixture key fail
+  // here instead of quietly answering nothing for every search case in the file.
+  assert.deepEqual(JSON.parse(at.text), { users: [SEARCH_HIT] },
+    'the search statement was answered by the empty default, not by the handler written for it');
 
   clearLimiters();
   const over = await call('GET', `/api/users/search?q=${pad(U.SEARCH + 1)}`);

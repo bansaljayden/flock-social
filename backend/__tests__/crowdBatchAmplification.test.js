@@ -457,10 +457,29 @@ test('predictBusyness forwards the caller identity down to the event fetch', () 
 
 test('every authenticated crowd surface passes a caller identity to the predictor', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
-  const calls = src.match(/mlPredictor\.predict(?:Busyness|HourlyForecast)\([^;]*?\);/g) || [];
+  // Each call is matched to its OWN closing paren, not to the next semicolon.
+  // The card route buys its score and its 24-hour strip in one Promise.all, so
+  // two of the call sites end in a comma inside an array literal and the next
+  // `;` in the file is the one after `]);` - a `[^;]*?\);` pattern read that
+  // whole array as ONE call and counted five sites as four. The loop below can
+  // only claim to have checked every site if the pattern answers one match per
+  // site.
+  const CALL = /mlPredictor\.predict(?:Busyness|HourlyForecast)\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
+  const calls = [...src.matchAll(CALL)];
+  // Two questions, and the second is the one that keeps this honest: the floor
+  // says the route still scores from five places, the census says the pattern
+  // above parsed every one of them. A call written in a shape it cannot read
+  // (two levels of nested parens in an argument list, say) fails here instead
+  // of dropping silently out of the loop.
+  const sites = (src.match(/mlPredictor\.predict(?:Busyness|HourlyForecast)\(/g) || []).length;
   assert.ok(calls.length >= 5, `expected every predictor call site to be found, saw ${calls.length}`);
-  for (const call of calls) {
-    assert.match(call, /\{ userId: req\.user\.id \}/,
+  assert.strictEqual(calls.length, sites,
+    `${sites} predictor call(s) in routes/crowd.js but ${calls.length} parsed: a call this `
+    + 'pattern cannot read is a call nobody checked');
+  // Read against the ARGUMENT LIST rather than the whole matched text, so a
+  // neighbouring call's identity can never stand in for a missing one.
+  for (const [call, args] of calls) {
+    assert.match(args, /\{ userId: req\.user\.id \}/,
       `an unidentified predictor call is an uncharged Ticketmaster fan-out: ${call}`);
   }
   assert.match(src, /latitude: \+\(\+v\.location\.latitude\)\.toFixed\(2\)/,

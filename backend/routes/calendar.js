@@ -178,6 +178,50 @@ const rowToEvent = (r) => ({
   members: 1,
 });
 
+// ---------------------------------------------------------------------------
+// A PERSONAL CALENDAR IS STILL NOT AN UNBOUNDED READ (round 22)
+// ---------------------------------------------------------------------------
+// `SELECT * ... ORDER BY event_date, time_label` with no ceiling cost this route
+// two separate things, on a read the Plans tab fires on boot and again on every
+// visit to the tab.
+//
+// The first is row WIDTH. rowToEvent keeps six columns; the table has nine. So
+// every event also carried user_id (which is $1, already known), created_at and
+// updated_at out of the heap, through the wire and into a value nothing reads.
+// Naming the six costs nothing and is the whole of that half.
+//
+// The second is row COUNT, and it is the half that grows. With neither bound the
+// only condition is `user_id = $1`, so the response is every event the account
+// has ever created, and it only ever gets bigger: a plan that has happened stays
+// in the table. The comment below already names that outcome as a bug for the
+// one-bound case, and the no-bound case is the one the client actually sends.
+//
+// A default date window is NOT the fix to make here, and that is the reason this
+// is a ceiling rather than a window. The client reads this route once and then
+// pages through months in memory: App.js holds `calendarMonth` in state, the
+// month arrows only move that state, and getEventsForDate filters the rows it
+// already has. A window the server picked would blank every month outside it
+// while nothing ever asked for more, so a plan in a year the window did not
+// cover would look deleted. Narrowing this read honestly means the caller naming
+// the month it is showing, which is the client's side of the contract to change.
+//
+// So: a ceiling, taken off the right end. The cut happens in a subquery ordered
+// NEWEST first and the order the route needs is restored outside it, because a
+// plain `ORDER BY event_date ... LIMIT n` keeps the OLDEST n and throws away the
+// plans that have not happened yet, which is exactly backwards for a calendar.
+// The inner order leads with event_date, which idx_calendar_events_user_date
+// (user_id, event_date) serves read in reverse, so this is no more sorting than
+// the single ORDER BY it replaces; `id DESC` is the tie-break so the boundary
+// day is cut the same way twice rather than arbitrarily. The OUTER order is the
+// one byDayThenTime below reads, and it is byte for byte the old one, so for
+// every account under the ceiling this returns the same rows in the same order
+// it always did.
+//
+// 1000 is roughly nineteen years at an event a week and about 110 KB on the
+// wire. Nothing typed in by hand reaches it. An importer would, and an importer
+// is a caller that should be passing bounds.
+const CALENDAR_MAX_EVENTS = 1000;
+
 // GET /api/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD — the signed-in user's events
 router.get('/', [
   // `?start[]=2026-01-01` is parsed by express as an array and satisfies a
@@ -198,13 +242,21 @@ router.get('/', [
     // handed every event they have ever had, with nothing in the response to
     // say the filter had been dropped. Each bound now stands on its own.
     //
-    // The fragments below are literals; only the values are parameters.
+    // The fragments below are literals; only the values are parameters, and the
+    // ceiling is a module constant rather than anything a caller can name.
     const conditions = ['user_id = $1'];
     const params = [req.user.id];
     if (start) { params.push(start); conditions.push(`event_date >= $${params.length}`); }
     if (end) { params.push(end); conditions.push(`event_date <= $${params.length}`); }
     const result = await pool.query(
-      `SELECT * FROM calendar_events WHERE ${conditions.join(' AND ')} ORDER BY event_date, time_label`,
+      `SELECT id, title, venue, event_date, time_label, color FROM (
+         SELECT id, title, venue, event_date, time_label, color
+           FROM calendar_events
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY event_date DESC, id DESC
+          LIMIT ${CALENDAR_MAX_EVENTS}
+       ) AS recent
+       ORDER BY event_date, time_label`,
       params
     );
     res.json(result.rows.map(rowToEvent).sort(byDayThenTime));

@@ -92,6 +92,10 @@ async function votingClosedReason(flockId, db = pool) {
 // internally so each recipient's blocked users can be stripped), guest-link
 // votes are counts only.
 async function collectVoteRows(flockId) {
+  // Both tallies are ISSUED here and AWAITED together at the Promise.all
+  // below. The note there says why the order of the two round trips stopped
+  // mattering and what had to stay exactly as it was.
+  //
   // Round 16: grouping by (venue_name, venue_id) split one venue into several
   // rows. venue_votes' unique key is (flock_id, user_id, venue_name) and
   // venue_id is nullable, so two members picking the same place through
@@ -113,7 +117,7 @@ async function collectVoteRows(flockId) {
   // is what the flock actually goes to. Membership is the rule for reading the
   // tally (verifyFlockMember on all three routes); it is the rule for
   // contributing to it too.
-  const raw = await pool.query(
+  const memberTally = pool.query(
     `SELECT venue_name,
             MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id,
             COUNT(*)::int AS member_count,
@@ -131,7 +135,7 @@ async function collectVoteRows(flockId) {
   // Round 13: this counted guest votes WITHOUT the is_hidden join that
   // routes/guest.js applies, so a guest whose RSVP a moderator took down still
   // moved the member-facing tally. A takedown has to remove them everywhere.
-  const guests = await pool.query(
+  const guestTally = pool.query(
     `SELECT gv.venue_name, COUNT(*)::int AS guest_count
      FROM guest_votes gv
      JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
@@ -161,6 +165,37 @@ async function collectVoteRows(flockId) {
     }
     throw err;
   });
+
+  // ── THE TWO TALLIES ARE READ AT ONCE (latency round) ──────────────────────
+  //
+  // These were two `await pool.query(...)` statements in a row, so the member
+  // tally's entire round trip finished before the guest tally was even sent.
+  // Nothing made that order necessary: they read disjoint tables (venue_votes
+  // with users and flock_members, against guest_votes with guest_rsvps), both
+  // take nothing but flockId, and neither reads a row of the other: the first
+  // line that touches either result is guestByVenue just below, and it wants
+  // both of them.
+  // So the second round trip was spent waiting rather than deciding anything,
+  // in the one function every tally in the product comes from: four routes in
+  // this file plus sockets/handlers.js, paid on every vote, every un-vote,
+  // every guest vote and every open of the vote list.
+  //
+  // What deliberately did NOT change:
+  //   - the statements still go out in this order, member tally first. Both
+  //     pool.query calls are made synchronously above, before either resolves,
+  //     so a fixture that answers statements in arrival order sees what it saw.
+  //   - the narrowed .catch stays on the guest half alone, exactly as written.
+  //     An unmigrated database still answers with the member votes it has; any
+  //     other guest failure still reaches the caller's 500 rather than being
+  //     served as a complete tally with the guest votes quietly removed.
+  //   - Promise.all attaches a handler to both promises in this same tick, so
+  //     if both halves fail the losing rejection cannot escape unhandled.
+  //
+  // The trade is two pooled connections for the length of one read where there
+  // was one connection for the length of two, so the connection-time spent is
+  // unchanged; the pool is 20 and both halves are single grouped reads scoped
+  // to one flock.
+  const [raw, guests] = await Promise.all([memberTally, guestTally]);
   const guestByVenue = Object.fromEntries(guests.rows.map(g => [g.venue_name, g.guest_count]));
 
   // ── THE GUEST LINK CANNOT OUTWEIGH THE ROSTER (game-rule abuse round) ─────

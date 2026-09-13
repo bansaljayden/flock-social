@@ -218,6 +218,66 @@ function storePhoto(cacheKey, entry) {
   }
 }
 
+// Drop one entry and keep the byte counter honest. Every deletion outside the
+// eviction loops in storePhoto goes through here, because a delete that forgets
+// the subtraction leaves photoCacheBytes ABOVE what the map actually holds, and
+// a counter that has drifted upward evicts live photos to make room that is
+// already there. __tests__/photoCacheCost.test.js asserts the counter equals the
+// sum of the buffers, which is what catches a missed subtraction.
+//
+// It takes a KEY and re-reads the map rather than taking an entry the caller
+// already has in hand, which is what makes it safe to call twice: two requests
+// for the same expired key both hold the same entry object, and a version that
+// trusted that reference would subtract its length twice and push the counter
+// below zero.
+function dropPhotoEntry(cacheKey) {
+  const entry = photoCache.get(cacheKey);
+  if (!entry) return false;
+  photoCache.delete(cacheKey);
+  photoCacheBytes -= entry.buffer.length;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// THE HEAP SIDE OF THE 30-DAY WINDOW, WHICH NOTHING WAS ENFORCING.
+// ---------------------------------------------------------------------------
+// PHOTO_CACHE_TTL is a TERMS decision and not a freshness one: the note above it
+// says so, and services/photoStore.js carries the clause it was chosen against.
+// That makes the deletion an obligation rather than housekeeping, so bytes past
+// the window have to LEAVE whether or not anything is short of space. The
+// durable tier honours that on a timer — server.js runs prunePhotoStore()
+// hourly, and its comment there calls the deletion a terms obligation in as
+// many words. L1 honoured it nowhere. An expired entry was SKIPPED by the read
+// in GET /photo and left sitting in the map, and storePhoto's expired-entry
+// sweep above only runs once photoCacheBytes is over MAX_PHOTO_CACHE_BYTES —
+// 32 MB, which a container at this traffic never reaches. So time-expired
+// Places bytes stayed in the heap until the next deploy emptied it, and the
+// claim that the expiry is enforced on the read path AND on a timer was only
+// ever true of the half that lives in Postgres.
+//
+// A FULL SCAN WITH NO EARLY BREAK, on purpose. photoCache insertion order is
+// LRU order, not age order (touchPhotoCache re-inserts a hit at the back), so
+// the first live entry says nothing about the rest of the map and stopping there
+// would leave older bytes behind.
+//
+// Not folded into storePhoto either. Sweeping on every insert is the per-write
+// scan the low-water mark above exists to avoid, and an insert-time sweep still
+// never fires in the process that holds expired bytes the LONGEST: the one that
+// has stopped buying photos.
+//
+// Synchronous, and it cannot throw: a caller on a timer needs no .catch.
+function prunePhotoMemory(now = Date.now()) {
+  let dropped = 0;
+  for (const [k, v] of photoCache) {
+    if (now - v.ts <= PHOTO_CACHE_TTL) continue;
+    photoCache.delete(k);
+    photoCacheBytes -= v.buffer.length;
+    dropped += 1;
+  }
+  if (dropped > 0) console.log(`[Photo Proxy] expired ${dropped} cached photos from memory`);
+  return dropped;
+}
+
 // In-flight coalescing (round 18). The caches above only help requests that
 // arrive AFTER the first one has finished; N concurrent requests for the same
 // uncached key were N budget charges and N paid Google calls — a hot venue's
@@ -424,11 +484,22 @@ router.get('/photo',
       // L1, this container's memory. Free, and the only tier that costs nothing
       // at all to consult.
       const cached = photoCache.get(cacheKey);
-      if (cached && Date.now() - cached.ts < PHOTO_CACHE_TTL) {
-        // A hit is what makes this entry recently used; without the re-insert
-        // the map is FIFO and the eviction comment above would be a lie.
-        touchPhotoCache(cacheKey, cached);
-        return sendPhoto(res, cached);
+      if (cached) {
+        if (Date.now() - cached.ts < PHOTO_CACHE_TTL) {
+          // A hit is what makes this entry recently used; without the re-insert
+          // the map is FIFO and the eviction comment above would be a lie.
+          touchPhotoCache(cacheKey, cached);
+          return sendPhoto(res, cached);
+        }
+        // Past the window, so the entry is DELETED here rather than stepped
+        // over. This read is the one moment the process is certain these bytes
+        // are expired, and merely skipping them kept Places content in memory
+        // past the 30-day window until either the cache grew to 32 MB or a
+        // deploy threw it away (see prunePhotoMemory). The answer the caller
+        // gets is unchanged: the flight below reads L2 or re-buys the photo
+        // exactly as it did when the entry was skipped, and storePhoto puts a
+        // fresh entry back.
+        dropPhotoEntry(cacheKey);
       }
 
       // Everything past L1 rides ONE flight per key: the L2 database read, the
@@ -1251,6 +1322,14 @@ function shapeDetails(out) {
 }
 
 module.exports = router;
+
+// The heap half of the photo expiry, for the hourly timer in server.js that
+// already runs prunePhotoStore() for the Postgres half. Exported the way
+// routes/stories.js exports purgeExpiredStories, and for the same reason: an
+// expiry that has to happen whether or not anybody asks for a photo needs a
+// caller that is not a route. UNTIL THAT TIMER CALLS IT, the only thing that
+// empties L1 of expired bytes is a read of that exact key or a 32 MB cache.
+module.exports.prunePhotoMemory = prunePhotoMemory;
 
 // Tests only (backend/__tests__/placesProxyAbuse.test.js). The photo DAY
 // counter this used to reset no longer exists in this file: the money ledger is

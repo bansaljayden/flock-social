@@ -280,48 +280,86 @@ router.get('/venues/tag-url', async (req, res) => {
 
 router.get('/analytics', async (req, res) => {
   try {
-    const totalFlocks = await pool.query('SELECT COUNT(*) AS count FROM flocks');
+    // NINE AGGREGATES THAT WERE WAITING IN LINE FOR EACH OTHER.
+    //
+    // These were nine consecutive `await pool.query(...)` calls. Not one of
+    // them takes a bind parameter, not one of them reads a prior result, and
+    // the first row is not touched until the unwrapping below — so the only
+    // thing the sequence bought was nine round trips laid end to end. Every one
+    // is a full-table aggregate over flocks, research_analytics or users with no
+    // WHERE an index can serve, so each is a sequential scan, and the panel's
+    // latency was the SUM of nine scans rather than the slowest of them.
+    //
+    // Promise.all is behaviour-neutral here: the same nine statements with the
+    // same (absent) parameters, the rows landing in the same names, and the same
+    // 500 out of the existing catch if any one of them fails. The nine promises
+    // are created back to back with no await between them, so the Promise.all
+    // that attaches a handler to every one of them is reached in the same tick —
+    // a second failure cannot escape as an unhandled rejection.
+    //
+    // THE SQL IS BYTE-IDENTICAL to what it was, ragged indentation included.
+    // Several suites in __tests__ script a fake pool by matching the wording of
+    // a statement, so re-wrapping one of these strings is a test change wearing
+    // the clothes of a formatting change. Moving the wrapper is not.
+    //
+    // Nine concurrent statements hold nine of the pool's 20 slots for as long as
+    // they run (config/database.js). That is acceptable on THIS route and would
+    // not be on a user route: it is admin-only (requireAdmin at the top of the
+    // router), opened by hand, and never fired by a client loop. Do not copy the
+    // width of this batch onto anything the app polls.
+    const [
+      totalFlocks,
+      completionRate,
+      avgGroupSize,
+      budgetAdoption,
+      avgTimeToConfirm,
+      stallPoints,
+      weeklyTrends,
+      userStats,
+      reliabilityDistribution,
+    ] = await Promise.all([
+      pool.query('SELECT COUNT(*) AS count FROM flocks'),
 
-    const completionRate = await pool.query(
-      `SELECT
+      pool.query(
+        `SELECT
         COUNT(*) FILTER (WHERE status = 'completed') AS completed,
         COUNT(*) FILTER (WHERE status IN ('completed', 'cancelled')) AS terminal
        FROM flocks`
-    );
+      ),
 
-    const avgGroupSize = await pool.query(
-      `SELECT AVG(group_size)::NUMERIC(4,1) AS avg_size FROM research_analytics`
-    );
+      pool.query(
+        `SELECT AVG(group_size)::NUMERIC(4,1) AS avg_size FROM research_analytics`
+      ),
 
-    const budgetAdoption = await pool.query(
-      `SELECT
+      pool.query(
+        `SELECT
         COUNT(*) FILTER (WHERE budget_enabled = true) AS with_budget,
         COUNT(*) AS total
        FROM research_analytics`
-    );
+      ),
 
-    const avgTimeToConfirm = await pool.query(
-      `SELECT AVG(time_to_confirmation)::INTEGER AS avg_minutes
+      pool.query(
+        `SELECT AVG(time_to_confirmation)::INTEGER AS avg_minutes
        FROM research_analytics WHERE flock_completed = true`
-    );
+      ),
 
-    // The only variable-length result on this router that had no ceiling.
-    // stall_point is server-chosen today (routes/flocks.js picks one of five
-    // words), so this returns five rows — but that is a property of ANOTHER
-    // file, and "a route widened the set of values it writes and the thing
-    // reading them back did not hear about it" is the exact drift this codebase
-    // has now hit four times (003, 016, 017, and the guest_rsvp console gap).
-    // A dashboard chart with more than 50 categories is not a chart anyway.
-    const stallPoints = await pool.query(
-      `SELECT stall_point, COUNT(*) AS count
+      // The only variable-length result on this router that had no ceiling.
+      // stall_point is server-chosen today (routes/flocks.js picks one of five
+      // words), so this returns five rows — but that is a property of ANOTHER
+      // file, and "a route widened the set of values it writes and the thing
+      // reading them back did not hear about it" is the exact drift this codebase
+      // has now hit four times (003, 016, 017, and the guest_rsvp console gap).
+      // A dashboard chart with more than 50 categories is not a chart anyway.
+      pool.query(
+        `SELECT stall_point, COUNT(*) AS count
        FROM research_analytics
        GROUP BY stall_point
        ORDER BY count DESC
        LIMIT 50`
-    );
+      ),
 
-    const weeklyTrends = await pool.query(
-      `SELECT
+      pool.query(
+        `SELECT
         DATE_TRUNC('week', created_at) AS week,
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE flock_completed = true) AS completed,
@@ -330,16 +368,16 @@ router.get('/analytics', async (req, res) => {
        WHERE created_at > NOW() - INTERVAL '8 weeks'
        GROUP BY week
        ORDER BY week DESC`
-    );
+      ),
 
-    const userStats = await pool.query(
-      `SELECT COUNT(*) AS total_users,
+      pool.query(
+        `SELECT COUNT(*) AS total_users,
         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS new_this_week
        FROM users`
-    );
+      ),
 
-    const reliabilityDistribution = await pool.query(
-      `SELECT
+      pool.query(
+        `SELECT
         COUNT(*) FILTER (WHERE reliability_score >= 80) AS reliable,
         COUNT(*) FILTER (WHERE reliability_score >= 50 AND reliability_score < 80) AS moderate,
         -- >= 0, not > 0. A user marked no_show on their only plan scores
@@ -350,7 +388,8 @@ router.get('/analytics', async (req, res) => {
         COUNT(*) FILTER (WHERE reliability_score >= 0 AND reliability_score < 50) AS flaky,
         COUNT(*) FILTER (WHERE reliability_score IS NULL) AS unscored
        FROM users`
-    );
+      ),
+    ]);
 
     const cr = completionRate.rows[0];
     const terminal = parseInt(cr.terminal) || 0;
