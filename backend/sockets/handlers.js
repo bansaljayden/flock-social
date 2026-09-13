@@ -1995,11 +1995,47 @@ function registerHandlers(io, socket) {
 
       // Exact coordinates never reach blocked users (round 3). Per-member
       // fan-out instead of room broadcast; fails closed by construction.
-      const members = await pool.query(
-        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-        [flockId, user.id]
-      );
-      const invisible = new Set(await getInvisibleUserIds(user.id));
+      //
+      // ONE ROUND TRIP FOR THE TWO READS (latency audit, 2026-09-12). A
+      // share is a session, not an event: the client emits this on a
+      // ten-second interval for the whole walk to the venue, and the handler
+      // used to pay THREE serial round trips on every tick - membership,
+      // then the roster, then the block/ban set. The roster read takes only
+      // flockId and the block read only user.id, neither reads the other's
+      // rows, and both are consumed below after both have resolved, so they
+      // are one concurrent round trip rather than two. Nothing a peer
+      // receives moves. Promise.all attaches a handler to both promises, so
+      // a failing read is still caught below instead of escaping as an
+      // unhandled rejection.
+      //
+      // WHY THERE IS NO CACHE HERE, which is the obvious next step and is
+      // refused on purpose. dm_share_location answers the same question out
+      // of a 30-second pair cache, and it may: creating a block INVALIDATES
+      // that cache (invalidateBlockCache, called from the block route),
+      // which is round 5's rule - a fresh block must invalidate a cache on
+      // live coordinates, never be waited out. A Map private to this file
+      // has nothing the block route can reach, so a cached block/ban set
+      // here would keep exact coordinates flowing to somebody who had just
+      // blocked the sharer. The roster half is worse: the note above
+      // emitToFlockMembers says what makes this per-member fan-out safe is
+      // that membership is re-read AT EMIT TIME, and routes/flocks.js
+      // revokes a departed member's rooms the moment their membership ends,
+      // so a cached roster would feed pins to somebody who had just left the
+      // plan. A cached SET of both, with an invalidation hook the block
+      // route can call, belongs in utils/blocks.js beside
+      // isBlockedBetweenCached if it is ever wanted - not here.
+      //
+      // The membership gate above stays first and stays uncached for the
+      // reason it always was: a non-member's packet costs one statement and
+      // nothing downstream.
+      const [members, invisibleIds] = await Promise.all([
+        pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, user.id]
+        ),
+        getInvisibleUserIds(user.id),
+      ]);
+      const invisible = new Set(invisibleIds);
       // The flock rides along. The client keeps one map of positions for the
       // whole session, and without this a member of two flocks saw the
       // people sharing in one of them counted as "here" in the other's chat.
@@ -2032,11 +2068,20 @@ function registerHandlers(io, socket) {
   // are honoured the same way update_location honours them, and the sharer is
   // excluded in the query rather than by relying on socket.to().
   async function announceStoppedSharing(flockId) {
-    const members = await pool.query(
-      "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-      [flockId, user.id]
-    );
-    const invisible = new Set(await getInvisibleUserIds(user.id));
+    // Same two independent reads update_location makes, so the same one
+    // concurrent round trip instead of two serial ones (latency audit,
+    // 2026-09-12). It matters most here: the stop is what takes a stale pin
+    // off a peer's map, and until it lands the map is claiming somebody is
+    // somewhere they left. Still uncached for the reasons written out above
+    // update_location's pair of reads.
+    const [members, invisibleIds] = await Promise.all([
+      pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+        [flockId, user.id]
+      ),
+      getInvisibleUserIds(user.id),
+    ]);
+    const invisible = new Set(invisibleIds);
     for (const m of members.rows) {
       if (invisible.has(m.user_id)) continue;
       io.to(`user:${m.user_id}`).emit('member_stopped_sharing', { userId: user.id, flockId });
@@ -2167,10 +2212,45 @@ function registerHandlers(io, socket) {
       const st = flockResult.rows[0].status;
       if (st === 'completed' || st === 'cancelled') return;
 
+      // ONE BLOCK QUESTION FOR BOTH AUDIENCES, ASKED ONCE (latency audit,
+      // 2026-09-12). The loop below used to ask isBlockedBetween(user.id,
+      // uid) per confirmed invitee - up to 25 serial user_blocks round trips,
+      // each one sitting in front of the toast it gates, so the first
+      // invitee's card waited on every other invitee's lookup - and then the
+      // room echo twenty lines down asked the SET-shaped version of the same
+      // question anyway. utils/blocks.js documents exactly this case above
+      // getInvisibleUserIds: a block decision for N people is one query and a
+      // Set membership test, never isBlockedBetween in a loop. The REST twin
+      // (routes/flocks.js POST /:id/invite) has been one set-based read since
+      // its own N+1 was batched.
+      //
+      // TWO DELIBERATE CONSEQUENCES, both in the safe direction.
+      //
+      //   * getInvisibleUserIds is wider than the pair check by exactly one
+      //     thing: a banned account is in the set, because every fan-out that
+      //     asks this question treats a ban the way it treats a block (see
+      //     the note on that function). So a banned invitee no longer gets
+      //     the toast, which changes no delivery: middleware/auth.js refuses
+      //     a banned account at the socket handshake and revalidateSession
+      //     cuts one that is already connected, so `user:{bannedId}` names no
+      //     socket to emit to.
+      //   * the fail-closed return now covers the per-invitee toasts as well.
+      //     Before, an unreadable block list suppressed only the room echo,
+      //     and it did so AFTER every toast had already gone out.
+      //
+      // Fails closed, because an unreadable block list is not an empty one.
+      let inviteInvisible;
+      try {
+        inviteInvisible = await getInvisibleUserIds(user.id);
+      } catch (_) {
+        return;
+      }
+      const inviteHidden = new Set(inviteInvisible);
+
       for (const row of invitedRows.rows) {
         const uid = row.user_id;
         // Blocked users never see each other's invites
-        if (await isBlockedBetween(user.id, uid)) continue;
+        if (inviteHidden.has(uid)) continue;
         io.to(`user:${uid}`).emit('flock_invite_received', {
           flockId,
           flockName,
@@ -2191,13 +2271,7 @@ function registerHandlers(io, socket) {
       // name to anyone in the room who had blocked them. Two transports, one
       // event, one guard: same block-excluded broadcast as
       // flock_invite_responded below, delivery scope (room only) unchanged.
-      // Fails closed, because an unreadable block list is not an empty one.
-      let inviteInvisible;
-      try {
-        inviteInvisible = await getInvisibleUserIds(user.id);
-      } catch (_) {
-        return;
-      }
+      // The block list it filters with is the one read above.
       broadcastExcluding(socket.to(`flock:${flockId}`), inviteInvisible, 'flock_members_invited', {
         flockId,
         invitedBy: { userId: user.id, name: user.name },

@@ -83,8 +83,22 @@ pool.query = (text, params = []) => {
     const u = USERS[params[0]];
     return Promise.resolve({ rows: u ? [{ ...u }] : [], rowCount: u ? 1 : 0 });
   }
-  // The route under test: the only `name ILIKE $1` in the file.
-  if (has('SELECT id, name, profile_image_url') && has('name ILIKE $1')) {
+  // The route under test, keyed on the PREDICATE it scans with.
+  //
+  // This used to also require the literal `SELECT id, name, profile_image_url`,
+  // and that half went stale the day the avatar column was wrapped in the house
+  // `CASE WHEN LENGTH(profile_image_url) > 12000 THEN NULL` guard that eight
+  // other list reads already carried. The select list stopped reading that way,
+  // this matcher stopped firing, the statement fell into `unknown`, and every
+  // count below went to zero — a route with no meter at all would have looked
+  // exactly the same. A projection is tuned whenever somebody trims what a list
+  // read puts on the wire, so it is the wrong thing to identify a route by.
+  //
+  // `FROM users WHERE name ILIKE $1` is not a projection. It is the
+  // leading-wildcard sequential scan that IS the metered resource here, it is
+  // the only one in the backend, and it cannot change without the finding this
+  // file pins changing with it.
+  if (has('FROM users WHERE name ILIKE $1')) {
     searchScans++;
     // The fixture answers a literal substring match, unescaping the two
     // wrapping % the route added. The escaping itself is pinned elsewhere.

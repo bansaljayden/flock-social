@@ -104,6 +104,21 @@ pool.query = async (text, params = []) => {
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
 
+  // routes/messages.js counterpartyIsBanned — the DM thread read and the DM
+  // read receipt ask "is THIS one person banned", one row for one id, rather
+  // than pulling back every banned account in the product to scan for it. The
+  // whole statement is the fragment on purpose: anything as short as "FROM
+  // users WHERE id = $1" also matches the auth middleware's own row read, and
+  // handing that a one-column ban verdict fails every request in this file on
+  // the fields the row does not carry. Answered from USERS rather than with a
+  // flat empty result, so a fixture user given is_banned: true is actually
+  // treated as banned instead of quietly waved through.
+  if (has('SELECT 1 FROM users WHERE id = $1 AND is_banned IS TRUE')) {
+    const u = USERS[params[0]];
+    const banned = Boolean(u && u.is_banned);
+    return banned ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+
   // ── flock membership lookups ──
   if (has('SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2')) {
     const m = Number(params[0]) === FLOCK.id ? memberOf(params[1]) : null;

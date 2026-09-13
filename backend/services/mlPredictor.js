@@ -1336,6 +1336,90 @@ function primeBaselineCache(placeId, rows) {
   return primed;
 }
 
+// ---------------------------------------------------------------------------
+// ONE CURVE READ PER VENUE PER BURST, NOT ONE PER STRIP.
+// ---------------------------------------------------------------------------
+// predictHourlyForecast primes the cache above from one whole-week read, which
+// is right. What was wrong is that it ran that read EVERY time, having asked
+// nothing about what the cache already holds, and one caller builds several
+// strips for the same venue inside one request: routes/venueDashboard.js GET
+// /intelligence scores today and then each of the next six days, so a single
+// cache miss there ran the identical up-to-168-row read SEVEN times and
+// replayed primeBaselineCache over the same rows seven times. Six of the seven
+// could only ever write what the first had already written.
+//
+// WHAT IS REMEMBERED IS THE ROWS, NOT THE FACT THAT A PRIME HAPPENED, and that
+// distinction is what makes skipping the read safe. baselineCache is bounded
+// (PREDICTOR_CACHE_MAX slots, shared with every other venue the consumer app is
+// scoring), so "this venue was primed ten minutes ago" is NOT evidence its slots
+// are still resident — an evicted curve plus a skipped prime would send every
+// hour of the strip back to its own three-row query, which is a worse outcome
+// than the read this exists to avoid. Replaying remembered rows through
+// primeBaselineCache costs no query and leaves residency exactly as it is today.
+//
+// COALESCE FIRST, CHARGE SECOND — the rule getNearbyEvents and
+// getNeighborActivity already state. A cache is a memory of a FINISHED read, and
+// the days of a week view can be asked for concurrently, so without the
+// in-flight map six simultaneous misses on one venue would still be six reads.
+// allowVenueLookup sits on the far side of both checks, so one read is charged
+// where the route paid up to seven: the same reading of "charge what you spend"
+// getBaseline applies to its own cache hits, not a discount.
+//
+// TEN MINUTES, not the 24 hours baselineCache gives a slot. The window only has
+// to cover one request's fan-out and a burst of them, and keeping it short is
+// what stops a remembered curve from outliving the rows it came from by anything
+// material, since every replay restamps the slots it writes. Fifty venues is
+// likewise a deliberate ceiling rather than a generous one: these entries hold
+// real rows (up to 168 each), so this is the one map in the file where a large
+// ceiling would cost memory instead of saving a round trip.
+const CURVE_CACHE_TTL = 10 * 60 * 1000;
+const CURVE_CACHE_MAX = 50;
+const curveCache = new Map();    // placeId -> { ts, rows }: the curve itself
+const curveInflight = new Map(); // placeId -> Promise<rows>: reads in flight
+
+// Returns the number of slots primed, the same number primeBaselineCache
+// returns, so a caller can tell a prime from a refusal. Callers must treat this
+// as the optimisation it is and wrap it: a failed read rejects (see the finally)
+// and must never be the reason a strip fails.
+async function primeVenueCurve(placeId, userId) {
+  if (!pool || !placeId) return 0;
+
+  const cached = curveCache.get(placeId);
+  if (cached && Date.now() - cached.ts < CURVE_CACHE_TTL) {
+    return primeBaselineCache(placeId, cached.rows);
+  }
+  const inflight = curveInflight.get(placeId);
+  if (inflight) return primeBaselineCache(placeId, await inflight);
+
+  // A refusal primes nothing and is NOT remembered: an account that cannot
+  // query must also be unable to teach this map that the curve is covered,
+  // which is the rule getBaseline follows when it declines to cache a refused
+  // miss.
+  if (!allowVenueLookup(placeId, userId)) return 0;
+
+  const pending = pool.query(
+    `SELECT day_of_week, hour, baseline, source, updated_at
+       FROM ml_venue_baselines
+      WHERE google_place_id = $1`,
+    [placeId]
+  ).then(({ rows }) => {
+    boundedSet(curveCache, placeId, { ts: Date.now(), rows }, CURVE_CACHE_MAX);
+    return rows;
+  });
+  curveInflight.set(placeId, pending);
+  try {
+    // primeBaselineCache writes only slots the curve actually has a row for,
+    // so an hour this venue has no data on still misses and takes the honest
+    // path. It cannot teach the cache that an unmeasured slot is zero.
+    return primeBaselineCache(placeId, await pending);
+  } finally {
+    // Deleted whatever happened, so a read that failed cannot leave a poisoned
+    // key behind. Every caller awaits this promise inside its own try/catch,
+    // which is why a rejection here cannot escape as an unhandled one.
+    curveInflight.delete(placeId);
+  }
+}
+
 // `userId` (optional) is the account a cache MISS is charged to — see
 // allowVenueLookup. Hits are answered above the gate and cost nothing.
 // `miss` (optional): an object this call writes its own miss reason into
@@ -3802,11 +3886,19 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // same treatment.
   //
   // CHARGED ONCE, NOT WAIVED. allowVenueLookup is the per-account venue-lookup
-  // budget and it is consulted here exactly as getBaseline would have
-  // consulted it, so this pays one unit where the loop paid up to 24. A
-  // refusal skips the prime entirely and every hour below takes its normal
-  // refused path, which keeps the budget a real ceiling rather than something
-  // an optimisation can step around.
+  // budget and it is consulted inside primeVenueCurve exactly as getBaseline
+  // would have consulted it, so this pays one unit where the loop paid up to
+  // 24. A refusal skips the prime entirely and every hour below takes its
+  // normal refused path, which keeps the budget a real ceiling rather than
+  // something an optimisation can step around.
+  //
+  // AND ONCE PER VENUE, NOT ONCE PER STRIP. The read, the charge and the
+  // in-flight coalescing all live in primeVenueCurve because a caller that
+  // builds several strips for one venue in one request ran this identical read
+  // once per strip: GET /api/venue-dashboard/intelligence builds seven of them
+  // for the same place id, so six of its seven reads could only rewrite what
+  // the first had already written. The block above primeVenueCurve argues why
+  // the remembered rows are replayed rather than the read merely skipped.
   //
   // WRAPPED, because this is an optimisation and an optimisation may never be
   // the reason a strip fails — the same rule the event prefetch is written
@@ -3820,18 +3912,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // is the cheapest-looking line here and it is the one that throws.
   try {
     const basePlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
-    if (pool && basePlaceId && allowVenueLookup(basePlaceId, options && options.userId)) {
-      const { rows: curve } = await pool.query(
-        `SELECT day_of_week, hour, baseline, source, updated_at
-           FROM ml_venue_baselines
-          WHERE google_place_id = $1`,
-        [basePlaceId]
-      );
-      // primeBaselineCache writes only slots the curve actually has a row for,
-      // so an hour this venue has no data on still misses and takes the honest
-      // path. It cannot teach the cache that an unmeasured slot is zero.
-      primeBaselineCache(basePlaceId, curve);
-    }
+    await primeVenueCurve(basePlaceId, options && options.userId);
   } catch { /* prime nothing; the loop queries per hour, as before */ }
 
   for (let i = 0; i < hours; i++) {
@@ -4029,6 +4110,8 @@ module.exports = {
     VENUE_LOOKUP_USER_DAILY,
     venueLookupBudgetRemaining: (userId) => venueLookupBudget.remaining(userId),
     baselineCacheSize: () => baselineCache.size,
+    curveCacheSize: () => curveCache.size,
+    curveInflightSize: () => curveInflight.size,
     feedbackCacheSize: () => feedbackCache.size,
     // Tests only. Production code must never reset a spending counter.
     __resetVenueLookupCaches: () => {
@@ -4036,6 +4119,11 @@ module.exports = {
       baselineMissCache.clear();
       feedbackCache.clear();
       selfBaselineCache.clear();
+      // The whole-curve memo belongs in this reset for the same reason the
+      // per-slot cache does: a test that counts curve reads would otherwise
+      // see the previous case's remembered rows and count one too few.
+      curveCache.clear();
+      curveInflight.clear();
       venueLookupBudget.reset();
     },
     neighborCacheSize: () => neighborCache.size,

@@ -554,9 +554,26 @@ test('the normalizer does not mutate the predictor\'s own block', () => {
 // until it matches prose.
 // ===========================================================================
 
+// Comments out, code untouched, and the second half of that is the hard half.
+// This used to strip `/* ... */` first and greedily, which made a `/*` inside a
+// LINE comment an opener: routes/publicCrowd.js gained the line
+//
+//     // fetches same-origin /relay/public/*, which vercel.json rewrites to this
+//
+// and the `/*` in that path glob paired with the `/* card arrives via the venue
+// endpoint instead */` 560 lines below it, so half the file — the demo payload
+// this sweep exists to watch included — was deleted before the sweep ever read
+// it. The sweep reported zero offenders in that file and was not looking at it.
+//
+// So a block opener is only believed where one is actually written: closing on
+// its own line, or starting a line. A line comment mentioning `/*` in prose or
+// in a path is neither, and it is removed whole by the last pass instead.
+// Comments are blanked rather than dropped so the offsets still line up with the
+// real file and the `file:line` a failure prints is the line a reader can open.
 const codeOf = (src) => src
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  .replace(/\/\*(?:(?!\*\/)[^\n])*\*\//g, '')
+  .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, (m) => m.replace(/[^\n]/g, ''))
+  .split('\n').map((l) => (/^\s*\/\//.test(l) ? '' : l)).join('\n');
 
 // The innermost object literal containing `at`. Walks left to the unmatched
 // `{`, then right to its partner.
@@ -584,9 +601,19 @@ function enclosingLiteral(src, at) {
   return null;
 }
 
+// The four surfaces the header names, counted per file. `found >= 4` alone says
+// the sweep saw four payloads SOMEWHERE, which is how a stripper that had gone
+// blind on one whole file still read as "three payloads, nothing wrong": a
+// missing file and a deleted surface produce the same number. This says WHICH
+// file each payload is in, so a file the sweep can no longer read fails by name.
+// A fifth payload in any of them is fine (>=); a fifth FILE is caught by the
+// offender check below, which reads every file in the directory.
+const PAYLOADS_PER_FILE = { 'ai.js': 1, 'crowd.js': 2, 'publicCrowd.js': 1 };
+
 test('every payload in routes/ that publishes a confidence publishes the block with it', () => {
   const dir = path.join(BACKEND, 'routes');
   const offenders = [];
+  const perFile = {};
   let found = 0;
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
     const src = codeOf(fs.readFileSync(path.join(dir, file), 'utf8'));
@@ -594,6 +621,7 @@ test('every payload in routes/ that publishes a confidence publishes the block w
     let m;
     while ((m = re.exec(src))) {
       found++;
+      perFile[file] = (perFile[file] || 0) + 1;
       const literal = enclosingLiteral(src, m.index);
       const line = src.slice(0, m.index).split('\n').length;
       if (!literal) {
@@ -607,6 +635,12 @@ test('every payload in routes/ that publishes a confidence publishes the block w
   }
   assert.ok(found >= 4,
     `only ${found} payload(s) in routes/ publish a confidence; this sweep has stopped looking at anything`);
+  for (const [file, least] of Object.entries(PAYLOADS_PER_FILE)) {
+    assert.ok((perFile[file] || 0) >= least,
+      `routes/${file} publishes ${least} confidence payload(s) and the sweep saw ${perFile[file] || 0}. `
+      + 'Either the surface was deleted, or the comment stripper above ate the code it lives in. '
+      + 'The second one reads as a clean sweep, so it is checked here rather than assumed.');
+  }
   assert.deepStrictEqual(offenders, [],
     'a confidence integer is being published with nothing to say what it measures. ' +
     'The unmeasured ladder (72) outranks the measured accuracy (33), so a bare number is read backwards:\n' +

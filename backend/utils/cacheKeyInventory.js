@@ -778,6 +778,50 @@ const INVENTORY = [
     why: 'Added with the R4-I2 fix. Bounded by concurrency; a rejection cannot leave a poisoned key.',
   },
   {
+    file: 'services/mlPredictor.js', name: 'curveCache', kind: 'cache',
+    key: 'placeId alone — one whole week of ml_venue_baselines rows for that venue, '
+      + 'with no day and no hour in the key',
+    callerControls: 'the whole placeId, the same 256-char field POST /api/crowd/batch '
+      + 'passes. allowVenueLookup re-imposes utils/places.js isPlaceIdShaped in front '
+      + 'of the query, so an unshaped id is refused for free and a shaped id that names '
+      + 'nothing reads zero rows',
+    protects: 'the up-to-168-row ml_venue_baselines read that primeBaselineCache replays. '
+      + 'routes/venueDashboard.js GET /intelligence builds one strip for today and one for '
+      + 'each of the next six days, so a single cold venue ran that identical read SEVEN '
+      + 'times and six of the seven could only write what the first had already written',
+    denominator: 'uncached whole-week curve reads, charged to the same crowd-venue-lookup '
+      + 'budget as the slot lookups it feeds (1500/hr, 5000/day per account). A hit is '
+      + 'answered above the gate and costs nothing, which is the reading of charge-what-you-'
+      + 'spend getBaseline already applies to its own hits',
+    bound: 'boundedSet at CURVE_CACHE_MAX = 50, delete-then-set, oldest-first, 10 minute TTL',
+    verdict: 'SAFE',
+    why: 'Fifty entries is far below the hourly lookup allowance of one account, so a '
+      + 'flooding caller CAN churn this map, and churn is the entire cost: an evicted curve '
+      + 'is re-read by whoever asks next, on the budget that already meters that read, and '
+      + 'no eviction can publish a wrong number. What is remembered is the ROWS and not the '
+      + 'fact that a prime happened, so a replay writes only slots the venue really has a '
+      + 'row for and an evicted baselineCache slot still takes the honest path. A refused '
+      + 'caller writes nothing here, because allowVenueLookup sits in front of the query and '
+      + 'only the resolved query writes the entry. The ceiling is 50 rather than the 2000 its '
+      + 'siblings carry because these entries hold real rows, up to 168 each, so a large '
+      + 'ceiling would cost memory instead of saving a round trip.',
+  },
+  {
+    file: 'services/mlPredictor.js', name: 'curveInflight', kind: 'inflight',
+    key: 'the same placeId as curveCache',
+    callerControls: 'same',
+    protects: 'collapses the concurrent misses of one week view — seven days of one venue '
+      + 'asked for at once — into 1 read and 1 charge',
+    denominator: 'in-flight promises',
+    bound: 'none, deleted in a finally',
+    verdict: 'SAFE',
+    why: 'Coalesce first and charge second, the rule getNearbyEvents and getNeighborActivity '
+      + 'already state: a cache remembers a FINISHED read, so without this map six '
+      + 'simultaneous misses on one venue would still be six reads. Bounded by concurrency, '
+      + 'and the finally deletes the key whatever happened, so a read that threw cannot leave '
+      + 'a poisoned promise behind for the next caller to await.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'eventUserBudget', kind: 'counter',
     key: "createUserBudget name:'crowd-events' — authenticated user id (200/hr, 400/day)",
     callerControls: 'nothing',

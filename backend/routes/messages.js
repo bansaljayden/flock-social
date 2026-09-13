@@ -169,6 +169,35 @@ async function verifyFlockMember(flockId, userId) {
   return result.rows.length > 0;
 }
 
+// "IS THIS ONE COUNTERPARTY BANNED?" — a pair question, asked as a pair.
+//
+// The two DM routes that need it (the read receipt and the thread read) have
+// already run isBlockedBetween one line earlier, which is a single indexed
+// lookup on the pair. The only fact left to establish is whether this one
+// counterparty is banned, and both of them used to establish it with
+// getInvisibleUserIds: a three-leg UNION whose third leg is EVERY banned
+// account in the product, whose other two legs re-ask the block question that
+// was just answered, all shipped to Node so one id could be scanned for. The
+// cost of opening a DM thread therefore grew with the total number of bans in
+// the database and with nothing about the request.
+//
+// A self-addressed id answers false rather than reading the row, deliberately:
+// the UNION excludes the caller from their own invisible set (`id <> $1` —
+// utils/blocks.js, "a banned account's OWN reads still see everyone"), so this
+// has to answer the same way for the same input.
+//
+// getInvisibleUserIds stays everywhere in this file that genuinely needs the
+// whole SET: the inbox, the history reads, the fan-outs. This is only for the
+// callers holding one id and wanting one answer.
+async function counterpartyIsBanned(viewerId, otherUserId) {
+  if (otherUserId === viewerId) return false;
+  const result = await pool.query(
+    'SELECT 1 FROM users WHERE id = $1 AND is_banned IS TRUE',
+    [otherUserId]
+  );
+  return result.rows.length > 0;
+}
+
 
 /* ── PINNED MESSAGES (migration 068) ──────────────────────────────────────
  *
@@ -200,8 +229,15 @@ const MAX_PINS = 3;
  * senders dropped so a pin is not how a blocked member's line reaches the
  * person who blocked them. The CASCADE in 068 covers a DELETED message; these
  * cover a message that still exists and must not be shown to this reader.
+ *
+ * SPLIT INTO ROWS AND PAYLOAD so the fan-out below can read the pins ONCE and
+ * cut every member's copy out of the same rows, rather than running this join
+ * once per recipient. An EMPTY invisible array filters nothing — `x = ANY('{}')`
+ * is false, so the `NOT (...)` keeps every row — and that is what lets the
+ * unfiltered batch read and the per-reader filtered read be the SAME statement
+ * instead of two copies of it that drift the next time these filters change.
  */
-async function readFlockPins(flockId, invisibleArr) {
+async function readFlockPinRows(flockId, invisibleArr) {
   const result = await pool.query(
     `SELECT p.id, p.message_id, p.pinned_by, p.created_at,
             m.message_text, m.message_type, m.sender_id,
@@ -216,14 +252,30 @@ async function readFlockPins(flockId, invisibleArr) {
       ORDER BY p.created_at ASC, p.id ASC`,
     [flockId, invisibleArr]
   );
-  return result.rows.map((r) => ({
+  return result.rows;
+}
+
+/**
+ * One pin row as the bar draws it.
+ *
+ * sender_id stays on the ROW and off the payload: it is what the visibility
+ * filter tests, and no client reads it. Shared by the per-reader read below and
+ * by the fan-out, so one pin can never end up shaped two ways.
+ */
+function pinPayload(r) {
+  return {
     id: r.message_id,
     messageId: r.message_id,
     text: r.message_text,
     messageType: r.message_type,
     senderName: r.sender_name,
     pinnedBy: r.pinned_by,
-  }));
+  };
+}
+
+/** The list ONE reader is allowed to see, filtered in SQL by their own set. */
+async function readFlockPins(flockId, invisibleArr) {
+  return (await readFlockPinRows(flockId, invisibleArr)).map(pinPayload);
 }
 
 /**
@@ -232,11 +284,39 @@ async function readFlockPins(flockId, invisibleArr) {
  * Per member and never to the flock room, the same rule the message fan-out
  * follows: a pin names a message and a sender, so the list one member should
  * see is not the list another should. Each member's own invisible set decides
- * their copy, which is why this reads the list once per recipient rather than
- * broadcasting one array.
+ * their copy.
+ *
+ * FOUR STATEMENTS, WHATEVER THE FLOCK SIZE. This used to read the pin list and
+ * the block list once PER MEMBER, inside the loop. getInvisibleUserIds is a
+ * three-leg UNION and readFlockPins is a three-table join, so a full flock
+ * (MAX_FLOCK_MEMBERSHIPS, routes/flocks.js, is 50 seats) paid 1 + 2x50 = 101
+ * statements to publish at most three rows, because MAX_PINS is 3. Most of
+ * that was the same work over and over: the UNION's third leg is every banned
+ * account in the product, which does not vary by member at all, and the pin
+ * join differs per member only by a filter on a column the projection already
+ * returns. So the rows are read ONCE unfiltered, every block edge touching the
+ * roster comes back in one statement, the banned set in one more, and each
+ * member's copy is derived in memory. Four, counted honestly: the roster, the
+ * pins, the block edges and the banned set. The pin and unpin routes each pay
+ * two more before calling this, for the caller's own copy of the same two
+ * reads, which is a duplicate worth removing separately and is not removed
+ * here. Same read-once-and-replay shape
+ * routes/venues.js invisibleSetsForFlock already uses to fan a vote out to this
+ * very set of members.
+ *
+ * NOBODY'S COPY CHANGES, and the in-memory test is the SQL filter's test
+ * written out: a pin is dropped when its sender is in that member's set, a pin
+ * whose author was deleted (sender_id NULL, ON DELETE SET NULL) is kept, and a
+ * member with an empty set still sees everything. The ban half keeps the
+ * UNION's `id <> $1` too, so a banned member's own copy still shows them the
+ * bar everyone else sees.
  *
  * NEVER THROWS. The pin is already written; a failure to announce it costs the
  * live update and nothing else, and the next history read carries the truth.
+ * What the batch does change is the GRANULARITY of that failure: an unreadable
+ * user_blocks now costs everybody the live update rather than one member. That
+ * is the trade for not asking the same question fifty times, and the per-member
+ * catch stays for what can still fail one member at a time.
  */
 async function broadcastPins(req, flockId) {
   try {
@@ -246,14 +326,45 @@ async function broadcastPins(req, flockId) {
       "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
       [flockId]
     );
-    for (const m of members.rows) {
+    const memberIds = members.rows.map((m) => m.user_id);
+    if (memberIds.length === 0) return;
+
+    const [rows, blocks, banned] = await Promise.all([
+      // Unfiltered on purpose: every member's copy is cut from these rows.
+      readFlockPinRows(flockId, []),
+      // Both directions at once — the two block legs of getInvisibleUserIds,
+      // asked once for the whole roster instead of once per member.
+      pool.query(
+        'SELECT blocker_id, blocked_id FROM user_blocks WHERE blocker_id = ANY($1::int[]) OR blocked_id = ANY($1::int[])',
+        [memberIds]
+      ),
+      // The leg that was identical for all fifty of them, served by the
+      // idx_users_banned index migration 069 added for exactly this leg.
+      pool.query('SELECT id FROM users WHERE is_banned IS TRUE'),
+    ]);
+
+    const invisibleBy = new Map(memberIds.map((id) => [id, new Set()]));
+    for (const b of blocks.rows) {
+      // An edge comes back when EITHER end is on the roster, so each end is
+      // recorded only for the members this flock has to answer for.
+      if (invisibleBy.has(b.blocker_id)) invisibleBy.get(b.blocker_id).add(b.blocked_id);
+      if (invisibleBy.has(b.blocked_id)) invisibleBy.get(b.blocked_id).add(b.blocker_id);
+    }
+    for (const [memberId, invisible] of invisibleBy) {
+      for (const b of banned.rows) {
+        if (b.id !== memberId) invisible.add(b.id);
+      }
+    }
+
+    for (const memberId of memberIds) {
       try {
-        const invisible = await getInvisibleUserIds(m.user_id);
-        const pins = await readFlockPins(flockId, invisible);
-        io.to(`user:${m.user_id}`).emit('flock_pins_changed', { flockId, pins });
+        const invisible = invisibleBy.get(memberId);
+        const pins = rows
+          .filter((r) => r.sender_id == null || !invisible.has(r.sender_id))
+          .map(pinPayload);
+        io.to(`user:${memberId}`).emit('flock_pins_changed', { flockId, pins });
       } catch (perMember) {
-        // One member's block list being unreadable must not cost everybody
-        // else the update.
+        // One member's emit failing must not cost everybody else the update.
         console.error('Pin broadcast (member) error:', perMember.message);
       }
     }
@@ -1190,8 +1301,9 @@ router.put('/dm/:userId/opened',
       }
       // A banned counterpart is invisible everywhere else in this file, and a
       // receipt is a message to them; the thread read a few routes down
-      // refuses the same pair for the same reason.
-      if ((await getInvisibleUserIds(req.user.id)).some((id) => Number(id) === otherUserId)) {
+      // refuses the same pair for the same reason. ONE PAIR QUERY rather than
+      // the product's whole ban list — see counterpartyIsBanned.
+      if (await counterpartyIsBanned(req.user.id, otherUserId)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
       const upTo = req.body.lastMessageId == null ? null : parseInt(req.body.lastMessageId);
@@ -1386,7 +1498,23 @@ router.get('/dm', async (req, res) => {
        FROM (
          SELECT DISTINCT ON (other_id) *
          FROM (
-           SELECT dm.id, dm.message_text, dm.created_at, dm.read_status, dm.sender_id,
+           -- A PREVIEW, NOT THE BODY. This row exists to draw one ellipsized
+           -- line. A DM is capped at 5,000 characters on both transports (the
+           -- isLength on the send route below, and the socket twin), the
+           -- collapse above keeps one row per partner, DM_CONVERSATION_LIMIT is
+           -- 200, and the outer SELECT l.* forwards whatever is selected
+           -- here — so one response could carry 200 full bodies, about a
+           -- megabyte, read, detoasted, sorted and serialised to fill rows
+           -- the inbox renders
+           -- with overflow hidden, text-overflow ellipsis and white-space
+           -- nowrap. Everything past the first line was thrown away by CSS.
+           -- Nothing else reads the field: the FULL body comes from the thread
+           -- read (GET /api/dm/:userId), and a thread already loaded in the
+           -- client derives its preview from those messages instead. 160
+           -- characters is past what any phone width fits on that one line, so
+           -- unlike the report queue in routes/admin.js this needs no "was it
+           -- clipped" flag beside it; there is nothing the row could do with one.
+           SELECT dm.id, LEFT(dm.message_text, 160) AS message_text, dm.created_at, dm.read_status, dm.sender_id,
                   CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END AS other_id
            FROM direct_messages dm
            WHERE (dm.sender_id = $1 OR dm.receiver_id = $1)
@@ -1463,8 +1591,11 @@ router.get('/dm/:userId',
         return res.json({ messages: [], blocked: true });
       }
       // A banned counterpart is gone from the inbox; the direct thread read
-      // used to hand it back by id (hardening review round 3, 2026-09-05).
-      if ((await getInvisibleUserIds(req.user.id)).some((id) => Number(id) === otherUserId)) {
+      // used to hand it back by id (hardening round, 2026-09-05). ONE PAIR
+      // QUERY rather than the product's whole ban list — see
+      // counterpartyIsBanned, which the receipt route above refuses the same
+      // pair with.
+      if (await counterpartyIsBanned(req.user.id, otherUserId)) {
         return res.json({ messages: [], blocked: true });
       }
 

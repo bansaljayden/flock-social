@@ -549,13 +549,22 @@ const OWNER = { id: 1, name: 'Ava', role: 'venue_owner' };
 const venueCtx = [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({
   rows: [{ id: 7, google_place_id: 'place-1', verified: true }], rowCount: 1,
 })];
+// The owner's review list asks for named columns now. `vr.*` was shipping an
+// uncapped base64 avatar column that no review card renders, and the takedown
+// predicate these tests are about lives in the WHERE clause either way.
+// One regex, shared by the handler and the assertions, so the two cannot drift
+// apart and quietly stop describing the same statement. It matches on the owner
+// read's own projection: the PUBLIC reviews list opens with the same first three
+// columns and then computes its reply through a CASE, so a matcher on
+// `SELECT vr.id, vr.rating, vr.text` would not say which read it answered.
+const OWNER_REVIEW_LIST = /SELECT vr\.id, vr\.rating, vr\.text, vr\.venue_reply, vr\.venue_replied_at/;
 
 test('the owner review stats exclude hidden reviews', async () => {
   CURRENT_USER = OWNER;
   handlers = [
     venueCtx,
     [/COUNT\(\*\) FILTER \(WHERE vr.rating = 1\)/, () => ({ rows: [{ total: 2, average: 4.5, r1: 0, r2: 0, r3: 0, r4: 1, r5: 1 }] })],
-    [/SELECT vr\.\*, u.name, u.profile_image_url/, () => ({ rows: [] })],
+    [OWNER_REVIEW_LIST, () => ({ rows: [] })],
   ];
   const res = await call('GET', '/api/venue-dashboard/reviews');
   assert.strictEqual(res.status, 200);
@@ -569,10 +578,10 @@ test('the owner review list excludes hidden reviews, with the SAME predicate as 
   handlers = [
     venueCtx,
     [/COUNT\(\*\) FILTER \(WHERE vr.rating = 1\)/, () => ({ rows: [{ total: 0, average: null }] })],
-    [/SELECT vr\.\*, u.name, u.profile_image_url/, () => ({ rows: [] })],
+    [OWNER_REVIEW_LIST, () => ({ rows: [] })],
   ];
   await call('GET', '/api/venue-dashboard/reviews');
-  const list = ran(/SELECT vr\.\*, u.name/)[0].sql;
+  const list = ran(OWNER_REVIEW_LIST)[0].sql;
   assert.match(list, /COALESCE\(vr.is_hidden, false\) = false/);
   // If the two ever disagree the count and the rows describe different sets.
   const stats = ran(/COUNT\(\*\) FILTER/)[0].sql;
