@@ -69,7 +69,14 @@ const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // create screen, which left App.js for screens/CreateScreen.js on 2026-09-01;
   // its source is appended so the pending / failed contract on that card is
   // still read at the call site that writes it.
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  // The venue detail sheet left App.js on 2026-09-13 for
+  // components/overlays/VenueDetailSheet.js, and the reviews list, its retry
+  // and the promotions section this file reads went with it. The handlers
+  // behind them (loadVenueDetailReviews, getPublicPromotions and the state they
+  // write) did not move, so App.js is still what the state assertions read and
+  // this file is appended for the call sites.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
 
 /**
  * Comments dropped, so prose describing a fix cannot pass for the fix. Line

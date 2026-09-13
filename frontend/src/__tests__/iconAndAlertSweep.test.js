@@ -44,7 +44,13 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  // The card a map pin opens left App.js on 2026-09-13 for
+  // components/venue/ConsumerVenueCard.js, carrying eleven sized icon calls with
+  // it, so that file is read too: unnamed, all eleven would drop out of the
+  // floor sweep below. Appended, because the slices in this file walk forward
+  // from markers in App.js.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 const ICONS = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
@@ -225,7 +231,13 @@ test('checking in is per venue, and it says so when it works', () => {
      flipped for two seconds on the button under your own thumb. A write that
      reached the server and told nobody is indistinguishable from a dead
      control, which is exactly how it was reported. */
-  const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+  // The venue card a map pin opens moved to
+  // components/venue/ConsumerVenueCard.js on 2026-09-13 and the per-venue label
+  // is read there, so that file is read with App.js. The state, the helper and
+  // the storage read behind it all stayed in App.js, so both halves of this
+  // contract are still in front of the assertions below.
+  const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+    + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
   // Keyed by place, both directions.
   expect(app).toMatch(/setCheckinDoneAt\(\(prev\) => \(\{ \.\.\.prev, \[placeId\]: ts \}\)\)/);
   expect(app).toMatch(/const lastCheckin = lastCheckinAt\(activeVenue\.place_id\)/);

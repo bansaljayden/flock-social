@@ -64,7 +64,13 @@ const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // screens/CreateScreen.js now. Appended after FlockDetail for the same
   // reason FlockDetail was appended after ChatDetail, so no marker pair above
   // spans a boundary it did not span when the source was one file.
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  // The wrap-up sheet followed on 2026-09-13: the question a host answers about
+  // who turned up, and the save that writes it, live in
+  // components/overlays/AttendanceModal.js now. Appended last for the same
+  // reason as the three above, so no marker pair spans a boundary it did not
+  // span when the source was one file.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'AttendanceModal.js'), 'utf8');
 const API_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'

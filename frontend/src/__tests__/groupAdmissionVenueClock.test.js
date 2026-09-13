@@ -37,6 +37,13 @@ const fs = require('fs');
 const path = require('path');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// getGroupAdmission itself left App.js on 2026-09-13 with the venue card a
+// map pin opens, the only thing that ever called it
+// (components/venue/ConsumerVenueCard.js), so the declaration is lifted from
+// there. App.js is still read beside it: the call-site pin below counts every
+// call in BOTH files, so a second call site appearing back in App.js with the
+// phone clock in its arguments still fails.
+const CARD = fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pull the function declaration out of App.js and evaluate it on its own.
@@ -82,7 +89,7 @@ function extractFunction(source, name) {
   throw new Error(`extractFunction: unterminated body for ${name}`);
 }
 
-const SRC = extractFunction(APP, 'getGroupAdmission');
+const SRC = extractFunction(CARD, 'getGroupAdmission');
 // eslint-disable-next-line no-new-func
 const getGroupAdmission = new Function(`${SRC}\nreturn getGroupAdmission;`)();
 
@@ -245,7 +252,7 @@ describe('5. source pins', () => {
   });
 
   test('every call site hands it the venue clock, never the phone', () => {
-    const code = stripComments(APP);
+    const code = stripComments(APP + CARD);
     const calls = code.match(/getGroupAdmission\([^)]*\)/g) || [];
     // The declaration plus exactly one call.
     expect(calls.length).toBe(2);
@@ -253,7 +260,7 @@ describe('5. source pins', () => {
   });
 
   test('nowHour and nowDay are the venue clock, not the device clock', () => {
-    const code = stripComments(APP);
+    const code = stripComments(APP + CARD);
     // The chart already resolved this: cd.venueClock when the server could
     // resolve the venue's offset, the caller's clock only where the server
     // itself fell back. If this ever stops being true the verdict silently

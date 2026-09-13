@@ -3,7 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+// THE PANEL LEFT App.js ON 2026-09-13 for components/birdie/BirdiePanel.js, so
+// the chirp meter line and the vote card this file reads are in that file now.
+// Both are read, App.js first, and nothing asserted below changed.
+const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'birdie', 'BirdiePanel.js'), 'utf8').replace(/\r\n/g, '\n');
 const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('"this flock" is a flock the person is looking at', () => {

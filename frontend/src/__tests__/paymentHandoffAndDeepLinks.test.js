@@ -137,6 +137,20 @@ const appSource = readSource('frontend', 'src', 'App.js')
   // last file for REVENUE_SCREEN_AT to keep meaning "everything declared out
   // in FlockAppInner comes first".
   + readSource('frontend', 'src', 'screens', 'CreateScreen.js')
+  // Both pay sheets left App.js on 2026-09-13 for
+  // components/PaymentSheets.js, taking the picker, the fallback sheet and
+  // the two startPaymentHandoff call sites counted below with them. Read
+  // BEFORE the revenue console for the same reason the create screen is:
+  // the console has to stay the last file for REVENUE_SCREEN_AT to keep
+  // meaning "everything declared out in FlockAppInner comes first".
+  + readSource('frontend', 'src', 'components', 'PaymentSheets.js')
+  // The venue detail sheet left App.js on the same day for
+  // components/overlays/VenueDetailSheet.js, taking the keyed-Fragment star row
+  // counted below with it. Read BEFORE the revenue console for the same reason
+  // the two above are: the console has to stay the last file for
+  // REVENUE_SCREEN_AT to keep meaning "everything declared out in FlockAppInner
+  // comes first".
+  + readSource('frontend', 'src', 'components', 'overlays', 'VenueDetailSheet.js')
   + readSource('frontend', 'src', 'screens', 'RevenueScreen.js');
 const pushNavSource = readSource('frontend', 'src', 'services', 'pushNavigation.js');
 const billingSource = readSource('backend', 'routes', 'billing.js');

@@ -44,13 +44,29 @@ const path = require('path');
 // The create screen left on the same day for screens/CreateScreen.js, and it
 // carries the StarRating row this file pins as well as its own sized icon
 // calls, so it is read too.
+// The event detail overlay left on 2026-09-13 for
+// components/EventDetailOverlay.js. It carries eight sized icon calls, one of
+// them the 12px mapPin on the distance line that sits exactly on the floor
+// this file enforces, so it is read too: unnamed, those eight would be swept
+// by nothing.
+// The card a map pin opens left on the same day for
+// components/venue/ConsumerVenueCard.js. It carries eleven sized icon calls and
+// the rating chip this file pins, so it is read too: unnamed, all eleven would
+// drop out of the floor sweep.
+// The full-screen search results list left on the same day for
+// components/SearchResultsOverlay.js. It carries seven sized icon calls, two of
+// them 12px sitting exactly on the floor this file enforces, and the crowd pill
+// whose label this file pins, so it is read too.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'EventDetailOverlay.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'SearchResultsOverlay.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 /** Comment lines dropped, so prose naming a retired pattern cannot fail the
  *  test the fix was written to pass (same exclusion, and same reason, as
