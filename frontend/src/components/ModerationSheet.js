@@ -80,6 +80,14 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
   const [details, setDetails] = useState('');
   const [busy, setBusy] = useState(false);
   const sheetRef = useRef(null);
+  // Held in refs so the dialog effect below can read the current values without
+  // listing them as dependencies. The note on that effect says why listing them
+  // was the bug: an inline `onClose` from the mount site made its dep array
+  // change on every render of the host, not once per open.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   // Reset to the menu each time the sheet is (re)opened for a new target.
   useEffect(() => {
@@ -92,6 +100,24 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
   // components/ had neither. A keyboard user could open this sheet and have no
   // way out of it, on the one screen an accessibility pass is most likely to
   // land on. Never closes mid-request — see the backdrop handler.
+  //
+  // IT KEYS ON `target` ALONE, AND THAT IS DELIBERATE. The deps used to read
+  // [target, busy, onClose]. The sheet is mounted with an inline arrow
+  // (onClose={() => setModerationTarget(null)}), so that array changed identity
+  // on every render of the component hosting the sheet rather than once per
+  // open: each host render tore the capture-phase keydown listener off
+  // `document`, added it back, and re-armed the 0 ms timer below, which then
+  // pulled focus back to the sheet's first button out from under whatever the
+  // user had reached. `busy` made the same theft certain rather than incidental,
+  // because pressing Submit flips it, so focus left the button that had just
+  // been pressed in the middle of filing a report. Reading onClose and busy
+  // through refs keeps the handler on today's values while the effect itself
+  // runs once per open, which is what a focus trap has always meant here. The
+  // two hardened copies of this block do exactly this: useSheetDialog in
+  // components/chat/sheets/FlockProfileSheet.js ("Mount and unmount only. Re-
+  // running the trap on every prop change is how DialogBehavior once grabbed
+  // focus back on each render") and components/safety/EmergencySheet.js, whose
+  // already-inside-the-sheet guard is copied onto the timer below.
   useEffect(() => {
     if (!target) return undefined;
     const onKeyDown = (e) => {
@@ -102,15 +128,23 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
       // listeners are not stopped by stopPropagation alone. Without this,
       // Escape over this sheet would also dismiss whatever dialog opened it.
       e.stopImmediatePropagation();
-      if (!busy) onClose?.();
+      if (!busyRef.current) onCloseRef.current?.();
     };
     document.addEventListener('keydown', onKeyDown, true);
     const t = setTimeout(() => {
-      const first = sheetRef.current?.querySelector('button');
+      const node = sheetRef.current;
+      if (!node) return;
+      // Focus the first control only when focus is not already inside the
+      // sheet. With the deps above this timer fires once per open, so the guard
+      // is belt and braces, and it is what keeps any future re-run (a second
+      // target arriving while the sheet is up, a remount under double-invoke)
+      // from being a focus theft again.
+      if (node.contains(document.activeElement) && document.activeElement !== document.body) return;
+      const first = node.querySelector('button');
       try { first?.focus({ preventScroll: true }); } catch { /* detached */ }
     }, 0);
     return () => { document.removeEventListener('keydown', onKeyDown, true); clearTimeout(t); };
-  }, [target, busy, onClose]);
+  }, [target]);
 
   if (!target) return null;
 

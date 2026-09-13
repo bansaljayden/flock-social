@@ -487,6 +487,24 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     timer = setTimeout(() => controller.abort(), remaining);
   };
   arm();
+  /* A CALLER'S OWN SIGNAL IS HONOURED, NOT SILENTLY DROPPED.
+     `signal: controller.signal` is set AFTER the spread, so a signal passed in
+     by a caller was overwritten by the deadline controller and did nothing.
+     That left the client with no cancellation primitive at all: the only thing
+     that could ever abort a read was its own timeout. The screens that needed
+     to cancel one worked around it instead, each keeping an `alive` ref or a
+     request generation and throwing the late answer away after it arrived.
+     Linking the two controllers is what LiveDemo's fetchOnce already does. */
+  let unlinkCaller = null;
+  const callerSignal = options && options.signal;
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else {
+      const onCallerAbort = () => controller.abort();
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+      unlinkCaller = () => callerSignal.removeEventListener('abort', onCallerAbort);
+    }
+  }
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     arm(); // the headers landed; the body gets its own window
@@ -496,10 +514,16 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     // Both failure modes become errors with copy a person can act on. The
     // raw TypeError ("Failed to fetch") used to surface verbatim in every
     // catch block that renders err.message.
+    /* Told apart, because they are different events to the caller: the
+       deadline expiring is something to report, and a caller cancelling is
+       something it asked for and must be able to recognise rather than
+       surface as "the connection timed out". */
+    if (e && e.name === 'AbortError' && callerSignal && callerSignal.aborted) throw e;
     if (e && e.name === 'AbortError') throw timeoutError();
     throw connectionError();
   } finally {
     if (timer) clearTimeout(timer);
+    if (unlinkCaller) unlinkCaller();
   }
 }
 

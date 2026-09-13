@@ -136,29 +136,77 @@ const isChildSafety = (r) => (
 // surfaced to the moderator as the browser's own words ("Failed to fetch", or
 // "Load failed" in the iOS WebView the admin push tap lands in). A moderator
 // who has just pressed Ban must never be left unsure whether it landed.
+//
+// THE CLOCK COVERS THE BODY. The deadline used to be cleared the moment the
+// status line landed, and the body was then read with the controller disarmed,
+// which is no deadline at all over the second half of a request: fetch() settles
+// on the HEADERS, and the body is a separate wait. A reply whose headers arrive
+// and whose body then stalls, on a cellular handoff, venue wifi, or a proxy
+// that dies after flushing headers, left that await pending for as long as the OS kept
+// the socket open. On this screen that does not merely spin, it seals itself
+// shut: the hung read sits inside load(), so load()'s finally never runs,
+// `loading` stays true, and the 60s background poll below is gated on `loading`
+// and stops with it. The console was then permanently stale, Refresh disabled,
+// with no way out but a page reload, on the one screen where the work is
+// reports nobody else is going to action. The route most likely to stall
+// mid-body is the evidence image, which answers with a base64 payload up to
+// 700KB. services/api.js, website/LiveDemo.js and website/GuestInvite.js each
+// had to make this same correction after clearing the timer at the header.
+//
+// The body gets its own FRESH window rather than whatever is left of the
+// header's, for the reason api.js gives one: a large evidence image over a bad
+// connection is slow, not stalled, and must not be cut off for having spent the
+// budget on arriving. Re-arming on each chunk of progress, which is what api.js
+// does, needs a streaming reader this file has no other use for. One window per
+// half is the honest bound, and the point is that it is a bound at all.
 const ADMIN_FETCH_TIMEOUT_MS = 20000;
+// One sentence for both halves of the deadline, because the advice after either
+// is the same and the card is the only place that knows which: a clock that
+// lands on the BODY is in fact the likelier of the two to have written
+// something, since the server answered before the connection went quiet.
+const ADMIN_TIMEOUT_COPY = 'That took too long. It may or may not have gone through. Press Refresh and check the card before trying again.';
 async function adminFetch(path, options = {}) {
   const token = getToken();
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), ADMIN_FETCH_TIMEOUT_MS) : null;
-  let res;
+  let timer = null;
+  const arm = () => {
+    if (!controller) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), ADMIN_FETCH_TIMEOUT_MS);
+  };
+  arm();
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
-      ...options,
-      ...(controller ? { signal: controller.signal } : {}),
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
-    });
-  } catch (err) {
-    if (err && err.name === 'AbortError') {
-      throw new Error('That took too long. It may or may not have gone through. Press Refresh and check the card before trying again.');
+    let res;
+    try {
+      res = await fetch(`${BASE_URL}${path}`, {
+        ...options,
+        ...(controller ? { signal: controller.signal } : {}),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw new Error(ADMIN_TIMEOUT_COPY);
+      throw new Error('The console could not reach the server. Check your connection and press Refresh.');
     }
-    throw new Error('The console could not reach the server. Check your connection and press Refresh.');
+    arm(); // the headers landed; the body gets its own window
+    let data;
+    try {
+      data = await res.json();
+    } catch (err) {
+      // Two different facts, and they must not reach the moderator as one. An
+      // AbortError here is our own clock landing on the BODY after a real status
+      // line arrived, so it is a timeout and has to be thrown as one,
+      // swallowing it into {} is how a dead connection used to read as a server
+      // that answered with nothing. Anything else is a reply that was not JSON
+      // at all (a captive portal, a proxy error page, a 204), which is the {}
+      // every caller here has always been handed and already refuses on shape.
+      if (err && err.name === 'AbortError') throw new Error(ADMIN_TIMEOUT_COPY);
+      data = {};
+    }
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
   } finally {
     if (timer) clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
 }
 
 const fmt = (t) => {

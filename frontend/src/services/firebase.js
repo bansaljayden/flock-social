@@ -538,18 +538,34 @@ export function startPushSessionWatcher() {
   if (watcherStarted || typeof window === 'undefined') return;
   watcherStarted = true;
 
-  const tick = () => { syncPushForSession(); };
-  const retry = () => { rearmIfUnresolved(); syncPushForSession(); };
+  // THE POLL STOPS ONCE IT HAS NOTHING LEFT TO ASK, AND RE-ARMS IF THAT
+  // CHANGES. This module is imported by App.js and two screens, so it is in
+  // the boot chunk and this runs on every cold start. The interval used to be
+  // created without keeping its handle, so it ran every two seconds for the
+  // whole life of the page. That is right up to the moment the session is
+  // registered, and pure waste afterwards: once syncPushForSession has set
+  // handledAuthToken and a push token exists, every later tick is a
+  // localStorage read followed by an early return, forever.
+  //
+  // Signing in still has to be heard, and the reason the poll exists is
+  // unchanged: it happens inside React state in another file, in an
+  // already-focused tab, so no event reaches this module. So the poll is kept
+  // for exactly as long as the question is open, and the four listeners below
+  // re-arm it whenever the answer could have changed underneath us: a sign
+  // out clears handledAuthToken, and another tab's sign-in arrives as storage.
+  let pollId = null;
+  const settled = () => handledAuthToken !== null && currentPushToken !== null;
+  const stopPoll = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
+
+  const tick = () => { syncPushForSession(); if (settled()) stopPoll(); };
+  const startPoll = () => { if (pollId === null && !settled()) pollId = setInterval(tick, 2000); };
+  const retry = () => { rearmIfUnresolved(); syncPushForSession(); if (settled()) stopPoll(); else startPoll(); };
 
   tick();
-  // Logging in does not fire an event this module can hear: it happens inside
-  // React state in another file, in an already-focused tab. A cheap poll (one
-  // localStorage read) is what makes "sign in and notifications work" true
-  // without reaching into App.js.
-  setInterval(tick, 2000);
+  startPoll();
   window.addEventListener('focus', retry);
   window.addEventListener('online', retry);
-  window.addEventListener('storage', tick); // another tab signed in or out
+  window.addEventListener('storage', retry); // another tab signed in or out
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') retry();
   });

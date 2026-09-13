@@ -115,24 +115,56 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   // App.js's DialogBehavior is defined inside App.js and is not exported.
   // stopImmediatePropagation matches those two, so Escape here does not also
   // dismiss whatever opened this.
+  //
+  // MOUNT AND UNMOUNT ONLY, which this block was not. The dep array read
+  // [open, busy, restoring, onClose], and onClose arrives from the mount site
+  // as an inline arrow (onClose={() => setPaywallTrigger(null)}), so it is a
+  // new function on every render of the host. The effect therefore tore down
+  // and re-added the document capture listener and re-armed the 0 ms focus
+  // timer on every one of those renders, and that timer moves focus to the
+  // sheet's first button: somebody reading the plan cards, or sitting on
+  // Monthly with the keyboard, loses their place for a reason that has nothing
+  // to do with this sheet. busy and restoring did the same thing twice per
+  // purchase attempt. The live values reach the handler through refs instead,
+  // which is how the other two copies of this block already hold it
+  // (FlockProfileSheet's useSheetDialog says it outright: re-running the trap
+  // on every prop change is how DialogBehavior once grabbed focus back on each
+  // render). Dep array is [open], so the listener and the timer belong to the
+  // open, not to the render.
   const sheetRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  const busyRef = useRef(busy);
+  const restoringRef = useRef(restoring);
+  onCloseRef.current = onClose;
+  busyRef.current = busy;
+  restoringRef.current = restoring;
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = (e) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      // Read at event time rather than closure time. The three locals keep the
+      // names of the props and state they mirror, so the rule below still says
+      // exactly what it said when the handler closed over them.
+      const busy = busyRef.current;
+      const restoring = restoringRef.current;
+      const onClose = onCloseRef.current;
       // Never mid-purchase: closing the sheet under a running transaction is
       // how someone ends up charged with no confirmation on screen.
       if (!busy && !restoring) onClose?.();
     };
     document.addEventListener('keydown', onKeyDown, true);
     const t = setTimeout(() => {
+      // Focus already inside the sheet stays where the user put it. The same
+      // guard sits ahead of EmergencySheet's focus move, for the same reason:
+      // a focus() on a re-run is a focus() the user did not ask for.
+      if (sheetRef.current?.contains(document.activeElement) && document.activeElement !== document.body) return;
       const first = sheetRef.current?.querySelector('button');
       try { first?.focus({ preventScroll: true }); } catch { /* detached */ }
     }, 0);
     return () => { document.removeEventListener('keydown', onKeyDown, true); clearTimeout(t); };
-  }, [open, busy, restoring, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

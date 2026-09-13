@@ -68,6 +68,30 @@ const incomingWhen = (iso) => {
   return d.toLocaleString([], opts);
 };
 
+// The date on a review row. Two things were wrong with formatting it inline.
+//
+// The formatter was rebuilt per row per render. `toLocaleDateString(locale,
+// options)` constructs an Intl.DateTimeFormat out of that options object on
+// every single call, and the construction is the expensive half, not the
+// formatting. One formatter built once covers the whole list. This file is
+// React.lazy'd, so "once" is the first time an owner opens the dashboard and
+// costs everyone else nothing.
+//
+// The NaN guard is load-bearing now rather than tidy. `toLocaleDateString`
+// answers a timestamp it cannot parse with the literal words "Invalid Date",
+// which the moderation console's suite already forbids rendering anywhere,
+// while `Intl.DateTimeFormat.prototype.format` throws RangeError on the same
+// value, and that would take the whole dashboard to the crash screen over one
+// malformed row. Empty is what `incomingWhen` above answers with, so it is
+// what this answers with.
+const REVIEW_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const reviewWhen = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return REVIEW_DATE_FMT.format(d);
+};
+
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
   // with screens that are not this one, so they stay there and come in here.
@@ -199,13 +223,28 @@ export default function VenueDashboard({
     // Incoming flocks — real data from backend
     const incomingFlocks = realIncomingFlocks;
 
-    // Reviews from backend
-    const reviews = (venueReviewsData.reviews || []).map(r => ({
+    // Reviews from backend, BUILT ONLY ON THE TAB THAT READS THEM.
+    //
+    // This component holds no state of its own, by the decision in the header:
+    // every control writes state in FlockAppInner, so the whole body below
+    // re-runs on each of those writes, and two of them are continuous. The
+    // busy-now slider writes once per pointer move. Every Settings intake
+    // field writes once per keystroke. Mapping the review page unconditionally
+    // at the top of the body meant typing a venue description rebuilt a page of
+    // display objects, and reformatted a page of dates, per character, for a
+    // tab that was not on screen. The server page is fifty reviews and the list
+    // pages further, so it grows with the venue's history rather than staying
+    // small.
+    //
+    // All three reads are inside the `venueTab === 'reviews'` block far below,
+    // so nothing ever looks at the empty array. It stays an array rather than
+    // null because those reads are `reviews.length` and `reviews.map`.
+    const reviews = venueTab !== 'reviews' ? [] : (venueReviewsData.reviews || []).map(r => ({
       id: r.id,
       user: r.name || 'Anonymous',
       rating: r.rating,
       text: r.text || '',
-      date: r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
+      date: reviewWhen(r.created_at),
       // A reply the server has retired (the review was edited after it, so it
       // is off the public card) is not a reply any more: the button comes
       // back, and the old words are shown as retired rather than as live.
