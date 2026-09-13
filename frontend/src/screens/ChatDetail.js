@@ -378,6 +378,20 @@ const NUDGE_ROW_ID = 'nudge-row';
    written twice and two copies of a colour drift. */
 const OWN_RUN_COLOUR = 'var(--chat-accent)';
 const WHO_ROW_ID = 'who-is-here';
+/* THE FOUR OF THEM AS ONE LIST, because MessageList has to be able to tell
+   them apart from messages.
+
+   Its scroll rules count arrivals, and none of these four is an arrival. Two
+   of them carry no anchor and therefore land at the END of the array, which
+   is exactly what that component reads to decide something has just come in:
+   the nudge appearing the moment the other person stopped typing grew the
+   array and changed its last id, so a reader scrolled up was offered "1 new
+   message" for a row nobody sent, and tapping it took them to a prompt. A
+   first location share did the same thing with the who-is-here row.
+
+   Module scope, so the identity holds between renders: the list builds a Set
+   from it and would otherwise rebuild that Set on every keystroke. */
+const SYNTHETIC_ROW_IDS = [POLL_ROW_ID, BILL_ROW_ID, WHO_ROW_ID, NUDGE_ROW_ID];
 
 /* WHAT COUNTS AS "AT THE VENUE", and why these two numbers.
    200m is a radius, not a doorstep: a phone indoors behind a bar's walls
@@ -390,6 +404,15 @@ const WHO_ROW_ID = 'who-is-here';
    is the exact failure the component refuses to render for. */
 const AT_VENUE_KM = 0.2;
 const POSITION_FRESH_MS = 10 * 60 * 1000;
+/* How finely that window is allowed to move, and it exists because of the
+   row cache below. Ten minutes is a window on the CLOCK, so a card that was
+   honest a minute ago can be a lie now with nothing at all having arrived.
+   The stream's row array is remembered between renders (search "REMEMBERED
+   BETWEEN RENDERS") and the clock is one of the values it is remembered
+   against, in steps this wide: short enough that a position cannot outlive
+   its window by anything a reader could measure against ten minutes, long
+   enough that a burst of typing does not rebuild the thread per character. */
+const POSITION_CLOCK_MS = 30 * 1000;
 
 /* One pill per emoji, not one per person.
  *
@@ -1029,13 +1052,50 @@ export default function ChatDetail({
        each keystroke. At 300 messages that is roughly 4,200 hooks and 1,200
        DOM nodes per character typed. */
     const stableColourFor = useStableFn((run) => (run.isMine ? OWN_RUN_COLOUR : runColourFor(run.senderId)));
-    const stableRenderCard = useStableFn((m) => renderCard(m));
-    const stableRenderStatus = useStableFn((m) => renderStatus(m));
+    /* THE TWO RENDERERS MessageRow CALLS WHILE IT RENDERS, and why they are
+       the one pair here that does not go through useStableFn.
+
+       That hook's own header names the gap it does not cover: it installs its
+       ref in a layout effect, so a call made DURING RENDER reads the PREVIOUS
+       commit's closure. The five wrappers around these are fired by a touch
+       or a tap, by which time the effect has run, so they always run the
+       newest closure. These two are called by MessageGroup and MessageRow as
+       they render, and so were always one commit behind.
+
+       THAT LAG WAS INVISIBLE BECAUSE THE ROW ARRAY WAS REBUILT EVERY RENDER:
+       whatever a one-commit-old closure drew, the next render drew again with
+       a current one. The array is remembered now, so the next render redraws
+       nothing, and a value read a commit late would stay late for as long as
+       the rows held still. That is the read receipt stopping one rung short
+       of Opened, and a venue card keeping the vote count it had before the
+       tap, and it is a worse bug than the waste the cache removes.
+
+       So the identity is stable the same way a useStableFn wrapper is (an
+       empty-dep useCallback, which is all React.memo compares), and the body
+       is reached through a ref THIS render writes rather than one the last
+       commit wrote. The write is at the foot of renderStatus, a few hundred
+       lines down and before any child of this component renders. App.js
+       writes `profilePicRef.current` during render for the same reason and
+       __tests__/closureFreshness.test.js pins it there.
+
+       The synthetic rows still carry what their cards draw. That is not
+       belt and braces being thrown away: it is what keeps those four cards
+       honest if a lag is ever put back in front of these two. */
+    const renderCardRef = React.useRef(null);
+    const renderStatusRef = React.useRef(null);
+    const stableRenderCard = React.useCallback((m) => (renderCardRef.current ? renderCardRef.current(m) : null), []);
+    const stableRenderStatus = React.useCallback((m) => (renderStatusRef.current ? renderStatusRef.current(m) : null), []);
     const stableLoadOlder = useStableFn(() => loadOlderHere());
     const stableLongPress = useStableFn((m, detail) => openMessageActions(m, detail));
     const stableSwipeReply = useStableFn((m) => setFlockReplyingTo(originalRow(m)));
     const stableOpenImage = useStableFn((m) => openImageViewer(originalRow(m)));
     const stableReactionTap = useStableFn((emoji, m) => addReactionToMessage(flock.id, m.id, emoji));
+
+    /* The row array from the last render, and what it was built from. The
+       block at its one caller, a few hundred lines down, has the reasoning.
+       It is declared up here because a ref is a hook, and everything below
+       the `!flock` return is the rest of the screen. */
+    const rowsCacheRef = React.useRef({ inputs: null, rows: null });
 
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
@@ -1442,8 +1502,34 @@ export default function ChatDetail({
 
     const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
     const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
+    /* THE VOTE ON A SHARED PLACE, AND IT HAS TO TRAVEL ON THE ROW.
+
+       A venue card is drawn by renderCard, which MessageRow calls while it
+       renders, and MessageRow is React.memo over the row it is handed. The
+       vote lives on the FLOCK, so a tap that changed nothing on the row left
+       every one of that component's props identical, the memo rejected the
+       re-render, and renderCard was never asked again: the card kept the
+       count and the pressed state it had before the tap until something else
+       rewrote that message. The optimistic write is the only render in the
+       local path, so "until something else" meant until the server answered,
+       and on an unvote it meant until the screen was left.
+
+       That is the same failure the four synthetic rows already answer by
+       carrying what their card draws, so this one is answered the same way:
+       the vote is stamped on the row in the pass below, the row changes when
+       the vote changes, and the memo lets the redraw through. */
+    const voteOnCard = (vc) => {
+      const existingVote = (flock.votes || []).find(v => v.venue === vc.name);
+      const voted = !!existingVote && (existingVote.voters || []).includes('You');
+      // The count is the real tally or nothing at all: VenueCardRow draws a
+      // figure only when it is given one, and a guess would be a vote count
+      // nobody cast.
+      return { active: voted, count: existingVote ? voteTotal(existingVote) : null };
+    };
     const needsDressing = searchActive
-      || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data && m.text)
+      // EVERY venue card, not only one carrying a caption, because every one
+      // of them needs its vote stamped on by the pass below.
+      || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data)
       // A quote needs the same preview treatment a row does: a reply to a photo
       // or a venue card has no text to show, and messagePreview is what turns
       // that into "Photo" instead of an empty quote block. Adding it to the
@@ -1457,9 +1543,11 @@ export default function ChatDetail({
       /* hadContent tells messagePreview the quoted row DID carry something,
          so an image quote reads "Photo" rather than falling through to the
          empty-message wording. Same call the DM stream makes. */
-      const carded = m.reply_to
+      const carded1 = m.reply_to
         ? { ...carded0, reply_to: { ...m.reply_to, text: messagePreview({ ...m.reply_to, hadContent: true }) } }
         : carded0;
+      /* See voteOnCard above for why this rides on the row. */
+      const carded = isCard ? { ...carded1, vote: voteOnCard(m.venue_data) } : carded1;
       /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
          the row's own copy, so a query the caption matched ("check out") put
          that caption straight back under the card the line above had just
@@ -1518,20 +1606,84 @@ export default function ChatDetail({
       return next;
     };
 
-    /* EACH SYNTHETIC ROW CARRIES WHAT ITS CARD DRAWS. renderCard reaches
-       MessageRow through useStableFn, whose ref is refreshed in a layout
-       effect, which is AFTER the render in which a row first appears. A row
-       that mounts in that render is drawn by the previous render's closure,
-       and in the previous render the thing it describes did not exist: the
-       nudge was null there, so `nudgeForCard.text` threw and the crash net
-       took the whole chat screen down. A sweep that pressed every button
-       reached it through Invite on a plan opened from the Nest, where the
-       nudge went away and came back across two renders. The same
-       one-commit lag sits under the bill, the poll and the who's-here row,
-       and any of the three would fail the same way. So the renderer
-       reads the ROW and never the screen: the row and its data are built
-       together here, and a closure one commit behind still draws exactly
-       what it is handed. */
+    /* THE ROW ARRAY IS REMEMBERED BETWEEN RENDERS, and what it is remembered
+       against is the whole of the correctness.
+
+       The composer's draft is state at the root of this screen, so one
+       keystroke re-renders the body and rebuilt this array. MessageList keys
+       its grouping and all three of its scroll rules off the array's
+       IDENTITY, so a fresh array per character re-ran groupRows over the
+       whole thread, re-rendered every run behind React.memo, and read the
+       scroller height back synchronously. At three hundred messages that is
+       the thread rebuilt on every keystroke.
+
+       A HOOK CANNOT DO THIS JOB HERE. useMemo would have to be declared
+       above the `if (!flock)` return, where nothing it depends on exists
+       yet, and splitting the component to move it is not available either:
+       __tests__/extractionEquivalence.test.js reads this file's destructured
+       parameter list and asserts it equals App.js's chatDetailProps keys in
+       both directions. So the cache is a ref and the compare is by hand.
+
+       BY IDENTITY, NEVER BY VALUE. Every input below is a prop or a piece of
+       state that App.js or this screen REPLACES when it changes rather than
+       editing in place, so an identity check gives the same answer a deep
+       compare would and costs one pass over a dozen slots.
+
+       A MISSING INPUT IS A STALE ROW, which is worse than the waste this
+       removes, so the list is the union of two things: everything the rows
+       are built FROM, and everything renderCard and renderStatus read off
+       the SCREEN rather than off the row they are handed.
+
+       THE SECOND HALF IS NOT OPTIONAL, and it is the half that is easy to
+       argue out of. A card is redrawn only when the run it sits in is
+       rebuilt, which is when this array is rebuilt, so a screen value that
+       did not invalidate this cache would never be redrawn at all: the
+       poll's member count, the bill's roster and own share, the who-is-here
+       venue name and the receipt roster all read from the screen, two of
+       them because a suite pins the expression that reads them. A card on a
+       REAL message row needs one thing more than a rebuilt array, because
+       MessageRow is React.memo over the row object: see voteOnCard above,
+       where the vote a shared place is carrying is stamped onto its row for
+       exactly that reason. */
+    const rememberRows = (built, inputs) => {
+      const last = rowsCacheRef.current;
+      const same = last.rows !== null
+        && last.inputs.length === inputs.length
+        && inputs.every((v, i) => Object.is(v, last.inputs[i]));
+      if (same) return last.rows;
+      /* A MISS HAS TO PRODUCE A NEW ARRAY IDENTITY, and that is not free here.
+         When nothing needs dressing and no synthetic row is spliced, `built`
+         IS flock.messages by reference. A flock_read rebuilds the plan row
+         with new `readers` and the SAME messages array, so the cache misses,
+         hands back a reference the stream already has, MessageList's run memo
+         sees no change and renderStatus is never asked again: the receipt
+         ladder stops one rung short of Opened, on the commit that was
+         supposed to advance it. Copying on that one case is O(rows) on a
+         miss, which is the render that was going to do the work anyway. */
+      const rows = built === last.rows ? built.slice() : built;
+      rowsCacheRef.current = { inputs, rows };
+      return rows;
+    };
+
+    /* EACH SYNTHETIC ROW CARRIES WHAT ITS CARD DRAWS. renderCard used to
+       reach MessageRow through useStableFn, whose ref is refreshed in a
+       layout effect, which is AFTER the render in which a row first appears.
+       A row that mounted in that render was drawn by the previous render's
+       closure, and in the previous render the thing it describes did not
+       exist: the nudge was null there, so `nudgeForCard.text` threw and the
+       crash net took the whole chat screen down. A sweep that pressed every
+       button reached it through Invite on a plan opened from the Nest, where
+       the nudge went away and came back across two renders. The same
+       one-commit lag sat under the bill, the poll and the who's-here row,
+       and any of the three would have failed the same way.
+
+       THE LAG IN FRONT OF THESE TWO RENDERERS IS GONE, and it is written out
+       where they are declared: both are reached through a ref this render
+       writes rather than one the last commit wrote. This rule stands anyway,
+       and it is not ceremony. It is what makes a row and its card one thing:
+       whatever draws a row is handed everything that row describes, so no
+       rearranging above can put a half-built card on screen, and these four
+       cannot go stale while the array they sit in holds still. */
     let streamRows = listRows;
     if (!searchActive) {
       if (pollForCard) {
@@ -1554,6 +1706,57 @@ export default function ChatDetail({
         streamRows = spliceByTime(streamRows, { id: NUDGE_ROW_ID, message_type: 'system', nudge: nudgeForCard }, NaN);
       }
     }
+
+    /* The clock, as an input, and only while there is a position that could
+       go stale. POSITION_FRESH_MS is a moving window rather than a fact about
+       the data, so without this a who-is-here card could outlive the fix it
+       was built on for as long as nothing else on the screen changed. With no
+       positions at all there is no card to go stale and no reason to rebuild
+       the thread twice a minute. */
+    const positionClock = Object.keys(flockMemberLocations || {}).length > 0
+      ? Math.floor(Date.now() / POSITION_CLOCK_MS)
+      : 0;
+    streamRows = rememberRows(streamRows, [
+      /* The plan, and it covers most of this list on its own. App.js replaces
+         the object whenever any of it changes (getSelectedFlock is a find over
+         the flocks array, and every writer rebuilds the row it touches with a
+         spread), so one identity stands for the messages the rows are made of,
+         the votes under the poll card and the venue cards, the status and the
+         venue behind pollLockedName and the who-is-here name, the coordinates
+         that decide who is near, the roster and member count the poll footer
+         and the bill avatars read, the creator the host test reads, and the
+         readers roster the receipt is computed from. */
+      flock,
+      /* Whether a search is open and what it is for. A search drops all four
+         cards and rewrites the rows it keeps with highlight nodes. */
+      showChatSearch,
+      chatSearch,
+      /* The bill card's whole payload, and half of the ghost-commit gate. */
+      billSplit,
+      /* The other half. estimatedShare is read off budgetStatus.ceiling, and
+         it is both the shell card's figure and the gate on drawing one. */
+      budgetStatus,
+      /* Every count and every face on the who-is-here row. */
+      flockMemberLocations,
+      /* The viewer: kept out of those counts, and the bill card's viewerId,
+         own share and Undo test, and the poll card's host test. */
+      authUser,
+      /* The nudge's "not mid-sentence" gate. */
+      isTyping,
+      /* The only other thing that takes the nudge away. */
+      nudgeDismissed,
+      /* See the note above it. */
+      positionClock,
+      /* Every write a card carries goes against this id: the vote, the ghost
+         commit, the settle, the undo, and the way back from the venue page.
+         It moves only when `flock` does, and it is named anyway because a
+         card holding the wrong flock id writes to the wrong flock. */
+      selectedFlockId,
+      /* handleConfirmVenue's place_id fallback, reached from the poll card's
+         Lock. A stale pin list is how a confirmed venue loses its place id,
+         and with it Details, Directions, Check In, the map and feedback. */
+      allVenues,
+    ]);
 
     // A venue card is the one message shape the module does not own, so the
     // screen draws it and the module calls back for it. Same vote arithmetic
@@ -1830,14 +2033,18 @@ export default function ChatDetail({
       }
       if (m.message_type === 'venue_card' && m.venue_data) {
         const vc = m.venue_data;
-        const existingVote = (flock.votes || []).find(v => v.venue === vc.name);
-        const voted = !!existingVote && (existingVote.voters || []).includes('You');
+        /* THE ROW, NOT THE SCREEN, for the same reason as the four cards
+           above, and for one more this card has on its own: MessageRow is
+           React.memo over the row, so a vote that moved nothing on the row
+           never reached the card at all. voteOnCard, where the rows are
+           dressed, has the whole account. */
+        const voted = !!(m.vote && m.vote.active);
         return (
           <VenueCardRow
             venue={vc}
             surface="flock"
             actionActive={voted}
-            count={existingVote ? voteTotal(existingVote) : null}
+            count={m.vote ? m.vote.count : null}
             /* The card is presentational and has no BASE_URL, so the path
                resolver is handed in, and so is the placeholder the rest of the
                app swaps to on an error. Both used to be withheld here on the
@@ -1955,6 +2162,14 @@ export default function ChatDetail({
       if (!status) return null;
       return <StatusLine status={status} openedBy={openedBy} />;
     };
+
+    /* THE TWO BODIES, INSTALLED DURING RENDER. The block at stableRenderCard
+       has the whole reason: both of these are called by the stream WHILE IT
+       RENDERS, and a layout effect would hand it the closure from the commit
+       before this one. Every child of this component renders after this line,
+       so a row drawn in this render is drawn by this render. */
+    renderCardRef.current = renderCard;
+    renderStatusRef.current = renderStatus;
 
     // Scrollback, the same three-part condition the old control carried, said
     // in the module's words: there is nothing further back while a first page
@@ -2508,6 +2723,10 @@ export default function ChatDetail({
              function serves the whole sequence. */
           onTouch={keyboard.dismissOnDrag}
           rows={streamRows}
+          /* Which of those rows are not messages. The scroll rules count
+             arrivals off everything else, so a card this screen invents
+             cannot raise a new-message pill for a row nobody sent. */
+          syntheticIds={SYNTHETIC_ROW_IDS}
           threadKey={flock.id}
           myId={authUser?.id}
           ownName="You"

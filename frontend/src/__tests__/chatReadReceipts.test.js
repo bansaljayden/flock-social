@@ -501,6 +501,58 @@ describe('the flock chat draws the receipt the server can back', () => {
     noReceiptDrawn();
   });
 
+  test('a flock_read arriving on its own still moves the receipt on', () => {
+    /* THE LAST RUNG OF THE LADDER, and what it is really pinning is that the
+       renderer the stream calls is the one this render built.
+
+       renderStatus is called by MessageGroup WHILE IT RENDERS. It used to be
+       reached through useStableFn, whose ref is installed in a layout effect,
+       so a render-time call ran the PREVIOUS commit's closure and read the
+       PREVIOUS `readers`. That was invisible while the row array was rebuilt
+       on every render, because the render after drew the receipt again with a
+       current closure. The array is remembered now, so there is no render
+       after: Delivered would have been the last word this flock ever said
+       about a message everybody had opened. */
+    const watermarks = (openedTo) => [
+      { userId: 2, name: 'Ava Chen', lastDeliveredMessageId: 101, lastOpenedMessageId: openedTo },
+      { userId: 3, name: 'Bo Nakamura', lastDeliveredMessageId: 101, lastOpenedMessageId: openedTo },
+    ];
+    /* A BARE THREAD, AND THAT IS THE ENTIRE POINT OF THE SETUP.
+       This test was green before the bug was fixed, for a fixture reason, and
+       it is worth naming so nobody relaxes it later. The harness defaults
+       billSplit to `[]`, and an empty array is TRUTHY, so `billSplit || ...`
+       put a bill row in every thread this suite builds. A spliced synthetic
+       row means the stream is a NEW array on every rebuild, which is exactly
+       the condition that hides this defect.
+
+       So: billSplit null, a status that kills the nudge, no votes, nobody
+       sharing a position, and plain text rows that need no dressing. Then
+       `listRows` IS flock.messages by reference and the stream is that same
+       array, which is the shape where a flock_read changes the plan object,
+       misses the row cache, and hands the stream back a reference it already
+       had. Without the copy on a miss, Delivered is the last word this flock
+       ever says about a message everybody opened. */
+    const bare = {
+      status: 'confirmed',
+      votes: [],
+      messages: [theirs(), mine({ status: 'sent' })],
+      readers: watermarks(0),
+    };
+    const p = chatProps({ flock: bare, billSplit: null, budgetStatus: null, flockMemberLocations: {} });
+    const { rerender } = render(React.createElement(ChatDetail, p));
+    expect(screen.getByText('Delivered')).toBeInTheDocument();
+
+    /* What App.js does with a flock_read: it rebuilds the flock row with a new
+       `readers` and touches nothing else on this screen. The messages array is
+       the SAME reference across this change, which is the whole hazard. */
+    const before = p.getSelectedFlock();
+    const opened = { ...before, readers: watermarks(101) };
+    expect(opened.messages).toBe(before.messages);
+    rerender(React.createElement(ChatDetail, { ...p, getSelectedFlock: () => opened }));
+    expect(screen.getByText('Opened by 2')).toBeInTheDocument();
+    expect(screen.queryByText('Delivered')).toBeNull();
+  });
+
   test('a failed send keeps its retry and its remove', () => {
     const p = chatProps({ flock: { messages: [mine({ id: 'temp-1', failed: true })], readers: [] } });
     render(React.createElement(ChatDetail, p));

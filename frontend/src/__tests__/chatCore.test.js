@@ -919,6 +919,11 @@ function makeScrollable(el, { scrollHeight = 1000, clientHeight = 300, scrollTop
   return () => top;
 }
 
+/* The ids screens/ChatDetail.js declares synthetic: rows it builds itself
+   rather than reading off the server. Written out rather than imported,
+   because importing them would pull a 146 KB screen into this file. */
+const SYNTHETIC = ['bill-card', 'poll-card', 'nudge-row', 'who-is-here'];
+
 const listProps = {
   myId: 1,
   ownColour: 'rgb(224, 76, 90)',
@@ -1125,6 +1130,60 @@ describe('MessageList: the scroller', () => {
     rerender(
       <MessageList {...listProps} rows={[row({ id: 'a' }), { ...pending, id: 55, pending: false }]} />
     );
+    expect(screen.queryByText(/new message/)).toBeNull();
+  });
+
+  it('a row the screen invented is not a message arriving', () => {
+    /* THE FLOCK STREAM carries four rows it builds itself, and two of them
+       go on the END with no anchor: the nudge and the who-is-here line. So
+       the array grew and its last id changed the moment the other person
+       stopped typing, and this component read that as traffic and offered
+       "1 new message" for a row nobody sent. Tapping it took the reader to a
+       prompt. */
+    const rows = [row({ id: 'a' })];
+    const { container, rerender } = render(
+      <MessageList {...listProps} rows={rows} syntheticIds={SYNTHETIC} />
+    );
+    const scroller = container.querySelector('.chat-scroller');
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
+    fireEvent.scroll(scroller);
+
+    const nudge = { id: 'nudge-row', message_type: 'system' };
+    rerender(
+      <MessageList {...listProps} rows={[...rows, nudge]} syntheticIds={SYNTHETIC} />
+    );
+    expect(screen.queryByText(/new message/)).toBeNull();
+    // And the reader is left where they were rather than being moved.
+    expect(readTop()).toBe(40);
+
+    // A real message landing beside it still counts ONCE. The old arithmetic
+    // measured from the last known id to the end of the array, so the row
+    // sitting after the message would have counted as a second arrival.
+    rerender(
+      <MessageList {...listProps} rows={[...rows, row({ id: 'b' }), nudge]} syntheticIds={SYNTHETIC} />
+    );
+    expect(screen.getByText('1 new message')).toBeInTheDocument();
+  });
+
+  it('still takes a reader at the bottom down to a card that appears', () => {
+    /* The half of the old behaviour worth keeping. A card that lands under
+       the fold is a card nobody sees, so a reader who is already at the
+       bottom is carried to it. What they do not get is a claim that
+       somebody sent something. */
+    const rows = [row({ id: 'a' })];
+    const { container, rerender } = render(
+      <MessageList {...listProps} rows={rows} syntheticIds={SYNTHETIC} />
+    );
+    const scroller = container.querySelector('.chat-scroller');
+    const readTop = makeScrollable(scroller, { scrollTop: 0 });
+    rerender(
+      <MessageList
+        {...listProps}
+        rows={[...rows, { id: 'who-is-here', message_type: 'system' }]}
+        syntheticIds={SYNTHETIC}
+      />
+    );
+    expect(readTop()).toBe(1000);
     expect(screen.queryByText(/new message/)).toBeNull();
   });
 
