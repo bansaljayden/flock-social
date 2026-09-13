@@ -92,8 +92,39 @@ const PARSE_OPTIONS = {
 };
 const parse = (code) => parser.parse(code, PARSE_OPTIONS);
 
-/* The nine screens, the props object each one is handed, and the component
-   name it exports. Adding another screen means adding a row here. */
+/* The ten screens and the two overlays, the props object each one is handed,
+   and the component name it exports. Adding another screen means adding a row
+   here.
+
+   THE LAST TWO ROWS ARE NOT SCREENS and the difference is worth a sentence,
+   because every check below still applies to them while one test title no
+   longer reads literally. The event detail overlay left App.js on 2026-09-13.
+   It is not mounted from renderScreen: it sits in the root tree beside the
+   toast region, inside its own `{eventDetail && (...)}` gate and a
+   React.Suspense, because the gate is what keeps its chunk unrequested until a
+   tap asks for it. The full-screen search results list left the same day and is
+   mounted the same way, inside a `{showSearchResults && (...)}` gate at the
+   bottom of the Discover container. What makes them belong here is the part
+   that is identical to the ten: each was an inline block inside FlockAppInner
+   that closed over a set of names, fourteen and twenty-three, and those names
+   travel as a props object now, which is exactly the substitution the four
+   checks below exist to police. For the results list that substitution is the
+   whole risk: `window` hands out `name`, `status`, `length`, `top` and two
+   dozen more, so a missed prop of that shape would build clean and read the
+   global for ever. Check 3 is what refuses it. `dir` is how a row says it lives
+   in components/ rather than screens/.
+
+   THE LAST ROW IS NOT AN OVERLAY EITHER. Birdie's panel left App.js on
+   2026-09-13, 460 lines of assistant surface that no first-paint path can
+   reach, and it is mounted from its own gate and its own React.Suspense beside
+   the toast region. It belongs here for the reason the two overlays do: it was
+   an inline block inside FlockAppInner that closed over 46 names, and those
+   names travel as a props object now. It is also the one row whose file holds
+   hooks of its own, the focus and the auto-scroll that used to sit in
+   FlockAppInner and could not stay there once the commit that opens the panel
+   stopped containing it, so check 4 below matters twice over for this row: a
+   component type rebuilt on every render would run both of those effects again
+   on every unrelated state change. */
 const SCREENS = [
   { component: 'ChatDetail', file: 'ChatDetail.js', props: 'chatDetailProps' },
   { component: 'AddFriends', file: 'AddFriends.js', props: 'addFriendsProps' },
@@ -104,6 +135,10 @@ const SCREENS = [
   { component: 'VenueOnboarding', file: 'VenueOnboarding.js', props: 'venueOnboardingProps' },
   { component: 'FlockDetail', file: 'FlockDetail.js', props: 'flockDetailProps' },
   { component: 'CreateScreen', file: 'CreateScreen.js', props: 'createScreenProps' },
+  { component: 'PastFlocksScreen', file: 'PastFlocksScreen.js', props: 'pastFlocksProps' },
+  { component: 'EventDetailOverlay', dir: 'components', file: 'EventDetailOverlay.js', props: 'eventDetailOverlayProps' },
+  { component: 'SearchResultsOverlay', dir: 'components', file: 'SearchResultsOverlay.js', props: 'searchResultsOverlayProps' },
+  { component: 'BirdiePanel', dir: 'components/birdie', file: 'BirdiePanel.js', props: 'birdiePanelProps' },
 ];
 
 const APP_SOURCE = read('App.js');
@@ -167,7 +202,7 @@ function freeIdentifiers(ast) {
 }
 
 const SCREEN_SOURCES = Object.fromEntries(
-  SCREENS.map((s) => [s.component, read('screens', s.file)])
+  SCREENS.map((s) => [s.component, read(s.dir || 'screens', s.file)])
 );
 const SCREEN_ASTS = Object.fromEntries(
   SCREENS.map((s) => [s.component, parse(SCREEN_SOURCES[s.component])])
@@ -324,7 +359,11 @@ describe('the moved screens are stable component types', () => {
     });
   });
 
-  it('renderScreen mounts each of them as an element with a spread props object', () => {
+  it('each of them is mounted as an element with a spread props object', () => {
+    // renderScreen mounts the ten screens; the event detail overlay and the
+    // results list are mounted from their own gates and their own Suspense
+    // boundaries, which is the same shape for this purpose and the reason this
+    // title no longer says renderScreen.
     // Pins the shape the rest of this file reasons about. If one of them goes
     // back to being called, the props object stops being the interface and
     // every assertion above is describing something that is no longer there.

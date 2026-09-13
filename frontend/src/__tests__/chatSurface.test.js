@@ -48,7 +48,13 @@ const apiPath = path.join(__dirname, '..', 'services', 'api.js');
 // one.
 const appSource = fs.readFileSync(appPath, 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
+  // Both pay sheets left App.js on 2026-09-13 for components/PaymentSheets.js,
+  // and one of the two unbreakable-string sites the wrap rule below counts went
+  // with them: the wallet handle, which is user-supplied and has no spaces in
+  // it. The rule is about the app's long-string sites, not about which file
+  // holds them, so the file is read here rather than the count lowered.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'PaymentSheets.js'), 'utf8');
 const apiSource = fs.readFileSync(apiPath, 'utf8');
 
 /* THE STREAM ITSELF IS `components/chat` NOW, and that is why several counts

@@ -46,7 +46,23 @@ const DM = read('screens', 'DmDetail.js');
    screens are still read for the half they kept: each has to WIRE the actions
    door, or the row has no way in at all. */
 const ROW = read('components', 'chat', 'MessageRow.js');
+/* THE WRAP-UP SHEET IS ITS OWN FILE NOW. The attendance rows whose pressed
+   state is pinned below moved to components/overlays/AttendanceModal.js on
+   2026-09-13 with the sheet that draws them, so the 2026-08-27 audit fix is
+   read where it lives rather than dropped. */
+const ATTENDANCE = read('components', 'overlays', 'AttendanceModal.js');
 const LIST = read('components', 'chat', 'MessageList.js');
+/* THE FULL-SCREEN RESULTS LIST IS ITS OWN FILE NOW. The search cards whose
+   crowd ink and whose Top Rated chip are pinned below moved to
+   components/SearchResultsOverlay.js on 2026-09-13 with the panel that draws
+   them, so the 2026-08-27 audit fix is read where it lives rather than dropped.
+   Both assertions name SEARCH rather than APP for a second reason as well: read
+   against App.js, the indexOf below would return -1 and the slice around it
+   would quietly test the first hundred bytes of the file instead of failing. */
+const SEARCH = read('components', 'SearchResultsOverlay.js');
+// The card a map pin opens has its own file since 2026-09-13, so the map mini
+// card label below reads the file that draws it.
+const CARD = read('components', 'venue', 'ConsumerVenueCard.js');
 
 describe('chat message actions are reachable without a pointer', () => {
   test('both screens still open the actions menu the row reports', () => {
@@ -143,16 +159,21 @@ describe('crowd readings are readable text, not saturated swatch hues', () => {
   test('the text sites take the ink and keep the hue for the swatch', () => {
     // VenueCard chat chip: percentage in ink over the hue-tinted pill.
     expect(APP).toContain('color: crowdInk, padding: ');
-    // Search rows, the no-photo variant on the card background.
-    expect(APP).toMatch(/color: crowdInk, backgroundColor: `\$\{crowdColor\}12`/);
+    // Search rows, the no-photo variant on the card background. Their own
+    // file since 2026-09-13, so this reads the file that draws them.
+    expect(SEARCH).toMatch(/color: crowdInk, backgroundColor: `\$\{crowdColor\}12`/);
     // The map mini card label.
-    expect(APP).toContain('color: crowdInkFor(score, colors) || crowdColor');
+    expect(CARD).toContain('color: crowdInkFor(score, colors) || crowdColor');
   });
 
   test('the Top Rated chip uses the amber token pair instead of white on translucent amber', () => {
     expect(APP).not.toContain("backgroundColor: 'rgba(245,158,11,0.9)'");
-    const at = APP.indexOf('Top Rated');
-    const chip = APP.slice(Math.max(0, at - 600), at + 100);
+    expect(SEARCH).not.toContain("backgroundColor: 'rgba(245,158,11,0.9)'");
+    const at = SEARCH.indexOf('Top Rated');
+    // Named, so a chip that moves again fails here instead of passing against
+    // the slice a -1 index produces.
+    expect(at).toBeGreaterThan(-1);
+    const chip = SEARCH.slice(Math.max(0, at - 600), at + 100);
     expect(chip).toContain('var(--accent-amber-bg)');
     expect(chip).toContain('var(--accent-amber-text)');
   });
@@ -171,7 +192,7 @@ describe('reduced motion reaches the map camera', () => {
 
 describe('small state announcements', () => {
   test('attendance rows and calendar days carry pressed state', () => {
-    expect(APP).toMatch(/aria-pressed=\{!!attendanceChecks\[m\.id\]\}/);
+    expect(ATTENDANCE).toMatch(/aria-pressed=\{!!attendanceChecks\[m\.id\]\}/);
     expect(APP).toMatch(/aria-pressed=\{isSelected\}/);
   });
 

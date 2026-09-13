@@ -82,11 +82,40 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // The flock plan detail screen left App.js on 2026-09-01 for
 // screens/FlockDetail.js, carrying the plan header, the roster, the venue
 // votes, the ruled details list and the feedback sheet, so it is read too.
+// The past flocks screen left on 2026-09-13 for screens/PastFlocksScreen.js,
+// carrying the Back button, the alert-role error state and the history rows
+// this file sweeps, so it is read too.
 // The create screen left on the same day for screens/CreateScreen.js,
 // carrying the plan name field, the day and hour chips, the invite search
 // and the Remove-a-friend buttons this file names, so it is read too.
 const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
   + read('screens/ProfileSettings.js') + read('screens/FlockDetail.js') + read('screens/CreateScreen.js')
+  + read('screens/PastFlocksScreen.js')
+  // Both pay sheets left on 2026-09-13 for components/PaymentSheets.js,
+  // carrying the wallet rows, the Close buttons and the two DialogBehaviors
+  // this file sweeps, so that file is read too.
+  + read('components/PaymentSheets.js')
+  // The full-screen results list left on the same day for
+  // components/SearchResultsOverlay.js, carrying the search field, the Map
+  // button, the sort chips and the modal={false} DialogBehavior this file
+  // asserts on, so that file is read too.
+  + read('components/SearchResultsOverlay.js')
+  // The venue detail sheet left on the same day for
+  // components/overlays/VenueDetailSheet.js, carrying the photo carousel
+  // arrows, the Close button, the two Report buttons and the five rating stars
+  // this file sweeps, so that file is read too.
+  + read('components/overlays/VenueDetailSheet.js')
+  // Birdie's panel left on the same day for components/birdie/BirdiePanel.js,
+  // carrying the new-chat, expand, close and share-sheet-close buttons, the
+  // aria-label on the ask box and its own DialogBehavior, so that file is read
+  // too. APPENDED, like the three above it, because the scans below slice
+  // windows that start in App.js.
+  + read('components/birdie/BirdiePanel.js')
+  // The venue card a map pin opens left on the same day for
+  // components/venue/ConsumerVenueCard.js, carrying the three forecast teaser
+  // buttons and the noise readout this file counts, so that file is read too.
+  // APPENDED, like the four above it, for the same reason.
+  + read('components/venue/ConsumerVenueCard.js')
   + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
 // THE CHAT STREAM AND THE CHAT COMPOSER LEFT BOTH SCREENS AT ONCE, for
 // components/chat/. The message row, the scroller, the status line, the input
@@ -608,7 +637,44 @@ const stripComments = (src) => {
 const APP_FILES = [
   'App.js', 'screens/ChatDetail.js', 'screens/DmDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
   'screens/ProfileSettings.js', 'screens/FlockDetail.js', 'screens/CreateScreen.js',
+  'screens/PastFlocksScreen.js',
   'components/EditProfileForm.js', 'components/NewDmModal.js', 'components/VerifyEmailSheet.js',
+  // The wrap-up sheet, lazily fetched since 2026-09-13. It is in this list for
+  // the same reason NewDmModal is: the overlay scan below is derived from
+  // source, so a sheet that leaves App.js leaves the sweep unless it is named.
+  'components/overlays/AttendanceModal.js',
+  // The event detail screen, lazily fetched since 2026-09-13, for the same
+  // reason: it is the overlay behind the Details button on an event card and
+  // it carries the DialogBehavior and the Back button this file checks, so
+  // unnaming it would drop a full-bleed overlay out of the sweep entirely.
+  'components/EventDetailOverlay.js',
+  // And both pay sheets, lazily fetched since the same day. The overlay scan
+  // below finds them by their own fixed-inset divs, so unnaming them would
+  // drop the one surface in the app that moves money out of the sweep.
+  'components/PaymentSheets.js',
+  // And the full-screen results list, lazily fetched since the same day. It is
+  // the panel behind "See All Results" under the search dropdown, and it
+  // carries the modal={false} DialogBehavior named below, so unnaming it would
+  // drop the whole search surface out of the sweep. APPENDED, not inserted
+  // before App.js: scans below slice windows out of `code` that begin in
+  // App.js, and a file ahead of it would cut them short.
+  'components/SearchResultsOverlay.js',
+  // And the venue detail sheet, lazily fetched since the same day. It is the
+  // most tapped overlay in the product and it carries the
+  // onClose={closeVenueDetail} named below, so unnaming it would drop the whole
+  // venue surface out of the sweep. APPENDED for the same reason the results
+  // list is.
+  'components/overlays/VenueDetailSheet.js',
+  // And Birdie's panel, lazily fetched since the same day. It is the whole
+  // assistant surface and it carries four icon-only buttons and the one field
+  // in the app people type questions into, so unnaming it would drop all of
+  // that out of the sweep. APPENDED for the same reason.
+  'components/birdie/BirdiePanel.js',
+  // And the card a map pin opens, lazily fetched since the same day. It is the
+  // surface the whole crowd forecast is drawn on, it carries the three paywall
+  // teasers swept above, and unnaming it would drop about 970 lines of JSX out
+  // of every derived scan in this file. APPENDED for the same reason.
+  'components/venue/ConsumerVenueCard.js',
 ];
 const code = APP_FILES.map((f) => stripComments(read(f))).join('\n');
 
@@ -856,8 +922,14 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // scales in on delays past a second for somebody who asked it not to.
     // The import is the lean one: `m` plus LazyMotion with domAnimation, not
     // the full `motion` component, so a regression back to the heavy bundle
-    // fails this line as well as the wrapper assertion below.
-    expect(code).toMatch(/import \{ m, AnimatePresence, MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
+    // fails these lines as well as the wrapper assertion below. App.js stopped
+    // importing `m` itself on 2026-09-13, when the last component in it that
+    // animated went to components/venue/ConsumerVenueCard.js, so the lean
+    // import is pinned where it is now used and the provider half is pinned in
+    // App.js. Both halves are in `code`, and the next test refuses the full
+    // `motion` component in either of them.
+    expect(code).toMatch(/import \{ AnimatePresence, MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
+    expect(code).toMatch(/import \{ m \} from 'framer-motion';/);
     expect(code).toMatch(/<MotionConfig reducedMotion="user">/);
   });
 

@@ -8,6 +8,12 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const app = read('App.js');
 const nav = read('services/pushNavigation.js');
 const dash = read('screens/VenueDashboard.js');
+// The card a map pin opens left App.js on 2026-09-13 for
+// components/venue/ConsumerVenueCard.js. The line that says how many check-ins
+// a venue has taken without a hardware sensor is drawn there now, so the sheet
+// half of that contract is read from that file; the loads that feed it stayed
+// in App.js and are still read from there.
+const card = read('components/venue/ConsumerVenueCard.js');
 const aasa = fs.readFileSync(path.join(__dirname, '..', '..', 'api', 'apple-app-site-association.js'), 'utf8');
 
 test('a tag tap is a claimed universal link with an intent behind it', () => {
@@ -46,7 +52,7 @@ test('check-ins are visible to the sheet and the dashboard without a hardware se
   expect(app).toMatch(/setSensorData\(current \|\| null\);/);
   expect(app).toMatch(/setOwnerSensorData\(current \|\| null\);/);
   expect(app).not.toMatch(/current && current\.sensor_data \? current : null/);
-  expect(app).toMatch(/\{sensorData && !sensorData\.sensor_data && sensorData\.recent_checkins > 0 && \(/);
+  expect(card).toMatch(/\{sensorData && !sensorData\.sensor_data && sensorData\.recent_checkins > 0 && \(/);
   expect(dash).toMatch(/\{ownerSensorData && !ownerSensorData\.sensor_data && \(/);
 });
 

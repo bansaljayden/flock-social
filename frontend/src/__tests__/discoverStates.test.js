@@ -4,11 +4,22 @@ const fs = require('fs');
 const path = require('path');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The full-screen results list moved to components/SearchResultsOverlay.js on
+// 2026-09-13. The budget sentence below is drawn there now, so it is read from
+// there: left pointed at App.js it would have gone green by looking at the
+// wrong file rather than by the sentence still being said.
+const searchResults = fs.readFileSync(path.join(__dirname, '..', 'components', 'SearchResultsOverlay.js'), 'utf8');
+// The card a map pin opens moved to components/venue/ConsumerVenueCard.js on
+// the same day, carrying the crowd forecast block. The two sentences under the
+// bars are read from there: left pointed at App.js the first of them would have
+// gone green on a comment that happens to quote it rather than on the card
+// still saying it.
+const card = fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 test('a failed crowd read ends the skeleton and says so', () => {
   expect(app).toMatch(/const \[crowdFetchFailed, setCrowdFetchFailed\] = useState\(false\);/);
   expect(app).toMatch(/setCrowdFetchFailed\(crowdResult\.status !== 'fulfilled'\);/);
-  expect(app).toMatch(/No crowd read for this spot right now\./);
+  expect(card).toMatch(/No crowd read for this spot right now\./);
 });
 
 test('a search that found nothing or failed clears the last city\'s pins', () => {
@@ -18,7 +29,7 @@ test('a search that found nothing or failed clears the last city\'s pins', () =>
 
 test('zero venues nearby is said, and the budget cap is named', () => {
   expect(app).toMatch(/No venues on Flock's map right here yet\. Search a place by name, or move the map\./);
-  expect(app).toMatch(/spots here are above your group's budget, so none show\. The search worked\./);
+  expect(searchResults).toMatch(/spots here are above your group's budget, so none show\. The search worked\./);
 });
 
 test('the category filter drives pins, heat and an empty sentence from one predicate', () => {
@@ -34,6 +45,6 @@ test('a quota refusal that names its window does not offer a retry that cannot w
 });
 
 test('a category-shaped hourly curve says so under the bars', () => {
-  expect(app).toMatch(/\{cd && !cd\.hourly && !crowdFetchFailed && \(/);
-  expect(app).toMatch(/at these hours, not a read of this spot\./);
+  expect(card).toMatch(/\{cd && !cd\.hourly && !crowdFetchFailed && \(/);
+  expect(card).toMatch(/at these hours, not a read of this spot\./);
 });

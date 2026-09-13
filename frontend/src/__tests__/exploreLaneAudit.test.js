@@ -33,6 +33,12 @@ test('the dot and ring leave with Location', () => {
 
 test('scores carry fetchedAt and expire, and an owner reading is not printed past its expiry', () => {
   const app = read('App.js');
+  /* All three labelled sites are the full-screen results list's, and that list
+     is components/SearchResultsOverlay.js since 2026-09-13, so the count reads
+     the file that draws them rather than silently falling to zero in App.js.
+     The TTL, the staleness test and the expiry check stay here: ownerReportShown
+     is defined in App.js and travels to the list as a prop. */
+  const searchResults = read('components/SearchResultsOverlay.js');
   expect(app).toContain('const CROWD_SCORE_TTL_MS = 30 * 60 * 1000;');
   expect(app).toContain("const stale = (e) => !e || !e.fetchedAt || Date.now() - e.fetchedAt > CROWD_SCORE_TTL_MS;");
   expect(app).toContain("map[p.placeId] = { ...p, fetchedAt };");
@@ -46,14 +52,17 @@ test('scores carry fetchedAt and expire, and an owner reading is not printed pas
      for the real property — wherever a crowd number is shown, an owner
      reading is labelled as the venue's — but it does catch a new site added
      without the owner branch, which is what it is here to do. */
-  expect((app.match(/ownerReportShown\(prediction\) \?/g) || []).length).toBe(3);
+  expect((searchResults.match(/ownerReportShown\(prediction\) \?/g) || []).length).toBe(3);
   expect(app).toContain("Date.parse(prediction.ownerReport.expiresAt) > Date.now()");
 });
 
 test('a failed crowd read, a map that cannot load, and a show that started are all said', () => {
   const app = read('App.js');
   // noEstimate is crowdFetchFailed plus a read that carried no finite score.
-  expect(app).toContain("{noEstimate && !isClosed ? (");
+  // It is drawn on the card a map pin opens, which has had its own file since
+  // 2026-09-13, so that sentence is read there and the map ones stay here.
+  const card = read('components/venue/ConsumerVenueCard.js');
+  expect(card).toContain("{noEstimate && !isClosed ? (");
   expect(app).toContain("The map could not load. Search still works.");
   expect(app).toContain("setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);");
   expect(app).toContain("{!mapReady && !mapFailed && (");

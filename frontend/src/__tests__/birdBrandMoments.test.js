@@ -85,14 +85,32 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  // The past flocks screen left on 2026-09-13 for screens/PastFlocksScreen.js
+  // and took both of its birds with it: the warm one beside a history read
+  // that failed, and the one on a history with nothing in it yet.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'PastFlocksScreen.js'), 'utf8')
   // The DM thread (screens/DmDetail.js) had no bird at all until the
   // 2026-09-01 sweep; the empty thread, the votes panel and the venue sheet
   // each carry one now, so it is read here too.
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
+  // Both pay sheets left on 2026-09-13 for components/PaymentSheets.js and
+  // took their one bird with it: the still mascot beside the line that says
+  // the payee has saved no way to be paid.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'PaymentSheets.js'), 'utf8')
+  // Birdie's panel left on 2026-09-13 for components/birdie/BirdiePanel.js and
+  // took BOTH animated mounts with it, the empty-state bird and the whisper
+  // behind the transcript, plus the warm still bird on the share sheet. The
+  // count below is about those two mounts, so this file is read here.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'birdie', 'BirdiePanel.js'), 'utf8')
   // Two components that render their own empty and error states: the New
   // Message sheet and the Roost insight cards.
   + fs.readFileSync(path.join(__dirname, '..', 'components', 'NewDmModal.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'components', 'VenueInsightCards.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'VenueInsightCards.js'), 'utf8')
+  // The venue detail sheet left App.js on 2026-09-13 for
+  // components/overlays/VenueDetailSheet.js and took both of its birds with it:
+  // the warm one beside a reviews read that failed, and the one on a venue
+  // nobody has reviewed yet.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'overlays', 'VenueDetailSheet.js'), 'utf8');
 // The crash nets live outside the app tree and are read on their own: a bird
 // counted in APP would not prove the error page has one.
 const ERROR_BOUNDARY_SRC = fs.readFileSync(path.join(__dirname, '..', 'components', 'ErrorBoundary.js'), 'utf8');

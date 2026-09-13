@@ -39,7 +39,13 @@ const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 // settings row went with it, so that file is read into `app` as well.
 const app = read('frontend', 'src', 'App.js')
   + read('frontend', 'src', 'components', 'EditProfileForm.js')
-  + read('frontend', 'src', 'screens', 'ProfileSettings.js');
+  + read('frontend', 'src', 'screens', 'ProfileSettings.js')
+  // The card a map pin opens left App.js on 2026-09-13 for
+  // components/venue/ConsumerVenueCard.js, carrying the sensor cards and the
+  // noise bands this file reads, so it is read into `app` as well. Appended,
+  // so every negative assertion below still covers it: a decibel figure must
+  // not become sayable by moving one file across.
+  + read('frontend', 'src', 'components', 'venue', 'ConsumerVenueCard.js');
 // The Add Friends screen, and with it the whole Contacts tab, left App.js for
 // screens/AddFriends.js. The handlers behind it did not move, so this file now
 // reads two sources: each assertion points at whichever one holds the line it

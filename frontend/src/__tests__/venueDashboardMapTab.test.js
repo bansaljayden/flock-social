@@ -46,7 +46,23 @@ const path = require('path');
 // this file scans went with it. Nothing asserted below changed. The app source
 // is simply in two files, so both are read, in the order they used to be one.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
+  // The card itself left App.js on 2026-09-13 for
+  // components/venue/ConsumerVenueCard.js: 971 lines that nothing renders until
+  // a pin is tapped, fetched on that tap instead of riding the boot chunk. Both
+  // call sites are unchanged, so condition 1 below is unchanged with it, and the
+  // signature sentence is still counted across every file that could hold a
+  // second copy of the card. APPENDED, not inserted before App.js: the regions
+  // below walk forward from a marker, and a file ahead of it would cut them
+  // short.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
+
+// The card body on its own. It used to be a region of App.js bounded by the
+// declaration and the Explore screen below it; it is a module now, so the file
+// IS the region. Read separately from APP because the owner-view checks below
+// are about what the card draws, and a match anywhere else would not answer
+// them.
+const CARD = fs.readFileSync(path.join(__dirname, '..', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
 
 function codeOnly(src) {
   return src
@@ -139,7 +155,7 @@ describe('the map tab reads what users read', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('owner view of the card', () => {
-  const card = region('const renderConsumerVenueCard = (', 'const ExploreScreen = () => (');
+  const card = CARD;
 
   it('the crowd reality check never renders for a venue account', () => {
     // An owner "reporting from the room" would be a user-shaped signal that

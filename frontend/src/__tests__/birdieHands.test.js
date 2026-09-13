@@ -10,7 +10,15 @@
 import fs from 'fs';
 import path from 'path';
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// THE CARDS THEMSELVES LEFT App.js ON 2026-09-13 for
+// components/birdie/BirdiePanel.js, with the rest of the panel, so that the
+// assistant surface is fetched when somebody asks for Birdie instead of riding
+// the boot chunk. The confirms stayed behind, in FlockAppInner, because they
+// are reachable from more than the card. Nothing asserted below changed: the
+// app source is simply in two files now and both are read, App.js first
+// because the slices below walk forward from a marker in it.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'birdie', 'BirdiePanel.js'), 'utf8');
 
 describe('the staged actions ride the assistant message', () => {
   test('both response fields land on the message object', () => {
