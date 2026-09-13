@@ -73,7 +73,13 @@
 import React from 'react';
 import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
-import { groupReactions, useStableFn } from './ChatDetail';
+/* NOT from './ChatDetail' any more. Importing these two from the group-chat
+   screen put its 146 KB chunk in this route's chunk group, so opening a DM
+   waited on the screen the reader had not opened. Both helpers now come from
+   the shared chat module they belong in; groupReactions is the same function
+   MessageRow draws the pills with. */
+import { groupReactions } from '../components/chat/MessageRow';
+import { useStableFn } from '../components/chat/useStableFn';
 import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 /* The keyboard lane, the same hook the flock thread calls. See the block at

@@ -31,6 +31,11 @@ export {
   isSystemRow,
 } from './groupRows';
 
+// The identity hook both chat screens use. It lives here rather than in
+// ChatDetail so the DM route does not take a dependency on the group-chat
+// chunk for it.
+export { useStableFn } from './useStableFn';
+
 export {
   groupReactions,
   imageOf,

@@ -773,7 +773,19 @@ export default function LiveDemo() {
       const last = lastSearchRef.current;
       if (last && last.hour !== new Date().getHours()) refreshPins();
     }, REFRESH_MS);
-    const age = setInterval(() => setAgeTick(t => t + 1), 5000);
+    /* THE SAME TWO GUARDS THE REFRESH INTERVAL ABOVE CARRIES, and for the
+       same reason. This tick only exists to re-render the relative "updated
+       13s ago" line, which is drawn solely when a venue is selected. Without
+       the guards it re-rendered the whole demo twelve times a minute for the
+       life of the page, including while the tab sat in the background and
+       while the section was several screens out of view on the landing page.
+       The label also drops to minute resolution after the first minute, so
+       most of those renders could not change a character. */
+    const age = setInterval(() => {
+      if (document.visibilityState !== 'visible' || !inViewRef.current) return;
+      if (!selectedIdRef.current) return;
+      setAgeTick(t => t + 1);
+    }, 5000);
     return () => { clearInterval(refresh); clearInterval(age); };
   }, [loadCard, refreshPins]);
 

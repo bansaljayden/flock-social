@@ -58,9 +58,16 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+
+/* The QR GENERATOR is lazy, the way the scanner half of this feature already
+   is. qrcode.react carries its own encoder and webpack gives it a chunk of its
+   own, which was 53% of this route's gzipped weight for one element behind a
+   tab the visitor has to tap. This screen is one of the six warmScreenChunks
+   prefetches on idle, so that weight was real traffic on every session, not
+   only on sessions that opened the tab. */
+const QRCodeSVG = React.lazy(() => import('qrcode.react').then((m) => ({ default: m.QRCodeSVG })));
 
 export default function AddFriends({
   // Module-level helpers and components that live in App.js and are shared
@@ -375,7 +382,9 @@ export default function AddFriends({
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 16px' }}>Friends can scan this to add you</p>
                 <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
                   {myFriendCode ? (
+                    <React.Suspense fallback={<div style={{ width: '180px', height: '180px' }} />}>
                     <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navy} />
+                    </React.Suspense>
                   ) : (
                     <div style={{ width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <div style={{ width: '20px', height: '20px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />

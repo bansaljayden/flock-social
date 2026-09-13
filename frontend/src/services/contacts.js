@@ -26,7 +26,15 @@
 // signed up to Flock with is a mobile. Preferring the mobile-ish labels and
 // stopping at two is the whole rule.
 // ---------------------------------------------------------------------------
-import { Contacts } from '@capacitor-community/contacts';
+/* RESOLVED WHERE IT IS USED, not at module scope. App.js imports
+   contactsAvailable and syncContacts from this file eagerly, so a static
+   `import { Contacts } from '@capacitor-community/contacts'` dragged
+   @capacitor/core into the app's first-paint chunk group on every platform,
+   web included, for a plugin only the two native branches below ever touch.
+   Every other Capacitor plugin in src/ is already behind a dynamic import;
+   this was the only one that was not. The two readers are both async, so
+   awaiting the module costs them nothing. */
+const loadContactsPlugin = () => import('@capacitor-community/contacts').then((m) => m.Contacts);
 
 // The server's own ceiling (backend/routes/friends.js MAX_SYNC_PHONES). A
 // larger request is a 400, so the client chunks rather than discovering this.
@@ -78,6 +86,7 @@ export async function contactsPermissionState() {
   // there is no stored state to read.
   if (mode === 'web') return 'prompt';
   try {
+    const Contacts = await loadContactsPlugin();
     const status = await Contacts.checkPermissions();
     return status?.contacts || 'prompt';
   } catch {
@@ -143,6 +152,7 @@ export async function readContactPhoneNumbers() {
   let state = await contactsPermissionState();
   if (state === 'prompt') {
     try {
+      const Contacts = await loadContactsPlugin();
       const status = await Contacts.requestPermissions();
       state = status?.contacts || 'denied';
     } catch {
@@ -159,6 +169,7 @@ export async function readContactPhoneNumbers() {
   // email, no image, no note, no postal address. Under iOS 18 limited access
   // this returns only the contacts the person chose to share, which is exactly
   // the right amount and needs no special handling.
+  const Contacts = await loadContactsPlugin();
   const result = await Contacts.getContacts({ projection: { phones: true } });
   const list = Array.isArray(result?.contacts) ? result.contacts : [];
   const numbers = list.flatMap(phonesFromContact);
