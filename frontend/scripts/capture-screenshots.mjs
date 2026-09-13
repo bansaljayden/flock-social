@@ -628,7 +628,7 @@ function allowLocalApiInCsp() {
     return;
   }
 
-  let policy = meta[2];
+  let policy = meta[2];
   const widenedDirectives = [];
   const widen = (directive, ...origins) => {
     // No backslash escapes in the pattern. Built as a template literal, `\s`
