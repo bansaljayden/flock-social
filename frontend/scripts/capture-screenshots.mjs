@@ -369,6 +369,26 @@ async function seed(dbUrl) {
     price: '$$',
     price_level: 2,
     place_id: DEMO.venue.placeId,
+    // Without this the card falls through to /marks/venue-placeholder.jpg, the
+    // sparrow, and every screenshot of the vote flow shipped showing a bird
+    // where a venue photo belongs. The Copper Finch is invented, so it has no
+    // Google Places photo to fetch; this is a local demo still. A relative path
+    // is correct here because resolveVenuePhoto only prefixes the API origin
+    // for paths beginning "/api/".
+    //
+    // THE IMAGE IS GENERATED, AND IT HAS TO BE. The first version of this line
+    // pointed at a Places photo of a real Allentown bar, captured out of the
+    // running app and cropped into the repo. That is wrong three times over and
+    // none of them are about whether the business is recognisable: the photo is
+    // someone's copyrighted work, backend/services/photoStore.js documents that
+    // NO clause of the Maps terms permits caching Places photo bytes at all
+    // (which is why that cache expires by real DELETE and never writes a photo
+    // name), and a file committed here is served from flockcorp.com, shipped
+    // inside every Capacitor binary, and pushed to the repository, i.e.
+    // redistributed and cached for ever. These screenshots also feed the
+    // marketing site, so the photo would have been baked into those too.
+    // Replace this file only with art Flock owns outright.
+    photo_url: '/marks/venue-demo-bar.jpg',
   };
   const msgs = [
     [jordan, 'ok who is actually free friday', 'text', null, 55],

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T03:38:43.672Z",
+  "generatedAt": "2026-09-13T19:53:02.518Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
