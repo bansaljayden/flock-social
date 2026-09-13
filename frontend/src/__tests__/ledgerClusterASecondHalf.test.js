@@ -94,10 +94,22 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
     // on emoji alone and threw the user_id away, so after a reload the pill knew
     // it existed but not that it was yours.
     // The point is WHERE groupReactions comes from, not what travels beside
-    // it. useStableFn is imported on the same line now, because DmDetail has
-    // the same memo boundary ChatDetail does and two copies of a hook whose
-    // whole job is identity would be an odd thing to own.
-    expect(DM).toMatch(/import \{[^}]*\bgroupReactions\b[^}]*\} from '\.\/ChatDetail'/);
+    // it: one shared implementation, never a second bespoke reduce.
+    //
+    // It no longer comes from './ChatDetail', and that is the fix rather than
+    // a regression. Both screens are lazily loaded, and importing these two
+    // helpers from the group-chat screen put its 146 KB chunk into the DM
+    // route's chunk group, so opening a DM could not resolve until the screen
+    // the reader had not opened arrived too. groupReactions now comes from
+    // MessageRow, which is the module that draws the pills with it, and
+    // useStableFn from components/chat/useStableFn. What this test is really
+    // about, that the DM pill and the row share one grouping function, is
+    // asserted more directly than before: the same import, named from the
+    // same file the row reads it from.
+    expect(DM).toMatch(/import \{[^}]*\bgroupReactions\b[^}]*\} from '\.\.\/components\/chat\/MessageRow'/);
+    expect(DM).toMatch(/import \{[^}]*\buseStableFn\b[^}]*\} from '\.\.\/components\/chat\/useStableFn'/);
+    // And no path back to the other screen, which is what cost the bytes.
+    expect(DM).not.toMatch(/from '\.\/ChatDetail'/);
     expect(DM).toContain('groupReactions(m.reactions)');
     // And the row that draws the pill reaches for the same helper.
     expect(ROW).toMatch(/groupReactions\(message && message\.reactions\)/);
@@ -119,6 +131,14 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
 
   it('groupReactions is still exported from where App.js imports it', () => {
     expect(CHAT).toMatch(/export function groupReactions/);
+  });
+
+  it('useStableFn lives in the shared chat module, and ChatDetail still publishes it', () => {
+    // Moved out of ChatDetail so the DM route stops depending on the group
+    // chat chunk. ChatDetail re-exports it because its own tests and readers
+    // name it there, and it is still this screen's heaviest user.
+    expect(CHAT).toMatch(/export \{ useStableFn \} from '\.\.\/components\/chat\/useStableFn'/);
+    expect(CHAT).not.toMatch(/export function useStableFn/);
   });
 });
 
