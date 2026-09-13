@@ -1475,7 +1475,15 @@ const OfflineGate = () => {
 //
 //   crowd  1024x498   the whole flock on a wire     transparent, any ground
 //   steps   864x290   a few birds along a branch    transparent, any ground
-//   money  1024x1024  birds sharing a banknote      CREAM GROUND, never navy
+//
+// MONEY IS NOT ONE OF THESE, and it used to be listed here as though it were.
+// `money` has never been passed to this component; the banknote artwork is a
+// marketing-site plate, drawn by website/LandingPage.js at a fixed size from
+// the -400 files directly, with no srcSet and so no 2x. Its 2x pair was
+// therefore downloaded by nobody and carried by everybody: 2,088,033 bytes of
+// PNG and 141,310 of WebP inside every Capacitor build. Both are deleted.
+// If an empty state ever wants the banknote, regenerate mark-money.png and
+// mark-money.webp first, because of the landmine below.
 //
 // -400 is the 1x and the full file is the 2x, the same pairing BirdieBird
 // uses. object-fit: contain is load-bearing: the marks have very different
@@ -1484,16 +1492,19 @@ const OfflineGate = () => {
 // them carries the meaning.
 //
 // Both densities are served as WebP, with the PNGs kept as the <picture>
-// fallback. The 2x entry was the expensive one and nothing was compressing it:
-// mark-crowd.png is 1,194,700 bytes against 391,212 for the WebP, and
-// mark-money.png 2,088,033 against 141,310. That weight is inside the Capacitor
-// download, not just a slow request. The `-400` WebP files predate this and are
-// also served by the marketing site, so they are used exactly as they are.
+// fallback. The 2x entry is the expensive one and nothing compresses it:
+// mark-crowd.png is 1,194,700 bytes against 391,212 for the WebP. That weight
+// is inside the Capacitor download, not just a slow request. The `-400` WebP
+// files predate this and are also served by the marketing site, so they are
+// used exactly as they are.
 //
-// LANDMINE for a new `name`: all FOUR files have to exist. <picture> falls back
-// to the <img> when the browser cannot decode the source's TYPE, never when the
-// chosen URL 404s, so a missing .webp is a broken image and not a silent
-// downgrade to the PNG. crowd, steps and money each have all four today.
+// LANDMINE for a new `name`: all FOUR files have to exist, and the srcSet below
+// is built from the name at RUNTIME, so no search of this repo will tell you
+// whether a file is used. <picture> falls back to the <img> when the browser
+// cannot decode the source's TYPE, never when the chosen URL 404s, so a missing
+// .webp is a broken image and not a silent downgrade to the PNG. A missing 2x
+// PNG is worse, because every phone picks it. crowd and steps each have all
+// four; they are the only two names this component is ever given.
 //
 // display:contents on the <picture> keeps this component's layout identical to
 // the bare <img> it replaced: the wrapper contributes no box, so the img is
