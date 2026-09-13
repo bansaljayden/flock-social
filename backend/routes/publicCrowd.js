@@ -257,6 +257,53 @@ function toVenueShape(p, localDay) {
   };
 }
 
+/* WARM THE PHOTOS THIS ANSWER JUST NAMED, AFTER THE ANSWER HAS GONE.
+   The demo draws one pin per venue, but a browser only fetches the pins it
+   actually paints, so the venues below the fold and the cards nobody taps stay
+   uncached. When one of those is finally asked for and the fetch fails, for a
+   rotated photo name or a moment of upstream trouble, the pin falls back to a
+   letter and the card to the placeholder bird, which is the failure this is
+   here to make rare.
+
+   It costs no extra Google search: the names come from the search this request
+   already paid for, and photos already held are answered from Postgres inside
+   fetchPhotoOnce before any gate, so a warm run on a warm area spends nothing.
+   It is fired AFTER res.json so it can never delay the response, and every
+   failure is swallowed: this is opportunistic, and a visitor must never see a
+   slower or worse answer because a warm did not work.
+
+   Bounded three ways. It never runs while the day's photo budget is nearly
+   spent, so a warm cannot be the thing that exhausts a ceiling a real viewer
+   needs. It asks for ONE width, the same 400 the pin and the card now share.
+   And it walks the venues one at a time rather than in parallel, because the
+   point is to fill a cache quietly, not to open eight sockets to Google the
+   moment somebody loads a marketing page. */
+const WARM_MIN_DAY_REMAINING = 32;
+let warmInFlight = false;
+async function warmDemoPhotos(rows, req) {
+  if (warmInFlight) return;
+  const refs = (rows || [])
+    .map((v) => {
+      const m = /[?&]ref=([^&]+)/.exec(String(v && v.photo_url) || '');
+      return m ? decodeURIComponent(m[1]) : null;
+    })
+    .filter(Boolean);
+  if (refs.length === 0) return;
+  warmInFlight = true;
+  try {
+    const { warmPhoto, photoProxyStatus } = require('./venueSearch');
+    const status = await photoProxyStatus();
+    if (!status || status.dayRemaining < WARM_MIN_DAY_REMAINING) return;
+    for (const ref of refs) {
+      try { await warmPhoto(ref, 400, req); } catch { /* opportunistic */ }
+    }
+  } catch (err) {
+    console.warn('[PublicDemo] photo warm skipped:', err.message);
+  } finally {
+    warmInFlight = false;
+  }
+}
+
 const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.utcOffsetMinutes,places.location,places.photos';
 
 // The full venue card: current score + best time + peak + 12h forecast.
@@ -653,6 +700,7 @@ router.get('/demo/venues',
 
       setCache(cacheKey, result, 20 * 60_000);
       res.json(card ? { ...result, card: presentCard(card) } : result);
+      warmDemoPhotos(result.venues, req);
     } catch (err) {
       console.error('[PublicDemo] venues error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
