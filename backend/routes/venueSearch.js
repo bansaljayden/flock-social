@@ -1390,6 +1390,17 @@ module.exports.__test = {
 // is charged just before chargePhotoFetch, so a photo refused by the durable
 // budget has still spent a unit of the shared Places day. That makes the SHARED
 // ledger able to overcount photos, never this one.
+/* ONE PHOTO, THROUGH THE ROUTE'S OWN PATH, for callers inside this process
+   that want a photo cached before somebody asks for it.
+   Published rather than reimplemented on purpose: fetchPhotoOnce is where the
+   Postgres cache is read, the dead-name memo is consulted, the spend is
+   charged, the size and content type are clamped and both cache tiers are
+   written. A warmer that repeated any of that would be a second opinion on
+   money, and the two would drift. It answers {status, buffer, contentType} on
+   a hit and {status, error} otherwise; a warmer only cares which. */
+module.exports.warmPhoto = (photoRef, maxWidth, req) =>
+  fetchPhotoOnce(photoRef, maxWidth, photoCacheKey(photoRef, maxWidth), req);
+
 module.exports.photoProxyStatus = () => photoSpendStatus();
 module.exports.photoBudgetLimits = {
   budgetUsdPerYear: PHOTO_BUDGET_USD_PER_YEAR,
