@@ -23,6 +23,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [view, setView] = useState(() => (isPasswordResetRoute() ? 'reset' : 'login'));
   // Carried back from the reset flow, e.g. "Your password is set. Sign in."
   const [notice, setNotice] = useState('');
+  // Drives the heading only. See the hero below for why it exists.
+  const [hasSignedInHere] = useState(() => {
+    try { return Boolean(window.localStorage.getItem('flockToken')); } catch (e) { return false; }
+  });
 
   // The arrival event for the login form, and only the login form: this
   // component also hosts the password-reset screens, so a /reset-password
@@ -158,10 +162,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     }
   };
 
+  // Every fresh install now opens on this screen, not on account creation, so
+  // "Welcome back" can no longer be unconditional: it would greet people who
+  // have never been here, which is the thing the old signup-first branch was
+  // added to avoid. A stored token, valid or expired, is the evidence that
+  // somebody has signed in on this device before. Read once at mount so the
+  // heading cannot change under a person mid-session.
   const hero = (
     <>
       <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
-      <h1 className="auth-h1">Welcome back</h1>
+      <h1 className="auth-h1">{hasSignedInHere ? 'Welcome back' : 'Plan the night'}</h1>
       <p className="auth-sub">Nurturing friendship, one night at a time.</p>
     </>
   );

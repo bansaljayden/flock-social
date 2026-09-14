@@ -5,6 +5,7 @@ const path = require('path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const app = read('App.js');
 const signup = read('components/auth/SignupScreen.js');
+const login = read('components/auth/LoginScreen.js');
 // The Plans tab left App.js on 2026-09-13 for screens/CalendarScreen.js,
 // lazily fetched, and the empty-day state below went with it. A slice of
 // App.js for a marker that is no longer in App.js is an empty window, and
@@ -25,9 +26,23 @@ test('confirming the email in Safari has a way back into the app', () => {
   expect(signup).toMatch(/Not confirmed yet\. Open the link in the email, then come back and tap this again\./);
 });
 
-test('a fresh native install opens on account creation', () => {
-  expect(app).toMatch(/return \(window\.Capacitor\?\.isNativePlatform\?\.\(\) && !hasToken\) \? 'signup' : 'login';/);
-  expect(app).toMatch(/window\.localStorage\.getItem\('flockToken'\)/);
+test('a fresh install opens on sign-in, and both doors stay reachable', () => {
+  // This used to open on ACCOUNT CREATION for a native install with no stored
+  // token, which is right for the common case and wrong for the one that
+  // decides submissions. Anyone arriving WITH credentials lands here, and the
+  // signup form's only route to the sign-in form is the line at its very
+  // bottom, under the create button, the terms, the divider and both OAuth
+  // buttons. On a short viewport that line is never on screen, so the
+  // credentials cannot be used and the account reads as broken.
+  expect(app).toMatch(/const \[authScreen, setAuthScreen\] = useState\(\(\) => \{/);
+  expect(app).toMatch(/return 'login';\s*\}\);/);
+  // The deep link from the marketing site's Create account CTA still has to
+  // pick signup, or that button goes to the wrong screen.
+  expect(app).toMatch(/if \(window\.location\.pathname === '\/signup'\) return 'signup';/);
+  // And the way BACK to account creation has to stay on the sign-in screen,
+  // because that is now the only door a new arrival is shown.
+  expect(login).toMatch(/New here\?/);
+  expect(login).toMatch(/onClick=\{onSwitchToSignup\}/);
 });
 
 test('every ask for location on a first run carries the control', () => {

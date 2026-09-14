@@ -62,7 +62,32 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [dob, setDob] = useState('');
+  // THIS FIELD IS TWO DIFFERENT ASKS AND THEY MUST NOT SHARE A SHAPE.
+  //
+  // Creating an account asks for a YEAR, for the reason written out at the top
+  // of SignupScreen.js: guideline 5.1.1(v) allows asking only for what the app
+  // needs, and the only fact needed is whether this person is old enough. The
+  // year is turned into December 31 of itself, the conservative end, so a year
+  // that spans two possible ages always reads as the YOUNGER one and the floor
+  // in backend/utils/age.js can only turn a stranger away rather than let a
+  // child through.
+  //
+  // SIGNING IN STILL ASKS FOR THE FULL DATE, and that asymmetry is the whole
+  // point. This field also appears on the sign-in half, for a legacy account
+  // with no date on file (needsDob). On that path the same conservative
+  // rounding is not cautious, it is destructive: enforceDobOnLogin in
+  // routes/auth.js treats an under-13 answer as actual knowledge, and its
+  // UPDATE is deliberately unguarded — it bumps token_version, revokes every
+  // session and starts a 24-hour lockout, permanently. Round somebody born in
+  // March 2013 down to December and an account holder who is genuinely old
+  // enough, and honest, loses their account for good with no way back. A
+  // stranger refused at signup can come back tomorrow; this cannot be undone.
+  // So the backfill keeps the exact date, and only the signup half rounds.
+  const [birthYear, setBirthYear] = useState('');
+  const [backfillDob, setBackfillDob] = useState('');
+  const dob = isSignup
+    ? (/^\d{4}$/.test(birthYear) ? `${birthYear}-12-31` : '')
+    : backfillDob;
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -183,7 +208,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     // The sign-in half had no checks whatsoever, so an empty form met a button
     // that refused to submit and said nothing.
     if (isSignup && !name.trim()) return fail('venue-name', 'Add your name.');
-    if (isSignup && !dob) return fail('venue-dob', 'Add your date of birth.');
+    if (isSignup && !birthYear) return fail('venue-dob', 'Add the year you were born.');
+    if (isSignup && !dob) return fail('venue-dob', 'Write the year in full, like 2004.');
     if (dobNeedsCheck) return fail('venue-dob-check', 'Check the date of birth below before you continue.');
     if (!email.trim()) return fail('venue-email', 'Add your email address.');
     if (!password) return fail('venue-password', isSignup ? 'Choose a password.' : 'Add your password.');
@@ -194,7 +220,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       }
       // Shape only. What the date says about age is the server's call.
       if (!dobLooksReal(dob)) {
-        return fail('venue-dob', 'That date of birth does not look right. Check it and try again.');
+        return fail('venue-dob', 'That year does not look right. Check it and try again.');
       }
     }
 
@@ -332,17 +358,41 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
         {(isSignup || needsDob) && (
           <div className="auth-field-row">
-            <label className="auth-label" htmlFor="venue-dob">Date of birth</label>
-            <input
-              id="venue-dob"
-              className="auth-field"
-              type="date"
-              value={dob}
-              onChange={(e) => setDob(e.target.value)}
-              autoComplete="bday"
-              aria-describedby="venue-dob-hint"
-              required
-            />
+            <label className="auth-label" htmlFor="venue-dob">
+              {isSignup ? 'Year of birth' : 'Date of birth'}
+            </label>
+            {/* Signup takes a year in plain numeric text: it is a year, so a
+                date picker is the wrong control, and the native one sizes
+                ITSELF and rendered wider than every other field on a short
+                viewport. The backfill keeps the date picker, because that half
+                needs the exact date. See the state comment above. */}
+            {isSignup ? (
+              <input
+                id="venue-dob"
+                className="auth-field"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={4}
+                placeholder="YYYY"
+                value={birthYear}
+                onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                autoComplete="bday-year"
+                aria-describedby="venue-dob-hint"
+                required
+              />
+            ) : (
+              <input
+                id="venue-dob"
+                className="auth-field"
+                type="date"
+                value={backfillDob}
+                onChange={(e) => setBackfillDob(e.target.value)}
+                autoComplete="bday"
+                aria-describedby="venue-dob-hint"
+                required
+              />
+            )}
             {/* "Yours, not the venue's" stays: an operator filling this in for
                 a bar that opened in 1974 is a real mistake, and saying so names
                 no threshold. What followed it was the threshold, and that is
@@ -350,7 +400,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. We use it to check your age.</p>}
             {!isSignup && (
               <p className="auth-hint" id="venue-dob-hint">
-                This is saved to your account and cannot be changed later, so check the year.
+                This is saved to your account and cannot be changed later, so check the date.
               </p>
             )}
           </div>
@@ -365,6 +415,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             tabIndex={-1}
           >
             <h2 id="venue-dob-check-title">Check this date</h2>
+            {/* dobNeedsCheck is gated on !isSignup, so `dob` here is always the
+                date typed on the backfill half, never a derived December 31.
+                Reading it back is therefore honest. */}
             <p>You entered {formatDob(dob)}.</p>
             <p>
               If that is right, Flock cannot keep an account for you and you will not be able to
@@ -512,11 +565,15 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               // says about age is not decided here, exactly as it is not
               // decided in handleSubmit.
               if (!dob) {
-                setError('Add your date of birth above first, then continue with Google.');
+                setError(isSignup
+                  ? 'Add the year you were born above first, then continue with Google.'
+                  : 'Add your date of birth above first, then continue with Google.');
                 return;
               }
               if (!dobLooksReal(dob)) {
-                setError('That date of birth does not look right. Check it and try again.');
+                setError(isSignup
+              ? 'That year does not look right. Check it and try again.'
+              : 'That date of birth does not look right. Check it and try again.');
                 return;
               }
             }
@@ -564,12 +621,16 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           // account that already exists signs in without one, and a new one
           // gets the server's needsDob answer and this field.
           if (isSignup && !dob) {
-            setError('Add your date of birth above first, then continue with Apple.');
+            setError(isSignup
+              ? 'Add the year you were born above first, then continue with Apple.'
+              : 'Add your date of birth above first, then continue with Apple.');
             return false;
           }
           // The impossible date, stopped for the reason on dobLooksReal.
           if (dob && !dobLooksReal(dob)) {
-            setError('That date of birth does not look right. Check it and try again.');
+            setError(isSignup
+              ? 'That year does not look right. Check it and try again.'
+              : 'That date of birth does not look right. Check it and try again.');
             return false;
           }
           return true;

@@ -90,7 +90,7 @@ function signUpConsumer(signupReply) {
   fireEvent.change(utils.getByLabelText('Name'), { target: { value: 'Sam' } });
   fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'sam@example.com' } });
   fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
-  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(25) } });
+  fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: String(new Date().getFullYear() - 25) } });
   fireEvent.submit(utils.container.querySelector('form'));
   return utils;
 }
@@ -109,7 +109,7 @@ function signUpVenue(signupReply) {
   fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Sam' } });
   fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'venue@example.com' } });
   fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
-  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(30) } });
+  fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: String(new Date().getFullYear() - 30) } });
   fireEvent.submit(utils.container.querySelector('form'));
   return utils;
 }

@@ -99,12 +99,25 @@ const UNDERAGE_MSG = (() => {
 
 const refusal = () => Object.assign(new Error(UNDERAGE_MSG), { status: 403, data: {} });
 
-const yearsAgo = (n) => {
-  const d = new Date();
-  d.setFullYear(d.getFullYear() - n);
-  return d.toISOString().split('T')[0];
+// The field takes a YEAR now, and the screen derives December 31 of it before
+// anything is sent. These two helpers keep the tests written in the units a
+// person thinks in (an age) while asserting on the units the server sees.
+//
+// Why the -1. A year alone spans two ages, and the screen deliberately picks
+// the conservative end, so someone who enters Y reads as (thisYear - Y - 1)
+// until December 31 actually passes. Computing it the other way would make
+// every age here one out, and the under-13 tests would stop testing under-13.
+const yearForAge = (n) => {
+  const now = new Date();
+  const lastDayPassed = now.getMonth() === 11 && now.getDate() === 31;
+  return String(now.getFullYear() - n - (lastDayPassed ? 0 : 1));
 };
-const yearsAhead = (n) => yearsAgo(-n);
+// What the screen sends for a given year. Mirrors the derivation in
+// SignupScreen.js / VenueLoginScreen.js; if that changes, this fails loudly
+// rather than silently asserting the old shape.
+const dobOf = (year) => `${year}-12-31`;
+// A year nobody alive can have been born in, for the typo tests.
+const yearAhead = () => String(new Date().getFullYear() + 1);
 
 const asWeb = () => { delete window.Capacitor; };
 const asNativeIos = () => {
@@ -173,14 +186,14 @@ DOORS.forEach((door) => {
     fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'sam@example.com' } });
     fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
   };
-  const setDate = (utils, value) =>
-    fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value } });
+  const setYear = (utils, value) =>
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value } });
   const submit = (utils) => fireEvent.submit(utils.container.querySelector('form'));
 
-  describe(`${door.label}: the field is neutral, it takes any date and teaches nothing`, () => {
-    it('the date picker is not capped, so a truthful under-13 date can be entered', () => {
+  describe(`${door.label}: the field is neutral, it takes any year and teaches nothing`, () => {
+    it('the field is not capped, so a truthful under-13 year can be entered', () => {
       const utils = door.open();
-      expect(utils.getByLabelText('Date of birth').hasAttribute('max')).toBe(false);
+      expect(utils.getByLabelText('Year of birth').hasAttribute('max')).toBe(false);
 
       // Source too, because the rendered attribute would also be absent if the
       // field were replaced by something that computes the cap another way.
@@ -198,9 +211,9 @@ DOORS.forEach((door) => {
       expect(text).not.toMatch(/must be \d+/i);
     });
 
-    it('the hint says what the date is for, names no number, and stays described on the field', () => {
+    it('the hint says what the year is for, names no number, and stays described on the field', () => {
       const utils = door.open();
-      const field = utils.getByLabelText('Date of birth');
+      const field = utils.getByLabelText('Year of birth');
       expect(field.getAttribute('aria-describedby')).toBe(door.hintId);
       const hint = utils.container.querySelector(`#${door.hintId}`);
       expect(hint.textContent).toMatch(/check your age/);
@@ -210,12 +223,13 @@ DOORS.forEach((door) => {
 
   describe(`${door.label}: nothing changes for someone 13 or older`, () => {
     it('the form sends the same four values it always did and the account is created', async () => {
-      const dob = yearsAgo(13);
+      const year = yearForAge(13);
+      const dob = dobOf(year);
       api.signup.mockResolvedValueOnce({ user: { id: 7, name: 'Sam' } });
 
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, dob);
+      setYear(utils, year);
       submit(utils);
 
       await waitFor(() => expect(api.signup).toHaveBeenCalledTimes(1));
@@ -228,31 +242,32 @@ DOORS.forEach((door) => {
 
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, yearsAgo(21));
+      setYear(utils, yearForAge(21));
       submit(utils);
 
       await waitFor(() => expect(utils.getByText('Confirm your email')).toBeTruthy());
       expect(utils.onCreated).not.toHaveBeenCalled();
     });
 
-    it('the empty date is still answered on the device', async () => {
+    it('the empty year is still answered on the device', async () => {
       const utils = door.open();
       fillEverythingBut(utils);
       submit(utils);
 
-      await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add your date of birth.'));
+      await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add the year you were born.'));
       expect(api.signup).not.toHaveBeenCalled();
     });
   });
 
   describe(`${door.label}: a 12 year old reaches the server, and the server answers`, () => {
-    it('the real date is sent rather than refused on the device', async () => {
-      const dob = yearsAgo(12);
+    it('the real year is sent rather than refused on the device', async () => {
+      const year = yearForAge(12);
+      const dob = dobOf(year);
       api.signup.mockRejectedValueOnce(refusal());
 
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, dob);
+      setYear(utils, year);
       submit(utils);
 
       // The date leaves the device exactly as typed. This is the whole point:
@@ -269,7 +284,7 @@ DOORS.forEach((door) => {
 
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, yearsAgo(12));
+      setYear(utils, yearForAge(12));
       submit(utils);
       await waitFor(() => expect(api.signup).toHaveBeenCalledTimes(1));
 
@@ -281,10 +296,10 @@ DOORS.forEach((door) => {
       // That memory is pinned in backend/__tests__/minorsCompliance.test.js;
       // what is pinned here is that the client still asks, so the lockout is
       // reachable at all.
-      setDate(utils, yearsAgo(30));
+      setYear(utils, yearForAge(30));
       submit(utils);
       await waitFor(() => expect(api.signup).toHaveBeenCalledTimes(2));
-      expect(api.signup.mock.calls[1][3]).toBe(yearsAgo(30));
+      expect(api.signup.mock.calls[1][3]).toBe(dobOf(yearForAge(30)));
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
 
@@ -293,7 +308,7 @@ DOORS.forEach((door) => {
 
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, yearsAgo(9));
+      setYear(utils, yearForAge(9));
       submit(utils);
 
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
@@ -303,12 +318,13 @@ DOORS.forEach((door) => {
   });
 
   describe(`${door.label}: Google and Apple do exactly what the form does`, () => {
-    it('Google carries an under-13 date to the server instead of stopping at the button', async () => {
-      const dob = yearsAgo(12);
+    it('Google carries an under-13 year to the server instead of stopping at the button', async () => {
+      const year = yearForAge(12);
+      const dob = dobOf(year);
       api.googleLoginWithToken.mockRejectedValueOnce(refusal());
 
       const utils = door.open();
-      setDate(utils, dob);
+      setYear(utils, year);
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
       await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledTimes(1));
@@ -316,35 +332,37 @@ DOORS.forEach((door) => {
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
 
-    it('Google with a date that passes signs the account in, unchanged', async () => {
-      const dob = yearsAgo(20);
+    it('Google with a year that passes signs the account in, unchanged', async () => {
+      const year = yearForAge(20);
+      const dob = dobOf(year);
       api.googleLoginWithToken.mockResolvedValueOnce({ user: { id: 9 } });
 
       const utils = door.open();
-      setDate(utils, dob);
+      setYear(utils, year);
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
       await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob));
       await waitFor(() => expect(utils.onCreated).toHaveBeenCalledWith({ id: 9 }));
     });
 
-    it('Google still asks for the date first, because the server requires one to create an account', async () => {
+    it('Google still asks for the year first, because the server requires a date to create an account', async () => {
       const utils = door.open();
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
       await waitFor(() => expect(utils.getByRole('alert').textContent)
-        .toBe('Add your date of birth above first, then continue with Google.'));
+        .toBe('Add the year you were born above first, then continue with Google.'));
       expect(api.googleLoginWithToken).not.toHaveBeenCalled();
     });
 
-    it('Apple carries an under-13 date to the server too', async () => {
+    it('Apple carries an under-13 year to the server too', async () => {
       asNativeIos();
-      const dob = yearsAgo(12);
+      const year = yearForAge(12);
+      const dob = dobOf(year);
       mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token' } });
       api.appleLogin.mockRejectedValueOnce(refusal());
 
       const utils = door.open();
-      setDate(utils, dob);
+      setYear(utils, year);
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
 
       await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
@@ -353,17 +371,17 @@ DOORS.forEach((door) => {
     });
   });
 
-  describe(`${door.label}: a date nobody alive can have is a typo, not an age claim`, () => {
+  describe(`${door.label}: a year nobody alive can have is a typo, not an age claim`, () => {
     // The server reads any date short of the minimum as knowledge that a child
     // is signing up, and remembers the mailbox for 24 hours. A mistyped year in
     // the future would therefore cost a real person their account for a day.
     // Refusing it here names no threshold and turns away no truthful date.
-    const NOT_RIGHT = 'That date of birth does not look right. Check it and try again.';
+    const NOT_RIGHT = 'That year does not look right. Check it and try again.';
 
-    it('the form says the date does not look right and sends nothing', async () => {
+    it('the form says the year does not look right and sends nothing', async () => {
       const utils = door.open();
       fillEverythingBut(utils);
-      setDate(utils, yearsAhead(1));
+      setYear(utils, yearAhead());
       submit(utils);
 
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(NOT_RIGHT));
@@ -372,7 +390,7 @@ DOORS.forEach((door) => {
 
     it('Google says the same thing and never opens the provider', async () => {
       const utils = door.open();
-      setDate(utils, yearsAhead(1));
+      setYear(utils, yearAhead());
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(NOT_RIGHT));
@@ -383,7 +401,7 @@ DOORS.forEach((door) => {
     it('Apple says the same thing and never opens the sheet', async () => {
       asNativeIos();
       const utils = door.open();
-      setDate(utils, yearsAhead(1));
+      setYear(utils, yearAhead());
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
 
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(NOT_RIGHT));
@@ -391,7 +409,7 @@ DOORS.forEach((door) => {
       expect(api.appleLogin).not.toHaveBeenCalled();
     });
 
-    it('an empty date is stopped before the Apple sheet opens, the same as Google', async () => {
+    it('an empty year is stopped before the Apple sheet opens, the same as Google', async () => {
       // This used to pin the opposite: an empty date reached Apple so that an
       // existing Apple account could sign in from this screen. Reversed
       // 2026-09-05. Apple hands over the person's name on the first sheet
@@ -406,7 +424,7 @@ DOORS.forEach((door) => {
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
 
       await waitFor(() => expect(utils.getByRole('alert').textContent)
-        .toBe('Add your date of birth above first, then continue with Apple.'));
+        .toBe('Add the year you were born above first, then continue with Apple.'));
       expect(mockAppleAuthorize).not.toHaveBeenCalled();
       expect(api.appleLogin).not.toHaveBeenCalled();
     });
