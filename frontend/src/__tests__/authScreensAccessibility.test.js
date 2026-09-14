@@ -239,16 +239,16 @@ describe('labels and autocomplete (1.3.1 / 1.3.5 / 3.3.2)', () => {
     );
     expect(getByLabelText('Name').tagName).toBe('INPUT');
     expect(getByLabelText('Email').tagName).toBe('INPUT');
-    expect(getByLabelText('Date of birth').tagName).toBe('INPUT');
+    expect(getByLabelText('Year of birth').tagName).toBe('INPUT');
     expect(getByLabelText('Password').tagName).toBe('INPUT');
 
     expect(getByLabelText('Name').getAttribute('autocomplete')).toBe('name');
     expect(getByLabelText('Email').getAttribute('autocomplete')).toBe('email');
-    expect(getByLabelText('Date of birth').getAttribute('autocomplete')).toBe('bday');
+    expect(getByLabelText('Year of birth').getAttribute('autocomplete')).toBe('bday-year');
     expect(getByLabelText('Password').getAttribute('autocomplete')).toBe('new-password');
 
     // The age-gate hint is described ON the field, not just near it.
-    expect(getByLabelText('Date of birth').getAttribute('aria-describedby')).toBe('signup-dob-hint');
+    expect(getByLabelText('Year of birth').getAttribute('aria-describedby')).toBe('signup-dob-hint');
   });
 
   it('login pairs username with current-password, the way password managers key a credential', () => {
@@ -333,9 +333,9 @@ describe('error announcement and focus management (3.3.1 / 4.1.3)', () => {
 
     fireEvent.change(getByLabelText('Email'), { target: { value: 'sam@example.com' } });
     submit();
-    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/add your date of birth/i));
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/add the year you were born/i));
 
-    fireEvent.change(getByLabelText('Date of birth'), { target: { value: '2000-01-01' } });
+    fireEvent.change(getByLabelText('Year of birth'), { target: { value: '2000' } });
     submit();
     await waitFor(() => expect(getByRole('alert').textContent).toMatch(/choose a password/i));
 

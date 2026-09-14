@@ -253,21 +253,25 @@ describe('the name Apple sends once', () => {
     const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
     tapApple(utils);
     await waitFor(() => expect(utils.getByRole('alert').textContent)
-      .toBe('Add your date of birth above first, then continue with Apple.'));
+      .toBe('Add the year you were born above first, then continue with Apple.'));
     expect(mockAppleAuthorize).not.toHaveBeenCalled();
     expect(api.appleLogin).not.toHaveBeenCalled();
   });
 
-  it('opens the sheet from the signup screen once a date is in', async () => {
+  it('opens the sheet from the signup screen once a year is in', async () => {
     asNativeIos();
     const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
-    fireEvent.change(utils.getByLabelText(/date of birth/i), { target: { value: '2000-01-01' } });
+    fireEvent.change(utils.getByLabelText(/year of birth/i), { target: { value: '2000' } });
     mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token-4', user: 'apple-user-C' } });
     api.appleLogin.mockResolvedValueOnce({ user: { id: 9 } });
     tapApple(utils);
     await waitFor(() => expect(mockAppleAuthorize).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
-    expect(api.appleLogin.mock.calls[0][3]).toBe('2000-01-01');
+    // December 31, not January 1. The field takes a year and the screen picks
+    // the conservative end of it, so a year that spans two ages always reads as
+    // the younger one and the server's floor can only turn somebody away rather
+    // than let a child through. January here would be the bug.
+    expect(api.appleLogin.mock.calls[0][3]).toBe('2000-12-31');
   });
 });
 
