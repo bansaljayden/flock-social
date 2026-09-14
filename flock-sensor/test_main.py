@@ -1825,5 +1825,190 @@ class ThermalRecovery(unittest.TestCase):
         self.assertGreater(max(waits), 5.0,
                            'the reopen backoff does not grow, so a missing camera is '
                            'retried in a tight loop forever')
+class SoundPressureEstimate(unittest.TestCase):
+    """One anchor turns the index into an estimated dB SPL, and shows the limit.
+
+    The slope is not a fitted parameter, it is the capsule's sensitivity: a
+    fixed volts per pascal means 20 dB of sound pressure is ten times the
+    voltage and therefore ten times the counts. So one measured point pins the
+    whole curve, and the interesting output is not the estimate itself but the
+    window: on this hardware the gap between the electrical noise floor and the
+    converter clipping is about 25 to 30 dB, and a venue spans closer to 45.
+    """
+
+    ANCHOR_COUNTS, ANCHOR_DB = 150.0, 75.0
+
+    def test_an_unanchored_unit_estimates_nothing(self):
+        # Better than guessing. A unit nobody has measured cannot know where it
+        # sits on an absolute scale, and saying so beats inventing a number.
+        self.assertIsNone(main.spl_from_counts(100.0, 0.0, 0.0))
+        self.assertIsNone(main.hearing_window(15.5, 0.0, 0.0))
+
+    def test_the_anchor_point_returns_itself(self):
+        got = main.spl_from_counts(self.ANCHOR_COUNTS, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        self.assertAlmostEqual(got, self.ANCHOR_DB, places=6)
+
+    def test_ten_times_the_counts_is_twenty_more_decibels(self):
+        # The physics the single anchor rests on. If this ever stops holding,
+        # the one-point calibration is no longer valid.
+        low = main.spl_from_counts(10.0, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        high = main.spl_from_counts(100.0, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        self.assertAlmostEqual(high - low, 20.0, places=6)
+
+    def test_silence_has_no_decibel_value(self):
+        self.assertIsNone(main.spl_from_counts(0.0, self.ANCHOR_COUNTS, self.ANCHOR_DB))
+        self.assertIsNone(main.spl_from_counts(-5.0, self.ANCHOR_COUNTS, self.ANCHOR_DB))
+
+    def test_the_measured_floor_puts_a_quiet_venue_below_hearing(self):
+        # The finding that matters. At the floor this unit actually has, an
+        # empty cafe at 45 to 55 dBA is under the bottom of the window and
+        # reads as silence.
+        low, high = main.hearing_window(15.5, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        self.assertGreater(low, 50.0)
+        self.assertLess(high - low, 35.0)
+
+    def test_removing_electrical_noise_is_what_widens_the_window(self):
+        # Not the gain. Gain multiplies the floor and the signal by the same
+        # amount, so it slides the window without widening it. This is the
+        # whole argument for treating the noise floor as the blocker.
+        narrow = main.hearing_window(15.5, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        wide = main.hearing_window(4.0, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        self.assertGreater(wide[1] - wide[0], narrow[1] - narrow[0] + 10.0)
+        self.assertAlmostEqual(wide[1], narrow[1], places=6,
+                               msg='the top of the window moved, so this is not a floor change')
+
+    def test_the_top_of_the_window_is_where_the_converter_clips(self):
+        _, high = main.hearing_window(15.5, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        at_clip = main.spl_from_counts(main.ADC_CLIP_RMS, self.ANCHOR_COUNTS, self.ANCHOR_DB)
+        self.assertAlmostEqual(high, at_clip, places=6)
+
+    def test_the_defaults_leave_it_switched_off(self):
+        self.assertEqual(main.NOISE_SPL_ANCHOR_COUNTS, 0.0)
+        self.assertEqual(main.NOISE_SPL_ANCHOR_DB, 0.0)
+
+
+class NoiseSampleRate(unittest.TestCase):
+    """A 1ms sleep between reads held the sample rate at about 650Hz.
+
+    Measured on the development machine: time.sleep(0.001) costs nearer 1.5ms,
+    so the burst managed about 63 samples in 100ms. Nyquist at 650Hz is 325Hz,
+    which is below almost everything in a room, so speech formants, music and
+    glassware all folded back into the measurement as alias and the RMS was the
+    loudness of a scrambled signal rather than of the room.
+    """
+
+    def test_the_sleep_is_gone_from_the_sampling_loop(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('def noise_loop():')
+        window = source[idx:idx + 900]
+        self.assertNotIn('time.sleep(0.001)', window,
+                         'the sampling loop is rate-limited again, which aliases the room')
+
+    def test_the_burst_is_bounded_in_both_time_and_count(self):
+        # No sleep means a fast machine could otherwise build a very large list.
+        self.assertGreater(main.NOISE_BURST_SECONDS, 0.0)
+        self.assertGreater(main.NOISE_MAX_SAMPLES, 500)
+
+    def test_the_burst_can_hold_enough_samples_to_beat_the_old_rate(self):
+        # The old loop managed about 63. The cap has to be well clear of that
+        # or the fix is undone by the ceiling that protects it.
+        self.assertGreater(main.NOISE_MAX_SAMPLES, 63 * 10)
+class NoiseWindowTrim(unittest.TestCase):
+    """A slammed door owned a sixth of the published loudness.
+
+    Professional noise monitoring reports percentile levels rather than a mean,
+    because a mean is owned by its loudest member and how busy a room feels is a
+    question about the level it persistently sits at. A burst is 100ms, which is
+    long enough for one door slam to own it entirely.
+    """
+
+    def test_a_single_loud_burst_does_not_move_a_steady_room(self):
+        steady = [45.0] * 11
+        self.assertAlmostEqual(main.trimmed_mean(steady), 45.0, places=6)
+        with_slam = steady + [95.0]
+        self.assertAlmostEqual(main.trimmed_mean(with_slam), 45.0, places=6)
+        plain = sum(with_slam) / len(with_slam)
+        self.assertGreater(plain - main.trimmed_mean(with_slam), 3.0,
+                           'the trim is not actually rejecting the transient')
+
+    def test_a_genuinely_louder_room_still_reads_louder(self):
+        # The trim must reject one outlier, not flatten a real change.
+        quiet = main.trimmed_mean([45.0] * 12)
+        busy = main.trimmed_mean([70.0] * 12)
+        self.assertGreater(busy - quiet, 20.0)
+
+    def test_it_falls_back_to_a_plain_mean_before_the_window_fills(self):
+        # The first minute after a start or a camera reopen.
+        self.assertAlmostEqual(main.trimmed_mean([40.0, 90.0]), 65.0, places=6)
+        self.assertEqual(main.trimmed_mean([]), 0.0)
+
+    def test_the_window_is_long_enough_to_have_something_to_trim(self):
+        self.assertGreaterEqual(main._state['noise_window'].maxlen,
+                                2 * main.NOISE_WINDOW_TRIM + 3)
+
+    def test_the_loop_publishes_the_trimmed_figure_not_a_mean(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn("_state['noise_db'] = trimmed_mean(", source,
+                      'the published loudness is a plain mean again')
+
+
+class ChannelHealth(unittest.TestCase):
+    """A dead sensor and an empty room published the same payload.
+
+    The last version of the problem that ran through every fix on this device:
+    0 is overloaded. On a venue card that is wrong for a while. In the training
+    corpus it is worse, because a run of zeros from a wedged camera cannot be
+    told from a run of zeros from a genuinely empty Tuesday, and the model
+    learns the venue is quiet when the sensor is broken.
+    """
+
+    def setUp(self):
+        for k in main._stale_streaks:
+            main._stale_streaks[k] = 0
+
+    tearDown = setUp
+
+    def test_a_current_reading_leaves_the_streak_at_zero(self):
+        main._fresh(5, time.monotonic(), 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['thermal'], 0)
+
+    def test_a_stale_reading_is_counted(self):
+        main._fresh(5, 0, 90, 'Thermal headcount')
+        main._fresh(5, 0, 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['thermal'], 2)
+
+    def test_a_sensor_that_dies_while_the_room_is_empty_is_still_counted(self):
+        # The case the old warning stayed silent about: it only spoke when there
+        # was a non-zero value to complain about losing, so a camera that failed
+        # during a quiet hour failed invisibly.
+        main._fresh(0, 0, 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['thermal'], 1)
+
+    def test_recovery_clears_it(self):
+        main._fresh(5, 0, 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['thermal'], 1)
+        main._fresh(5, time.monotonic(), 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['thermal'], 0)
+
+    def test_the_channels_are_counted_separately(self):
+        main._fresh(5, 0, 90, 'Thermal headcount')
+        self.assertEqual(main.channel_health()['noise'], 0)
+        main._fresh(5.0, 0, 60, 'Noise level')
+        self.assertEqual(main.channel_health()['noise'], 1)
+
+    def test_the_key_does_not_depend_on_the_display_wording(self):
+        # The callers pass display names. If somebody rewords one, the counter
+        # must not silently stop counting that channel.
+        main._fresh(5, 0, 90, 'Thermal headcount')
+        main._fresh(5, 0, 90, 'Thermal something else entirely')
+        self.assertEqual(main.channel_health()['thermal'], 2)
+
+    def test_the_push_says_what_its_zeros_mean(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn('channel_health()', source)
+        self.assertIn("log_throttled('channel_health'", source,
+                      'a stale channel is invisible to an operator again')
+
+
 if __name__ == '__main__':
     unittest.main()
