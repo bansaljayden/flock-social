@@ -64,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.8.0'
+VERSION = '1.9.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -2432,6 +2432,88 @@ def calibrate(seconds=CALIBRATE_SECONDS):
         return 1
     finally:
         _thermal_camera.close()
+def listen(seconds=None):
+    """Live level meter. What the microphone is hearing, right now.
+
+    Built because a column of numbers does not tell a person whether the
+    microphone works, and clapping at a device while watching a bar move does.
+    It is also the only way to set the gain screw on the MAX4466 by eye: too
+    high and the bar pins and the clip counter runs, too low and a conversation
+    barely moves it.
+
+    The figure is a RELATIVE level, not dB SPL. Nothing here has been held next
+    to a sound level meter, so the number is honest about loud against quiet and
+    means nothing in absolute terms. See README.md, Calibration.
+    """
+    if not init_noise():
+        print('MCP3008 not detected. Check SPI is enabled and the wiring.')
+        return 1
+
+    mic = sample_adc(NOISE_CHANNEL)
+    healthy, why = adc_health(mic, sample_adc(ADC_SPARE_CHANNEL))
+    if not healthy:
+        print('The converter is not returning anything usable:')
+        for line in textwrap.wrap(why, 70):
+            print(f'  {line}')
+        return 1
+
+    print(f'flock-sensor {VERSION} microphone level')
+    print(f'  channel {NOISE_CHANNEL}, {why}')
+    print('  relative level, NOT dB SPL. Ctrl+C to stop.')
+    print('')
+    deadline = None if seconds is None else time.monotonic() + seconds
+    peak = 0.0
+    floor = None
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            raw = []
+            t_end = time.monotonic() + 0.12
+            while time.monotonic() < t_end:
+                raw.append(_read_mcp3008(NOISE_CHANNEL))
+                time.sleep(0.001)
+            if not raw:
+                continue
+            centred = [r - ADC_MID for r in raw]
+            rms = math.sqrt(sum(c * c for c in centred) / len(centred))
+            level = compute_noise_db(centred)
+            peak = max(peak, rms)
+            floor = rms if floor is None else min(floor, rms)
+            # The same four words the venue card shows, from the same
+            # thresholds, so what a person sees here is what a venue sees.
+            word = ('Quiet' if level < 50 else 'Moderate' if level < 70
+                    else 'Lively' if level < 85 else 'Loud')
+            # Clipping is worth its own counter: it is the one fault the bar
+            # cannot show, because a pinned reading looks like a loud room.
+            clips = sum(1 for r in raw if r <= 1 or r >= 1022)
+            filled = max(0, min(32, int(level / 100.0 * 32)))
+            bar = '#' * filled + '.' * (32 - filled)
+            flag = f'  CLIPPING x{clips}' if clips else ''
+            print(f'  rms {rms:6.1f}   level {level:5.1f}  {word:<8} '
+                  f'[{bar}]  peak {peak:6.1f}{flag}')
+    except KeyboardInterrupt:
+        print('')
+    print(f'  loudest burst seen: rms {peak:.1f}')
+    if floor is not None:
+        print(f'  quietest burst seen: rms {floor:.1f}')
+        # The four words the venue card shows are thresholds on this level, and
+        # at the shipped NOISE_REF_COUNTS of 1.0 a genuinely silent room already
+        # reads Moderate, because 20*log10(rms/1.0)+50 is above 50 for any rms
+        # above one count. Setting the reference to the room's own floor puts a
+        # room this quiet at the bottom of Quiet, which is where it belongs.
+        suggested = max(1.0, round(floor, 1))
+        if abs(suggested - NOISE_REF_COUNTS) > 0.5:
+            print('')
+            print(f'  RECOMMENDED: NOISE_REF_COUNTS={suggested}')
+            print(f'  At the current {NOISE_REF_COUNTS}, a room this quiet reports '
+                  f'{compute_noise_db([floor]):.0f}, which the app calls '
+                  f'{"Quiet" if compute_noise_db([floor]) < 50 else "Moderate or worse"}.')
+            print('  Run this again in the quietest the venue ever gets before setting it.')
+    if peak < 5:
+        print('  Nothing ever moved. Talk directly at the microphone, and if it')
+        print('  still does not move, turn the gain screw on the MAX4466 clockwise.')
+    return 0
+
+
 def selftest():
     """Check an installation end to end and say exactly what is wrong.
 
@@ -2643,6 +2725,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Flock venue occupancy sensor')
     parser.add_argument('--selftest', action='store_true',
                         help='check this installation and exit')
+    parser.add_argument('--listen', action='store_true',
+                        help='live microphone level meter; Ctrl+C to stop')
     parser.add_argument('--calibrate', action='store_true',
                         help='measure THERMAL_MIN_CLUSTER against this mounting position')
     parser.add_argument('--seconds', type=int, default=CALIBRATE_SECONDS,
@@ -2651,6 +2735,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.selftest:
         sys.exit(selftest())
+    if args.listen:
+        sys.exit(listen(args.seconds if args.seconds != CALIBRATE_SECONDS else None))
     if args.calibrate:
         sys.exit(calibrate(max(5, args.seconds)))
     main()
