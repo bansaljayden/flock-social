@@ -36,7 +36,14 @@ design choice below follows from that.
 >   into 3 clusters and at bin 4 the same person reads 1. What that did to
 >   `THERMAL_MIN_CLUSTER` is worked out under Calibration; the short version is
 >   that 12 cells now means four times as many pixels as it used to.
-> - The microphone answers over the MCP3008. Reading it is not calibrating it.
+> - **The microphone, end to end.** 2026-09-13: the MCP3008 converts, and CH0
+>   idles near mid-scale and swings with sound in the room, which is what a
+>   working MAX4466 does. Four wires were wrong to get there and all four were
+>   the same mistake, counted one row too high: 3.3V sat above VDD, ground sat
+>   on VREF and held it at zero, DGND had nothing, and the mic's OUT was in a
+>   row above the chip entirely. A VREF at zero is what pinned every channel to
+>   1023, because the converter divides by it. Reading it is still not
+>   calibrating it; see Calibration.
 >
 > **The bench found one bug and it is fixed here.** `setup.sh` created
 > `/etc/flock-sensor` as root:root 0750 and chowned only the file inside it, so
@@ -661,6 +668,12 @@ Commit it and have `setup.sh` install from it.
 | Crossings stuck at 0, `--selftest` says the board is a Pi 5 | `RPi.GPIO` cannot drive Pi 5 GPIO | `sudo pip3 uninstall RPi.GPIO && sudo pip3 install --break-system-packages rpi-lgpio`, then restart |
 | Crossings stuck at 0 | Beam misaligned or receiver unpowered | Break the beam by hand and watch the log |
 | `has not read successfully for over 90s` in the log | A sensor answered once and then stopped: a USB camera that dropped off the bus, or a locked SPI bus | The device is reporting 0 for that signal on purpose. Reseat the USB cable or the wiring; a reboot clears a wedged bus |
+| `--selftest` says READING NOTHING USEFUL, every sample 1023 | VREF has no power. The converter divides by VREF, so zero there pins every channel to full scale | Check VREF and VDD both reach 3.3V. They are the two pins at the notch end of the chip |
+| Same, every sample 0 | No ground, or the chip is never selected | Check AGND and DGND both reach ground, and that CS reaches CE0 |
+| Same, every sample identical at some middling value | The converter has stopped converting. A live mic jitters a count or two even in silence | Reseat the chip; check CLK reaches SCK |
+| Same, the mic idles far from 512 | OUT is not reaching CH0, or the mic has no power | OUT goes in the row of the chip's pin 1 corner, on the opposite side of the board from the power pins. VCC on 3.3V, never 5V |
+| All eight channels return the same numbers | The chip is not selecting channels | CS to CE0, CLK to SCK |
+| Everything above at once, on a first build | Almost always one mistake repeated: the wires counted from the wrong row | Find the row the chip's notch end sits in and number down from there. Pin 1 is that row on the left side; pin 16 is that row on the right |
 
 ---
 
