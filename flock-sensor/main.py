@@ -64,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.10.0'
+VERSION = '1.11.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -128,6 +128,13 @@ DEFAULTS = {
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
     'NOISE_REF_COUNTS': '1.0',
+    # Stretches the level scale. The four words the venue card shows are spaced
+    # across 35 dB, which assumes a microphone with at least that much range
+    # between its own noise and clipping. A real unit measured 30 dB, so with a
+    # scale of 1.0 the top word is unreachable however the reference is set:
+    # shifting the window cannot widen it. --listen measures both ends and
+    # recommends the pair. 1.0 leaves the old behaviour exactly as it was.
+    'NOISE_SCALE': '1.0',
     'NOISE_DB_OFFSET': '50.0',
     # Allow a plaintext http:// endpoint. Off by default: the API key travels
     # in a header over the venue's wifi, and http would broadcast it.
@@ -242,6 +249,7 @@ THERMAL_BIN, THERMAL_MIN_CLUSTER, _pair_complaint = validated_thermal_pair(
     THERMAL_BIN, THERMAL_MIN_CLUSTER)
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
+NOISE_SCALE = _cfg_number('NOISE_SCALE', float, 0.1, 10.0, 1.0)
 
 # Ceilings mirrored from backend/routes/sensors.js. Sending a value the server
 # will reject only wastes a retry, so clamp here too. The ceilings are the
@@ -1143,12 +1151,32 @@ def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
 
 
 # After this many consecutive reads that produced nothing usable, stop trusting
-# the file descriptor and open the camera again. At a 2s cadence that is about
-# 30s of silence, comfortably longer than any FFC (0.9s) or frame timeout (2s),
-# and shorter than the 90s staleness latch, so a camera that comes back is
-# reporting again before the venue card has finished going quiet.
-_THERMAL_REOPEN_AFTER = 15
+# the file descriptor and open the camera again.
+#
+# The arithmetic, written out because the comment here used to claim 30s and
+# was wrong. A read that times out costs _FRAME_WAIT_SECONDS inside read_frame
+# AND the 2s wait at the bottom of the loop, so a failing iteration is about
+# 4s and not 2s. Eight of them is roughly 32s. A reopen then reseeds the scene
+# background, 30 frames at 2s, which is another 60s before a headcount is
+# published at all.
+#
+# So a full recovery is about 90s against a THERMAL_STALE_AFTER of 90s, which
+# means a real dropout DOES briefly show as offline on the venue card. That is
+# the honest outcome and it fails safe. The previous version of this comment
+# promised the opposite, which was arithmetic nobody had done.
+_THERMAL_REOPEN_AFTER = 8
 _THERMAL_REOPEN_BACKOFF_MAX = 300.0
+
+# A camera can also fail by succeeding: the driver keeps handing back buffers
+# and the content never changes. A frozen frame that is plausible and not flat
+# passes every check in this loop, resets the failure count, and refreshes the
+# freshness clock forever, so _fresh never engages and the venue publishes one
+# stale headcount indefinitely. That is the exact failure _fresh exists to
+# prevent, arriving through a different door. Real sensor noise means two
+# consecutive frames are never bit-identical, so identical frames are a wedged
+# bus. noise_loop already withholds on this for the ADC; the thermal path did
+# not, and that asymmetry was the gap.
+_THERMAL_IDENTICAL_LIMIT = 5
 
 
 # One frame in roughly fifteen used to decide the label for a whole 30 second
@@ -1170,6 +1198,12 @@ def count_people(frame, scene=None):
     """
     if scene is None:
         return count_thermal_clusters(frame)
+    if len(frame) < THERMAL_ROWS * THERMAL_COLS:
+        # The guard count_thermal_clusters and thermal_region_sizes both have.
+        # Unreachable from thermal_loop today because _configure refuses a
+        # camera whose geometry is not 160x120, but this is the one function in
+        # the group that would raise IndexError rather than degrade.
+        return None
     cells, rows, cols = bin_frame(frame, THERMAL_ROWS, THERMAL_COLS, max(1, int(THERMAL_BIN)))
     ambient = _ambient(cells)
     cutoff = max(THERMAL_THRESHOLD_C, ambient + THERMAL_MARGIN_C)
@@ -1196,6 +1230,8 @@ def thermal_loop():
     however many weeks it takes for a person to look.
     """
     failures = 0
+    last_signature = None
+    identical = 0
     scene = SceneBackground()
     backoff = 0.0
     while not _stop.is_set():
@@ -1239,6 +1275,22 @@ def thermal_loop():
                 # this loop comes back around in two.
                 pass
             else:
+                # Cheap fingerprint. A stride sample tells a frozen buffer from a
+                # live one, and hashing 19,200 floats every read is not worth it
+                # for a check that only fires on broken hardware.
+                signature = hash(tuple(frame[::97]))
+                identical = identical + 1 if signature == last_signature else 0
+                last_signature = signature
+                if identical >= _THERMAL_IDENTICAL_LIMIT:
+                    # Counted as a failure on purpose, so the reopen machinery
+                    # engages instead of this repeating forever.
+                    failures += 1
+                    log_throttled('thermal_frozen', logging.ERROR,
+                                  'Thermal camera has returned the same frame '
+                                  f'{identical + 1} times. The bus is wedged, so the '
+                                  'headcount is withheld rather than repeated.')
+                    _stop.wait(2)
+                    continue
                 failures = 0
                 backoff = 0.0
                 n = count_people(frame, scene)
@@ -1275,6 +1327,7 @@ def thermal_loop():
             # A camera that went away and came back may be pointing at a
             # different scene, or the same one hours later. Relearn it.
             scene = SceneBackground()
+            last_signature, identical = None, 0
             _thermal_window.clear()
             failures = 0
         _stop.wait(2)
@@ -1326,6 +1379,9 @@ QUIET_TARGET_LEVEL = 40.0
 # Quiet starts at 50 and Loud starts at 85, so the four words the venue card
 # shows need this much range to all be reachable.
 WORD_SCALE_SPAN_DB = 35.0
+# Where the loudest thing the microphone can register should land. Inside Loud,
+# which starts at 85, rather than on its edge.
+LOUD_TARGET_LEVEL = 90.0
 
 
 def recommend_noise_ref(floor_rms, offset=None, target=None):
@@ -1345,6 +1401,31 @@ def recommend_noise_ref(floor_rms, offset=None, target=None):
     if floor_rms <= 0:
         return None
     return round(floor_rms * (10 ** ((offset - target) / 20.0)), 1)
+
+
+def recommend_noise_settings(floor_rms, peak_rms, offset=None,
+                             quiet_target=None, loud_target=None):
+    """Reference and scale that map a measured room onto the whole word scale.
+
+    Returns (ref, scale), or None when the two ends are not distinguishable.
+
+    Solves both ends at once: the quietest burst lands at `quiet_target`, inside
+    Quiet, and the loudest lands at `loud_target`, inside Loud. The reference
+    alone can only slide the window, so a microphone with less usable range than
+    the words assume needs the scale as well. Pure, so the arithmetic that
+    decides what a venue is called is tested rather than eyeballed.
+    """
+    offset = NOISE_DB_OFFSET if offset is None else offset
+    quiet_target = QUIET_TARGET_LEVEL if quiet_target is None else quiet_target
+    loud_target = LOUD_TARGET_LEVEL if loud_target is None else loud_target
+    if floor_rms <= 0 or peak_rms <= floor_rms:
+        return None
+    span_db = 20 * math.log10(peak_rms / floor_rms)
+    if span_db <= 0:
+        return None
+    scale = (loud_target - quiet_target) / span_db
+    ref = floor_rms * (10 ** ((offset - quiet_target) / (20.0 * scale)))
+    return round(ref, 1), round(scale, 2)
 
 
 def _read_mcp3008(channel=NOISE_CHANNEL):
@@ -1417,14 +1498,24 @@ def adc_health(mic_samples, spare_samples=None):
     return True, f'idles at {mean:.0f}, spread {hi - lo} counts'
 
 
-def compute_noise_db(samples, ref_counts=None, offset=None):
-    """RMS of centred ADC counts, expressed on a log scale."""
+def compute_noise_db(samples, ref_counts=None, offset=None, scale=None):
+    """RMS of centred ADC counts, expressed on a log scale.
+
+    The scale is what lets a microphone with less range than the four words
+    assume still reach all four of them. Without it the slope is fixed at
+    20*log10, the reference can only slide the window along the scale, and a
+    unit with 30 dB between its noise floor and clipping cannot cover 35 dB
+    of thresholds: you get a correct Quiet or a reachable Loud, never both.
+    Measured on a real unit 2026-09-13, where shouting into the microphone
+    from an inch away reported Lively and could not do better.
+    """
     if not samples:
         return 0.0
     ref_counts = NOISE_REF_COUNTS if ref_counts is None else ref_counts
     offset = NOISE_DB_OFFSET if offset is None else offset
+    scale = NOISE_SCALE if scale is None else scale
     rms = math.sqrt(sum(s * s for s in samples) / len(samples))
-    db = 20 * math.log10(max(rms, 1e-6) / max(ref_counts, 1e-6)) + offset
+    db = scale * 20 * math.log10(max(rms, 1e-6) / max(ref_counts, 1e-6)) + offset
     return max(0.0, min(MAX_NOISE_DB, db))
 
 
@@ -2220,12 +2311,23 @@ def display_loop():
                                      (PAD + i * slot, chart_bottom - h, bar_w, h))
 
             if view == 'thermal':
-                # Drawn over the stats rather than instead of them. The stats pass
-                # is blits into an off-screen surface with no side effects and
-                # costs about a millisecond at this size, and overdrawing keeps
-                # this change from re-indenting sixty lines of working layout.
-                draw_thermal_view(pygame, screen, (font_med, font_sm, font_xs),
-                                  frame, therm, therm_live)
+                # Wrapped on its own. The outer handler around this loop logs and
+                # RETURNS, which ends the display thread for the life of the
+                # process, and nothing restarts it. So a raise in the newest and
+                # least exercised drawing code would take the doorway counter down
+                # with it, which is the demo's headline moment. Fall back to the
+                # stats screen instead.
+                try:
+                    # Drawn over the stats rather than instead of them. The stats
+                    # pass is blits into an off-screen surface with no side effects
+                    # and costs about a millisecond at this size.
+                    draw_thermal_view(pygame, screen, (font_med, font_sm, font_xs),
+                                      frame, therm, therm_live)
+                except Exception as e:
+                    view = 'stats'
+                    log_throttled('thermal_view', logging.ERROR,
+                                  f'Thermal view failed, falling back to the stats '
+                                  f'screen: {e}')
             pygame.display.flip()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -2533,18 +2635,38 @@ def listen(seconds=None):
         # The shipped reference of 1.0 is the reason a silent room reads Lively:
         # the level is 20*log10(rms/ref)+offset, and measured against one count
         # every real reading is enormous.
+        # Both recommenders refuse a floor of zero, which is what a genuinely
+        # silent 4am venue can produce and also what a dead channel produces.
+        # This block used to subtract None from a float in exactly that case,
+        # after somebody had stood in a venue at 4am collecting the reading it
+        # asked them for.
+        pair = recommend_noise_settings(floor, peak)
         suggested = recommend_noise_ref(floor)
         now = compute_noise_db([floor])
         now_word = ('Quiet' if now < 50 else 'Moderate' if now < 70
                     else 'Lively' if now < 85 else 'Loud')
         print('')
-        print(f'  At the current NOISE_REF_COUNTS={NOISE_REF_COUNTS}, a room this quiet '
-              f'reports {now:.0f},')
-        print(f'  which the app calls {now_word}.')
-        if abs(suggested - NOISE_REF_COUNTS) > 0.5:
+        print(f'  At the current settings a room this quiet reports {now:.0f}, '
+              f'which the app calls {now_word}.')
+        if pair is None and suggested is None:
+            print('')
+            print('  The quietest burst read exactly 0, so there is nothing to')
+            print('  measure against. Run it again, and if it stays at 0 the')
+            print('  channel is not converting: check the wiring with --selftest.')
+        elif pair is not None:
+            ref, scale = pair
+            print('')
+            print(f'  RECOMMENDED: NOISE_REF_COUNTS={ref}   NOISE_SCALE={scale}')
+            print(f'  Puts this room at {QUIET_TARGET_LEVEL:.0f} and the loudest thing '
+                  f'heard at {LOUD_TARGET_LEVEL:.0f},')
+            print('  so all four words are reachable. Both are needed: the')
+            print('  reference slides the scale, and only the scale can stretch it.')
+        elif suggested is not None:
             print('')
             print(f'  RECOMMENDED: NOISE_REF_COUNTS={suggested}')
             print(f'  That puts a room this quiet at {QUIET_TARGET_LEVEL:.0f}, inside Quiet.')
+            print('  Make some noise during the next run and it can recommend a')
+            print('  NOISE_SCALE too, which is what makes Loud reachable.')
 
         # The four words span 35 dB. A microphone whose whole range is narrower
         # than that can never reach the top word no matter how it is referenced,
@@ -2779,14 +2901,18 @@ if __name__ == '__main__':
                         help='live microphone level meter; Ctrl+C to stop')
     parser.add_argument('--calibrate', action='store_true',
                         help='measure THERMAL_MIN_CLUSTER against this mounting position')
-    parser.add_argument('--seconds', type=int, default=CALIBRATE_SECONDS,
+    # default=None, not CALIBRATE_SECONDS: --listen runs until Ctrl+C when the
+    # flag is absent, and `--listen --seconds 20` used to be indistinguishable
+    # from not passing it at all, so an explicitly requested duration was
+    # silently ignored.
+    parser.add_argument('--seconds', type=int, default=None,
                         help=f'seconds to watch per --calibrate stage (default {CALIBRATE_SECONDS})')
     parser.add_argument('--version', action='version', version=f'flock-sensor {VERSION}')
     args = parser.parse_args()
     if args.selftest:
         sys.exit(selftest())
     if args.listen:
-        sys.exit(listen(args.seconds if args.seconds != CALIBRATE_SECONDS else None))
+        sys.exit(listen(args.seconds))
     if args.calibrate:
-        sys.exit(calibrate(max(5, args.seconds)))
+        sys.exit(calibrate(max(5, args.seconds or CALIBRATE_SECONDS)))
     main()

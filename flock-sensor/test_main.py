@@ -1604,5 +1604,112 @@ class NoiseReference(unittest.TestCase):
         import math
         span = 20 * math.log10(self.MEASURED_PEAK / self.MEASURED_FLOOR)
         self.assertLess(span, main.WORD_SCALE_SPAN_DB)
+class NoiseScale(unittest.TestCase):
+    """Shouting into the microphone reported Lively and could not do better.
+
+    The level has a fixed slope, so the reference slides the scale and cannot
+    stretch it. A unit with 30 dB between its own noise and clipping cannot
+    cover the 35 dB the four words are spaced across: you get a correct Quiet or
+    a reachable Loud, never both. Measured on a real unit 2026-09-13, where the
+    ceiling worked out at about 70 however the reference was set.
+    """
+
+    FLOOR = 15.5
+    PEAK = 500.0
+
+    def test_without_a_scale_the_top_word_is_unreachable(self):
+        # The bug, pinned with the real numbers. Loud starts at 85.
+        ref = main.recommend_noise_ref(self.FLOOR)
+        top = main.compute_noise_db([self.PEAK], ref_counts=ref, scale=1.0)
+        self.assertLess(top, 85.0)
+
+    def test_the_pair_reaches_both_ends(self):
+        ref, scale = main.recommend_noise_settings(self.FLOOR, self.PEAK)
+        quiet = main.compute_noise_db([self.FLOOR], ref_counts=ref, scale=scale)
+        loud = main.compute_noise_db([self.PEAK], ref_counts=ref, scale=scale)
+        self.assertAlmostEqual(quiet, main.QUIET_TARGET_LEVEL, places=0)
+        self.assertAlmostEqual(loud, main.LOUD_TARGET_LEVEL, places=0)
+        self.assertLess(quiet, 50.0, 'a silent room is not called Quiet')
+        self.assertGreater(loud, 85.0, 'the loudest thing heard is not called Loud')
+
+    def test_a_scale_of_one_is_exactly_the_old_behaviour(self):
+        # The default must change nothing, or every unit already deployed moves.
+        self.assertEqual(main.NOISE_SCALE, 1.0)
+        plain = main.compute_noise_db([100.0], ref_counts=49.0, offset=50.0)
+        scaled = main.compute_noise_db([100.0], ref_counts=49.0, offset=50.0, scale=1.0)
+        self.assertEqual(plain, scaled)
+
+    def test_it_refuses_rather_than_dividing_by_a_silent_room(self):
+        # The crash the review found: listen() subtracted None from a float, in
+        # exactly the 4am quiet venue the tool tells people to measure in.
+        self.assertIsNone(main.recommend_noise_settings(0, 100))
+        self.assertIsNone(main.recommend_noise_settings(-1, 100))
+
+    def test_it_refuses_when_the_two_ends_are_the_same(self):
+        # Nobody made any noise during the run, so there is no range to map.
+        self.assertIsNone(main.recommend_noise_settings(20.0, 20.0))
+        self.assertIsNone(main.recommend_noise_settings(20.0, 10.0))
+
+    def test_the_ordering_survives_the_stretch(self):
+        ref, scale = main.recommend_noise_settings(self.FLOOR, self.PEAK)
+        levels = [main.compute_noise_db([r], ref_counts=ref, scale=scale)
+                  for r in (self.FLOOR, 50.0, 150.0, self.PEAK)]
+        self.assertEqual(levels, sorted(levels))
+
+
+class FrozenThermalFrame(unittest.TestCase):
+    """A camera can fail by succeeding, and that path had no guard.
+
+    The driver keeps handing back buffers and the content never changes. A
+    frozen frame that is plausible and not flat passes every check in
+    thermal_loop, resets the failure count, and refreshes the freshness clock
+    forever, so _fresh never engages and one stale headcount is published
+    indefinitely. noise_loop already withheld on this for the ADC.
+    """
+
+    def test_the_loop_compares_frames_against_the_previous_one(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn('_THERMAL_IDENTICAL_LIMIT', source,
+                      'a wedged camera can publish one stale headcount forever again')
+        self.assertIn('signature = hash(tuple(frame[::97]))', source)
+
+    def test_an_identical_frame_counts_as_a_failure_so_the_reopen_engages(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('if identical >= _THERMAL_IDENTICAL_LIMIT:')
+        window = source[idx:idx + 600]
+        self.assertIn('failures += 1', window,
+                      'a frozen camera never trips the reopen, so it stays frozen')
+        self.assertIn('continue', window,
+                      'a frozen frame still reaches the publish path')
+
+    def test_the_limit_is_above_one_so_a_single_repeat_is_not_a_fault(self):
+        self.assertGreater(main._THERMAL_IDENTICAL_LIMIT, 1)
+
+    def test_the_recovery_budget_is_documented_honestly(self):
+        # The comment used to claim recovery finishes inside the 90s staleness
+        # latch. It does not: a timing-out read costs about 4s, not 2s, and the
+        # background reseeds for another 60s afterwards.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertNotIn('shorter than the 90s staleness latch', source)
+        detect = main._THERMAL_REOPEN_AFTER * 4
+        reseed = main._BG_SEED_FRAMES * 2
+        self.assertGreaterEqual(detect + reseed, main.THERMAL_STALE_AFTER,
+                                'the arithmetic changed; re-read the comment on '
+                                '_THERMAL_REOPEN_AFTER, it claims a gap is expected')
+
+
+class DisplayFallback(unittest.TestCase):
+    """A raise in the thermal view used to end the whole display thread."""
+
+    def test_the_thermal_view_call_is_wrapped_on_its_own(self):
+        # The outer handler around display_loop logs and RETURNS, so an
+        # exception in the newest drawing code took the doorway counter down
+        # with it, and nothing restarts that thread.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index("if view == 'thermal':")
+        window = source[idx:idx + 1600]
+        self.assertIn('try:', window)
+        self.assertIn("view = 'stats'", window,
+                      'a failing thermal view does not fall back to the stats screen')
 if __name__ == '__main__':
     unittest.main()
