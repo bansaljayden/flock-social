@@ -650,7 +650,12 @@ class ThermalCamera:
         # (raspberrypi/linux#1211), which on a blocking fd hangs the thermal
         # thread forever with no exception and no log line. Non-blocking turns
         # that into the EAGAIN this code already handles.
-        self.fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
+        # getattr, because O_NONBLOCK does not exist on every host this file
+        # is imported on and the suite runs on one of them. Same tolerance the
+        # fcntl guard above already has: Linux always has the flag, and a 0 here
+        # would only ever mean a blocking open on a platform that cannot run
+        # V4L2 anyway.
+        self.fd = os.open(self.path, os.O_RDWR | getattr(os, 'O_NONBLOCK', 0))
         try:
             self._configure()
         except Exception:
