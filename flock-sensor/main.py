@@ -64,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.11.0'
+VERSION = '1.12.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -135,6 +135,13 @@ DEFAULTS = {
     # shifting the window cannot widen it. --listen measures both ends and
     # recommends the pair. 1.0 leaves the old behaviour exactly as it was.
     'NOISE_SCALE': '1.0',
+    # One measured point against a phone sound level app turns the relative
+    # index into an estimated dB SPL. Only the constant is unknown: the slope
+    # is physics, because the capsule's sensitivity is a fixed volts-per-pascal
+    # and 20 dB of SPL is exactly ten times the voltage and so ten times the
+    # counts. Leave at 0 and nothing is estimated. See README, Calibration.
+    'NOISE_SPL_ANCHOR_COUNTS': '0.0',
+    'NOISE_SPL_ANCHOR_DB': '0.0',
     'NOISE_DB_OFFSET': '50.0',
     # Allow a plaintext http:// endpoint. Off by default: the API key travels
     # in a header over the venue's wifi, and http would broadcast it.
@@ -250,6 +257,8 @@ THERMAL_BIN, THERMAL_MIN_CLUSTER, _pair_complaint = validated_thermal_pair(
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 NOISE_SCALE = _cfg_number('NOISE_SCALE', float, 0.1, 10.0, 1.0)
+NOISE_SPL_ANCHOR_COUNTS = _cfg_number('NOISE_SPL_ANCHOR_COUNTS', float, 0.0, 1024.0, 0.0)
+NOISE_SPL_ANCHOR_DB = _cfg_number('NOISE_SPL_ANCHOR_DB', float, 0.0, 140.0, 0.0)
 
 # Ceilings mirrored from backend/routes/sensors.js. Sending a value the server
 # will reject only wastes a retry, so clamp here too. The ceilings are the
@@ -373,7 +382,11 @@ _state = {
     'thermal_at': None,                     # Monotonic mark of the last GOOD read
     'noise_db': 0.0,                        # Rolling 30s average
     'noise_at': None,                       # Monotonic mark of the last GOOD read
-    'noise_window': deque(maxlen=6),        # 6 samples x 5s = 30s
+    # 12 bursts x 5s = 60s. It was 6, and a plain mean of six values lets one
+    # bad burst move the published figure by a sixth of its own excess. A
+    # slammed door or a dropped glass lasts long enough to own an entire
+    # 100ms burst, so that is not a hypothetical.
+    'noise_window': deque(maxlen=12),
     'last_push_history': deque(maxlen=12),  # For the optional display chart
     # The most recent thermal frame, and ONLY when THERMAL_VIEW_ON. On any unit
     # without a screen this stays None for the life of the process, which is
@@ -385,6 +398,32 @@ _state = {
 }
 _stop = threading.Event()
 
+
+# How many pushes in a row each channel has been reported as 0 because it was
+# STALE rather than because the room was quiet.
+#
+# This is the last version of the problem that has run through every fix on this
+# device: 0 is overloaded. A dead thermal camera and an empty room publish the
+# same payload, byte for byte, and nothing downstream can tell them apart. That
+# is survivable on a venue card, which is merely wrong for a while. It is not
+# survivable in the training corpus, where a run of zeros from a wedged camera
+# is indistinguishable from a run of zeros from a genuinely empty Tuesday, and
+# the model learns the venue is quiet when in fact the sensor is broken.
+#
+# The backend's payload schema is closed, so this is not on the wire yet. It is
+# logged as one structured line per push, which makes the question answerable
+# from a terminal today:
+#
+#     journalctl -u flock-sensor | grep channel_health
+#
+# Putting it on the wire needs an optional nullable column and an additive
+# change to the ingest validator, which is written up in README, Known gaps.
+_stale_streaks = {'thermal': 0, 'noise': 0}
+
+
+def channel_health():
+    """What each channel's zeros currently mean. Cheap, and the only way to ask."""
+    return dict(_stale_streaks)
 
 def _fresh(value, taken_at, max_age, name):
     """Return a latched reading only while it is still current, else 0.
@@ -403,8 +442,20 @@ def _fresh(value, taken_at, max_age, name):
     never had this problem: its counter resets into every payload, so a dead
     beam reports 0 by construction.
     """
+    # The callers pass display names like 'Thermal headcount'. One word, lower
+    # case, is the key, so the counter does not depend on that wording.
+    key = name.split()[0].lower()
     if taken_at is not None and time.monotonic() - taken_at <= max_age:
+        if key in _stale_streaks:
+            _stale_streaks[key] = 0
         return value
+    if key in _stale_streaks:
+        # Counted whether or not the latched value was truthy. A camera that
+        # died while the room happened to be empty is just as dead as one that
+        # died mid-rush, and it is the one the old warning stayed silent about,
+        # because it only spoke when there was a non-zero value to complain
+        # about losing.
+        _stale_streaks[key] += 1
     if value:
         log_throttled(f'stale_{name}', logging.WARNING,
                       f'{name} has not read successfully for over {max_age}s. '
@@ -1389,6 +1440,55 @@ WORD_SCALE_SPAN_DB = 35.0
 LOUD_TARGET_LEVEL = 90.0
 
 
+# The converter's hard ceiling. A signal centred at ADC_MID can swing 512 counts
+# either way before it squares off against the rails, so an RMS approaching this
+# is not a loud room, it is a clipped one.
+ADC_CLIP_RMS = 512.0
+
+
+def spl_from_counts(rms, anchor_counts=None, anchor_db=None):
+    """Estimated dB SPL for an RMS in counts. None when the unit is not anchored.
+
+    One anchor is enough and that is not a shortcut, it is the physics. The
+    capsule has a fixed sensitivity in volts per pascal, so 20 dB of sound
+    pressure is ten times the voltage and therefore ten times the counts. The
+    slope of counts against dB is fixed at 20*log10; only the constant depends
+    on where the gain trimpot happens to sit, and one measurement pins it.
+
+    This is an ESTIMATE and the error bar is wide. A phone sound level app is
+    within a few dB of a real meter at best, the phone and this microphone do
+    not point the same way or have the same response, and neither is
+    A-weighted. Treat it as good to about 5 to 8 dB, which is enough to say
+    which end of a venue's range a reading sits at and not enough to publish a
+    decibel figure to a user.
+    """
+    anchor_counts = NOISE_SPL_ANCHOR_COUNTS if anchor_counts is None else anchor_counts
+    anchor_db = NOISE_SPL_ANCHOR_DB if anchor_db is None else anchor_db
+    if anchor_counts <= 0 or anchor_db <= 0 or rms <= 0:
+        return None
+    return anchor_db + 20 * math.log10(rms / anchor_counts)
+
+
+def hearing_window(floor_rms, anchor_counts=None, anchor_db=None):
+    """(lowest, highest) dB SPL this unit can actually distinguish. None if unanchored.
+
+    The bottom is the electrical noise floor and the top is where the converter
+    clips, and the gap between them is fixed at roughly 25 to 28 dB on this
+    hardware. Turning the gain trimpot slides the window along the SPL axis; it
+    does not widen it, because gain multiplies the floor and the signal by the
+    same amount. Only removing noise widens it.
+
+    Worth printing because it answers the question that matters: a venue spans
+    something like 45 dB SPL when empty to 90 when packed, and a 27 dB window
+    cannot see all of that at once. Whatever falls below the bottom of this
+    range reads as the floor and is indistinguishable from silence.
+    """
+    low = spl_from_counts(floor_rms, anchor_counts, anchor_db)
+    high = spl_from_counts(ADC_CLIP_RMS, anchor_counts, anchor_db)
+    if low is None or high is None:
+        return None
+    return low, high
+
 def recommend_noise_ref(floor_rms, offset=None, target=None):
     """Reference count that puts a room this quiet at `target` on the level scale.
 
@@ -1524,14 +1624,69 @@ def compute_noise_db(samples, ref_counts=None, offset=None, scale=None):
     return max(0.0, min(MAX_NOISE_DB, db))
 
 
+# How long each burst listens for. The sleep that used to sit inside this loop
+# is gone, and that was the whole problem: time.sleep(0.001) does not cost a
+# millisecond, it costs about 1.5, so the loop managed roughly 63 samples in
+# 100ms. That is a 650Hz sample rate and a Nyquist limit of about 325Hz, which
+# is below almost everything in a room. Speech formants, music, glassware and
+# every consonant sat above it and folded back down into the measurement as
+# alias, so the RMS was not the loudness of the room, it was the loudness of a
+# scrambled version of it.
+#
+# Without the sleep the same loop manages thousands of samples in the same
+# window, which moves Nyquist into the kilohertz and makes the figure mean what
+# it claims. The cost is 100ms of one core every 5 seconds.
+#
+# Changing the sample rate changes the measured RMS, so it changes what
+# NOISE_REF_COUNTS should be. Re-run --listen after this.
+NOISE_BURST_SECONDS = 0.1
+# A ceiling so a fast machine cannot build an enormous list. At 20kHz this is
+# reached before the window closes and the burst simply ends early.
+NOISE_MAX_SAMPLES = 4000
+
+# How many bursts to discard from each end of the window before averaging.
+#
+# Professional noise monitoring does not report a plain mean, it reports
+# percentile levels: L90 for the background a room sits at, L50 for the typical
+# level, L10 for the peaks. The reason is that a mean is owned by its loudest
+# member, and "how busy does this room feel" is a question about the level the
+# room persistently sits at, not about the loudest thing that happened in it.
+#
+# Trimming one burst from each end of a twelve-burst window is the cheap version
+# of that: it is an L50-shaped statistic rather than an Leq-shaped one, it costs
+# a sort of twelve floats every five seconds, and it means a single door slam
+# cannot carry the number.
+#
+# Deliberately NOT done: trimming outlier SAMPLES inside a single burst. It was
+# recommended and it is the wrong level to do it at. A door slam lasts long
+# enough to occupy a whole burst, so clipping a percentile of samples within one
+# would not remove it, while it WOULD shave the genuine peaks of speech and
+# music, which have a high crest factor and carry real energy. That trades a bias
+# that is always present for a transient that it does not actually catch.
+NOISE_WINDOW_TRIM = 1
+
+
+def trimmed_mean(values, trim=None):
+    """Mean of the window with the loudest and quietest bursts set aside.
+
+    Falls back to a plain mean while the window is too short to trim, which is
+    the first minute after a start or a reopen.
+    """
+    trim = NOISE_WINDOW_TRIM if trim is None else trim
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if trim > 0 and len(ordered) >= 2 * trim + 3:
+        ordered = ordered[trim:len(ordered) - trim]
+    return sum(ordered) / float(len(ordered))
+
 def noise_loop():
     while not _stop.is_set():
         try:
             samples = []
-            t_end = time.monotonic() + 0.1
-            while time.monotonic() < t_end:
-                samples.append(_read_mcp3008_ch0() - 512)  # centre around 0
-                time.sleep(0.001)
+            t_end = time.monotonic() + NOISE_BURST_SECONDS
+            while time.monotonic() < t_end and len(samples) < NOISE_MAX_SAMPLES:
+                samples.append(_read_mcp3008_ch0() - ADC_MID)  # centre around 0
             if samples:
                 # A converter that has stopped converting returns the same count
                 # every time, and compute_noise_db turns that into a perfectly
@@ -1547,7 +1702,7 @@ def noise_loop():
                     db = compute_noise_db(samples)
                     with _lock:
                         _state['noise_window'].append(db)
-                        _state['noise_db'] = sum(_state['noise_window']) / len(_state['noise_window'])
+                        _state['noise_db'] = trimmed_mean(list(_state['noise_window']))
                         _state['noise_at'] = time.monotonic()
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
@@ -1801,6 +1956,17 @@ def snapshot():
         'noise_db': round(float(_fresh(noise, noise_at, NOISE_STALE_AFTER,
                                        'Noise level')), 2),
     }
+
+    # Says what this payload's zeros mean. A thermal_headcount of 0 with a
+    # streak of 0 is an empty room; the same 0 with a streak of 400 is a camera
+    # that died three hours ago. The payload itself cannot carry the difference
+    # yet, so it goes to the log where a person can still get at it.
+    health = channel_health()
+    if any(health.values()):
+        log_throttled('channel_health', logging.WARNING,
+                      'channel_health ' + json.dumps(health) +
+                      ' consecutive pushes reporting 0 because the channel is stale, '
+                      'not because the room is quiet')
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:
@@ -2685,6 +2851,34 @@ def listen(seconds=None):
             print('  run this again: the noise floor drops and the range widens.')
         print('')
         print('  Run this again in the quietest the venue ever gets before setting it.')
+
+        # The question the level alone cannot answer: what can this unit hear at
+        # all? The gap between the noise floor and the clipping point is fixed at
+        # roughly 25 to 28 dB on this hardware, and a venue spans closer to 45,
+        # so a good part of the range is simply below the floor and reads as
+        # silence. Turning the gain trimpot slides this window; it cannot widen
+        # it, because gain multiplies the floor and the signal equally.
+        window = hearing_window(floor)
+        if window is None:
+            print('')
+            print('  This unit is not anchored to real sound levels, so it cannot say')
+            print('  what it can and cannot hear. To anchor it: put a phone sound level')
+            print('  app next to the microphone, make a steady noise, note the dB it shows')
+            print('  and the rms here at the same moment, then set both:')
+            print('      NOISE_SPL_ANCHOR_COUNTS=<the rms>')
+            print('      NOISE_SPL_ANCHOR_DB=<the app reading>')
+        else:
+            low, high = window
+            print('')
+            print(f'  THIS UNIT HEARS {low:.0f} to {high:.0f} dBA ({high - low:.0f} dB wide).')
+            print('  For reference: empty cafe 45-55, busy cafe 70-80, busy bar 75-85,')
+            print('  peak bar 80-97, nightclub 90-100.')
+            if low > 60:
+                print('')
+                print(f'  Anything below {low:.0f} dBA reads as silence, which includes a')
+                print('  quiet venue. The floor is electrical, so lowering the gain does not')
+                print('  help: it moves both ends down together. Shorter leads, the mic off')
+                print('  the breadboard, and VREF off the noisy rail are what widen this.')
     if peak < 5:
         print('  Nothing ever moved. Talk directly at the microphone, and if it')
         print('  still does not move, turn the gain screw on the MAX4466 clockwise.')
