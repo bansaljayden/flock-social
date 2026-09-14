@@ -390,12 +390,59 @@ and returns the original row instead of double-counting the doorway.
 
 ## Calibration
 
-**Noise.** Out of the box `NOISE_REF_COUNTS=1.0` and `NOISE_DB_OFFSET=50.0` are
-nominal, so the reported figure is a **relative loudness index, not calibrated
-dB SPL.** To calibrate: put a sound level meter next to the mic, note the real
-dB at two very different loudness levels, and adjust `NOISE_DB_OFFSET` until
-the reported value matches. Until someone does that on real hardware, do not
-present the number to users as a decibel measurement.
+**Noise, and the default is wrong in a way that shows.** The level is
+`20*log10(rms / NOISE_REF_COUNTS) + NOISE_DB_OFFSET`, and the reference ships at
+`1.0`. Measured on a real unit 2026-09-13: an empty room runs rms 15 to 25 and
+therefore reports **76**, which the venue card calls **Lively**, with nobody in
+it. Silence is being compared against a single ADC count, which nothing real
+ever reaches. That default was a placeholder and no one had looked at it through
+a meter.
+
+**To calibrate, run the meter.** In the quietest the venue ever gets:
+
+    sudo systemctl stop flock-sensor
+    python3 /opt/flock-sensor/main.py --listen
+
+It prints a live bar with the rms, the level, the same four words the card
+shows, and a clipping counter. Sit quiet for twenty seconds, make some noise,
+then Ctrl+C. It reports the quietest and loudest bursts it saw and recommends a
+`NOISE_REF_COUNTS`.
+
+It aims to put a silent room at 40 rather than at 50. Setting the reference
+equal to the measured floor is the obvious move and it is wrong: 50 is exactly
+the Quiet/Moderate threshold, so an empty venue sits on the boundary and
+flickers between two words all night.
+
+**The gain screw does less than you would think, and measuring that is worth
+five minutes.** On the same unit, turning the MAX4466's trimpot down by a
+quarter turn moved the loudest burst from rms 504 to 166, and left the noise
+floor at 15. The floor did not move at all:
+
+| | floor | loudest | usable range |
+|---|---|---|---|
+| As delivered | rms 15.5 | 503.8 | 30.2 dB |
+| A quarter turn down | rms 15.4 | 166.0 | 20.6 dB |
+
+If that floor were amplifier gain it would have come down with the signal.
+It did not, so the noise is entering **after** the amplifier: jumper leads, the
+breadboard, the Pi's power rail, and a 4G modem radiating a few inches away.
+Turning the gain down costs range and buys nothing. Set it just below the point
+where ordinary speech clips and leave it. Bringing that floor down is a wiring
+job, not a settings one: shorter leads, off the breadboard, away from the modem.
+
+**What none of this fixes.** The level has a fixed slope, so the reference
+shifts the scale and cannot stretch it. Quiet through Loud spans 35 dB of
+thresholds and that unit had 20 to 30 dB of range between its own noise and
+clipping, which means **the top word is unreachable** until the floor comes
+down. `--listen` says so when it sees it. Two-point calibration against a real
+meter cannot fix it either, and an older version of this section wrongly said it
+could: adjusting `NOISE_DB_OFFSET` to match a measured dB can only ever line up
+one point, because the slope is not a parameter.
+
+**And it is still not dB SPL.** Nothing here has been held next to a sound level
+meter. The figure is honest about loud against quiet and means nothing in
+absolute terms, which is why no screen in the product prints a dB unit. Do not
+put one back.
 
 **Thermal.** The warm-pixel threshold floats above each frame's own median
 (`THERMAL_MARGIN_C`), so a hot room does not turn the whole grid into one giant
