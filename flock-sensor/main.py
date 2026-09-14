@@ -64,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.9.0'
+VERSION = '1.10.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1320,6 +1320,32 @@ ADC_MID = 512
 ADC_RESTING_MIN = 120
 ADC_RESTING_MAX = 900
 
+# Where a silent room should land on the level scale. Inside Quiet, not on its
+# edge, so an empty venue does not flicker between two words all night.
+QUIET_TARGET_LEVEL = 40.0
+# Quiet starts at 50 and Loud starts at 85, so the four words the venue card
+# shows need this much range to all be reachable.
+WORD_SCALE_SPAN_DB = 35.0
+
+
+def recommend_noise_ref(floor_rms, offset=None, target=None):
+    """Reference count that puts a room this quiet at `target` on the level scale.
+
+    The level is 20*log10(rms/ref)+offset, so the reference is the rms that
+    reads exactly `offset`. Shipping it at 1.0 means silence is measured against
+    one count and a quiet room reports in the seventies, which the card calls
+    Lively. Setting it to the measured floor is the obvious correction and is
+    also wrong: that lands silence on the Quiet/Moderate boundary and an empty
+    venue flickers between two words. This aims inside Quiet instead.
+
+    Pure, so the arithmetic that decides what a venue is called is tested.
+    """
+    offset = NOISE_DB_OFFSET if offset is None else offset
+    target = QUIET_TARGET_LEVEL if target is None else target
+    if floor_rms <= 0:
+        return None
+    return round(floor_rms * (10 ** ((offset - target) / 20.0)), 1)
+
 
 def _read_mcp3008(channel=NOISE_CHANNEL):
     """One 10-bit conversion, 0 to 1023, from any of the eight channels."""
@@ -2495,19 +2521,43 @@ def listen(seconds=None):
     print(f'  loudest burst seen: rms {peak:.1f}')
     if floor is not None:
         print(f'  quietest burst seen: rms {floor:.1f}')
-        # The four words the venue card shows are thresholds on this level, and
-        # at the shipped NOISE_REF_COUNTS of 1.0 a genuinely silent room already
-        # reads Moderate, because 20*log10(rms/1.0)+50 is above 50 for any rms
-        # above one count. Setting the reference to the room's own floor puts a
-        # room this quiet at the bottom of Quiet, which is where it belongs.
-        suggested = max(1.0, round(floor, 1))
+        span = 20 * math.log10(max(peak, 1e-6) / max(floor, 1e-6))
+        print(f'  usable range: {span:.1f} dB between the two')
+
+        # Pick a reference that puts a room this quiet at QUIET_TARGET_LEVEL,
+        # which sits inside Quiet rather than on its boundary. Setting the
+        # reference equal to the floor, which is the obvious thing to do, lands
+        # silence at exactly the Quiet/Moderate threshold and makes the card
+        # flicker between two words in an empty room.
+        #
+        # The shipped reference of 1.0 is the reason a silent room reads Lively:
+        # the level is 20*log10(rms/ref)+offset, and measured against one count
+        # every real reading is enormous.
+        suggested = recommend_noise_ref(floor)
+        now = compute_noise_db([floor])
+        now_word = ('Quiet' if now < 50 else 'Moderate' if now < 70
+                    else 'Lively' if now < 85 else 'Loud')
+        print('')
+        print(f'  At the current NOISE_REF_COUNTS={NOISE_REF_COUNTS}, a room this quiet '
+              f'reports {now:.0f},')
+        print(f'  which the app calls {now_word}.')
         if abs(suggested - NOISE_REF_COUNTS) > 0.5:
             print('')
             print(f'  RECOMMENDED: NOISE_REF_COUNTS={suggested}')
-            print(f'  At the current {NOISE_REF_COUNTS}, a room this quiet reports '
-                  f'{compute_noise_db([floor]):.0f}, which the app calls '
-                  f'{"Quiet" if compute_noise_db([floor]) < 50 else "Moderate or worse"}.')
-            print('  Run this again in the quietest the venue ever gets before setting it.')
+            print(f'  That puts a room this quiet at {QUIET_TARGET_LEVEL:.0f}, inside Quiet.')
+
+        # The four words span 35 dB. A microphone whose whole range is narrower
+        # than that can never reach the top word no matter how it is referenced,
+        # and the fix is the gain screw, not the config file.
+        if span < WORD_SCALE_SPAN_DB:
+            print('')
+            print(f'  NOTE: {span:.0f} dB of range, and Quiet through Loud needs '
+                  f'{WORD_SCALE_SPAN_DB:.0f} dB.')
+            print('  The top word is unreachable at this gain. Turn the screw on the')
+            print('  MAX4466 anticlockwise until a clap stops showing CLIPPING, then')
+            print('  run this again: the noise floor drops and the range widens.')
+        print('')
+        print('  Run this again in the quietest the venue ever gets before setting it.')
     if peak < 5:
         print('  Nothing ever moved. Talk directly at the microphone, and if it')
         print('  still does not move, turn the gain screw on the MAX4466 clockwise.')
