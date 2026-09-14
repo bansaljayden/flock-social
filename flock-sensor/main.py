@@ -48,6 +48,7 @@ import select
 import signal
 import sys
 import threading
+import textwrap
 import time
 from collections import deque
 from logging.handlers import RotatingFileHandler
@@ -63,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.7.0'
+VERSION = '1.8.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1305,10 +1306,89 @@ def init_noise():
         return False
 
 
-def _read_mcp3008_ch0():
-    # Returns a 10-bit value, 0..1023
-    resp = _spi.xfer2([1, (8 + 0) << 4, 0])
+# The MCP3008 channel the microphone is wired to, and a channel nothing is wired
+# to. Reading both is how the health check below tells "the converter is running"
+# apart from "the converter is echoing one broken wire eight times".
+NOISE_CHANNEL = 0
+ADC_SPARE_CHANNEL = 7
+ADC_HEALTH_SAMPLES = 40
+
+# A MAX4466 on 3.3V idles at half its supply, which lands near the middle of the
+# converter's range. A resting figure far outside this band is not a quiet room,
+# it is a microphone that is not reaching the chip.
+ADC_MID = 512
+ADC_RESTING_MIN = 120
+ADC_RESTING_MAX = 900
+
+
+def _read_mcp3008(channel=NOISE_CHANNEL):
+    """One 10-bit conversion, 0 to 1023, from any of the eight channels."""
+    resp = _spi.xfer2([1, (8 + (int(channel) & 7)) << 4, 0])
     return ((resp[1] & 3) << 8) + resp[2]
+
+
+def _read_mcp3008_ch0():
+    return _read_mcp3008(NOISE_CHANNEL)
+
+
+def sample_adc(channel=NOISE_CHANNEL, count=ADC_HEALTH_SAMPLES, gap=0.002):
+    """A short burst from one channel. Empty list when the bus is not open."""
+    if _spi is None:
+        return []
+    out = []
+    for _ in range(count):
+        out.append(_read_mcp3008(channel))
+        time.sleep(gap)
+    return out
+
+
+def adc_health(mic_samples, spare_samples=None):
+    """Is the converter running, or reporting a broken wire confidently?
+
+    Returns (ok, reason). Pure, so every failure below is tested without a chip.
+
+    Each case here was seen on a bench, and each reason names the wire to check,
+    because from the outside these are indistinguishable: one unit spent an
+    evening printing "noise mic : ok" while the converter returned 1023 on all
+    eight channels, because the only thing that check did was open the SPI bus.
+    Opening a bus proves a bus. It says nothing about the part on the end of it.
+    """
+    if not mic_samples:
+        return False, 'no samples were read from the ADC'
+
+    lo, hi = min(mic_samples), max(mic_samples)
+    if lo == hi:
+        if lo >= 1020:
+            return False, (
+                f'every sample reads {lo}, the top of the scale. The converter divides by '
+                f'VREF, so a VREF sitting at zero pins every channel to full scale. Check '
+                f'that VREF and VDD both reach 3.3V. They are the two pins at the notch '
+                f'end of the chip.')
+        if lo <= 3:
+            return False, (
+                f'every sample reads {lo}. The converter is not running. Check that AGND '
+                f'and DGND both reach ground, and that CS reaches CE0.')
+        return False, (
+            f'every sample reads {lo}, with no variation at all. A live microphone jitters '
+            f'by a count or two even in a silent room, so nothing is being converted.')
+
+    if (spare_samples and len(spare_samples) == len(mic_samples)
+            and list(spare_samples) == list(mic_samples)):
+        return False, (
+            'the microphone channel and an unconnected channel return byte-identical '
+            'readings, so the chip is not selecting channels. Check that CS reaches CE0 '
+            'and CLK reaches SCK.')
+
+    mean = sum(mic_samples) / float(len(mic_samples))
+    if not (ADC_RESTING_MIN <= mean <= ADC_RESTING_MAX):
+        return False, (
+            f'the microphone idles at {mean:.0f}, and a MAX4466 on 3.3V rests near '
+            f'{ADC_MID}. Its OUT is probably not reaching the chip, or it has no power. '
+            f'Check that OUT lands in the same row as the chip pin 1 corner, on the '
+            f'opposite side of the board from the power pins, and that VCC is on 3.3V '
+            f'rather than 5V.')
+
+    return True, f'idles at {mean:.0f}, spread {hi - lo} counts'
 
 
 def compute_noise_db(samples, ref_counts=None, offset=None):
@@ -1331,11 +1411,22 @@ def noise_loop():
                 samples.append(_read_mcp3008_ch0() - 512)  # centre around 0
                 time.sleep(0.001)
             if samples:
-                db = compute_noise_db(samples)
-                with _lock:
-                    _state['noise_window'].append(db)
-                    _state['noise_db'] = sum(_state['noise_window']) / len(_state['noise_window'])
-                    _state['noise_at'] = time.monotonic()
+                # A converter that has stopped converting returns the same count
+                # every time, and compute_noise_db turns that into a perfectly
+                # plausible loudness. Withholding the reading lets _fresh report
+                # it honestly instead, the same way a camera that stops
+                # answering is reported.
+                if min(samples) == max(samples):
+                    log_throttled('noise_frozen', logging.ERROR,
+                                  f'ADC returned {min(samples) + 512} on every sample; '
+                                  'the converter is not running, so the noise level is '
+                                  'being withheld. Run main.py --selftest.')
+                else:
+                    db = compute_noise_db(samples)
+                    with _lock:
+                        _state['noise_window'].append(db)
+                        _state['noise_db'] = sum(_state['noise_window']) / len(_state['noise_window'])
+                        _state['noise_at'] = time.monotonic()
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
         _stop.wait(5)
@@ -2400,7 +2491,21 @@ def selftest():
                   f'{_median(frame):.1f}C, {count_thermal_clusters(frame)} '
                   f'cluster(s) in view')
         _thermal_camera.close()
-    print(f'    noise mic      : {"ok" if init_noise() else "NOT DETECTED (reports 0)"}')
+    # Opening the SPI bus proves a bus, not a converter. This line used to
+    # print ok on the strength of that alone, and did so for an entire evening
+    # on a unit whose ADC was returning 1023 on every channel.
+    if not init_noise():
+        print('    noise mic      : NOT DETECTED (reports 0)')
+    else:
+        mic = sample_adc(NOISE_CHANNEL)
+        spare = sample_adc(ADC_SPARE_CHANNEL)
+        healthy, why = adc_health(mic, spare)
+        if healthy:
+            print(f'    noise mic      : ok  ({why})')
+        else:
+            print('    noise mic      : READING NOTHING USEFUL')
+            for line in textwrap.wrap(why, 62):
+                print(f'                     {line}')
 
     if problems:
         print('\nFAILED:')
