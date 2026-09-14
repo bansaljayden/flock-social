@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 # main.py resolves its paths at import time, so redirect them first: a test run
@@ -1711,5 +1712,118 @@ class DisplayFallback(unittest.TestCase):
         self.assertIn('try:', window)
         self.assertIn("view = 'stats'", window,
                       'a failing thermal view does not fall back to the stats screen')
+class ThermalRecovery(unittest.TestCase):
+    """The reopen path, which until now was covered by reading it carefully.
+
+    A USB thermal camera in a bar drops at least once over months, and before
+    2026-09-13 nothing in this program ever re-opened one. The fixes for that
+    are the kind that rot silently, because the happy path never touches them,
+    so they are driven here with a fake descriptor rather than trusted.
+    """
+
+    def setUp(self):
+        self._camera = main._thermal_camera
+        main._stop.clear()
+
+    def tearDown(self):
+        main._set_thermal_camera(self._camera)
+        main._stop.clear()
+
+    def test_open_does_not_leak_the_descriptor_when_configure_raises(self):
+        # Every raise inside _configure used to leave the fd open. A raw fd is an
+        # int with no finalizer, so it held the V4L2 node for the life of the
+        # process and the next open got EBUSY. Survivable when init ran once;
+        # not survivable now that the loop re-opens.
+        camera = main.ThermalCamera('/dev/video-test')
+        closed = []
+        with mock.patch.object(main, 'fcntl', object()), \
+             mock.patch.object(main.os, 'open', return_value=7), \
+             mock.patch.object(camera, '_configure', side_effect=OSError('S_FMT refused')), \
+             mock.patch.object(camera, 'close', side_effect=lambda: closed.append(True)):
+            with self.assertRaises(OSError):
+                camera.open()
+        self.assertTrue(closed, 'open() leaked the file descriptor on a failed configure')
+
+    def test_init_thermal_closes_the_camera_it_replaces(self):
+        # The trap under the reopen fix: assigning over _thermal_camera without
+        # closing it left the old fd streaming, the new REQBUFS returned EBUSY,
+        # the except set the camera to None, and a working camera was then off
+        # for the rest of the deployment.
+        closed = []
+
+        class Incumbent:
+            cols, rows = main.THERMAL_COLS, main.THERMAL_ROWS
+
+            def close(self):
+                closed.append(True)
+
+        main._set_thermal_camera(Incumbent())
+        with mock.patch.object(main, 'ThermalCamera', side_effect=OSError('no camera')):
+            self.assertFalse(main.init_thermal())
+        self.assertTrue(closed, 'init_thermal replaced a live camera without closing it')
+        self.assertIsNone(main._thermal_camera)
+
+    def test_a_camera_that_never_delivers_gets_reopened(self):
+        # The headline behaviour: reads that return None must eventually trip
+        # the reopen rather than retrying the same dead descriptor forever.
+        opens = []
+
+        class Dead:
+            def read_frame(self):
+                return None
+
+            def close(self):
+                pass
+
+        def fake_init():
+            opens.append(True)
+            main._set_thermal_camera(Dead())
+            return True
+
+        waits = []
+
+        def bounded_wait(seconds):
+            waits.append(seconds)
+            # Hard cap so a regression hangs the suite for a moment rather than
+            # forever, and stop once the reopen has had room to happen twice.
+            if len(opens) >= 2 or len(waits) > 4 * main._THERMAL_REOPEN_AFTER + 20:
+                main._stop.set()
+            return False
+
+        main._set_thermal_camera(Dead())
+        with mock.patch.object(main, 'init_thermal', fake_init), \
+             mock.patch.object(main._stop, 'wait', bounded_wait):
+            main.thermal_loop()
+
+        self.assertGreaterEqual(len(opens), 1,
+                                'the loop retried a dead descriptor forever instead of reopening')
+
+    def test_a_camera_absent_at_boot_is_retried_rather_than_written_off(self):
+        # It used to be that init failing at boot meant the thread never started,
+        # so a camera that enumerated late was gone for the life of the process.
+        attempts = []
+
+        def never_opens():
+            attempts.append(True)
+            return False
+
+        waits = []
+
+        def bounded_wait(seconds):
+            waits.append(seconds)
+            if len(attempts) >= 3 or len(waits) > 40:
+                main._stop.set()
+            return False
+
+        main._set_thermal_camera(None)
+        with mock.patch.object(main, 'init_thermal', never_opens), \
+             mock.patch.object(main._stop, 'wait', bounded_wait):
+            main.thermal_loop()
+
+        self.assertGreaterEqual(len(attempts), 2,
+                                'a camera missing at boot is only tried once')
+        self.assertGreater(max(waits), 5.0,
+                           'the reopen backoff does not grow, so a missing camera is '
+                           'retried in a tight loop forever')
 if __name__ == '__main__':
     unittest.main()
