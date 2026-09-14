@@ -1485,5 +1485,70 @@ class ThermalView(unittest.TestCase):
 
     def test_a_headless_unit_holds_no_frame(self):
         self.assertIsNone(main._state['thermal_frame'])
+class AdcHealth(unittest.TestCase):
+    """The check that could not fail.
+
+    init_noise opened the SPI bus and selftest printed "noise mic : ok" on the
+    strength of it. A unit ran an entire evening that way while its converter
+    returned 1023 on all eight channels, because VREF had no power and the
+    digital ground was never connected. Every branch below is one of the things
+    that were actually true of that board, and the reason strings name the wire
+    to check, since from the outside the failures look identical.
+    """
+
+    def test_a_working_microphone_passes_and_says_what_it_measured(self):
+        ok, why = main.adc_health([505, 512, 498, 530, 480, 516])
+        self.assertTrue(ok)
+        self.assertIn('idles at', why)
+
+    def test_full_scale_on_every_sample_names_vref(self):
+        ok, why = main.adc_health([1023] * 40)
+        self.assertFalse(ok)
+        self.assertIn('VREF', why)
+
+    def test_zero_on_every_sample_names_the_grounds(self):
+        ok, why = main.adc_health([0] * 40)
+        self.assertFalse(ok)
+        self.assertIn('DGND', why)
+
+    def test_a_frozen_midscale_reading_is_still_a_failure(self):
+        # The subtle one: 512 looks exactly like a healthy idle, and a real
+        # microphone never sits perfectly still for forty samples.
+        ok, why = main.adc_health([512] * 40)
+        self.assertFalse(ok)
+        self.assertIn('no variation', why)
+
+    def test_identical_channels_mean_the_chip_is_not_selecting(self):
+        same = [700, 701, 699, 702]
+        ok, why = main.adc_health(same, same)
+        self.assertFalse(ok)
+        self.assertIn('CE0', why)
+
+    def test_a_different_spare_channel_does_not_trip_it(self):
+        ok, _ = main.adc_health([505, 512, 498, 530], [40, 44, 39, 41])
+        self.assertTrue(ok)
+
+    def test_an_idle_far_from_midscale_names_the_microphone(self):
+        # What an unpowered MAX4466 looks like, or an OUT wire one row off.
+        ok, why = main.adc_health([3, 8, 2, 11, 4, 9])
+        self.assertFalse(ok)
+        self.assertIn('OUT', why)
+
+    def test_no_samples_is_not_a_pass(self):
+        ok, _ = main.adc_health([])
+        self.assertFalse(ok)
+
+    def test_the_selftest_no_longer_calls_it_ok_just_for_opening_the_bus(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertNotIn('{"ok" if init_noise() else', source,
+                         'the mic verdict is back to being decided by whether a bus opened')
+        self.assertIn('healthy, why = adc_health(mic, spare)', source)
+
+    def test_a_frozen_converter_does_not_publish_a_loudness(self):
+        # compute_noise_db will happily turn a stuck reading into a plausible
+        # number, so the loop has to withhold it rather than average it in.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn('if min(samples) == max(samples):', source,
+                      'noise_loop publishes a confident level from a converter that stopped')
 if __name__ == '__main__':
     unittest.main()
