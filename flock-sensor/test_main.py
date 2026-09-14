@@ -1550,5 +1550,59 @@ class AdcHealth(unittest.TestCase):
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
         self.assertIn('if min(samples) == max(samples):', source,
                       'noise_loop publishes a confident level from a converter that stopped')
+class NoiseReference(unittest.TestCase):
+    """A silent room reported Lively, and the default is why.
+
+    The level is 20*log10(rms/NOISE_REF_COUNTS)+NOISE_DB_OFFSET. Shipped, the
+    reference is 1.0, so silence is measured against a single count. Measured on
+    a real unit 2026-09-13: an empty room ran rms 15 to 25 and reported 76, which
+    the venue card calls Lively, all night, with nobody in it.
+    """
+
+    MEASURED_FLOOR = 15.5     # quietest burst on a real unit in a silent room
+    MEASURED_PEAK = 503.8     # loudest, speaking directly into the microphone
+
+    def test_the_shipped_default_calls_a_silent_room_lively(self):
+        # The bug, pinned. If this ever starts passing as Quiet, the default
+        # changed and the rest of this class needs rereading.
+        level = main.compute_noise_db([self.MEASURED_FLOOR], ref_counts=1.0, offset=50.0)
+        self.assertGreater(level, 70.0)
+
+    def test_the_recommendation_puts_a_quiet_room_inside_quiet(self):
+        ref = main.recommend_noise_ref(self.MEASURED_FLOOR)
+        level = main.compute_noise_db([self.MEASURED_FLOOR], ref_counts=ref)
+        self.assertAlmostEqual(level, main.QUIET_TARGET_LEVEL, places=1)
+        self.assertLess(level, 50.0, 'a silent room is not being called Quiet')
+
+    def test_it_does_not_land_on_the_boundary(self):
+        # Setting the reference to the floor is the obvious fix and it puts
+        # silence at exactly 50, where the card flickers between two words.
+        naive = main.compute_noise_db([self.MEASURED_FLOOR],
+                                      ref_counts=self.MEASURED_FLOOR)
+        self.assertAlmostEqual(naive, 50.0, places=1)
+        chosen = main.compute_noise_db([self.MEASURED_FLOOR],
+                                       ref_counts=main.recommend_noise_ref(self.MEASURED_FLOOR))
+        self.assertLess(chosen, 45.0)
+
+    def test_the_recommended_reference_keeps_loud_reachable_ordering(self):
+        # With the recommendation applied, the measured room should still order
+        # correctly: silence quietest, speech above it, peak highest.
+        ref = main.recommend_noise_ref(self.MEASURED_FLOOR)
+        quiet = main.compute_noise_db([self.MEASURED_FLOOR], ref_counts=ref)
+        speech = main.compute_noise_db([100.0], ref_counts=ref)
+        peak = main.compute_noise_db([self.MEASURED_PEAK], ref_counts=ref)
+        self.assertLess(quiet, speech)
+        self.assertLess(speech, peak)
+
+    def test_a_silent_reading_is_not_a_reference(self):
+        self.assertIsNone(main.recommend_noise_ref(0))
+        self.assertIsNone(main.recommend_noise_ref(-1))
+
+    def test_the_four_words_need_more_range_than_that_unit_had(self):
+        # 30 dB measured against 35 dB of thresholds: the top word was
+        # unreachable at that gain, which is a hardware screw and not a setting.
+        import math
+        span = 20 * math.log10(self.MEASURED_PEAK / self.MEASURED_FLOOR)
+        self.assertLess(span, main.WORD_SCALE_SPAN_DB)
 if __name__ == '__main__':
     unittest.main()
