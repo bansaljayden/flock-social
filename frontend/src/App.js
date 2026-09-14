@@ -17207,20 +17207,29 @@ function bootSessionCopy(err) {
 const FlockApp = () => {
   const [authUser, setAuthUser] = useState(null);
   // /signup deep-links straight to account creation (the marketing site's
-  // "Create account" CTA); every other path opens on login as before.
-  // A fresh native install has no session and no history with us, so it
-  // opens on account creation. "Welcome back" was greeting strangers: the
-  // /signup path that picks signup on the web is unreachable in the shell.
-  // A stored token, valid or expired, means they have signed in here before.
+  // "Create account" CTA); every other path, native shell included, opens on
+  // sign-in. The native shell used to branch on a stored token and open on
+  // account creation when there was none; the comment below the venue check
+  // records why that branch is gone.
   const [authScreen, setAuthScreen] = useState(() => {
     if (typeof window === 'undefined') return 'login';
     if (window.location.pathname === '/signup') return 'signup';
     // The website's venue card links here; with no session that is the venue
     // sign-in, not the consumer one with a small link at the bottom.
     if (new URLSearchParams(window.location.search || '').get('venue') === 'true') return 'venue-login';
-    let hasToken = false;
-    try { hasToken = Boolean(window.localStorage.getItem('flockToken')); } catch (e) { /* storage blocked */ }
-    return (window.Capacitor?.isNativePlatform?.() && !hasToken) ? 'signup' : 'login';
+    // A fresh native install used to open on SIGN UP, on the reasoning that
+    // someone who just installed the app has no account yet. That is usually
+    // true and it cost a submission anyway: the only route from the signup form
+    // to the sign-in form is the "Already have an account? Sign in" line at the
+    // very BOTTOM of it, under the create button, the terms, the divider and
+    // both OAuth buttons. Anyone arriving WITH credentials and without a stored
+    // token — App Review every single time, on a short iPad viewport in iPhone
+    // compatibility mode — lands on a form that never shows them a way to use
+    // what they were given, and reports that the demo account does not work.
+    // Opening on sign-in costs a new user one tap on "New here? Create an
+    // account" and costs a returning one nothing, which is the cheaper side of
+    // the trade and the way most apps do it.
+    return 'login';
   });
   const [authChecking, setAuthChecking] = useState(true);
   // A cold start that has a stored session but cannot reach the server. The

@@ -85,7 +85,7 @@ test('SignupScreen renders the server rate-limit sentence, not "a few minutes"',
   fireEvent.change(utils.getByLabelText('Name'), { target: { value: 'Sam' } });
   fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'sam@example.com' } });
   fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
-  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(25) } });
+  fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: String(new Date().getFullYear() - 25) } });
   fireEvent.submit(utils.container.querySelector('form'));
 
   await driveToResendNote(() => utils.getByText('Send the link again'));
@@ -111,7 +111,7 @@ test('VenueLoginScreen renders the server rate-limit sentence, not "a few minute
   fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Sam' } });
   fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'venue@example.com' } });
   fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
-  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(30) } });
+  fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: String(new Date().getFullYear() - 30) } });
   fireEvent.submit(utils.container.querySelector('form'));
 
   await driveToResendNote(() => utils.getByText('Send the link again'));
@@ -160,7 +160,7 @@ test('the venue portal names a refused mailbox instead of offering the loop agai
   fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Sam' } });
   fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'bounced@example.com' } });
   fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
-  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(30) } });
+  fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: String(new Date().getFullYear() - 30) } });
   fireEvent.submit(utils.container.querySelector('form'));
 
   api.resendVerificationEmail.mockResolvedValueOnce({ verificationSent: false, mailRefused: true });
