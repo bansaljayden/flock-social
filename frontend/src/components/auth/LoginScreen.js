@@ -5,6 +5,7 @@ import AppleSignInButton from './AppleSignInButton';
 import AuthShell, {
   ageFromDob, AuthError, AuthLabelRow, AuthNotice, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
 } from './AuthShell';
+import BirthYearField, { birthYearToDob } from './BirthYearField';
 import {
   ForgotPasswordScreen, ResetPasswordScreen, isPasswordResetRoute,
 } from './PasswordReset';
@@ -60,6 +61,26 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // of carrying an old yes onto a new date.
   const [dobConfirmed, setDobConfirmed] = useState('');
 
+  // WHICH ASK THIS IS, decided by the server rather than guessed here.
+  //
+  // needsDob alone is ambiguous and that ambiguity shipped a bug. The same flag
+  // comes back from two different situations: enforceDobOnLogin backfilling a
+  // date onto an account that ALREADY EXISTS, and the Google/Apple handlers
+  // refusing to CREATE one without a date. Those need different fields. The
+  // backfill needs the exact date, because rounding it writes an under-13 value
+  // and revokes every session permanently. Creation may only ask for the year,
+  // because guideline 5.1.1(v) allows asking only for what the app needs, and
+  // asking for the whole birthday there is what the app was rejected for.
+  //
+  // The creation 403s carry dobGranularity:'year'; the backfill 403 carries
+  // nothing, so an older server or an unflagged path falls back to the full
+  // date, which is the safe direction.
+  const [dobGranularity, setDobGranularity] = useState(null);
+  const [birthYear, setBirthYear] = useState('');
+  const askYearOnly = dobGranularity === 'year';
+  // What actually gets sent, whichever field is on screen.
+  const dobToSend = askYearOnly ? birthYearToDob(birthYear) : dob;
+
   // -------------------------------------------------------------------------
   // WHY A DATE TYPED HERE IS NOT THE SAME AS A DATE TYPED ON SIGNUP
   //
@@ -107,7 +128,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     onError: (msg, err) => {
       if (err?.data?.needsDob) {
         setNeedsDob(true);
-        setError('Add your date of birth below, then tap Continue with Google again.');
+        setDobGranularity(err.data.dobGranularity || null);
+        setError(err.data.dobGranularity === 'year'
+          ? 'Add the year you were born below, then tap Continue with Google again.'
+          : 'Add your date of birth below, then tap Continue with Google again.');
       } else {
         setError(msg || 'Google sign-in failed');
       }
@@ -148,12 +172,21 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
     setLoading(true);
     try {
-      const data = await login(email, password, needsDob && dob ? dob : undefined);
+      const data = await login(email, password, needsDob && dobToSend ? dobToSend : undefined);
       onLoginSuccess(data.user);
     } catch (err) {
       if (err.data?.needsDob) {
         setNeedsDob(true);
-        setError(needsDob && dob ? err.message : 'One more thing: add your date of birth below to continue.');
+        // Deliberately does NOT set dobGranularity. Reaching here means the
+        // password matched an account that already exists, so this is
+        // enforceDobOnLogin backfilling a row, never creation, and the exact
+        // date is required: rounding it would write an under-13 value, revoke
+        // every session and lock a real person out permanently.
+        setError(needsDob && dobToSend
+          ? err.message
+          : askYearOnly
+            ? 'One more thing: add the year you were born below to continue.'
+            : 'One more thing: add your date of birth below to continue.');
       } else {
         setError(err.message);
       }
@@ -216,6 +249,14 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
             "below" in that copy is literally true, and so it is the next
             thing under the reader's eye on the email, Google and Apple paths. */}
         {needsDob && (
+          askYearOnly ? (
+            <BirthYearField
+              id="login-dob"
+              hintId="login-dob-hint"
+              value={birthYear}
+              onChange={setBirthYear}
+            />
+          ) : (
           <div className="auth-field-row">
             <label className="auth-label" htmlFor="login-dob">Date of birth</label>
             <input
@@ -236,6 +277,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               This is saved to your account and cannot be changed later, so check the year.
             </p>
           </div>
+          )
         )}
 
         {dobNeedsCheck && (
@@ -344,7 +386,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               return;
             }
             setError('');
-            startGoogle({ dob: needsDob && dob ? dob : undefined });
+            startGoogle({ dob: needsDob && dobToSend ? dobToSend : undefined });
           }}
           disabled={loading}
         >
@@ -364,7 +406,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           the app. Same field, same retry as the Google and email paths. */}
       <AppleSignInButton
         onSuccess={onLoginSuccess}
-        dob={needsDob && dob ? dob : undefined}
+        dob={needsDob && dobToSend ? dobToSend : undefined}
         /* Returning false stops the native sheet before it opens. Apple's flow
            is the one path that cannot be re-entered from a confirmation panel,
            because the sheet needs this button's own tap, so the guard has to
@@ -378,7 +420,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         onError={(m, err) => {
           if (err?.data?.needsDob) {
             setNeedsDob(true);
-            setError(needsDob && dob ? m : 'Add your date of birth below, then tap Continue with Apple again.');
+            setDobGranularity(err.data.dobGranularity || null);
+            setError(needsDob && dobToSend
+              ? m
+              : askYearOnly
+                ? 'Add the year you were born below, then tap Continue with Apple again.'
+                : 'Add your date of birth below, then tap Continue with Apple again.');
           } else {
             setError(m);
           }

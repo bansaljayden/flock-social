@@ -3094,7 +3094,20 @@ router.post('/google', [
         const googleDob = suppliedDob(req.body.date_of_birth);
         const dobAge = googleDob ? ageFromDob(googleDob) : null;
         if (dobAge === null) {
-          return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
+          // CREATION, not backfill, and the client has to be able to tell.
+          // enforceDobOnLogin returns a 403 with the same needsDob flag when it
+          // is backfilling an EXISTING row, and those two cases need different
+          // fields: creating an account may only ask for the year (guideline
+          // 5.1.1(v)), while the backfill needs the exact date, because
+          // rounding a real account holder's birthday down writes an under-13
+          // date, revokes every session and locks them out for good.
+          // dobGranularity says which ask this is. Its ABSENCE means the full
+          // date, so the backfill 403 stays exactly as it was.
+          return res.status(403).json({
+            error: 'No Flock account yet. Add the year you were born, then tap Continue with Google again.',
+            needsDob: true,
+            dobGranularity: 'year',
+          });
         }
         // Same under-13 refusal + retry lockout as password signup: an age
         // screen that only guards one of the three account-creation doors is
@@ -3491,7 +3504,20 @@ router.post('/apple', [
       const appleDob = suppliedDob(req.body.date_of_birth);
       const appleDobAge = appleDob ? ageFromDob(appleDob) : null;
       if (appleDobAge === null) {
-        return res.status(403).json({ error: 'No Flock account yet. Sign up with your date of birth first.', needsDob: true });
+        // CREATION, not backfill, and the client has to be able to tell.
+        // enforceDobOnLogin returns a 403 with the same needsDob flag when it
+        // is backfilling an EXISTING row, and those two cases need different
+        // fields: creating an account may only ask for the year (guideline
+        // 5.1.1(v)), while the backfill needs the exact date, because
+        // rounding a real account holder's birthday down writes an under-13
+        // date, revokes every session and locks them out for good.
+        // dobGranularity says which ask this is. Its ABSENCE means the full
+        // date, so the backfill 403 stays exactly as it was.
+        return res.status(403).json({
+          error: 'No Flock account yet. Add the year you were born, then tap Continue with Apple again.',
+          needsDob: true,
+          dobGranularity: 'year',
+        });
       }
       // Same under-13 refusal + retry lockout as the other two creation
       // paths. Apple may omit the email; recordUnderageAttempt then keys on

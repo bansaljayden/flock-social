@@ -3,6 +3,7 @@ import { signup, resendVerificationEmail, trackAuthScreen, getCurrentUser } from
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import BirthYearField, { birthYearToDob } from './BirthYearField';
 import Icons from '../ui/Icons';
 
 // Same live pages the in-app Settings screen and the paywall sheet link to.
@@ -15,28 +16,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [birthYear, setBirthYear] = useState('');
-  // WHY A YEAR AND NOT A DATE. App Review read the full date of birth this form
-  // used to require as personal information the app does not need, which is
-  // guideline 5.1.1(v): a thing may be asked for only if the app needs it, and
-  // the app needs exactly one fact, whether this person is old enough. A year
-  // answers that and a birthday does not have to be handed over to get it.
-  //
-  // DECEMBER 31 IS THE WHOLE TRICK, and it has to stay. A year alone spans two
-  // possible ages, so one of the two ends has to be chosen, and the choice is
-  // not symmetric: January 1 would treat everyone as the OLDER of the two and
-  // let a twelve-year-old born late in the year through the floor in
-  // backend/utils/age.js, while December 31 treats everyone as the YOUNGER and
-  // can only ever turn someone away. A gate that protects children fails
-  // closed, so it is the last day of the year, every time.
-  //
-  // The cost of that, stated rather than buried: somebody who has had their
-  // thirteenth birthday but was born earlier in the year reads as twelve until
-  // January. The floor is effectively "turns fourteen this year". That is the
-  // price of not collecting the birthday, and it is the right side to be wrong
-  // on. Nothing downstream changes: the server still receives, validates and
-  // stores a YYYY-MM-DD date, so no route, no column and no age arithmetic
-  // moves for this.
-  const dob = /^\d{4}$/.test(birthYear) ? `${birthYear}-12-31` : '';
+  // The field, the December-31 derivation and the reasoning for both live in
+  // BirthYearField. Creating an account may ask only for the year; see that
+  // file for why the conservative end of it is the one that gets sent.
+  const dob = birthYearToDob(birthYear);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -379,36 +362,14 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           />
         </div>
 
-        <div className="auth-field-row">
-          <label className="auth-label" htmlFor="signup-dob">Year of birth</label>
-          {/* A plain numeric text field rather than <input type="date">. Two
-              reasons, and the second one is not cosmetic. It is a year now, so
-              a date picker is the wrong control. And the native date control
-              sizes ITSELF: it ignores the width its siblings take and on a
-              short, narrow viewport it rendered wider than every other field on
-              this form and pushed out of the card. The screenshot that came
-              back with the review showed exactly that. A text input is laid out
-              like the Name and Email fields above it because it is the same
-              kind of element. */}
-          <input
-            id="signup-dob"
-            className="auth-field"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={4}
-            placeholder="YYYY"
-            value={birthYear}
-            onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
-            autoComplete="bday-year"
-            aria-describedby="signup-dob-hint"
-            required
-          />
-          {/* Says what the year is for and nothing else. The number this field
-              used to print above itself was the part that taught a child which
-              birthday to type instead. */}
-          <p className="auth-hint" id="signup-dob-hint">We use this to check your age.</p>
-        </div>
+        {/* BirthYearField draws its own auth-field-row, so it is not wrapped
+            in a second one. */}
+        <BirthYearField
+          id="signup-dob"
+          hintId="signup-dob-hint"
+          value={birthYear}
+          onChange={setBirthYear}
+        />
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
           <label className="auth-label" htmlFor="signup-password">Password</label>

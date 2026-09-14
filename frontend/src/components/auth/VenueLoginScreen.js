@@ -5,6 +5,7 @@ import AppleSignInButton from './AppleSignInButton';
 import AuthShell, {
   ageFromDob, AUTH, AuthError, AuthLabelRow, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
 } from './AuthShell';
+import BirthYearField, { birthYearToDob } from './BirthYearField';
 import { ForgotPasswordScreen } from './PasswordReset';
 import Icons from '../ui/Icons';
 
@@ -85,9 +86,15 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // So the backfill keeps the exact date, and only the signup half rounds.
   const [birthYear, setBirthYear] = useState('');
   const [backfillDob, setBackfillDob] = useState('');
-  const dob = isSignup
-    ? (/^\d{4}$/.test(birthYear) ? `${birthYear}-12-31` : '')
-    : backfillDob;
+  // The SIGN-IN half creates accounts too: its Google and Apple buttons make
+  // one for anyone who has none, and the server answers that with a 403
+  // carrying dobGranularity:'year'. Without reading that flag this half would
+  // keep showing a full-date picker on a creation path, which is the exact
+  // thing guideline 5.1.1(v) was cited for. The backfill 403 carries no flag,
+  // so an unflagged answer still gets the full date, which is the safe default.
+  const [dobGranularity, setDobGranularity] = useState(null);
+  const askYearOnly = isSignup || dobGranularity === 'year';
+  const dob = askYearOnly ? birthYearToDob(birthYear) : backfillDob;
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -182,7 +189,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     onError: (msg, err) => {
       if (err?.data?.needsDob) {
         setNeedsDob(true);
-        setError('Add your date of birth below, then tap Continue with Google again.');
+        setDobGranularity(err.data.dobGranularity || null);
+        setError(err.data.dobGranularity === 'year'
+          ? 'Add the year you were born below, then tap Continue with Google again.'
+          : 'Add your date of birth below, then tap Continue with Google again.');
       } else {
         setError(msg || 'Google sign-in failed');
       }
@@ -246,6 +256,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     } catch (err) {
       if (err.data?.needsDob) {
         setNeedsDob(true);
+        // No dobGranularity on purpose: the password matched an existing
+        // account, so this is a backfill and the exact date is required.
         setError(needsDob && dob ? err.message : 'One more thing: add your date of birth below to continue.');
       } else {
         setError(err.message);
@@ -357,53 +369,43 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         )}
 
         {(isSignup || needsDob) && (
+          askYearOnly ? (
+            /* One field, shared with SignupScreen and LoginScreen, so the three
+               cannot drift apart again. They already did once: signup was moved
+               to a year and this screen was not, which left a full-date field on
+               an account-creation path under the guideline that had just been
+               cited. "Yours, not the venue's" stays, because an operator filling
+               this in for a bar that opened in 1974 is a real mistake, and
+               saying so names no threshold. */
+            <BirthYearField
+              id="venue-dob"
+              hintId="venue-dob-hint"
+              value={birthYear}
+              onChange={setBirthYear}
+              hint="Yours, not the venue's. We use it to check your age."
+            />
+          ) : (
           <div className="auth-field-row">
-            <label className="auth-label" htmlFor="venue-dob">
-              {isSignup ? 'Year of birth' : 'Date of birth'}
-            </label>
-            {/* Signup takes a year in plain numeric text: it is a year, so a
-                date picker is the wrong control, and the native one sizes
-                ITSELF and rendered wider than every other field on a short
-                viewport. The backfill keeps the date picker, because that half
-                needs the exact date. See the state comment above. */}
-            {isSignup ? (
-              <input
-                id="venue-dob"
-                className="auth-field"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={4}
-                placeholder="YYYY"
-                value={birthYear}
-                onChange={(e) => setBirthYear(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                autoComplete="bday-year"
-                aria-describedby="venue-dob-hint"
-                required
-              />
-            ) : (
-              <input
-                id="venue-dob"
-                className="auth-field"
-                type="date"
-                value={backfillDob}
-                onChange={(e) => setBackfillDob(e.target.value)}
-                autoComplete="bday"
-                aria-describedby="venue-dob-hint"
-                required
-              />
-            )}
-            {/* "Yours, not the venue's" stays: an operator filling this in for
-                a bar that opened in 1974 is a real mistake, and saying so names
-                no threshold. What followed it was the threshold, and that is
-                the part that taught a child which birthday to type. */}
-            {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. We use it to check your age.</p>}
-            {!isSignup && (
-              <p className="auth-hint" id="venue-dob-hint">
-                This is saved to your account and cannot be changed later, so check the date.
-              </p>
-            )}
+            <label className="auth-label" htmlFor="venue-dob">Date of birth</label>
+            {/* The BACKFILL keeps the date picker, because this half needs the
+                exact date: rounding it down writes an under-age value onto a
+                row that already exists and locks the owner out for good. See
+                the state comment above, which names no threshold either. */}
+            <input
+              id="venue-dob"
+              className="auth-field"
+              type="date"
+              value={backfillDob}
+              onChange={(e) => setBackfillDob(e.target.value)}
+              autoComplete="bday"
+              aria-describedby="venue-dob-hint"
+              required
+            />
+            <p className="auth-hint" id="venue-dob-hint">
+              This is saved to your account and cannot be changed later, so check the date.
+            </p>
           </div>
+          )
         )}
 
         {dobNeedsCheck && (
@@ -599,7 +601,12 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           // Google path above makes: reveal the date field and say so.
           if (err?.data?.needsDob) {
             setNeedsDob(true);
-            setError(needsDob && dob ? m : 'Add your date of birth below, then tap Continue with Apple again.');
+            setDobGranularity(err.data.dobGranularity || null);
+            setError(needsDob && dob
+              ? m
+              : err.data.dobGranularity === 'year'
+                ? 'Add the year you were born below, then tap Continue with Apple again.'
+                : 'Add your date of birth below, then tap Continue with Apple again.');
           } else {
             setError(m);
           }
