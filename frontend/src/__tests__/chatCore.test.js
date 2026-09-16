@@ -1199,6 +1199,58 @@ describe('MessageList: the scroller', () => {
     expect(screen.queryByText(/new message/)).toBeNull();
   });
 
+  it('corrects by how far the reader\'s row moved, not by how much the box grew', () => {
+    /* THE DEFECT. The flock screen's poll card is anchored to the first venue
+       card in the LOADED messages. With that card on a page not yet fetched
+       the anchor is NaN and the poll sits at the END of the thread, below the
+       reader; the page that carries the card resolves the anchor and the poll
+       is spliced in above them. The box grew by one page (200). The content
+       over the reader grew by a page and a card (320). Correcting by the box
+       put them 120px below the line they were reading.
+
+       jsdom reports every offsetTop as 0, so the rows are told where they
+       sit, by id, on the prototype getter the scroller reads. */
+    const saved = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, 'offsetTop');
+    const tops = { b: 0 };
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get() {
+        const id = this.getAttribute('data-message-id');
+        return id != null && id in tops ? tops[id] : 0;
+      },
+    });
+    try {
+      const poll = row({ id: 'poll-card', sender: 'Poll', senderId: 9, text: 'Where to?' });
+      const first = [row({ id: 'b' }), row({ id: 'c' }), poll];
+      const { container, rerender } = render(
+        <MessageList {...listProps} syntheticIds={SYNTHETIC} rows={first} />
+      );
+      const scroller = container.querySelector('.chat-scroller');
+      const readTop = makeScrollable(scroller, { scrollTop: 40 });
+      let height = 1000;
+      Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => height });
+      // The same rows in a fresh array, so the scroller records the box at
+      // 1000 with 'b' at 0 before the page lands.
+      rerender(<MessageList {...listProps} syntheticIds={SYNTHETIC} rows={[...first]} />);
+      expect(readTop()).toBe(40);
+
+      height = 1200;
+      tops.b = 320;
+      rerender(
+        <MessageList
+          {...listProps}
+          syntheticIds={SYNTHETIC}
+          rows={[row({ id: 'a', sender: 'Mia', senderId: 3 }), poll, row({ id: 'b' }), row({ id: 'c' })]}
+        />
+      );
+      expect(readTop()).toBe(360);
+      expect(screen.queryByText(/new message/)).toBeNull();
+    } finally {
+      delete window.HTMLElement.prototype.offsetTop;
+      if (saved) Object.defineProperty(window.HTMLElement.prototype, 'offsetTop', saved);
+    }
+  });
+
   it('opens a second thread at its own newest message, not where the last one was', () => {
     /* App.js mounts the chat screen with no key, so a jump from one chat into
        another reuses this component. Without the reset the mount branch is

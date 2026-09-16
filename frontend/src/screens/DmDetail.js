@@ -440,6 +440,9 @@ export default function DmDetail({
   const dmSearchQuery = showDmChatSearch && dmChatSearch.trim() ? dmChatSearch : '';
   const dmSourceRows = selectedDm?.messages || NO_DM_ROWS;
   const myDmId = authUser?.id;
+  /* The viewer's name is what a DM tally lists its voters by, so the row
+     dressing below reads it through this one const and lists it as a dep. */
+  const myDmName = authUser?.name;
   /* Your own runs, in one place, because MessageList is handed it twice: once
      as ownColour and once from colourFor, and two copies of a colour drift. */
   const DM_OWN_COLOUR = 'var(--chat-accent, var(--accent-purple-text))';
@@ -457,6 +460,29 @@ export default function DmDetail({
     const base = q
       ? dmSourceRows.filter(m => m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q))
       : dmSourceRows;
+    /* THE VOTE ON A SHARED PLACE, AND IT HAS TO TRAVEL ON THE ROW.
+
+       A venue card is drawn by renderDmCard, which MessageRow calls while it
+       renders, and MessageRow is React.memo over the row it is handed. The
+       tally lives in `dmVenueVotes`, not on the message, so a tap that
+       changed nothing on the row left every one of that component's props
+       identical, the memo rejected the re-render, and the card was never
+       asked again: it kept the count and the pressed state it had before the
+       tap, and a thread opened before its votes loaded kept drawing zero
+       after they had. This array was also remembered on the messages alone,
+       so a vote change did not even reach the memo boundary.
+
+       Same answer as the flock stream's voteOnCard: the vote is stamped on
+       the row here, the tally is a dep of this memo, so the row changes when
+       the vote changes and the memo lets the redraw through. The count is
+       the parsed tally or zero, which is what the card was handed before. */
+    const voteOnDmCard = (vd) => {
+      const tally = dmVenueVotes.find(v => v.venue_name === vd.name);
+      return {
+        active: (tally?.voters || []).includes(myDmName),
+        count: tally ? parseInt(tally.vote_count || 0) : 0,
+      };
+    };
     return base.map((m) => {
       const quoted = m.reply_to
         ? { ...m, reply_to: { ...m.reply_to, text: messagePreview({ ...m.reply_to, hadContent: true }) } }
@@ -468,7 +494,8 @@ export default function DmDetail({
          card whose first line is the venue's name. The shell's own copy still
          has it, which is what the conversation list previews. */
       const isCard = quoted.message_type === 'venue_card' && quoted.venue_data;
-      const carded = isCard ? { ...quoted, text: '' } : quoted;
+      /* See voteOnDmCard above for why the vote rides on the row. */
+      const carded = isCard ? { ...quoted, text: '', vote: voteOnDmCard(quoted.venue_data) } : quoted;
       /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
          the shell's own copy, so a query the caption matched ("check out")
          put that caption straight back under the card the line above had
@@ -477,7 +504,7 @@ export default function DmDetail({
       if (isCard || !q || typeof m.text !== 'string' || !m.text.toLowerCase().includes(q)) return carded;
       return { ...carded, text: highlightMatches(m.text, dmSearchQuery) };
     });
-  }, [dmSourceRows, dmSearchQuery, messagePreview]);
+  }, [dmSourceRows, dmSearchQuery, messagePreview, dmVenueVotes, myDmName]);
 
   // The count line above the stream. Only drawn on a live query, and only when
   // something matched, exactly as it was.
@@ -562,9 +589,13 @@ export default function DmDetail({
   const renderDmCard = (m) => {
     if (!(m.message_type === 'venue_card' && m.venue_data)) return null;
     const vd = m.venue_data;
-    const tally = dmVenueVotes.find(v => v.venue_name === vd.name);
-    const tallyCount = tally ? parseInt(tally.vote_count || 0) : 0;
-    const iVoted = (tally?.voters || []).includes(authUser?.name);
+    /* THE ROW, NOT THE SCREEN. MessageRow is React.memo over the row, so a
+       vote read off `dmVenueVotes` here never reached a card whose row had
+       not moved. voteOnDmCard, where the rows are dressed, has the whole
+       account; the tap handler below still reads the live tally, because it
+       runs at event time and writes the next one. */
+    const iVoted = !!(m.vote && m.vote.active);
+    const tallyCount = m.vote ? m.vote.count : 0;
     /* A long press fires at 350ms and the browser still dispatches a click on
        release, so a press held over this card would open the venue, or cast a
        vote, underneath the menu the press just asked for. MessageRow spends
@@ -760,13 +791,45 @@ export default function DmDetail({
      component, so every character typed re-ran this body, handed MessageRow
      seven new function identities, and reconciled the whole thread. */
   const stableDmColour = useStableFn((run) => (run.isMine ? DM_OWN_COLOUR : DM_FRIEND_COLOUR));
-  const stableDmCard = useStableFn((m) => renderDmCard(m));
-  const stableDmStatus = useStableFn((m) => renderDmStatus(m));
+  /* THE TWO RENDERERS MessageRow CALLS WHILE IT RENDERS, and why they are
+     the one pair here that does not go through useStableFn.
+
+     That hook's own header names the gap it does not cover: it installs its
+     ref in a layout effect, so a call made DURING RENDER reads the PREVIOUS
+     commit's closure. The five wrappers around these fire on a touch or a
+     tap, by which time the effect has run. These two are called by
+     MessageGroup and MessageRow as they render, and so were always one
+     commit behind, which the memoised row array turned from waste into a
+     wrong answer: the render after, which used to redraw everything with a
+     current closure, now redraws nothing.
+
+     The receipt is where it showed. A send puts a pending row last, so that
+     render's `dmReceiptRowId` is null. The echo replaces the row with the
+     real one and re-renders it, and the status it drew came from the closure
+     of the render BEFORE, where the receipt id was null, so Sent never
+     appeared under a message the server had just acknowledged.
+
+     So the identity is stable the same way a useStableFn wrapper is (an
+     empty-dep useCallback, which is all React.memo compares), and the body
+     is reached through a ref THIS render writes, a few lines down and before
+     any child of this component renders. The flock screen does the same at
+     its renderCardRef. */
+  const renderCardRef = React.useRef(null);
+  const renderStatusRef = React.useRef(null);
+  const stableDmCard = React.useCallback((m) => (renderCardRef.current ? renderCardRef.current(m) : null), []);
+  const stableDmStatus = React.useCallback((m) => (renderStatusRef.current ? renderStatusRef.current(m) : null), []);
   const stableDmLoadOlder = useStableFn(() => loadOlderDms(selectedDmId, oldestServerId(dmSourceRows)));
   const stableDmLongPress = useStableFn((m, detail) => openDmActions(m, detail));
   const stableDmSwipeReply = useStableFn((m) => startDmReply(m));
   const stableDmOpenImage = useStableFn((m) => openImageViewer(originalDmRow(m)));
   const stableDmReactionTap = useStableFn((emoji, m) => toggleDmReaction(emoji, m));
+
+  /* THE TWO BODIES, INSTALLED DURING RENDER. The block above has the whole
+     reason: a layout effect would hand the stream the closure from the commit
+     before this one. Every child of this component renders after this line,
+     so a row drawn in this render is drawn by this render. */
+  renderCardRef.current = renderDmCard;
+  renderStatusRef.current = renderDmStatus;
 
   return currentScreen === 'dmDetail' && selectedDm && (
     /* The keyboard's committed height, spent once, on this column. The padding

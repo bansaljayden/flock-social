@@ -101,10 +101,12 @@ describe('the location prompt waits for a map to be on screen', () => {
       'const isExploreVisible =',
       // The Discover tab left App.js on 2026-09-13 for screens/ExploreScreen.js
       // and is a fetched chunk now, so the layer mounts it as a lazy component
-      // behind a Suspense boundary instead of handing a builder to ScreenSlot.
-      // The LATCH this test is about did not move, and this anchor is only
-      // here to close the region at the same place it always closed.
-      '<ExploreScreen {...exploreScreenProps} />'
+      // behind a Suspense boundary instead of handing a builder to ScreenSlot,
+      // through the ExploreScreenView wrapper so the boundary's "Try again"
+      // can reach a re-armed lazy (screenBoundaryCoverage pins why). The LATCH
+      // this test is about did not move, and this anchor is only here to
+      // close the region at the same place it always closed.
+      '<ExploreScreenView {...exploreScreenProps} />'
     ));
 
     // The latch itself: set the first time Discover is visible, never cleared.

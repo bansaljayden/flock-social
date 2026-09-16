@@ -1097,6 +1097,24 @@ export default function ChatDetail({
        the `!flock` return is the rest of the screen. */
     const rowsCacheRef = React.useRef({ inputs: null, rows: null });
 
+    /* THE CLOCK THAT CACHE IS REMEMBERED AGAINST, and it is state because
+       state is the only thing here that can cause a render. POSITION_FRESH_MS
+       is a window on the clock (the note at POSITION_CLOCK_MS), so a
+       who-is-here row can go stale with nothing at all having arrived, and a
+       clock read off Date.now() during render is only ever compared by a
+       render something else already caused: in a quiet chat that was the card
+       outliving its fix until somebody typed. The interval runs only while
+       there is a position to go stale. Setting the same integer again is a
+       bail-out React does not render for, so a tick that crossed no boundary
+       costs nothing. */
+    const [positionClock, setPositionClock] = React.useState(0);
+    const hasPositions = Object.keys(flockMemberLocations || {}).length > 0;
+    React.useEffect(() => {
+      if (!hasPositions) return;
+      const id = setInterval(() => setPositionClock(Math.floor(Date.now() / POSITION_CLOCK_MS)), POSITION_CLOCK_MS);
+      return () => clearInterval(id);
+    }, [hasPositions]);
+
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
@@ -1707,15 +1725,10 @@ export default function ChatDetail({
       }
     }
 
-    /* The clock, as an input, and only while there is a position that could
-       go stale. POSITION_FRESH_MS is a moving window rather than a fact about
-       the data, so without this a who-is-here card could outlive the fix it
-       was built on for as long as nothing else on the screen changed. With no
-       positions at all there is no card to go stale and no reason to rebuild
-       the thread twice a minute. */
-    const positionClock = Object.keys(flockMemberLocations || {}).length > 0
-      ? Math.floor(Date.now() / POSITION_CLOCK_MS)
-      : 0;
+    /* The clock, as an input. It is state, ticked above the `!flock` return
+       (search "THE CLOCK THAT CACHE IS REMEMBERED AGAINST"), because an input
+       can only retire a row on a render, and a value read here could not
+       cause one. */
     streamRows = rememberRows(streamRows, [
       /* The plan, and it covers most of this list on its own. App.js replaces
          the object whenever any of it changes (getSelectedFlock is a find over

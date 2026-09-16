@@ -674,7 +674,21 @@ router.get('/', async (req, res) => {
         tier_expires_at: entitlement.expiresAt,
         tier_source: entitlement.source,
         tier_reason: entitlement.reason,
-      } : {}),
+      } : {
+        // The lookup failed, and "not a downgrade" has to hold HERE too. The
+        // spread above carries the raw venue_profiles.tier column, 'free' by
+        // default, and with nothing overriding it that guess reached the
+        // dashboard, which locked Analytics, Deals and Events against routes
+        // that would all have served (requireVenueTier waves everything
+        // through with billing off). So the answer is the one the switch
+        // implies, which is the same rule the reader applies when it does
+        // run (services/venueEntitlements.js, getVenueEntitlement: 'pro'
+        // while billing is off, nothing to be below). With billing on there
+        // is no honest tier to give, so none is given: `undefined` drops the
+        // key from the JSON, and the client keeps what it last knew rather
+        // than adopting a column that may lag a grant.
+        tier: venueBillingEnabled() ? undefined : 'pro',
+      }),
     });
   } catch (err) {
     console.error('Get venue profile error:', err);

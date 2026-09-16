@@ -59,6 +59,19 @@ describe('the ways this could lie about where people are', () => {
     expect(derivation).toMatch(/if \(!Number\.isFinite\(at\)/);
   });
 
+  test('the window keeps moving in a quiet chat', () => {
+    /* The row array is remembered between renders with a clock as one of its
+       inputs, and a clock read during render is only ever compared by a
+       render something else caused. In a chat where nothing arrived, the card
+       outlived its fix until somebody typed. So the clock is state, ticked by
+       an interval that runs only while there is a position to go stale. */
+    expect(chatDetailSrc).toMatch(/const \[positionClock, setPositionClock\] = React\.useState\(0\);/);
+    expect(chatDetailSrc).toMatch(/setInterval\(\(\) => setPositionClock\(Math\.floor\(Date\.now\(\) \/ POSITION_CLOCK_MS\)\), POSITION_CLOCK_MS\)/);
+    expect(chatDetailSrc).not.toMatch(/const positionClock = Object\.keys/);
+    // And it is still what the row cache is remembered against.
+    expect(chatDetailSrc).toMatch(/\n {6}positionClock,\n/);
+  });
+
   test('a position with no usable coordinates is not counted', () => {
     expect(derivation).toMatch(/!Number\.isFinite\(Number\(loc\.lat\)\) \|\| !Number\.isFinite\(Number\(loc\.lng\)\)\) continue;/);
   });
