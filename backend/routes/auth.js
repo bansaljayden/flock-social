@@ -1753,7 +1753,14 @@ function suppliedDob(raw) {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (trimmed.length > MAX_DOB_LENGTH) return null;
-  return ISO_DATE_RE.test(trimmed) ? trimmed : null;
+  if (!ISO_DATE_RE.test(trimmed)) return null;
+  // The regex admits an optional time tail so a client that sends an instant
+  // is not refused, but the tail itself was passed through to a DATE column,
+  // and '2000-01-01Tjunk' is a Postgres 22007 on a sign-in. ageFromDob runs
+  // the calendar check (a real month, a real day, Feb 29 in a leap year) and
+  // ignores the tail, so a null here is a date pg would refuse; a value here
+  // is the ten characters pg will accept.
+  return ageFromDob(trimmed) === null ? null : trimmed.slice(0, 10);
 }
 
 async function enforceDobOnLogin(user, req, res) {
@@ -1771,6 +1778,34 @@ async function enforceDobOnLogin(user, req, res) {
     return false;
   }
   if (user.date_of_birth) return true;
+  // A DERIVED DATE IS NOT KNOWLEDGE, AND IT MUST NOT BE WRITTEN HERE.
+  //
+  // Account creation asks for a birth YEAR and the screens send December 31
+  // of it, the conservative end, so a stranger who is under age is refused
+  // rather than admitted. That is the right rounding for a row that does not
+  // exist yet. It is the wrong rounding for this function, which writes to a
+  // row that DOES exist and then treats what it wrote as actual knowledge:
+  // the under-13 branch below bumps token_version, revokes every session and
+  // refuses every later sign-in, permanently. Somebody born in March 2013 who
+  // honestly types 2013 into a year field would be recorded as born on
+  // December 31 and frozen out of an account they already hold.
+  //
+  // The screens say when a date is derived (`dob_granularity: 'year'`), and
+  // a derived date reaches this line whenever a creation-shaped request lands
+  // on a row that already exists with no date on file: an OAuth identity that
+  // turns out to have an account, or a client that carried a creation answer
+  // into a sign-in. Whatever the route, the answer is the same: do not write
+  // it, and ask for the full date. The 403 carries needsDob and no
+  // granularity, which is exactly the shape the screens already render as
+  // the full-date field. Compared strictly and never stored, so the field
+  // needs no width and no validator of its own.
+  if (req.body && req.body.dob_granularity === 'year') {
+    res.status(403).json({
+      error: 'This account already exists and has no date of birth on file. Sign in to it and add your full date of birth there.',
+      needsDob: true,
+    });
+    return false;
+  }
   const supplied = suppliedDob(req.body.date_of_birth);
   const age = supplied ? ageFromDob(supplied) : null;
   if (age === null) {

@@ -328,7 +328,10 @@ DOORS.forEach((door) => {
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
       await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledTimes(1));
-      expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob);
+      // The third argument is not decoration: it is how the server knows this
+      // date was derived from a year and must not be written onto an account
+      // that already exists.
+      expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, { dobGranularity: 'year' });
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
 
@@ -341,7 +344,7 @@ DOORS.forEach((door) => {
       setYear(utils, year);
       fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
 
-      await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob));
+      await waitFor(() => expect(api.googleLoginWithToken).toHaveBeenCalledWith('web-access-token', dob, { dobGranularity: 'year' }));
       await waitFor(() => expect(utils.onCreated).toHaveBeenCalledWith({ id: 9 }));
     });
 
@@ -367,6 +370,7 @@ DOORS.forEach((door) => {
 
       await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
       expect(api.appleLogin.mock.calls[0][3]).toBe(dob);
+      expect(api.appleLogin.mock.calls[0][4]).toEqual({ dobGranularity: 'year' });
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
   });

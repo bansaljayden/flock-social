@@ -147,7 +147,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     // between an incomplete form and a request. See the comment on the <form>.
     // Order follows the fields down the screen, and the date of birth is first
     // only when it is actually on screen, which is where it is rendered.
-    if (needsDob && !dob) {
+    // Only when the FULL-DATE field is the one on screen. In year mode the
+    // year belongs to a provider's account-creation ask, not to this form,
+    // which is a password sign-in and therefore a backfill on a row that
+    // already exists: it sends no date, and if the server wants one it
+    // answers with the backfill 403, which flips the screen to the date field.
+    if (needsDob && !askYearOnly && !dob) {
       setError('Add your date of birth to continue.');
       document.getElementById('login-dob')?.focus();
       return;
@@ -172,21 +177,22 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
     setLoading(true);
     try {
-      const data = await login(email, password, needsDob && dobToSend ? dobToSend : undefined);
+      // Never dobToSend here: a derived December 31 must not reach a backfill.
+      const data = await login(email, password, needsDob && !askYearOnly && dob ? dob : undefined);
       onLoginSuccess(data.user);
     } catch (err) {
       if (err.data?.needsDob) {
         setNeedsDob(true);
-        // Deliberately does NOT set dobGranularity. Reaching here means the
-        // password matched an account that already exists, so this is
+        // CLEARS any 'year' a provider tap left behind. Reaching here means
+        // the password matched an account that already exists, so this is
         // enforceDobOnLogin backfilling a row, never creation, and the exact
         // date is required: rounding it would write an under-13 value, revoke
-        // every session and lock a real person out permanently.
-        setError(needsDob && dobToSend
+        // every session and lock a real person out permanently. The full-date
+        // field is the only one this path may show.
+        setDobGranularity(null);
+        setError(needsDob && !askYearOnly && dob
           ? err.message
-          : askYearOnly
-            ? 'One more thing: add the year you were born below to continue.'
-            : 'One more thing: add your date of birth below to continue.');
+          : 'One more thing: add your date of birth below to continue.');
       } else {
         setError(err.message);
       }
@@ -386,7 +392,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               return;
             }
             setError('');
-            startGoogle({ dob: needsDob && dobToSend ? dobToSend : undefined });
+            startGoogle({
+              dob: needsDob && dobToSend ? dobToSend : undefined,
+              dobGranularity: askYearOnly ? 'year' : undefined,
+            });
           }}
           disabled={loading}
         >
@@ -407,6 +416,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       <AppleSignInButton
         onSuccess={onLoginSuccess}
         dob={needsDob && dobToSend ? dobToSend : undefined}
+        dobGranularity={askYearOnly ? 'year' : undefined}
         /* Returning false stops the native sheet before it opens. Apple's flow
            is the one path that cannot be re-entered from a confirmation panel,
            because the sheet needs this button's own tap, so the guard has to

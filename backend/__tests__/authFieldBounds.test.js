@@ -704,7 +704,9 @@ test('login refuses a wide date of birth instead of writing it', async () => {
   assert.equal(ok.status, 200, ok.text);
   const update = log.find((q) => /^UPDATE users SET date_of_birth/.test(q.sql));
   assert.ok(update, 'a date of birth at the ceiling must still be stored');
-  assert.equal(update.params[0], at);
+  // Stored as the calendar date it names: the column is DATE and never kept
+  // the time part, and suppliedDob now strips it before pg sees it.
+  assert.equal(update.params[0], '2000-01-01');
 });
 
 // ---------------------------------------------------------------------------

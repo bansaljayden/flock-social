@@ -831,12 +831,19 @@ export async function exportMyData(password) {
   });
 }
 
-export async function login(email, password, dateOfBirth) {
+export async function login(email, password, dateOfBirth, opts) {
   // dateOfBirth: only for legacy accounts created before DOB was required —
   // the backend answers 403 {needsDob: true} and the login screen retries
   // with the collected date.
+// dobGranularity: 'year' when the date was DERIVED from a birth year (the
+// screens send December 31 of the typed year). The server refuses to write a
+// derived date onto an account that already exists, because rounding a real
+// birthday down can freeze a real account for good; it answers needsDob
+// without a granularity so the screen asks for the full date instead. Omit it
+// and the date is taken as typed.
   const body = { email, password };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
+  if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
   let data;
   try {
     data = await request('/api/auth/login', {
@@ -855,9 +862,11 @@ export async function login(email, password, dateOfBirth) {
 
 // Custom-button flow: useGoogleLogin yields an OAuth access token, verified
 // server-side (tokeninfo aud check + userinfo). Same backend route.
-export async function googleLoginWithToken(accessToken, dateOfBirth) {
+export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
   const body = { access_token: accessToken };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
+  // See login() for dobGranularity.
+  if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
   let data;
   try {
     data = await request('/api/auth/google', {
@@ -874,11 +883,13 @@ export async function googleLoginWithToken(accessToken, dateOfBirth) {
   return data;
 }
 
-export async function googleLogin(credential, dateOfBirth) {
+export async function googleLogin(credential, dateOfBirth, opts) {
   const body = { credential };
   // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
   // OAuth accounts too, matching email signup. Existing-user logins omit it.
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
+  // See login() for dobGranularity.
+  if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
   let data;
   try {
     data = await request('/api/auth/google', {
@@ -899,11 +910,13 @@ export async function googleLogin(credential, dateOfBirth) {
 // identityToken; the backend verifies it against Apple's JWKS and issues our
 // JWT (backend/routes/auth.js POST /apple). fullName only arrives on the very
 // FIRST authorization for an Apple ID, so pass it through when present.
-export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth) {
+export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth, opts) {
   const body = { identityToken };
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
   if (dateOfBirth) body.date_of_birth = dateOfBirth; // required server-side for NEW accounts (age gate)
+  // See login() for dobGranularity.
+  if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
   let data;
   try {
     data = await request('/api/auth/apple', {

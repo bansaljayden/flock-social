@@ -1226,8 +1226,12 @@ test('Apple will not create an account for an address it did not vouch for', asy
 test('suppliedDob accepts only a date-shaped string', () => {
   assert.strictEqual(suppliedDob('2000-01-01'), '2000-01-01');
   assert.strictEqual(suppliedDob('  2000-01-01  '), '2000-01-01');
-  assert.strictEqual(suppliedDob('2000-01-01T00:00:00.000Z'), '2000-01-01T00:00:00.000Z');
-  for (const junk of [946684800000, ['2000-01-01'], { y: 2000 }, null, undefined, true, '01/01/2000', 'yesterday']) {
+  // A time tail is tolerated on the way in and dropped on the way out: pg
+  // gets the ten characters a DATE column keeps, never the tail, so a
+  // date-prefixed non-date cannot reach the column as a 22007.
+  assert.strictEqual(suppliedDob('2000-01-01T00:00:00.000Z'), '2000-01-01');
+  assert.strictEqual(suppliedDob('2000-01-01Tx'), '2000-01-01');
+  for (const junk of [946684800000, ['2000-01-01'], { y: 2000 }, null, undefined, true, '01/01/2000', 'yesterday', '2000-02-30', '2000-13-01T00:00:00Z']) {
     assert.strictEqual(suppliedDob(junk), null, `${JSON.stringify(junk)} must not reach a DATE column`);
   }
 });
@@ -1419,4 +1423,63 @@ test('the ordinary reset still works, and still does not verify the address', as
   assert.match(guardSql, /is_banned IS NOT TRUE/,
     'the write guard must re-check the ban the read checked');
   assert.ok(!/email_verified/.test(guardSql), 'and must never touch the verification columns');
+});
+
+// ===========================================================================
+// A DERIVED DATE IS NEVER WRITTEN ONTO A ROW THAT ALREADY EXISTS
+// ===========================================================================
+// Account creation asks for a birth YEAR and the screens send December 31 of
+// it, the conservative end, so a stranger under the floor is refused rather
+// than admitted. That is the right rounding for a row that does not exist and
+// the wrong one for enforceDobOnLogin, which writes to a row that does and
+// then treats what it wrote as actual knowledge: an honest account holder
+// born in March 2013 who types 2013 would be recorded as born on December 31
+// and frozen out for good. The screens say when a date is derived
+// (dob_granularity:'year'); a derived date arriving for an existing row with
+// no date on file is refused with the plain backfill 403, so the screen asks
+// for the full date instead, and nothing is written.
+// ===========================================================================
+
+test('a derived date on an existing account is refused with needsDob and nothing is written', async () => {
+  reset();
+  addUser({
+    id: 40, email: 'legacy@gmail.com', name: 'Legacy', oauth_provider: 'google',
+    oauth_id: 'g-40', email_verified: true, verified_email: 'legacy@gmail.com', date_of_birth: null,
+  });
+  const res = await withGoogle(
+    { sub: 'g-40', email: 'legacy@gmail.com', email_verified: true, name: 'Legacy' },
+    () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: '2013-12-31', dob_granularity: 'year' })
+  );
+  assert.strictEqual(res.status, 403, 'a derived date must not be taken as knowledge');
+  const body = await res.json();
+  assert.strictEqual(body.needsDob, true, 'the screen is asked for the full date');
+  assert.strictEqual(body.dobGranularity, undefined, 'and not for a year, which is the creation shape');
+  assert.strictEqual(userById(40).date_of_birth, null, 'the row is untouched');
+  assert.ok(!executed.some((q) => q.startsWith('UPDATE users SET date_of_birth')),
+    'no date-of-birth write of any kind was attempted');
+});
+
+test('the same request without the flag is the ordinary backfill and stores the exact date', async () => {
+  reset();
+  addUser({
+    id: 41, email: 'legacy2@gmail.com', name: 'Legacy Two', oauth_provider: 'google',
+    oauth_id: 'g-41', email_verified: true, verified_email: 'legacy2@gmail.com', date_of_birth: null,
+  });
+  const res = await withGoogle(
+    { sub: 'g-41', email: 'legacy2@gmail.com', email_verified: true, name: 'Legacy Two' },
+    () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: '2004-03-09' })
+  );
+  assert.strictEqual(res.status, 200, await res.text());
+  assert.strictEqual(userById(41).date_of_birth, '2004-03-09', 'a typed date is stored as typed');
+});
+
+test('a derived date on a NEW account is still the creation path and is accepted', async () => {
+  reset();
+  const res = await withGoogle(
+    { sub: 'g-42', email: 'brand.new@gmail.com', email_verified: true, name: 'New' },
+    () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: '2004-12-31', dob_granularity: 'year' })
+  );
+  assert.strictEqual(res.status, 200, await res.text());
+  assert.strictEqual(db.users.length, 1);
+  assert.strictEqual(db.users[0].date_of_birth, '2004-12-31', 'creation keeps the conservative date');
 });
