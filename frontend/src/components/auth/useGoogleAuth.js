@@ -157,6 +157,9 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   // The date of birth is supplied at the tap, not at hook-call time, and the
   // native round trip outlives the render that started it.
   const dobRef = useRef(undefined);
+  // 'year' when dobRef holds a date derived from a typed birth year. Travels
+  // with the date so the server can refuse to write it onto an existing row.
+  const dobGranularityRef = useRef(undefined);
   const runningRef = useRef(false);
 
   // Posts whichever proof we ended up with and reports the result. `send` is a
@@ -178,12 +181,14 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   // these screens already shipped — GIS popup, access token, same api call.
   const startWeb = useGoogleLogin({
     onSuccess: (tokenResponse) =>
-      exchange(() => googleLoginWithToken(tokenResponse.access_token, dobRef.current)),
+      exchange(() => googleLoginWithToken(tokenResponse.access_token, dobRef.current,
+        ...(dobGranularityRef.current ? [{ dobGranularity: dobGranularityRef.current }] : []))),
     onError: () => handlers.current.onError?.('Google sign-in failed'),
   });
 
   return (options) => {
     dobRef.current = options?.dob || undefined;
+    dobGranularityRef.current = options?.dobGranularity || undefined;
 
     if (!isNativeIos()) {
       startWeb();
@@ -210,7 +215,8 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
         } finally {
           busy?.(false);
         }
-        await exchange(() => googleLogin(idToken, dobRef.current));
+        await exchange(() => googleLogin(idToken, dobRef.current,
+          ...(dobGranularityRef.current ? [{ dobGranularity: dobGranularityRef.current }] : [])));
       } finally {
         runningRef.current = false;
       }

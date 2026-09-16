@@ -206,7 +206,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   };
 
   const venueDobAge = ageFromDob(dob);
-  const dobNeedsCheck = !isSignup && needsDob
+  // Gated on the FULL-DATE field being the one on screen. In year mode `dob`
+  // is a derived December 31 that nobody typed, and reading it back as a date
+  // would be a lie; and the year belongs to a provider's creation ask, which
+  // the panel has nothing to say about.
+  const dobNeedsCheck = !isSignup && !askYearOnly && needsDob
     && venueDobAge !== null && venueDobAge < MIN_AGE && dobConfirmed !== dob;
 
   const handleSubmit = async (e) => {
@@ -250,15 +254,21 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         }
         onLoginSuccess(data.user);
       } else {
-        const data = await login(email, password, needsDob && dob ? dob : undefined);
+        // The typed date only, never the derived one: this is a backfill on
+        // a row that exists, and a rounded date written there is permanent.
+        const data = await login(email, password, needsDob && !askYearOnly && backfillDob ? backfillDob : undefined);
         onLoginSuccess(data.user);
       }
     } catch (err) {
       if (err.data?.needsDob) {
         setNeedsDob(true);
-        // No dobGranularity on purpose: the password matched an existing
-        // account, so this is a backfill and the exact date is required.
-        setError(needsDob && dob ? err.message : 'One more thing: add your date of birth below to continue.');
+        // Clears any 'year' a provider tap left behind: the password matched
+        // an existing account, so this is a backfill and the exact date is
+        // required. The date field is the only one this path may show.
+        setDobGranularity(null);
+        setError(needsDob && !askYearOnly && backfillDob
+          ? err.message
+          : 'One more thing: add your date of birth below to continue.');
       } else {
         setError(err.message);
       }
@@ -271,6 +281,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     setIsSignup((v) => !v);
     setError('');
     setNeedsDob(false);
+    // Nothing typed or answered under one half's rules is carried into the
+    // other: a provider's 'year' answer, a confirmed read-back, and both
+    // fields' values all belong to the half that is being left.
+    setDobGranularity(null);
+    setDobConfirmed('');
+    setBirthYear('');
+    setBackfillDob('');
     // A password typed under the login rules is not carried into a signup form
     // that is about to grade it against a checklist.
     setPassword('');
@@ -417,9 +434,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             tabIndex={-1}
           >
             <h2 id="venue-dob-check-title">Check this date</h2>
-            {/* dobNeedsCheck is gated on !isSignup, so `dob` here is always the
-                date typed on the backfill half, never a derived December 31.
-                Reading it back is therefore honest. */}
+            {/* dobNeedsCheck is gated on !isSignup AND !askYearOnly, so `dob`
+                here is always the date typed into the date field, never a
+                derived December 31. Reading it back is therefore honest. */}
             <p>You entered {formatDob(dob)}.</p>
             <p>
               If that is right, Flock cannot keep an account for you and you will not be able to
@@ -579,7 +596,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
                 return;
               }
             }
-            startGoogle({ dob: dob || undefined });
+            startGoogle({ dob: dob || undefined, dobGranularity: askYearOnly ? 'year' : undefined });
           }}
         >
           <GoogleG /> Continue with Google
@@ -612,6 +629,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           }
         }}
         dob={dob}
+        dobGranularity={askYearOnly ? 'year' : undefined}
         beforeAuthorize={() => {
           if (dobNeedsCheck) {
             setError('Check the date of birth above before you continue.');
