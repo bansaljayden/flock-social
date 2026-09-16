@@ -285,6 +285,22 @@ const rearmExploreScreen = () => {
   ExploreScreen = React.lazy(loadExploreScreen);
 };
 
+/* THE SCREEN, AS THE LAYER MOUNTS IT. A wrapper rather than the lazy binding
+   itself, for the reason the map inside it goes through MapLibreMapView
+   below: the re-arm above rebinds a NAME, and a name is not what is in the
+   tree. The Discover boundary's "Try again" is a setState on the boundary and
+   nothing else, so it re-renders the children it was handed at the shell's
+   last render, and that element's type is whatever ExploreScreen was at the
+   time, which after a failed download is the lazy that remembers the
+   rejection. Rebound or not, the boundary rethrows the stored error, and the
+   button does nothing until something unrelated happens to re-render the
+   shell. This wrapper reads the binding when IT renders, which is after the
+   button has run the re-arm, so the fresh lazy is the one that mounts. And
+   its own type is a const, so a shell re-render that re-armed nothing
+   reconciles the same lazy in place and the permanent mount keeps its map
+   and its camera exactly as it did before the wrapper existed. */
+const ExploreScreenView = (props) => <ExploreScreen {...props} />;
+
 /* THE WRAP-UP SHEET, and the first lazy thing in this file that is not a
    screen. It is 6.7 KB of JSX that only a host closing out a plan they created
    ever opens, so it had no business in the chunk every account downloads
@@ -307,6 +323,19 @@ const loadAttendanceModal = () => import('./components/overlays/AttendanceModal'
     return { default: AttendanceSheetUnavailable };
   });
 let AttendanceModal = React.lazy(loadAttendanceModal);
+
+/* RE-ARMING JUST THIS ONE, for the reason the event overlay, the pay sheets,
+   the results list, the venue sheet and Birdie below each have a narrow
+   helper of their own. The host who sees the "did not load" sheet is standing
+   on a live plan screen, and rearmLazyScreens below rebuilds the lazy of
+   every screen in the file: running it from this sheet's Close hands React a
+   new element type for FlockDetail, which unmounts the screen under the sheet
+   and mounts it again from scratch, taking its scroll position with it, for a
+   download that failed. So the sheet's own way out re-arms the sheet and
+   nothing else. */
+const rearmAttendanceModal = () => {
+  AttendanceModal = React.lazy(loadAttendanceModal);
+};
 
 /* THE EVENT DETAIL SCREEN, the second lazy thing in this file that is not a
    screen in screens/. It is the full-bleed overlay a tap on "Details" on an
@@ -771,9 +800,11 @@ const rearmLazyScreens = () => {
   // screens. Its loader RESOLVES, to the "did not load" sheet, rather than
   // rejecting, and React.lazy keeps whatever it resolved for the life of the
   // page: without this line the next "Mark it", minutes later and back on wifi,
-  // would paint that same sheet again without asking the network. That sheet's
-  // own Close button is what calls this.
-  AttendanceModal = React.lazy(loadAttendanceModal);
+  // would paint that same sheet again without asking the network. Through the
+  // narrow helper, which is also what that sheet's own Close calls: the plan
+  // screen under the sheet is live, and the blanket rebuild here would remount
+  // it.
+  rearmAttendanceModal();
   // And the event detail overlay, for the same reason as the sheet above: its
   // loader RESOLVES, to the "did not load" panel, rather than rejecting, so
   // without a re-arm the next tap on Details would paint that panel again
@@ -831,9 +862,11 @@ const rearmLazyScreens = () => {
    DialogBehavior as the real sheet, so Escape, Tab and focus restore behave the
    way they do in every other overlay in the stack, and it states the one fact
    that decides what the host does next: nothing was recorded. Closing re-arms
-   the lazy, so the next tap is a real second request. */
+   this one lazy, so the next tap is a real second request and the plan screen
+   under the sheet stays mounted; rearmAttendanceModal says why not the blanket
+   re-arm. */
 const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) => {
-  const close = () => { rearmLazyScreens(); setShowAttendanceModal(false); };
+  const close = () => { rearmAttendanceModal(); setShowAttendanceModal(false); };
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
       <DialogBehavior onClose={close} label="Attendance did not load" />
@@ -16229,12 +16262,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               what this tap resolves from; an unwarmed first visit draws
               nothing for the length of the fetch, which is the same deal the
               map, the venue card and the results list inside it already
-              take. */}
+              take.
+
+              THE WRAPPER, NOT THE LAZY, is what is mounted here. The
+              boundary's "Try again" re-renders this element as it was handed
+              in, so a re-armed binding could never reach it; ExploreScreenView
+              beside the loader reads the binding when it renders, and its
+              comment carries the mechanism. */}
           {exploreMounted && (
             <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
               <ErrorBoundary label="screen:explore" resetKey={screenKey} fallback={exploreCrashFallback}>
                 <React.Suspense fallback={null}>
-                  <ExploreScreen {...exploreScreenProps} />
+                  <ExploreScreenView {...exploreScreenProps} />
                 </React.Suspense>
               </ErrorBoundary>
             </div>

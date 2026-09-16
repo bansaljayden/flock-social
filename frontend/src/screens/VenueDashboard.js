@@ -472,7 +472,20 @@ export default function VenueDashboard({
         const updated = await replyToReview(reviewId, replyText);
         setVenueReviewsData(prev => ({
           ...prev,
-          reviews: prev.reviews.map(r => r.id === reviewId ? { ...r, venue_reply: updated.venue_reply, venue_replied_at: updated.venue_replied_at } : r)
+          reviews: prev.reviews.map(r => r.id === reviewId ? {
+            ...r,
+            venue_reply: updated.venue_reply,
+            venue_replied_at: updated.venue_replied_at,
+            // `reply_needs_review` arrives on the list read and used to ride
+            // through this spread untouched, so replying over a RETIRED reply
+            // left it true under the new words: the mapper above then showed
+            // the reply the owner had just posted as off their card, with a
+            // live Reply button beneath it, until a reload. The reply route
+            // answers RETURNING *, which is the columns and never the computed
+            // flag, so it is rebuilt here from the same two columns the list
+            // read derives it from.
+            reply_needs_review: updated.venue_reply != null && updated.venue_replied_at == null,
+          } : r)
         }));
         setReplyingToReview(null);
         setReplyText('');
@@ -669,6 +682,26 @@ export default function VenueDashboard({
       aiRecommendations: venueTier === 'pro',
       booking: venueTier === 'pro',
     };
+
+    // WHETHER `can` MEANS ANYTHING YET.
+    //
+    // `venueTier` starts life in App.js as 'free' and holds that until
+    // GET /api/venue-profile answers, so for the length of that request every
+    // flag above reads false for every venue, a paying one included. This tab
+    // is the one the dashboard opens on, and it rendered that answer: the
+    // Premium lock, the Post-a-Deal overlay and an Upgrade button, which then
+    // snapped to the real tab when the response landed. A paywall shown to a
+    // venue that has paid, for however short a moment, is the wrong sentence
+    // at the wrong time.
+    //
+    // `venueProfile` is the signal, because it is null until that same
+    // response lands and is set from it in the same place the tier is; App.js
+    // already gates the live-number and map reads on it for the same reason.
+    // Nothing here changes what `can` says once the tier is known. If the
+    // profile read fails outright the profile stays null and this tab keeps
+    // its placeholder, which is what the Map tab already does in that state,
+    // and is still the honest answer: the plan is unknown, not free.
+    const tierKnown = venueProfile != null;
 
     // Locked tab placeholder — shown when feature isn't available on current tier
     const LockedTab = ({ requiredTier, featureName, description }) => (
@@ -908,6 +941,27 @@ export default function VenueDashboard({
             </div>
           )}
 
+          {/* The plan is not known until the profile answers (see `tierKnown`),
+              and until it is, neither the lock nor the body is the right
+              thing to draw: the lock is a paywall shown on a default, and the
+              body mounts Roost's two fetching components against a tier that
+              may not include them. The shape of what is coming instead, in
+              the global shimmer (DESIGN-STANDARD rule 10, skeletons for page
+              loads): one card where the forecast card sits, then the four
+              metric tiles. `tierKnown` trails the tier read on both gates
+              below because venueDashboardMapTab.test.js anchors a region on
+              the lock's opening text. */}
+          {venueTab === 'analytics' && !tierKnown && (
+            <div aria-hidden="true">
+              <div className="skeleton" style={{ height: '120px', borderRadius: '12px', marginBottom: '12px' }} />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
+                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
+              </div>
+            </div>
+          )}
           {/* Was "Analytics Dashboard" / "Track check-ins, peak hours, and
               customer traffic with real-time insights." Three things wrong
               with one sentence: this tab has never shown check-in counts or a
@@ -915,10 +969,10 @@ export default function VenueDashboard({
               have; "real-time insights" is the marketing register DESIGN-STANDARD
               §B bans; and the plan card behind it is titled Dashboard already.
               This says what is actually behind the gate. */}
-          {venueTab === 'analytics' && !can.analytics && (
+          {venueTab === 'analytics' && !can.analytics && tierKnown && (
             <LockedTab requiredTier="premium" featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you." />
           )}
-          {venueTab === 'analytics' && can.analytics && (<>
+          {venueTab === 'analytics' && can.analytics && tierKnown && (<>
           {/* No linked listing / loading states.
               Same failure class as the Map tab's, so it gets the Map tab's
               treatment: a headline that names the state, the server's own

@@ -168,6 +168,21 @@ function scrollToBottom(el, smooth) {
   el.scrollTop = el.scrollHeight;
 }
 
+/* Where a row's top edge sits in the box, for rule 3. MessageRow carries
+   data-message-id, so a row is addressable without this component holding a
+   ref per row, which the virtualisation note above forbids. NaN when the row
+   is not in the box, so the caller can tell "not measured" from "at the top". */
+function rowTop(el, id) {
+  if (!el || id == null) return NaN;
+  let node = null;
+  try {
+    node = el.querySelector(`[data-message-id="${String(id).replace(/["\\]/g, '\\$&')}"]`);
+  } catch (err) {
+    node = null;
+  }
+  return node ? node.offsetTop : NaN;
+}
+
 export default function MessageList({
   rows,
   syntheticIds,
@@ -240,7 +255,7 @@ export default function MessageList({
   }, [registerScroller]);
   const nearBottomRef = useRef(true);
   const mountedRef = useRef(false);
-  const prevRef = useRef({ firstId: null, lastId: null, height: 0, count: 0, rows: 0 });
+  const prevRef = useRef({ firstId: null, lastId: null, height: 0, firstTop: NaN, count: 0, rows: 0 });
   const [newCount, setNewCount] = useState(0);
   /* The same reading as nearBottomRef, kept as state because the pill is
      rendered from it. The ref is what the layout effect reads before paint,
@@ -294,7 +309,7 @@ export default function MessageList({
      thread at its newest message. */
   useLayoutEffect(() => {
     mountedRef.current = false;
-    prevRef.current = { firstId: null, lastId: null, height: 0, count: 0, rows: 0 };
+    prevRef.current = { firstId: null, lastId: null, height: 0, firstTop: NaN, count: 0, rows: 0 };
     nearBottomRef.current = true;
     setOffBottom(false);
     setNewCount(0);
@@ -339,8 +354,24 @@ export default function MessageList({
            reader watches fifty messages scroll past on entry. */
         scrollToBottom(el, false);
       } else if (prepended) {
-        // Rule 3. Correct by the exact height that appeared above.
-        const grew = el.scrollHeight - prev.height;
+        /* Rule 3. Correct by how far the row that WAS first moved, not by how
+           much the box grew, because the two are not always the same number.
+           The flock screen's poll card is anchored to the first venue card in
+           the LOADED messages. While that card is on a page not yet fetched
+           the anchor is NaN and the poll sits at the END of the thread, below
+           the reader; the page that carries the card resolves the anchor and
+           the poll is spliced in above them. The box grew by one page. The
+           content over the reader grew by a page and a card, so a correction
+           of one page left them a card's height below the line they were on,
+           once, on that load. The old first row's displacement is the whole
+           truth however the rows above it were rearranged.
+
+           The box's growth stays as the fallback for a row that could not be
+           measured: an engine with no layout reports every offsetTop as 0,
+           and a page that moved the row by nothing is not a page that landed
+           above it. */
+        const moved = rowTop(el, prev.firstId) - prev.firstTop;
+        const grew = moved > 0 ? moved : el.scrollHeight - prev.height;
         if (grew > 0) el.scrollTop = el.scrollTop + grew;
       } else if (lastId !== prev.lastId && messages.length > prev.count) {
         /* A MESSAGE landed at the end. The count has to have grown as well as
@@ -371,6 +402,9 @@ export default function MessageList({
       firstId,
       lastId,
       height: el.scrollHeight,
+      // Read now, while this commit's rows are in the box: rule 3 on the next
+      // commit needs to know where this row WAS, and by then it has moved.
+      firstTop: rowTop(el, firstId),
       count: messages.length,
       rows: list.length,
     };
