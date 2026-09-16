@@ -1,5 +1,6 @@
 /**
- * The analytics consent bar never covers the app's tab bar.
+ * The analytics consent bar never covers the app's tab bar, and never covers
+ * the sign-in footer either.
  *
  * It is fixed to the bottom of the viewport and above everything by z-index,
  * so inside the app it sat on top of the five tabs until answered: a tap on
@@ -59,4 +60,34 @@ test('the bottom offset is built from the clearance variable', () => {
   const src = require('fs').readFileSync(require.resolve('../components/ConsentBanner.js'), 'utf8');
   expect(src).toMatch(/bottom: calc\(12px \+ var\(--cb-clearance, 0px\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   expect(src).toMatch(/nav\[aria-label="Main"\]/);
+});
+
+// Before sign-in there is no tab bar, so the clearance above is zero and the
+// bar sat flat on the bottom of the auth card, over "New here? Create an
+// account". Walking the reviewer's path against production found the click
+// intercepted by this dialog. The bar now publishes its own footprint on the
+// document while open, and the auth column pads by it.
+test('while the bar is open the document carries its footprint, and it is gone once answered', async () => {
+  const { container, getByText } = render(<ConsentBanner />);
+  const wrap = container.querySelector('.cb-wrap');
+  wrap.getBoundingClientRect = () => ({ height: 120, width: 366, top: 0, left: 0, right: 366, bottom: 120 });
+  await act(async () => {
+    window.dispatchEvent(new Event('resize'));
+    // resize schedules a measurement on the next animation frame.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  // 120 of bar + the 12px it floats above the page + 0 of tab bar.
+  expect(document.documentElement.style.getPropertyValue('--cb-height')).toBe('132px');
+  await act(async () => { getByText('No thanks').click(); });
+  expect(document.documentElement.style.getPropertyValue('--cb-height')).toBe('');
+});
+
+test('the auth column pads its bottom by that footprint, so the footer links stay tappable', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'auth', 'AuthShell.js'), 'utf8');
+  expect(src).toMatch(/\.auth-col \{[\s\S]*?padding-bottom: var\(--cb-height, 0px\);/);
+  const bar = fs.readFileSync(require.resolve('../components/ConsentBanner.js'), 'utf8');
+  expect(bar).toMatch(/style\.setProperty\(HEIGHT_VAR/);
+  expect(bar).toMatch(/style\.removeProperty\(HEIGHT_VAR\)/);
 });
