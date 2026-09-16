@@ -2041,6 +2041,24 @@ function registerHandlers(io, socket) {
       // people sharing in one of them counted as "here" in the other's chat.
       // The stop already carries it (member_stopped_sharing below).
       const payload = { userId: user.id, name: user.name, lat, lng, flockId, timestamp: Date.now() };
+      // "ON MY WAY" RIDES ON THE PIN. A position may say what the person is
+      // doing with it: intent ('omw' or 'need_ride'), how they are travelling
+      // (walk / drive / transit) and, for a car, spare seats. The chat's
+      // who-is-here card turns that into "Sam, about 8 min, driving, 2 seats".
+      // Three rules keep it honest. Each field is copied only when it is
+      // exactly one of the allowed values, so junk is dropped rather than
+      // forwarded and a packet with none of them is byte-identical to what it
+      // was before (socketEventAuthz pins the six-key shape of a plain share).
+      // Seats travel only with a car. And nothing here widens the audience:
+      // the fields go through the same per-member fan-out above that already
+      // keeps coordinates from blocked peers, so "I need a ride" reaches
+      // exactly the people the pin reaches.
+      const travel = data && typeof data === 'object' ? data : {};
+      if (travel.intent === 'omw' || travel.intent === 'need_ride') payload.intent = travel.intent;
+      if (travel.mode === 'walk' || travel.mode === 'drive' || travel.mode === 'transit') payload.mode = travel.mode;
+      if (payload.mode === 'drive' && Number.isInteger(travel.seats) && travel.seats >= 0 && travel.seats <= 8) {
+        payload.seats = travel.seats;
+      }
       for (const m of members.rows) {
         if (invisible.has(m.user_id)) continue;
         io.to(`user:${m.user_id}`).emit('location_update', payload);
