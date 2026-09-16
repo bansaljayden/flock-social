@@ -195,6 +195,35 @@ test('a database failure on the paid boundary fails closed', async () => {
   assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED');
 });
 
+test('the same failure on the profile GET is not a downgrade', async () => {
+  // The profile GET is a state read, not a gate, and its own comment says a
+  // failed lookup must not read as a downgrade. It did anyway: the raw
+  // venue_profiles.tier column ('free' by default) fell through the spread
+  // when the entitlement was null, and the dashboard locked three tabs that
+  // every gated route would have served with billing off.
+  const profileThenDbDown = () => [
+    [/SELECT \* FROM venue_profiles WHERE user_id/, () => ({ rows: [profileRow] })],
+    [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => { throw new Error('db down'); }],
+  ];
+
+  // Billing off: the answer the switch implies, same as the reader gives.
+  handlers = profileThenDbDown();
+  let res = await call('GET', '/api/venue-profile');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.billing_enabled, false);
+  assert.strictEqual(res.body.tier, 'pro', 'the raw column reached the client with billing off');
+  assert.strictEqual(res.body.tier_expires_at, undefined, 'a failed lookup invented an end date');
+
+  // Billing on: no honest tier exists, so none is sent. The column's guess
+  // must not stand in for the entitlement.
+  process.env.VENUE_BILLING_ENABLED = 'true';
+  handlers = profileThenDbDown();
+  res = await call('GET', '/api/venue-profile');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.billing_enabled, true);
+  assert.ok(!('tier' in res.body), `the raw column leaked with billing on: tier=${res.body.tier}`);
+});
+
 test('an unauthenticated request never reaches a paid feature', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
   const res = await call('GET', '/gated-anon');

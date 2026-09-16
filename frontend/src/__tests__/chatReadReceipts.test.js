@@ -762,6 +762,48 @@ describe('the DM thread draws the receipt the row carries', () => {
     expect(p.retryFailedDm).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText('Remove this message that did not send')).toBeInTheDocument();
   });
+
+  test('the echo that replaces a pending row draws Sent in the same render', () => {
+    /* The DM twin of the flock_read case above, and the same defect. The
+       renderer the stream calls while it renders used to be reached through
+       useStableFn, whose ref is installed in a layout effect, so the echo's
+       render ran the closure of the render BEFORE it. That closure was built
+       while the pending row was last, so its receipt id was null and the
+       acknowledged row drew nothing. Nothing re-renders after an echo, so
+       nothing was what it kept drawing. */
+    const p = dmProps({ dm: { messages: [dmTheirs(), dmMine({ id: 'temp-1', pending: true })] } });
+    const { rerender } = render(React.createElement(DmDetail, p));
+    expect(screen.getByText('Sending')).toBeInTheDocument();
+    noReceiptDrawn();
+
+    // What the send echo does: the pending row becomes the server's row, with
+    // its id and the word the server put on it, and nothing else changes.
+    const echoed = { ...p.selectedDm, messages: [dmTheirs(), dmMine({ id: 201, status: 'sent' })] };
+    rerender(React.createElement(DmDetail, { ...p, selectedDm: echoed }));
+    expect(screen.getByText('Sent')).toBeInTheDocument();
+    expect(screen.queryByText('Sending')).toBeNull();
+  });
+});
+
+describe('a DM venue card that reads the screen rather than its row is still current', () => {
+  test('a vote that lands after the card is drawn reaches the card', () => {
+    /* The DM row array is remembered on the messages, and a tally lives in
+       dmVenueVotes rather than on any message. So an optimistic vote, or the
+       tally loading after the thread opened, changed nothing the memoised
+       row could see, and the card kept whatever it drew first. */
+    const card = dmTheirs({ id: 202, message_type: 'venue_card', text: '', venue_data: { name: 'Kome', place_id: 'p1' } });
+    const p = dmProps({ dm: { messages: [dmTheirs(), card] }, dmVenueVotes: [] });
+    const { rerender } = render(React.createElement(DmDetail, p));
+    expect(screen.getByRole('button', { name: 'Vote' })).toBeInTheDocument();
+    expect(screen.queryByText(/[0-9]+ vote/)).toBeNull();
+
+    // What the card's own tap writes, optimistically: the viewer's name on the
+    // voters list and the count up by one. The messages are untouched.
+    const voted = [{ venue_name: 'Kome', venue_id: 'p1', vote_count: 1, voters: ['Alex'] }];
+    rerender(React.createElement(DmDetail, { ...p, dmVenueVotes: voted }));
+    expect(screen.getByRole('button', { name: 'Voted' })).toBeInTheDocument();
+    expect(screen.getByText(/1 vote/)).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------

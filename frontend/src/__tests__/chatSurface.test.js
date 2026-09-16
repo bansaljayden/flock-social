@@ -355,7 +355,11 @@ describe('claims a chat screen must not make', () => {
     // blanking had just cleared. A card is a card whether or not a search is
     // running, which is why the card test comes FIRST in the condition.
     CHAT_SCREENS.forEach(([name, src]) => {
-      expect({ name, blanks: /isCard \? \{ \.\.\.(m|quoted), text: '' \} : (m|quoted)/.test(src) })
+      // The DM screen stamps the vote onto the same object (see voteOnDmCard in
+      // DmDetail.js), so the row may carry fields after the blanked text. The
+      // contract is the blanking and the card-first shape, not that nothing
+      // else rides on the row.
+      expect({ name, blanks: /isCard \? \{ \.\.\.(m|quoted), text: ''(, [^}]+)? \} : (m|quoted)/.test(src) })
         .toEqual({ name, blanks: true });
       expect({ name, guarded: /if \(isCard \|\|/.test(src) }).toEqual({ name, guarded: true });
     });

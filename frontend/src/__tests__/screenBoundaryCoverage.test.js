@@ -304,6 +304,52 @@ describe('the error state clears on navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Plans' }));
     expect(screen.getByText('plans screen')).toBeInTheDocument();
   });
+
+  test('Try again reaches a re-armed lazy only through a wrapper that reads the binding when it renders', async () => {
+    // The Discover chunk. A React.lazy that rejected remembers the rejection
+    // for the life of the page, so App.js re-arms by REBINDING the `let` to a
+    // fresh lazy. reset() is a setState on the boundary and nothing else: it
+    // re-renders the children it was handed at the shell's last render, and an
+    // element whose TYPE is the poisoned lazy is still that element after the
+    // name has been rebound. Mounting the lazy directly therefore makes "Try
+    // again" a button that can never work; a module-scope wrapper reads the
+    // name when IT renders, which is after the button ran the re-arm.
+    const dead = () => Promise.reject(new Error('Loading chunk 7 failed'));
+    const alive = () => Promise.resolve({ default: () => <p>discover screen</p> });
+
+    let Direct = React.lazy(dead);
+    let Wrapped = React.lazy(dead);
+    const WrappedView = (props) => <Wrapped {...props} />;
+
+    const fallback = (rearm) => ({ reset }) => (
+      <>
+        <div role="alert">The map stopped working</div>
+        <button type="button" onClick={() => { rearm(); reset(); }}>Try again</button>
+      </>
+    );
+
+    render(
+      <>
+        <ErrorBoundary label="screen:explore:direct" fallback={fallback(() => { Direct = React.lazy(alive); })}>
+          <React.Suspense fallback={null}><Direct /></React.Suspense>
+        </ErrorBoundary>
+        <ErrorBoundary label="screen:explore:wrapped" fallback={fallback(() => { Wrapped = React.lazy(alive); })}>
+          <React.Suspense fallback={null}><WrappedView /></React.Suspense>
+        </ErrorBoundary>
+      </>
+    );
+    // Both downloads fail and both boundaries catch the rejection.
+    expect(await screen.findAllByRole('alert')).toHaveLength(2);
+
+    // Both buttons re-arm their name and reset their boundary.
+    screen.getAllByRole('button', { name: 'Try again' }).forEach((button) => fireEvent.click(button));
+
+    // Only the wrapped one comes back: findByText throws if two match, so this
+    // is also the assertion that the direct mount is still showing the stored
+    // rejection, which the alert count below states outright.
+    expect(await screen.findByText('discover screen')).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
 });
 
 describe('ScreenSlot is what makes the boundary able to catch anything', () => {
@@ -378,9 +424,18 @@ describe('App.js routes every screen through a boundary', () => {
     // no longer the way to say "one render site", because the name also
     // appears in the loader, the lazy, the re-arm and the idle warm, so the
     // mount itself is counted instead.
+    //
+    // The lazy binding is spelled as an element exactly once, inside the
+    // module-scope ExploreScreenView wrapper, and the layer mounts the
+    // WRAPPER. `Try again reaches a re-armed lazy` above is the reason: an
+    // element whose type is the poisoned lazy stays poisoned after the name
+    // is rebound, so the boundary has to be handed something that reads the
+    // name when it renders.
     expect(count(APP_CODE, /<ExploreScreen\b/g)).toBe(1);
+    expect(APP_CODE).toMatch(/^const ExploreScreenView = \(props\) => <ExploreScreen \{\.\.\.props\} \/>;$/m);
+    expect(count(APP_CODE, /<ExploreScreenView\b/g)).toBe(1);
     expect(APP_CODE).toMatch(
-      /<ErrorBoundary label="screen:explore" resetKey=\{screenKey\} fallback=\{exploreCrashFallback\}>\s*\n\s*<React\.Suspense fallback=\{null\}>\s*\n\s*<ExploreScreen \{\.\.\.exploreScreenProps\} \/>/
+      /<ErrorBoundary label="screen:explore" resetKey=\{screenKey\} fallback=\{exploreCrashFallback\}>\s*\n\s*<React\.Suspense fallback=\{null\}>\s*\n\s*<ExploreScreenView \{\.\.\.exploreScreenProps\} \/>/
     );
     // And the layer it is mounted inside is still the latched, never
     // unmounted one: the boundary and the Suspense sit INSIDE it.
@@ -417,9 +472,9 @@ describe('App.js routes every screen through a boundary', () => {
     expect(topLevelJsx.match(/\b[A-Za-z]\w*Screen\(\)/g)).toBeNull();
     // Two screen render sites, two boundaries, and every site is one of the
     // two shapes that put the build inside a boundary: the switch through
-    // ScreenSlot, and Discover as a mounted lazy component.
+    // ScreenSlot, and Discover as a mounted lazy component behind its wrapper.
     expect(count(topLevelJsx, /<ScreenSlot render=\{/g)).toBe(1);
-    expect(count(topLevelJsx, /<ExploreScreen \{\.\.\.exploreScreenProps\} \/>/g)).toBe(1);
+    expect(count(topLevelJsx, /<ExploreScreenView \{\.\.\.exploreScreenProps\} \/>/g)).toBe(1);
     expect(count(topLevelJsx, /<ErrorBoundary/g)).toBe(2);
   });
 
