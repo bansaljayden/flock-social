@@ -191,6 +191,9 @@ import {
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import { owedOn } from '../lib/billShares';
 import { lsSet } from '../lib/storage';
+/* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
+   design; that file's header says why there is no routing call behind it. */
+import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel';
 /* The keyboard lane. It is a hook and not part of the chat module's index on
    purpose: it owns DOM nodes and a native bridge rather than any markup, and
    both screens reach it the same way. See the block at its call below. */
@@ -392,6 +395,34 @@ const WHO_ROW_ID = 'who-is-here';
    Module scope, so the identity holds between renders: the list builds a Set
    from it and would otherwise rebuild that Set on every keystroke. */
 const SYNTHETIC_ROW_IDS = [POLL_ROW_ID, BILL_ROW_ID, WHO_ROW_ID, NUDGE_ROW_ID];
+
+/* THE SECOND LINE OF THE SHARING BAR, and why it is three words and a
+   stepper. A person who has said "on my way" is asked one more thing, how,
+   because nobody can read an ETA off a position alone (etaMinutes returns
+   null with no mode, on purpose), and a car is asked one thing more, spare
+   seats, because that is the number a friend who needs a ride is waiting to
+   see. Text chips rather than icons: this bar has no icon language to borrow,
+   and "Walk" is read faster than a glyph that has to be decoded. Module scope
+   so the array keeps its identity between renders. */
+const TRAVEL_MODE_CHIPS = Object.freeze([
+  { mode: 'walk', label: 'Walk' },
+  { mode: 'drive', label: 'Drive' },
+  { mode: 'transit', label: 'Transit' },
+]);
+/* The bar's own palette (white on its green), sized like its Stop button,
+   with the chosen chip inverted so the mode reads at a glance. */
+const travelChipStyle = (pressed) => ({
+  padding: '4px 8px',
+  borderRadius: '10px',
+  border: pressed ? '1px solid white' : '1px solid rgba(255,255,255,0.3)',
+  background: pressed ? 'white' : 'rgba(255,255,255,0.15)',
+  color: pressed ? '#047857' : 'white',
+  fontSize: 'var(--t-meta)',
+  fontWeight: '600',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+});
 
 /* WHAT COUNTS AS "AT THE VENUE", and why these two numbers.
    200m is a radius, not a doorstep: a phone indoors behind a bar's walls
@@ -712,6 +743,8 @@ export default function ChatDetail({
   startSharingLocation,
   stopLocationSharing,
   styles,
+  myTravel,
+  updateTravel,
   typingUser,
   updateFlockVenue,
   updateFlockVotes,
@@ -1427,10 +1460,12 @@ export default function ChatDetail({
        the reader had to leave the conversation to see. This is the one line
        the group actually wants at nine o'clock.
 
-       COUNTS ONLY, and only from FRESH positions. A stale fix is not where
+       COUNTS, and only from FRESH positions. A stale fix is not where
        somebody is. The card refuses to draw when both counts are zero, so a
        night where nobody is sharing shows nothing at all rather than an empty
-       claim.
+       claim. The one thing past a count is the traveller list built in the
+       on-the-way branch below: a person who said "on my way" or "need a
+       ride" is named, with how far off they are.
 
        The viewer is not counted. "3 near Kome" meaning two other people and
        yourself reads as a bigger group than there is, and you already know
@@ -1442,6 +1477,7 @@ export default function ChatDetail({
       let near = 0;
       let onTheWay = 0;
       const nearPeople = [];
+      const travellers = [];
       for (const [uid, loc] of Object.entries(positions)) {
         if (String(uid) === String(authUser?.id)) continue;
         if (!loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) continue;
@@ -1461,9 +1497,45 @@ export default function ChatDetail({
           nearPeople.push({ id: uid, name: loc.name || member?.name || 'Member', avatarUrl: member?.image || undefined });
         } else {
           onTheWay += 1;
+          /* ON THE WAY, AND SAID SO. A position carrying an intent is a person
+             telling the group what they are doing, and the card names them
+             with how far off they are. Only this branch builds one: somebody
+             inside the radius has arrived whatever their packet still says,
+             and "Sam, about 2 min" beside "1 near Kome" would be the card
+             contradicting itself. A packet with no intent is the plain share
+             every packet used to be, and stays a count.
+
+             The distance is measured to the venue, so with no venue there is
+             no distance and no time: the person is moving toward a place the
+             group has not named, and a number toward nowhere is invented.
+             With a distance but no mode there is still no time, because a
+             time needs a speed (etaMinutes says so), and the card falls back
+             to the distance, which is true on its own. The haversine is the
+             call isNear already made, asked again for the few positions that
+             carry an intent: a second call to one function is not a second
+             copy of the arithmetic, and the isNear line stays the one line
+             the radius is read from. */
+          if (loc.intent === 'omw' || loc.intent === 'need_ride') {
+            const member = (flock.members || []).find((mm) => String(mm.id) === String(uid)) || null;
+            const km = hasVenue
+              ? distanceKm(Number(loc.lat), Number(loc.lng), Number(flock.venueLat), Number(flock.venueLng))
+              : null;
+            travellers.push({
+              id: uid,
+              name: loc.name || member?.name || 'Member',
+              avatarUrl: member?.image || undefined,
+              intent: loc.intent,
+              mode: loc.mode,
+              // Seats ride only with a car, the same rule the wire applies.
+              seats: loc.mode === 'drive' ? loc.seats : undefined,
+              distanceKm: km,
+              etaLabel: formatEta(etaMinutes(km, loc.mode)),
+              distanceLabel: formatDistance(km),
+            });
+          }
         }
       }
-      return (near === 0 && onTheWay === 0) ? null : { near, onTheWay, people: nearPeople, hasVenue };
+      return (near === 0 && onTheWay === 0) ? null : { near, onTheWay, people: nearPeople, hasVenue, travellers };
     })();
     // The "N sharing" figure on the sharing bar, scoped the same way: the
     // reader's own position is not one of the N, and another flock's are not.
@@ -1471,6 +1543,21 @@ export default function ChatDetail({
       String(uid) !== String(authUser?.id)
       && loc && (loc.flockId == null || String(loc.flockId) === String(flock.id))
     )).length;
+    // The seat count the bar's stepper shows and steps from. Absent means
+    // none offered, which is also what a car with no count says on the wire.
+    const mySeats = Number.isInteger(myTravel?.seats) ? myTravel.seats : 0;
+
+    /* THE SHARE'S OWN GATE, one copy for the three tiles that start one
+       (Share location, On my way, Need a ride). Closes the sheet, and refuses
+       with a toast when there is nobody else in the flock, because a position
+       broadcast to nobody is a share the person cannot see the point of and
+       would reasonably think broken. Returns whether to go on. */
+    const readyToShare = () => {
+      setPlusOpen(false);
+      const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length;
+      if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return false; }
+      return true;
+    };
 
     /* The bar takes `{ id, preview }`. The server sends the message id and
        enough of the row to describe it, so the preview is built here with the
@@ -1937,6 +2024,10 @@ export default function ChatDetail({
             nearCount={who.near}
             onTheWayCount={who.onTheWay}
             members={who.people}
+            /* The named subset of "on the way": everyone who said an intent,
+               each with an ETA or a distance. Built by the derivation above
+               and read off the row for the same reason the counts are. */
+            travellers={who.travellers}
             onOpenMap={() => {
               leaveChatScreen();
               setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
@@ -2610,15 +2701,57 @@ export default function ChatDetail({
           </div>
         )}
 
-        {/* Active location sharing indicator */}
+        {/* Active location sharing indicator, and under it the "on my way"
+            line. One bar, two rows: the first says the share is running and
+            holds Stop, the second is what the share is SAYING, which starts
+            as nothing and is upgraded in place. A separate bar for the intent
+            would be one more banner between the header and the first
+            message, which is the thing the chat rebuild exists to remove. */}
         {sharingLocationForFlock === flock.id && (
-          <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none' }} />
-            <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
-            {sharingHere > 0 && (
-              <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{sharingHere} sharing</span>
-            )}
-            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none' }} />
+              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
+              {sharingHere > 0 && (
+                <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{sharingHere} sharing</span>
+              )}
+              <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+            </div>
+            {/* THE INTENT ROW. A plain share offers one upgrade, "On my way".
+                Said, it asks how, and a car is asked for spare seats. Somebody
+                who asked for a ride can switch to travelling. Every tap goes
+                through updateTravel, which re-emits at once rather than on
+                the next ten-second tick, so the group's card answers the tap.
+                It is one line at 320px, which is why the labels are one word
+                each and the seat count is a number rather than a sentence,
+                and it may wrap rather than clip if a device ever scales the
+                type past that, because a control cut off at the edge is a
+                control that is not there. */}
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', marginTop: '6px', minWidth: 0 }}>
+              {!myTravel?.intent && (
+                <button className="hit44" onClick={() => updateTravel({ intent: 'omw' })} style={travelChipStyle(false)}>On my way</button>
+              )}
+              {myTravel?.intent === 'omw' && (
+                <>
+                  {TRAVEL_MODE_CHIPS.map(({ mode, label }) => (
+                    <button key={mode} className="hit44" aria-pressed={myTravel.mode === mode} onClick={() => updateTravel({ ...myTravel, mode })} style={travelChipStyle(myTravel.mode === mode)}>{label}</button>
+                  ))}
+                  {myTravel.mode === 'drive' && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto', flexShrink: 0 }}>
+                      <button aria-label="One seat fewer" className="hit44" disabled={mySeats <= 0} onClick={() => updateTravel({ ...myTravel, mode: 'drive', seats: Math.max(0, mySeats - 1) })} style={{ ...travelChipStyle(false), opacity: mySeats <= 0 ? 0.45 : 1 }}>-</button>
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'white', fontWeight: '600', whiteSpace: 'nowrap' }}>{mySeats} {mySeats === 1 ? 'seat' : 'seats'}</span>
+                      <button aria-label="One seat more" className="hit44" disabled={mySeats >= MAX_SEATS} onClick={() => updateTravel({ ...myTravel, mode: 'drive', seats: Math.min(MAX_SEATS, mySeats + 1) })} style={{ ...travelChipStyle(false), opacity: mySeats >= MAX_SEATS ? 0.45 : 1 }}>+</button>
+                    </span>
+                  )}
+                </>
+              )}
+              {myTravel?.intent === 'need_ride' && (
+                <>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'white', fontWeight: '500', flex: 1, minWidth: 0 }}>Looking for a ride</span>
+                  <button className="hit44" onClick={() => updateTravel({ ...myTravel, intent: 'omw' })} style={travelChipStyle(false)}>I'm on my way instead</button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -2998,10 +3131,22 @@ export default function ChatDetail({
           onPickPhoto={() => { setPlusOpen(false); chatGalleryInputRef.current?.click(); }}
           onTakePhoto={() => { setPlusOpen(false); openCameraViewfinder('flock'); }}
           onShareLocation={sharingLocationForFlock === flock.id ? undefined : () => {
-            setPlusOpen(false);
-            const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length;
-            if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; }
+            if (!readyToShare()) return;
             startSharingLocation(flock.id);
+          }}
+          /* ON MY WAY and NEED A RIDE are the same share with an intent on it,
+             so they stand behind the share's two guards: gone while a share
+             is already running (the upgrade then lives on the bar above the
+             field, and two doors that mean different things do not both get
+             to start a share), and refused with the same toast when there is
+             nobody to tell. */
+          onOnMyWay={sharingLocationForFlock === flock.id ? undefined : () => {
+            if (!readyToShare()) return;
+            startSharingLocation(flock.id, { intent: 'omw' });
+          }}
+          onNeedRide={sharingLocationForFlock === flock.id ? undefined : () => {
+            if (!readyToShare()) return;
+            startSharingLocation(flock.id, { intent: 'need_ride' });
           }}
           /* The other three this screen can honour. Each posts something into
              the stream, which is the rule for what belongs in this sheet: a

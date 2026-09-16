@@ -40,9 +40,9 @@
  *
  * MEASUREMENTS
  *   Tiles are a 4 column grid. The icon well is 56, radius 28, filled with
- *   --icon-bg, the glyph at 22, except the solid bird at 20. Ten tiles is
- *   three rows, and the sheet scrolls inside its own max height rather than
- *   growing past it. The label sits under it at --t-meta, two lines
+ *   --icon-bg, the glyph at 22, except the solid bird at 20. Thirteen tiles
+ *   is four rows, and the sheet scrolls inside its own max height rather
+ *   than growing past it. The label sits under it at --t-meta, two lines
  *   maximum, centred. Whole tile is 44 minimum in both directions by
  *   construction (56 alone clears it), so no tile needs the hit44 overlay.
  *   Sheet geometry, backdrop, grabber, focus handling and keyboard dismissal
@@ -81,6 +81,8 @@ export default function ComposerPlusSheet({
   onSuggestPlace,   // DM
   onOpenVote,       // flock
   onShareLocation,
+  onOnMyWay,        // flock
+  onNeedRide,       // flock
   onRequestCash,    // DM
   onSplitBill,      // flock
   onAskBirdie,
@@ -102,11 +104,17 @@ export default function ComposerPlusSheet({
 
   // Order is the order of use, not of importance: the two photo actions are
   // what the "+" is opened for most, and Check in is the end of a night.
+  // On my way and Need a ride sit directly after Share location because they
+  // are the same share, saying something: each starts the position share that
+  // tile starts, with an intent riding on the packet, so the three that put a
+  // person on the map are found together rather than one of them alone.
   const tiles = [
     { key: 'photo', glyph: Icons.image, label: 'Photo', onClick: onPickPhoto },
     { key: 'camera', glyph: Icons.camera, label: 'Take a photo', onClick: onTakePhoto },
     { key: 'venue', glyph: venueGlyph, label: venueLabel, onClick: venueHandler },
     { key: 'location', glyph: Icons.crosshair, label: 'Share location', onClick: onShareLocation },
+    { key: 'omw', glyph: Icons.compass, label: 'On my way', onClick: onOnMyWay },
+    { key: 'ride', glyph: Icons.users, label: 'Need a ride', onClick: onNeedRide },
     { key: 'money', glyph: moneyGlyph, label: moneyLabel, onClick: moneyHandler },
     /* Two sizes under the bird, and only under the bird. It is the one solid
        mark in the set (the icon system's own stated exception, drawn unstroked

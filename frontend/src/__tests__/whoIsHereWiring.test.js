@@ -148,3 +148,90 @@ describe('the card itself', () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe('on my way', () => {
+  /* The card's one line grew a second: a person who said what they are doing
+     is named with an ETA. Everything that could make that line lie is pinned
+     here, beside the counts it extends. */
+  const nearBranch = derivation.slice(derivation.indexOf('if (isNear) {'), derivation.indexOf('} else {'));
+  const onTheWayBranch = derivation.slice(derivation.indexOf('} else {'), derivation.indexOf('return (near === 0'));
+
+  test('a traveller is a fresh, on-the-way position that carries an intent', () => {
+    /* A packet with no intent is the plain share every packet used to be,
+       and stays a count. The list is built inside the same loop, past every
+       guard the counts pass through, so nothing stale, blank, foreign or the
+       viewer's own can reach it. */
+    expect(derivation).toMatch(/const travellers = \[\];/);
+    expect(onTheWayBranch).toMatch(/onTheWay \+= 1;/);
+    expect(onTheWayBranch).toMatch(/if \(loc\.intent === 'omw' \|\| loc\.intent === 'need_ride'\) \{/);
+    expect(onTheWayBranch).toMatch(/travellers\.push\(\{/);
+    expect(onTheWayBranch).toMatch(/intent: loc\.intent,/);
+    // Seats ride only with a car, the rule the wire applies.
+    expect(onTheWayBranch).toMatch(/seats: loc\.mode === 'drive' \? loc\.seats : undefined,/);
+  });
+
+  test('a near person is never a traveller', () => {
+    /* Somebody inside the radius has arrived whatever their packet still
+       says. "Sam, about 2 min" beside "1 near Kome" is the card contradicting
+       itself. */
+    expect(nearBranch).toMatch(/nearPeople\.push\(/);
+    expect(nearBranch).not.toMatch(/travellers\.push\(/);
+    expect(nearBranch).not.toMatch(/loc\.intent/);
+  });
+
+  test('the ETA is the labelled estimate, measured to the venue, and null without one', () => {
+    /* No routing call, on purpose (lib/travel.js says why). The distance is
+       the haversine isNear asks, against the venue the group picked, so with
+       no venue there is no distance and no time rather than a number toward
+       nowhere; with no mode there is a distance and no time, because a time
+       needs a speed. */
+    expect(chatDetailSrc).toMatch(/import \{ MAX_SEATS, etaMinutes, formatDistance, formatEta \} from '\.\.\/lib\/travel';/);
+    expect(onTheWayBranch).toMatch(/const km = hasVenue\n\s+\? distanceKm\(Number\(loc\.lat\), Number\(loc\.lng\), Number\(flock\.venueLat\), Number\(flock\.venueLng\)\)\n\s+: null;/);
+    expect(onTheWayBranch).toMatch(/distanceKm: km,/);
+    expect(onTheWayBranch).toMatch(/etaLabel: formatEta\(etaMinutes\(km, loc\.mode\)\),/);
+    expect(onTheWayBranch).toMatch(/distanceLabel: formatDistance\(km\),/);
+  });
+
+  test('the card is handed the list off the row, beside the counts', () => {
+    expect(derivation).toMatch(/return \(near === 0 && onTheWay === 0\) \? null : \{ near, onTheWay, people: nearPeople, hasVenue, travellers \};/);
+    expect(chatDetailSrc).toMatch(/travellers=\{who\.travellers\}/);
+  });
+
+  test('the two sheet tiles start the share with an intent, behind the share\'s own gate', () => {
+    /* The same call as Share location, with a travel state on it. Both tiles
+       go away while a share is already running, the way Share does, and both
+       refuse with the same toast when there is nobody to tell. */
+    const handler = (name, call) => new RegExp(
+      `${name}=\\{sharingLocationForFlock === flock\\.id \\? undefined : \\(\\) => \\{\\n\\s+if \\(!readyToShare\\(\\)\\) return;\\n\\s+${call}`
+    );
+    expect(chatDetailSrc).toMatch(handler('onShareLocation', "startSharingLocation\\(flock\\.id\\);"));
+    expect(chatDetailSrc).toMatch(handler('onOnMyWay', "startSharingLocation\\(flock\\.id, \\{ intent: 'omw' \\}\\);"));
+    expect(chatDetailSrc).toMatch(handler('onNeedRide', "startSharingLocation\\(flock\\.id, \\{ intent: 'need_ride' \\}\\);"));
+    const gate = chatDetailSrc.slice(chatDetailSrc.indexOf('const readyToShare = () => {'), chatDetailSrc.indexOf('const pinnedForBar'));
+    expect(gate).toMatch(/setPlusOpen\(false\);/);
+    expect(gate).toMatch(/if \(otherMembers === 0\) \{ showToast\('No one else in this flock to share with', 'error'\); return false; \}/);
+  });
+
+  test('the bar upgrades a running share in place, and every tap re-emits', () => {
+    /* The chips and the stepper go through updateTravel, which App.js emits
+       at once rather than on the next ten-second tick. A plain share offers
+       "On my way"; said, it asks how; a car is asked for seats, bounded by
+       the wire's ceiling; and a ride request can switch to travelling. */
+    const bar = chatDetailSrc.slice(chatDetailSrc.indexOf('Sharing location with {flock.name}'), chatDetailSrc.indexOf('{/* Budget status bar */}'));
+    expect(bar).toMatch(/\{!myTravel\?\.intent && \(/);
+    expect(bar).toMatch(/onClick=\{\(\) => updateTravel\(\{ intent: 'omw' \}\)\}[^>]*>On my way<\/button>/);
+    expect(bar).toMatch(/\{myTravel\?\.intent === 'omw' && \(/);
+    expect(bar).toMatch(/TRAVEL_MODE_CHIPS\.map\(\(\{ mode, label \}\) => \(/);
+    expect(bar).toMatch(/aria-pressed=\{myTravel\.mode === mode\} onClick=\{\(\) => updateTravel\(\{ \.\.\.myTravel, mode \}\)\}/);
+    expect(bar).toMatch(/\{myTravel\.mode === 'drive' && \(/);
+    expect(bar).toMatch(/updateTravel\(\{ \.\.\.myTravel, mode: 'drive', seats: Math\.max\(0, mySeats - 1\) \}\)/);
+    expect(bar).toMatch(/updateTravel\(\{ \.\.\.myTravel, mode: 'drive', seats: Math\.min\(MAX_SEATS, mySeats \+ 1\) \}\)/);
+    expect(bar).toMatch(/\{myTravel\?\.intent === 'need_ride' && \(/);
+    expect(bar).toMatch(/Looking for a ride/);
+    expect(bar).toMatch(/updateTravel\(\{ \.\.\.myTravel, intent: 'omw' \}\)[^>]*>I'm on my way instead<\/button>/);
+    // The three modes the wire accepts, and no fourth.
+    const chips = chatDetailSrc.slice(chatDetailSrc.indexOf('const TRAVEL_MODE_CHIPS = Object.freeze(['), chatDetailSrc.indexOf('const travelChipStyle'));
+    expect(chips.match(/\{ mode: '(walk|drive|transit)', label: '[A-Z][a-z]+' \}/g)).toHaveLength(3);
+    expect(chips.match(/\{ mode: /g)).toHaveLength(3);
+  });
+});

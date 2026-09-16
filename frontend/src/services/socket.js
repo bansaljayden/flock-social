@@ -1,4 +1,5 @@
 import { io } from 'socket.io-client';
+import { travelFields } from '../lib/travel';
 import { getToken, BASE_URL } from './api';
 
 let socket = null;
@@ -910,9 +911,12 @@ export function onUnblockedBy(callback) {
 
 // --- Live location sharing ---
 
-export function emitLocation(flockId, lat, lng) {
+// `travel` is optional: { intent, mode, seats } as lib/travel.js defines them.
+// travelFields validates and drops anything the server would refuse, so a
+// plain share still sends exactly { flockId, lat, lng }.
+export function emitLocation(flockId, lat, lng, travel) {
   if (socket?.connected) {
-    socket.emit('update_location', { flockId, lat, lng });
+    socket.emit('update_location', { flockId, lat, lng, ...travelFields(travel) });
   }
 }
 

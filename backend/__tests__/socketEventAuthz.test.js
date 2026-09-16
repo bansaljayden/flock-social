@@ -468,6 +468,58 @@ test('update_location fans out only to accepted members and never to blocked pee
   } finally { restore(); }
 });
 
+// "On my way" rides on the pin. The three optional fields are copied only when
+// they are exactly one of the allowed values, seats only with a car, and a
+// packet with none of them keeps the six-key shape the test above pins.
+test('update_location forwards a valid travel state and drops an invalid one', async () => {
+  __resetRateLimiters();
+  const restore = mockPool([
+    [/user_id != \$2/, [{ user_id: 811 }]],
+    [MEMBERSHIP, [{ id: 1 }]],
+    [INVISIBLE, []],
+  ]);
+  try {
+    const io = fakeIo();
+    const s = fakeSocket('driver', { id: 810, name: 'Driver' }, io);
+    registerHandlers(io, s);
+
+    await fire(s, 'update_location', { flockId: 4310, lat: 40.7, lng: -74.0, intent: 'omw', mode: 'drive', seats: 2 });
+    let sent = io.emitted.filter((e) => e.event === 'location_update');
+    assert.strictEqual(sent.length, 1);
+    assert.deepStrictEqual(Object.keys(sent[0].payload).sort(),
+      ['flockId', 'intent', 'lat', 'lng', 'mode', 'name', 'seats', 'timestamp', 'userId']);
+    assert.strictEqual(sent[0].payload.intent, 'omw');
+    assert.strictEqual(sent[0].payload.mode, 'drive');
+    assert.strictEqual(sent[0].payload.seats, 2);
+
+    // Junk is dropped field by field, never forwarded, and never fatal.
+    io.emitted.length = 0;
+    __resetRateLimiters();
+    await fire(s, 'update_location', { flockId: 4310, lat: 40.7, lng: -74.0, intent: 'teleport', mode: 5, seats: 99 });
+    sent = io.emitted.filter((e) => e.event === 'location_update');
+    assert.strictEqual(sent.length, 1, 'bad travel fields do not cost the pin');
+    assert.deepStrictEqual(Object.keys(sent[0].payload).sort(),
+      ['flockId', 'lat', 'lng', 'name', 'timestamp', 'userId']);
+
+    // Seats without a car are a shape, not a fact; a fractional or wide count
+    // is dropped; a string is not a number.
+    for (const bad of [
+      { mode: 'walk', seats: 2 },
+      { mode: 'drive', seats: 2.5 },
+      { mode: 'drive', seats: 9 },
+      { mode: 'drive', seats: -1 },
+      { mode: 'drive', seats: '2' },
+    ]) {
+      io.emitted.length = 0;
+      __resetRateLimiters();
+      await fire(s, 'update_location', { flockId: 4310, lat: 40.7, lng: -74.0, ...bad });
+      sent = io.emitted.filter((e) => e.event === 'location_update');
+      assert.strictEqual(sent.length, 1);
+      assert.ok(!('seats' in sent[0].payload), `seats leaked for ${JSON.stringify(bad)}`);
+    }
+  } finally { restore(); }
+});
+
 test('update_location refuses coordinates that are not coordinates', async () => {
   __resetRateLimiters();
   const calls = [];
