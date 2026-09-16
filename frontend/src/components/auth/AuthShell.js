@@ -286,6 +286,10 @@ const AUTH_CSS = `
   width: 100%; max-width: 440px; margin: 0 auto;
   min-height: 100%;
   display: flex; flex-direction: column;
+  /* The analytics bar publishes its footprint as --cb-height while it is
+     open and removes it when answered. Padding by it keeps "Create an
+     account" / "Sign in" above the bar rather than under it. Zero otherwise. */
+  padding-bottom: var(--cb-height, 0px);
 }
 .auth-hero {
   position: relative;

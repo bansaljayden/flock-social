@@ -25,7 +25,20 @@ import { setConsent, consentUnanswered } from '../services/analyticsConsent';
  * capture rig timed out on the first tab. The bar now measures the visible
  * main navigation and sits above it; on the marketing pages, which have no
  * tab bar, nothing changes.
+ *
+ * AND IT NEVER COVERS THE SIGN-IN FOOTER EITHER, which is the same bug one
+ * screen earlier. Before sign-in there is no tab bar, so the clearance above
+ * is zero and the bar sat flat over the bottom of the auth card, on the line
+ * that reads "New here? Create an account" and, on the signup half, "Already
+ * have an account? Sign in". A fresh install lands on that screen, and a tap
+ * on either link landed on the bar until the analytics question was answered.
+ * Walking the reviewer's path against production caught it: the click on
+ * "Create an account" was intercepted by this dialog. So while it is open the
+ * bar publishes its own height on the document as --cb-height, and the auth
+ * column pads its bottom by that much, so the footer scrolls clear of the bar
+ * instead of under it. The variable is removed the moment the bar closes.
  */
+const HEIGHT_VAR = '--cb-height';
 const MAIN_NAV = 'nav[aria-label="Main"]';
 
 function visibleNavHeight() {
@@ -41,6 +54,7 @@ function visibleNavHeight() {
 export default function ConsentBanner({ onAnswer }) {
   const [open, setOpen] = React.useState(() => consentUnanswered());
   const [clearance, setClearance] = React.useState(() => visibleNavHeight());
+  const wrapRef = React.useRef(null);
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -49,6 +63,12 @@ export default function ConsentBanner({ onAnswer }) {
       frame = 0;
       const h = visibleNavHeight();
       setClearance((prev) => (prev === h ? prev : h));
+      // The bar's own footprint: its height plus the 12px it floats above
+      // whatever is under it. Published so a page can keep its own footer
+      // above the bar; see the header comment.
+      const el = wrapRef.current;
+      const own = el ? Math.round(el.getBoundingClientRect().height) : 0;
+      document.documentElement.style.setProperty(HEIGHT_VAR, `${own + 12 + h}px`);
     };
     const schedule = () => {
       if (frame) return;
@@ -66,6 +86,9 @@ export default function ConsentBanner({ onAnswer }) {
       window.removeEventListener('resize', schedule);
       if (observer) observer.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
+      // Closing, or unmounting: nothing is under the bar any more, so nothing
+      // should keep padding for it.
+      document.documentElement.style.removeProperty(HEIGHT_VAR);
     };
   }, [open]);
 
@@ -77,6 +100,7 @@ export default function ConsentBanner({ onAnswer }) {
   };
   return (
     <div
+      ref={wrapRef}
       className="cb-wrap"
       role="dialog"
       aria-label="Analytics choice"
