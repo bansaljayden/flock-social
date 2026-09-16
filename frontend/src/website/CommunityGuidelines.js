@@ -81,9 +81,10 @@ export default function CommunityGuidelines() {
             (NCMEC) and/or the relevant authorities, as required by law.
           </li>
           <li>
-            Flock is intended for users 13 and older. Sign-up asks for a date of birth, our
-            server recalculates the age from it rather than trusting the app, and anyone
-            under 13 is refused an account. We do not knowingly allow children under 13.
+            Flock is intended for users 13 and older. Sign-up asks for a year of birth, our
+            server works out the age from it in the one way that can only count someone as
+            younger, and anyone under 13 is refused an account. We do not knowingly allow
+            children under 13.
           </li>
           <li>
             Child-safety concerns can be reported any time to{' '}
