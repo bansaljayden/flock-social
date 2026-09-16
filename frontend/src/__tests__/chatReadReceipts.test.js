@@ -327,6 +327,9 @@ function chatProps(over = {}) {
     loadPopularVenues: fn(),
     locationBannerDismissed: true,
     messagesLoading: false,
+    // null is a plain share or none; an object here means the viewer said an
+    // intent and the chat draws the mode chips.
+    myTravel: null,
     notifAskDismissed: true,
     notifStatus: 'granted',
     olderLoading: false,
@@ -406,6 +409,7 @@ function chatProps(over = {}) {
     typingUser: '',
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
+    updateTravel: fn(),
     userLocation: null,
     ...over,
   };

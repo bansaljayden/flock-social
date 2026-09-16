@@ -6496,6 +6496,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Live location sharing
   const [sharingLocationForFlock, setSharingLocationForFlock] = useState(null); // { flockId, watchId }
+  // What the reader's own share is SAYING, beyond where they are: null for a
+  // plain share, or { intent, mode, seats } as lib/travel.js defines them
+  // ("on my way, driving, 2 seats"). Rides on every ten-second packet below
+  // and is cleared with the share. Held in a ref too, because the emit loop
+  // reads it on a timer and must not restart when it changes.
+  const [myTravel, setMyTravel] = useState(null);
   const [flockMemberLocations, setFlockMemberLocations] = useState({}); // userId -> { lat, lng, name, timestamp }
   const [locationBannerDismissed, setLocationBannerDismissed] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_loc_dismissed') || '{}'); } catch { return {}; }
@@ -9379,9 +9385,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // --- Live location sharing ---
 
-  const startSharingLocation = useCallback((flockId) => {
+  // `travel` is optional: { intent, mode, seats }. "On my way" is this call
+  // with an intent; a plain Share is this call without one. Either way the
+  // share itself is the same thing it always was.
+  const startSharingLocation = useCallback((flockId, travel = null) => {
+    setMyTravel(travel);
+    myTravelRef.current = travel;
     if (userLocation) {
-      emitLocation(flockId, userLocation.lat, userLocation.lng);
+      emitLocation(flockId, userLocation.lat, userLocation.lng, travel);
       setSharingLocationForFlock(flockId);
       return;
     }
@@ -9399,7 +9410,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setUserLocation({ lat: latitude, lng: longitude });
-        emitLocation(flockId, latitude, longitude);
+        emitLocation(flockId, latitude, longitude, travel);
         setSharingLocationForFlock(flockId);
       },
       (err) => {
@@ -9416,6 +9427,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const flockId = sharingLocationForFlock;
     if (!flockId) return;
     socketStopSharing(flockId);
+    setMyTravel(null);
+    myTravelRef.current = null;
     // Release the socket room the share was holding open.
     //
     // The chat effect keeps the room while a share is live on purpose: peers
@@ -9436,6 +9449,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Emit location every 10 seconds while sharing is active
   const userLocationRef = useRef(userLocation);
   userLocationRef.current = userLocation;
+  const myTravelRef = useRef(myTravel);
+  myTravelRef.current = myTravel;
   // THE SHARE HAS TO FOLLOW THE PERSON. Both emitters below re-send
   // userLocationRef.current every ten seconds, and nothing was writing new
   // fixes into it during a share: the only writers are explicit taps (the map,
@@ -9477,13 +9492,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   useEffect(() => {
     if (!sharingLocationForFlock || !userLocation) return;
-    emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
+    emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng, myTravelRef.current);
     const interval = setInterval(() => {
       const loc = userLocationRef.current;
-      if (loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng);
+      if (loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng, myTravelRef.current);
     }, 10000);
     return () => clearInterval(interval);
   }, [sharingLocationForFlock]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Changing how you are travelling mid-share ("actually I'm driving, 2
+  // seats") is said to the group at once rather than on the next ten-second
+  // tick, so the card answers the tap. The loop keeps carrying the new value.
+  const updateTravel = useCallback((travel) => {
+    const next = travel && typeof travel === 'object' ? travel : null;
+    setMyTravel(next);
+    myTravelRef.current = next;
+    const loc = userLocationRef.current;
+    if (sharingLocationForFlock && loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng, next);
+  }, [sharingLocationForFlock]);
 
   // Auto-stop sharing when flock status explicitly changes from confirmed
   const sharingFlockStatusRef = useRef(null);
@@ -9508,7 +9534,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const unsubLocation = onLocationUpdate((data) => {
       setFlockMemberLocations(prev => ({
         ...prev,
-        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp, flockId: data.flockId },
+        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, intent: data.intent, mode: data.mode, seats: data.seats, timestamp: data.timestamp, flockId: data.flockId },
       }));
     });
     const unsubStopped = onMemberStoppedSharing((data) => {
@@ -15272,6 +15298,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         startSharingLocation,
         stopLocationSharing,
         styles,
+        myTravel,
+        updateTravel,
         typingUser,
         updateFlockVenue,
         updateFlockVotes,
