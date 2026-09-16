@@ -48,7 +48,9 @@ let lastDelivered = null;
 // sheet needs this button's own tap. A screen with something to settle with the
 // user first (the sign-in screen's date-of-birth read-back) therefore has to be
 // able to stop the tap rather than undo what it did.
-const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
+// `dobGranularity` (optional): 'year' when `dob` was derived from a typed
+// birth year, so the server can refuse to write it onto an existing account.
+const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize }) => {
   const [busy, setBusy] = useState(false);
 
   if (!isNativeIos()) return null;
@@ -80,7 +82,8 @@ const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
         ? lastDelivered.fullName
         : undefined;
       const fullName = delivered || remembered;
-      const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob);
+      const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob,
+        ...(dobGranularity ? [{ dobGranularity }] : []));
       // Accepted: the account carries the name now, and nothing else on this
       // device should ever receive it.
       lastDelivered = null;

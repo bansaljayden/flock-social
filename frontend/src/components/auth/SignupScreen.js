@@ -471,7 +471,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
               setError('That year does not look right. Check it and try again.');
               return;
             }
-            startGoogle({ dob });
+            startGoogle({ dob, dobGranularity: 'year' });
           }}
         >
           <GoogleG /> Continue with Google
@@ -494,6 +494,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         onSuccess={onSignupSuccess}
         onError={(m) => setError(m)}
         dob={dob}
+        dobGranularity="year"
         beforeAuthorize={() => {
           setError('');
           if (!dob) {
