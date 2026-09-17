@@ -35,7 +35,9 @@
  * module imports App.js already pulls in from '../services/api',
  * '../services/haptics', '../components/ui/BirdieBird' and
  * '../components/ui/Icons', so this file imports them straight from the
- * source rather than taking them as props. The names were not read off the
+ * source rather than taking them as props (createFlockInviteLink became the
+ * eighth on 2026-09-16, for the made step at the bottom of this header; it
+ * is the same kind of import). The names were not read off the
  * page. They came from a Babel scope walk of the block, every referenced
  * identifier whose binding resolves outside it, and the parameter list below
  * and the props object at the call site were both generated from that one
@@ -99,10 +101,31 @@
  * Nothing on the screen claims a feature that does not ship. "Invites go out
  * as soon as the flock exists" is POST /api/flocks: a socket event to anyone
  * online and pushInvitesToOffline for everyone else.
+ *
+ * THE LAST STEP OF CREATE IS THE LINK (2026-09-16)
+ *
+ * Production told the story: three real flocks, and every one of them had
+ * exactly one member. The room a person landed in after Create Flock was
+ * empty, and the way to fill it, the guest invite link, sat two taps deep
+ * behind Invite friends in that empty room, an afterthought after the moment
+ * that made them want it. So the form no longer ends in the chat. A
+ * successful create does everything it did before, except navigate: the
+ * flock row, the selection and the skip-history ref are all set, and the
+ * screen swaps the form for one step that says the plan is made and asks
+ * for the one thing that makes it a group, sending the link where the
+ * friends already are. The invite link is minted the moment the flock
+ * exists, into a ref, so the tap on Send the link does not wait on a round
+ * trip it could have started earlier; if that early mint failed, the tap
+ * mints on the spot and says so if it fails again. The share itself is the
+ * ladder the chat's invite sheet already uses (Web Share, a decline is not
+ * an error, clipboard when there is no sheet), and every exit from the step,
+ * including the one that declines, lands in the chat. The chat is now the
+ * SECOND thing the creator sees, and the first thing they did was send the
+ * link.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ChoiceChip, FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES, FormGroup, FormRow } from '../components/ui/FormBits';
-import { createFlock as apiCreateFlock, sendMessage as apiSendMessage } from '../services/api';
+import { createFlock as apiCreateFlock, createFlockInviteLink, sendMessage as apiSendMessage } from '../services/api';
 import { hapticSuccess } from '../services/haptics';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -213,6 +236,27 @@ export default function CreateScreen({
     // what the read-back line above it claims is about to happen.
     const dmTarget = flockFriends.length === 1 && flockFriends[0]?.id ? flockFriends[0] : null;
     const dmFirstName = dmTarget ? String(dmTarget.name || '').split(' ')[0] : '';
+
+    // THE MADE STEP'S STATE, and it is local on purpose. `made` holds the
+    // flock row the create just returned, and it is null for the life of
+    // the form; App.js unmounts this screen the moment currentScreen moves,
+    // so the step cannot outlive its flock or greet the next plan. The
+    // invite link lives in a ref rather than state because nothing renders
+    // it: it is minted the moment the flock exists and read once, by the tap
+    // that sends it. `sending` is what the primary button reads while the
+    // link is fetched and the share sheet is up.
+    const [made, setMade] = useState(null);
+    const [sending, setSending] = useState(false);
+    const inviteLinkRef = useRef(null);
+    const madeHeadingRef = useRef(null);
+    useEffect(() => {
+      if (!made) return;
+      // Focus lands on the heading so a screen reader announces the swap
+      // from the form to the made step, the same reason the name input takes
+      // focus on a validation miss. A detached node throws and does not
+      // matter.
+      try { madeHeadingRef.current?.focus(); } catch { /* detached */ }
+    }, [made]);
 
     const handleCreate = async () => {
       if (!flockName.trim()) {
@@ -329,12 +373,24 @@ export default function CreateScreen({
         }
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: [], invited: invitedNames, memberCount: 1, time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
-        // Batch all state updates together — navigate immediately
+        // Everything the chat will need is in place before anyone sees it:
+        // the ref that tells the chat's mount effect to skip the history
+        // fetch (App.js consumes it only when currentScreen becomes
+        // 'chatDetail', so it keeps for as long as the made step is up), the
+        // flock row, and the selection. What no longer happens here is the
+        // navigation. The last step of create is the link (see the header),
+        // so the screen swaps to the made step instead, and the invite link
+        // starts minting now, into a ref, so the tap that sends it does not
+        // pay for a round trip that could already be over. The promise never
+        // rejects: it settles to { url } or { error }, and inviteUrlFor is
+        // the one place that reads it, so a refused mint is neither an
+        // unhandled rejection nor a swallowed one. It is retried on the tap.
         hapticSuccess();
-      newlyCreatedFlockRef.current = f.id;
+        newlyCreatedFlockRef.current = f.id;
         setFlocks(prev => [...prev, newFlock]);
         setSelectedFlockId(f.id);
-        setCurrentScreen('chatDetail');
+        inviteLinkRef.current = { flockId: f.id, promise: createFlockInviteLink(f.id).then((r) => ({ url: r?.url || null }), (err) => ({ error: err })) };
+        setMade(newFlock);
         setIsLoading(false);
       } catch (err) {
         if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That flock didn't get created. Try again.", 'error');
@@ -387,6 +443,125 @@ export default function CreateScreen({
        inline error is dropped, because a stale validation message about a
        field you have since left is noise. */
     const leave = () => { setCurrentScreen('main'); setFlockNameError(''); };
+
+    /* THE MADE STEP. Every door out of it leads to the chat, because the
+       flock exists and the chat is where it lives; a step that could strand
+       a person on a screen for a plan that is already made would be worse
+       than the empty room it replaces. selectedFlockId was set on the way in,
+       so the chat opens on this flock. */
+    const goToChat = () => { setCurrentScreen('chatDetail'); };
+
+    // The link for the flock just made. The early mint is awaited first; if
+    // it came back without a url (refused, or a shape this build does not
+    // know) the mint runs again right here, and its error is the one the
+    // person is told about. A link the server hands back a second time is
+    // the same link: the route returns the existing one unless regenerate is
+    // asked for, and nothing here asks.
+    const inviteUrlFor = async (flock) => {
+      const held = inviteLinkRef.current;
+      const early = held && held.flockId === flock.id ? await held.promise : null;
+      if (early?.url) return early.url;
+      const fresh = await createFlockInviteLink(flock.id);
+      if (!fresh?.url) throw new Error("Couldn't make an invite link. Try again.");
+      inviteLinkRef.current = { flockId: flock.id, promise: Promise.resolve({ url: fresh.url }) };
+      return fresh.url;
+    };
+
+    const sendLink = async () => {
+      if (!made || sending) return;
+      setSending(true);
+      let url;
+      try {
+        url = await inviteUrlFor(made);
+      } catch (err) {
+        // The step stays up: the plan is made, the link is not, and the
+        // button is still the way to try again.
+        setSending(false);
+        showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
+        return;
+      }
+      // What the share sheet carries: the plan, when it is if a time was set
+      // (formatEventTime answers 'TBD' when the server has none, the same
+      // rule the chat header reads), and what tapping the link gets you. One
+      // line, because that is what a group chat shows of it.
+      const when = made.time && made.time !== 'TBD' ? made.time : '';
+      const text = `${made.name}${when ? `, ${when}` : ''}. Say if you're in, no app needed.`;
+      // Web Share where it exists (mobile Safari, Chrome on Android, which is
+      // where a texted invite is sent from). Backing out of the sheet is an
+      // AbortError, and it is the person's answer, not a failure: they still
+      // go to the chat, where Invite friends holds the same link. Any other
+      // refusal falls through to the clipboard.
+      if (typeof navigator.share === 'function') {
+        try {
+          await navigator.share({ title: made.name, text, url });
+          goToChat();
+          return;
+        } catch (e) {
+          if (e?.name === 'AbortError') { goToChat(); return; }
+          // fall through to the clipboard
+        }
+      }
+      // Copying can fail on an insecure origin or a denied permission. The
+      // chat's Invite friends sheet shows the link as text for exactly that
+      // case, so the person is sent there and told where it is.
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('Invite link copied');
+      } catch {
+        showToast("Couldn't copy the link. It's under Invite friends in the chat.", 'error');
+      }
+      goToChat();
+    };
+
+    if (made) {
+      return (
+        <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+          <DialogBehavior modal={false} onClose={goToChat} />
+          {/* The same bar as the form, minus the back arrow. Back from a plan
+              that is already made cannot un-make it, and an arrow that lands
+              in the chat would point the wrong way; Escape and the system
+              back still work, and go where every door here goes. The 32px
+              line box keeps the bar the height the arrow gave it, so nothing
+              jumps when the form swaps out. */}
+          <div style={{ padding: '12px', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
+            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 0 4px', lineHeight: '32px' }}>Start a Flock</h1>
+          </div>
+
+          <div style={{ flex: 1, padding: '24px 16px 16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
+            {/* Stacked, not the opener's side-by-side: a plan name is up to
+                255 characters and at 320px a heading beside a 92px bird has
+                about 190px to wrap in. The bird is the warm one for the reason
+                the opener gives, and eager because it is the first paint of
+                this step. overflowWrap because a name with no spaces must
+                still break rather than run off the edge. */}
+            <BirdieStill bird={WARM_BIRD} size={92} eager />
+            <h2 ref={madeHeadingRef} tabIndex={-1} style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em', fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '14px 0 6px', lineHeight: 1.2, overflowWrap: 'anywhere' }}>{made.name} is made.</h2>
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Now put it where your friends already are.</p>
+          </div>
+
+          {/* The commit, in the shape the Create button has: same class, same
+              padding, same radius, same busy state. Not now is the quiet
+              second door VerifyEmailSheet draws under its primary, and it is
+              never disabled: a mint that hangs must not hold the person on
+              this screen. */}
+          <div style={{ padding: '10px 16px 16px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)' }}>
+            <button className="hit44 glass-btn glass-primary" onClick={sendLink} disabled={sending} style={{
+              width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
+              background: colors.navy,
+              color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              opacity: sending ? 0.6 : 1,
+              boxShadow: '0 1px 2px rgba(30,41,59,0.10)',
+            }}>
+              {sending
+                ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Getting the link...</>
+                : <>{Icons.share('white', 18)} Send the link</>}
+            </button>
+            <button className="hit44" onClick={goToChat} style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Not now</button>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>

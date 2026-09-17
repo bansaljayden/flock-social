@@ -321,6 +321,22 @@ describe('claims a chat screen must not make', () => {
     expect(appSource).toMatch(/\{chat \? <ChatSkeleton \/> : null\}/);
   });
 
+  test('the still-in strip asks only while the server has a window open', () => {
+    // reconfirmSweep opens the window a few hours before a confirmed plan
+    // and `flock.reconfirm` is null the rest of the time. A strip that put
+    // "Still in?" up off a null would be the chat asking on Tuesday about
+    // Saturday, so the ask lives inside the gate and nowhere else.
+    const gate = flockScreenSource.indexOf('{flock.reconfirm?.open && (');
+    expect(gate).toBeGreaterThan(-1);
+    const ask = flockScreenSource.indexOf('Still in? ');
+    expect(ask).toBeGreaterThan(gate);
+    expect(flockScreenSource.match(/Still in\? /g)).toHaveLength(1);
+    // No gate closes between the two: the ask is inside it, not after it.
+    expect(flockScreenSource.slice(gate, ask)).not.toMatch(/\n {8}\)\}/);
+    // And the answer goes through the App.js action that patches the count.
+    expect(flockScreenSource).toMatch(/await reconfirmFlock\(flock\.id\);/);
+  });
+
   test('a send in flight says so', () => {
     // `pending` has been set on every optimistic bubble since the echo work
     // landed and nothing rendered it, so a message looked delivered for the

@@ -410,6 +410,7 @@ function chatProps(over = {}) {
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
     updateTravel: fn(),
+    reconfirmFlock: fn(),
     userLocation: null,
     ...over,
   };

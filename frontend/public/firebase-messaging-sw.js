@@ -56,6 +56,7 @@ function configFromUrl() {
 var FLOCK_TYPES = [
   'flock_invite', 'flock_message', 'flock_rsvp', 'flock_confirmed', 'flock_updated',
   'flock_cancelled',
+  'flock_reconfirm',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
 ];

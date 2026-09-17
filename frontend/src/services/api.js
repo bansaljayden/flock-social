@@ -2142,6 +2142,20 @@ export async function getBudgetStatus(flockId) {
   return request(`/api/budget/${flockId}`);
 }
 
+// The night-of "still in?" tap (POST /api/flocks/:id/reconfirm). Answers
+// { reconfirmed, count, total, deadline }. A 409 carrying code NOT_OPEN means
+// the window is not open, which a screen left open for hours can hit.
+export async function reconfirmFlock(flockId) {
+  return request(`/api/flocks/${flockId}/reconfirm`, { method: 'POST' });
+}
+
+// The creator starts the budget over (POST /api/budget/:id/reset): every
+// answer is deleted and the lock comes off, so the next number the group sees
+// is a first publication. The only privacy-safe way off a settled number.
+export async function resetBudget(flockId) {
+  return request(`/api/budget/${flockId}/reset`, { method: 'POST' });
+}
+
 export async function lockBudget(flockId) {
   return request(`/api/budget/${flockId}/lock`, { method: 'POST' });
 }

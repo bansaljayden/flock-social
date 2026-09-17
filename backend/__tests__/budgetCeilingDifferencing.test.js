@@ -150,6 +150,12 @@ async function dispatch(sql, params) {
     return { rows, rowCount: rows.length };
   }
 
+  // routes/budget.js answeringPopulation: the guest half of "who has to
+  // answer". Nobody in these worlds answered from a link; modelled so the
+  // statement is understood, not so it is exercised.
+  if (/^SELECT COUNT\(\*\) AS total FROM guest_rsvps WHERE flock_id = \$1 AND status = 'in' AND COALESCE\(is_hidden, false\) = false$/.test(flat)) {
+    return { rows: [{ total: '0' }], rowCount: 1 };
+  }
   unknown.push(flat.slice(0, 160));
   throw new Error(`unscripted query: ${flat.slice(0, 160)}`);
 }

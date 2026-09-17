@@ -409,6 +409,25 @@
   color: var(--gi-ink-3);
 }
 
+/* Said "still in" tonight: a second small tag on the row, set like the guest
+   tag, carried by the double check AND the words. Accent rather than the
+   quiet ink because on the night it is the one fact that matters, and the
+   glyph is inline-flex with the words so the two cannot separate when a long
+   name wraps the row. --gi-accent measures 6.4:1 on the paper (8.1:1 dark),
+   the same pair the "Your vote" tag is held to. */
+.gi-who-still {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--gi-accent);
+  white-space: nowrap;
+}
+
 /* Someone who is not coming, or has not said, is still on the list and still
    readable; they are just not the row your eye stops on. */
 .gi-tone-no .gi-who-name,
@@ -579,6 +598,36 @@
 
 .gi-input[aria-invalid='true'] { border-color: var(--gi-bad); }
 
+/* ---------- the amount field ---------- */
+
+/* The dollar sign sits inside the field's own edge, so "$ 30" reads as one
+   thing, and the field itself stays a plain .gi-input that the !important
+   block above already themes (the global input rule sets no padding, so the
+   left padding here is not fighting anything). Narrow on purpose: seven
+   characters is the most an amount can be, and a full-width field for "30"
+   reads as a question about something bigger than a night out. */
+.gi-amount {
+  position: relative;
+  display: block;
+  max-width: 11rem;
+}
+
+.gi-amount-prefix {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--gi-ink-2);
+  pointer-events: none;
+}
+
+.gi .gi-amount-input {
+  padding-left: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- buttons ---------- */
 
 .gi-row {
@@ -663,6 +712,11 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* A quiet button sitting in a button row ("Skip" beside "That works") gets
+   side padding so its thumb target is wider than the word, which the inline
+   "Change name" link in a sentence must not have. */
+.gi-row .gi-btn-quiet { padding: 8px 14px; }
 
 /* Focus is drawn against the ink, not the browser default, so it survives on
    both the cream and the navy fills. Keyboard and switch-control users get the
