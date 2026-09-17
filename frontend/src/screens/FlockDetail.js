@@ -594,6 +594,17 @@ export default function FlockDetail({
                 {Icons.userPlus('white', 12)} Invite
               </button>
             </div>
+            {/* The night-of window (services/reconfirmSweep.js opens it a few
+                hours before a confirmed plan; App.js reads it into
+                flock.reconfirm). The chat's strip asks the question; this
+                screen states the answer beside the faces, because "who is
+                still in" is a fact about the roster. Null the rest of the
+                time, so nothing here on Tuesday about Saturday. */}
+            {flock.reconfirm?.open && (
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '-6px 0 10px' }}>
+                {Number(flock.reconfirm.count) || 0} of {Number(flock.reconfirm.total) || 0} still in tonight.
+              </p>
+            )}
             {roster.length > 0 ? (
               <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
                 {roster.map((member, i) => {
@@ -631,6 +642,14 @@ export default function FlockDetail({
                       )}
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '500' }}>{mName.split(' ')[0]}</span>
                       {isGuest && <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', letterSpacing: '0.3px' }}>GUEST</span>}
+                      {/* A word, never a tint: a face that has not answered
+                          says nothing, rather than something a colour-blind
+                          reader cannot tell from "has". */}
+                      {flock.reconfirm?.open && typeof member === 'object' && member.reconfirmed && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', letterSpacing: '0.3px' }}>
+                          {Icons.check('currentColor', 12)} STILL IN
+                        </span>
+                      )}
                     </>
                   );
                   const rowKey = typeof member === 'object' && member.id != null ? String(member.id) : i;

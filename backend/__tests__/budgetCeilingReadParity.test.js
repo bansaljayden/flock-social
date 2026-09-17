@@ -197,7 +197,9 @@ async function dispatch(text, params = []) {
   }
 
   // ── budget_submissions: three statements, three different projections ──
-  if (has('COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count')) {
+  // non_skip_count is the CROWD (member sharers, `bm.id IS NOT NULL`) since
+  // migration 071; the totals around it range over everyone present.
+  if (has('COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count')) {
     return {
       rows: [{ total_submissions: String(nonSkipCount), non_skip_count: String(nonSkipCount), skip_count: '0' }],
       rowCount: 1,
@@ -229,6 +231,11 @@ async function dispatch(text, params = []) {
   }
   if (has("SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'")) {
     return { rows: [{ total: String(MEMBERS.length) }], rowCount: 1 };
+  }
+  // routes/budget.js answeringPopulation: the guest half of "who has to
+  // answer", zero on this plan.
+  if (has("SELECT COUNT(*) AS total FROM guest_rsvps WHERE flock_id = $1 AND status = 'in'")) {
+    return { rows: [{ total: '0' }], rowCount: 1 };
   }
   if (has("SELECT COUNT(*) AS cnt FROM flock_members WHERE flock_id = $1 AND status = 'accepted'")) {
     return { rows: [{ cnt: String(MEMBERS.length) }], rowCount: 1 };

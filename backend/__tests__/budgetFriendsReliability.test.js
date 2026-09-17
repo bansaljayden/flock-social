@@ -360,6 +360,11 @@ async function dispatch(text, params = [], ctx = null) {
       rowCount: 1,
     };
   }
+  // routes/budget.js answeringPopulation: the guest half of "who has to
+  // answer", zero on this plan.
+  if (has('COUNT(*) AS total FROM guest_rsvps')) {
+    return { rows: [{ total: '0' }], rowCount: 1 };
+  }
   if (has('COUNT(*) AS total FROM flock_members')) {
     return { rows: [{ total: String(members.length) }], rowCount: 1 };
   }
@@ -791,7 +796,7 @@ test('budget: concurrent double-submit from one user counts once and crosses the
   assertQueriesUnderstood();
 });
 
-test('budget: a plain submit runs 9 statements, with the redundant others-count gone', async () => {
+test('budget: a plain submit runs 10 statements, with the redundant others-count gone', async () => {
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
 
   const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 90 });
@@ -805,7 +810,11 @@ test('budget: a plain submit runs 9 statements, with the redundant others-count 
   // announcement fires on the settle, which can only happen once, so there is
   // nothing to compare against) and the cache write (flocks.budget_ceiling is
   // written only when the budget settles, and this submit does not settle it).
-  assert.strictEqual(queries.length, 9,
+  // 10 since migration 071: the population the settle compares against is
+  // members plus 'in' guests, and the guest half is one more count (see
+  // answeringPopulation in routes/budget.js for why it is not folded into the
+  // member count).
+  assert.strictEqual(queries.length, 10,
     `submit issued ${queries.length} statements:\n${queries.map((q) => q.sql).join('\n')}`);
   assert.ok(!queries.some((q) => q.sql.includes('user_id != $2') && q.sql.includes('budget_submissions')),
     'the redundant per-submit others-count is back');

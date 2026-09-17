@@ -59,3 +59,56 @@ test('the guest page does not promise a revoke control the host does not have', 
   expect(guestPage).not.toMatch(/They can make one from the plan in the app/);
   expect(guestPage).toMatch(/Ask whoever sent it to share the plan with you again\./);
 });
+
+// The link does what a member can do (2026-09-16): the budget and the night-of
+// question, in the same words the chat uses and on the same wire.
+
+test('the link and the chat ask the budget in the same words', () => {
+  for (const line of [
+    "What's your budget tonight?",
+    'Group budget: up to',
+    'It takes three amounts before Flock can show one',
+    'This is anonymous. No one sees your answer.',
+  ]) {
+    expect({ line, inChat: chat.includes(line) }).toEqual({ line, inChat: true });
+    expect({ line, onLink: guestPage.includes(line) }).toEqual({ line, onLink: true });
+  }
+});
+
+test('a guest\'s own state travels as a POST body, never a query string', () => {
+  expect(guest).toMatch(/router\.post\('\/:token\/me',/);
+  expect(guestPage).toMatch(/\/me`, \{\s*method: 'POST',\s*headers: \{ 'Content-Type': 'application\/json' \},\s*body: JSON\.stringify\(\{ guestToken \}\)/);
+  expect(guestPage).not.toMatch(/\/me\?/);
+});
+
+test('the public preview never carries a ceiling, and the page reads one only off the guest\'s own channel', () => {
+  const start = guest.indexOf('async function guestBudgetSummary(');
+  const end = guest.indexOf('// GET /api/guest/:token', start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  const summary = guest.slice(start, end);
+  expect(summary).toMatch(/submissionCount:/);
+  expect(summary).not.toMatch(/ceiling/);
+  // On the page: the ceiling is never read off the preview's block, and it
+  // is set from exactly two replies keyed on the guest's token (the /me merge
+  // and the guest's own answer) plus the reset when the identity is dropped.
+  expect(guestPage).not.toMatch(/budget\.ceiling/);
+  expect(guestPage).toMatch(/const band = Number\(me\.ceiling\);/);
+  expect(guestPage).toMatch(/const band = Number\(body\.ceiling\);/);
+  expect((guestPage.match(/setCeiling\(/g) || []).length).toBe(3);
+});
+
+test('the refusal codes the page reads are the ones the server sends', () => {
+  for (const code of ['NOT_IN', 'BUDGET_LOCKED', 'NOT_OPEN']) {
+    expect({ code, sent: guest.includes(`code: '${code}'`) }).toEqual({ code, sent: true });
+    expect({ code, read: guestPage.includes(`body.code === '${code}'`) }).toEqual({ code, read: true });
+  }
+});
+
+test('an old server\'s preview is not asked for what it cannot answer', () => {
+  // Both keys are always on a preview from a server that has /me; the page
+  // treats their absence the way it treats an absent roster or `full`.
+  expect(guest).toMatch(/reconfirm: reconfirm && reconfirm\.open \? reconfirm : null,/);
+  expect(guestPage).toMatch(/const serverHasMe = !!\(data && typeof data === 'object' && \('budget' in data \|\| 'reconfirm' in data\)\);/);
+  expect(guestPage).toMatch(/if \(phase !== 'ready' \|\| !serverHasMe\) return undefined;/);
+});

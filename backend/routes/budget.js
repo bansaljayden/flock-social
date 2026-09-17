@@ -257,6 +257,70 @@ const MEMBER_SUBMISSIONS = `budget_submissions bs
            JOIN flock_members bm ON bm.flock_id = bs.flock_id AND bm.user_id = bs.user_id
             AND bm.status = 'accepted'`;
 
+// AND A GUEST'S ANSWER BINDS THE NUMBER BUT CANNOT BE THE CROWD.
+//
+// A share link can answer the budget (routes/guest.js POST /:token/budget;
+// migration 071 adds budget_submissions.guest_rsvp_id). Two different
+// questions are asked of the rows, and they get two different fragments:
+//
+//   MEMBER_SUBMISSIONS, above, is THE CROWD: the rows a published number can
+//   hide a person in. It stays accounts only. The three-amount floor exists
+//   because a MIN over fewer people is one person's figure, and a guest row is
+//   minted by whoever holds the link, with no account, no invitation and no
+//   departure, twelve an hour from one address. If those rows could be the
+//   crowd, a creator alone in a plan could mint two, answer ten thousand on
+//   each, answer their own number, and read the band of it back off the link:
+//   the "two people plus a throwaway" shape the MEMBERSHIP note closed, for
+//   free. So every reveal threshold in this file, in routes/flocks.js and in
+//   routes/billing.js counts THIS fragment, and a guest never makes three.
+//
+//   PRESENT_ANSWERS, below, is WHO HAS ANSWERED AND WHAT BINDS: members plus
+//   guests, each on the terms of their own presence. A guest's number is in
+//   the MIN (a cap somebody going cannot afford is not a cap) and their row
+//   counts toward "everyone has answered"; a guest who flips to out, is hidden
+//   by a moderator, or joins for real (the join hides the guest row) leaves
+//   both in the same statement a departed member does, and comes back with
+//   their answer if they come back.
+//
+// THE SHAPE. Callers own the WHERE clause (every reader appends its own
+// `WHERE bs.flock_id = $1 AND skipped = false`), so presence has to be
+// enforced inside the FROM fragment. Two LEFT JOINs, one per kind of author,
+// and an inner join on "one of them matched" does that without moving a
+// predicate into the callers. bm.id and bg.id are non-NULL exactly when the
+// row's author is present, and a row has one author (CHECK
+// budget_submissions_one_author), so a row is never counted twice; and
+// `bm.id IS NOT NULL` inside a COUNT FILTER is how one statement over this
+// fragment still counts the crowd.
+const PRESENT_ANSWERS = `budget_submissions bs
+           LEFT JOIN flock_members bm ON bm.flock_id = bs.flock_id AND bm.user_id = bs.user_id
+            AND bm.status = 'accepted'
+           LEFT JOIN guest_rsvps bg ON bg.id = bs.guest_rsvp_id AND bg.flock_id = bs.flock_id
+            AND bg.status = 'in' AND COALESCE(bg.is_hidden, false) = false
+           JOIN (SELECT 1) present ON (bm.id IS NOT NULL OR bg.id IS NOT NULL)`;
+
+// WHO HAS TO ANSWER. The denominator of "3 of 6 answered" and of the settle
+// decision: accepted members plus visible 'in' guests, which is who the roster
+// shows as going. The member count is also returned on its own, because the
+// skip/share split is published over the CROWD (see publishableSkipCount): a
+// link holder's guest rows must not be able to push a two-member plan over
+// that floor. Two statements rather than one, on purpose: the member count is
+// the statement every budget fixture already models, and a guest count of
+// zero is what every plan that exists today has. `run` is the query function,
+// so the settle can ask inside its transaction and the reads can ask on the
+// pool.
+const GUEST_ANSWERERS_SQL = `SELECT COUNT(*) AS total FROM guest_rsvps
+   WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false`;
+async function answeringPopulation(run, flockId) {
+  const memberResult = await run(
+    "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+    [flockId]
+  );
+  const guestResult = await run(GUEST_ANSWERERS_SQL, [flockId]);
+  const members = parseInt((memberResult.rows && memberResult.rows[0] && memberResult.rows[0].total) || 0);
+  const guests = parseInt((guestResult.rows && guestResult.rows[0] && guestResult.rows[0].total) || 0);
+  return { total: members + guests, members, guests };
+}
+
 function bandCeiling(raw) {
   if (raw === null || raw === undefined) return null;
   const n = typeof raw === 'number' ? raw : parseFloat(raw);
@@ -277,6 +341,163 @@ function sweepReminderCooldowns(now) {
   // fixed lifetime), so oldest-first drops whatever is nearest to expiring.
   while (reminderCooldowns.size > REMINDER_MAX_ENTRIES) {
     reminderCooldowns.delete(reminderCooldowns.keys().next().value);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ONE SETTLE, ONE PUBLICATION, TWO DOORS.
+//
+// POST /submit (a member) and routes/guest.js POST /:token/budget (a guest
+// holding the invite link) each write their own row and then run exactly this:
+// recompute the MIN over present rows, count them, read the population, lock
+// the flock if this answer completed it, and publish the same aggregate the
+// same way. The statements and their order are the ones the privacy fixtures
+// model; a second door that recomputed them its own way would be the "one of
+// the readers forgot" finding this file has already had twice.
+//
+// settleIfComplete runs INSIDE the caller's transaction, after the caller's
+// own upsert, with the flock row already held FOR UPDATE.
+// ---------------------------------------------------------------------------
+async function settleIfComplete(client, flockId) {
+  // Recalculate ceiling: MIN of non-skipped amounts from PRESENT rows (see
+  // MEMBER_SUBMISSIONS: a departed account's cent used to set this forever).
+  const ceilingResult = await client.query(
+    `SELECT MIN(amount) AS ceiling FROM ${PRESENT_ANSWERS}
+     WHERE bs.flock_id = $1 AND skipped = false`,
+    [flockId]
+  );
+  // Band it before anything else can see it. The cached column is read by
+  // GET /api/budget/:flockId here, by the flock list and flock detail in
+  // routes/flocks.js, and by the ghost commit in routes/billing.js; banding on
+  // the way IN is what makes every one of those surfaces publish the band
+  // rather than one person's exact amount.
+  const ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
+
+  // Count submissions, over present rows only, same as the MIN above: the
+  // non-skip count IS the privacy threshold, so a row from someone who left
+  // was borrowing anonymity for a flock that does not have it.
+  //
+  // non_skip_count is THE CROWD (member sharers, `bm.id IS NOT NULL`); the
+  // other two range over everyone present. See the note above PRESENT_ANSWERS
+  // for why a guest's amount binds the number and never counts toward three.
+  const countResult = await client.query(
+    `SELECT
+       COUNT(*) AS total_submissions,
+       COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count,
+       COUNT(*) FILTER (WHERE skipped = true) AS skip_count
+     FROM ${PRESENT_ANSWERS} WHERE bs.flock_id = $1`,
+    [flockId]
+  );
+  const countRow = countResult.rows[0];
+
+  // The population is read INSIDE the transaction, because the settle
+  // decision below is made from it: "everyone has answered" is a comparison
+  // between two counts, and reading one of them from a different snapshot is
+  // how a flock settles on a roster that no longer exists.
+  const population = await answeringPopulation((q, p) => client.query(q, p), flockId);
+  const totalMembers = population.total;
+
+  // SETTLE, ONCE. Everyone who has to answer has, and at least three of them
+  // shared an amount, so this is the last moment at which a number can be
+  // published without a previous number to subtract it from. The flock row
+  // is held FOR UPDATE, so exactly one answer wins this branch; anything
+  // arriving after it meets budget_locked at the top of its transaction and
+  // is refused.
+  //
+  // Below the three-amount floor nothing settles and nothing is written, even
+  // when everybody has answered: the group can still reach three by someone
+  // turning a skip into an amount, and locking would take that away for a
+  // number we are not allowed to publish anyway.
+  const everyoneAnswered = totalMembers > 0
+    && parseInt(countRow.total_submissions) >= totalMembers;
+  const settledNow = everyoneAnswered && parseInt(countRow.non_skip_count) >= 3 && !!ceiling;
+  if (settledNow) {
+    // Same statement as POST /lock, deliberately: settling is settling, and
+    // flocks.budget_ceiling is written by exactly these two places and holds
+    // exactly the number that was published.
+    await client.query(
+      'UPDATE flocks SET budget_locked = true, budget_ceiling = $2, updated_at = NOW() WHERE id = $1',
+      [flockId, ceiling]
+    );
+  }
+  return { ceiling, countRow, totalMembers, memberCount: population.members, settledNow };
+}
+
+// What the answerer is told and what the room is told: one object.
+//
+// isReady means "enough amounts have been shared for a number to be
+// publishable", which is what the creator's Lock button is gated on. It is
+// NOT "here is the number": the ceiling goes out only in the answer that
+// settled the budget (see settledCeiling), and the skip/share split on the
+// same terms (see publishableSkipCount). Every other answer carries null in
+// both, so a member watching the screen has no earlier number to subtract.
+//
+// The split's floor is measured over the CROWD (memberCount), not the
+// population: a link holder's guest rows must not push a two-member plan over
+// "three co-members" and hand out a count the two of them can subtract.
+function answerPayload({ countRow, ceiling, totalMembers, memberCount, settledNow }) {
+  const submissionCount = parseInt(countRow.total_submissions);
+  const skipCount = parseInt(countRow.skip_count);
+  const nonSkipCount = parseInt(countRow.non_skip_count);
+  const crowd = Number.isFinite(Number(memberCount)) ? Number(memberCount) : 0;
+  return {
+    ceiling: settledNow ? ceiling : null,
+    submissionCount,
+    totalMembers,
+    isReady: nonSkipCount >= 3,
+    skipCount: settledNow ? publishableSkipCount(skipCount, crowd) : null,
+    budgetLocked: settledNow,
+  };
+}
+
+// Per-member fan-out, not the `flock:{id}` room, so a member sitting anywhere
+// else in the app still gets the budget-ready signal. This carries the SAME
+// value the REST response carries, which matters twice over: a raw MIN
+// reaching the socket while REST published a band would hand back the value
+// fix, and a live ceiling reaching the socket while REST withheld it would
+// hand back the sequence fix, which is the one this payload used to leak on
+// every keystroke. Guarded so a fan-out failure cannot 500 an answer that
+// already committed.
+async function emitAnswer(io, flockId, payload) {
+  if (!io) return;
+  await emitToFlockMembers(io, flockId, 'budget_updated', { flockId, ...payload })
+    .catch((e) => console.error('budget_updated fan-out failed:', e.message));
+}
+
+// Push "Budget set!" on the settling answer, which happens at most once per
+// flock because the budget is locked from here on. Runs AFTER the response,
+// inside its own try/catch, and fans out with allSettled, for the reason
+// billing.js records: pushIfOffline is not guaranteed to hand back a promise,
+// so a synchronous throw here, while this sat before the response, landed in
+// the outer catch and answered a budget that had already settled in the
+// transaction with a 500 that a retry then refuses. The settle is committed by
+// this point, so a delivery failure must not unwind it, and a twenty-member
+// fan-out must not be twenty sequential Firebase round trips the answerer
+// waits on. `exceptUserId` is the member who just answered (they are looking
+// at it); a guest's answer has nobody to exclude.
+async function pushBudgetSet(io, flockId, ceiling, exceptUserId) {
+  if (!ceiling) return;
+  try {
+    const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+    const flockName = flockNameResult.rows[0]?.name || 'Flock';
+    const membersResult = exceptUserId != null
+      ? await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+        [flockId, exceptUserId]
+      )
+      : await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+        [flockId]
+      );
+    await Promise.allSettled(
+      membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
+        'Budget set!',
+        `Group budget: up to $${formatMoney(ceiling)} for ${flockName}`,
+        { type: 'budget_ready', flockId: String(flockId) }
+      ))
+    );
+  } catch (pushErr) {
+    console.error('Budget set push fan-out failed:', pushErr.message);
   }
 }
 
@@ -358,6 +579,7 @@ router.post('/:flockId/submit',
       let countRow;
       let ceiling;
       let totalMembers = 0;
+      let memberCount = 0;
       let settledNow = false;
       try {
         await client.query('BEGIN');
@@ -395,68 +617,12 @@ router.post('/:flockId/submit',
           [flockId, userId, skipped ? null : amount, !!skipped]
         );
 
-        // Recalculate ceiling: MIN of non-skipped amounts from PRESENT members
-        // (see MEMBER_SUBMISSIONS: a departed account's cent used to set this
-        // forever).
-        const ceilingResult = await client.query(
-          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
-           WHERE bs.flock_id = $1 AND skipped = false`,
-          [flockId]
-        );
-        // Band it before anything else can see it. The cached column is read by
-        // GET /api/budget/:flockId here, by the flock list and flock detail in
-        // routes/flocks.js, and by the ghost commit in routes/billing.js —
-        // banding on the way IN is what makes every one of those surfaces
-        // publish the band rather than one person's exact amount.
-        ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
-
-        // Count submissions, over present members only, same as the MIN above:
-        // the non-skip count IS the privacy threshold, so a row from someone
-        // who left was borrowing anonymity for a flock that does not have it.
-        const countResult = await client.query(
-          `SELECT
-             COUNT(*) AS total_submissions,
-             COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
-             COUNT(*) FILTER (WHERE skipped = true) AS skip_count
-           FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1`,
-          [flockId]
-        );
-        countRow = countResult.rows[0];
-
-        // The roster size is read INSIDE the transaction now, because the
-        // settle decision below is made from it: "everyone has answered" is a
-        // comparison between two counts, and reading one of them from a
-        // different snapshot is how a flock settles on a roster that no longer
-        // exists.
-        const memberResult = await client.query(
-          "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-          [flockId]
-        );
-        totalMembers = parseInt(memberResult.rows[0].total);
-
-        // SETTLE, ONCE. Every accepted member has answered and at least three
-        // of them shared an amount, so this is the last moment at which a
-        // number can be published without a previous number to subtract it
-        // from. The flock row is held FOR UPDATE, so exactly one submission
-        // wins this branch; anything arriving after it meets budget_locked at
-        // the top of this transaction and is refused.
-        //
-        // Below the three-amount floor nothing settles and nothing is written,
-        // even when everybody has answered: the group can still reach three by
-        // someone turning a skip into an amount, and locking would take that
-        // away for a number we are not allowed to publish anyway.
-        const everyoneAnswered = totalMembers > 0
-          && parseInt(countRow.total_submissions) >= totalMembers;
-        settledNow = everyoneAnswered && parseInt(countRow.non_skip_count) >= 3 && !!ceiling;
-        if (settledNow) {
-          // Same statement as POST /lock, deliberately: settling is settling,
-          // and flocks.budget_ceiling is written by exactly these two places
-          // and holds exactly the number that was published.
-          await client.query(
-            'UPDATE flocks SET budget_locked = true, budget_ceiling = $2, updated_at = NOW() WHERE id = $1',
-            [flockId, ceiling]
-          );
-        }
+        // The recompute, the counts, the population and the settle decision
+        // live in settleIfComplete above, because the guest door
+        // (routes/guest.js POST /:token/budget) runs the identical sequence
+        // after its own upsert, and a second copy of it would be the next
+        // "one of the doors forgot" finding.
+        ({ ceiling, countRow, totalMembers, memberCount, settledNow } = await settleIfComplete(client, flockId));
 
         await client.query('COMMIT');
       } catch (txErr) {
@@ -465,93 +631,15 @@ router.post('/:flockId/submit',
       } finally {
         client.release();
       }
-      const { total_submissions, non_skip_count, skip_count } = countRow;
-      const submissionCount = parseInt(total_submissions);
-      const skipCount = parseInt(skip_count);
-      const nonSkipCount = parseInt(non_skip_count);
-
-      // isReady means "enough amounts have been shared for a number to be
-      // publishable", which is what the creator's Lock button is gated on. It
-      // is NOT "here is the number": below, the ceiling goes out only in the
-      // request that settled the budget. Keeping the two separate is what lets
-      // the screen say "3 of 4 answered" without saying how much.
-      const isReady = nonSkipCount >= 3;
-      // ONE PUBLICATION, AND ONLY THE ONE THAT SETTLED IT. Every other
-      // submission answers null, so a member watching the screen has no earlier
-      // number to compare this one against. See settledCeiling above.
-      const visibleCeiling = settledNow ? ceiling : null;
-      // And the skip/share split on the same terms as the ceiling: once, in
-      // the payload that settled the budget, and only when it ranges over
-      // three co-members or more. Publishing it on every submission handed out
-      // a difference, and the difference is over the one row that was just
-      // written. See publishableSkipCount.
-      const visibleSkipCount = settledNow ? publishableSkipCount(skipCount, totalMembers) : null;
-
-      // Emit socket event to flock room
+      // Answer, then tell the room, then push, in that order, from one shape
+      // (answerPayload / emitAnswer / pushBudgetSet, shared with the guest
+      // door). The payload is aggregate-only on every answer but the one that
+      // settles the budget, where it carries the banded number once.
+      const payload = answerPayload({ countRow, ceiling, totalMembers, memberCount, settledNow });
       const io = req.app.get('io');
-      if (io) {
-        // Per-member fan-out, not the `flock:{id}` room, so a member sitting
-        // anywhere else in the app still gets the budget-ready signal. Payload
-        // is aggregate-only on every submission but the one that settles the
-        // budget, where it carries the banded number once; no individual amount
-        // is ever put on the wire. This carries the SAME value the REST
-        // response below carries, which matters twice over: a raw MIN reaching
-        // the socket while REST published a band would hand back the value
-        // fix, and a live ceiling reaching the socket while REST withheld it
-        // would hand back the sequence fix, which is the one this payload used
-        // to leak on every keystroke. Guarded so a fan-out failure cannot 500 a
-        // submission that already committed.
-        await emitToFlockMembers(io, flockId, 'budget_updated', {
-          flockId,
-          ceiling: visibleCeiling,
-          submissionCount,
-          totalMembers,
-          isReady,
-          skipCount: visibleSkipCount,
-          budgetLocked: settledNow,
-        }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
-      }
-
-      res.json({
-        submitted: true,
-        ceiling: visibleCeiling,
-        submissionCount,
-        totalMembers,
-        isReady,
-        skipCount: visibleSkipCount,
-        budgetLocked: settledNow,
-        userSubmitted: true,
-      });
-
-      // Push "Budget set!" on the settling submission, which happens at most
-      // once per flock because the budget is locked from here on. It runs AFTER
-      // res.json, inside its own try/catch, and fans out with allSettled, for
-      // the reason billing.js records: pushIfOffline is not guaranteed to hand
-      // back a promise, so a synchronous throw here, while this sat before the
-      // response, landed in the outer catch and answered a budget that had
-      // already settled in the transaction with a 500 that a retry then refuses.
-      // The settle is committed by this point, so a delivery failure must not
-      // unwind it, and a twenty-member fan-out must not be twenty sequential
-      // Firebase round trips the submitter waits on.
-      if (settledNow && visibleCeiling) {
-        try {
-          const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
-          const flockName = flockNameResult.rows[0]?.name || 'Flock';
-          const membersResult = await pool.query(
-            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-            [flockId, userId]
-          );
-          await Promise.allSettled(
-            membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
-              'Budget set!',
-              `Group budget: up to $${formatMoney(visibleCeiling)} for ${flockName}`,
-              { type: 'budget_ready', flockId: String(flockId) }
-            ))
-          );
-        } catch (pushErr) {
-          console.error('Budget set push fan-out failed:', pushErr.message);
-        }
-      }
+      await emitAnswer(io, flockId, payload);
+      res.json({ submitted: true, ...payload, userSubmitted: true });
+      await pushBudgetSet(io, flockId, payload.ceiling, userId);
     } catch (err) {
       console.error('Budget submit error:', err);
       res.status(500).json({ error: 'Failed to submit budget' });
@@ -592,12 +680,15 @@ router.get('/:flockId',
       // moment everyone is watching the crossing. Counting first means a
       // crossing mid-request errs to "withhold", and a >= 3 count is only ever
       // paired with a ceiling at least as new as the state it counted.
+      //
+      // Totals over everyone present (PRESENT_ANSWERS), the reveal threshold
+      // over the crowd inside them (`bm.id IS NOT NULL`): see the fragments.
       const countResult = await pool.query(
         `SELECT
            COUNT(*) AS total_submissions,
-           COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
+           COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count,
            COUNT(*) FILTER (WHERE skipped = true) AS skip_count
-         FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1`,
+         FROM ${PRESENT_ANSWERS} WHERE bs.flock_id = $1`,
         [flockId]
       );
 
@@ -613,12 +704,9 @@ router.get('/:flockId',
       const submissionCount = parseInt(countResult.rows[0].total_submissions);
       const nonSkipCount = parseInt(countResult.rows[0].non_skip_count);
 
-      // Total members
-      const memberResult = await pool.query(
-        "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-        [flockId]
-      );
-      const totalMembers = parseInt(memberResult.rows[0].total);
+      // Who has to answer: accepted members plus visible 'in' guests, the
+      // same population the settle counts (see answeringPopulation).
+      const totalMembers = (await answeringPopulation((q, p) => pool.query(q, p), flockId)).total;
 
       // User's own submission (privacy: only their own)
       const userResult = await pool.query(
@@ -797,7 +885,7 @@ router.post('/:flockId/lock',
         // Recompute inside the transaction — the cached column could be stale
         // relative to the submissions this count just validated.
         const ceilingResult = await client.query(
-          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
+          `SELECT MIN(amount) AS ceiling FROM ${PRESENT_ANSWERS}
            WHERE bs.flock_id = $1 AND skipped = false`,
           [flockId]
         );
@@ -837,6 +925,98 @@ router.post('/:flockId/lock',
     } catch (err) {
       console.error('Budget lock error:', err);
       res.status(500).json({ error: 'Failed to lock budget' });
+    }
+  }
+);
+
+// POST /api/budget/:flockId/reset — the creator starts the budget over.
+//
+// WHY IT EXISTS. The ceiling is a MIN, and it is published once and never
+// moves (settledCeiling). Those two rules together mean a single cent, once it
+// has settled, is the group's budget for good: hiding its author cannot move a
+// number that is not allowed to move, and there was no path off it. A member
+// could always park one (they were chosen, and the MEMBERSHIP note concedes
+// it); a guest holding the link can now park one too, and a guest was not
+// chosen. So the creator gets the one recovery that is privacy-safe:
+// everything goes, and the next publication is a FIRST publication, with no
+// earlier number to subtract it from. Deleting every row rather than unlocking
+// around them is the whole point: an unlock that kept the rows would publish
+// a second number over the same people, which is the sequence leak.
+//
+// Creator only, one transaction under the flock lock, and a real DELETE bounded
+// by flock_id. The room is told with the same aggregate shape every other
+// budget event carries, all zeros, so a screen showing "up to $30" draws the
+// open state again.
+router.post('/:flockId/reset',
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const flockId = parseInt(req.params.flockId);
+      const userId = req.user.id;
+
+      // Membership first, like /lock: a stranger cannot learn which ids exist.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const flockResult = await client.query(
+          'SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
+          [flockId]
+        );
+        if (flockResult.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        if (flockResult.rows[0].creator_id !== userId) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'Only the flock creator can start the budget over' });
+        }
+        if (!flockResult.rows[0].budget_enabled) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+        }
+        await client.query('DELETE FROM budget_submissions WHERE flock_id = $1', [flockId]);
+        await client.query(
+          'UPDATE flocks SET budget_locked = false, budget_ceiling = NULL, updated_at = NOW() WHERE id = $1',
+          [flockId]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+
+      const population = await answeringPopulation((q, p) => pool.query(q, p), flockId);
+      const io = req.app.get('io');
+      if (io) {
+        await emitToFlockMembers(io, flockId, 'budget_updated', {
+          flockId,
+          ceiling: null,
+          submissionCount: 0,
+          totalMembers: population.total,
+          isReady: false,
+          skipCount: null,
+          budgetLocked: false,
+          reset: true,
+        }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
+      }
+      res.json({ reset: true, totalMembers: population.total });
+    } catch (err) {
+      console.error('Budget reset error:', err);
+      res.status(500).json({ error: 'Failed to start the budget over' });
     }
   }
 );
@@ -930,12 +1110,18 @@ router.post('/:flockId/remind',
       // The count in the response was wrong for the same reason, and wrong in
       // the direction that hides the mistake: an organiser with three
       // outstanding members was told four people had been reminded.
+      //
+      // NOT EXISTS rather than NOT IN: a guest's answer carries a NULL user_id
+      // (migration 071), and one NULL inside a NOT IN list makes the whole
+      // predicate unknown, which would have reminded nobody on any plan where
+      // a guest had answered.
       const missingResult = await pool.query(
         `SELECT u.id, u.name FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
          WHERE fm.flock_id = $1 AND fm.status = 'accepted'
          AND fm.user_id <> $2
-         AND fm.user_id NOT IN (SELECT user_id FROM budget_submissions WHERE flock_id = $1)`,
+         AND NOT EXISTS (SELECT 1 FROM budget_submissions bs
+                          WHERE bs.flock_id = $1 AND bs.user_id = fm.user_id)`,
         [flockId, userId]
       );
 
@@ -1012,6 +1198,17 @@ module.exports.settledCeiling = settledCeiling;
 module.exports.MEMBER_SUBMISSIONS = MEMBER_SUBMISSIONS;
 module.exports.CEILING_BANDS = CEILING_BANDS;
 module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
+// The guest door in routes/guest.js runs the same settle and the same
+// publication as POST /submit, from these, so there is one implementation of
+// each. answeringPopulation is the denominator every "n of m answered" reads.
+module.exports.answeringPopulation = answeringPopulation;
+module.exports.GUEST_ANSWERERS_SQL = GUEST_ANSWERERS_SQL;
+module.exports.PRESENT_ANSWERS = PRESENT_ANSWERS;
+module.exports.settleIfComplete = settleIfComplete;
+module.exports.answerPayload = answerPayload;
+module.exports.emitAnswer = emitAnswer;
+module.exports.pushBudgetSet = pushBudgetSet;
+module.exports.publishableSkipCount = publishableSkipCount;
 
 // Test hook only — the reminder cooldown is process-wide in-memory state, so a
 // test suite needs a way to start each case from a clean window.

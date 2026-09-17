@@ -1033,6 +1033,16 @@ export function onFlockUpdated(callback) {
   return register('flock_updated', callback);
 }
 
+// The night-of window: opened by the server's sweep a few hours before a
+// confirmed plan (per member, wherever they are), and each answer to it, from
+// the app or from the invite link.
+export function onFlockReconfirmOpened(callback) {
+  return register('flock_reconfirm_opened', callback);
+}
+export function onFlockReconfirmed(callback) {
+  return register('flock_reconfirmed', callback);
+}
+
 export function onFlockMemberLeft(callback) {
   return register('flock_member_left', callback);
 }
