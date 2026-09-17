@@ -758,8 +758,8 @@ describe('GuestInvite: the rebuilt screen', () => {
 
   test('every request the page makes carries a deadline', () => {
     const src = readSrc('GuestInvite.js');
-    // No bare fetch survives: all three endpoints go through the one helper
-    // that owns the AbortController.
+    // No bare fetch survives: every endpoint goes through the one helper that
+    // owns the AbortController.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const fetches = [...code.matchAll(/[^a-zA-Z]fetch\(/g)].length;
     expect(fetches).toBe(1);
@@ -1120,5 +1120,412 @@ describe('a regenerated link does not strand a guest who already answered', () =
 
   it('compares names the way the server does', () => {
     expect(src).toMatch(/const sameGuestName = \(a, b\) => String\(a \|\| ''\)\.trim\(\)\.toLowerCase\(\)\.replace\(\/\\s\+\/g, ' '\)/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The link does what a member can do: the anonymous budget and the night-of
+// "still in?", added 2026-09-16 because production data said no flock had ever
+// had a second member. Every element here has to degrade to nothing on an old
+// server, on a plan that is not asking, and on a plan that is over, and
+// nothing here may put a second filled control on the page.
+// ───────────────────────────────────────────────────────────────────────────
+describe('GuestInvite: the budget and the still-in question, from the link', () => {
+  // eslint-disable-next-line global-require
+  const GuestInvite = require('../website/GuestInvite').default;
+
+  const KEY = `flock_guest_${NEW_TOKEN}`;
+  const IDENTITY = { guestToken: 'g-1', name: 'Sam', status: 'in' };
+
+  // Two hours out, and the label is computed the way the page computes it,
+  // so the assertion holds in whatever zone the test machine is in.
+  const DEADLINE = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const deadlineLabel = new Date(DEADLINE).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  const BUDGET = { enabled: true, context: 'dinner', locked: false, submissionCount: 2, totalMembers: 6, isReady: false };
+  const WINDOW = { open: true, deadline: DEADLINE, count: 2, total: 5 };
+  // A server that has POST /:token/me sends both keys on every preview, null
+  // when the plan is not asking. Their presence is what tells the page it may
+  // ask; PLAN, which has neither, is an old server.
+  const ASKING = { ...PLAN, budget: BUDGET, reconfirm: WINDOW };
+  // What /me says about a guest who is in and has answered nothing yet.
+  const ME = (over = {}) => ({
+    name: 'Sam',
+    status: 'in',
+    reconfirmed: false,
+    reconfirm: WINDOW,
+    budget: { ...BUDGET, ceiling: null, userSubmitted: false, userAmount: null, userSkipped: false },
+    ...over,
+  });
+
+  const reply = (status, body) => Promise.resolve({
+    ok: status < 400, status, json: () => Promise.resolve(body),
+  });
+
+  // Routes each request by the path after the token, and records every POST
+  // body so a test can read what the page actually sent.
+  const mount = (routes) => {
+    window.history.pushState({}, '', `/i/${NEW_TOKEN}`);
+    const sent = [];
+    global.fetch = jest.fn((url, opts) => {
+      const route = String(url).replace(/^.*\/api\/guest\/[^/?]+/, '');
+      if (opts && opts.method === 'POST') sent.push({ path: route, body: JSON.parse(opts.body) });
+      const handler = routes[route];
+      return handler ? handler() : reply(404, {});
+    });
+    const view = render(React.createElement(GuestInvite));
+    return { ...view, sent };
+  };
+
+  const stored = () => JSON.parse(window.localStorage.getItem(KEY));
+  const dollars = (text) => text.match(/\$[\d,]+(?:\.\d+)?/g) || [];
+
+  beforeEach(() => { window.localStorage.clear(); });
+  afterEach(() => { window.history.pushState({}, '', '/'); });
+
+  // ── /me on load ─────────────────────────────────────────────────────────
+
+  test('on load, the page asks /me for the identity it holds, and the server\'s word beats the store', async () => {
+    // The store remembers $20 from an earlier visit; the server's row says
+    // $40 (answered from another device, say), and the row is the server's.
+    window.localStorage.setItem(KEY, JSON.stringify({ ...IDENTITY, budget: { amount: 20, skipped: false } }));
+    const { container, sent } = mount({
+      '': () => reply(200, { ...PLAN, budget: BUDGET, reconfirm: null }),
+      '/me': () => reply(200, ME({
+        reconfirm: null,
+        budget: {
+          ...BUDGET, locked: true, submissionCount: 6, totalMembers: 6, isReady: true,
+          ceiling: 30, userSubmitted: true, userAmount: 40, userSkipped: false,
+        },
+      })),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    await waitFor(() => expect(container.textContent).toMatch(/You said \$40\./));
+    expect(container.textContent).not.toMatch(/\$20/);
+    expect(stored().budget).toEqual({ amount: 40, skipped: false });
+    // The group's band, in the app's words, and only because /me sent it.
+    expect(container.textContent).toMatch(/Group budget: up to \$30 per person\./);
+    expect(container.textContent).toMatch(/6 of 6 answered\. This number is set and does not change\./);
+    // Locked: their answer stands, with no way to change it offered.
+    expect(screen.queryByRole('button', { name: /^change$/i })).toBeNull();
+    // A bearer token travels in a POST body and never in a URL.
+    expect(sent).toEqual([{ path: '/me', body: { guestToken: 'g-1' } }]);
+    for (const [url] of global.fetch.mock.calls) expect(url).not.toMatch(/\?/);
+    // The GET went first, and /me was asked once, not once per render.
+    expect(global.fetch.mock.calls[0][1].method).toBeUndefined();
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('a /me that refuses the identity drops it, says why, and does not steal focus on page open', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(403, { error: 'RSVP first' }),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    // The name field is back and the dead identity is gone from the store.
+    const input = await screen.findByLabelText(/your name/i);
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(container.querySelector('#gi-problem-rsvp').textContent).toMatch(/not on this plan anymore/i);
+    // Unlike the 403 on a vote, this runs at page open, so nobody's place on
+    // the page is taken from them.
+    expect(document.activeElement).not.toBe(input);
+    // With no identity, both questions say to answer first and offer nothing.
+    expect(screen.queryByRole('button', { name: /still in/i })).toBeNull();
+    expect(container.querySelector('#gi-budget')).toBeNull();
+    expect(container.textContent).toMatch(/Say I'm in below first/);
+    expect(container.textContent).toMatch(/Answer above first\./);
+  });
+
+  test('a server that cannot answer /me leaves the page working on what the preview said', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(500, { error: 'Server error' }),
+    });
+    await waitFor(() => expect(container.textContent).toMatch(/2 of 6 answered/));
+    await screen.findByRole('button', { name: /^i'm still in$/i });
+    expect(container.querySelector('#gi-budget')).not.toBeNull();
+    expect(stored().guestToken).toBe('g-1');
+  });
+
+  test('an old server, one whose preview has neither key, is never asked', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container, sent } = mount({ '': () => reply(200, PLAN) });
+    await screen.findByRole('button', { name: /bookstore speakeasy/i });
+    expect(sent).toEqual([]);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    // And nothing new is drawn.
+    expect(container.querySelector('#gi-budget-h')).toBeNull();
+    expect(container.querySelector('#gi-still-h')).toBeNull();
+    expect(container.querySelector('.gi-who-still')).toBeNull();
+  });
+
+  // ── the budget ──────────────────────────────────────────────────────────
+
+  test('the budget section is drawn when the plan is matching budgets, in the app\'s own words', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({
+      // A preview padded with a ceiling it must never carry, to show that the
+      // page does not read one off the public read whatever it holds.
+      '': () => reply(200, { ...ASKING, budget: { ...BUDGET, ceiling: 99 } }),
+      '/me': () => reply(200, ME()),
+    });
+    await screen.findByRole('heading', { level: 2, name: /what's your budget tonight\?/i });
+    expect(container.textContent).toMatch(/For dinner\./);
+    expect(container.textContent).toMatch(/2 of 6 answered\./);
+    expect(container.textContent).toMatch(/It takes three amounts before Flock can show one/);
+    expect(container.textContent).toMatch(/This is anonymous\. No one sees your answer\./);
+    // A labelled decimal field with the server's own length bound.
+    const input = container.querySelector('#gi-budget');
+    expect(input).not.toBeNull();
+    expect(input.getAttribute('inputmode')).toBe('decimal');
+    expect(input.getAttribute('maxlength')).toBe('7');
+    expect(container.querySelector('label[for="gi-budget"]').textContent).toBe('Amount');
+    expect(input.getAttribute('aria-describedby')).toBe('gi-problem-budget');
+    expect(screen.getByRole('button', { name: /^that works$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^skip$/i })).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Group budget/);
+    expect(container.textContent).not.toMatch(/\$99/);
+  });
+
+  test('the budget section is absent without a block, absent on a closed plan, and offers a stranger no control', async () => {
+    const { container: none } = mount({ '': () => reply(200, { ...PLAN, budget: null, reconfirm: null }) });
+    await waitFor(() => expect(none.textContent).toMatch(/friday night out/i));
+    expect(none.querySelector('#gi-budget-h')).toBeNull();
+    expect(none.querySelector('#gi-still-h')).toBeNull();
+
+    const { container: over } = mount({
+      '': () => reply(200, { ...ASKING, flock: { ...PLAN.flock, status: 'cancelled' } }),
+    });
+    await waitFor(() => expect(over.textContent).toMatch(/called off/i));
+    expect(over.querySelector('#gi-budget-h')).toBeNull();
+    expect(over.querySelector('#gi-still-h')).toBeNull();
+
+    const { container: fresh } = mount({ '': () => reply(200, ASKING) });
+    await waitFor(() => expect(fresh.querySelector('#gi-budget-h')).not.toBeNull());
+    expect(fresh.textContent).toMatch(/Answer above first\. The budget only counts people who are going\./);
+    expect(fresh.querySelector('#gi-budget')).toBeNull();
+    // The count is public and is still said.
+    expect(fresh.textContent).toMatch(/2 of 6 answered\./);
+  });
+
+  test('answering the budget is stored beside the vote, and the only amount ever drawn is the guest\'s own', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    let count = 2;
+    const { container, sent } = mount({
+      '': () => reply(200, { ...ASKING, budget: { ...BUDGET, submissionCount: count } }),
+      '/me': () => reply(200, ME()),
+      '/budget': () => {
+        count = 3;
+        // Padded with fields the server never sends, so the page can be shown
+        // to draw none of them even if a reply ever carried them.
+        return reply(200, {
+          submitted: true, ceiling: null, submissionCount: 3, totalMembers: 6, isReady: false,
+          skipCount: 0, budgetLocked: false, userSubmitted: true, amounts: [12, 45], lowest: 12,
+        });
+      },
+    });
+    const input = await screen.findByLabelText(/^amount$/i);
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+
+    await waitFor(() => expect(container.textContent).toMatch(/You said \$30\./));
+    expect(sent.find((s) => s.path === '/budget').body).toEqual({ guestToken: 'g-1', amount: 30 });
+    expect(stored().guestToken).toBe('g-1');
+    expect(stored().budget).toEqual({ amount: 30, skipped: false });
+    await waitFor(() => expect(container.textContent).toMatch(/3 of 6 answered\./));
+    // Their own number, and nothing else on the page with a dollar sign.
+    expect(dollars(container.textContent)).toEqual(['$30']);
+    // The field is gone until they ask for it back, and it comes back filled.
+    expect(container.querySelector('#gi-budget')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^change$/i }));
+    expect((await screen.findByLabelText(/^amount$/i)).value).toBe('30');
+
+    // A skip is the shape the app sends, and is remembered the same way.
+    fireEvent.click(screen.getByRole('button', { name: /^skip$/i }));
+    await waitFor(() => expect(container.textContent).toMatch(/You skipped\./));
+    expect(sent.filter((s) => s.path === '/budget')[1].body).toEqual({ guestToken: 'g-1', amount: 0, skipped: true });
+    expect(stored().budget).toEqual({ amount: null, skipped: true });
+    expect(screen.getByRole('button', { name: /^set an amount$/i })).toBeInTheDocument();
+  });
+
+  test('a blank or out-of-range amount is refused on the page, marked on the field, with no request', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container, sent } = mount({ '': () => reply(200, ASKING), '/me': () => reply(200, ME()) });
+    const input = await screen.findByLabelText(/^amount$/i);
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+    expect(container.querySelector('#gi-problem-budget').textContent).toMatch(/put an amount in first/i);
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: '20000' } });
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+    expect(container.querySelector('#gi-problem-budget').textContent).toMatch(/between \$0\.01 and \$10,000/);
+    expect(sent.filter((s) => s.path === '/budget')).toEqual([]);
+  });
+
+  test('a budget refused as NOT_IN says to tap I\'m in first and takes the server\'s word about the answer', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(200, ME()),
+      '/budget': () => reply(409, { code: 'NOT_IN', error: "Say you're in first. The budget only counts people who are going." }),
+    });
+    const input = await screen.findByLabelText(/^amount$/i);
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+    await waitFor(() => expect(container.querySelector('#gi-problem-budget').textContent).toMatch(/tap i'm in first/i));
+    // The controls that could only 409 again are gone, and the store agrees.
+    expect(container.querySelector('#gi-budget')).toBeNull();
+    expect(stored().status).toBe('out');
+    expect(stored().budget).toBeUndefined();
+  });
+
+  test('a budget refused as BUDGET_LOCKED says the budget is already set, and a 429 says the server\'s sentence', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    let answers = 0;
+    const { container } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(200, ME()),
+      '/budget': () => {
+        answers += 1;
+        return answers === 1
+          ? reply(429, { error: 'You have changed this a lot in the last hour. You can change it again in 40 minutes.' })
+          : reply(409, { code: 'BUDGET_LOCKED', error: 'The group budget is already set' });
+      },
+    });
+    const input = await screen.findByLabelText(/^amount$/i);
+    fireEvent.change(input, { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+    await waitFor(() => expect(container.querySelector('#gi-problem-budget').textContent)
+      .toBe('You have changed this a lot in the last hour. You can change it again in 40 minutes.'));
+    fireEvent.click(screen.getByRole('button', { name: /^that works$/i }));
+    await waitFor(() => expect(container.querySelector('#gi-problem-budget').textContent)
+      .toMatch(/already set/i));
+    expect(stored().budget).toBeUndefined();
+  });
+
+  // ── still in? ───────────────────────────────────────────────────────────
+
+  test('the still-in question is drawn while the window is open, above the RSVP, and one tap answers it', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    let said = 2;
+    const { container, sent } = mount({
+      '': () => reply(200, { ...ASKING, reconfirm: { ...WINDOW, count: said } }),
+      '/me': () => reply(200, ME({ reconfirm: { ...WINDOW, count: said } })),
+      '/reconfirm': () => {
+        said = 3;
+        return reply(200, { reconfirmed: true, count: 3, total: 5, deadline: DEADLINE });
+      },
+    });
+    await screen.findByRole('heading', { level: 2, name: /^still in\?$/i });
+    expect(container.textContent).toContain(`2 of 5 have said so. Answer by ${deadlineLabel}.`);
+    // On the night it is the question, so it sits above "Or just answer";
+    // the budget stays below it.
+    const order = Array.from(container.querySelectorAll('h2')).map((h) => h.id);
+    expect(order.indexOf('gi-still-h')).toBeGreaterThan(order.indexOf('gi-join-h'));
+    expect(order.indexOf('gi-still-h')).toBeLessThan(order.indexOf('gi-rsvp-h'));
+    expect(order.indexOf('gi-rsvp-h')).toBeLessThan(order.indexOf('gi-budget-h'));
+
+    fireEvent.click(screen.getByRole('button', { name: /^i'm still in$/i }));
+    await waitFor(() => expect(container.textContent).toMatch(/You're in\. 3 of 5 still in\./));
+    expect(sent.find((s) => s.path === '/reconfirm').body).toEqual({ guestToken: 'g-1' });
+    expect(stored().reconfirmed).toBe(true);
+    expect(screen.queryByRole('button', { name: /^i'm still in$/i })).toBeNull();
+    // Announced, and the announcement names who can see it.
+    expect(screen.getAllByRole('status').map((n) => n.textContent).join(' ')).toMatch(/Counted\. Maya can see you're still in\./);
+  });
+
+  test('the still-in question is absent outside the window, and never offers a tap the server would refuse', async () => {
+    // Not asking: nothing drawn, even for a guest who is in.
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container: quiet } = mount({
+      '': () => reply(200, { ...ASKING, reconfirm: null }),
+      '/me': () => reply(200, ME({ reconfirm: null })),
+    });
+    await waitFor(() => expect(quiet.querySelector('#gi-budget-h')).not.toBeNull());
+    expect(quiet.querySelector('#gi-still-h')).toBeNull();
+
+    // A stranger: the question and the count, and a line to answer first.
+    window.localStorage.clear();
+    const { container: fresh } = mount({ '': () => reply(200, ASKING) });
+    await waitFor(() => expect(fresh.querySelector('#gi-still-h')).not.toBeNull());
+    expect(fresh.textContent).toMatch(/2 of 5 have said so\./);
+    expect(fresh.textContent).toMatch(/Say I'm in below first/);
+    expect(Array.from(fresh.querySelectorAll('button')).some((b) => /still in/i.test(b.textContent))).toBe(false);
+
+    // Out: said so, no button.
+    window.localStorage.setItem(KEY, JSON.stringify({ ...IDENTITY, status: 'out' }));
+    const { container: out } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(200, ME({ status: 'out' })),
+    });
+    await waitFor(() => expect(out.querySelector('#gi-still-h')).not.toBeNull());
+    expect(out.textContent).toMatch(/You're down as out\./);
+    expect(Array.from(out.querySelectorAll('button')).some((b) => /still in/i.test(b.textContent))).toBe(false);
+  });
+
+  test('a window that closes under the tap reloads the plan and says so, rather than leaving a dead button', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    let open = true;
+    const { container } = mount({
+      '': () => reply(200, { ...ASKING, reconfirm: open ? WINDOW : null }),
+      '/me': () => reply(200, ME()),
+      '/reconfirm': () => {
+        open = false;
+        return reply(409, { code: 'NOT_OPEN', error: 'Flock asks this in the last few hours before a plan. Nothing to answer yet.' });
+      },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /^i'm still in$/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^i'm still in$/i })).toBeNull());
+    // The line outlives the block the reload took away.
+    await waitFor(() => expect(container.textContent).not.toMatch(/have said so/));
+    expect(container.querySelector('#gi-problem-reconfirm').textContent).toMatch(/that question has closed/i);
+    expect(stored().reconfirmed).toBeFalsy();
+  });
+
+  // ── the rules the rest of the page is held to ───────────────────────────
+
+  test('with both questions on the page, the join band is still the only filled control', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({ '': () => reply(200, ASKING), '/me': () => reply(200, ME()) });
+    const still = await screen.findByRole('button', { name: /^i'm still in$/i });
+    const works = await screen.findByRole('button', { name: /^that works$/i });
+    expect(still.className).toBe('gi-btn');
+    expect(works.className).toBe('gi-btn');
+    expect(screen.getByRole('button', { name: /^skip$/i }).className).toBe('gi-btn-quiet');
+    for (const btn of container.querySelectorAll('.gi-row .gi-btn')) {
+      expect(btn.className).not.toMatch(/gi-btn-primary|gi-btn-strong/);
+    }
+    expect(container.querySelectorAll('.gi-join-btn')).toHaveLength(1);
+    expect(container.querySelectorAll('.gi-btn-strong')).toHaveLength(0);
+  });
+
+  test('a roster mark for "still in" is a glyph and a word, and only while the window is open', async () => {
+    const people = [
+      { name: 'Maya', rsvp: 'in', kind: 'member', reconfirmed: true },
+      { name: 'Jordan', rsvp: 'in', kind: 'member', reconfirmed: false },
+      // An old server's row: no key at all, which must read as "has not said".
+      { name: 'Sam', rsvp: 'in', kind: 'guest' },
+      { name: 'Noor', rsvp: 'out', kind: 'member', reconfirmed: false },
+    ];
+    const { container } = mount({ '': () => reply(200, { ...ASKING, people }) });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    const rows = Array.from(container.querySelectorAll('.gi-who-row'));
+    const marks = rows.map((r) => r.querySelector('.gi-who-still'));
+    expect(marks.map(Boolean)).toEqual([true, false, false, false]);
+    // Glyph AND the words, from the icon system, at the 12px floor: never a
+    // tint on its own, the same rule the RSVP answer is held to.
+    expect(marks[0].textContent.trim()).toBe('still in');
+    const svg = marks[0].querySelector('svg');
+    expect(svg).not.toBeNull();
+    expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(12);
+    // The RSVP answer is still the row's spoken state.
+    expect(rows[0].querySelector('.gi-sr').textContent).toBe('Going');
+
+    // Outside the window the same flag draws nothing.
+    const { container: quiet } = mount({ '': () => reply(200, { ...ASKING, people, reconfirm: null }) });
+    await waitFor(() => expect(quiet.querySelectorAll('.gi-who-row')).toHaveLength(4));
+    expect(quiet.querySelector('.gi-who-still')).toBeNull();
   });
 });

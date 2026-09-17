@@ -161,7 +161,7 @@
  */
 import React from 'react';
 import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
-import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
+import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -444,6 +444,18 @@ const POSITION_FRESH_MS = 10 * 60 * 1000;
    its window by anything a reader could measure against ten minutes, long
    enough that a burst of typing does not rebuild the thread per character. */
 const POSITION_CLOCK_MS = 30 * 1000;
+
+/* The reconfirm deadline as a clock time in the reader's zone ("9:00 PM").
+   The server sends ISO. The window opens a few hours before the plan, so
+   the day is understood and printing it would only push the strip's one
+   sentence onto a second line. Null for anything that does not parse, and
+   the strip drops its "Answer by" clause rather than showing "Invalid Date"
+   to somebody being asked to answer by it. */
+function reconfirmDeadlineLabel(iso) {
+  const at = iso ? new Date(iso) : null;
+  if (!at || !Number.isFinite(at.getTime())) return null;
+  return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
 
 /* One pill per emoji, not one per person.
  *
@@ -745,6 +757,7 @@ export default function ChatDetail({
   styles,
   myTravel,
   updateTravel,
+  reconfirmFlock,
   typingUser,
   updateFlockVenue,
   updateFlockVotes,
@@ -1148,6 +1161,14 @@ export default function ChatDetail({
       return () => clearInterval(id);
     }, [hasPositions]);
 
+    /* THE "I'm still in" TAP WHILE IT IS ON THE WIRE. reconfirmFlock is
+       App.js's, it is async, and it puts its own answer in a toast either
+       way; what it cannot do is tell the button that a second tap is
+       pointless, so this is the one thing a double tap would otherwise send
+       twice. State rather than a ref because the disabled attribute has to
+       repaint, and above the guard for the reason every hook here is. */
+    const [reconfirmPending, setReconfirmPending] = React.useState(false);
+
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
@@ -1546,6 +1567,16 @@ export default function ChatDetail({
     // The seat count the bar's stepper shows and steps from. Absent means
     // none offered, which is also what a car with no count says on the wire.
     const mySeats = Number.isInteger(myTravel?.seats) ? myTravel.seats : 0;
+
+    /* The strip's one tap. The window is the server's and the call is
+       App.js's; this only keeps a second tap off the wire while the first
+       is out, and lets go whether the first came back with a count or a
+       refusal, both of which App.js has already put in a toast. */
+    const answerStillIn = async () => {
+      if (reconfirmPending) return;
+      setReconfirmPending(true);
+      try { await reconfirmFlock(flock.id); } finally { setReconfirmPending(false); }
+    };
 
     /* THE SHARE'S OWN GATE, one copy for the three tiles that start one
        (Share location, On my way, Need a ride). Closes the sheet, and refuses
@@ -2515,6 +2546,48 @@ export default function ChatDetail({
           </div>
         </div>
 
+        {/* THE NIGHT-OF QUESTION, under the header, while the server has it
+            open. reconfirmSweep opens a window a few hours before a confirmed
+            plan and closes it at the deadline; `flock.reconfirm` is null the
+            rest of the time, so the strip has no way to ask on Tuesday about
+            Saturday, and the space above the stream stays the header's. It
+            wears the header's own colours because it is a fact about the
+            plan, not about a phone: green is the location bar's and means a
+            share is running.
+
+            THE TEXT IS TWO CLAUSES THAT EACH HOLD THEIR OWN LINE. At 320px
+            the sentence fills the row on its own, so the button drops to a
+            second row and sits right; under the large-type setting the
+            clauses break between themselves, never through "9:00 PM", and
+            nothing runs off the edge. Answered, the button goes and the count
+            stays, because the count is what a person checks back for. */}
+        {flock.reconfirm?.open && (
+          <div style={{ padding: '8px 14px', background: colors.navyBg, borderTop: '1px solid rgba(255,255,255,0.12)', flexShrink: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px 10px' }}>
+            <p style={{ flex: '1 1 auto', minWidth: 0, margin: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', lineHeight: '1.3' }}>
+              {flock.reconfirm.me ? (
+                <>
+                  <span style={{ display: 'inline-block', whiteSpace: 'nowrap' }}>You're in.</span>
+                  {' '}
+                  <span style={{ display: 'inline-block', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.7)' }}>{Number(flock.reconfirm.count) || 0} of {Number(flock.reconfirm.total) || 0} still in.</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ display: 'inline-block', whiteSpace: 'nowrap' }}>Still in? {Number(flock.reconfirm.count) || 0} of {Number(flock.reconfirm.total) || 0} have said so.</span>
+                  {reconfirmDeadlineLabel(flock.reconfirm.deadline) && (
+                    <>
+                      {' '}
+                      <span style={{ display: 'inline-block', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.7)' }}>Answer by {reconfirmDeadlineLabel(flock.reconfirm.deadline)}.</span>
+                    </>
+                  )}
+                </>
+              )}
+            </p>
+            {!flock.reconfirm.me && (
+              <button type="button" className="hit44" aria-label="I'm still in" disabled={reconfirmPending} aria-disabled={reconfirmPending} onClick={answerStillIn} style={{ marginLeft: 'auto', flexShrink: 0, padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reconfirmPending ? 'default' : 'pointer', opacity: reconfirmPending ? 0.6 : 1 }}>I'm still in</button>
+            )}
+          </div>
+        )}
+
         {/* Dismiss menu on outside tap */}
         {showFlockMenu && (
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
@@ -3345,6 +3418,19 @@ export default function ChatDetail({
                         <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
                       </div>
                     )}
+                    {/* THE ONE WAY OFF A SETTLED NUMBER. The ceiling is published
+                        once and never moves, so a cent that settled (a member's,
+                        or a link holder's, now that a guest can answer) was the
+                        group's budget for good. The creator can start over:
+                        every answer goes and the next number is a first
+                        publication (routes/budget.js POST /reset). Quiet, under
+                        the number, and it says what it costs before the tap. */}
+                    {isCreator && budgetStatus?.budgetLocked && !showCreateBill && (
+                      <div style={{ marginBottom: '12px' }}>
+                        <button className="hit44" onClick={async () => { try { await resetBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: false, ceiling: null, submissionCount: 0, isReady: false, skipCount: null, userSubmitted: false, userAmount: null, userSkipped: false })); showToast('Budget cleared. Everyone can answer again.'); } catch (err) { showToast(err.message, 'error'); } }} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}>Start the budget over</button>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.5 }}>Clears every answer, the group number with them, and asks everyone again.</p>
+                      </div>
+                    )}
                     {isConfirmedOrComplete && (
                       <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                     )}
@@ -3475,6 +3561,16 @@ export default function ChatDetail({
                           <div key={s.userId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{s.name}</span>
+                              {/* The night-of answer, beside the name, while the
+                                  window is open. A word rather than a tint, so a
+                                  row that has not answered says nothing rather
+                                  than something a colour-blind reader cannot
+                                  tell from "has". The roster carries the flag
+                                  (App.js reads reconfirmed_at into it); a share
+                                  is matched to it by user id. */}
+                              {flock.reconfirm?.open && (flock.members || []).some((mm) => mm && String(mm.id) === String(s.userId) && mm.reconfirmed) && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>{Icons.check('currentColor', 12)} still in</span>
+                              )}
                               {s.committed && !s.settled && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.amberText, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

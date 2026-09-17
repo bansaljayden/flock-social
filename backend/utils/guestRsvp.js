@@ -24,7 +24,7 @@ const GUEST_ID_PREFIX = 'guest:';
 // Every member-facing read of guest_rsvps uses this exact projection + filter.
 // $1 is the flock id.
 const GUEST_RSVP_SELECT = `
-  SELECT id, name, status, created_at, updated_at
+  SELECT id, name, status, created_at, updated_at, reconfirmed_at
   FROM guest_rsvps
   WHERE flock_id = $1 AND COALESCE(is_hidden, false) = false
   ORDER BY created_at ASC`;
@@ -44,6 +44,8 @@ function toGuestEntry(row) {
     status: row.status === 'in' ? 'accepted' : 'declined',
     guest_status: row.status,
     attendance: null,
+    // The night-of answer (migration 072), read by the chat's roster.
+    reconfirmed_at: row.reconfirmed_at || null,
     joined_at: row.created_at,
   };
 }

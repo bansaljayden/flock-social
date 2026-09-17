@@ -19,6 +19,7 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
+const { reconfirmState } = require('../utils/reconfirm');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
 const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
@@ -1191,7 +1192,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     // await and stays unasked when the flock has no budget.
     const [membersResult, guestsResult, votesResult, guestVotesResult, invisibleIds] = await Promise.all([
       pool.query(
-        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at
+        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at, fm.reconfirmed_at
          FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
          WHERE fm.flock_id = $1
@@ -1272,9 +1273,12 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
         [flockId]
       );
       const submissions = parseInt(budgetResult.rows[0].submissions || 0);
-      // Budget submissions are account-only — a guest has no way to submit one,
-      // so the denominator stays members. Using the guest-inclusive `accepted`
-      // here would make inviting guests look like budget regress.
+      // A guest can answer the budget now (migration 071), so this numerator
+      // can include guest rows while the denominator stays members. It is a
+      // momentum heuristic capped at ten points, not a published figure, and
+      // it counts rows the way it always did rather than adding statements to
+      // this route for a score; using the guest-inclusive `accepted` as the
+      // denominator would make inviting guests look like budget regress.
       if (counts.memberAccepted > 0) {
         score += Math.min(10, Math.round((submissions / counts.memberAccepted) * 10));
       }
@@ -1334,11 +1338,23 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     const invisible = new Set(invisibleIds);
     const visibleMembers = members.filter((m) => !invisible.has(m.id));
 
+    // The night-of window, once one has been opened (utils/reconfirm.js):
+    // whether it is open, the deadline, "4 of 7" over both rosters, and
+    // whether the caller has answered it. Not asked for a plan that has never
+    // had a window, which is every plan until a few hours before it.
+    let reconfirm = null;
+    if (flock.reconfirm_opened_at) {
+      const state = await reconfirmState((q, p) => pool.query(q, p), flockId);
+      const mine = members.find((m) => String(m.id) === String(req.user.id));
+      reconfirm = { ...state, me: !!(mine && mine.reconfirmed_at) };
+    }
+
     res.json({
       flock,
       members: visibleMembers,
       guests,
       momentum,
+      reconfirm,
     });
   } catch (err) {
     console.error('Get flock error:', err);
@@ -1498,6 +1514,29 @@ router.put('/:id',
       // Notify flock members of the update
       const io = req.app.get('io');
       const updated = result.rows[0];
+
+      // A moved plan is a new question. "Still in for 9?" answered yes is not
+      // an answer to "still in for 11?", so a time change closes any night-of
+      // window that had opened and clears every answer in it; the sweep opens
+      // a fresh one at the new lead (services/reconfirmSweep.js). Only when a
+      // window existed, so a plan that never had one costs nothing here.
+      //
+      // And a plan that stops being confirmed (moved back to planning, or
+      // cancelled) is not a plan anyone can be still in for: the same reset,
+      // or a later re-confirm would find the old window open with the old
+      // answers in it and no push to say so. A completed plan keeps its
+      // answers; they are the record of the night.
+      const leftConfirmed = status !== undefined && status !== null && status !== 'confirmed' && status !== 'completed';
+      if (((event_time !== undefined && event_time !== null) || leftConfirmed) && updated.reconfirm_opened_at) {
+        try {
+          await pool.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [flockId]);
+          await pool.query('UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+          await pool.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+          updated.reconfirm_opened_at = null;
+        } catch (resetErr) {
+          console.error('Reconfirm reset failed:', resetErr.message);
+        }
+      }
       if (io) {
         // Block-aware per-member fan-out: this payload carries `updatedBy`, the
         // editor's NAME, so a room broadcast handed a blocked user's name
@@ -1935,6 +1974,79 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
   } catch (err) {
     console.error('Invite link error:', err);
     res.status(500).json({ error: 'Could not create invite link' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/flocks/:id/reconfirm — the night-of "still in?" tap, from the app.
+//
+// The window is opened by services/reconfirmSweep.js a few hours before a
+// confirmed plan's time and closes at that time; utils/reconfirm.js decides
+// both in SQL, and routes/guest.js answers the same window for a guest holding
+// the link. One tap, once. A second tap is answered with the current count
+// rather than refused, because the count is what the person came back for.
+//
+// GATES. No membership row: 404, like every flock route (hasMembershipRow's
+// rule: without a row, every flock looks like it does not exist). A row that
+// is not accepted: 403 in words, because an invitee who never said yes cannot
+// say "still yes". Window not open: 409 with a code the client can read, so a
+// stale screen is told rather than 500'd.
+// ---------------------------------------------------------------------------
+router.post('/:id/reconfirm', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    const flockId = parseInt(req.params.id);
+
+    const membership = await pool.query(
+      'SELECT status, reconfirmed_at FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+      [flockId, req.user.id]
+    );
+    if (membership.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
+    if (membership.rows[0].status !== 'accepted') {
+      return res.status(403).json({ error: 'Say yes to the plan first' });
+    }
+
+    const run = (q, p) => pool.query(q, p);
+    const before = await reconfirmState(run, flockId);
+    if (!before.open) {
+      return res.status(409).json({
+        code: 'NOT_OPEN',
+        error: 'Flock asks this in the last few hours before a plan. Nothing to answer yet.',
+      });
+    }
+    if (membership.rows[0].reconfirmed_at) {
+      return res.json({ reconfirmed: true, already: true, count: before.count, total: before.total, deadline: before.deadline });
+    }
+
+    await pool.query(
+      `UPDATE flock_members SET reconfirmed_at = COALESCE(reconfirmed_at, NOW())
+        WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'`,
+      [flockId, req.user.id]
+    );
+    const after = await reconfirmState(run, flockId);
+    res.json({ reconfirmed: true, count: after.count, total: after.total, deadline: after.deadline });
+
+    // After the response, like every fan-out in this file: the answer is
+    // committed and nothing in it depends on the room hearing.
+    try {
+      const io = req.app.get('io');
+      if (io) {
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_reconfirmed', {
+          flockId,
+          userId: req.user.id,
+          name: req.user.name,
+          isGuest: false,
+          count: after.count,
+          total: after.total,
+        });
+      }
+    } catch (emitErr) {
+      console.error('Reconfirm fan-out failed:', emitErr.message);
+    }
+  } catch (err) {
+    console.error('Reconfirm error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Could not save that' });
   }
 });
 

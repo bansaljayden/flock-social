@@ -2162,6 +2162,8 @@ let storyPurgeInterval = null;
 let storyPurgeKickoff = null;
 let flockSweepInterval = null;
 let flockSweepKickoff = null;
+let reconfirmSweepInterval = null;
+let reconfirmSweepKickoff = null;
 let moneyWatchInterval = null;
 let moneyWatchKickoff = null;
 let heartbeatInterval = null;
@@ -2303,6 +2305,18 @@ async function boot() {
     flockSweepKickoff = setTimeout(() => runFlockCompletionSweep(io), 90 * 1000);
   }
 
+  // The night-of "still in?" window, opened a few hours before each confirmed
+  // plan. Same switch as the completion sweep (it is the same family of clock
+  // work) and a five-minute tick, because the lead is measured in hours and a
+  // window opened half an hour late is a shorter window. See
+  // services/reconfirmSweep.js.
+  const { runReconfirmSweep, RECONFIRM_SWEEP_INTERVAL_MS } = require('./services/reconfirmSweep');
+  if (flockSweepEnabled()) {
+    reconfirmSweepInterval = setInterval(() => runReconfirmSweep(io), RECONFIRM_SWEEP_INTERVAL_MS);
+    // 100s: after the completion sweep's 90s, same stagger reason.
+    reconfirmSweepKickoff = setTimeout(() => runReconfirmSweep(io), 100 * 1000);
+  }
+
   // The money watch. Registered LAST because it reads what the others spend,
   // and every read is non-consuming. See its block above for why it exists.
   const moneyWatch = () => runMoneyWatch().catch((e) => console.error('[moneyWatch] sweep failed:', e && e.message));
@@ -2366,6 +2380,8 @@ function shutdown(signal) {
   if (storyPurgeKickoff) clearTimeout(storyPurgeKickoff);
   if (flockSweepInterval) clearInterval(flockSweepInterval);
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
+  if (reconfirmSweepInterval) clearInterval(reconfirmSweepInterval);
+  if (reconfirmSweepKickoff) clearTimeout(reconfirmSweepKickoff);
   if (moneyWatchInterval) clearInterval(moneyWatchInterval);
   if (moneyWatchKickoff) clearTimeout(moneyWatchKickoff);
 

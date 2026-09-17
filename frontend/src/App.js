@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -8194,7 +8194,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // silently skipped.
         try {
           const data = await getFlock(flockId);
-          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, attendance: m.attendance || 'unmarked' }));
+          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: !!m.reconfirmed_at, attendance: m.attendance || 'unmarked' }));
           flocksRef.current = flocksRef.current.map(f => f.id === flockId ? { ...f, members } : f);
           setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, members } : f));
           if (openAttendanceSheet(flockId)) return;
@@ -8610,7 +8610,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const accepted = (data.members || []).filter(m => m.status === 'accepted');
       const members = accepted
         .filter(m => !blockedIdsRef.current.has(String(m.id)))
-        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
+        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, reconfirmed: !!m.reconfirmed_at }));
       // The headcount has to come down with the faces. "3 going" over two faces
       // is the kind of mismatch that makes someone go looking for the third.
       //
@@ -8630,7 +8630,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // instead of, because it is the only thing a guest_rsvp report can be
       // filed against. See guestRsvpId.
       const guests = (data.guests || []).map(g => ({
-        id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true,
+        id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: !!g.reconfirmed_at,
       }));
       const eventTime = data.flock?.event_time || null;
       setFlocks(prev => prev.map(f => f.id === flockId
@@ -8657,6 +8657,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // progress stage ("has two or more people"), not a headcount, and
             // a blocked member is still coming to the thing.
             momentum: data.momentum || null,
+            // The night-of window while one is open: { open, deadline, count,
+            // total, me }. Null for a plan that is not being asked.
+            reconfirm: data.reconfirm || null,
             eventTime: eventTime || f.eventTime || null,
           }
         : f));
@@ -9083,7 +9086,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // `attendance` comes down with the roster ('unmarked' | 'attended' |
           // 'no_show') and is what tells the host whether the done step still
           // owes an answer for a night that is already over.
-          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, attendance: m.attendance || 'unmarked' }));
+          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: !!m.reconfirmed_at, attendance: m.attendance || 'unmarked' }));
           // ── GUESTS, AND THE HEADCOUNT THIS SCREEN USED TO EAT ────────────
           //
           // Two things were missing here and both come from the same place:
@@ -9110,14 +9113,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // momentum.accepted is members-plus-guests, and a member hidden by a
           // block comes off it because their face is not on the roster either.
           const guests = (data.guests || []).map(g => ({
-            id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true,
+            id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: !!g.reconfirmed_at,
           }));
           const acceptedCount = (data.members || []).filter(m => m.status === 'accepted').length;
           const hiddenAccepted = acceptedCount - members.filter(m => m.status === 'accepted').length;
           const eventTime = data.flock?.event_time || null;
           // hiddenAccepted rides on the flock so a live going count (a guest
           // answering, below) can subtract the same blocked members this does.
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, reconfirm: data.reconfirm || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => setRosterError(true));
       loadFlockVotes(selectedFlockId);
@@ -9503,6 +9506,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Changing how you are travelling mid-share ("actually I'm driving, 2
   // seats") is said to the group at once rather than on the next ten-second
   // tick, so the card answers the tap. The loop keeps carrying the new value.
+  // "I'm still in", from the chat strip. The server answers the new count and
+  // the plan's reconfirm state takes it at once, rather than waiting for the
+  // room's echo, which is addressed to everyone but the sender.
+  const reconfirmFlock = useCallback(async (flockId) => {
+    try {
+      const r = await apiReconfirmFlock(flockId);
+      setFlocks(prev => prev.map(f => f.id !== flockId ? f : {
+        ...f,
+        reconfirm: {
+          ...(f.reconfirm || {}),
+          open: true,
+          me: true,
+          count: r.count,
+          total: r.total,
+          deadline: r.deadline || (f.reconfirm && f.reconfirm.deadline) || null,
+        },
+      }));
+      showToast("You're in.");
+    } catch (err) {
+      // A window that closed while the strip was on screen: the server said
+      // so in words, and the roster refresh takes the strip down.
+      refreshFlockRoster(flockId);
+      showToast(err?.message || "Couldn't save that. Try again.", 'error');
+    }
+  }, [showToast, refreshFlockRoster]);
+
   const updateTravel = useCallback((travel) => {
     const next = travel && typeof travel === 'object' ? travel : null;
     setMyTravel(next);
@@ -9672,13 +9701,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // through is the point: a screen that re-rendered a new number on each
       // submission told everyone watching whose answer had just moved it.
       if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling, budgetLocked: true } : f));
+      // The creator started the budget over (POST /reset): the lock comes off
+      // and every row is gone, this reader's own included.
+      if (data.reset) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: null, budgetLocked: false } : f));
       // Update detailed status if viewing this flock
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
           if (prev && !prev.ceiling && data.ceiling) {
             showToast('Budget set. Showing spots that work for everyone');
           }
-          return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount, budgetLocked: data.budgetLocked || prev.budgetLocked } : prev;
+          if (!prev) return prev;
+          const next = { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount, budgetLocked: data.budgetLocked || prev.budgetLocked };
+          return data.reset ? { ...next, budgetLocked: false, userSubmitted: false, userAmount: null, userSkipped: false } : next;
         });
       }
     });
@@ -9921,6 +9955,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           time: data.event_time ? formatEventTime(data.event_time) : f.time,
           eventTime: data.event_time || f.eventTime || null,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
+          // A moved plan closes its night-of window (routes/flocks.js PUT);
+          // the sweep opens a fresh one at the new lead.
+          reconfirm: data.event_time ? null : f.reconfirm,
         };
       }));
       // Pending invitees hear it too (lifecycle audit, 2026-09-05): the card
@@ -9939,6 +9976,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     return unsub;
   }, [showToast]);
+
+  // The night-of window. Opened by the server a few hours before a confirmed
+  // plan (one event per member, wherever they are); each answer moves the
+  // count. Both patch the plan's `reconfirm` state the chat's strip reads; the
+  // open event also refreshes the roster, which is where `me` and the deadline
+  // come from.
+  useEffect(() => {
+    const offOpened = onFlockReconfirmOpened((data) => {
+      if (!data || !data.flockId) return;
+      refreshFlockRoster(data.flockId);
+      const f = flocksRef.current.find(x => x.id === data.flockId);
+      showToast(`Still in? ${f?.name || 'Your plan'} is in a few hours.`);
+    });
+    // `me` is not derived here: the sender's own answer sets it in
+    // reconfirmFlock below before any echo arrives, and the echo keeps it.
+    const offAnswered = onFlockReconfirmed((data) => {
+      if (!data || !data.flockId) return;
+      setFlocks(prev => prev.map(f => f.id !== data.flockId ? f : {
+        ...f,
+        reconfirm: {
+          ...(f.reconfirm || { deadline: null }),
+          open: true,
+          count: data.count,
+          total: data.total,
+          me: !!(f.reconfirm && f.reconfirm.me),
+        },
+        members: (f.members || []).map(m => (!data.isGuest && String(m.id) === String(data.userId)) ? { ...m, reconfirmed: true } : m),
+      }));
+    });
+    return () => { offOpened(); offAnswered(); };
+  }, [showToast, refreshFlockRoster]);
 
   // Unsent messages leave every open screen the moment the server confirms
   // the tombstone. Removal, not a stub: the thread reads as if the message
@@ -15300,6 +15368,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         styles,
         myTravel,
         updateTravel,
+        reconfirmFlock,
         typingUser,
         updateFlockVenue,
         updateFlockVotes,

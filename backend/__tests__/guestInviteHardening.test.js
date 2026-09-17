@@ -216,8 +216,8 @@ test('a new token fits the widened column and the route validators', () => {
   // that answers 400 where its neighbours answer 404, which is the enumeration
   // oracle the rest of this file exists to prevent.
   const uses = guestSrc.match(/isLength\(\{ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX \}\)/g) || [];
-  assert.strictEqual(uses.length, 4,
-    'all four routes (preview, rsvp, vote, join) must share the one token bound');
+  assert.strictEqual(uses.length, 7,
+    'all seven routes (preview, rsvp, vote, join, budget, me, reconfirm) must share the one token bound');
 });
 
 test('legacy 12-char tokens still resolve, and both formats pass validation', async () => {
@@ -264,6 +264,9 @@ test('unknown, revoked, and deleted-flock tokens are one uniform 404 on every ro
     await call('GET', `/api/guest/${LEGACY_TOKEN}`),
     await call('POST', `/api/guest/${LEGACY_TOKEN}/rsvp`, { name: 'Alice', status: 'in' }),
     await call('POST', `/api/guest/${LEGACY_TOKEN}/vote`, { guestToken: GUEST_TOKEN, venueName: 'The Bar' }),
+    await call('POST', `/api/guest/${LEGACY_TOKEN}/budget`, { guestToken: GUEST_TOKEN, amount: 20 }),
+    await call('POST', `/api/guest/${LEGACY_TOKEN}/me`, { guestToken: GUEST_TOKEN }),
+    await call('POST', `/api/guest/${LEGACY_TOKEN}/reconfirm`, { guestToken: GUEST_TOKEN }),
   ];
   for (const res of responses) {
     assert.strictEqual(res.status, 404);
@@ -277,8 +280,11 @@ test('unknown, revoked, and deleted-flock tokens are one uniform 404 on every ro
   // identical sentence, because a signed-in caller learning "that token existed
   // once" is the same oracle as an anonymous one learning it.
   const deadTokenAnswers = guestSrc.match(/error: 'This invite link is no longer active'/g) || [];
-  assert.strictEqual(deadTokenAnswers.length, 4,
-    'all four routes answer a dead token with the same sentence');
+  // Seven routes, plus the budget door's second use of the same sentence for
+  // a flock deleted between its link check and its transaction: the same
+  // words there too, because a different sentence would be the oracle.
+  assert.strictEqual(deadTokenAnswers.length, 8,
+    'all seven routes answer a dead token with the same sentence');
 });
 
 test('the guest mount sits behind the API rate limiter', () => {
@@ -335,7 +341,7 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
     { name: 'Noor Haddad', status: 'declined' },
     { name: 'Theo Lang', status: 'invited' },
   ] }));
-  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [{ name: 'Sam', status: 'in' }] }));
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [{ name: 'Sam', status: 'in' }] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
@@ -343,7 +349,29 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
   // The guest ledger has its own 50-row ceiling and the page used to learn
   // about it from a 409 after the guest had already typed their name into a
   // live form. Same contract as `full`: a boolean, never the count.
-  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'full', 'going', 'guestsFull', 'host', 'people', 'venues']);
+  // ── PIN UPDATE. `budget` and `reconfirm` were added deliberately. ────────
+  // The link is now where a non-user answers the anonymous budget and the
+  // night-of "still in?" question, so the preview has to say where each
+  // stands. Both are bounded the way `full` and `guestsFull` are:
+  //
+  //   budget     null unless the plan matches budgets; otherwise a fixed key
+  //              set of COUNTS ({ enabled, context, locked, submissionCount,
+  //              totalMembers, isReady }) and never a ceiling, on this
+  //              unauthenticated read. The group's banded number reaches only
+  //              a guest who has answered the plan, through POST /:token/me,
+  //              keyed on their server-issued identity (PART 8 pins that).
+  //   reconfirm  null unless the window is open; then { open, deadline, count,
+  //              total }, where deadline is the plan time `flock.when` already
+  //              publishes and the two integers are counts over the roster the
+  //              page already shows.
+  //
+  // The roster row gains ONE boolean, `reconfirmed`, which says nothing about
+  // a person that their answer does not already say, and is false on every
+  // row until the window opens.
+  assert.deepStrictEqual(Object.keys(res.body).sort(),
+    ['budget', 'flock', 'full', 'going', 'guestsFull', 'host', 'people', 'reconfirm', 'venues']);
+  assert.strictEqual(res.body.budget, null, 'a plan that is not matching budgets publishes nothing about one');
+  assert.strictEqual(res.body.reconfirm, null, 'no window has been opened on this plan');
   assert.strictEqual(res.body.guestsFull, false, 'nowhere near the guest ledger cap');
   assert.strictEqual(typeof res.body.guestsFull, 'boolean', 'a yes or a no, never the count');
   assert.deepStrictEqual(Object.keys(res.body.flock).sort(), ['chosenVenue', 'name', 'status', 'when']);
@@ -357,14 +385,15 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
 
   // The roster: three answers, first names only, yes before no before silence.
   assert.deepStrictEqual(res.body.people, [
-    { name: 'Ava', rsvp: 'in', kind: 'member' },
-    { name: 'Sam', rsvp: 'in', kind: 'guest' },
-    { name: 'Noor', rsvp: 'out', kind: 'member' },
-    { name: 'Theo', rsvp: 'none', kind: 'member' },
+    { name: 'Ava', rsvp: 'in', kind: 'member', reconfirmed: false },
+    { name: 'Sam', rsvp: 'in', kind: 'guest', reconfirmed: false },
+    { name: 'Noor', rsvp: 'out', kind: 'member', reconfirmed: false },
+    { name: 'Theo', rsvp: 'none', kind: 'member', reconfirmed: false },
   ]);
   for (const p of res.body.people) {
-    assert.deepStrictEqual(Object.keys(p).sort(), ['kind', 'name', 'rsvp'],
-      'a roster row carries three fields and nothing else');
+    assert.deepStrictEqual(Object.keys(p).sort(), ['kind', 'name', 'reconfirmed', 'rsvp'],
+      'a roster row carries four fields and nothing else');
+    assert.strictEqual(typeof p.reconfirmed, 'boolean', 'the night-of answer is a yes or a no');
     assert.ok(!/\s/.test(p.name), 'a surname must never cross this surface');
     assert.ok(p.name.length <= 24, 'names are length-capped');
   }
@@ -386,7 +415,7 @@ test('a plan at the join ceiling says so on the preview, before anybody signs up
   on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
-  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
@@ -402,7 +431,7 @@ test('one member under the ceiling is not reported as full', async () => {
   on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP - 1, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
-  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.body.full, false);
@@ -418,7 +447,7 @@ test('guests do not fill the member ceiling, because they do not take member sea
   on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 3, guests: guest.LINK_JOIN_MEMBER_CAP }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
-  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.body.full, false);
@@ -435,7 +464,7 @@ test('the roster is capped, and the cap is what the route advertises', async () 
   on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 200, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: many }));
-  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [] }));
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
@@ -443,7 +472,7 @@ test('the roster is capped, and the cap is what the route advertises', async () 
 
   // And the cap is pushed into SQL as a LIMIT, not applied only after the rows
   // have already been read into memory.
-  for (const q of ran(/FROM flock_members fm JOIN users u/).concat(ran(/SELECT name, status FROM guest_rsvps/))) {
+  for (const q of ran(/FROM flock_members fm JOIN users u/).concat(ran(/SELECT name, status, reconfirmed_at FROM guest_rsvps/))) {
     assert.match(q.sql, /LIMIT \$2/, 'the roster reads are bounded in the database');
   }
 });
@@ -639,7 +668,7 @@ test('the preview counts, tallies and ROSTER all exclude hidden guests', async (
   // a takedown could have been undone: it is the one surface an abuser can
   // still reach, and it names people. Filtered in the SQL, like every other
   // reader on this route.
-  const roster = ran(/SELECT name, status FROM guest_rsvps/)[0];
+  const roster = ran(/SELECT name, status, reconfirmed_at FROM guest_rsvps/)[0];
   assert.ok(roster, 'the roster read the guest rows');
   assert.match(roster.sql, /COALESCE\(is_hidden, false\) = false/,
     'a taken-down guest name must not come back on the roster');
@@ -657,13 +686,13 @@ test('a hidden guest is absent from the roster even when the row is returned', a
   on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 0, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
-  on(/SELECT name, status FROM guest_rsvps/, (params, sql) => {
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, (params, sql) => {
     assert.match(sql, /COALESCE\(is_hidden, false\) = false/);
     return { rows: [{ name: 'Visible', status: 'in' }] };
   });
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
-  assert.deepStrictEqual(res.body.people, [{ name: 'Visible', rsvp: 'in', kind: 'guest' }]);
+  assert.deepStrictEqual(res.body.people, [{ name: 'Visible', rsvp: 'in', kind: 'guest', reconfirmed: false }]);
 });
 
 test('a hidden guest cannot edit their RSVP back onto the surface', async () => {

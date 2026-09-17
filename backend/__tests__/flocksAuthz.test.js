@@ -281,6 +281,11 @@ async function dispatch(text, params = []) {
   }
 
   // ── membership lookups ──
+  // POST /:id/reconfirm reads the night-of answer alongside the status.
+  if (has('SELECT status, reconfirmed_at FROM flock_members WHERE flock_id = $1 AND user_id = $2')) {
+    const m = memberOf(params[0], params[1]);
+    return { rows: m ? [{ status: m.status, reconfirmed_at: m.reconfirmed_at || null }] : [], rowCount: m ? 1 : 0 };
+  }
   if (has('SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2')) {
     const m = memberOf(params[0], params[1]);
     return { rows: m ? [{ status: m.status }] : [], rowCount: m ? 1 : 0 };
@@ -1490,6 +1495,34 @@ test('leave: only the creator\'s departure deletes, and it cascades', async () =
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 11b. POST /api/flocks/:id/reconfirm — the night-of "still in?" tap
+// ===========================================================================
+//
+// The window itself (open, deadline, the counts, the one-tap rule) is pinned
+// in reconfirmWindow.test.js. This sweep pins the gates in front of it, which
+// are the gates every other flock route has: no membership row means the
+// flock does not exist, and an invitee who never said yes cannot say "still
+// yes".
+
+test('reconfirm: a stranger is told the flock does not exist, real or not', async () => {
+  const real = await call('POST', '/api/flocks/10/reconfirm', 'mallory');
+  const fake = await call('POST', `/api/flocks/${MISSING_ID}/reconfirm`, 'mallory');
+  assert.strictEqual(real.status, 404);
+  assert.strictEqual(fake.status, 404);
+  assert.deepStrictEqual(await real.json(), await fake.json(),
+    'the refusal is the same whether or not the flock exists');
+  assert.deepStrictEqual(writes, [], 'nothing is written');
+  assertQueriesUnderstood();
+});
+
+test('reconfirm: an invitee who never said yes cannot say still yes', async () => {
+  const res = await call('POST', '/api/flocks/10/reconfirm', 'carol');
+  assert.strictEqual(res.status, 403);
+  assert.deepStrictEqual(writes, [], 'nothing is written');
+  assertQueriesUnderstood();
+});
+
+// ===========================================================================
 // 12. GET /api/flocks/:id/members — the roster
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1973,7 +2006,7 @@ test('inventory: every route in flocks.js is one this sweep actually covers', as
     'GET /', 'POST /', 'GET /activity', 'GET /history', 'GET /:id', 'PUT /:id',
     'DELETE /:id', 'POST /:id/invite-link', 'POST /:id/join', 'POST /:id/invite',
     'POST /:id/rerun', 'POST /:id/decline', 'POST /:id/leave', 'GET /:id/members',
-    'POST /:id/attendance',
+    'POST /:id/attendance', 'POST /:id/reconfirm',
   ].sort();
   assert.deepStrictEqual(found, audited,
     'routes/flocks.js gained or lost a route — audit it and update this list');
@@ -1996,6 +2029,7 @@ test('id confusion: a bounded-integer id is settled on every route before any qu
     ['POST', '/api/flocks/%s/invite'],
     ['POST', '/api/flocks/%s/rerun'],
     ['POST', '/api/flocks/%s/attendance'],
+    ['POST', '/api/flocks/%s/reconfirm'],
   ];
   for (const [method, tpl] of paths) {
     for (const bad of ['abc', '0', '-5', '2147483648', '1e3']) {

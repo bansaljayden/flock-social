@@ -66,12 +66,24 @@ test('the reminder pushes run after its response, not in front of the button', (
 });
 
 test('the fan-out runs AFTER res.json, so a delivery failure cannot unwind a settled budget', () => {
-  const iResponse = SRC.indexOf('submitted: true');
-  const iFanOut = SRC.indexOf('Promise.allSettled');
+  // The fan-out lives in pushBudgetSet, a helper defined above the route and
+  // shared with the guest door (routes/guest.js POST /:token/budget), so the
+  // order that matters is the CALL order inside the submit handler: the
+  // response goes, then the helper is awaited. The helper itself carries the
+  // concurrent fan-out and its own catch.
+  const iRoute = SRC.indexOf("router.post('/:flockId/submit'");
   const iCatch = SRC.indexOf('Budget submit error');
-  assert.ok(iResponse > -1 && iFanOut > -1 && iCatch > -1, 'all three markers are present');
+  assert.ok(iRoute > -1 && iCatch > iRoute, 'the submit handler is where it was');
+  const route = SRC.slice(iRoute, iCatch);
+  const iResponse = route.indexOf('submitted: true');
+  const iFanOut = route.indexOf('await pushBudgetSet(');
+  assert.ok(iResponse > -1 && iFanOut > -1, 'both markers are present inside the submit handler');
   assert.ok(iFanOut > iResponse, 'the push fans out after res.json has returned the settled budget');
-  assert.ok(iFanOut < iCatch, 'and still inside the submit handler, not leaked into another route');
+  const iHelper = SRC.indexOf('async function pushBudgetSet(');
+  assert.ok(iHelper > -1 && iHelper < iRoute, 'the helper is defined once, above the route');
+  const helper = SRC.slice(iHelper, iRoute);
+  assert.ok(helper.includes('Promise.allSettled'), 'the helper fans out concurrently');
+  assert.ok(helper.includes('catch (pushErr)'), 'and is guarded on its own');
 });
 
 test('the old sequential pre-response loop is gone and the fan-out is guarded on its own', () => {

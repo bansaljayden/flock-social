@@ -30,6 +30,20 @@ const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 // unmoderated content on a public link. The page says that plainly rather than
 // implying the guest path is the same thing in fewer steps.
 //
+// TWO MORE THINGS THE LINK ANSWERS (2026-09-16). Production said the product
+// had never once been used by a group: every real flock had one member,
+// because the room a host landed in after creating a plan was empty and the
+// link sat two taps away as an afterthought. So the link now does everything
+// a member can do from the chat. Beyond the RSVP and the vote that means the
+// anonymous budget (a guest's number goes into the same pipe as a member's,
+// and only the group's banded ceiling ever comes back out) and the night-of
+// "still in?", a window the server opens a few hours before a confirmed plan.
+// Both are read for THIS guest through POST /:token/me, keyed on the identity
+// the RSVP minted, because the public preview never carries a ceiling or
+// anyone's own row. Every one of the new elements degrades to nothing: an old
+// server, a plan that is not asking, and a plan that is over all draw the
+// page exactly as it was.
+//
 // Rules this page is held to (DESIGN-STANDARD.md): no em dashes, no pill badge over
 // the headline, no gradients, no icon-in-rounded-square tiles, no card stack,
 // no scroll reveals, no claim of a feature that does not ship, no dead buttons,
@@ -42,6 +56,11 @@ const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 //   POST /api/guest/:token/rsvp     400 bad name/status, 403 taken down,
 //                                   404 link died mid-session, 429 capped
 //   POST /api/guest/:token/vote     400 unknown venue, 403 not RSVPed, 404, 429
+//   POST /api/guest/:token/me       200 this guest's own state, 403 no RSVP
+//                                   under that token (the identity is dead)
+//   POST /api/guest/:token/budget   400 bad amount, 403 no RSVP, 409 NOT_IN /
+//                                   BUDGET_LOCKED / FLOCK_CLOSED, 429 capped
+//   POST /api/guest/:token/reconfirm 403 no RSVP, 409 NOT_IN / NOT_OPEN, 429
 //   POST /api/guest/:token/join     authenticated; the app redeems it, not this
 //                                   page (services/inviteHandoff.js)
 // ---------------------------------------------------------------------------
@@ -144,7 +163,7 @@ const clearStore = (key) => {
 // popup and the native Sign in with Apple sheet. Written with the same key and
 // the same shape services/inviteHandoff.js reads, and inlined here rather than
 // imported because that module pulls in the whole REST client, which this page
-// deliberately does not ship (it talks to three endpoints with bare fetch).
+// deliberately does not ship (it talks to the guest routes with bare fetch).
 const HANDOFF_KEY = 'flock_pending_invite';
 
 // ANALYTICS, AT THE MOMENT OF THE TAP AND NEVER AT PAGE LOAD.
@@ -214,10 +233,32 @@ const whenLabel = (d) => {
   return `${day} ${DOT} ${time}`;
 };
 
+// The hour a night-of question closes, in the reader's own clock. The time
+// alone: the plan's row above already names the day and the zone, and the
+// window opens a few hours before the plan, so "Answer by 9:00 PM" is read
+// against a date the reader can already see.
+const timeLabel = (d) => (
+  d ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : null
+);
+
+// "$30", "$12.50": a whole number stays whole and anything else gets its
+// cents, so the page never prints "$12.5" at somebody.
+const money = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return null;
+  return `$${Number.isInteger(v) ? v : v.toFixed(2)}`;
+};
+
+// The server's own bounds on an amount (routes/guest.js, the same validators
+// POST /api/budget/:id/submit carries). Checked here so a blank or a typo gets
+// an answer with no round trip.
+const AMOUNT_MIN = 0.01;
+const AMOUNT_MAX = 10000;
+
 // ---------------------------------------------------------------------------
 // THE PAGE'S OWN REQUEST CLOCK.
 //
-// This page talks to three endpoints with bare fetch, and that part stays.
+// This page talks to the guest routes with bare fetch, and that part stays.
 // services/api.js is the APP's client: it attaches a JWT, wipes the device and
 // announces an expiry on a 401, and carries the PostHog funnel. None of that
 // means anything to somebody who has no account and may never make one, and
@@ -409,6 +450,23 @@ export default function GuestInvite() {
   const [nameProblem, setNameProblem] = useState(false);
   const nameRef = useRef(null);
   const deadEndRef = useRef(null);
+  // The amount field's text, kept as a string until the tap so a half-typed
+  // "12." is not parsed out from under someone.
+  const [budgetText, setBudgetText] = useState('');
+  const [budgetProblem, setBudgetProblem] = useState(false);
+  // "Change" on an answered budget puts the field back WITHOUT forgetting the
+  // answer, so a re-submit that fails still leaves the old one standing.
+  const [budgetEditing, setBudgetEditing] = useState(false);
+  // The group's banded ceiling, and the ONLY dollar figure on this page that
+  // is not this guest's own. It arrives through POST /:token/me, or in the
+  // reply to the answer that settled the budget, never in the public preview.
+  // React state rather than the guest store, because it is the group's
+  // number and not part of anyone's identity.
+  const [ceiling, setCeiling] = useState(null);
+  const budgetRef = useRef(null);
+  // The identity POST /:token/me was last asked about, so the question is
+  // put once per identity and not once per render or once per refresh.
+  const meAskedFor = useRef(null);
   // Which phase the last committed render used, so a phase CHANGE can be told
   // apart from the phase this page happened to open on.
   const lastPhase = useRef(null);
@@ -594,6 +652,9 @@ export default function GuestInvite() {
         name: p.name.trim(),
         rsvp: ANSWERS[p.rsvp] ? p.rsvp : 'none',
         isGuest: p.kind === 'guest',
+        // === true: an old server sends no such key, and absent is "has not
+        // said", never anything else.
+        reconfirmed: p.reconfirmed === true,
       }));
     const RANK = { in: 0, out: 1, none: 2 };
     return rows.sort((a, b) => RANK[a.rsvp] - RANK[b.rsvp]);
@@ -604,6 +665,24 @@ export default function GuestInvite() {
     for (const p of people) t[p.rsvp] += 1;
     return t;
   }, [people]);
+
+  // THE SERVER'S OWN VERSION PROBE. A server that has POST /:token/me sends
+  // both of these keys on every preview (null when the plan is not asking),
+  // and one that predates the route sends neither, so their absence is read
+  // the way hasRoster and atCapacity read theirs: an old server, not a plan
+  // with nothing to say. The page does not ask /me of a server that cannot
+  // answer it. On the worst network the product sees that is a whole request
+  // spent on a 404 the page already knows is coming.
+  const serverHasMe = !!(data && typeof data === 'object' && ('budget' in data || 'reconfirm' in data));
+  // The budget as the link sees it: counts, the floor, whether it settled.
+  // === true on `enabled` for the same reason `full` is tested that way.
+  const budget = (data && data.budget && typeof data.budget === 'object' && data.budget.enabled === true)
+    ? data.budget : null;
+  // The night-of window, only while it is open. The server sends null outside
+  // it, and a block that does not say open is read as null too.
+  const reconfirm = (data && data.reconfirm && typeof data.reconfirm === 'object' && data.reconfirm.open === true)
+    ? data.reconfirm : null;
+  const reconfirmDeadline = useMemo(() => parseWhen(reconfirm && reconfirm.deadline), [reconfirm]);
 
   const topVotes = venues.reduce((m, v) => Math.max(m, v.votes), 0);
   const rsvpStatus = pendingRsvp || (guest && guest.status) || null;
@@ -618,12 +697,22 @@ export default function GuestInvite() {
 
   // The stored identity is dead server-side. Drop it and put them back on the
   // name field, which is the only step that can actually get them unstuck.
-  const startOver = () => {
+  // Everything that identity carried goes with it: a budget answer or a
+  // "still in" that belonged to a row the server no longer has is not this
+  // person's answer any more, and the group's ceiling was theirs to see only
+  // as a guest who is in.
+  const dropIdentity = () => {
     setGuest(null);
     clearStore(storageKey);
     setEditingName(true);
     setName('');
     setPendingRsvp(null);
+    setBudgetEditing(false);
+    setBudgetText('');
+    setCeiling(null);
+  };
+  const startOver = () => {
+    dropIdentity();
     // The name field is the only step that unsticks them, and it did not exist
     // a moment ago. Without this, a 403 on a VOTE left focus on a venue button
     // near the bottom of the page while the thing to fix appeared above the
@@ -632,6 +721,129 @@ export default function GuestInvite() {
     // complaint out as the field's description rather than racing the alert.
     setTimeout(() => nameRef.current && nameRef.current.focus(), 0);
   };
+
+  // What POST /:token/me said about this identity, taken field by field. Only
+  // the fields the page knows are read, each checked for shape, because this
+  // is a reply to a bearer token being merged into the identity the token
+  // names: a renamed field must read as absent, never as a value.
+  //
+  // THE SERVER WINS OVER THE STORE about this guest's own budget row. The
+  // store is a cache of a fact the server owns, and a row can be gone
+  // (leaving the plan and coming back) or present (answered from another
+  // device under a carried identity) without this page having seen it.
+  const mergeMe = (body) => {
+    if (!guest) return;
+    const status = body.status === 'in' || body.status === 'out' ? body.status : null;
+    const me = body.budget && typeof body.budget === 'object' ? body.budget : null;
+    const next = { ...guest };
+    if (status) next.status = status;
+    if (typeof body.reconfirmed === 'boolean') next.reconfirmed = body.reconfirmed;
+    if (me) {
+      if (me.userSubmitted === true) {
+        const own = Number(me.userAmount);
+        next.budget = me.userSkipped === true || !Number.isFinite(own)
+          ? { amount: null, skipped: true }
+          : { amount: own, skipped: false };
+      } else {
+        delete next.budget;
+      }
+    }
+    setGuest(next);
+    writeStore(storageKey, next);
+    if (me) {
+      // The band, or null. Null here IS the answer (not in, not settled, or
+      // fewer than three sharers), so it replaces rather than being ignored.
+      const band = Number(me.ceiling);
+      setCeiling(me.ceiling !== null && me.ceiling !== undefined && Number.isFinite(band) ? band : null);
+    }
+    setData((d) => {
+      if (!d) return d;
+      const out = { ...d };
+      if (me) {
+        const was = d.budget && typeof d.budget === 'object' ? d.budget : {};
+        out.budget = {
+          ...was,
+          enabled: true,
+          context: typeof me.context === 'string' ? me.context : (was.context || null),
+          locked: me.locked === true,
+          submissionCount: Number.isFinite(Number(me.submissionCount)) ? Number(me.submissionCount) : (was.submissionCount || 0),
+          totalMembers: Number.isFinite(Number(me.totalMembers)) ? Number(me.totalMembers) : (was.totalMembers || 0),
+          isReady: me.isReady === true,
+        };
+      }
+      // Present on every reply from a server that has the route: the open
+      // block, or null once the window has closed. Either is newer than the
+      // preview's copy, so either replaces it.
+      if ('reconfirm' in body) {
+        out.reconfirm = (body.reconfirm && typeof body.reconfirm === 'object' && body.reconfirm.open === true)
+          ? body.reconfirm : null;
+      }
+      return out;
+    });
+  };
+
+  // ON LOAD, WHAT THE SERVER HOLDS FOR THIS IDENTITY. The public preview
+  // carries what anyone with the link may see. This guest's own budget row,
+  // whether they have said "still in", and the group's ceiling are read here
+  // instead, keyed on the identity the RSVP minted: a bearer credential, so a
+  // POST body and never a query string (server logs, browser history, the
+  // Referer header). Asked once per identity, after the preview is up, so the
+  // GET is always the first request the page makes and a server that cannot
+  // answer this is never asked (serverHasMe).
+  //
+  // WHAT A FAILURE MEANS. A 403 is the identity being dead server-side (the
+  // RSVP was removed, or the name was taken down), which is the same fact a
+  // 403 on a vote means and gets the same answer: the identity is dropped and
+  // the name field comes back. WITHOUT the focus move startOver makes, because
+  // this runs at page open and stealing focus from someone who just opened a
+  // link is the bug that move exists to avoid. Anything else (a 404 or 500
+  // from a server that predates the route, a dead connection, a torn body)
+  // leaves the page working on what the preview said.
+  //
+  // COMMITS ONLY WHILE CURRENT, AND TAKES NO NUMBER OF ITS OWN. It reads the
+  // page's generation and commits only if nothing newer has claimed one since
+  // it left, so a write made while it was in the air (the guest tapping "out"
+  // on a slow phone) is never overwritten by the state before that write. It
+  // does not claim, because a quiet refresh already in the air must still be
+  // allowed to land: dropping the roster refresh that follows an RSVP to make
+  // room for this would leave the guest out of "Who is coming" under their
+  // own answer.
+  useEffect(() => {
+    if (phase !== 'ready' || !serverHasMe) return undefined;
+    const guestToken = guest && guest.guestToken;
+    if (!guestToken || meAskedFor.current === guestToken) return undefined;
+    meAskedFor.current = guestToken;
+    const seq = stateSeq.current;
+    let stale = false;
+    let landed = false;
+    (async () => {
+      const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/me`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guestToken }),
+      });
+      landed = true;
+      if (stale || seq !== stateSeq.current) return;
+      if (r.status === 403) {
+        dropIdentity();
+        complain('rsvp', 'Your earlier answer is not on this plan anymore. Answer again if you are coming.');
+        return;
+      }
+      if (r.status < 200 || r.status >= 300 || r.torn) return;
+      mergeMe(r.body);
+    })();
+    // The identity changed under this request (an RSVP landed, or the token
+    // was dropped): whatever it was asking about is not the identity on the
+    // page any more. And if nothing has landed yet, the question is unmarked
+    // so the next run asks it again rather than remembering a question
+    // nothing answered. StrictMode's development-only mount, unmount, mount
+    // is the case that found this: the first run's reply was stale and the
+    // second run skipped, so the merge never happened at all.
+    return () => {
+      stale = true;
+      if (!landed && meAskedFor.current === guestToken) meAskedFor.current = null;
+    };
+  }, [phase, serverHasMe, guest, token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE PRIMARY ACTION. Stash the token, then hand the browser to the app's
   // signup entry. index.js routes /signup into App.js, which opens on the
@@ -776,7 +988,23 @@ export default function GuestInvite() {
     // or a torn reply, and counting those as answers would report an invite
     // working on exactly the nights it did not.
     trackGuest((api) => api.trackGuestRsvp(status));
-    const next = { guestToken: body.guestToken, name: typed, status, vote: guest && guest.vote };
+    // An identity this page just minted holds nothing on the server this page
+    // did not put there, so POST /:token/me is not asked about it. A CARRIED
+    // one was minted under another link and may hold a budget row and a
+    // "still in" this page has never seen, so the effect above does ask.
+    if (!carried) meAskedFor.current = body.guestToken;
+    // The same row, re-answered: switching to out and back does not remove a
+    // budget answer or a "still in" on the server, so it must not remove them
+    // here either. A different token is a different row, and carries nothing.
+    const sameRow = !!(guest && guest.guestToken === body.guestToken);
+    const next = {
+      guestToken: body.guestToken,
+      name: typed,
+      status,
+      vote: guest && guest.vote,
+      ...(sameRow && guest.budget ? { budget: guest.budget } : {}),
+      ...(sameRow && guest.reconfirmed ? { reconfirmed: true } : {}),
+    };
     setGuest(next);
     writeStore(storageKey, next);
     setPendingRsvp(null);
@@ -864,6 +1092,210 @@ export default function GuestInvite() {
     // tab. It runs after the claim and with no await between them, so no reply
     // can land in the gap. Quiet, so a rate-limited or flaky refresh leaves the
     // counted vote on screen rather than replacing the plan with an error.
+    load({ quiet: true });
+  };
+
+  // THE BUDGET, FROM THE LINK. A number, or a skip, into the same pipe a
+  // member's answer takes (routes/guest.js runs routes/budget.js's own settle
+  // after its upsert). The reply is the aggregate and, on the one answer that
+  // settles the budget, the group's band. Never anyone's amount. What this
+  // page stores is this guest's own answer, next to their vote, so a second
+  // tab and a reload both read the same thing.
+  const submitBudget = async (skipped) => {
+    if (busy) return;
+    if (!answered || closed) return;
+    let amount = null;
+    if (!skipped) {
+      const typed = budgetText.trim();
+      amount = Number(typed);
+      if (!typed || !Number.isFinite(amount) || amount < AMOUNT_MIN || amount > AMOUNT_MAX) {
+        // Marked and described the way the name field is, so the complaint
+        // reads as the field's own and not as a line somewhere below it.
+        setBudgetProblem(true);
+        complain('budget', typed
+          ? 'Amount must be between $0.01 and $10,000.'
+          : 'Put an amount in first, or skip.');
+        if (budgetRef.current) budgetRef.current.focus();
+        return;
+      }
+      amount = Math.round(amount * 100) / 100;
+    }
+    setBudgetProblem(false);
+    setBusy({ kind: 'budget', key: skipped ? 'skip' : 'amount' });
+    hush('budget');
+
+    const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/budget`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(skipped
+        ? { guestToken: guest.guestToken, amount: 0, skipped: true }
+        : { guestToken: guest.guestToken, amount }),
+    });
+    const body = r.body;
+
+    setBusy(null);
+
+    if (r.status === 404) { claim(); setPhase('gone'); return; }
+    if (r.status === 403) {
+      startOver();
+      complain('rsvp', 'Your RSVP is not on this plan anymore. Answer again, then the budget.');
+      return;
+    }
+    if (r.status === 409 && body.code === 'NOT_IN') {
+      // The server's row says out, whatever this page thought. Its word is
+      // taken, so the controls that could only 409 again leave with the
+      // same message and the RSVP section reads the same fact.
+      const next = { ...guest, status: 'out' };
+      setGuest(next);
+      writeStore(storageKey, next);
+      setPendingRsvp(null);
+      complain('budget', "Tap I'm in first. The budget only counts people who are going.");
+      return;
+    }
+    if (r.status === 409 && body.code === 'BUDGET_LOCKED') {
+      // Settled between the load and the tap. Said in words, as the member
+      // door says it, and the refresh brings the count the settle produced.
+      setData((d) => (d && d.budget && typeof d.budget === 'object'
+        ? { ...d, budget: { ...d.budget, locked: true } } : d));
+      complain('budget', 'The group budget is already set.');
+      load({ quiet: true });
+      return;
+    }
+    if (r.status === 409) {
+      // FLOCK_CLOSED, or the plan finishing between the load and the tap. The
+      // refresh flips the page into its closed shape, as the RSVP's does.
+      complain('budget', body.error || 'This plan is not taking answers anymore.');
+      load({ quiet: true });
+      return;
+    }
+    if (r.status < 200 || r.status >= 300 || r.torn) {
+      // 400 lands here too, carrying the server's own sentence (it names the
+      // bound, or says the plan is not matching budgets), and a 429 carries
+      // its wait phrase verbatim, both through failureText.
+      complain('budget', failureText(r, 'Your answer did not save. Try again.', host));
+      return;
+    }
+
+    // Claimed, as the vote is: this replaces the count in place, and the
+    // refresh the RSVP started may still be in the air with the old one.
+    claim();
+    const next = {
+      ...guest,
+      budget: skipped ? { amount: null, skipped: true } : { amount, skipped: false },
+    };
+    setGuest(next);
+    writeStore(storageKey, next);
+    setData((d) => {
+      if (!d) return d;
+      const was = d.budget && typeof d.budget === 'object' ? d.budget : {};
+      return {
+        ...d,
+        budget: {
+          ...was,
+          enabled: true,
+          submissionCount: Number.isFinite(Number(body.submissionCount)) ? Number(body.submissionCount) : (was.submissionCount || 0),
+          totalMembers: Number.isFinite(Number(body.totalMembers)) ? Number(body.totalMembers) : (was.totalMembers || 0),
+          isReady: body.isReady === true,
+          locked: body.budgetLocked === true,
+        },
+      };
+    });
+    // The one way the group's number reaches this page other than /me: this
+    // was the answer that settled the budget, and the reply carries the band.
+    // Null on every other reply, and null there is not "no ceiling any more".
+    const band = Number(body.ceiling);
+    if (body.ceiling !== null && body.ceiling !== undefined && Number.isFinite(band)) setCeiling(band);
+    setBudgetEditing(false);
+    setBudgetText('');
+    say('budget', skipped
+      ? 'Skipped. You will not count toward the group number.'
+      : 'Saved. Nobody sees your amount, only the group number once there is one.');
+    load({ quiet: true });
+  };
+
+  // "I'M STILL IN", FROM THE LINK. One tap, once, inside the window the server
+  // opened. The reply carries the new count; the roster's marks and the
+  // count both move on screen at once, and the quiet refresh that follows
+  // brings everyone else's.
+  const submitReconfirm = async () => {
+    if (busy) return;
+    if (!answered || closed || !reconfirm) return;
+    setBusy({ kind: 'reconfirm', key: 'me' });
+    hush('reconfirm');
+
+    const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/reconfirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guestToken: guest.guestToken }),
+    });
+    const body = r.body;
+
+    setBusy(null);
+
+    if (r.status === 404) { claim(); setPhase('gone'); return; }
+    if (r.status === 403) {
+      startOver();
+      complain('rsvp', 'Your RSVP is not on this plan anymore. Answer again first.');
+      return;
+    }
+    if (r.status === 409 && body.code === 'NOT_IN') {
+      // Same as the budget's NOT_IN: the server's row says out, and the page
+      // takes its word rather than keep offering a button it will refuse.
+      const next = { ...guest, status: 'out' };
+      setGuest(next);
+      writeStore(storageKey, next);
+      setPendingRsvp(null);
+      complain('reconfirm', body.error || "You're down as out. Tap I'm in first if that changed.");
+      return;
+    }
+    if (r.status === 409 && body.code === 'NOT_OPEN') {
+      // The window closed while this page sat open: the plan's time arrived,
+      // or it stopped being confirmed. The preview is the thing that knows,
+      // so it is taken again, and the section below keeps this line up after
+      // the block it was drawn for is gone.
+      complain('reconfirm', 'That question has closed. Here is the plan as it stands.');
+      load({ quiet: true });
+      return;
+    }
+    if (r.status === 409) {
+      complain('reconfirm', body.error || 'This plan is not taking answers anymore.');
+      load({ quiet: true });
+      return;
+    }
+    if (r.status < 200 || r.status >= 300 || r.torn) {
+      complain('reconfirm', failureText(r, 'That did not save. Try again.', host));
+      return;
+    }
+
+    // Claimed, for the reason the vote's commit is: this replaces the count
+    // and this guest's own roster row in place, and the refresh the RSVP
+    // started may still be in the air with the state before the tap.
+    claim();
+    const next = { ...guest, reconfirmed: true };
+    setGuest(next);
+    writeStore(storageKey, next);
+    setData((d) => {
+      if (!d) return d;
+      const was = d.reconfirm && typeof d.reconfirm === 'object' ? d.reconfirm : {};
+      return {
+        ...d,
+        reconfirm: {
+          ...was,
+          open: true,
+          count: Number.isFinite(Number(body.count)) ? Number(body.count) : (was.count || 0),
+          total: Number.isFinite(Number(body.total)) ? Number(body.total) : (was.total || 0),
+          deadline: body.deadline || was.deadline || null,
+        },
+        // This guest's own row, marked now rather than when the refresh
+        // lands, so the list and the line above it agree at once.
+        people: Array.isArray(d.people)
+          ? d.people.map((p) => (
+            p && p.kind === 'guest' && sameGuestName(p.name, guest.name) ? { ...p, reconfirmed: true } : p
+          ))
+          : d.people,
+      };
+    });
+    say('reconfirm', `Counted. ${host || 'They'} can see you're still in.`);
     load({ quiet: true });
   };
 
@@ -1079,6 +1511,17 @@ export default function GuestInvite() {
                         saying, because it is the difference between the people
                         in the chat and the people who only answered. */}
                     {p.isGuest && <span className="gi-who-kind">guest</span>}
+                    {/* Said "still in" tonight. Drawn only while the window is
+                        open: outside it the flag is a fact about a night
+                        nobody is being asked about, and a plan can carry it
+                        for a week afterwards. Glyph AND the words, like the
+                        answer itself, never a tint on its own. */}
+                    {reconfirm && p.reconfirmed && (
+                      <span className="gi-who-still">
+                        {Icons.checkDouble('var(--gi-accent)', 12)}
+                        still in
+                      </span>
+                    )}
                     {/* The glyph is decoration, so the answer is spelled out
                         here for anyone who is not looking at the legend. */}
                     <span className="gi-sr">{a.word}</span>
@@ -1202,6 +1645,52 @@ export default function GuestInvite() {
         </section>
       )}
 
+      {/* ---------------------------------------------------------- still in? */}
+      {/* THE NIGHT-OF QUESTION, and on the night it is THE question, which is
+          why it sits above the RSVP rather than under it. The server opens
+          the window a few hours before a confirmed plan (utils/reconfirm.js
+          decides when, in SQL) and the preview carries the block only while
+          it is open, so a plan that is not being asked draws nothing here. A
+          closed plan draws nothing either: a question about a night that is
+          over is the page not reading its own data.
+          The section also stays up, heading and complaint only, after the
+          window closes under a tap: the reload takes the block away, and a
+          line that vanished with it would have said nothing. */}
+      {!closed && (reconfirm || (feedback.where === 'reconfirm' && feedback.kind === 'problem')) && (
+        <section className="gi-sec" aria-labelledby="gi-still-h">
+          <h2 id="gi-still-h">Still in?</h2>
+          {reconfirm && (
+            <p className="gi-sub">
+              {reconfirm.count} of {reconfirm.total} have said so.
+              {reconfirmDeadline ? ` Answer by ${timeLabel(reconfirmDeadline)}.` : ''}
+            </p>
+          )}
+          {reconfirm && !answered && (
+            <p className="gi-sub">Say I'm in below first, then you can answer this.</p>
+          )}
+          {reconfirm && answered && rsvpStatus !== 'in' && (
+            <p className="gi-sub">You're down as out.</p>
+          )}
+          {reconfirm && answered && rsvpStatus === 'in' && (guest.reconfirmed ? (
+            <p className="gi-sub">You're in. {reconfirm.count} of {reconfirm.total} still in.</p>
+          ) : (
+            /* Outline, like the RSVP answers: the join band stays the only
+               filled control on the page. */
+            <div className="gi-row">
+              <button
+                type="button"
+                className="gi-btn"
+                onClick={submitReconfirm}
+                aria-disabled={busy !== null}
+              >
+                {busy && busy.kind === 'reconfirm' ? 'Saving' : "I'm still in"}
+              </button>
+            </div>
+          ))}
+          <Feedback where="reconfirm" feedback={feedback} />
+        </section>
+      )}
+
       {/* ------------------------------------------------- the quieter path */}
       {!closed && (
         <section className="gi-sec" aria-labelledby="gi-rsvp-h">
@@ -1288,6 +1777,128 @@ export default function GuestInvite() {
               {rsvpStatus === 'in'
                 ? "You're down as coming. Tap the other button any time if that changes."
                 : "You're down as out. Tap I'm in if that changes."}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* --------------------------------------------------------- the budget */}
+      {/* THE ANONYMOUS BUDGET, FROM THE LINK. In a group chat this is the one
+          question that has to be said out loud, and it is the one a person
+          can answer here with no account. The words are the app's own
+          (screens/ChatDetail.js, the cash pool sheet), so the link and the
+          chat state the same rule in the same sentences.
+          What this section never shows is anyone's amount but this guest's
+          own. The preview carries counts ("3 of 6 answered") and never a
+          ceiling; the group's banded number arrives only through /me or in
+          the reply to this guest's own answer, only to a guest who is in, and
+          only once the budget has settled at three sharers. */}
+      {!closed && budget && (
+        <section className="gi-sec" aria-labelledby="gi-budget-h">
+          <h2 id="gi-budget-h">What's your budget tonight?</h2>
+          {budget.context && <p className="gi-sub">For {budget.context}.</p>}
+
+          {!answered ? (
+            <p className="gi-sub">Answer above first. The budget only counts people who are going.</p>
+          ) : rsvpStatus !== 'in' ? (
+            <p className="gi-sub">This only counts people who are going. Tap I'm in above if that changes.</p>
+          ) : guest.budget && (!budgetEditing || budget.locked) ? (
+            <p className="gi-sub">
+              {guest.budget.skipped ? 'You skipped.' : `You said ${money(guest.budget.amount)}.`}
+              {/* The way back, while there still is one. A skip stores no
+                  amount, and the app's own sheet once lost the way to enter
+                  one after a skip; the link does not repeat that. */}
+              {!budget.locked && (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className="gi-btn-quiet"
+                    onClick={() => {
+                      setBudgetText(guest.budget.skipped || guest.budget.amount == null ? '' : String(guest.budget.amount));
+                      setBudgetEditing(true);
+                      setTimeout(() => budgetRef.current && budgetRef.current.focus(), 0);
+                    }}
+                  >
+                    {guest.budget.skipped ? 'Set an amount' : 'Change'}
+                  </button>
+                </>
+              )}
+            </p>
+          ) : budget.locked ? null : (
+            <form onSubmit={(e) => { e.preventDefault(); submitBudget(false); }}>
+              <span className="gi-field">
+                <label className="gi-label" htmlFor="gi-budget">Amount</label>
+                <span className="gi-amount">
+                  <span className="gi-amount-prefix" aria-hidden="true">$</span>
+                  <input
+                    id="gi-budget"
+                    ref={budgetRef}
+                    className="gi-input gi-amount-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={budgetText}
+                    onChange={(e) => {
+                      // Digits and a point, nothing else: the field is text so
+                      // iOS shows the decimal pad, and text takes anything.
+                      setBudgetText(e.target.value.replace(/[^0-9.]/g, ''));
+                      if (budgetProblem) setBudgetProblem(false);
+                    }}
+                    placeholder="30"
+                    autoComplete="off"
+                    enterKeyHint="done"
+                    maxLength={7}
+                    aria-invalid={budgetProblem ? 'true' : undefined}
+                    aria-describedby="gi-problem-budget"
+                  />
+                </span>
+              </span>
+              <p className="gi-sub">
+                This is anonymous. No one sees your answer. One group number
+                appears after everyone has answered, and only if at least three
+                people shared an amount. It is rounded down to a range, and it
+                does not change after that.
+              </p>
+              {/* Outline and quiet, never filled: the join band stays the only
+                  filled control on the page. */}
+              <div className="gi-row">
+                <button type="submit" className="gi-btn" aria-disabled={busy !== null}>
+                  {busy && busy.kind === 'budget' && busy.key === 'amount' ? 'Saving' : 'That works'}
+                </button>
+                <button
+                  type="button"
+                  className="gi-btn-quiet"
+                  onClick={() => submitBudget(true)}
+                  aria-disabled={busy !== null}
+                >
+                  {busy && busy.kind === 'budget' && busy.key === 'skip' ? 'Saving' : 'Skip'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          <Feedback where="budget" feedback={feedback} />
+
+          {/* The aggregate, always. A ceiling is shown only to a guest who is
+              in, which is the only guest the server ever sends one to, and
+              the sentences under it are the app's own. */}
+          {ceiling != null && answered && rsvpStatus === 'in' ? (
+            <>
+              <p><strong>Group budget: up to {money(ceiling)} per person.</strong></p>
+              <p className="gi-sub">
+                {Number(budget.submissionCount) || 0} of {Number(budget.totalMembers) || 0} answered.
+                {' '}This number is set and does not change.
+              </p>
+            </>
+          ) : (
+            <p className="gi-sub">
+              {Number(budget.submissionCount) || 0} of {Number(budget.totalMembers) || 0} answered.
+              {' '}
+              {budget.locked
+                ? 'The budget is set.'
+                : ((Number(budget.totalMembers) || 0) < 3 || budget.isReady !== true)
+                  ? 'It takes three amounts before Flock can show one, because with fewer than that the number would give away what somebody answered.'
+                  : 'Flock shows one group number once everyone has answered.'}
             </p>
           )}
         </section>

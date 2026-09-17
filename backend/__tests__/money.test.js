@@ -148,6 +148,8 @@ function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow, locked = false 
       rows: [{ total_submissions: String(nonSkip + skip), non_skip_count: String(nonSkip), skip_count: String(skip) }],
     })],
     [/COUNT\(\*\) AS total FROM flock_members/, () => ({ rows: [{ total: '4' }] })],
+    // routes/budget.js answeringPopulation: the guest half, zero on this plan.
+    [/COUNT\(\*\) AS total FROM guest_rsvps/, () => ({ rows: [{ total: '0' }] })],
     [/SELECT amount, skipped FROM budget_submissions/, () => ({ rows: callerRow ? [callerRow] : [] })],
   ];
 }
@@ -237,6 +239,8 @@ test('submitting a budget echoes aggregates only, never a neighbour amount', asy
     [/user_id != \$2/, () => ({ rows: [{ n: 1 }] })],
     [/COUNT\(\*\) AS total_submissions/, () => ({ rows: [{ total_submissions: '2', non_skip_count: '2', skip_count: '0' }] })],
     [/COUNT\(\*\) AS total FROM flock_members/, () => ({ rows: [{ total: '4' }] })],
+    // routes/budget.js answeringPopulation: the guest half, zero on this plan.
+    [/COUNT\(\*\) AS total FROM guest_rsvps/, () => ({ rows: [{ total: '0' }] })],
   ];
 
   const res = await call('POST', '/api/budget/42/submit', { amount: 90 });

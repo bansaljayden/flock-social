@@ -739,6 +739,9 @@ test('tryAuth still enforces the two revocation controls it was given', async ()
 const GUEST_READERS = [
   'routes/guest.js', 'routes/flocks.js', 'routes/venues.js',
   'routes/moderation.js', 'sockets/handlers.js', 'utils/guestRsvp.js',
+  // The budget's presence fragment and population read (migration 071) and
+  // the night-of window's counts (migration 072) read guest rows too.
+  'routes/budget.js', 'utils/reconfirm.js',
 ];
 
 // The statements that touch guest_rsvps WITHOUT filtering the flag, each for a
@@ -749,6 +752,10 @@ const DELIBERATE = [
   'SELECT COUNT(*)::int AS n FROM guest_rsvps',
   // Writes, not reads.
   'INSERT INTO guest_rsvps',
+  // A moved plan clears every night-of answer, hidden rows included: nothing
+  // is rendered by the reset, and a hidden row's answer must not outlive the
+  // window it was given in (routes/flocks.js PUT).
+  'UPDATE guest_rsvps SET reconfirmed_at = NULL',
 ];
 
 test('every read of guest_rsvps outside the moderator console honours is_hidden', () => {

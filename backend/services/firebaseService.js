@@ -101,6 +101,7 @@ const FLOCK_SCOPED_TYPES = new Set([
   'flock_confirmed',
   'flock_updated',
   'flock_cancelled',
+  'flock_reconfirm',
   'budget_reminder',
   'budget_ready',
   'bill_created',

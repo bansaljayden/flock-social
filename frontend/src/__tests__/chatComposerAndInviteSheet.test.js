@@ -288,6 +288,10 @@ function chatProps(over = {}) {
     // Changes the mode or seats on a running share; a fresh share arrives
     // through startSharingLocation with its intent.
     updateTravel: fn(),
+    // "I'm still in" on the night-of strip. App.js's, async, and it
+    // toasts its own result, so a stub that resolves to nothing is the
+    // whole contract here.
+    reconfirmFlock: fn(),
     userLocation: null,
     handleUnsendFlockMessage: fn(),
     eventCrowd: null,

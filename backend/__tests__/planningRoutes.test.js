@@ -382,12 +382,19 @@ function dispatch(text, params = []) {
     // aggregate's own FILTER is still parsed out of the statement, so dropping
     // one from the route changes the number that comes back.
     const rows = db.budget_submissions.filter((r) => r.flock_id === Number(params[0]));
+    // Since migration 071 the non-skip aggregate is THE CROWD: it carries
+    // `AND bm.id IS NOT NULL`, which is a member row. This world has only
+    // member rows (every row here has a user_id), so the crowd filter is the
+    // rows with an author account.
     const counted = (alias) => {
-      const re = new RegExp(`COUNT\\(\\*\\)\\s*(?:FILTER\\s*\\(\\s*WHERE\\s+skipped\\s*=\\s*(true|false)\\s*\\)\\s*)?AS ${alias}`, 'i');
+      const re = new RegExp(`COUNT\\(\\*\\)\\s*(?:FILTER\\s*\\(\\s*WHERE\\s+skipped\\s*=\\s*(true|false)(\\s+AND\\s+bm\\.id\\s+IS\\s+NOT\\s+NULL)?\\s*\\)\\s*)?AS ${alias}`, 'i');
       const m = re.exec(sql);
       if (!m) return null;
       if (!m[1]) return rows.length;
-      return rows.filter((r) => r.skipped === (m[1].toLowerCase() === 'true')).length;
+      const crowdOnly = !!m[2];
+      return rows
+        .filter((r) => !crowdOnly || r.user_id != null)
+        .filter((r) => r.skipped === (m[1].toLowerCase() === 'true')).length;
     };
     return {
       rows: [{
