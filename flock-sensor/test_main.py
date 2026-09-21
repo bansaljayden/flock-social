@@ -2075,5 +2075,102 @@ class CrossingSensorWiring(unittest.TestCase):
         idx = source.index('def init_ir():')
         window = source[idx:idx + 2200]
         self.assertIn('GPIO.PUD_UP if IR_ACTIVE_LOW else GPIO.PUD_DOWN', window)
+class PanelLayout(unittest.TestCase):
+    """The layout is computed from the panel, because the panel changed.
+
+    The code hardcoded 720x1280, a portrait DSI screen an early build plan
+    named. The panel actually bought is a 7 inch 1024x600 HDMI screen. Three
+    stacked blocks at the old sizes needed 912 pixels of height, so on the real
+    panel the third ran off the bottom and the chart drew through the second,
+    and none of that was visible from reading the code.
+    """
+
+    PANELS = [(1024, 600), (720, 1280), (800, 480), (480, 800)]
+
+    def test_nothing_is_drawn_past_the_bottom_of_any_panel(self):
+        for w, h in self.PANELS:
+            m = main.display_metrics(w, h)
+            self.assertLessEqual(m['block_top'] + m['block_h'], m['chart_top'],
+                                 f'blocks reach the chart at {w}x{h}')
+            self.assertLessEqual(m['chart_bottom'], h, f'chart past the edge at {w}x{h}')
+            self.assertGreater(m['block_h'], 0, f'no room for a block at {w}x{h}')
+
+    def test_the_three_readings_never_overlap(self):
+        for w, h in self.PANELS:
+            m = main.display_metrics(w, h)
+            boxes = [main.block_origin(m, i) for i in range(3)]
+            for a, b in zip(boxes, boxes[1:]):
+                if m['columns']:
+                    self.assertEqual(b[1], a[1], f'columns drifted vertically at {w}x{h}')
+                    self.assertGreaterEqual(b[0] - a[0], m['block_w'],
+                                            f'columns overlap at {w}x{h}')
+                else:
+                    self.assertEqual(b[0], a[0], f'rows drifted sideways at {w}x{h}')
+                    self.assertGreaterEqual(b[1] - a[1], m['block_h'],
+                                            f'rows overlap at {w}x{h}')
+
+    def test_every_reading_stays_inside_the_panel(self):
+        for w, h in self.PANELS:
+            m = main.display_metrics(w, h)
+            for i in range(3):
+                x, y = main.block_origin(m, i)
+                self.assertLessEqual(x + m['block_w'], w, f'block {i} past the right at {w}x{h}')
+                self.assertLessEqual(y + m['block_h'], m['chart_top'] + 1,
+                                     f'block {i} past the chart at {w}x{h}')
+
+    def test_a_wide_panel_gets_columns_and_a_tall_one_gets_rows(self):
+        # The whole reason both layouts exist. Three stacked blocks do not fit
+        # 600 pixels of height, and three columns on a 480 wide portrait panel
+        # give each number 150 pixels, which a three digit count overflows.
+        self.assertTrue(main.display_metrics(1024, 600)['columns'])
+        self.assertTrue(main.display_metrics(800, 480)['columns'])
+        self.assertFalse(main.display_metrics(720, 1280)['columns'])
+        self.assertFalse(main.display_metrics(480, 800)['columns'])
+
+    def test_the_default_matches_the_panel_that_was_actually_bought(self):
+        self.assertEqual((main.DISPLAY_W, main.DISPLAY_H), (1024, 600))
+
+    def test_text_stays_readable_on_a_small_panel(self):
+        # Scaling purely by height would make the captions 12 pixels tall on a
+        # 480 pixel panel, which is unreadable from across a room, which is the
+        # only distance this screen is ever read from.
+        for w, h in self.PANELS:
+            m = main.display_metrics(w, h)
+            self.assertGreaterEqual(m['font_xs'], 18, f'caption too small at {w}x{h}')
+            self.assertGreater(m['font_big'], m['font_med'], f'hierarchy inverted at {w}x{h}')
+            self.assertGreater(m['font_med'], m['font_sm'], f'hierarchy inverted at {w}x{h}')
+
+
+class ThermalImageFit(unittest.TestCase):
+    """The hero screen has to fit the window it is drawn into."""
+
+    def test_the_image_never_exceeds_the_space_it_is_given(self):
+        for w, h in PanelLayout.PANELS:
+            m = main.display_metrics(w, h)
+            reserve = m['font_sm'] + m['font_med'] + m['font_xs'] * 2 + m['pad'] * 3
+            iw, ih = main.thermal_image_box(w, h, 160, 120, m['pad'],
+                                            m['header_h'], reserve)
+            self.assertLessEqual(iw, w - 2 * m['pad'], f'image too wide at {w}x{h}')
+            self.assertLessEqual(m['header_h'] + ih, h - reserve + 1,
+                                 f'image overruns the text at {w}x{h}')
+
+    def test_it_keeps_the_cameras_shape(self):
+        # A stretched thermal image reads as a bug to anybody who has seen one,
+        # and this is the screen the pitch turns on.
+        for w, h in PanelLayout.PANELS:
+            m = main.display_metrics(w, h)
+            iw, ih = main.thermal_image_box(w, h, 160, 120, m['pad'], m['header_h'], 200)
+            self.assertAlmostEqual(iw / float(ih), 160 / 120.0, delta=0.04,
+                                   msg=f'aspect ratio lost at {w}x{h}')
+
+    def test_the_old_bug_would_fail_this(self):
+        # The previous code set the width to the panel width and derived the
+        # height from it, with no check that the result fit. On the real panel
+        # that asked for 714 pixels of height inside 600.
+        m = main.display_metrics(1024, 600)
+        naive_h = int((1024 - 2 * m['pad']) * 120 / 160.0)
+        self.assertGreater(naive_h, 600, 'this test no longer reproduces the bug')
+        _, ih = main.thermal_image_box(1024, 600, 160, 120, m['pad'], m['header_h'], 200)
+        self.assertLess(ih, 600)
 if __name__ == '__main__':
     unittest.main()

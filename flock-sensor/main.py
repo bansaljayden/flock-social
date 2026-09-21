@@ -2266,18 +2266,76 @@ def push_loop():
 # ---------------------------------------------------------------------------
 # Display loop (optional, demo unit only)
 #
-# The panel is the 7 inch 720x1280 DSI screen the build plan specifies, mounted
-# in PORTRAIT. That is the long axis vertical, so the three readings stack down
-# the screen instead of sitting in three columns as they did on the 800x480
-# landscape panel this used to assume.
+# THE PANEL SIZE IS NOT A CONSTANT, and treating it as one is what broke this.
+# The code below used to hardcode 720x1280, the portrait DSI panel an early
+# build plan named. The panel actually bought is a 7 inch 1024x600 HDMI screen,
+# which is landscape and barely half the height. Every piece of the layout was
+# sized against 1280: three stacked blocks needed 912 pixels of height, so on a
+# 600 pixel panel the third ran off the bottom and the chart drew straight
+# through the second. The thermal view was worse, scaling its image to 714
+# pixels tall inside a 600 pixel window.
 #
-# Portrait is a Raspberry Pi OS display setting, not something this program can
-# impose: it asks the framebuffer for 720x1280 and draws into whatever it gets.
-# If the panel comes up landscape, rotate it in the OS. UNVERIFIED: no panel
-# has been attached to this code.
+# So the numbers below are only a default, for the case where the framebuffer
+# cannot say what it is. What actually drives the layout is the size set_mode
+# returns, read back at startup, and the layout picks columns or rows from the
+# shape it gets. The next panel, whatever it is, needs no code change.
 # ---------------------------------------------------------------------------
 
-DISPLAY_W, DISPLAY_H = 720, 1280
+DISPLAY_W = _cfg_number('DISPLAY_W', int, 320, 4096, 1024)
+DISPLAY_H = _cfg_number('DISPLAY_H', int, 240, 4096, 600)
+
+
+def display_metrics(w, h):
+    """Every number the panel layout needs, derived from the panel's own size.
+
+    Pure, so the whole layout is checked at both shapes without a framebuffer.
+
+    A wide panel gets the three readings in columns and a tall one gets them
+    stacked. That is not cosmetic: three stacked blocks at a readable size need
+    about 900 pixels of height, which a 600 pixel panel does not have, and
+    three columns on a narrow portrait panel leave each number about 240 pixels
+    wide, which a three digit count overflows.
+    """
+    pad = max(16, w // 28)
+    header_h = max(48, h // 9)
+    # The chart gives up space first, because it is the only thing on the
+    # screen that is nice to have rather than the reading itself.
+    chart_h = max(48, h // 6)
+    chart_caption = max(28, h // 20)
+    chart_bottom = h - pad - chart_caption
+    chart_top = chart_bottom - chart_h
+
+    block_top = header_h + max(12, h // 40)
+    block_room = max(1, chart_top - block_top - pad)
+
+    columns = w >= h * 1.3
+    if columns:
+        block_w = (w - 2 * pad) // 3
+        block_h = block_room
+    else:
+        block_w = w - 2 * pad
+        block_h = max(1, block_room // 3)
+
+    return {
+        'w': w, 'h': h, 'pad': pad, 'header_h': header_h,
+        'columns': columns, 'block_w': block_w, 'block_h': block_h,
+        'block_top': block_top,
+        'chart_top': chart_top, 'chart_h': chart_h, 'chart_bottom': chart_bottom,
+        # Sized off the height so the text keeps the same share of a 7 inch
+        # panel whichever way round it is, with floors so a short panel stays
+        # legible from across a room instead of shrinking into nothing.
+        'font_big': max(56, int(h * 0.155) if columns else int(h * 0.117)),
+        'font_med': max(34, int(h * 0.075)),
+        'font_sm': max(22, int(h * 0.036)),
+        'font_xs': max(18, int(h * 0.026)),
+    }
+
+
+def block_origin(m, i):
+    """Top-left of reading `i`, laid out whichever way round the panel is."""
+    if m['columns']:
+        return (m['pad'] + i * m['block_w'], m['block_top'])
+    return (m['pad'], m['block_top'] + i * m['block_h'])
 
 
 # ---------------------------------------------------------------------------
@@ -2353,30 +2411,58 @@ def thermal_frame_rgb(frame, lo, hi):
         out += palette[0 if i < 0 else 255 if i > 255 else i]
     return bytes(out)
 
-def draw_thermal_view(pygame, screen, fonts, frame, count, live):
+def thermal_image_box(w, h, cols, rows, pad, top, reserve):
+    """Largest rectangle the thermal image can fill without being cropped.
+
+    Fits by whichever of width or height runs out first. The version before
+    this one set the width to the panel's width and derived the height, which
+    on a 1024x600 panel asked for an image 714 pixels tall and drew a third of
+    it off the bottom of the screen.
+    """
+    avail_w = max(1, w - 2 * pad)
+    avail_h = max(1, h - top - reserve)
+    img_w = avail_w
+    img_h = int(round(img_w * rows / float(cols)))
+    if img_h > avail_h:
+        img_h = avail_h
+        img_w = int(round(img_h * cols / float(rows)))
+    return max(1, img_w), max(1, img_h)
+
+
+def draw_thermal_view(pygame, screen, fonts, frame, count, live, size=None):
     """Fill the panel with what the camera is looking at.
 
     Takes pygame as an argument rather than importing it, because this program
     has to run headless on a venue unit where pygame is not installed at all,
     and an import at module scope would make the whole file unloadable there.
+
+    `size` is the real window size. It defaults to the configured one so that
+    the tests, and any caller that does not have a surface to ask, still work.
     """
     font_med, font_sm, font_xs = fonts
+    w, h = size if size else (DISPLAY_W, DISPLAY_H)
+    m = display_metrics(w, h)
+    pad = m['pad']
     CREAM = (241, 237, 224)
     MUTED = (160, 170, 180)
     FAINT = (110, 120, 130)
     screen.fill((10, 14, 24))
-    screen.blit(font_sm.render('WHAT THE SENSOR SEES', True, CREAM), (36, 24))
+    screen.blit(font_sm.render('WHAT THE SENSOR SEES', True, CREAM), (pad, pad // 2))
 
     if not frame:
-        screen.blit(font_med.render('no frame yet', True, MUTED), (36, 300))
-        screen.blit(font_xs.render('tap to go back', True, FAINT), (36, DISPLAY_H - 60))
+        screen.blit(font_med.render('no frame yet', True, MUTED), (pad, h // 2))
+        screen.blit(font_xs.render('tap to go back', True, FAINT), (pad, h - pad - 16))
         return
 
     lo, hi = thermal_frame_span(frame)
     surf = pygame.image.frombuffer(thermal_frame_rgb(frame, lo, hi),
                                    (THERMAL_COLS, THERMAL_ROWS), 'RGB')
-    img_w = DISPLAY_W - 72
-    img_h = int(img_w * THERMAL_ROWS / float(THERMAL_COLS))
+    top = m['header_h']
+    # Room under the picture for the two readings and the two captions. On a
+    # short panel this is what stops the image eating the text.
+    reserve = m['font_sm'] + m['font_med'] + m['font_xs'] * 2 + pad * 3
+    img_w, img_h = thermal_image_box(w, h, THERMAL_COLS, THERMAL_ROWS,
+                                     pad, top, reserve)
     # smoothscale interpolates, which is what turns 160x120 into something that
     # reads as thermal imagery rather than a grid of squares. It refuses some
     # surface depths, so fall back rather than crash in front of a judge.
@@ -2384,21 +2470,26 @@ def draw_thermal_view(pygame, screen, fonts, frame, count, live):
         surf = pygame.transform.smoothscale(surf, (img_w, img_h))
     except Exception:
         surf = pygame.transform.scale(surf, (img_w, img_h))
-    top = 110
-    screen.blit(surf, (36, top))
-    pygame.draw.rect(screen, (54, 66, 84), (36, top, img_w, img_h), 2)
+    img_x = (w - img_w) // 2
+    screen.blit(surf, (img_x, top))
+    pygame.draw.rect(screen, (54, 66, 84), (img_x, top, img_w, img_h), 2)
 
-    y = top + img_h + 40
-    screen.blit(font_sm.render('In view now', True, MUTED), (36, y))
-    screen.blit(font_med.render(f'~{count}' if live else '--', True, CREAM), (36, y + 44))
-    screen.blit(font_sm.render('Warmest point', True, MUTED), (360, y))
-    screen.blit(font_med.render(f'{max(frame):.1f}C', True, CREAM), (360, y + 44))
-    # Say what the picture is, on the picture. A thermal image of a room reads as
-    # a camera to most people, and this is the one screen in the product where
-    # that misreading is easy to make and worth heading off out loud.
+    y = top + img_h + pad // 2
+    screen.blit(font_sm.render('In view now', True, MUTED), (pad, y))
+    screen.blit(font_med.render(f'~{count}' if live else '--', True, CREAM),
+                (pad, y + m['font_sm']))
+    warm_x = pad + max(200, w // 3)
+    screen.blit(font_sm.render('Warmest point', True, MUTED), (warm_x, y))
+    screen.blit(font_med.render(f'{max(frame):.1f}C', True, CREAM),
+                (warm_x, y + m['font_sm']))
+    # Say what the picture is, on the picture. A thermal image of a room reads
+    # as a camera to most people, and this is the one screen in the product
+    # where that misreading is easy to make and worth heading off out loud.
     screen.blit(font_xs.render('Temperatures only. Nothing here is recorded or sent.',
-                               True, FAINT), (36, y + 150))
-    screen.blit(font_xs.render('tap to go back', True, FAINT), (36, DISPLAY_H - 60))
+                               True, FAINT), (pad, y + m['font_sm'] + m['font_med']))
+    screen.blit(font_xs.render('tap to go back', True, FAINT), (pad, h - pad - 16))
+
+
 
 def display_loop():
     try:
@@ -2408,12 +2499,24 @@ def display_loop():
         screen = pygame.display.set_mode(
             (DISPLAY_W, DISPLAY_H),
             pygame.FULLSCREEN if os.path.exists('/dev/fb0') else 0)
+        # What was asked for and what was granted are not the same thing. On a
+        # real framebuffer FULLSCREEN gives the panel's native size whatever was
+        # requested, so read it back and lay out against that. Asking is how the
+        # 1024x600 panel ended up being drawn for as though it were 720x1280.
+        try:
+            win_w, win_h = screen.get_size()
+        except Exception:
+            win_w, win_h = DISPLAY_W, DISPLAY_H
+        m = display_metrics(win_w, win_h)
+        logger.info(f'Panel is {win_w}x{win_h}, laying out in '
+                    f'{"columns" if m["columns"] else "rows"}')
         pygame.mouse.set_visible(False)
-        # Sized for a 7 inch panel read from across a room, not for a desktop.
-        font_big = pygame.font.Font(None, 150)
-        font_med = pygame.font.Font(None, 84)
-        font_sm = pygame.font.Font(None, 40)
-        font_xs = pygame.font.Font(None, 32)
+        # Sized for a 7 inch panel read from across a room, not for a desktop,
+        # and scaled to the panel rather than to one remembered resolution.
+        font_big = pygame.font.Font(None, m['font_big'])
+        font_med = pygame.font.Font(None, m['font_med'])
+        font_sm = pygame.font.Font(None, m['font_sm'])
+        font_xs = pygame.font.Font(None, m['font_xs'])
 
         NAVY = (30, 41, 59)
         CREAM = (241, 237, 224)
@@ -2425,11 +2528,13 @@ def display_loop():
         FAINT = (110, 120, 130)
         RULE = (54, 66, 84)
 
-        PAD = 36
-        HEADER_H = 84
-        # Three stacked panels, then the chart takes the rest.
-        BLOCK_H = 268
-        BLOCK_TOP = HEADER_H + 24
+        PAD = m['pad']
+        # Inside a block: the label, then the number under it, then the caption
+        # at the bottom. Derived so the caption cannot land on the number on a
+        # short panel, which is what a fixed 200 pixel drop did.
+        num_dy = m['font_sm'] + max(6, win_h // 90)
+        cap_dy = min(m['block_h'] - m['font_xs'] - 8,
+                     num_dy + m['font_big'] + max(4, win_h // 120))
 
         # Which screen the panel is showing. Demo units only, always: a venue
         # box has no screen, so this loop never runs there.
@@ -2452,64 +2557,78 @@ def display_loop():
             noise_live = noise_at is not None and now_mono - noise_at <= NOISE_STALE_AFTER
 
             screen.fill(NAVY)
-            top = pygame.Surface((DISPLAY_W, HEADER_H))
+            top = pygame.Surface((win_w, m['header_h']))
             top.fill((20, 28, 40))
             screen.blit(top, (0, 0))
-            screen.blit(font_sm.render('FLOCK VENUE SENSOR', True, CREAM), (PAD, 24))
+            screen.blit(font_sm.render('FLOCK VENUE SENSOR', True, CREAM),
+                        (PAD, max(8, (m['header_h'] - m['font_sm']) // 2)))
 
-            def rule(y):
-                pygame.draw.line(screen, RULE, (PAD, y), (DISPLAY_W - PAD, y), 1)
+            def divider(i):
+                # Between the columns when side by side, under each block when
+                # stacked. A horizontal rule drawn across a column layout runs
+                # straight through the neighbouring numbers.
+                if i >= 2:
+                    return
+                if m['columns']:
+                    x = PAD + (i + 1) * m['block_w']
+                    pygame.draw.line(screen, RULE,
+                                     (x, m['block_top']),
+                                     (x, m['block_top'] + m['block_h']), 1)
+                else:
+                    y = m['block_top'] + (i + 1) * m['block_h'] - PAD // 2
+                    pygame.draw.line(screen, RULE, (PAD, y), (win_w - PAD, y), 1)
 
-            # Panel 1. Beam breaks since the last snapshot: crossings in either
-            # direction, over at most one push interval. This was once labelled
-            # "Entered Today", which the number has never been.
-            y = BLOCK_TOP
-            screen.blit(font_sm.render('Doorway crossings', True, MUTED), (PAD, y))
-            screen.blit(font_big.render(str(ir), True, CREAM), (PAD, y + 52))
-            screen.blit(font_xs.render('since last update', True, FAINT), (PAD, y + 200))
-            rule(y + BLOCK_H - 24)
+            # Block 0. Crossings since the last snapshot, in either direction,
+            # over at most one push interval. This was once labelled "Entered
+            # Today", which the number has never been.
+            bx, by = block_origin(m, 0)
+            screen.blit(font_sm.render('Doorway crossings', True, MUTED), (bx, by))
+            screen.blit(font_big.render(str(ir), True, CREAM), (bx, by + num_dy))
+            screen.blit(font_xs.render('since last update', True, FAINT), (bx, by + cap_dy))
+            divider(0)
 
-            # Panel 2.
-            y = BLOCK_TOP + BLOCK_H
-            screen.blit(font_sm.render('In view now', True, MUTED), (PAD, y))
+            # Block 1.
+            bx, by = block_origin(m, 1)
+            screen.blit(font_sm.render('In view now', True, MUTED), (bx, by))
             screen.blit(font_big.render(f'~{therm}' if therm_live else '--', True, CREAM),
-                        (PAD, y + 52))
+                        (bx, by + num_dy))
             if therm_live:
-                screen.blit(font_xs.render('warm bodies, counted on the device', True, FAINT),
-                            (PAD, y + 200))
+                screen.blit(font_xs.render('warm bodies, counted here', True, FAINT),
+                            (bx, by + cap_dy))
             else:
-                screen.blit(font_xs.render('thermal offline', True, RED), (PAD, y + 200))
-            rule(y + BLOCK_H - 24)
+                screen.blit(font_xs.render('thermal offline', True, RED), (bx, by + cap_dy))
+            divider(1)
 
-            # Panel 3.
-            y = BLOCK_TOP + BLOCK_H * 2
-            screen.blit(font_sm.render('Noise', True, MUTED), (PAD, y))
+            # Block 2.
+            bx, by = block_origin(m, 2)
+            screen.blit(font_sm.render('Noise', True, MUTED), (bx, by))
             if noise_live:
                 label = 'Quiet' if db < 50 else 'Moderate' if db < 70 else 'Lively' if db < 85 else 'Loud'
                 color = GREEN if db < 50 else AMBER if db < 70 else ORANGE if db < 85 else RED
                 # "level", never "dB": nobody has calibrated this against a sound
                 # level meter, so it is a relative loudness index. See README.
-                screen.blit(font_med.render(label, True, color), (PAD, y + 60))
-                screen.blit(font_xs.render(f'level {int(db)}', True, FAINT), (PAD, y + 160))
+                screen.blit(font_med.render(label, True, color), (bx, by + num_dy))
+                screen.blit(font_xs.render(f'level {int(db)}', True, FAINT), (bx, by + cap_dy))
             else:
-                screen.blit(font_med.render('--', True, CREAM), (PAD, y + 60))
-                screen.blit(font_xs.render('mic offline', True, RED), (PAD, y + 160))
-            rule(y + BLOCK_H - 24)
+                screen.blit(font_med.render('--', True, CREAM), (bx, by + num_dy))
+                screen.blit(font_xs.render('mic offline', True, RED), (bx, by + cap_dy))
+            divider(2)
 
             # Chart of recent pushed headcounts, along the bottom.
             if history:
-                chart_bottom = DISPLAY_H - PAD - 40
-                chart_h = 200
+                chart_bottom = m['chart_bottom']
+                chart_h = m['chart_h']
                 screen.blit(font_xs.render('Last few readings', True, FAINT),
-                            (PAD, chart_bottom + 12))
-                usable = DISPLAY_W - PAD * 2
+                            (PAD, chart_bottom + 8))
+                usable = win_w - PAD * 2
                 slot = usable // max(len(history), 1)
-                bar_w = max(8, slot - 8)
+                bar_w = max(6, slot - 8)
                 max_h = max(history) or 1
                 for i, v in enumerate(history):
-                    h = int((v / max_h) * chart_h) if max_h else 0
+                    bh = int((v / max_h) * chart_h) if max_h else 0
                     pygame.draw.rect(screen, CREAM,
-                                     (PAD + i * slot, chart_bottom - h, bar_w, h))
+                                     (PAD + i * slot, chart_bottom - bh, bar_w, bh))
+
 
             if view == 'thermal':
                 # Wrapped on its own. The outer handler around this loop logs and
@@ -2523,7 +2642,8 @@ def display_loop():
                     # pass is blits into an off-screen surface with no side effects
                     # and costs about a millisecond at this size.
                     draw_thermal_view(pygame, screen, (font_med, font_sm, font_xs),
-                                      frame, therm, therm_live)
+                                      frame, therm, therm_live,
+                                      (win_w, win_h))
                 except Exception as e:
                     view = 'stats'
                     log_throttled('thermal_view', logging.ERROR,
