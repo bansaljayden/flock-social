@@ -43,51 +43,53 @@ pi_hole_dia     = 2.7;   // clearance for M2.5
 // THE SCREEN IS NOT THE PART THIS FILE FIRST ASSUMED. It was written for a
 // Raspberry Pi Touch Display 2, a 720x1280 portrait DSI panel, because that is
 // what an early build plan named. The panel in hand is a Lebula/ROADOM 7 inch
-// 1024x600 HDMI touchscreen: landscape, and not a bare panel at all. It is a
-// carrier board with two speakers, five buttons and a Raspberry Pi Zero
-// mounting outline on the back, so the PCB is noticeably larger than the 7 inch
-// LCD bonded to it, and the PCB is what a box has to swallow.
+// 1024x600 HDMI touchscreen: landscape, and a carrier board rather than a bare
+// panel, carrying two speakers, five buttons and a Pi Zero mounting outline.
+// The PCB is what the box has to swallow, not the LCD.
 //
-// Measured photogrammetrically: the board was photographed beside a US one
-// dollar note, which is 155.956 x 66.294 mm on every note ever printed and is
-// therefore a better ruler than most rulers. Scaling the board against the
-// note's two edges gives 178.1 x 125.6 and 182.6 x 128.8; the 2.5% spread
-// between them is the camera's perspective and the note's creases, so the
-// honest reading is 180 x 127 with about 5 mm of doubt either way.
+// HOW THESE WERE MEASURED, and why the first attempt was wrong by 11%.
 //
-// That doubt is why screen_slack exists and why the fit test comes first. Do
-// not cut acrylic against these numbers.
-screen_outer_w  = 180.0;   // long edge, horizontal: the PCB, not the LCD
-screen_outer_h  = 127.0;   // short edge, vertical
+// The board was photographed beside a US one dollar note, which is
+// 155.956 x 66.294 mm on every note printed. Scaling against the note gave
+// 180 x 127 and that number was committed. It is wrong. The note lay flat on
+// the desk while the board sat above it on the LCD's own thickness, so the
+// board was nearer the lens and photographed bigger. Close in, that is worth
+// about a tenth.
+//
+// The fix was to stop using the note. The lit area is 154.21 x 85.92 by spec,
+// it lies in the SAME PLANE as the board, and a photograph of the screen
+// switched on measures its aspect at 1.787 against the spec's 1.795, which is
+// 0.4% and confirms both the spec and the reading. Scaled against the lit area
+// instead, the board lands within 3 mm of the published generic 7 inch panel,
+// which the inflated numbers did not.
+//
+// The lesson generalises: a scale reference has to lie in the plane being
+// measured, or it is measuring a different plane.
+screen_outer_w  = 162.0;   // long edge, horizontal
+screen_outer_h  = 119.0;   // short edge, vertical
 screen_thick    = 12.0;    // MEASURE: board plus the LCD behind it
-screen_slack    = 5.0;     // the measurement's own uncertainty
+screen_slack    = 3.0;     // what is left of the doubt
 
-// Anker Prime 20K 200W, model A1336 confirmed off the unit's own label:
-// 124 x 53 x 48.
-//
-// One of the 53 x 48 end faces carries five pogo contacts for Anker's charging
-// dock. That face has to stay clear, or the battery can only be charged by
-// opening the box, which is not a thing anyone will do between rounds at a
-// competition. batt_contacts_face says which way it points so the panel with
-// the hatch in it can follow.
-batt_w          = 124.0;
-batt_h          = 53.0;
-batt_d          = 48.0;
-batt_contacts_face = "bottom";   // where the five dock pins look
+// Four mounting holes in small tabs at the corners, outside the LCD. Read off
+// the same photograph, so carrying the same few millimetres; the fit test
+// settles them before anything is cut.
+screen_hole_dx  = 149.0;
+screen_hole_dy  = 113.0;
+screen_hole_dia = 3.4;     // M3 clearance, MEASURE
 
-// The lit area of the LCD. 1024x600 on a 7 inch diagonal works out to
-// 154.2 x 86.0, and the panel vendors publish exactly that, so the size is
-// settled.
+// The lit area, and where it sits. 1024x600 on a 7 inch diagonal is
+// 154.21 x 85.92, every vendor publishes exactly that, and the photograph
+// agrees to within half a percent.
 //
-// WHERE it sits on the 180 x 127 board is NOT settled, and that is the number
-// that decides whether the window looks centred or looks like a mistake. The
-// board is wider than the LCD by about 26 mm and taller by about 41 mm, and
-// none of that margin is symmetric: the buttons run down one side and the
-// speakers along the bottom. Waiting on the face-up photo.
-screen_active_w = 154.2;   // horizontal, landscape
-screen_active_h = 86.0;    // vertical
-screen_active_offset_x = 0;   // MEASURE: from the board's left edge
-screen_active_offset_y = 0;   // MEASURE: from the board's bottom edge
+// IT IS NOT CENTRED, which is the part worth knowing. The borders measure
+// about 4 mm at each side but 14 mm above the picture and 17 mm below it, so
+// a window cut on the board's centre line sits about 1.5 mm high. Small, and
+// exactly the kind of small that reads as sloppy on a finished panel.
+screen_active_w = 154.2;
+screen_active_h = 85.9;
+screen_border_l = 3.8;     // board's left edge to the lit area
+screen_border_b = 17.4;    // board's bottom edge to the lit area
+screen_border_t = 14.4;    // kept explicit so the asymmetry is not lost again
 
 // PureThermal 3 carrier: 25.8 x 28.9 from the October 2022 datasheet.
 pt3_w           = 25.8;
@@ -113,7 +115,7 @@ lens_dia        = 11.0;    // MEASURE
 // 1024x600, which is landscape, so the 11.5 mm shortfall that was going to
 // force the box to 8.75 inches tall never existed: it came from the DSI panel
 // this file was first written against. The locked 9 x 7 inch box holds a
-// 180 x 127 board with 48 mm spare across and 50 mm up, which is room for the
+// 162 x 119 board with 67 mm spare across and 59 mm up, which is room for the
 // bezel and then some.
 //
 // main.py now reads its layout from whatever the framebuffer reports and lays
@@ -163,7 +165,13 @@ module screen_opening(t) {
     overlap = 1.0;
     w = screen_active_w - 2 * overlap;
     h = screen_active_h - 2 * overlap;
-    translate([(box_w - w) / 2, (box_h - h) / 2, -1])
+    // Centre the BOARD in the panel, then put the window where the lit area
+    // actually falls on it. Centring the window instead would push the board
+    // 1.5 mm low and take the mounting tabs off their holes.
+    bx = (box_w - screen_outer_w) / 2;
+    by = (box_h - screen_outer_h) / 2;
+    translate([bx + screen_border_l + overlap,
+               by + screen_border_b + overlap, -1])
         cube([w, h, t + 2]);
 }
 
@@ -191,6 +199,13 @@ module screen_fit_test() {
                    wall - 1.6])
             cube([screen_outer_w + screen_slack,
                   screen_outer_h + screen_slack, 2]);
+        // The four corner holes. The point of printing this is to hold the
+        // real board against it and see whether the screws line up, so a test
+        // piece without them tests half the fit.
+        for (dx = [-screen_hole_dx / 2, screen_hole_dx / 2],
+             dy = [-screen_hole_dy / 2, screen_hole_dy / 2])
+            translate([w / 2 + dx, h / 2 + dy, -1])
+                cylinder(h = wall + 2, d = screen_hole_dia);
     }
 }
 
