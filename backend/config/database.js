@@ -22,6 +22,17 @@ const sslConfig = SSLMODE
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  // EVERY SESSION RUNS IN UTC, BY THIS CLIENT'S SAY-SO. The schema is mixed:
+  // flocks.event_time, flocks.updated_at and the rest of database/schema.sql
+  // are naive TIMESTAMP columns holding UTC wall-clock, and every sweep
+  // (services/flockSweep.js, services/reconfirmSweep.js) and window test
+  // (utils/reconfirm.js) compares them against NOW() AT TIME ZONE 'UTC',
+  // while NOW() written INTO one of them is converted through the session's
+  // TimeZone. That was only ever right because the server's default zone
+  // was UTC, which is a fact about a hosting image and not about this code.
+  // Sent as a startup parameter so it holds on every pooled connection from
+  // its first statement, with no per-connect SET to forget.
+  options: '-c TimeZone=UTC',
   // For non-Railway production (AWS RDS, etc.), set rejectUnauthorized: true + provide CA cert.
   ssl: sslConfig,
   max: 20,

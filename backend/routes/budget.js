@@ -929,6 +929,56 @@ router.post('/:flockId/lock',
   }
 );
 
+// A BUDGET CAN COMPLETE WITHOUT AN ANSWER. "Everyone has answered" compares
+// the answers against the population, and the population moves when an 'in'
+// guest says out (routes/guest.js): three members may have answered a budget
+// that was waiting on exactly that person, and nothing would have settled it.
+// The same settle, under the same flock lock, publishing the same way, or
+// nothing at all. Never throws: it runs after a write that already
+// committed, and a failure here must not turn that write into a 500.
+//
+// A member leaving is the same shape and is older than this file's guest
+// arm; today the creator's /lock covers it once three amounts exist.
+async function settleAfterPopulationChange(io, flockId) {
+  let settled = null;
+  let client;
+  try {
+    // Checking out the connection is the one step that can reject BEFORE the
+    // try below, and an exhausted pool here would answer a committed RSVP with
+    // a 500 that the client's retry then reads as a duplicate.
+    client = await pool.connect();
+  } catch (err) {
+    console.error('Settle after population change could not connect:', err.message);
+    return false;
+  }
+  try {
+    await client.query('BEGIN');
+    const f = await client.query(
+      'SELECT budget_enabled, budget_locked, status FROM flocks WHERE id = $1 FOR UPDATE',
+      [flockId]
+    );
+    const row = f.rows && f.rows[0];
+    if (!row || !row.budget_enabled || row.budget_locked
+        || row.status === 'completed' || row.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    settled = await settleIfComplete(client, flockId);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Settle after population change failed:', err.message);
+    return false;
+  } finally {
+    client.release();
+  }
+  if (!settled || !settled.settledNow) return false;
+  const payload = answerPayload(settled);
+  await emitAnswer(io, flockId, payload);
+  await pushBudgetSet(io, flockId, payload.ceiling, null);
+  return true;
+}
+
 // POST /api/budget/:flockId/reset — the creator starts the budget over.
 //
 // WHY IT EXISTS. The ceiling is a MIN, and it is published once and never
@@ -942,6 +992,15 @@ router.post('/:flockId/lock',
 // earlier number to subtract it from. Deleting every row rather than unlocking
 // around them is the whole point: an unlock that kept the rows would publish
 // a second number over the same people, which is the sequence leak.
+//
+// WHAT A SECOND ROUND DOES AND DOES NOT GIVE AWAY. The room remembers the
+// first band; nothing can un-publish it. The sequence leak this file closes is
+// a number that moves while ONE row changes, which attributes the move to that
+// row's author. After a reset every row is new, so the second band is a band
+// over a fresh set of answers, and what a member learns from it is exactly
+// what any settle hands them: an interval containing the lowest amount among
+// the others (see the note at CEILING_BANDS). Two rounds are two such
+// intervals, not a narrower one, and nobody's move between them is visible.
 //
 // Creator only, one transaction under the flock lock, and a real DELETE bounded
 // by flock_id. The room is told with the same aggregate shape every other
@@ -985,6 +1044,13 @@ router.post('/:flockId/reset',
         if (!flockResult.rows[0].budget_enabled) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+        }
+        // Only a settled budget has a number to get off. An open one is
+        // still collecting private answers, and deleting those buys nothing
+        // the members did not already have (Change is on their own row).
+        if (!flockResult.rows[0].budget_locked) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'The budget is still open, so there is nothing to start over', code: 'BUDGET_OPEN' });
         }
         await client.query('DELETE FROM budget_submissions WHERE flock_id = $1', [flockId]);
         await client.query(
@@ -1208,6 +1274,7 @@ module.exports.settleIfComplete = settleIfComplete;
 module.exports.answerPayload = answerPayload;
 module.exports.emitAnswer = emitAnswer;
 module.exports.pushBudgetSet = pushBudgetSet;
+module.exports.settleAfterPopulationChange = settleAfterPopulationChange;
 module.exports.publishableSkipCount = publishableSkipCount;
 
 // Test hook only — the reminder cooldown is process-wide in-memory state, so a

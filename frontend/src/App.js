@@ -8194,7 +8194,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // silently skipped.
         try {
           const data = await getFlock(flockId);
-          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: !!m.reconfirmed_at, attendance: m.attendance || 'unmarked' }));
+          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: m.reconfirmed === true, attendance: m.attendance || 'unmarked' }));
           flocksRef.current = flocksRef.current.map(f => f.id === flockId ? { ...f, members } : f);
           setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, members } : f));
           if (openAttendanceSheet(flockId)) return;
@@ -8610,7 +8610,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const accepted = (data.members || []).filter(m => m.status === 'accepted');
       const members = accepted
         .filter(m => !blockedIdsRef.current.has(String(m.id)))
-        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, reconfirmed: !!m.reconfirmed_at }));
+        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, reconfirmed: m.reconfirmed === true }));
       // The headcount has to come down with the faces. "3 going" over two faces
       // is the kind of mismatch that makes someone go looking for the third.
       //
@@ -8630,7 +8630,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // instead of, because it is the only thing a guest_rsvp report can be
       // filed against. See guestRsvpId.
       const guests = (data.guests || []).map(g => ({
-        id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: !!g.reconfirmed_at,
+        id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: g.reconfirmed === true,
       }));
       const eventTime = data.flock?.event_time || null;
       setFlocks(prev => prev.map(f => f.id === flockId
@@ -9086,7 +9086,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // `attendance` comes down with the roster ('unmarked' | 'attended' |
           // 'no_show') and is what tells the host whether the done step still
           // owes an answer for a night that is already over.
-          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: !!m.reconfirmed_at, attendance: m.attendance || 'unmarked' }));
+          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, reconfirmed: m.reconfirmed === true, attendance: m.attendance || 'unmarked' }));
           // ── GUESTS, AND THE HEADCOUNT THIS SCREEN USED TO EAT ────────────
           //
           // Two things were missing here and both come from the same place:
@@ -9113,7 +9113,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // momentum.accepted is members-plus-guests, and a member hidden by a
           // block comes off it because their face is not on the roster either.
           const guests = (data.guests || []).map(g => ({
-            id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: !!g.reconfirmed_at,
+            id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: g.reconfirmed === true,
           }));
           const acceptedCount = (data.members || []).filter(m => m.status === 'accepted').length;
           const hiddenAccepted = acceptedCount - members.filter(m => m.status === 'accepted').length;
@@ -9955,9 +9955,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           time: data.event_time ? formatEventTime(data.event_time) : f.time,
           eventTime: data.event_time || f.eventTime || null,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
-          // A moved plan closes its night-of window (routes/flocks.js PUT);
-          // the sweep opens a fresh one at the new lead.
-          reconfirm: data.event_time ? null : f.reconfirm,
+          // A moved or un-confirmed plan closes its night-of window
+          // (routes/flocks.js PUT says so with reconfirm_reset; every update
+          // carries event_time, so its presence means nothing). The sweep
+          // opens a fresh one at the new lead.
+          reconfirm: data.reconfirm_reset ? null : f.reconfirm,
         };
       }));
       // Pending invitees hear it too (lifecycle audit, 2026-09-05): the card
@@ -10003,6 +10005,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           me: !!(f.reconfirm && f.reconfirm.me),
         },
         members: (f.members || []).map(m => (!data.isGuest && String(m.id) === String(data.userId)) ? { ...m, reconfirmed: true } : m),
+        // A guest's answer from the link marks the guest's own roster row;
+        // the server names it by the same namespaced id the roster carries.
+        guests: (f.guests || []).map(g => (data.isGuest && String(g.id) === String(data.guestId)) ? { ...g, reconfirmed: true } : g),
       }));
     });
     return () => { offOpened(); offAnswered(); };

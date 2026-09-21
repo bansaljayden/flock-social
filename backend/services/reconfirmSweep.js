@@ -23,6 +23,12 @@
 // A plan whose time has already passed gets no window. There is nothing left
 // to be still in for, and flockSweep.js will complete it.
 //
+// THE CLAIM IS A CLAIM. The inner select takes the rows FOR UPDATE SKIP
+// LOCKED and the outer update re-checks the two predicates that another
+// writer could have changed, so two sweeps (a second replica, a kickoff
+// overlapping a tick) cannot both open the same window and push the same
+// people twice, and an un-confirm landing mid-sweep is not overwritten.
+//
 // TIMES. flocks.event_time and updated_at are naive TIMESTAMP columns holding
 // UTC wall-clock (the reading flockSweep.js and routes/flocks.js use), so every
 // comparison is against NOW() AT TIME ZONE 'UTC'. The hours-until figure in
@@ -72,7 +78,10 @@ async function runReconfirmSweep(io) {
              AND updated_at <= (NOW() AT TIME ZONE 'UTC') - make_interval(mins => $2::int)
            ORDER BY event_time
            LIMIT $3::int
+           FOR UPDATE SKIP LOCKED
         )
+          AND status = 'confirmed'
+          AND reconfirm_opened_at IS NULL
         RETURNING id, name, venue_name, event_time,
                   EXTRACT(EPOCH FROM (event_time - (NOW() AT TIME ZONE 'UTC'))) / 3600 AS hours_out`,
       [lead, SETTLE_MINUTES, SWEEP_BATCH_SIZE]

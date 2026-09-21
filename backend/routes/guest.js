@@ -21,9 +21,9 @@ const { pushIfOffline } = require('../services/pushHelper');
 // (routes/budget.js exports them for exactly this), so there is one of each.
 const {
   PRESENT_ANSWERS, settledCeiling, settleIfComplete, answerPayload, emitAnswer,
-  pushBudgetSet, answeringPopulation,
+  pushBudgetSet, answeringPopulation, settleAfterPopulationChange,
 } = require('./budget');
-const { reconfirmState } = require('../utils/reconfirm');
+const { reconfirmState, RECONFIRM_GUEST_WRITE_SQL, answeredWindow } = require('../utils/reconfirm');
 // Every refusal in this file is read by a stranger with no account, no app and
 // no way to ask anyone what happened, so the window it names has to be the real
 // one. See utils/retryAfter.js.
@@ -495,7 +495,7 @@ function firstNameOnly(name) {
   return String(name || '').trim().split(/\s+/)[0].slice(0, 24);
 }
 
-async function rosterFor(flockId) {
+async function rosterFor(flockId, openedAt = null) {
   const [members, guests] = await Promise.all([
     // flock_members.status is invited | accepted | declined (CHECK constraint,
     // migration 000). accepted IS the yes on this product: every capability and
@@ -526,7 +526,7 @@ async function rosterFor(flockId) {
       name: firstNameOnly(r.name),
       rsvp: MEMBER_ANSWER[r.status] || 'none',
       kind: 'member',
-      reconfirmed: !!r.reconfirmed_at,
+      reconfirmed: answeredWindow(r.reconfirmed_at, openedAt),
     })),
     ...guests.rows.map((r) => ({
       name: firstNameOnly(r.name),
@@ -535,7 +535,7 @@ async function rosterFor(flockId) {
       // state to represent here.
       rsvp: r.status === 'out' ? 'out' : 'in',
       kind: 'guest',
-      reconfirmed: !!r.reconfirmed_at,
+      reconfirmed: answeredWindow(r.reconfirmed_at, openedAt),
     })),
   ].filter((p) => p.name.length > 0);
 
@@ -684,7 +684,7 @@ router.get('/:token',
              (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1)::int AS guest_rows`,
           [link.flock_id]
         ),
-        rosterFor(link.flock_id),
+        rosterFor(link.flock_id, link.reconfirm_opened_at || null),
         guestBudgetSummary(link),
         // Only asked once a window has been opened; a plan that has never
         // had one costs nothing here.
@@ -869,6 +869,14 @@ router.post('/:token/rsvp',
         if (upd.rows.length) {
           if (changed) {
             await announceGuestRsvp(req, link, { guestId: upd.rows[0].id, name, status, isNew: false });
+          }
+          // "Everyone has answered" is a comparison against the population,
+          // and an 'in' guest saying out shrinks it: three members may have
+          // answered a budget that was waiting on exactly this person. The
+          // same settle, under the same lock, publishing the same way, or
+          // nothing (routes/budget.js). Never throws.
+          if (prior && prior.status === 'in' && status === 'out') {
+            await settleAfterPopulationChange(req.app.get('io'), link.flock_id);
           }
           return res.json({ guestToken: upd.rows[0].guest_token, status });
         }
@@ -1337,23 +1345,31 @@ router.post('/:token/me',
         // /api/budget/:flockId gives: the reveal decision is made from this
         // count, and a >= 3 count must only ever be paired with a ceiling at
         // least as new as the state it counted.
+        //
+        // ONE STATEMENT, ONE SNAPSHOT. The reveal decision is made from the
+        // crowd count and the number comes from the cached lock; read as two
+        // statements, a member leaving between them pairs a count of three
+        // with a number that now hides two. Reading both in one statement
+        // is what the member reader's "count first" ordering was reaching
+        // for, and it costs nothing here.
         const counts = await pool.query(
           `SELECT COUNT(*) AS total_submissions,
-                  COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count
+                  COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count,
+                  (SELECT budget_locked FROM flocks WHERE id = $1) AS budget_locked,
+                  (SELECT budget_ceiling FROM flocks WHERE id = $1) AS budget_ceiling
              FROM ${PRESENT_ANSWERS} WHERE bs.flock_id = $1`,
           [link.flock_id]
         );
         const row = (counts.rows && counts.rows[0]) || {};
         const isReady = parseInt(row.non_skip_count || 0) >= 3;
-        const [flockRow, population, own] = await Promise.all([
-          pool.query('SELECT budget_locked, budget_ceiling FROM flocks WHERE id = $1', [link.flock_id]),
+        const [population, own] = await Promise.all([
           answeringPopulation((q, p) => pool.query(q, p), link.flock_id),
           pool.query(
             'SELECT amount, skipped FROM budget_submissions WHERE flock_id = $1 AND guest_rsvp_id = $2',
             [link.flock_id, g.id]
           ),
         ]);
-        const fr = (flockRow.rows && flockRow.rows[0]) || {};
+        const fr = { budget_locked: row.budget_locked, budget_ceiling: row.budget_ceiling };
         const mine = (own.rows && own.rows[0]) || null;
         budget = {
           enabled: true,
@@ -1382,7 +1398,7 @@ router.post('/:token/me',
       res.json({
         name: g.name,
         status: g.status,
-        reconfirmed: windowOpen && !!g.reconfirmed_at,
+        reconfirmed: windowOpen && answeredWindow(g.reconfirmed_at, link.reconfirm_opened_at),
         reconfirm: windowOpen ? reconfirm : null,
         budget,
       });
@@ -1450,16 +1466,21 @@ router.post('/:token/reconfirm',
           error: 'Flock asks this in the last few hours before a plan. Nothing to answer yet.',
         });
       }
-      if (g.reconfirmed_at) {
-        return res.json({ reconfirmed: true, already: true, count: before.count, total: before.total, deadline: before.deadline });
-      }
 
-      await pool.query(
-        `UPDATE guest_rsvps SET reconfirmed_at = COALESCE(reconfirmed_at, NOW()), updated_at = NOW()
-          WHERE id = $1 AND flock_id = $2 AND status = 'in' AND COALESCE(is_hidden, false) = false`,
-        [g.id, link.flock_id]
-      );
+      // Window-bound, like the member tap (utils/reconfirm.js): the write
+      // re-checks the window and changes only a row that has not answered
+      // it. Zero rows is "already" or "just closed"; the re-read says which.
+      const write = await pool.query(RECONFIRM_GUEST_WRITE_SQL, [g.id, link.flock_id]);
       const after = await reconfirmState(run, link.flock_id);
+      if ((write.rowCount || 0) === 0) {
+        if (!after.open) {
+          return res.status(409).json({
+            code: 'NOT_OPEN',
+            error: 'That window just closed. The plan moved or was called off.',
+          });
+        }
+        return res.json({ reconfirmed: true, already: true, count: after.count, total: after.total, deadline: after.deadline });
+      }
 
       try {
         const io = req.app.get('io');

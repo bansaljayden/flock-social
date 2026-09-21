@@ -181,13 +181,25 @@ const DEADLINE = '2026-09-16T23:00:00.000Z';
 
 // utils/reconfirm.js RECONFIRM_STATE_SQL, answered from a small counter so the
 // read after a write shows the write.
-function scriptWindow({ open = true, count = 2, total = 7, deadline = DEADLINE } = {}) {
+//
+// The two writes are window-bound (utils/reconfirm.js): they join the flock,
+// re-check the window and change only a row that has not answered THIS
+// window, so the fixture answers them with the row count that rule would
+// give: one when the person had not answered, zero when they had
+// (`already`), and zero with the window shut afterwards when a time change
+// lands between the read and the write (`closeAtWrite`).
+function scriptWindow({ open = true, count = 2, total = 7, deadline = DEADLINE, already = false, closeAtWrite = false } = {}) {
   let answered = count;
-  on(/AS open, f\.event_time AS deadline/, () => ({ rows: [{ open, deadline, count: answered, total }], rowCount: 1 }));
-  on(/^UPDATE flock_members SET reconfirmed_at = COALESCE\(reconfirmed_at, NOW\(\)\) WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'$/,
-    () => { answered += 1; return { rows: [], rowCount: 1 }; });
-  on(/^UPDATE guest_rsvps SET reconfirmed_at = COALESCE\(reconfirmed_at, NOW\(\)\), updated_at = NOW\(\) WHERE id = \$1 AND flock_id = \$2 AND status = 'in' AND COALESCE\(is_hidden, false\) = false$/,
-    () => { answered += 1; return { rows: [], rowCount: 1 }; });
+  let shut = false;
+  on(/AS open, f\.event_time AS deadline/, () => ({ rows: [{ open: open && !shut, deadline, count: answered, total }], rowCount: 1 }));
+  const write = () => {
+    if (closeAtWrite) { shut = true; return { rows: [], rowCount: 0 }; }
+    if (already) return { rows: [], rowCount: 0 };
+    answered += 1;
+    return { rows: [{ '?column?': 1 }], rowCount: 1 };
+  };
+  on(/^UPDATE flock_members fm SET reconfirmed_at = NOW\(\) FROM flocks f WHERE /, write);
+  on(/^UPDATE guest_rsvps g SET reconfirmed_at = NOW\(\), updated_at = NOW\(\) FROM flocks f WHERE /, write);
   // The two fan-out rosters (sockets/handlers.js), and the block set.
   on(/^SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2$/,
     () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
@@ -213,8 +225,10 @@ const guestRow = (over = {}) => ({ id: GUEST_ID, name: 'Cass', status: 'in', rec
 
 const memberTap = () => call('POST', `/api/flocks/${FLOCK}/reconfirm`);
 const guestTap = (token = GUEST_TOKEN) => call('POST', `/api/guest/${LINK_TOKEN}/reconfirm`, { guestToken: token });
-const MEMBER_WRITE = /^UPDATE flock_members SET reconfirmed_at = COALESCE/;
-const GUEST_WRITE = /^UPDATE guest_rsvps SET reconfirmed_at = COALESCE/;
+const MEMBER_WRITE = /^UPDATE flock_members fm SET reconfirmed_at = NOW\(\)/;
+const GUEST_WRITE = /^UPDATE guest_rsvps g SET reconfirmed_at = NOW\(\)/;
+const MEMBER_WRITE_SQL = "UPDATE flock_members fm SET reconfirmed_at = NOW() FROM flocks f WHERE fm.flock_id = $1 AND fm.user_id = $2 AND fm.status = 'accepted' AND f.id = fm.flock_id AND f.reconfirm_opened_at IS NOT NULL AND f.status = 'confirmed' AND f.event_time > (NOW() AT TIME ZONE 'UTC') AND (fm.reconfirmed_at IS NULL OR fm.reconfirmed_at < f.reconfirm_opened_at) RETURNING 1";
+const GUEST_WRITE_SQL = "UPDATE guest_rsvps g SET reconfirmed_at = NOW(), updated_at = NOW() FROM flocks f WHERE g.id = $1 AND g.flock_id = $2 AND g.status = 'in' AND COALESCE(g.is_hidden, false) = false AND f.id = g.flock_id AND f.reconfirm_opened_at IS NOT NULL AND f.status = 'confirmed' AND f.event_time > (NOW() AT TIME ZONE 'UTC') AND (g.reconfirmed_at IS NULL OR g.reconfirmed_at < f.reconfirm_opened_at) RETURNING 1";
 
 // ===========================================================================
 // 1. The lead and the words
@@ -292,8 +306,8 @@ test('the state statement decides open in SQL and counts over both rosters', () 
   const flat = RECONFIRM_STATE_SQL.replace(/\s+/g, ' ').trim();
   assert.match(flat, /\(f\.reconfirm_opened_at IS NOT NULL AND f\.status = 'confirmed' AND f\.event_time > \(NOW\(\) AT TIME ZONE 'UTC'\)\) AS open/);
   assert.match(flat, /f\.event_time AS deadline/);
-  assert.match(flat, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted' AND reconfirmed_at IS NOT NULL\)::int \+ \(SELECT COUNT\(\*\) FROM guest_rsvps WHERE flock_id = f\.id AND status = 'in' AND COALESCE\(is_hidden, false\) = false AND reconfirmed_at IS NOT NULL\)::int AS count/,
-    'count is accepted members plus visible in guests who have answered');
+  assert.match(flat, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted' AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\.reconfirm_opened_at\)::int \+ \(SELECT COUNT\(\*\) FROM guest_rsvps WHERE flock_id = f\.id AND status = 'in' AND COALESCE\(is_hidden, false\) = false AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\.reconfirm_opened_at\)::int AS count/,
+    'count is accepted members plus visible in guests who answered THIS window: an older timestamp is an answer to an earlier question');
   assert.match(flat, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted'\)::int \+ \(SELECT COUNT\(\*\) FROM guest_rsvps WHERE flock_id = f\.id AND status = 'in' AND COALESCE\(is_hidden, false\) = false\)::int AS total/,
     'total is the same population the budget counts');
   assert.match(flat, /FROM flocks f WHERE f\.id = \$1$/);
@@ -319,8 +333,10 @@ test('the sweep claims confirmed plans inside the lead that nobody has touched l
   assert.match(sql, /event_time <= \(NOW\(\) AT TIME ZONE 'UTC'\) \+ make_interval\(hours => \$1::int\)/, 'within the lead');
   assert.match(sql, /updated_at <= \(NOW\(\) AT TIME ZONE 'UTC'\) - make_interval\(mins => \$2::int\)/,
     'not on the heels of "It\'s happening!"');
-  assert.match(sql, /ORDER BY event_time LIMIT \$3::int \)/, 'soonest first, and never more than a batch');
-  assert.match(sql, /RETURNING id, name, venue_name, event_time, EXTRACT\(EPOCH FROM \(event_time - \(NOW\(\) AT TIME ZONE 'UTC'\)\)\) \/ 3600 AS hours_out$/);
+  assert.match(sql, /ORDER BY event_time LIMIT \$3::int FOR UPDATE SKIP LOCKED \)/,
+    'soonest first, never more than a batch, and the rows are taken, so a second sweep skips them rather than opening them twice');
+  assert.match(sql, /\) AND status = 'confirmed' AND reconfirm_opened_at IS NULL RETURNING id, name, venue_name, event_time, EXTRACT\(EPOCH FROM \(event_time - \(NOW\(\) AT TIME ZONE 'UTC'\)\)\) \/ 3600 AS hours_out$/,
+    'the outer update re-checks what another writer could have changed since the select');
   assert.deepStrictEqual(params, [DEFAULT_LEAD_HOURS, SETTLE_MINUTES, SWEEP_BATCH_SIZE]);
   assert.strictEqual(SETTLE_MINUTES, 15);
   assert.strictEqual(SWEEP_BATCH_SIZE, 200);
@@ -478,9 +494,8 @@ test('an accepted member\'s tap writes once and answers with the count after it'
 
   const writes = ran(MEMBER_WRITE);
   assert.strictEqual(writes.length, 1);
-  assert.strictEqual(writes[0].sql,
-    "UPDATE flock_members SET reconfirmed_at = COALESCE(reconfirmed_at, NOW()) WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
-    'the write is gated on accepted in the statement itself, and never moves a first answer');
+  assert.strictEqual(writes[0].sql, MEMBER_WRITE_SQL,
+    'the write is gated on accepted AND on the window in the statement itself, and changes only a row that has not answered this window');
   assert.deepStrictEqual(writes[0].params, [FLOCK, ME.id]);
   // The count is read again after the write, so the number handed back
   // includes this tap.
@@ -495,13 +510,32 @@ test('an accepted member\'s tap writes once and answers with the count after it'
   assert.deepStrictEqual(unknownSql, []);
 });
 
-test('a second tap is already: true with the current count, and writes nothing', async () => {
+test('a tap that lands after the window shut is refused and changes nothing, even though the read said open', async () => {
+  // The race the window-bound write exists for: the state read says open,
+  // a time change clears the window before the write lands, and the write,
+  // which re-checks the window in its own statement, changes no row. The
+  // re-read then says closed, and the person is told the plan moved rather
+  // than being counted into a window that no longer exists.
+  scriptMembership({ status: 'accepted', reconfirmed_at: null });
+  scriptWindow({ count: 2, total: 7, closeAtWrite: true });
+  const res = await memberTap();
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'NOT_OPEN');
+  assert.strictEqual(ran(MEMBER_WRITE).length, 1, 'the write ran and changed nothing: the window check is in the statement');
+  assert.strictEqual(ran(/AS open, f\.event_time AS deadline/).length, 2, 'read before, read after');
+  assert.strictEqual(emits.length, 0, 'nothing announced');
+  assert.deepStrictEqual(unknownSql, []);
+});
+
+test('a second tap is already: true with the current count, and changes no row', async () => {
   scriptMembership({ status: 'accepted', reconfirmed_at: '2026-09-16T20:30:00.000Z' });
-  scriptWindow({ count: 3, total: 7 });
+  scriptWindow({ count: 3, total: 7, already: true });
   const res = await memberTap();
   assert.strictEqual(res.status, 200, res.text);
   assert.deepStrictEqual(res.body, { reconfirmed: true, already: true, count: 3, total: 7, deadline: DEADLINE });
-  assert.strictEqual(ran(MEMBER_WRITE).length, 0, 'no second write');
+  // The statement runs (it is the one that knows whether this window was
+  // answered) and changes no row; "already" is read off its row count.
+  assert.strictEqual(ran(MEMBER_WRITE).length, 1, 'one window-bound statement, no row changed');
   await until(() => emits.length > 0, 100);
   assert.strictEqual(emits.length, 0, 'and nothing to announce');
 });
@@ -561,9 +595,8 @@ test('an in guest\'s tap writes only a visible in row, and every member hears th
 
   const writes = ran(GUEST_WRITE);
   assert.strictEqual(writes.length, 1);
-  assert.strictEqual(writes[0].sql,
-    "UPDATE guest_rsvps SET reconfirmed_at = COALESCE(reconfirmed_at, NOW()), updated_at = NOW() WHERE id = $1 AND flock_id = $2 AND status = 'in' AND COALESCE(is_hidden, false) = false",
-    'the write re-checks in and not hidden in the statement, so a row that changed between the read and the write is not answered for');
+  assert.strictEqual(writes[0].sql, GUEST_WRITE_SQL,
+    'the write re-checks in, not hidden AND the window in the statement, so a row or a plan that changed between the read and the write is not answered for');
   assert.deepStrictEqual(writes[0].params, [GUEST_ID, FLOCK]);
 
   // Announced through the same fan-out a guest RSVP uses, to every accepted
@@ -581,14 +614,17 @@ test('an in guest\'s tap writes only a visible in row, and every member hears th
 
 test('a guest\'s second tap is already: true, writes nothing, emits nothing, and costs one action unit', async () => {
   scriptGuest(guestRow({ reconfirmed_at: '2026-09-16T20:30:00.000Z' }));
-  scriptWindow({ count: 3, total: 7 });
+  scriptWindow({ count: 3, total: 7, already: true });
   // All but one unit already spent, so the tap below is paying with the
   // last one, and the tap after it shows what it paid.
   for (let i = 0; i < guest.GUEST_ACTIONS_PER_HOUR - 1; i++) guest.allowGuestAction(GUEST_ID);
   const res = await guestTap();
   assert.strictEqual(res.status, 200, res.text);
   assert.deepStrictEqual(res.body, { reconfirmed: true, already: true, count: 3, total: 7, deadline: DEADLINE });
-  assert.strictEqual(ran(GUEST_WRITE).length, 0, 'no second write');
+  // The statement runs (it is the one that knows whether this window was
+  // answered) and changes no row; "already" is read off its row count.
+  assert.strictEqual(ran(GUEST_WRITE).length, 1, 'one window-bound statement');
+  assert.strictEqual(ran(GUEST_WRITE)[0].rowCount, undefined, 'rows are the fixture\'s to report, not the log\'s');
   assert.strictEqual(emits.length, 0, 'and nothing to announce');
   // Coming back for the count IS an action now. The budget used to sit in
   // front of the write only, which left the NOT_OPEN and already-tapped

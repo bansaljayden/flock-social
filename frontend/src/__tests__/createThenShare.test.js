@@ -59,7 +59,13 @@ test('a successful create lands on the made step, and the chat is not navigated 
 
 test('the invite link starts minting the moment the flock exists, into a ref, without being awaited', () => {
   const fn = successPath();
-  expect(fn).toContain('inviteLinkRef.current = { flockId: f.id, promise: createFlockInviteLink(f.id).then(');
+  // The mint starts on the create and is never awaited there; the ref also
+  // records when it settles, because the tap shares only a link already in
+  // hand (the share sheet needs the tap's own activation, and a network wait
+  // spends it).
+  expect(fn).toContain('held.promise = createFlockInviteLink(f.id)');
+  expect(fn).toContain('held.settled = true; held.result = r;');
+  expect(fn).toContain('inviteLinkRef.current = held;');
   // Both outcomes settle, so a refused mint is neither an unhandled rejection
   // nor a swallowed one; the tap reads it.
   expect(fn).toMatch(/\.then\(\(r\) => \(\{ url: r\?\.url \|\| null \}\), \(err\) => \(\{ error: err \}\)\)/);
