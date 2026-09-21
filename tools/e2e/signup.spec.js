@@ -52,7 +52,13 @@ async function openSignupForm(page) {
 async function submitSignup(page, { name = 'Ada Tester', email, dob = adultDob(), password = PASSWORD }) {
   await page.getByLabel('Name', { exact: true }).fill(name);
   await page.getByLabel('Email', { exact: true }).fill(email);
-  await page.getByLabel('Date of birth', { exact: true }).fill(dob);
+  // ACCOUNT CREATION ASKS FOR A YEAR, NOT A DATE. The screen collects four
+  // digits and derives YYYY-12-31 before sending, so the server, the validator
+  // and the age arithmetic never moved. Callers still hand this helper a full
+  // date because that reads clearly at the call site, and only the year is
+  // typed. December 31 is why a "nine years ago" year is still refused: a year
+  // spans two ages and the gate takes the younger one.
+  await page.getByLabel('Year of birth', { exact: true }).fill(String(dob).slice(0, 4));
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: /^create account$/i }).click();
 }
@@ -132,7 +138,7 @@ test('the password rules printed on the screen are the rules the server enforces
 
   await page.getByLabel('Name', { exact: true }).fill('Ada Tester');
   await page.getByLabel('Email', { exact: true }).fill(newEmail('pwbad'));
-  await page.getByLabel('Date of birth', { exact: true }).fill(adultDob());
+  await page.getByLabel('Year of birth', { exact: true }).fill(adultDob().slice(0, 4));
   await page.getByRole('button', { name: /^create account$/i }).click();
   await expect(page.getByText(/password is missing a requirement/i)).toBeVisible();
   await expect(page.getByRole('heading', { name: /create your account/i })).toBeVisible();
@@ -202,7 +208,7 @@ test('a plainly under 13 date is refused, and the refusal teaches no age', async
   // Nothing on the form may print the threshold or cap the picker. A screen that
   // does either tells a child which birthday to type instead of turning them
   // away, which is the whole point of the neutral screen.
-  const dobField = page.getByLabel('Date of birth', { exact: true });
+  const dobField = page.getByLabel('Year of birth', { exact: true });
   expect(await dobField.getAttribute('max')).toBeNull();
   expect(await dobField.getAttribute('min')).toBeNull();
   const formText = normalise(await page.locator('form').innerText());
@@ -242,7 +248,7 @@ test('typing an older date straight after being refused does not get in', async 
 
   // Same mailbox, older year, form still filled in. This is the exact move the
   // lockout exists to answer.
-  await page.getByLabel('Date of birth', { exact: true }).fill(adultDob());
+  await page.getByLabel('Year of birth', { exact: true }).fill(adultDob().slice(0, 4));
   await page.getByRole('button', { name: /^create account$/i }).click();
   await expect(page.getByText(/can't create a flock account for you/i)).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole('heading', { name: /confirm your email/i })).toHaveCount(0);
@@ -371,7 +377,12 @@ test('every empty panel a brand new account meets explains itself', async ({ pag
 
   // Discover with location declined, which is the state the app must work in.
   await page.getByRole('button', { name: 'Discover', exact: true }).click();
-  await expect(page.getByText(/location is off/i)).toBeVisible({ timeout: 20_000 });
+  // TWO elements say "location is off" on this screen now: the map's own status
+  // line ("Location is off, so this is Philadelphia, not you") and the banner
+  // offering to turn it on. Either satisfies what these tests are about, which
+  // is that the empty state EXPLAINS ITSELF, so they take the first rather than
+  // failing strict mode on an app that got more helpful, not less.
+  await expect(page.getByText(/location is off/i).first()).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/search for a place by name/i)).toBeVisible();
 
   // Past flocks, reached from home.
@@ -516,7 +527,7 @@ test('Try again on the Discover banner answers the tap', async ({ page }) => {
   await signUpAndSignIn(page, 'retry');
 
   await page.getByRole('button', { name: 'Discover', exact: true }).click();
-  await expect(page.getByText(/location is off/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/location is off/i).first()).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(2_000);
 
   const retry = page.getByRole('button', { name: /try again/i }).first();
