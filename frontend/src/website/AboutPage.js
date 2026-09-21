@@ -115,12 +115,12 @@ export default function AboutPage() {
           someone else's chart. It predicts how busy a venue will be, hour by hour,
           from 106 signals: time patterns, weather, nearby events, venue category,
           and how that specific spot actually behaves. It was trained on 1.9 million
-          venue-hour observations across 30 cities and held out another 395,000 it
-          never saw. Where it earns its place is live conditions: on 67,000 realtime
-          observations it cuts the average error by 2.1 points against the
-          popular-times baseline it started from.
-          When a venue is too new or too small for the model to know it yet, a
-          rule-based engine answers instead of guessing wildly.
+          venue-hour observations across 30 cities and scored on another 395,000 in
+          three cities it never trained on. Where it earns its place is live
+          conditions: on 67,000 realtime observations it cuts the average error by
+          2.1 points against the popular-times baseline it started from.
+          When the model has no baseline for a venue yet, a rule-based engine
+          answers and the app records which engine did.
         </p>
         <p>
           Busyness charts you've seen elsewhere measure who already showed up.

@@ -58,8 +58,8 @@ as of the August 18, 2026 training run (version 2.6.0 "Starling").
   the model never trained on: Barcelona, Miami, and Tokyo.
 - On the realtime slice of that holdout (67,249 observations), it reduces mean
   absolute error by 2.06 points against the popular-times baseline it started from.
-- When a venue is too new or too small for the model to know it, a rule-based
-  engine answers instead of guessing.
+- When the model has no baseline for a venue yet, a rule-based engine answers
+  and the prediction is tagged with the engine that produced it.
 
 ## Who it is for
 
