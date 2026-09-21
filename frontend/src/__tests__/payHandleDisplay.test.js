@@ -2,7 +2,7 @@
  * THE PAY SURFACE — one plain link to their handle, or a bird saying there
  * isn't one.
  *
- * the maintainer, 2026-08-14: "when you go to pay it should show a link to their Venmo
+ * The brief, 2026-08-14: "when you go to pay it should show a link to their Venmo
  * that's all if they have it if they don't add a bird icon and say that they
  * don't simple".
  *

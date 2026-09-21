@@ -26,9 +26,9 @@ import { BirdieStill, BirdNote } from './ui/BirdieBird';
 // the owner can read is a decline. A decline they cannot see is a bug.
 //
 // Then it read as a widget rather than a conversation: a heading, a paragraph,
-// four chips, a disclosure, and a thin pill squeezed in underneath. the maintainer's
-// words were "you actually should be typing it, like how you would type to
-// a conversational AI assistant." What changed. The composer grew into a real box that
+// four chips, a disclosure, and a thin pill squeezed in underneath. The report
+// said "you actually should be typing it, like how you would type to" a
+// conversational AI assistant. What changed. The composer grew into a real box that
 // grows with the question. The thread became an exchange: the owner's words in
 // their own bubble on their own side, Roost's answer plain and full width
 // beneath it, which is how every chat that has to print long answers with
@@ -181,7 +181,7 @@ const ADVICE_MARKER = 'General advice, not from your data.';
 const PENDING_CHIP = 'Reading your numbers…';
 const PENDING_TYPED = 'Working on it…';
 
-// BIRDIE IS PRESENT WHILE ROOST WORKS, AND ONLY VISUALLY (the maintainer, build 26
+// BIRDIE IS PRESENT WHILE ROOST WORKS, AND ONLY VISUALLY (build 26
 // review, 2026-08-21: "have Birdie pop out when it's talking so that it feels
 // interactive. Like you're not just talking to a blank wall.")
 //
@@ -928,8 +928,8 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           new owner reads here. It is supporting text, so it gets the token for
           supporting text. */}
       {/* Before a word is exchanged, Birdie is the greeter — the same shape
-          Birdie's own panel opens with, because the maintainer asked for this surface
-          to "feel like a regular chat" (build 26 review, 2026-08-21). The
+          Birdie's own panel opens with, because this surface has to
+          "feel like a regular chat" (build 26 review, 2026-08-21). The
           lead-in copy is unchanged: the bird adds presence, not promises. */}
       {!started && (
         <div data-roost="greeter" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>

@@ -305,7 +305,7 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
   // ── PIN UPDATE, 2026-08-14. `people` was added deliberately. ──────────────
   // The old payload answered "how many" (`going: 3`) and never "who", so the
   // page could not tell the person deciding whether to come who else was
-  // coming. That was the whole of the maintainer's report on this surface. The widening
+  // coming. That was the whole of the report on this surface. The widening
   // is EXACTLY one key, and it is bounded on three axes rather than left open:
   //
   //   1. FIELD SET. Each row is { name, rsvp, kind } and the assertions below

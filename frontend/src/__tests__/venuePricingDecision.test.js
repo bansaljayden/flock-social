@@ -19,7 +19,7 @@
 // still say "fix the app to $49/$149"; that has been backwards since
 // 2026-08-14 and is checked against below.
 //
-// If one of these fails because the maintainer re-priced the tiers on purpose, update
+// If one of these fails because the tiers were re-priced on purpose, update
 // VENUE-BILLING.md's table and this file in the same commit. Nothing else
 // counts as a reason to touch it.
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ describe('the app renders the decided venue prices', () => {
   });
 
   // The venue settings screen printed "Pro Plan / $75/month / No end date" and
-  // offered no way to change or cancel it (the maintainer, TestFlight build 26). Both
+  // offered no way to change or cancel it (TestFlight build 26). Both
   // halves are now pinned: the price is gone from the settings screen, and a
   // real route to a human is present.
   test('the settings screen offers a way out of the plan', () => {

@@ -57,7 +57,7 @@ const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 // PUBLIC_PHOTO_BUDGET of 1,500 fetches a day, both in this process's memory,
 // both destroyed by every deploy. The day counter was doing the money job
 // badly. 1,500 a day is 45,656 a month, which is $311 a month or $3,738 a
-// year at $7.00 per 1,000, more than twelve times what the maintainer has agreed to
+// year at $7.00 per 1,000, more than twelve times the agreed budget to
 // spend, and it was doing it in the one place a limit must never be reached,
 // because reaching it means a real person sees a venue card with no picture on
 // it.

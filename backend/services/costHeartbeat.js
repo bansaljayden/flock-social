@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // COST HEARTBEAT (2026-09-01)
 // ---------------------------------------------------------------------------
-// the maintainer's order the day he paid the first real Google invoice: keep the
+// The order given the day the first real Google invoice was paid: keep the
 // expense picture current, constantly. Two things on that picture can go
 // stale or go wrong silently, and each is checked here once a day.
 //

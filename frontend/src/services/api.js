@@ -5,7 +5,7 @@ import { lsGet } from '../lib/storage';
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
 // brand's own domain, which took the entire app down on exactly the machines
-// students use (the maintainer's school laptop). Same Railway service behind both
+// students use (a school laptop). Same Railway service behind both
 // names; the old domain stays valid so builds shipped before the flip keep
 // working. The Apple sign-in redirectURI deliberately still uses the railway
 // domain because that exact URI is registered in the Apple portal.

@@ -272,7 +272,7 @@ export default function VenueDashboard({
 
     // The "How full are you compared to your capacity?" card.
     //
-    // NAMED AGAINST CAPACITY, the maintainer's call 2026-09-04. "How full are you right
+    // NAMED AGAINST CAPACITY, decided 2026-09-04. "How full are you right
     // now?" left the scale for the owner to guess, and the two plausible
     // guesses are far apart: percent of what the room holds, or percent of this
     // venue's own busiest hour, which is what the 0-100 means everywhere else in
@@ -1130,7 +1130,7 @@ export default function VenueDashboard({
                to carry a second "Request verification" off the same handler
                as the intel card at the top of this tab, so an unverified
                premium owner opened Analytics to the button twice within one
-               scroll. the maintainer's TestFlight note (2026-08-21) was precisely
+               scroll. The TestFlight note (2026-08-21) was precisely
                that the screen said it too many times. Both cards render
                under the same `can.analytics` gate, so the intel card's copy
                is always on screen whenever this one would have been: one ask
@@ -2188,7 +2188,7 @@ export default function VenueDashboard({
                   it. What must not come back is the panel without the sends. */}
 
               {/* SUBSCRIPTION, and the dead end that used to live here.
-                  the maintainer, TestFlight build 26: this block read "Pro Plan /
+                  From TestFlight build 26: this block read "Pro Plan /
                   $75/month / No end date" and there was no way to change or
                   cancel it anywhere in the product. Same shape as the venue
                   verification dead end: the screen stated a fact about money

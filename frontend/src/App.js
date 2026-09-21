@@ -56,8 +56,8 @@ import { MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // space. Neither is ever a functional glyph — Icons.birdie stays the glyph.
 //
 // BirdNote is the shared shape every bird-carrying empty and error state uses
-// (bird plus title, body and an optional action, stacked or in a row). the maintainer,
-// TestFlight build 26: "Birds on empty and error states. Yes. It should be
+// (bird plus title, body and an optional action, stacked or in a row). From
+// the TestFlight build 26 pass: "Birds on empty and error states. Yes. It should be
 // everywhere." The old rule that a bird marked genuine-empty ONLY is retired by
 // that instruction; what survives is the honesty half of it, which is that the
 // bird decorates a state and never relabels one. Error copy still says the load
@@ -5148,7 +5148,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [showFlockInviteModal, setShowFlockInviteModal] = useState(false);
   const [flockInviteSearch, setFlockInviteSearch] = useState('');
   const [flockInviteSelected, setFlockInviteSelected] = useState([]);
-  // The friends list itself. the maintainer's words for what was missing: "you can go
+  // The friends list itself. The report of what was missing: "you can go
   // to your friend's list and just pick them". You could not. The sheet had no
   // list, an empty search box returned nothing, and the only default content
   // was "Available tonight", which is the availability pulses. Eight friends
@@ -5385,7 +5385,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      venue attached, and its comment claimed it came from localStorage while
      nothing in the app ever read it back.
 
-     Two things followed, and the maintainer hit both: checking in anywhere disabled
+     Two things followed, and both were hit in use: checking in anywhere disabled
      Check In EVERYWHERE for two hours, because one venue's success was the
      state every other venue's button read; and the per-venue key the write
      below stores was invisible to the app, so the two-hour gate that
@@ -8458,7 +8458,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // move the cursor forward, and the ref dedupes so one message does not
   // cost three identical PUTs.
   // Visibility as STATE, not a read at effect time, so the two read effects
-  // below re-fire when the user comes back. code review, 2026-09-01: a tab
+  // below re-fire when the user comes back. Code review, 2026-09-01: a tab
   // left on chatDetail and then hidden kept advancing the server cursor as
   // messages arrived, while onNewMessage was simultaneously counting those
   // same messages unread because IT checks visibility. The recipient never
@@ -8523,7 +8523,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // others. `currentScreen === 'chatDetail'` is the chat being the screen the
   // app is drawing. `selectedFlockId` is WHICH chat, so a receipt can never
   // land on the thread the user just left. `docVisible` is React state fed by
-  // visibilitychange rather than a read at effect time, which is the fix code review
+  // visibilitychange rather than a read at effect time, which is the fix the code review
   // found on 2026-09-01 for the cursor PUT directly above: a tab parked on
   // chatDetail and then hidden kept claiming to be reading, forever, off one
   // stale evaluation.
@@ -13074,7 +13074,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowModeSelection(false);
     setCurrentScreen('venueDashboard');
   }, []);
-  // Birdie in the flock chat. the maintainer's note from the TestFlight pass: the
+  // Birdie in the flock chat. The note from the TestFlight pass: the
   // chat needs Birdie present. The panel mounts at the root, so it opens over
   // the chat; the context effect already hands the model this flock while
   // the person is on chatDetail, so "this flock" is the one they are in.

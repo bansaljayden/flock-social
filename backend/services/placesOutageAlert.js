@@ -13,14 +13,14 @@
 //     "Sentry DISABLED: SENTRY_DSN is unset" on every deploy.
 //
 // So an alarm that only did those two things would have detected the outage
-// perfectly and still told the maintainer nothing. This is the channel that works,
+// perfectly and still told nobody. This is the channel that works,
 // copied deliberately from services/collectionHeartbeat.js rather than
 // invented: same MODERATION_ALERT_EMAIL recipients, same ops_alert_ledger
 // dedupe, same release-the-claim-on-failure rule.
 //
 // WHY THE LEDGER AND NOT AN IN-MEMORY FLAG. Migration 058 was written because
 // the heartbeat's "already sent today" lived in process RAM and two deploys on
-// 2026-09-01 mailed the maintainer twice inside an hour about one condition. The money
+// 2026-09-01 mailed the operator twice in an hour about one condition. The money
 // watch's sayOnceToday has exactly that shape, so the EMAIL claim goes through
 // Postgres and survives every restart. The log line can repeat; an inbox may
 // not.

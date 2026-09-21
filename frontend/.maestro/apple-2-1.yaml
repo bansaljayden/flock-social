@@ -4,7 +4,7 @@
 # starts xcrun simctl recordVideo, and passes these env vars:
 #
 #   REVIEW_EMAIL_A, REVIEW_EMAIL_B, REVIEW_PASSWORD
-#       Two FIXED, pre-verified, persistent accounts the maintainer created once by
+#       Two FIXED, pre-verified, persistent accounts created once by
 #       ordinary signup and confirmed by email. Everything that needs a
 #       verified account (create flock, invite, friend request, chat, vote,
 #       photo, report, block) happens on these two. They are never deleted.

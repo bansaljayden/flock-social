@@ -2458,7 +2458,7 @@ router.get('/costs', async (req, res) => {
   });
 
   // -- WHAT THE TIERS ARE, AND WHO IS ON THEM --------------------------------
-  // the maintainer asked for this because he could not answer either question from any
+  // This exists because neither question could be answered from any
   // screen: what the venue and consumer tiers actually are, and how many
   // accounts sit on each. Both halves are read here rather than restated in the
   // panel, because a hardcoded tier list is a list that goes stale the first

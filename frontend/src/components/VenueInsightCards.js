@@ -575,7 +575,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   // NO VERIFICATION BUTTON HERE. This card used to take a handler and draw
   // its own verification ask under the unverified reason, and the intel card
   // at the top of the same tab pressed the same handler, so an unverified
-  // owner saw the ask twice in one scroll (the maintainer's TestFlight note,
+  // owner saw the ask twice in one scroll (TestFlight note,
   // 2026-08-21). The dashboard stopped passing the handler on 2026-09-01 and
   // the dormant path was deleted on 2026-09-02: the one ask lives on the
   // dashboard (renderVerificationAsk in screens/VenueDashboard.js), and this

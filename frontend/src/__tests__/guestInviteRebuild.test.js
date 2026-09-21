@@ -1,7 +1,7 @@
 /**
  * THE INVITE SCREEN, REBUILT — /i/:token, 2026-08-14.
  *
- * the maintainer's report was three things at once: "when I send an invite they don't
+ * The report was three things at once: "when I send an invite they don't
  * get a direct link to being able to text in that flock", "the screen should be
  * better", and "it should tell what that person says in the flock whether they
  * are going or not".

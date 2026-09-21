@@ -38,8 +38,9 @@
 //     unchanged. VISION_UNIT_PRICE_USD stays the single source for that leg and
 //     is imported here rather than copied.
 //   * frontend/src/App.js's Projections tab carried the fixed-cost array by
-//     hand (Railway $20, Development tooling $125, code review $20, Apple $99/yr, BestTime
-//     $1,500 once). Those are the maintainer's real bills, so they are carried over
+//     hand (Railway $20, the assistant subscription $125, the review tool $20,
+//     Apple $99/yr, BestTime
+//     $1,500 once). Those are the real bills, so they are carried over
 //     verbatim into FIXED_MONTHLY / ANNUAL / ONE_TIME and the frontend now
 //     reads them from here instead of holding a second copy.
 //
@@ -319,15 +320,15 @@ const RATES = {
 //                      it is the number that belongs beside a price when
 //                      anybody asks what a customer costs or how many
 //                      customers cover the running of this thing.
-//   'tooling'        — a bill the DEVELOPER causes. Development tooling and code review are
-//                      real recurring money and they are counted, and no user
+//   'tooling'        — a bill the DEVELOPER causes. The two writing-tool
+//                      subscriptions are real recurring money and they are counted, and no user
 //                      has ever caused a dollar of either. They would keep
 //                      arriving at zero users and stop arriving the day the
 //                      writing stops, which is the opposite of how
 //                      infrastructure behaves.
 //
-// The distinction was already in this file, in prose, in the note on the development tooling
-// Max line: "Development tooling, not app infrastructure. It is a real
+// The distinction was already in this file, in prose, in the note on the
+// assistant-subscription line: "Development tooling, not app infrastructure. It is a real
 // recurring bill so it is counted, but no user causes it." A sentence cannot
 // be added up. Quoting the combined total as the cost of service overstates it
 // by the whole tooling line, which is the largest single figure on the monthly
@@ -346,8 +347,8 @@ const FIXED_MONTHLY = [
     note: 'Matches Railway Pro at $20/month, which includes $20 of usage credits. Compute and volume draw down that credit before anything is billed on top.',
   },
   {
-    id: 'development-tooling',
-    label: 'Development tooling',
+    id: 'ai-assistant-subscription',
+    label: 'AI coding assistant (subscription)',
     usd: 125.00,
     verified: true,
     kind: 'tooling',
@@ -356,8 +357,8 @@ const FIXED_MONTHLY = [
     note: 'Development tooling, not app infrastructure. It is a real recurring bill so it is counted, but no user causes it.',
   },
   {
-    id: 'code-review',
-    label: 'code review',
+    id: 'code-review-tool',
+    label: 'AI code review tool (subscription)',
     usd: 20.00,
     verified: true,
     kind: 'tooling',
@@ -373,7 +374,7 @@ const FIXED_MONTHLY = [
     kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
-    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. the maintainer committed to roughly five months, so this line is expected through early 2027 and is cancelled by him, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
+    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
   },
   {
     id: 'sportsdb',
@@ -568,7 +569,7 @@ const RECONCILED = {
       id: 'google-cloud',
       label: 'Google Cloud (Places, Vision, Gemini on one bill)',
       usdPerMonth: 31.19,
-      note: 'the maintainer paid $31.19 on 2026-09-01, the first FULL billing cycle anyone has read off an invoice. The $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20, so it was never a monthly figure and this line should not be read as a 3.5x increase. Essentially all of it is still Place Details Photos, and the size is what the photo budget is configured to allow: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. $31.19 sits inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling being used, not a leak.',
+      note: 'A $31.19 invoice was paid on 2026-09-01, the first FULL billing cycle anyone has read off an invoice. The $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20, so it was never a monthly figure and this line should not be read as a 3.5x increase. Essentially all of it is still Place Details Photos, and the size is what the photo budget is configured to allow: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. $31.19 sits inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling being used, not a leak.',
     },
   ],
   note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so it is only as current as the date beside it.',
@@ -621,7 +622,8 @@ const GOOGLE_QUOTAS = {
 // happens to mention it, and several vendors appeared in none of them at all:
 // PostHog, Sentry, RevenueCat, push, Google Sign-In and Sign in with Apple were
 // all in the rate card and on no screen. This block answers a different
-// question, and it is the one the maintainer asked: what do I actually depend on. A
+// question, and it is the one that matters here: what does this actually
+// depend on. A
 // dependency that costs $0 is still a dependency, still an account somebody can
 // lock, still a terms of service, and a zero is a fact worth printing rather
 // than a reason to leave a row out.
@@ -816,23 +818,23 @@ const DEPENDENCIES = [
     usageNote: 'Bandwidth and build minutes are not read from here.',
   },
   {
-    id: 'development-tooling',
-    label: 'Development tooling',
+    id: 'ai-assistant-subscription',
+    label: 'AI coding assistant (subscription)',
     what: 'Development tooling. No user causes this one.',
     where: 'not in the product',
     group: 'fixed',
-    fixedId: 'development-tooling',
+    fixedId: 'ai-assistant-subscription',
     configuredEnv: null,
     observedLineId: null,
     usageNote: null,
   },
   {
-    id: 'code-review',
-    label: 'code review',
+    id: 'code-review-tool',
+    label: 'AI code review tool (subscription)',
     what: 'Development tooling, same as above.',
     where: 'not in the product',
     group: 'fixed',
-    fixedId: 'code-review',
+    fixedId: 'code-review-tool',
     configuredEnv: null,
     observedLineId: null,
     usageNote: null,
@@ -1358,7 +1360,7 @@ function buildObserved(counts = {}) {
         ? `From places_photo_spend, so it survives deploys and is shared across instances. Counts photos BOUGHT from Google; cache hits are free and never counted. Priced gross here: the free tier is monthly and is applied on the month line. Daily brake ${photoBudget.burstPerDay}.`
         : 'From places_photo_spend, so it survives deploys. Counts photos BOUGHT from Google; cache hits are free and never counted.',
     });
-    // The line that is actually denominated in the budget the maintainer set. Google
+    // The line that is actually denominated in the configured budget. Google
     // bills Place Photos per calendar month with the first 1,000 free, so the
     // month is the period the money question is asked in, and the free tier is
     // subtracted here rather than pretended away.

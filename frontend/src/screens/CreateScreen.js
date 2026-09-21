@@ -63,7 +63,7 @@
  * declares and hands to a screen.
  *
  * The move on 2026-09-01 carried the old block across verbatim. Later the
- * same day the RENDER half was rebuilt (the maintainer, TestFlight: "needs to be a
+ * same day the RENDER half was rebuilt (TestFlight report: "needs to be a
  * lot more detailed and needs to look a lot better. Follow the design standard, and
  * I would add one or two of my bird graphics in there"), so the JSX below is
  * no longer a character-for-character copy of the deleted lines. handleCreate,

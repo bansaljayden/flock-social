@@ -6,8 +6,8 @@
  * that declared `height: 60px` and `alignItems: flex-end`. At 390px a column
  * measures 81px, so every column hung 21px out of the top of its own row, and
  * a bar is painted after the heading that precedes it: six red blocks landed
- * across the lower half of the title and cut the words in two. the maintainer reported
- * it from a screenshot.
+ * across the lower half of the title and cut the words in two. It was reported
+ * from a screenshot.
  *
  * The fix is structural rather than a nudge — the bar now lives in its own
  * fixed-height well and the two labels sit under that well in flow, so no box

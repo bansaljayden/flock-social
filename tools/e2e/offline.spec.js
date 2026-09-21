@@ -248,9 +248,9 @@ test('going offline anywhere brings up the bird game, and the game itself needs 
   test.slow();
   // DECIDED, NOT DEFECTIVE. This spec shipped red under the name "the offline
   // screen buries the plan you are standing in the middle of", arguing the
-  // plan's name and address should stay readable. the maintainer ruled the other way
+  // plan's name and address should stay readable. The call went the other way
   // on 2026-08-26: anytime anything goes offline, the game is the screen,
-  // everywhere. So what this pins now is HIS design, in both halves:
+  // everywhere. So what this pins now is THAT design, in both halves:
   //
   //   1. The takeover really happens on every screen, including mid chat.
   //      A gate that only covered some screens would be the defect now.

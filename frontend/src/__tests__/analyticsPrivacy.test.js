@@ -367,7 +367,7 @@ describe('isLocalAnalyticsOrigin', () => {
     expect(at('http:', '0.0.0.0')).toBe(true);
     expect(at('http:', '[::1]')).toBe(true);
     expect(at('https:', 'localhost')).toBe(true); // serve -s build over TLS
-    expect(at('http:', 'Jaydens-MacBook.local')).toBe(true);
+    expect(at('http:', 'Someones-MacBook.local')).toBe(true);
   });
 
   test('production and the native shells are not', () => {

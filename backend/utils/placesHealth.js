@@ -8,7 +8,7 @@
 //
 // WHAT ACTUALLY HAPPENED (2026-09-01 to 2026-09-05). Google Places answered
 // HTTP 429 for five days. Venue pins and photos were dead the entire time. The
-// only thing that noticed was the maintainer, by eye, on day five. Railway's log had
+// only thing that noticed was a human, by eye, on day five. Railway's log had
 // been printing
 //
 //     [PublicDemo] Places search failed: HTTP 429

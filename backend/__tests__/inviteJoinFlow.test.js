@@ -2,7 +2,7 @@
 //
 // THE INVITE LINK'S JOIN PATH — POST /api/guest/:token/join, 2026-08-14.
 //
-// the maintainer's report: "when I send an invite they don't get a direct link to being
+// The report on it: "when I send an invite they don't get a direct link to being
 // able to text in that flock". Before this route the invite page was a dead
 // end. Someone could read the plan, RSVP to it and vote on it, and had no way
 // at all to reach the conversation it was being made in; the only door into a

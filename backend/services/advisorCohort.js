@@ -292,7 +292,7 @@
 // decided may not see the middle of it. The copy names both conditions and
 // never says which one bit.
 //
-// ── OPEN PRODUCT QUESTION (the maintainer's call, not this module's) ────────────────
+// ── OPEN PRODUCT QUESTION (a product call, not this module's) ───────────────
 //
 // Should cohort membership be owner-grouped? This module already is: one owner
 // contributes one value however many venues they hold, and the floor counts

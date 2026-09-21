@@ -16,7 +16,7 @@
 // a venue carrying `popular_times`, which no route in this repo supplies.
 //
 // What this file pins is the counter's contract, not a coverage target. The
-// target is the maintainer's to set once the number is visible.
+// target is a product decision, to be set once the number is visible.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------

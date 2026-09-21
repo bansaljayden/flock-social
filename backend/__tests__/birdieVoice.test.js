@@ -70,7 +70,7 @@ test('the prompt bans the assistant tells by name, not by vibe', () => {
   }
 });
 
-test('the four behaviours the maintainer actually complained about are each forbidden', () => {
+test('the four behaviours actually complained about in use are each forbidden', () => {
   const prompt = adult();
   const rules = [
     // Verbosity.

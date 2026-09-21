@@ -697,6 +697,6 @@ export function neverTouchesChecklist() {
     'Age rating questionnaire: NOT pushed. Transcribe section 2; it must calculate 13+.',
     'App Review notes: NOT pushed. Section 6.10 has two preconditions (ADMIN_USER_IDS set; reviewer password re-seeded) that must be true first.',
     'Submission for review: NOT triggered. Nothing here creates an appStoreVersionSubmission or reviewSubmission.',
-    'Category selection: NOT pushed. Section 6.9 records the recommendation (Social Networking + Lifestyle); it is the maintainer\'s call in the UI.',
+    'Category selection: NOT pushed. Section 6.9 records the recommendation (Social Networking + Lifestyle); it is a human call in the UI.',
   ];
 }

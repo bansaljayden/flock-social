@@ -149,7 +149,7 @@ class ErrorBoundary extends React.Component {
     return (
       <div style={styles.screen} role="alert">
         <div style={styles.card}>
-          {/* Every error page carries a bird (the maintainer, build 26). Eager: this
+          {/* Every error page carries a bird (build 26 review). Eager: this
               card IS the fold, and a lazy image on a crash screen would be
               the one bird that never arrives. Warm for a download that died,
               cobalt for a real crash, so the two pages do not look alike. */}

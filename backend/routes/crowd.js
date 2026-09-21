@@ -1724,7 +1724,7 @@ router.get('/:placeId/alternatives',
       {
         // Calibrated the way the full path calibrates (verified reports in
         // the same window), then the owner's reading, so a venue that recent
-        // reports say is busy is not called calm on its raw score (code review
+        // reports say is busy is not called calm on its raw score (the code review
         // round 3, 2026-09-05). A cold details lookup reserved two units; the
         // search unit goes back when no search runs.
         const targetFeedback = await pool.query(

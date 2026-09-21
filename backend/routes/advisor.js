@@ -16,8 +16,8 @@
 //
 // THE CHAT CONTRACT, as it now stands. The original build was chips ONLY, and
 // that was the right first shape: with no user text anywhere, the one-way
-// valve was airtight by construction. the maintainer reopened it on 2026-08-20, in his
-// words: the venue can ask any question about its business and how it can
+// valve was airtight by construction. It was reopened on 2026-08-20, to this
+// brief: the venue can ask any question about its business and how it can
 // promote, drive, or have better business. That is the T2 tier
 // ADVISOR-PRODUCT-SHAPE.md already designed, brought forward by decision, and
 // it lives at POST /question with refusal as its default route.
@@ -67,7 +67,7 @@ const { HOUR_ORDERING_MIN_GAP } = require('../services/crowdEngine');
 
 const router = express.Router();
 
-// The feature's user-facing name (the maintainer's decision 2026-08-19). Backend
+// The feature's user-facing name (product decision 2026-08-19). Backend
 // identifiers and the route path stay 'advisor'; owner-visible copy says Roost.
 const FEATURE_NAME = 'Roost';
 const requirePro = requireVenueTier('pro');

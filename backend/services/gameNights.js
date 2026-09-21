@@ -6,8 +6,8 @@
 // model could stand behind: within-10 flat, MAE slightly WORSE with the
 // game-night features, worse still on game nights themselves. So nothing
 // here ever says "busier". It says a tracked team plays tonight, and where,
-// and stops; the reader draws their own inference. the maintainer's call, same day:
-// the fact alone is worth surfacing, and it is the reason the SportsDB
+// and stops; the reader draws their own inference. The product call, same
+// day: the fact alone is worth surfacing, and it is the reason the SportsDB
 // subscription stays.
 //
 // Market-gated at the same 60km the training features used: the schedule

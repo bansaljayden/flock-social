@@ -170,7 +170,7 @@ def reconstruct(raw_delta, baseline):
 # score-qmap — the SAME two arrays services/mlPredictor.js carries, applied with
 # the same np.interp semantics (constant at both ends, linear between knots), so
 # the gate scores the arithmetic production performs. ARMED by default since
-# 2026-08-28 (the maintainer: within-10 is the primary metric); CROWD_QMAP_ENABLED=false
+# 2026-08-28 (within-10 is the primary metric); CROWD_QMAP_ENABLED=false
 # is the kill switch on both sides, and a run's reconstruction is recorded
 # either way so a verdict cannot be read against the wrong arithmetic.
 #
@@ -204,7 +204,7 @@ def reconstruct(raw_delta, baseline):
 # than by quality, and the thresholds were calibrated on the UNMAPPED
 # reconstruction before the map was armed on 2026-08-28. Either the thresholds
 # are recalibrated for the mapped distribution or the map comes off both sides.
-# That is a product decision, written up as JAYDEN-TODO 2c.
+# That is a product decision, written up in the local decisions list as 2c.
 #
 # A second reason it cannot simply be left on: nothing here compares
 # QMAP_FITTED_ON to the model under test, and it cannot, because export_model.py
@@ -430,7 +430,7 @@ def date_block_bootstrap(dates, y_true, pred_challenger, pred_incumbent,
 # ---------------------------------------------------------------------------
 # GATE-B — ARMED 2026-08-28 as the EITHER-PATH gate. RETRAIN.md drafted B1-B5
 # to replace the two MAE-protective baseline arms for a candidate that SPENDS
-# MAE to buy within-10, and the maintainer took that trade when he armed the qmap. The
+# MAE to buy within-10, and that trade was taken when the qmap was armed. The
 # arming interpretation, recorded here because the draft predated the decision:
 #
 #   * The legacy arms (beat the popular-times baseline, no MAE regression) and

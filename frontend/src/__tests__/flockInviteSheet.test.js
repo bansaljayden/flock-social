@@ -1,7 +1,7 @@
 /**
  * THE INVITE SHEET, AND THE TWO SILENT FAILURES AROUND IT.
  *
- * the maintainer, on what he expected the sheet to do: "you can go to your friend's
+ * On what the sheet was expected to do: "you can go to your friend's
  * list and just pick them". You could not. Opening Invite Friends showed no
  * list at all. An empty search box returned an empty array, and the only
  * default content was "Available tonight", which is the availability pulses,

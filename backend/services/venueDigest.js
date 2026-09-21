@@ -12,7 +12,7 @@
 // before a single row is read for rendering:
 //
 //   1. DIGEST_ENABLED=true. Unset or anything else, the sweep returns without
-//      touching the database. Nothing sends until the maintainer flips it.
+//      touching the database. Nothing sends until it is flipped on.
 //   2. It is Monday morning (07:00 to 11:59) on the VENUE'S wall clock:
 //      ml_venues.timezone when the venue is in the corpus, America/New_York
 //      otherwise (both live markets are in it).

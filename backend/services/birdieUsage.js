@@ -168,7 +168,7 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
   limit.dailyCount++;
   limit.recentTimestamps.push(now);
   // chargeDay binds a refund to the counter it was charged on: a call that
-  // straddles UTC midnight must not hand back the next day's chirp (code review
+  // straddles UTC midnight must not hand back the next day's chirp (hardening review
   // round 3, 2026-09-05).
   return { allowed: true, remaining: dailyLimit - limit.dailyCount, chargeDay: key };
 }

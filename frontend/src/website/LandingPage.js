@@ -42,8 +42,8 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
 // Don't flip it early: linking users at a 404 is worse than saying "soon".
 const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
 const APP_STORE_LIVE = false;
-// Inbound mail: Cloudflare Email Routing forwards this to the maintainer's Gmail
-// (set up 2026-08-12). Outbound stays on Resend.
+// Inbound mail: Cloudflare Email Routing forwards this to the maintainer's
+// inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 /* Every destination in the page menu. Same six sections the header used to
@@ -331,7 +331,7 @@ export default function LandingPage() {
           <a className="lp-brand" href="/"><Mark /> Flock</a>
           <a className="lp-btn lp-btn-cream lp-nav-open" href="/app">Open Flock</a>
         </div>
-        {/* The corner block opens the site menu; Open Flock beside it is the direct door, because reaching the app must not require a menu (the maintainer, 2026-08-27). The
+        {/* The corner block opens the site menu; Open Flock beside it is the direct door, because reaching the app must not require a menu (2026-08-27). The
             inline link row used to vanish under 860px, which meant phones had
             no menu at all. */}
         <button
@@ -766,7 +766,7 @@ export default function LandingPage() {
           <div className="lp-row-media">
             <div className="lp-split">
               <div className="lp-split-total"><span>Friday Night Out</span><b>$116.82</b></div>
-              <div className="lp-split-row"><span>the maintainer</span><b>$23.36</b></div>
+              <div className="lp-split-row"><span>Maya</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Sam</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Riley</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Jordan</span><b>$23.37</b></div>

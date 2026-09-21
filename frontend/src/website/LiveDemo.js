@@ -22,7 +22,7 @@ export const photoHrefFor = (path) => Array.from(`${BASE_URL}${path}`, (c) => (
 
 // School and work network filters commonly block *.railway.app while allowing
 // this site's own domain, and that one difference took the whole demo down on
-// exactly the machines students browse on (the maintainer's school laptop,
+// exactly the machines students browse on (a school laptop,
 // 2026-08-27). In production the demo therefore calls same-origin /relay,
 // which vercel.json rewrites to the backend server-side, so the browser only
 // ever talks to this site. Dev has no Vercel in front, so it keeps the direct

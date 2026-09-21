@@ -4,7 +4,7 @@
 //
 // The 2026-08-30 sports ablation measured the game-night features against
 // the frozen corpus and found no lift the model could stand behind, so the
-// product decision (the maintainer's, same day) is a schedule FACT on the crowd
+// product decision (same day) is a schedule FACT on the crowd
 // card: who plays tonight, and where, and nothing else. Pinned here:
 //   1. The service is market-gated at the same 60km the training features
 //      used: a venue outside the Philadelphia and Lehigh Valley market
@@ -68,7 +68,7 @@ test('a Tokyo venue never carries the line, whatever the schedule says', async (
 });
 
 test('a game that ended hours ago is not tonight', async () => {
-  // code review, 2026-09-01: the date-only query kept a 1 PM final on the
+  // Code review, 2026-09-01: the date-only query kept a 1 PM final on the
   // card until midnight. Start plus four hours is the over line.
   resetWorld();
   gamesRows = [{

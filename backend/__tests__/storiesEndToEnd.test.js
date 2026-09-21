@@ -832,7 +832,7 @@ test('the expired-story purge is scheduled on its own timer and cleared on shutd
   // does not match \r, so `//.*$` stopped before the carriage return, never
   // matched, and left the comment in place. The guard then passed over a
   // commented-out timer on a developer machine and would have behaved
-  // differently in CI, which is the environment-dependent class this session
+  // differently in CI, which is the environment-dependent class this repository
   // has already been bitten by twice.
   const serverSrc = rawServerSrc
     .replace(/\r/g, '')

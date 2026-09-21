@@ -2,8 +2,8 @@
 //
 // PREP SCRIPTS SPEND NOTHING BY SURPRISE.
 //
-// Two scripts landed 2026-08-29 while all BestTime usage was paused on
-// the maintainer's word: addDemandVenues.js (stages the user-demand want-list into
+// Two scripts landed 2026-08-29 while all BestTime usage was paused under
+// standing order: addDemandVenues.js (stages the user-demand want-list into
 // ml_venues off Google Places) and collectSportsSchedules.js (game schedules
 // for the crowd model off TheSportsDB). Both exist to make the paid pulls
 // one command away WITHOUT being the paid pull. Pinned here:

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // COLLECTION HEARTBEAT (2026-09-01)
 // ---------------------------------------------------------------------------
-// the maintainer's standing order the day collection restarted: the BestTime pull
-// runs until he cancels the subscription, about five months. The Railway
+// The standing order the day collection restarted: the BestTime pull
+// runs until the subscription is cancelled, about five months. The Railway
 // cron that does the pulling exits silently on failure (restart NEVER, by
 // design for a cron), so a broken deploy, a dead key, a vendor block, or a
 // misconfigured schedule would stop the corpus growing and nobody would
@@ -35,7 +35,7 @@
 //
 // Once-per-day dedupe lives in ops_alert_ledger (migration 058), NOT in
 // process memory: the first version kept it in RAM, and two deploys on
-// 2026-09-01 mailed the maintainer twice inside an hour because each restart forgot
+// 2026-09-01 mailed the operator twice inside an hour because each restart forgot
 // it had already sent. The INSERT ... ON CONFLICT DO NOTHING is the whole
 // mutex: only the caller whose insert lands sends the email, atomically,
 // across restarts and replicas alike.
