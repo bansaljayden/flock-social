@@ -552,7 +552,7 @@ test('deleting an account needs DELETE typed and the right password, then really
   await page.getByLabel('Type DELETE to confirm').fill('DELETE');
   await confirmButton.click();
 
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible({ timeout: 20_000 });
 
   // 4. And it is gone: the same credentials no longer get in.
   await page.getByRole('textbox', { name: /email/i }).fill(email);

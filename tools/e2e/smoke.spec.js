@@ -18,7 +18,7 @@ test('the app loads and is talking to the LOCAL api, not production', async ({ p
   pinToLocalApi(page);
 
   await page.goto('/app');
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible();
 
   // Make it actually call the API rather than trusting a static page load.
   await page.getByRole('textbox', { name: /email/i }).fill('nobody@example.com');
@@ -53,6 +53,6 @@ test('a brand new account can be created through the real screens', async ({ pag
 
   // Landing anywhere that is not still the signup form is the bar here. The
   // flow specs assert what the first screen should actually say.
-  await expect(page.getByRole('heading', { name: /create|welcome back/i })).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /create|welcome back|plan the night/i })).toHaveCount(0, { timeout: 20_000 });
   expect(errors).toEqual([]);
 });
