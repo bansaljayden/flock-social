@@ -64,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.12.0'
+VERSION = '1.13.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -99,6 +99,20 @@ DEFAULTS = {
     # drawing the picture means holding a real thermal frame in memory, and the
     # privacy policy's promise about venue sensors rests on that not happening.
     'THERMAL_VIEW': '1',
+    # The crossing sensor. This was written for a two-part break-beam, an
+    # emitter facing a receiver across the doorway, and the code never cared:
+    # all it watches is one pin changing state. So a one-sided IR proximity
+    # module works here with no code change at all, which is one part instead
+    # of two, nothing to keep aligned, and no second side of the slot to wire.
+    #
+    # IR_ACTIVE_LOW is the one thing that differs between parts. A break-beam
+    # receiver and most proximity modules pull the line LOW when something is
+    # there, which is the default. A few pull it HIGH. If --beam counts
+    # continuously when nothing is happening and stops when you block it, the
+    # part is the other kind: set this to 0.
+    'IR_GPIO_PIN': '17',
+    'IR_ACTIVE_LOW': '1',
+    'IR_DEBOUNCE_SECONDS': '0.5',
     # The V4L2 node the Lepton's USB breakout came up on. /dev/video0 on a Pi
     # with nothing else plugged in; `v4l2-ctl --list-devices` says for certain.
     'THERMAL_DEVICE': '/dev/video0',
@@ -207,6 +221,9 @@ THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
 THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
 THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
+IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
+IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
+IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
 
 # The bench measured the pair (4, 12) and nothing else, and the two settings are
 # not independent: a cell is bin x bin pixels, so the SAME 12 means 48 raw pixels
@@ -479,29 +496,42 @@ def pi_model():
 # ---------------------------------------------------------------------------
 
 def init_ir():
+    """Watch one pin for something crossing the doorway.
+
+    Deliberately agnostic about what is on the end of it. A two-part break-beam
+    and a one-sided IR proximity module both present as a pin that changes state
+    when something is in the way, so both work here, and the one-sided part is
+    the easier build: one thing to mount, nothing to align, and no 5V receiver
+    to put in front of a pin that cannot take 5V.
+    """
     try:
         import RPi.GPIO as GPIO
         GPIO.setmode(GPIO.BCM)
-        GPIO.setup(17, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        # Pulled toward the resting state, so an unconnected or unpowered sensor
+        # sits quiet rather than floating and counting noise as a crowd.
+        pull = GPIO.PUD_UP if IR_ACTIVE_LOW else GPIO.PUD_DOWN
+        edge = GPIO.FALLING if IR_ACTIVE_LOW else GPIO.RISING
+        GPIO.setup(IR_GPIO_PIN, GPIO.IN, pull_up_down=pull)
 
         last_trigger = [0.0]
 
         def on_break(channel):
             now = time.monotonic()
-            if now - last_trigger[0] < 0.5:
+            if now - last_trigger[0] < IR_DEBOUNCE_SECONDS:
                 return
             last_trigger[0] = now
             with _lock:
-                # Bounded so a stuck or noisy beam cannot grow this without
+                # Bounded so a stuck or noisy sensor cannot grow this without
                 # limit between snapshots.
                 if _state['ir_count'] < MAX_IR_PER_READING:
                     _state['ir_count'] += 1
 
-        GPIO.add_event_detect(17, GPIO.FALLING, callback=on_break, bouncetime=200)
-        logger.info('IR break-beam initialized on GPIO 17')
+        GPIO.add_event_detect(IR_GPIO_PIN, edge, callback=on_break, bouncetime=200)
+        logger.info(f'Crossing sensor initialized on GPIO {IR_GPIO_PIN}, counting '
+                    f'{"falling" if IR_ACTIVE_LOW else "rising"} edges')
         return True
     except Exception as e:
-        logger.error(f'IR init failed (will report 0 crossings): {e}')
+        logger.error(f'Crossing sensor init failed (will report 0 crossings): {e}')
         # The Pi 5 moved GPIO behind the RP1 southbridge and the original
         # RPi.GPIO cannot drive it at all, so on the board this project's own
         # demo-unit build plan specifies, the doorway counter fails at startup
@@ -2885,6 +2915,129 @@ def listen(seconds=None):
     return 0
 
 
+# What fraction of a test run may sit in the "something is there" state before
+# the wiring is more likely backwards than the doorway is genuinely busy.
+BEAM_STUCK_FRACTION = 0.8
+
+
+def diagnose_beam(states, active_low=None):
+    """Read a run of pin samples and say what the wiring is doing.
+
+    `states` is a list of booleans, True meaning the pin read HIGH. Returns
+    (ok, message). Pure, so every diagnosis below is tested without a Pi.
+
+    This function exists because of how the microphone went. That took an
+    evening, and almost all of it went on not knowing which half of the problem
+    to look at. Every failure a crossing sensor can have is visible in the
+    pattern of one pin, so the tool says which one it is rather than leaving
+    somebody to guess between a dead part, the wrong pin, and a part wired the
+    other way up.
+    """
+    if not states:
+        return False, 'no samples were read from the pin'
+
+    active_low = IR_ACTIVE_LOW if active_low is None else active_low
+    # "Triggered" means something is in the way. Which voltage that is depends
+    # on the part, and getting it backwards is the single most likely mistake.
+    triggered = [s is False for s in states] if active_low else [s is True for s in states]
+    hits = sum(1 for t in triggered if t)
+    fraction = hits / float(len(states))
+
+    if hits == 0:
+        return False, (
+            'the pin never changed. Either nothing is wired to it, it is on a '
+            'different pin than the one configured, the sensor has no power, or '
+            'whatever is in front of it is out of range. Check the three wires '
+            'first, then turn the range screw on the module.')
+    if fraction >= 1.0:
+        return False, (
+            'the pin is stuck in the "something is there" state for the whole run. '
+            'Either something is permanently in front of the sensor, or the part '
+            'signals the opposite way round from what is configured. Try setting '
+            'IR_ACTIVE_LOW to the other value and run this again.')
+    if fraction >= BEAM_STUCK_FRACTION:
+        return False, (
+            f'the pin reads "something is there" {fraction * 100:.0f}% of the time, '
+            f'which is more likely a part wired the other way up than a doorway that '
+            f'busy. Try flipping IR_ACTIVE_LOW.')
+    return True, f'the pin is changing, and sits clear {100 - fraction * 100:.0f}% of the time'
+
+
+def beam_test(seconds=None):
+    """Live crossing counter. Wave a hand through and watch it count.
+
+    Polls rather than using edge callbacks on purpose: polling can show the
+    resting state of the pin, which is what tells a wiring mistake from a dead
+    part, and an edge callback that never fires looks identical to a pin nobody
+    connected.
+    """
+    try:
+        import RPi.GPIO as GPIO
+    except Exception as e:
+        print(f'Cannot reach the GPIO pins: {e}')
+        model = pi_model()
+        if model.startswith('Raspberry Pi 5'):
+            print(f'This is a "{model}". RPi.GPIO does not work on a Pi 5.')
+            print('  sudo pip3 uninstall -y RPi.GPIO')
+            print('  sudo pip3 install --break-system-packages rpi-lgpio')
+        return 1
+
+    print(f'flock-sensor {VERSION} crossing sensor test')
+    print(f'  GPIO {IR_GPIO_PIN}, counting when the pin goes '
+          f'{"LOW" if IR_ACTIVE_LOW else "HIGH"}')
+    print(f'  debounce {IR_DEBOUNCE_SECONDS}s, so two crossings closer than that '
+          f'count once')
+    print('  Wave your hand through the slot. Ctrl+C to stop.')
+    print('')
+
+    GPIO.setmode(GPIO.BCM)
+    pull = GPIO.PUD_UP if IR_ACTIVE_LOW else GPIO.PUD_DOWN
+    GPIO.setup(IR_GPIO_PIN, GPIO.IN, pull_up_down=pull)
+
+    states = []
+    count = 0
+    last_trigger = 0.0
+    was_triggered = False
+    deadline = None if seconds is None else time.monotonic() + seconds
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            high = bool(GPIO.input(IR_GPIO_PIN))
+            states.append(high)
+            now_triggered = (not high) if IR_ACTIVE_LOW else high
+            now = time.monotonic()
+            # Count the moment it becomes blocked, not while it stays blocked,
+            # which is the same rule the running service uses.
+            if now_triggered and not was_triggered:
+                if now - last_trigger >= IR_DEBOUNCE_SECONDS:
+                    count += 1
+                    gap = now - last_trigger if last_trigger else 0.0
+                    print(f'  [{count:3d}] crossing' +
+                          (f'   {gap:.1f}s since the last one' if last_trigger else ''))
+                    last_trigger = now
+            was_triggered = now_triggered
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        print('')
+    finally:
+        try:
+            GPIO.cleanup(IR_GPIO_PIN)
+        except Exception:
+            pass
+
+    ok, why = diagnose_beam(states)
+    print('')
+    print(f'  {count} crossing(s) counted over {len(states)} samples')
+    if ok:
+        print(f'  WIRING LOOKS RIGHT: {why}')
+        if count == 0:
+            print('  The pin moves, but nothing crossed. Wave a hand closer, or turn')
+            print('  the range screw on the module clockwise.')
+        return 0
+    print('  PROBLEM:')
+    for line in textwrap.wrap(why, 66):
+        print(f'    {line}')
+    return 1
+
 def selftest():
     """Check an installation end to end and say exactly what is wrong.
 
@@ -3096,6 +3249,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Flock venue occupancy sensor')
     parser.add_argument('--selftest', action='store_true',
                         help='check this installation and exit')
+    parser.add_argument('--beam', action='store_true',
+                        help='live crossing-sensor test; diagnoses its own wiring')
     parser.add_argument('--listen', action='store_true',
                         help='live microphone level meter; Ctrl+C to stop')
     parser.add_argument('--calibrate', action='store_true',
@@ -3110,6 +3265,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.selftest:
         sys.exit(selftest())
+    if args.beam:
+        sys.exit(beam_test(args.seconds))
     if args.listen:
         sys.exit(listen(args.seconds))
     if args.calibrate:
