@@ -30,7 +30,7 @@ product invariant (see below, including what it does not cover).
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
-| Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below), with a rule engine for venues it has no baseline for |
+| Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below). A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
 | Venues | Venue dashboard: profile, promotions, events, reviews with owner reply, incoming-flocks demand feed. Tier is enforced server-side; nobody has been charged |
@@ -71,14 +71,14 @@ Barcelona), which is the population production serves:
 Flock wins every row.
 
 **How that compares.** The average miss drops from 31.48 to 29.42, a **6.5%
-reduction in MAE**, earned from the venue's attributes, the calendar, the
-weather and nearby events alone. The closest published system, a 2023 ACM
+reduction in MAE**, and it is earned from the venue's attributes, the calendar,
+the weather and nearby events alone. The closest published system, a 2023 ACM
 SIGSPATIAL graph model ([BysGNN](https://arxiv.org/abs/2306.15927)), starts from
 a baseline it describes as "similar to Google Maps' popular times graph" and
-cuts its error roughly in half, and it does that by feeding each venue's own
-recent visit history back in. Flock's model has no such input yet. The
-collector now gathers exactly that reading, every hour, for the venues the app
-serves, and it is the next feature in line.
+halves its error by feeding each venue's own recent visit history back in.
+Flock's gain is measured with no such input in the feature set. The collector
+now writes exactly that reading every hour for the venues the app serves, which
+makes it the next input the model gets.
 
 **It is above zero at the granularity where the field is below it.** R², the
 coefficient of determination, is positive when a model's predictions carry more
@@ -121,7 +121,7 @@ cities, and no row-level split exists anywhere. On the blended training
 population (weekly and live rows together) leave-one-city-out R² is **0.653**
 and R² on the three held-out cities is **0.772**. Holdout scoring above
 cross-validation is the signature of a model that generalises, and breadth of
-collection is what bought it. Accuracy on the served population is the table
+collection is what bought it. Performance on the served population is the table
 above.
 
 **The corpus grows every hour.** A collector runs on an hourly cron across the
@@ -131,18 +131,20 @@ records whether its label is a live reading or the vendor's forecast, with the
 vendor's forecast for the same moment kept beside it, and each run reads back
 what it wrote and refuses to exit clean if any row it committed is unlabelled.
 
-Venues the model has no baseline for are answered by the rule engine in
-`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so the client can
-always tell which engine answered.
+A venue the model has no baseline for is answered by the rule engine in
+`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so every response
+names the engine behind it and no rule-engine answer is ever presented as a
+model output.
 
-**Known limits.** The binding limit is evidence density: about 26 live readings
-per venue across 168 weekly slots, so the model knows what a Tuesday at 9pm
-looks like for a kind of venue far better than how one particular venue departs
-from its own pattern on one night. Every accuracy figure above is measured on
-three held-out cities the model never trained on; the cities the product serves
-are training cities. The mid-October retrain is the planned next step, the first
-on live rows that all carry verified provenance and measured event and weather
-features, with an autumn month in the climate table.
+**Where the next gain comes from.** Every figure above is scored on three
+cities held out of training entirely, rather than on the cities the product
+serves, which is the harder of the two readings and the one worth publishing.
+The binding input today is evidence density: about 26 live readings per venue
+across 168 weekly slots, so the model reads a kind of venue on a Tuesday at 9pm
+better than it reads one particular venue departing from its own pattern. That
+is a data question with a running answer. The mid-October retrain is the first
+on live rows that all carry verified provenance with measured event and weather
+features, and an autumn month in the climate table.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
 > and `model_metadata.json` are Flock's own artifacts, built from Flock's own

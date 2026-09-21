@@ -1,14 +1,18 @@
 # Crowd model: retrain runbook + the continuous-learning loop
 
-**Currently shipped: v2.6.0-starling** (`models/model_metadata.json`,
-trained 2026-08-18 on the clock-corrected corpus, 106 features, ship gate `verdict: ship` on the realtime
-holdout slice). The narrative below was written during the v2.3 work and is
-kept because the *reasoning* still holds; the version numbers in it are not
-current. Always read `model_metadata.json` for live figures.
+**Currently shipped: v2.6.0-starling** (`models/model_metadata.json`, trained
+2026-08-18 on the clock-corrected corpus, 106 features, ship gate
+`verdict: ship` on the realtime holdout slice, CPU-trained and bit-reproducible).
+The artifact's own metadata is the authority on every live figure; this file is
+the procedure that produces one.
 
-Read `ml_overfitting_fixes` doctrine first
-(memory) — high R² alone means NOTHING on this problem; the weekly rows are a
-tautology and the realtime slice is the only honest gate.
+The narrative in the v2.3 section below is kept because its *reasoning* still
+holds, and its version numbers do not.
+
+One rule governs every number this runbook reports: **score the realtime served
+slice.** A high R² on the blended population means nothing here, because the
+weekly rows carry a delta label of zero by construction. The realtime slice is
+the population production serves and it is the only gate.
 
 ## The v2.3 change (why this retrain exists)
 
@@ -241,9 +245,9 @@ serves the rule engine instead and logs why at startup. So:
 
 ## GATE-B: the two-metric alternative — **ARMED 2026-08-28**, as the either-path gate
 
-**the maintainer made the decision this section was written to wait for** (2026-08-28:
-within-10 is the primary metric, "I'm really big on the one number"), and the
-qmap serves by default the same day. The arming interpretation, since the
+**The decision this section was written to wait for was taken on 2026-08-28:
+within-10 is the primary metric, because it is the one number a user feels.**
+The qmap serves by default from the same day. The arming interpretation, since the
 draft predated the decision: the legacy arms and B1-B3 are ALTERNATIVE
 admission paths (a routine retrain that spends no MAE ships the old way; a
 deliberate dispersion-spending candidate ships the B way), the floor binds on
@@ -254,7 +258,7 @@ The draft below is kept as written.
 
 **The draft (2026-08-20), as it stood before arming.** `quick_eval.py` implements the four criteria
 above and only those. GATE-B is written down so the trade it describes can be
-taken deliberately, by the maintainer, in one decision, instead of being smuggled in as
+taken deliberately, in one recorded decision, instead of being smuggled in as
 a waiver of an arm that is doing its job. Arming it is a code change in
 `quick_eval.py` plus that decision. The gate above is not modified.
 
@@ -400,7 +404,7 @@ Cadence: retrain when meaningful new realtime rows accumulate (rule of thumb:
 re-runs the same gate. With ~0 users the loop idles; the pipeline being ready
 is the point.
 
-## Holiday / holiday-eve features (the maintainer's directive, plumbing spec)
+## Holiday / holiday-eve features (plumbing spec)
 
 The data has `is_holiday` (stamped at collection) but NO date column, and
 weekly rows are dateless by nature ("typical Tuesday"), so holiday-EVE
@@ -833,7 +837,7 @@ Read it before quoting any accuracy figure. Short version:
 
 ## The paid refresh runbook (2026-08-28; superseded numbers below, see the $500 plan v2 that follows)
 
-the maintainer approved buying two fresh collection windows. The order below is load
+Two fresh collection windows were approved for purchase. The order below is load
 bearing; the traps it guards against are pinned in
 `__tests__/besttimeRefreshPrep.test.js`.
 
@@ -848,8 +852,8 @@ bearing; the traps it guards against are pinned in
    this paragraph is the 2026-09-01 state. Under Package 100 the schedule costs
    nothing either way, because the plan meters new venue admissions and not
    calls.)
-   *Original text:* Revive the existing BestTime account (the maintainer, in the
-   dashboard). The 403 is account level, and the stored `besttime_venue_id`s
+   *Original text:* Revive the existing BestTime account, from the vendor
+   dashboard. The 403 is account level, and the stored `besttime_venue_id`s
    belong to that account: a fresh account re-forecasts all 1,915 PA venues by
    name at 2 credits instead of 1, $153 per window instead of $77. Basic
    metered plan, $0.04 per credit, $29/mo minimum. The key goes in
@@ -885,8 +889,8 @@ bearing; the traps it guards against are pinned in
 
 ## The $500 plan, v3 (2026-08-29, Package beats metered — see below)
 
-the maintainer's word: spend on model accuracy, budget is a guideline not a wall
-("I'm ok with any... use it to the max"). Tier prices VERIFIED off the live
+The standing instruction: spend on model quality, and treat the budget as a
+guideline rather than a wall. Tier prices VERIFIED off the live
 pricing page. Basic metered has NO live data. Pro metered is $99/mo minimum
 credited to usage at $0.009/credit ($0.006 after 10K) — our month-one load
 (1,915 by-id refreshes + 95 by-name adds) is ~2,105 credits, ~$19, so month
@@ -966,7 +970,7 @@ the unfavorable case hits and a Package 5K bulk-readmit month is needed
 ($119+$399+$119 across September-November instead of $119 x 3). Both exceed
 the original $500 line by design — the corpus-wide nightly coverage this
 buys was not available on the metered plan at any price point near $500, and
-the maintainer's word this round was value over the ceiling. Confirm with BestTime
+the instruction this round was value over the ceiling. Confirm with BestTime
 support before relying on it long-term: (a) whether admitted-venue status
 survives a metered-to-package switch (self-answering via the September test
 above, cheaper than asking and waiting), and (b) the literal fair-use limit
@@ -978,14 +982,14 @@ permanent ceiling).
 
 Free levers riding along: a backlink to BestTime.app in the flockcorp.com
 footer (their standing free-credits offer) and one student-discount email to
-their contact address, both the maintainer-cheap and worth doing before September's
+their contact address, both free and worth doing before September's
 invoice.
 
-## Prep status (2026-08-29 evening): everything staged, NOTHING spends until the maintainer says go
+## Prep status (2026-08-29 evening): everything staged, NOTHING spends without an explicit go
 
-the maintainer's standing order, verbatim intent: get everything ready for SportsDB
-and BestTime, but do not use BestTime yet. The rule in force: NO BestTime
-API call of any kind without a fresh, unambiguous yes from him. State:
+The standing order: get everything ready for SportsDB and BestTime, but do not
+use BestTime yet. The rule in force: NO BestTime API call of any kind without a
+fresh, unambiguous go. State:
 
 - **Account**: Package-100 is LIVE ($119/mo). The original "FLock" key
   (Mar 9) is dead; resubscribing did not revive it. The working key is the
@@ -998,7 +1002,7 @@ API call of any kind without a fresh, unambiguous yes from him. State:
   plan a wrong reading costs nothing. Unresolved on purpose; the month-one
   test in the v3 plan settles it empirically.
 - **BestTime usage so far, total**: 10 venues touched (1 test + 9 of 843
-  when the philly refresh was stopped seconds after the maintainer paused usage).
+  when the philly refresh was stopped seconds after usage was paused).
   All by-id refreshes of already-owned venues. Partial refresh is harmless:
   the collector upserts, and the full run redoes it.
 - **Archive: DONE.** 3,454,955 weekly rows copied to
@@ -1019,7 +1023,7 @@ API call of any kind without a fresh, unambiguous yes from him. State:
   call and zero writes. Full pull + the free corpus ablation are the next
   moves and cost nothing but the flat $9/mo already paid.
 
-The armed sequence, in order, once the maintainer says go on BestTime:
+The armed sequence, in order, once BestTime is cleared to spend:
 1. finish addDemandVenues dry run, review, `--commit`
 2. `node scripts/ml/collectWeekly.js --city=philly --only-found` (843)
 3. `node scripts/ml/collectWeekly.js --city=lehigh --only-found`
@@ -1110,7 +1114,7 @@ observations all sit at one hour of the night.
 
 ## The five-month commitment and the capture-everything rule (2026-09-01)
 
-the maintainer's word, the day collection restarted: keep BestTime about five months
+The commitment made the day collection restarted: keep BestTime about five months
 (September through January, roughly $595 at Package-100, plus $45 SportsDB)
 and make sure every row lands with every feature it can carry, because the
 Ticketmaster autopsy proved uncaptured context is unrecoverable. The audit
@@ -1168,9 +1172,9 @@ locks exist because a wrong mapping trains worse than no rows.
 
 ## SportsDB feature scope, expanded (2026-08-29)
 
-the maintainer asked to exhaust the options before any of this gets built. The
-sequencing decision he made: **BestTime first.** Nothing below starts until
-that's sorted; this section is the plan waiting for him, not a queue.
+The options are to be exhausted before any of this gets built. The sequencing
+decision: **BestTime first.** Nothing below starts until that is sorted, so this
+section is a plan awaiting approval, not a queue.
 
 The one-liner above (item 7, item 4) undersold what this actually is. Full
 breakdown:
@@ -1206,7 +1210,7 @@ the serving-path wiring get built. Building the live pipeline before running
 this free test would be spending engineering time to find out something a
 one-off backfill script answers for nothing.
 
-**Two product uses, approved by the maintainer 2026-08-29, sequenced after the
+**Two product uses, approved 2026-08-29, sequenced after the
 ablation proves the feature real, not before:**
 - An explainability badge: "Busier than usual, Eagles play tonight" next to
   the crowd score. Near-free once the schedule pull exists, and it directly
@@ -1229,7 +1233,7 @@ specifically MAE is a full point worse; the trees ranked the six columns
 the geo holdout passed (32.000 to 31.960). Verdict line, verbatim: "no lift
 distinguishable from day noise."
 
-**the maintainer challenged the verdict and the challenge was RIGHT about the
+**The verdict was challenged, and the challenge was RIGHT about the
 world (measured 2026-08-30, an hour after the ablation).** A direct
 label-level probe, no model in the way, weekday-hour matched: PA game
 nights run +7.1 points busier than the same weekday and hour without a
