@@ -993,9 +993,12 @@ export default function GuestInvite() {
     // one was minted under another link and may hold a budget row and a
     // "still in" this page has never seen, so the effect above does ask.
     if (!carried) meAskedFor.current = body.guestToken;
-    // The same row, re-answered: switching to out and back does not remove a
-    // budget answer or a "still in" on the server, so it must not remove them
-    // here either. A different token is a different row, and carries nothing.
+    // The same row, re-answered: a budget answer survives a change of answer
+    // on the server, so it survives here. A "still in" does not: the server
+    // clears it the moment the answer stops being in (saying out IS the
+    // answer to the night's question), and does not bring it back on a
+    // return to in, so the page keeps it only for in-to-in. A different
+    // token is a different row, and carries nothing.
     const sameRow = !!(guest && guest.guestToken === body.guestToken);
     const next = {
       guestToken: body.guestToken,
@@ -1003,7 +1006,7 @@ export default function GuestInvite() {
       status,
       vote: guest && guest.vote,
       ...(sameRow && guest.budget ? { budget: guest.budget } : {}),
-      ...(sameRow && guest.reconfirmed ? { reconfirmed: true } : {}),
+      ...(sameRow && guest.reconfirmed && guest.status === 'in' && status === 'in' ? { reconfirmed: true } : {}),
     };
     setGuest(next);
     writeStore(storageKey, next);

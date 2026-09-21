@@ -19,7 +19,7 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds } = require('../utils/blocks');
 const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
-const { reconfirmState } = require('../utils/reconfirm');
+const { reconfirmState, RECONFIRM_MEMBER_WRITE_SQL } = require('../utils/reconfirm');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
 const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
@@ -1192,7 +1192,8 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     // await and stays unasked when the flock has no budget.
     const [membersResult, guestsResult, votesResult, guestVotesResult, invisibleIds] = await Promise.all([
       pool.query(
-        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at, fm.reconfirmed_at
+        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at, fm.reconfirmed_at,
+                (fm.reconfirmed_at IS NOT NULL AND fm.reconfirmed_at >= (SELECT reconfirm_opened_at FROM flocks WHERE id = fm.flock_id)) AS reconfirmed
          FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
          WHERE fm.flock_id = $1
@@ -1346,7 +1347,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     if (flock.reconfirm_opened_at) {
       const state = await reconfirmState((q, p) => pool.query(q, p), flockId);
       const mine = members.find((m) => String(m.id) === String(req.user.id));
-      reconfirm = { ...state, me: !!(mine && mine.reconfirmed_at) };
+      reconfirm = { ...state, me: !!(mine && mine.reconfirmed === true) };
     }
 
     res.json({
@@ -1526,15 +1527,27 @@ router.put('/:id',
       // or a later re-confirm would find the old window open with the old
       // answers in it and no push to say so. A completed plan keeps its
       // answers; they are the record of the night.
+      let reconfirmReset = false;
       const leftConfirmed = status !== undefined && status !== null && status !== 'confirmed' && status !== 'completed';
       if (((event_time !== undefined && event_time !== null) || leftConfirmed) && updated.reconfirm_opened_at) {
+        //
+        // One transaction: a failure between the three statements would
+        // leave one roster's answers standing after the other's were
+        // cleared, and the next window would count them.
+        const resetClient = await pool.connect();
         try {
-          await pool.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [flockId]);
-          await pool.query('UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
-          await pool.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+          await resetClient.query('BEGIN');
+          await resetClient.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [flockId]);
+          await resetClient.query('UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+          await resetClient.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+          await resetClient.query('COMMIT');
           updated.reconfirm_opened_at = null;
+          reconfirmReset = true;
         } catch (resetErr) {
+          await resetClient.query('ROLLBACK').catch(() => {});
           console.error('Reconfirm reset failed:', resetErr.message);
+        } finally {
+          resetClient.release();
         }
       }
       if (io) {
@@ -1556,6 +1569,10 @@ router.put('/:id',
           event_time: updated.event_time,
           status: updated.status,
           updatedBy: req.user.name,
+          // True only when this edit closed a night-of window. Every update
+          // carries event_time, so a client cannot infer "the time moved"
+          // from its presence; it has to be told.
+          reconfirm_reset: reconfirmReset,
         }, { includeInvited: true }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
       }
 
@@ -2015,16 +2032,22 @@ router.post('/:id/reconfirm', param('id').isInt({ min: 1, max: INT4_MAX }).withM
         error: 'Flock asks this in the last few hours before a plan. Nothing to answer yet.',
       });
     }
-    if (membership.rows[0].reconfirmed_at) {
-      return res.json({ reconfirmed: true, already: true, count: before.count, total: before.total, deadline: before.deadline });
-    }
 
-    await pool.query(
-      `UPDATE flock_members SET reconfirmed_at = COALESCE(reconfirmed_at, NOW())
-        WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'`,
-      [flockId, req.user.id]
-    );
+    // The write re-checks the window in the same statement (utils/reconfirm.js)
+    // and changes only a row that has not answered this window. Zero rows is
+    // either "already answered" or "the window closed since the read above";
+    // the state re-read below says which.
+    const write = await pool.query(RECONFIRM_MEMBER_WRITE_SQL, [flockId, req.user.id]);
     const after = await reconfirmState(run, flockId);
+    if ((write.rowCount || 0) === 0) {
+      if (!after.open) {
+        return res.status(409).json({
+          code: 'NOT_OPEN',
+          error: 'That window just closed. The plan moved or was called off.',
+        });
+      }
+      return res.json({ reconfirmed: true, already: true, count: after.count, total: after.total, deadline: after.deadline });
+    }
     res.json({ reconfirmed: true, count: after.count, total: after.total, deadline: after.deadline });
 
     // After the response, like every fan-out in this file: the answer is
@@ -3263,20 +3286,20 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         await leaveClient.query('ROLLBACK');
         return res.status(409).json(bound);
       }
-      // Notify flock that member left (accepted members only — see above).
-      // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
-      // else in the app was never in that room and missed the count change. The
-      // DELETE is below, so the leaver still holds their accepted row and the
-      // roster read reaches the same set the room held. Guarded so a fan-out
-      // failure cannot 500 a leave that is about to succeed.
-      if (io && wasAccepted) {
-        // Block-aware, because this payload carries the leaver's NAME. Per-member
-        // fan-out reaches a blocker wherever they are in the app, where the old
-        // room broadcast only reached one who happened to have the flock screen
-        // open, so delivering it unfiltered would widen what a block leaks.
-        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
-          flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
-        }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
+      // Notify flock that member left (accepted members only — see above).
+      // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
+      // else in the app was never in that room and missed the count change. The
+      // DELETE is below, so the leaver still holds their accepted row and the
+      // roster read reaches the same set the room held. Guarded so a fan-out
+      // failure cannot 500 a leave that is about to succeed.
+      if (io && wasAccepted) {
+        // Block-aware, because this payload carries the leaver's NAME. Per-member
+        // fan-out reaches a blocker wherever they are in the app, where the old
+        // room broadcast only reached one who happened to have the flock screen
+        // open, so delivering it unfiltered would widen what a block leaks.
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
+          flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
+        }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
       }
       left = await leaveClient.query(
         `WITH gone AS (

@@ -389,7 +389,14 @@ export default function CreateScreen({
         newlyCreatedFlockRef.current = f.id;
         setFlocks(prev => [...prev, newFlock]);
         setSelectedFlockId(f.id);
-        inviteLinkRef.current = { flockId: f.id, promise: createFlockInviteLink(f.id).then((r) => ({ url: r?.url || null }), (err) => ({ error: err })) };
+        // `settled` and `result` are read by the tap: a link already in hand
+        // is shared on that tap, a link still minting is waited for and
+        // shared on the next one (see sendLink for why).
+        const held = { flockId: f.id, settled: false, result: null, promise: null };
+        held.promise = createFlockInviteLink(f.id)
+          .then((r) => ({ url: r?.url || null }), (err) => ({ error: err }))
+          .then((r) => { held.settled = true; held.result = r; return r; });
+        inviteLinkRef.current = held;
         setMade(newFlock);
         setIsLoading(false);
       } catch (err) {
@@ -463,23 +470,37 @@ export default function CreateScreen({
       if (early?.url) return early.url;
       const fresh = await createFlockInviteLink(flock.id);
       if (!fresh?.url) throw new Error("Couldn't make an invite link. Try again.");
-      inviteLinkRef.current = { flockId: flock.id, promise: Promise.resolve({ url: fresh.url }) };
+      inviteLinkRef.current = { flockId: flock.id, settled: true, result: { url: fresh.url }, promise: Promise.resolve({ url: fresh.url }) };
       return fresh.url;
     };
 
     const sendLink = async () => {
       if (!made || sending) return;
-      setSending(true);
-      let url;
-      try {
-        url = await inviteUrlFor(made);
-      } catch (err) {
-        // The step stays up: the plan is made, the link is not, and the
-        // button is still the way to try again.
+      // THE SHARE SHEET SPENDS THE TAP. navigator.share only opens inside the
+      // tap's own activation, and an await on the network uses it up, so a
+      // link that is not already in hand is fetched on THIS tap and shared on
+      // the NEXT one: the toast says the link is ready and the button is still
+      // there. On the usual path the mint that started with the create has
+      // long settled, and the first tap shares.
+      const held = inviteLinkRef.current;
+      const ready = held && held.flockId === made.id && held.settled && held.result?.url ? held.result.url : null;
+      if (!ready) {
+        setSending(true);
+        try {
+          await inviteUrlFor(made);
+        } catch (err) {
+          // The step stays up: the plan is made, the link is not, and the
+          // button is still the way to try again.
+          setSending(false);
+          showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
+          return;
+        }
         setSending(false);
-        showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
+        showToast('Link ready. Tap Send the link again.');
         return;
       }
+      setSending(true);
+      const url = ready;
       // What the share sheet carries: the plan, when it is if a time was set
       // (formatEventTime answers 'TBD' when the server has none, the same
       // rule the chat header reads), and what tapping the link gets you. One

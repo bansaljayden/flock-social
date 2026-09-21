@@ -12,6 +12,13 @@
  *       node scripts/capture-screenshots.mjs --skip-build   (reuse last build)
  *       node scripts/capture-screenshots.mjs --only=nest,birdie
  *       node scripts/capture-screenshots.mjs --set=web      (web|appstore|all)
+ *       node scripts/capture-screenshots.mjs --only=made,stillin,guestlink --set=web --modes=light --out=../some/dir
+ *
+ * --modes narrows the theme pass (default light,dark). --out sends every
+ * capture to another directory and skips the manifest, WIRING.md and the
+ * public/ archive step, for a layout check that must not leave files in the
+ * repo. Scenarios marked `narrow` are also shot at a 320px-wide viewport in
+ * the web set, the floor DESIGN-STANDARD rule 6 names.
  *
  * THIS RUN COSTS MONEY. The backend child keeps the real external API keys
  * on purpose, which is what makes the screens real, and `discover` and `crowd`
@@ -55,13 +62,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(FRONTEND_DIR, '..');
 const BACKEND_DIR = path.join(REPO_ROOT, 'backend');
-const OUT_DIR = path.join(FRONTEND_DIR, 'public', 'screenshots');
 const APPSTORE_DIR = path.join(REPO_ROOT, 'store-assets');
 
 // CommonJS deps live in the two package roots; reach them explicitly so this
@@ -91,6 +98,13 @@ const ONLY = opt('only') ? opt('only').split(',').map((s) => s.trim()) : null;
 const SET = opt('set') || 'all'; // web | appstore | all
 const SKIP_BUILD = flag('skip-build');
 const KEEP_ALIVE = flag('keep-alive'); // leave the stack up for manual poking
+/* Somewhere other than public/. The default output is deployed with the site
+   and its archive step moves every unreferenced capture into the tracked
+   frontend/screenshots/, so a run made only to look at a layout would leave
+   files in the repo either way. With --out set, captures go to that directory
+   and nothing under public/ or frontend/screenshots/ is written or moved. */
+const OUT_OVERRIDE = opt('out');
+const OUT_DIR = OUT_OVERRIDE ? path.resolve(OUT_OVERRIDE) : path.join(FRONTEND_DIR, 'public', 'screenshots');
 
 // Scratch space OUTSIDE the repo: the CRA build output and the pg data dir.
 const SCRATCH = path.join(os.tmpdir(), 'flock-screenshot-run');
@@ -294,7 +308,24 @@ const DEMO = {
     category: 'Bar & grill',
   },
   rivalVenueName: 'Juniper Bowl',
+  // The plan the `made` scenario creates through the real form.
+  madeName: 'Taco Tuesday',
+  // A confirmed plan inside its night-of window (see the seed). `guest` has
+  // already answered from the link; `newGuest` is who the guestlink scenario
+  // answers as.
+  night: { name: 'Trivia Night', guest: 'Casey', newGuest: 'Riley' },
 };
+
+/* A share-link token the way routes/guest.js mints one: 24 characters from
+   its look-alike-free alphabet, each drawn uniformly. The alphabet is copied
+   rather than imported because that module pulls in the pool and the
+   middleware chain on load, and this script must never touch either. */
+const LINK_TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; // gitleaks:allow -- character set for token generation, not a credential
+function inviteLinkToken() {
+  let t = '';
+  while (t.length < 24) t += LINK_TOKEN_ALPHABET[crypto.randomInt(LINK_TOKEN_ALPHABET.length)];
+  return t;
+}
 
 async function seed(dbUrl) {
   const db = new Client({ connectionString: dbUrl });
@@ -531,9 +562,61 @@ async function seed(dbUrl) {
   }
   await q(`INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source) VALUES ${values.join(',')} ON CONFLICT DO NOTHING`);
 
+  // ---- A confirmed plan inside its night-of window -------------------------
+  // What the "still in?" strip, the roster marks and the guest link are
+  // photographed against. Two hours out, in UTC wall-clock: flocks.event_time
+  // is a naive TIMESTAMP and utils/reconfirm.js decides "open" by comparing it
+  // with NOW() AT TIME ZONE 'UTC', so a time seeded in local wall-clock would
+  // read as already past on any machine west of Greenwich and the window would
+  // be shut. reconfirm_opened_at is written here rather than left to the sweep,
+  // which only opens windows at its own lead. Two accepted members, one of whom
+  // has answered, and one visible 'in' guest who has, so the camera account
+  // sees "2 of 3" with the question still addressed to it. The budget is on so
+  // the link carries the amount ask too. One message, so the plan has a row in
+  // the Messages list to be opened from.
+  const night = await q(
+    `INSERT INTO flocks (name, creator_id, venue_id, venue_name, event_time, status, budget_enabled, reconfirm_opened_at)
+     VALUES ($1,$2,$3,$4,(NOW() AT TIME ZONE 'UTC') + interval '2 hours','confirmed',TRUE,NOW())
+     RETURNING id`,
+    [DEMO.night.name, maya, DEMO.venue.placeId, DEMO.venue.name]
+  );
+  const nightId = night.rows[0].id;
+  await q(`INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1,$2,'accepted')`, [nightId, maya]);
+  await q(`INSERT INTO flock_members (flock_id, user_id, status, reconfirmed_at) VALUES ($1,$2,'accepted',NOW())`, [nightId, jordan]);
+  const nightGuest = await q(
+    `INSERT INTO guest_rsvps (flock_id, name, status, reconfirmed_at) VALUES ($1,$2,'in',NOW()) RETURNING id`,
+    [nightId, DEMO.night.guest]
+  );
+  await q(
+    `INSERT INTO messages (flock_id, sender_id, message_text, message_type, created_at)
+     VALUES ($1,$2,'we still on for tonight?','text', NOW() - interval '40 minutes')`,
+    [nightId, jordan]
+  );
+  // The share link, on the same terms routes/flocks.js mints one: fourteen
+  // days, not revoked, created by the plan's creator.
+  const nightToken = inviteLinkToken();
+  await q(
+    `INSERT INTO flock_invite_links (token, flock_id, created_by, expires_at)
+     VALUES ($1,$2,$3, NOW() + interval '14 days')`,
+    [nightToken, nightId, maya]
+  );
+
   await db.end();
-  log(`seeded: 6 users, flock "${DEMO.flockName}" (${msgs.length} messages, 4 votes, 4 budgets), venue "${DEMO.venue.name}" (promo, 3 reviews, 4 live check-ins, 168 baseline rows)`);
-  return { maya, flockId, owner };
+  log(`seeded: 6 users, flock "${DEMO.flockName}" (${msgs.length} messages, 4 votes, 4 budgets), venue "${DEMO.venue.name}" (promo, 3 reviews, 4 live check-ins, 168 baseline rows), night-of plan "${DEMO.night.name}" (window open, 2 of 3 answered, share link minted)`);
+  return { maya, flockId, owner, night: { flockId: nightId, guestId: nightGuest.rows[0].id, token: nightToken } };
+}
+
+/* The guestlink scenario answers as a new guest, says still in and gives a
+   number, and every size and theme pass runs it again from a fresh context.
+   Its rows are cleared before each pass so "2 of 3" is what every pass
+   photographs: the seeded guest stays, the one the driver added goes, and the
+   guest's budget row goes with it (guest_rsvp_id is ON DELETE CASCADE). */
+async function resetNightRows(dbUrl, night) {
+  if (!night) return;
+  const db = new Client({ connectionString: dbUrl });
+  await db.connect();
+  await db.query('DELETE FROM guest_rsvps WHERE flock_id = $1 AND id <> $2', [night.flockId, night.guestId]);
+  await db.end();
 }
 
 // ---------------------------------------------------------------------------
@@ -736,12 +819,12 @@ async function main() {
     pgHandle = await startPostgres();
     backend = startBackend(pgHandle.url, pgHandle.port);
     await backend.waitUp();
-    await seed(pgHandle.url);
+    const seeded = await seed(pgHandle.url);
     if (flag('stack-only')) { log('stack-only: backend + seed verified, skipping build/capture'); return; }
     await buildFrontend();
     webServer = await startStaticServer();
 
-    await captureAll(pgHandle.url);
+    await captureAll(pgHandle.url, seeded);
 
     if (KEEP_ALIVE) {
       log(`--keep-alive: stack stays up. App: ${WEB_ORIGIN}/app  API: ${API_ORIGIN}`);
@@ -770,10 +853,15 @@ async function main() {
 // ---------------------------------------------------------------------------
 const SIZES = [
   { id: 'web', viewport: { width: 390, height: 844 }, dsf: 2, out: 'web' },
+  /* The narrow end of DESIGN-STANDARD rule 6 ("Mobile 320-390px"), same aspect as
+     the web frame so the two shots of a screen sit side by side. Only screens
+     that say `narrow: true` are shot here; the web set proper is 390. */
+  { id: 'web-320', viewport: { width: 320, height: 693 }, dsf: 2, out: 'web', narrow: true },
   { id: 'appstore-6.9', viewport: { width: 440, height: 956 }, dsf: 3, out: 'appstore' },
   { id: 'appstore-6.5', viewport: { width: 428, height: 926 }, dsf: 3, out: 'appstore' },
 ];
-const MODES = ['light', 'dark'];
+const MODES = (opt('modes') || 'light,dark').split(',').map((s) => s.trim()).filter(Boolean);
+for (const m of MODES) if (m !== 'light' && m !== 'dark') die(`--modes takes light and/or dark, not "${m}"`);
 
 // Which screens go in which set. `replaces` names the existing site asset the
 // web capture is meant to swap in for (mode-matched to the current assets).
@@ -807,7 +895,20 @@ const SCREENS = [
      that the screen now offers a path. It is the paid B2B surface and it had
      no visual coverage at all. */
   { id: 'venue-analytics', title: 'Venue dashboard (analytics tab)', appstore: false, replaces: {} },
+  /* THE SECOND PERSON. Three surfaces from the change that made the share
+     link the product: the step that replaces the create form once a plan
+     exists, the night-of "still in?" question in the chat and on the roster,
+     and the link itself answered by someone with no account. None performs a
+     Places search. All three are shot at 320 as well as 390, because each is
+     a strip or a stacked form where the narrow width is the one that breaks. */
+  { id: 'made', title: 'Create: the plan is made, send the link', appstore: false, narrow: true, replaces: {} },
+  { id: 'stillin', title: 'Night-of window: chat strip and roster marks', appstore: false, narrow: true, replaces: {} },
+  { id: 'guestlink', title: 'Guest link: answered, still in, budget given', appstore: false, narrow: true, replaces: {} },
 ];
+
+// Which screens a size takes: the narrow size only those that asked for it,
+// the web size everything, the App Store sizes what is marked for the store.
+const wantsSize = (screen, size) => (size.narrow ? !!screen.narrow : (size.id === 'web' || screen.appstore));
 
 async function apiLogin(email, password) {
   const r = await fetch(`${API_ORIGIN}/api/auth/login`, {
@@ -864,6 +965,11 @@ const tab = (page, name) => mainNav(page).getByRole('button', { name });
    than an ordinary session. Both filters below read this, so a screen added to
    one is never missing from the other. */
 const OWNER_SCREENS = new Set(['venue-dash', 'venue-analytics']);
+
+/* The screens driven from a context with NO session: no token, nothing an
+   app visitor carries. The guest page is for exactly that person, and the
+   path router in src/index.js picks it by URL before anything reads a token. */
+const GUEST_SCREENS = new Set(['guestlink']);
 
 // Per-screen drivers. Each takes an already-logged-in page sitting on the app
 // and leaves the target screen fully rendered.
@@ -1111,7 +1217,134 @@ const DRIVERS = {
     await page.getByText('Jordan Avery').first().waitFor({ timeout: 15000 }).catch(() => {});
     await settle(page);
   },
+  /* THE MADE STEP. Tapping Create Flock now swaps the form for one step
+     ("{name} is made." and the ask to send the link) before the chat is ever
+     shown. Name and a time, like the create shot; the venue picker is a
+     Places search and this is not the shot to spend one on. Send the link is
+     NOT tapped: headless Chromium has no navigator.share, so the tap would
+     take the clipboard path and leave for the chat. */
+  async made(page) {
+    await tab(page, 'Nest').click();
+    await page.getByText('Start a flock').first().click();
+    const name = page.locator('#flock-name-input');
+    await name.waitFor({ timeout: 10000 });
+    await name.fill(DEMO.madeName);
+    for (const label of ['Tonight', '9 PM']) {
+      const chip = page.getByRole('button', { name: label, exact: true }).first();
+      if (await chip.count()) await chip.click().catch(() => {});
+    }
+    // The name box commits upward on a short debounce; the chip taps above
+    // cover it, this is belt and braces for a form with no chips.
+    await page.waitForTimeout(300);
+    const created = page.waitForResponse((r) => r.request().method() === 'POST' && /\/api\/flocks\/?$/.test(r.url()), { timeout: 30000 }).catch(() => null);
+    await page.getByRole('button', { name: 'Create Flock' }).click();
+    await created;
+    await page.getByText(`${DEMO.madeName} is made.`).waitFor({ timeout: 20000 });
+    await page.getByRole('button', { name: 'Not now' }).waitFor({ timeout: 10000 });
+    // The heading takes focus on arrival so a screen reader announces it;
+    // the ring is not part of the picture.
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await settle(page);
+  },
+  /* THE NIGHT-OF QUESTION, from the app. The strip under the chat header and
+     the roster's count and marks both read flock.reconfirm off the same
+     GET /api/flocks/:id, open on the seeded plan. The camera account has not
+     answered, so the strip carries the button. Two frames from one visit,
+     because the plan screen is a tap on the chat header and the state on
+     both is the same fetch. */
+  async stillin(page, shoot) {
+    await tab(page, 'Messages').click();
+    await page.getByRole('button', { name: new RegExp(DEMO.night.name) }).filter({ visible: true }).first().click();
+    await page.locator('.chat-composer-field').first().waitFor({ timeout: 15000 });
+    await page.getByText(/Still in\? \d+ of \d+ have said so\./).waitFor({ timeout: 15000 });
+    await page.getByRole('button', { name: "I'm still in" }).waitFor({ timeout: 10000 });
+    await settle(page);
+    await shoot('chat');
+    await page.getByRole('button', { name: 'Open the plan' }).click();
+    await page.getByText(/\d+ of \d+ still in tonight\./).waitFor({ timeout: 15000 });
+    await page.getByText('STILL IN', { exact: true }).first().waitFor({ timeout: 10000 });
+    await settle(page);
+    await shoot('roster');
+    return true;
+  },
+  /* THE LINK, answered by someone with no account. The page is /i/<token>
+     in a session-less context (see captureAll). Three frames: answered as a
+     guest, with the night-of question and the budget ask both in view; the
+     still-in tap counted; a number given, with the aggregate line the page
+     shows in place of any amount. Each frame scrolls the Still in? section
+     to the top, which is where the budget ask fits underneath at 390; where
+     it does not, the run says so in the log rather than hiding it. */
+  async guestlink(page, shoot) {
+    await declineAnalyticsAsk(page);
+    await page.getByRole('heading', { name: 'Still in?' }).waitFor({ timeout: 20000 });
+    const nameField = page.locator('#gi-name');
+    await nameField.waitFor({ timeout: 10000 });
+    await nameField.fill(DEMO.night.newGuest);
+    const rsvp = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/rsvp'), { timeout: 20000 }).catch(() => null);
+    await page.getByRole('button', { name: "I'm in", exact: true }).click();
+    await rsvp;
+    await page.getByText("You're down as coming.").waitFor({ timeout: 15000 });
+    await page.locator('#gi-budget').waitFor({ timeout: 15000 });
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await frameStillInAndBudget(page, 'answered');
+    await settle(page);
+    await shoot('answered');
+    await shoot('answered', { fullPage: true });
+    const still = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/reconfirm'), { timeout: 20000 }).catch(() => null);
+    await page.getByRole('button', { name: "I'm still in" }).click();
+    await still;
+    await page.getByText(/You're in\. \d+ of \d+ still in\./).waitFor({ timeout: 15000 });
+    await frameStillInAndBudget(page, 'stillin');
+    await settle(page);
+    await shoot('stillin');
+    await shoot('stillin', { fullPage: true });
+    await page.locator('#gi-budget').fill('30');
+    const budget = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/budget'), { timeout: 20000 }).catch(() => null);
+    await page.getByRole('button', { name: 'That works' }).click();
+    await budget;
+    await page.getByText(/You said \$30/).waitFor({ timeout: 15000 });
+    await page.getByText(/\d+ of \d+ answered\./).waitFor({ timeout: 10000 });
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    // This frame is about the aggregate line, so the budget section wins the
+    // frame when the two will not share it.
+    await frameStillInAndBudget(page, 'budget', { fitBudget: true });
+    await settle(page);
+    await shoot('budget');
+    await shoot('budget', { fullPage: true });
+    return true;
+  },
 };
+
+/* Put the night-of question at the top of the frame and say whether the
+   budget ask made it in underneath. With `fitBudget`, a budget section that
+   runs past the frame is brought fully in instead, at the cost of the
+   question scrolling off the top. The guest page scrolls the document and
+   has nothing fixed over it but the off-screen skip link. */
+async function frameStillInAndBudget(page, label, { fitBudget = false } = {}) {
+  const fit = await page.evaluate((wantBudget) => {
+    const still = document.getElementById('gi-still-h');
+    if (!still) return null;
+    (still.closest('section') || still).scrollIntoView({ block: 'start' });
+    window.scrollBy(0, -8);
+    const budget = document.getElementById('gi-budget-h');
+    if (!budget) return { budget: false };
+    const section = budget.closest('section') || budget;
+    let r = section.getBoundingClientRect();
+    let moved = false;
+    if (wantBudget && r.bottom > window.innerHeight) {
+      section.scrollIntoView({ block: 'end' });
+      window.scrollBy(0, 8);
+      r = section.getBoundingClientRect();
+      moved = true;
+    }
+    return { budget: true, top: Math.round(r.top), bottom: Math.round(r.bottom), frame: window.innerHeight, moved };
+  }, fitBudget);
+  if (!fit) log(`  guestlink/${label}: no Still in? section on the page`);
+  else if (!fit.budget) log(`  guestlink/${label}: no budget section on the page`);
+  else if (fit.moved) log(`  guestlink/${label}: budget section did not fit under Still in?; framed on the budget section, the question scrolled off the top`);
+  else if (fit.top >= fit.frame) log(`  guestlink/${label}: budget section starts at ${fit.top}px, below the ${fit.frame}px frame`);
+  else if (fit.bottom > fit.frame) log(`  guestlink/${label}: budget section runs to ${fit.bottom}px, past the ${fit.frame}px frame (heading in, form cut)`);
+}
 
 async function launchChromium() {
   const { chromium } = requireFrontend('@playwright/test');
@@ -1150,7 +1383,8 @@ async function newAppContext(browser, { size, mode, token, userMode }) {
     if (uMode === 'venue') localStorage.setItem('flockVenueOnboardingComplete', 'true');
     localStorage.setItem('flock_user_lat', '39.9526');
     localStorage.setItem('flock_user_lng', '-75.1652');
-    localStorage.setItem('flockToken', jwt);
+    // No token means no session: the guest page is shot as a stranger.
+    if (jwt) localStorage.setItem('flockToken', jwt);
     // Lets the map audit below project venues and measure their pins.
     window.__FLOCK_MAP_DEBUG__ = true;
   }, [mode, token, userMode]);
@@ -1183,8 +1417,8 @@ async function setServerTheme(dbUrl, mode) {
   await db.end();
 }
 
-async function captureAll(dbUrl) {
-  const sizes = SIZES.filter((s) => SET === 'all' || (SET === 'web' ? s.id === 'web' : s.id.startsWith('appstore')));
+async function captureAll(dbUrl, seeded) {
+  const sizes = SIZES.filter((s) => SET === 'all' || (SET === 'web' ? s.out === 'web' : s.out === 'appstore'));
   const screens = SCREENS.filter((s) => !ONLY || ONLY.includes(s.id));
   const sharp = requireFrontend('sharp');
   const browser = await launchChromium();
@@ -1197,13 +1431,15 @@ async function captureAll(dbUrl) {
     for (const size of sizes) {
       for (const mode of MODES) {
         await setServerTheme(dbUrl, mode);
+        await resetNightRows(dbUrl, seeded && seeded.night);
         /* OWNER_SCREENS, not a hardcoded 'venue-dash'. This excluded that one id
            by name, so adding venue-analytics silently put it in the CONSUMER
            context: logged in as an ordinary user, no ?venue=true, and a
            twenty-second wait for a "Welcome," that a regular account never
            sees. One list, used by both filters, so a third owner screen cannot
-           repeat it. */
-        const consumerScreens = screens.filter((s) => !OWNER_SCREENS.has(s.id) && (size.id === 'web' || s.appstore));
+           repeat it. GUEST_SCREENS is the same rule for the session-less
+           context below. */
+        const consumerScreens = screens.filter((s) => !OWNER_SCREENS.has(s.id) && !GUEST_SCREENS.has(s.id) && wantsSize(s, size));
         if (consumerScreens.length) {
           const { context, page } = await newAppContext(browser, { size, mode, token: userToken, userMode: 'user' });
           /* Collected for the failure report above. Attached here rather than
@@ -1245,43 +1481,35 @@ async function captureAll(dbUrl) {
                 await page.goto(`${WEB_ORIGIN}/app`, { waitUntil: 'domcontentloaded' });
                 await page.addStyleTag({ content: hideCaretCss });
                 await waitAppReady(page);
-                await DRIVERS[screen.id](page);
-                await snap(page, sharp, manifest, { screen, size, mode });
+                await driveAndSnap(page, sharp, manifest, { screen, size, mode });
               } catch (e) {
-                /* SAY WHY, not just that. This reported "Timeout 30000ms
-                   exceeded" and nothing else, which is a sentence that fits
-                   every possible cause: a stale selector, a login that did not
-                   land, a crash on boot. The rig produces App Store submission
-                   material, so a failure nobody can diagnose is a failure
-                   nobody fixes, and this one had gone unnoticed.
-
-                   A screenshot of whatever WAS on screen, plus the console and
-                   any page error, turns thirty seconds of silence into an
-                   answer. Best effort throughout: diagnostics must never
-                   replace the real failure with one of their own. */
-                const why = [`${screen.id} [${size.id}/${mode}]: ${e.message.split('\n')[0]}`];
-                try {
-                  /* SCRATCH, not OUT_DIR. OUT_DIR is frontend/public/screenshots,
-                     which is deployed with the site, so a debug capture there
-                     would ship a picture of a broken app to production. */
-                  const shot = path.join(SCRATCH, `FAILED-${screen.id}-${size.id}-${mode}.png`);
-                  fs.mkdirSync(SCRATCH, { recursive: true });
-                  await page.screenshot({ path: shot });
-                  why.push(`  screen at failure: ${shot}`);
-                } catch { /* the page may be gone */ }
-                try {
-                  const logged = (page.__consoleErrors || []).slice(0, 6);
-                  if (logged.length) why.push(`  console: ${logged.join(' | ')}`);
-                  const url = page.url();
-                  const visible = await page.evaluate(() => ({
-                    nav: !!document.querySelector('nav[aria-label="Main"]'),
-                    loading: document.body.innerText.includes('Loading...'),
-                    firstText: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 160),
-                  }));
-                  why.push(`  at ${url} | nav:${visible.nav} loading:${visible.loading}`);
-                  why.push(`  page reads: ${visible.firstText}`);
-                } catch { /* ditto */ }
-                failures.push(why.join('\n'));
+                failures.push(await failureReport(page, e, { screen, size, mode }));
+              }
+            }
+          } finally {
+            await context.close();
+          }
+        }
+        /* THE GUEST LINK, from a context with no session at all. One page per
+           screen, each opened at /i/<token> fresh, the same rule as the two
+           loops around it. Diagnosed on failure the same way. */
+        const guestScreens = screens.filter((s) => GUEST_SCREENS.has(s.id) && wantsSize(s, size));
+        if (guestScreens.length && seeded && seeded.night) {
+          const { context, page } = await newAppContext(browser, { size, mode, token: null, userMode: 'user' });
+          page.__consoleErrors = [];
+          page.on('console', (m) => {
+            if (m.type() === 'error') page.__consoleErrors.push(m.text().slice(0, 200));
+          });
+          page.on('pageerror', (err) => page.__consoleErrors.push(`pageerror: ${String(err).slice(0, 200)}`));
+          try {
+            for (const screen of guestScreens) {
+              try {
+                page.__imgFails = [];
+                await page.goto(`${WEB_ORIGIN}/i/${seeded.night.token}`, { waitUntil: 'domcontentloaded' });
+                await page.addStyleTag({ content: hideCaretCss });
+                await driveAndSnap(page, sharp, manifest, { screen, size, mode });
+              } catch (e) {
+                failures.push(await failureReport(page, e, { screen, size, mode }));
               }
             }
           } finally {
@@ -1316,11 +1544,63 @@ async function captureAll(dbUrl) {
     await browser.close();
   }
 
-  writeManifestAndWiring(manifest);
-  archiveUnshipped();
+  if (OUT_OVERRIDE) {
+    log(`captures written to ${OUT_DIR}; manifest, WIRING.md and the public/ archive step skipped (--out)`);
+  } else {
+    writeManifestAndWiring(manifest);
+    archiveUnshipped();
+  }
+  reportOverflow();
   log(`captured ${manifest.length} images${failures.length ? `, ${failures.length} FAILURES` : ''}`);
   for (const f of failures) log(`  FAIL ${f}`);
   if (failures.length) process.exitCode = 1;
+}
+
+/* Run a driver and take the picture. A driver that frames its own captures
+   (several states of one visit) calls `shoot(label)` for each and returns
+   true; every other driver leaves one screen up and the frame is taken here.
+   `shoot(label, { fullPage: true })` takes the whole document at the
+   viewport's width, for a page that scrolls further than one frame shows. */
+async function driveAndSnap(page, sharp, manifest, { screen, size, mode }) {
+  const shoot = (label, extra = {}) => snap(page, sharp, manifest, { screen, size, mode, label, ...extra });
+  const framed = await DRIVERS[screen.id](page, shoot);
+  if (!framed) await snap(page, sharp, manifest, { screen, size, mode });
+}
+
+/* SAY WHY, not just that. This reported "Timeout 30000ms exceeded" and
+   nothing else, which is a sentence that fits every possible cause: a stale
+   selector, a login that did not land, a crash on boot. The rig produces App
+   Store submission material, so a failure nobody can diagnose is a failure
+   nobody fixes, and this one had gone unnoticed.
+
+   A screenshot of whatever WAS on screen, plus the console and any page
+   error, turns thirty seconds of silence into an answer. Best effort
+   throughout: diagnostics must never replace the real failure with one of
+   their own. */
+async function failureReport(page, e, { screen, size, mode }) {
+  const why = [`${screen.id} [${size.id}/${mode}]: ${e.message.split('\n')[0]}`];
+  try {
+    /* SCRATCH, not OUT_DIR. OUT_DIR is frontend/public/screenshots by default,
+       which is deployed with the site, so a debug capture there would ship a
+       picture of a broken app to production. */
+    const shot = path.join(SCRATCH, `FAILED-${screen.id}-${size.id}-${mode}.png`);
+    fs.mkdirSync(SCRATCH, { recursive: true });
+    await page.screenshot({ path: shot });
+    why.push(`  screen at failure: ${shot}`);
+  } catch { /* the page may be gone */ }
+  try {
+    const logged = (page.__consoleErrors || []).slice(0, 6);
+    if (logged.length) why.push(`  console: ${logged.join(' | ')}`);
+    const url = page.url();
+    const visible = await page.evaluate(() => ({
+      nav: !!document.querySelector('nav[aria-label="Main"]'),
+      loading: document.body.innerText.includes('Loading...'),
+      firstText: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 160),
+    }));
+    why.push(`  at ${url} | nav:${visible.nav} loading:${visible.loading}`);
+    why.push(`  page reads: ${visible.firstText}`);
+  } catch { /* ditto */ }
+  return why.join('\n');
 }
 
 /* Collected across a run and printed at the end, so one overflowing screen
@@ -1381,16 +1661,32 @@ async function checkOverflow(page, { screen, size, mode }) {
   }
 }
 
-async function snap(page, sharp, manifest, { screen, size, mode }) {
-  await checkOverflow(page, { screen, size, mode });
-  const raw = await page.screenshot({ type: 'png' });
+async function snap(page, sharp, manifest, { screen, size, mode, label = '', fullPage = false }) {
+  // Measured once per state, on the viewport frame; the full-page twin of the
+  // same state would only repeat the finding.
+  if (!fullPage) await checkOverflow(page, { screen, size, mode });
+  /* FROM THE TOP. Chromium paints a full-page frame with the window still
+     scrolled where it was, and lays out position:fixed elements against that
+     scrolled viewport, so the guest page's skip link, which lives two of its
+     own heights above the viewport's top edge, turned up in the middle of the
+     document sitting on the join band. No viewer sees that; the capture did.
+     Scrolling to the top first puts every fixed element where the document's
+     top edge really is, and a driver re-frames before its next frame anyway. */
+  if (fullPage) await page.evaluate(() => window.scrollTo(0, 0));
+  const raw = await page.screenshot({ type: 'png', fullPage });
   const px = { w: size.viewport.width * size.dsf, h: size.viewport.height * size.dsf };
   const meta = await sharp(raw).metadata();
-  if (meta.width !== px.w || meta.height !== px.h) {
-    throw new Error(`capture size mismatch: got ${meta.width}x${meta.height}, wanted ${px.w}x${px.h}`);
+  // A full-page frame is as tall as the document; its width is still the
+  // viewport's, and that is the half of the check that catches a wrong size.
+  if (meta.width !== px.w || (!fullPage && meta.height !== px.h)) {
+    throw new Error(`capture size mismatch: got ${meta.width}x${meta.height}, wanted ${px.w}x${fullPage ? 'document' : px.h}`);
   }
+  if (fullPage) px.h = meta.height;
   if (size.out === 'web') {
-    const base = `${screen.id}-${mode}@2x`;
+    // The 390 name is unchanged, so the shipped set keeps its files; a frame
+    // label, a full-page frame and the narrow width are spelled out where
+    // they apply.
+    const base = `${screen.id}${label ? `-${label}` : ''}${fullPage ? '-full' : ''}-${mode}${size.id === 'web' ? '' : `-${size.viewport.width}`}@2x`;
     const pngPath = path.join(OUT_DIR, `${base}.png`);
     const webpPath = path.join(OUT_DIR, `${base}.webp`);
     await sharp(raw).png({ compressionLevel: 9, palette: true }).toFile(pngPath);
@@ -1407,7 +1703,7 @@ async function snap(page, sharp, manifest, { screen, size, mode }) {
   }
   const imgFails = [...new Set(page.__imgFails || [])];
   const imgNote = imgFails.length ? `  (${imgFails.length} image(s) did not load: ${imgFails.slice(0, 3).join(' | ')})` : '';
-  log(`  ok ${screen.id} [${size.id}/${mode}]${imgNote}`);
+  log(`  ok ${screen.id}${label ? `/${label}` : ''}${fullPage ? ' (full page)' : ''} [${size.id}/${mode}]${imgNote}`);
 }
 
 // The captures that ship: anything source, index.html or the PWA manifest
@@ -1514,9 +1810,13 @@ March) are referenced nowhere and can be deleted whenever.
 `;
   fs.writeFileSync(path.join(OUT_DIR, 'WIRING.md'), wiring);
   log('wrote manifest.json + WIRING.md');
-  /* DESIGN-STANDARD rule 6, reported rather than enforced. A capture run that is
-     otherwise good should not fail on this, but nobody should have to go
-     looking for it either. */
+}
+
+/* DESIGN-STANDARD rule 6, reported rather than enforced. A capture run that is
+   otherwise good should not fail on this, but nobody should have to go
+   looking for it either. Its own function so a --out run, which writes no
+   manifest, still says it. */
+function reportOverflow() {
   if (overflowFindings.length) {
     log(`HORIZONTAL OVERFLOW on ${overflowFindings.length} screen(s) - DESIGN-STANDARD rule 6:`);
     for (const f of overflowFindings) log(`  ${f}`);

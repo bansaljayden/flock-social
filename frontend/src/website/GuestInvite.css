@@ -377,8 +377,15 @@
 
 .gi-who-row {
   display: flex;
+  /* A row can carry two tags now (GUEST and STILL IN). In the two-column
+     roster at 390px that left a five-letter name about 30px and broke it in
+     half; wrapping lets the tags step down a line first, so a name is only
+     ever broken when it would not fit the column on its own. row-gap after
+     gap on purpose: the shorthand would reset it. */
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 9px;
+  row-gap: 2px;
   padding: 9px 0;
   border-bottom: 1px solid var(--gi-rule-soft);
 }

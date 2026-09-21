@@ -264,7 +264,18 @@ async function dispatch(sql, params) {
   }
   if (/COUNT\(\*\) AS total_submissions/.test(flat) && overPresent(flat) && /WHERE bs\.flock_id = \$1$/.test(flat)) {
     const crowdOnly = /COUNT\(\*\) FILTER \(WHERE skipped = false AND bm\.id IS NOT NULL\) AS non_skip_count/.test(flat);
-    return { rows: [countsRow(Number(p[0]), crowdOnly)], rowCount: 1 };
+    const row = countsRow(Number(p[0]), crowdOnly);
+    // POST /me reads the cached lock and number IN THE SAME STATEMENT as the
+    // crowd count, so the two cannot come from different moments (a member
+    // leaving between two statements would pair a count of three with a
+    // number that now hides two). One snapshot, so the fixture answers both
+    // from the same world state.
+    if (/\(SELECT budget_locked FROM flocks WHERE id = \$1\) AS budget_locked/.test(flat)) {
+      const f = world.flocks.get(Number(p[0]));
+      row.budget_locked = f ? f.budget_locked : null;
+      row.budget_ceiling = f ? f.budget_ceiling : null;
+    }
+    return { rows: [row], rowCount: 1 };
   }
   if (/^SELECT COUNT\(\*\)::int AS n FROM /.test(flat) && overCrowd(flat)
       && /WHERE bs\.flock_id = \$1 AND (bs\.)?skipped = false$/.test(flat)) {
@@ -1089,7 +1100,10 @@ test('POST /me spends a read budget: the 121st reload of one row in an hour is 4
   assert.strictEqual(ran(/total_submissions/).length, 0, 'the refused reload counts nothing');
   assert.strictEqual(ran(/^SELECT budget_locked, budget_ceiling FROM flocks/).length, 0, 'and reads no number');
   assert.strictEqual(ran(/AS open, f\.event_time AS deadline/).length, 0);
-  assert.ok(!refused.text.includes('45'), 'and hands back no row');
+  // The refusal carries a wait and nothing of the row: no budget block, no
+  // amount, no name. (Not a search for the digits of the amount: a 429 body
+  // names a retry instant, and a clock can contain any two digits.)
+  assert.ok(!('budget' in (refused.body || {})) && !/"userAmount"|"amount"|"name"/.test(refused.text), 'and hands back no row');
 
   // A different row, same link: its own allowance, untouched.
   const other = await me(GUEST_B);
@@ -1396,6 +1410,28 @@ test('the creator resets a settled budget: every row deleted and the lock lifted
     });
   }
   assert.strictEqual(pushes.length, 0, 'a reset is not "Budget set!"');
+  assertQueriesUnderstood();
+});
+
+test('an open budget cannot be started over: there is no number to get off, and nothing is deleted', async () => {
+  // Two private answers and no settle. A reset here would delete answers
+  // people are still free to change themselves and publish nothing new, so
+  // the door is closed with a code the client can read; the transaction
+  // opens, reads the lock under FOR UPDATE, and rolls back.
+  seedFlock({ members: [AVA, BOB, DEE], guests: [CASS] });
+  await memberAnswer(AVA.id, 60);
+  await memberAnswer(BOB.id, 70);
+  log = [];
+  emits = [];
+  const res = await reset(AVA.id);
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'BUDGET_OPEN');
+  assert.strictEqual(ran(/DELETE FROM budget_submissions/).length, 0);
+  const tx = lastTransaction();
+  assert.strictEqual(tx.closedBy, 'ROLLBACK');
+  assert.strictEqual(world.submissions.length, 2, 'the two private answers stand');
+  assert.strictEqual(world.flocks.get(FLOCK).budget_locked, false);
+  assert.strictEqual(emits.filter((e) => e.event === 'budget_updated').length, 0);
   assertQueriesUnderstood();
 });
 
