@@ -46,11 +46,18 @@ screen_outer_w  = 120.24;  // short edge
 screen_outer_h  = 189.32;  // long edge
 screen_thick    = 14.50;
 
-// Anker Prime 20K 200W, 124 x 53 x 48 from Anker's own spec page. Add a
-// couple of millimetres of slack if the unit has a rubber sleeve on it.
+// Anker Prime 20K 200W, model A1336 confirmed off the unit's own label:
+// 124 x 53 x 48.
+//
+// One of the 53 x 48 end faces carries five pogo contacts for Anker's charging
+// dock. That face has to stay clear, or the battery can only be charged by
+// opening the box, which is not a thing anyone will do between rounds at a
+// competition. batt_contacts_face says which way it points so the panel with
+// the hatch in it can follow.
 batt_w          = 124.0;
 batt_h          = 53.0;
 batt_d          = 48.0;
+batt_contacts_face = "bottom";   // where the five dock pins look
 
 // The glass's ACTIVE area, inside the black border. The cutout is sized to this
 // and not to the module's outer size, or the border shows through.
