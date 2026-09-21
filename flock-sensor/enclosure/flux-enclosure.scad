@@ -91,6 +91,39 @@ screen_border_l = 3.8;     // board's left edge to the lit area
 screen_border_b = 17.4;    // board's bottom edge to the lit area
 screen_border_t = 14.4;    // kept explicit so the asymmetry is not lost again
 
+// Anker Prime 20K 200W, model A1336 read off the unit's own label:
+// 124 x 53 x 48.
+//
+// One of the 53 x 48 end faces carries five pogo contacts for Anker's
+// charging dock, which the spec page does not mention. That face has to stay
+// clear, or the battery can only be charged by opening the box, and nobody is
+// doing that between rounds at a competition.
+batt_w          = 124.0;
+batt_h          = 53.0;
+batt_d          = 48.0;
+batt_contacts_face = "bottom";   // where the five dock pins look
+
+// The Pi 5 with its heatsink and the 4G HAT on top. RESERVED, not measured.
+//
+// Two attempts failed and both failed the same way. A dollar note stood on
+// edge beside the stack ran out of frame, so its length was unknown. Scaling
+// off the GPIO header should have worked instead, since those pins are 2.54 mm
+// apart by definition, but the photograph is too soft to resolve them: the
+// gaps between detected pins came out between 10 and 20 pixels when every one
+// of them is the same distance.
+//
+// An autocorrelation over that strip answered 14 px with harmonics at 28 and
+// 42, which looks clean and is not. A periodic signal that is not actually
+// resolved still autocorrelates, and the harmonics follow from the assumed
+// period rather than confirming it. Comparing against the length of a 20 pin
+// row is what caught it.
+//
+// So this is a reservation from the spec route: about 18 mm for a Pi 5 to the
+// top of its ports, 11 mm of standard HAT spacing, and the HAT's own parts and
+// heatsink for the rest. The box is 88.9 mm deep, so a wrong guess costs
+// nothing here. Confirm at assembly.
+pi_stack_h      = 55.0;
+
 // PureThermal 3 carrier: 25.8 x 28.9 from the October 2022 datasheet.
 pt3_w           = 25.8;
 pt3_h           = 28.9;
