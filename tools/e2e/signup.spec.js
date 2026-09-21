@@ -319,10 +319,10 @@ test('nothing on the way in spins forever or flashes an error before the data la
   const beforeForm = [];
   for (let i = 0; i < 12; i++) {
     beforeForm.push(normalise(await page.locator('body').innerText().catch(() => '')));
-    if (/welcome back/i.test(beforeForm[beforeForm.length - 1])) break;
+    if (/welcome back|plan the night/i.test(beforeForm[beforeForm.length - 1])) break;
     await page.waitForTimeout(250);
   }
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible({ timeout: 15_000 });
   for (const frame of beforeForm) expect(frame).not.toMatch(badWords);
 
   const email = newEmail('firstpaint');
@@ -392,7 +392,7 @@ test('the first screens carry no em dashes', async ({ page }) => {
 
   await page.setExtraHTTPHeaders({ 'X-Forwarded-For': clientIp() });
   await page.goto('/app');
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible();
   expect(await page.locator('body').innerText()).not.toContain(EM_DASH);
 
   await page.getByRole('button', { name: /create an account/i }).click();

@@ -110,7 +110,7 @@ async function newPerson(browser, tag, firstName = 'Ada') {
   await confirmEmail(email);
 
   await page.getByRole('button', { name: /^sign in$/i }).click();
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible({ timeout: 20_000 });
   await page.getByRole('textbox', { name: /email/i }).fill(email);
   await page.getByRole('textbox', { name: /password/i }).first().fill(PASSWORD);
   await page.getByRole('button', { name: /^sign in$/i }).click();
@@ -322,7 +322,7 @@ test('a cold start that cannot reach Flock does not silently show a signed-in pe
   expect(await ada.page.evaluate(() => window.localStorage.getItem('flockToken')),
     'the session was kept, so nobody has actually been signed out').not.toBeNull();
 
-  const onSignIn = await ada.page.getByRole('heading', { name: /welcome back/i }).isVisible();
+  const onSignIn = await ada.page.getByRole('heading', { name: /welcome back|plan the night/i }).isVisible();
   const toldWhy = await ada.page
     .getByText(/couldn.t reach flock|you.re offline|check your (signal|connection)|no connection/i)
     .count();

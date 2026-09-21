@@ -105,7 +105,7 @@ async function newPerson(browser, tag, firstName) {
   // Then back through the real sign-in screen, the way somebody who just
   // clicked the link in their inbox comes back.
   await page.getByRole('button', { name: /^sign in$/i }).click();
-  await expect(page.getByRole('heading', { name: /welcome back/i })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /welcome back|plan the night/i })).toBeVisible({ timeout: 20_000 });
   await page.getByRole('textbox', { name: /email/i }).fill(email);
   await page.getByRole('textbox', { name: /password/i }).first().fill('E2eTesting!2026');
   await page.getByRole('button', { name: /^sign in$/i }).click();
@@ -711,7 +711,7 @@ test('the share link opened by a different signed-in account puts them in the fl
 
   // Already signed in, so the app finishes the join itself and lands him in
   // the plan rather than on a login screen or an empty home.
-  await expect(other.page.getByRole('heading', { name: /welcome back/i })).toHaveCount(0, { timeout: 30_000 });
+  await expect(other.page.getByRole('heading', { name: /welcome back|plan the night/i })).toHaveCount(0, { timeout: 30_000 });
   await expect(other.page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 30_000 });
 
   // He is a real member: the flock is on his list after a reload.
