@@ -74,11 +74,18 @@ screw_dia   = 3.4;    // clearance for M3
 insert_dia  = 4.2;    // for an M3 heat-set insert
 
 // The mount. A quarter-inch twenty thread is the tripod standard, which means
-// the ball joint is a $12 part off a shelf rather than something printed, and a
+// the ball joint is an off-the-shelf part rather than something printed, and a
 // printed ball joint is exactly the part that creeps and droops over a night.
-mount_thread_dia = 6.8;   // tapping size for 1/4"-20
-mount_boss_dia   = 18.0;
-mount_boss_h     = 9.0;
+//
+// The thread itself is a captured hex nut, not a tapped hole. Tapping needs a
+// 1/4"-20 tap bought for this one job, and a thread cut straight into printed
+// plastic strips the first time the mount is over-tightened. A nut dropped
+// into a hexagonal pocket is free, is steel, and cannot strip.
+mount_nut_af     = 11.4;  // 1/4"-20 hex nut, across the flats, plus a little
+mount_nut_th     = 5.8;   // and its thickness
+mount_clear_dia  = 7.0;   // clearance for the screw itself
+mount_boss_dia   = 22.0;
+mount_boss_h     = 10.0;
 
 cable_dia   = 9.0;    // the one cable out of the back
 
@@ -203,14 +210,20 @@ module back_plate() {
                     linear_extrude(0.01) offset(r = -edge_cham * 2)
                         square([head_h, head_w]);
             }
-            // The boss the ball mount threads into.
+            // The boss the ball mount screws into.
             translate([head_h / 2, head_w / 2, wall])
                 cylinder(h = mount_boss_h, d = mount_boss_dia);
         }
 
-        // 1/4"-20, tapped by hand with a tap, or a threaded insert pressed in.
-        translate([head_h / 2, head_w / 2, wall - 1])
-            cylinder(h = mount_boss_h + 2, d = mount_thread_dia);
+        // Clearance for the mount's screw, all the way through.
+        translate([head_h / 2, head_w / 2, -1])
+            cylinder(h = mount_boss_h + wall + 2, d = mount_clear_dia);
+
+        // The hex pocket the nut drops into, opening on the inside face so the
+        // nut is trapped against the boss once the plate is on and cannot be
+        // pushed out by tightening.
+        translate([head_h / 2, head_w / 2, wall + mount_boss_h - mount_nut_th])
+            cylinder(h = mount_nut_th + 1, d = mount_nut_af / cos(30), $fn = 6);
 
         for (p = back_screw_points())
             translate([p[0], p[1], -1]) cylinder(h = wall + 2, d = screw_dia);
