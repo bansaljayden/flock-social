@@ -46,26 +46,39 @@ screen_outer_w  = 120.24;  // short edge
 screen_outer_h  = 189.32;  // long edge
 screen_thick    = 14.50;
 
-// Anker Prime 20K, from the 4.9 x 2.1 x 1.9 inch spec.
+// Anker Prime 20K 200W, 124 x 53 x 48 from Anker's own spec page. Add a
+// couple of millimetres of slack if the unit has a rubber sleeve on it.
 batt_w          = 124.0;
 batt_h          = 53.0;
 batt_d          = 48.0;
 
-// ===========================================================================
-// MEASURE THESE WITH CALIPERS BEFORE PRINTING A REAL PANEL.
-// The defaults are estimates and are almost certainly a millimetre or two out.
-// ===========================================================================
-
 // The glass's ACTIVE area, inside the black border. The cutout is sized to this
-// plus an overlap, not to the module's outer size, or you see the border.
-screen_active_w = 99.0;    // MEASURE
-screen_active_h = 165.0;   // MEASURE
+// and not to the module's outer size, or the border shows through.
+//
+// These are the published 155 x 88, and they check out independently: a 7 inch
+// diagonal at the panel's 9:16 ratio is 87.2 x 155.0, so the spec and the
+// geometry agree. Worth stating because the first pass at this file guessed
+// 99 x 165 from the outer size, which would have cut an opening wider than the
+// glass behind it and shown the frame on all four sides.
+//
+// The module is 120.24 x 189.32 overall, so the screen's own frame is about
+// 16 mm on each side and 17 mm top and bottom. That is a wide border already,
+// which is why the panel's own bezel below is kept modest.
+screen_active_w = 88.0;
+screen_active_h = 155.0;
 
-// PureThermal 3 carrier. GroupGets does not publish an outline.
-pt3_w           = 30.0;    // MEASURE
-pt3_h           = 35.0;    // MEASURE
-pt3_hole_dx     = 24.0;    // MEASURE
-pt3_hole_dy     = 29.0;    // MEASURE
+// PureThermal 3 carrier: 25.8 x 28.9 from the October 2022 datasheet.
+pt3_w           = 25.8;
+pt3_h           = 28.9;
+
+// ===========================================================================
+// STILL UNKNOWN. Both are in the datasheet's dimension drawing, which is a
+// picture rather than text, and both are small enough to check against the
+// printed slot_fit_test piece rather than measured in advance.
+// ===========================================================================
+
+pt3_hole_dx     = 20.0;    // MEASURE
+pt3_hole_dy     = 23.0;    // MEASURE
 
 // The lens barrel that has to see out of the front face.
 lens_dia        = 11.0;    // MEASURE
