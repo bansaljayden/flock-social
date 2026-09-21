@@ -1,7 +1,7 @@
 /**
  * THE VERIFICATION REQUEST — the way out of a dead end.
  *
- * WHY THIS FILE EXISTS. the maintainer found it on TestFlight, 2026-08-21: the venue
+ * WHY THIS FILE EXISTS. It was found on TestFlight, 2026-08-21: the venue
  * dashboard told an owner to verify their venue in three separate places and
  * nothing anywhere started a verification. The admin half had existed since
  * migration 020; the owner half did not exist at all. A paying Pro owner was
@@ -114,7 +114,7 @@ describe('The wiring behind the button', () => {
   // same handler, so one request settles both cards". They did, and that was
   // the defect. On the Analytics tab a premium unverified owner saw "Request
   // verification" on the intel card and again on the Roost card a scroll
-  // below, and the maintainer's TestFlight complaint was precisely that the screen
+  // below, and the TestFlight complaint was precisely that the screen
   // said it too many times. The intel card keeps the button; the Roost card
   // has no handler prop at all as of 2026-09-02, and the dashboard no longer
   // receives `requestVerificationNow` from App.js since nothing there read it.

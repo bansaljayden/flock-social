@@ -1,5 +1,5 @@
 /**
- * SWEARING SENDS IN CHAT; SLURS STILL DO NOT (the maintainer, 2026-09-05).
+ * SWEARING SENDS IN CHAT; SLURS STILL DO NOT (2026-09-05).
  *
  * "fuck you" in a flock chat or a DM used to be refused as not fitting the
  * community guidelines. Ordinary cursing between friends is not a guideline

@@ -7,7 +7,7 @@
 // nothing could ever tell those people the app is out, and an account created
 // with a waitlisted email never touched its row, so "your friends on the
 // waitlist get informed, and their signup counts from when they joined" was a
-// promise with no machinery. the maintainer asked for the machinery on 2026-08-27.
+// promise with no machinery. The machinery was specified on 2026-08-27.
 //
 // What is pinned here:
 //   1. THE ANNOUNCE ROUTE IS ADMIN-ONLY and idempotent by column: a row is

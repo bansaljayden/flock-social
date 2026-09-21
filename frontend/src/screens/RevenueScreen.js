@@ -154,7 +154,7 @@ export default function RevenueScreen({
     // Three tabs, three glyphs, three distinct meanings.
     // Costs landed 2026-08-20 as the fourth. It carries creditCard, which is
     // the only glyph in the set that says "a bill arrived" rather than "a
-    // number went up", and the label is the one word the maintainer used for it.
+    // number went up", and the label is the one word used for it.
     const adminTabs = [
       { id: 'revenue', label: 'Revenue', icon: Icons.dollar },
       { id: 'costs', label: 'Costs', icon: Icons.creditCard },
@@ -845,7 +845,7 @@ export default function RevenueScreen({
 
                 {/* 1b. THE INVENTORY.
                     ------------------------------------------------------------
-                    the maintainer asked for every API on this screen, including the
+                    The ask was for every API on this screen, including the
                     ones that cost nothing, and that turned out to be a
                     different question from the one the panel answered. The
                     blocks here are ordered by how far a number can be trusted,
@@ -970,7 +970,7 @@ export default function RevenueScreen({
                   )}
                 </div>
 
-                {/* 2b. PLANS AND TIERS. the maintainer could not answer, from any
+                {/* 2b. PLANS AND TIERS. Nobody could answer, from any
                     screen, what the tiers are or who is on them. Every figure
                     here is read from the payload rather than typed in, and a
                     zero is always printed next to the flag that explains it,
@@ -1526,10 +1526,10 @@ export default function RevenueScreen({
               {/* Burn and break-even.
                   ------------------------------------------------------------
                   These used to be computed from a MONTHLY / ANNUAL / ONE_TIME
-                  array typed into this file. That array was the maintainer's real
+                  array typed into this file. That array was the real
                   spend and it was five vendors out of date: it knew about
-                  Railway, Development tooling, code review, the Apple fee and the BestTime
-                  corpus, and had never heard of Gemini, Google Places, Cloud
+                  Railway, the two developer tools, the Apple fee and the
+                  BestTime corpus, and had never heard of Gemini, Google Places, Cloud
                   Vision, MapTiler or the domain. It also sat two tabs away
                   from a set of API ceilings nobody had ever priced.
 

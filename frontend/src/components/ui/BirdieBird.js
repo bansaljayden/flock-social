@@ -241,7 +241,7 @@ export function BirdieStill({ size = 96, bird = BIRDIE, style, eager = false }) 
 // ---------------------------------------------------------------------------
 // BirdNote — the one shape every bird-carrying empty and error state shares.
 //
-// the maintainer, reviewing build 26 (2026-08-21): "Any error page or no-content page
+// From the build 26 review (2026-08-21): "Any error page or no-content page
 // needs a bird. We have five birds, and we can add multiple of them." This is
 // the reusable form of that instruction, so the sweep is one component reused
 // rather than twenty pasted <img> stacks.

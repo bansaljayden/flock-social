@@ -4,8 +4,8 @@
 // FREE TEXT, PINNED. Three modes, never blurred.
 //
 // services/advisorFreeText.js is the first surface in this repo where a user's
-// own words reach a language model. What that buys is the product the maintainer asked
-// for: an owner can type any question about their business. What it costs is
+// own words reach a language model. What that buys is the product goal:
+// an owner can type any question about their business. What it costs is
 // every guarantee the chip-only design got for free, so each one is rebuilt
 // here as something a machine checks:
 //

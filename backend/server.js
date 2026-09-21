@@ -2035,8 +2035,8 @@ async function runMoneyWatch() {
   // and would stay silent all the way through one.
   //
   // It did. Places answered 429 from 2026-09-01 to 2026-09-05, venue pins and
-  // photos were dead for five days, and the only detector was the maintainer noticing by
-  // eye. Railway's log carried "[PublicDemo] Places search failed: HTTP 429" the
+  // photos were dead for five days, and the only detector was a human noticing
+  // by eye. Railway's log carried "[PublicDemo] Places search failed: HTTP 429" the
   // whole time, which is the point: the signal existed from hour one and nothing
   // counted it.
   //

@@ -697,7 +697,7 @@ function record(userId, data, outcome, { sent = 0, failed = 0, quiet = false } =
   const type = typeOf(data);
   // The zero-dependency half of the answer. One line per push, in Railway's
   // log stream, greppable as `[Push] outcome=`, so "did anything go out
-  // yesterday" survives even a database the maintainer cannot reach.
+  // yesterday" survives even a database nobody can reach.
   console.log(
     `[Push] type=${type} user=${userId} outcome=${outcome} sent=${sent} failed=${failed} quiet=${quiet}`
   );

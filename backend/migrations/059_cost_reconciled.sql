@@ -3,8 +3,8 @@
 -- services/costModel.js carries RECONCILED, the one cost line a human has read
 -- off a real invoice, as a hand-edited constant with a date beside it. That is
 -- why it stood at a mid-month snapshot for twelve days on 2026-09-01: recording
--- a paid bill meant editing a JavaScript file and deploying. the maintainer's ask that
--- day was that he should never have to do that to record a bill.
+-- a paid bill meant editing a JavaScript file and deploying. The requirement
+-- set that day: recording a bill must never require a code change.
 --
 -- One row per reconciled line, keyed by the same id the constant uses, written
 -- only by POST /api/admin/costs/reconciled behind the admin gate. The code

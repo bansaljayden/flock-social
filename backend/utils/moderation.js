@@ -57,7 +57,7 @@ const PROVIDER_ALLOWED = [
 const providerFilter = new Filter();
 providerFilter.removeWords(...PROVIDER_ALLOWED);
 
-// CHAT IS NOT A NAME FIELD (the maintainer, 2026-09-05). "fuck you" in a flock chat
+// CHAT IS NOT A NAME FIELD (2026-09-05). "fuck you" in a flock chat
 // or a DM was refused with "doesn't fit our community guidelines", which is
 // not true of ordinary swearing between friends, and a refused message is a
 // reason to leave the app. The everyday curse family comes off the list for

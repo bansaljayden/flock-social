@@ -484,7 +484,7 @@ const INVENTORY = [
     denominator: 'wall-clock hours per reason',
     bound: 'three keys, by construction',
     verdict: 'SAFE',
-    why: 'The key space is a closed set of literals written in this file. No caller input reaches it, so it cannot grow, and nothing is refused on the strength of it, because throttling the log never throttles a request. It is listed because a keyed Map that protects an operator signal is exactly the kind of thing the four audit rounds found unlisted, and because the signal itself matters: a budget that is being reached is information the maintainer needs to act on, so the throttle exists to keep that line readable rather than to hide it.',
+    why: 'The key space is a closed set of literals written in this file. No caller input reaches it, so it cannot grow, and nothing is refused on the strength of it, because throttling the log never throttles a request. It is listed because a keyed Map that protects an operator signal is exactly the kind of thing the four audit rounds found unlisted, and because the signal itself matters: a budget that is being reached is information an operator needs to act on, so the throttle exists to keep that line readable rather than to hide it.',
   },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',

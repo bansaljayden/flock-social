@@ -111,7 +111,7 @@ function askConfirmation(prompt) {
 }
 
 // ---------------------------------------------------------------------------
-// Demo Users (other people in the maintainer's flocks)
+// Demo Users (other people in the real account's flocks)
 // ---------------------------------------------------------------------------
 const demoUsers = [
   {
@@ -330,14 +330,14 @@ async function seed() {
     // 3. Look up or create real account (UPSERT — never delete)
     // --------------------------------------------------
     console.log(`\nSetting up real account (${REAL_EMAIL})...`);
-    let realJayden;
+    let realUserId;
     const realLookup = await client.query(
       `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
       [REAL_EMAIL]
     );
     if (realLookup.rows.length > 0) {
-      realJayden = realLookup.rows[0].id;
-      console.log(`  Found real account → id ${realJayden} (NOT modified)`);
+      realUserId = realLookup.rows[0].id;
+      console.log(`  Found real account → id ${realUserId} (NOT modified)`);
     } else {
       const seedPassword = process.env.SEED_REAL_USER_PASSWORD;
       if (!seedPassword) {
@@ -354,8 +354,8 @@ async function seed() {
          RETURNING id`,
         [REAL_EMAIL, hashed, ['entrepreneurship', 'technology', 'business', 'innovation']]
       );
-      realJayden = result.rows[0].id;
-      console.log(`  Created real account → id ${realJayden}`);
+      realUserId = result.rows[0].id;
+      console.log(`  Created real account → id ${realUserId}`);
     }
 
     // --------------------------------------------------
@@ -366,7 +366,7 @@ async function seed() {
     const flockDefs = [
       {
         name: 'DECA Nationals Prep',
-        creator: realJayden,
+        creator: realUserId,
         venue_name: 'Linderman Library',
         venue_address: '30 Library Drive, Bethlehem, PA 18015',
         venue_id: 'ChIJK8wKxVNWxokRVxqRmqBFRjY',
@@ -383,7 +383,7 @@ async function seed() {
       },
       {
         name: 'Weekend Hangout Plans',
-        creator: realJayden,
+        creator: realUserId,
         venue_name: 'The Steel Pub',
         venue_address: '55 E 3rd St, Bethlehem',
         venue_latitude: 40.6183,
@@ -406,7 +406,7 @@ async function seed() {
         event_time: hoursFromNow(24),
         status: 'confirmed',
         members: [
-          { uid: realJayden, status: 'accepted' },
+          { uid: realUserId, status: 'accepted' },
           { uid: emma, status: 'accepted' },
         ],
       },
@@ -418,7 +418,7 @@ async function seed() {
         event_time: hoursFromNow(48),
         status: 'planning',
         members: [
-          { uid: realJayden, status: 'accepted' },
+          { uid: realUserId, status: 'accepted' },
           { uid: emma, status: 'accepted' },
           { uid: jordan, status: 'accepted' },
           { uid: alex, status: 'invited' },
@@ -434,7 +434,7 @@ async function seed() {
         event_time: hoursFromNow(40),
         status: 'confirmed',
         members: [
-          { uid: realJayden, status: 'accepted' },
+          { uid: realUserId, status: 'accepted' },
           { uid: alex, status: 'accepted' },
           { uid: jordan, status: 'accepted' },
           { uid: sarah, status: 'accepted' },
@@ -450,7 +450,7 @@ async function seed() {
         event_time: hoursFromNow(1),
         status: 'confirmed',
         members: [
-          { uid: realJayden, status: 'accepted' },
+          { uid: realUserId, status: 'accepted' },
           { uid: mike, status: 'accepted' },
           { uid: emma, status: 'accepted' },
         ],
@@ -505,68 +505,68 @@ async function seed() {
     }
 
     // --- DECA Nationals Prep (10 messages) ---
-    await msg('DECA Nationals Prep', realJayden, "Alright team, nationals are in 3 weeks. We need to lock in 🔒", 2800);
+    await msg('DECA Nationals Prep', realUserId, "Alright team, nationals are in 3 weeks. We need to lock in 🔒", 2800);
     await msg('DECA Nationals Prep', emma, "I've been working on the marketing section, it's looking solid", 2750);
     await msg('DECA Nationals Prep', alex, "Same here, financial analysis is almost done. Need to run projections one more time", 2700);
-    await msg('DECA Nationals Prep', realJayden, "Let's meet tomorrow to run through the full presentation", 2650);
+    await msg('DECA Nationals Prep', realUserId, "Let's meet tomorrow to run through the full presentation", 2650);
     await msg('DECA Nationals Prep', jordan, "I'll bring the printed materials and practice scorecards", 2600);
-    await msg('DECA Nationals Prep', realJayden, "Perfect. We should also practice the Q&A section, judges always throw curveballs", 2550);
+    await msg('DECA Nationals Prep', realUserId, "Perfect. We should also practice the Q&A section, judges always throw curveballs", 2550);
     await msg('DECA Nationals Prep', emma, "Good call. Last time they grilled us on competitive analysis", 2500);
     await msg('DECA Nationals Prep', alex, "I've researched all the top competitors. We're ready for that this time", 2450);
-    await msg('DECA Nationals Prep', realJayden, "This is our year. Let's bring home the trophy 🏆", 2400);
+    await msg('DECA Nationals Prep', realUserId, "This is our year. Let's bring home the trophy 🏆", 2400);
     await msg('DECA Nationals Prep', jordan, "LET'S GOOO", 2380);
 
     // --- Weekend Hangout Plans (10 messages) ---
-    await msg('Weekend Hangout Plans', realJayden, "yo what's everyone doing Saturday?", 480);
+    await msg('Weekend Hangout Plans', realUserId, "yo what's everyone doing Saturday?", 480);
     await msg('Weekend Hangout Plans', mike, "nothing yet, what you thinking?", 475);
-    await msg('Weekend Hangout Plans', realJayden, "maybe Steel Pub? happy hour starts at 4", 470);
+    await msg('Weekend Hangout Plans', realUserId, "maybe Steel Pub? happy hour starts at 4", 470);
     await msg('Weekend Hangout Plans', emma, "I'm in! haven't been there in a while", 460);
-    await msg('Weekend Hangout Plans', realJayden, "bet, let's roll around 5ish?", 450);
+    await msg('Weekend Hangout Plans', realUserId, "bet, let's roll around 5ish?", 450);
     await msg('Weekend Hangout Plans', mike, "works for me, their wings are fire 🔥", 440);
     await msg('Weekend Hangout Plans', emma, "ooh yes get the garlic parm ones", 430);
-    await msg('Weekend Hangout Plans', realJayden, "noted 📝 Jordan you coming?", 420);
+    await msg('Weekend Hangout Plans', realUserId, "noted 📝 Jordan you coming?", 420);
     await msg('Weekend Hangout Plans', mike, "tell Jordan no excuses this time 😂", 410);
-    await msg('Weekend Hangout Plans', realJayden, "lmao fr, he always flakes last minute", 400);
+    await msg('Weekend Hangout Plans', realUserId, "lmao fr, he always flakes last minute", 400);
 
     // --- Study Session (8 messages) ---
     await msg('Study Session', alex, "exam is Wednesday, we should probably start studying lol", 1200);
-    await msg('Study Session', realJayden, "yeah I haven't even looked at chapter 5 yet 😬", 1180);
+    await msg('Study Session', realUserId, "yeah I haven't even looked at chapter 5 yet 😬", 1180);
     await msg('Study Session', emma, "same... the recursion stuff is confusing", 1160);
     await msg('Study Session', alex, "let's meet at Rauch tomorrow, I can explain the recursion concepts", 1140);
-    await msg('Study Session', realJayden, "you're a lifesaver fr", 1120);
+    await msg('Study Session', realUserId, "you're a lifesaver fr", 1120);
     await msg('Study Session', emma, "what time? I'm free after 2", 1100);
     await msg('Study Session', alex, "2pm works, I'll grab the big study room", 1080);
-    await msg('Study Session', realJayden, "I'll bring coffee for everyone ☕ we're gonna need it", 1060);
+    await msg('Study Session', realUserId, "I'll bring coffee for everyone ☕ we're gonna need it", 1060);
 
     // --- Friday Night Out (10 messages) ---
     await msg('Friday Night Out', mike, "friday plans?? we gotta go out", 3600);
-    await msg('Friday Night Out', realJayden, "I'm so down, this week has been brutal", 3550);
+    await msg('Friday Night Out', realUserId, "I'm so down, this week has been brutal", 3550);
     await msg('Friday Night Out', emma, "same 😩 I need to decompress", 3500);
     await msg('Friday Night Out', jordan, "downtown? or someone's place first?", 3450);
     await msg('Friday Night Out', mike, "pregame at mine then head out?", 3400);
-    await msg('Friday Night Out', realJayden, "that's the move. what time should we come over?", 3350);
+    await msg('Friday Night Out', realUserId, "that's the move. what time should we come over?", 3350);
     await msg('Friday Night Out', mike, "like 8? then we hit downtown around 10", 3300);
     await msg('Friday Night Out', emma, "perfect, gives me time to get ready", 3250);
     await msg('Friday Night Out', jordan, "I'll bring the speaker 🔊", 3200);
-    await msg('Friday Night Out', realJayden, "this is gonna be a good night 🎉", 3150);
+    await msg('Friday Night Out', realUserId, "this is gonna be a good night 🎉", 3150);
 
     // --- Sunday Brunch Crew (8 messages) ---
     await msg('Sunday Brunch Crew', emma, "who's doing brunch Sunday?", 1500);
-    await msg('Sunday Brunch Crew', realJayden, "me!! Molinari's?", 1480);
+    await msg('Sunday Brunch Crew', realUserId, "me!! Molinari's?", 1480);
     await msg('Sunday Brunch Crew', alex, "bottomless mimosas? say less 🥂", 1460);
     await msg('Sunday Brunch Crew', jordan, "their french toast is unreal", 1440);
     await msg('Sunday Brunch Crew', sarah, "count me in! love that place", 1430);
-    await msg('Sunday Brunch Crew', realJayden, "11am? I don't wanna wake up too early lol", 1420);
+    await msg('Sunday Brunch Crew', realUserId, "11am? I don't wanna wake up too early lol", 1420);
     await msg('Sunday Brunch Crew', emma, "11 is perfect, I'll make a reservation", 1400);
-    await msg('Sunday Brunch Crew', realJayden, "you're the best Emma 🙌", 1380);
+    await msg('Sunday Brunch Crew', realUserId, "you're the best Emma 🙌", 1380);
 
     // --- Downtown Tonight (8 messages) ---
     await msg('Downtown Tonight', sarah, "who's coming out tonight?? 🎉", 120);
-    await msg('Downtown Tonight', realJayden, "I'm in! where we going?", 115);
+    await msg('Downtown Tonight', realUserId, "I'm in! where we going?", 115);
     await msg('Downtown Tonight', sarah, "SouthSide 313, they have live music tonight", 110);
     await msg('Downtown Tonight', mike, "say less, I'm there", 100);
     await msg('Downtown Tonight', emma, "yesss I've been wanting to check that place out", 90);
-    await msg('Downtown Tonight', realJayden, "what time we meeting up?", 80);
+    await msg('Downtown Tonight', realUserId, "what time we meeting up?", 80);
     await msg('Downtown Tonight', sarah, "doors open at 8, let's get there around 8:30", 70);
     await msg('Downtown Tonight', mike, "bet, see everyone there 🤙", 60);
 
@@ -576,10 +576,10 @@ async function seed() {
     console.log('\nCreating stories...');
 
     const storyDefs = [
-      { user: realJayden, image: 'https://picsum.photos/seed/flock1/400/600', caption: 'Grinding for DECA nationals 💪', hoursAgo: 1 },
+      { user: realUserId, image: 'https://picsum.photos/seed/flock1/400/600', caption: 'Grinding for DECA nationals 💪', hoursAgo: 1 },
       { user: mike,       image: 'https://picsum.photos/seed/flock2/400/600', caption: 'Game day vibes 🏈',             hoursAgo: 2 },
       { user: emma,       image: 'https://picsum.photos/seed/flock3/400/600', caption: 'Coffee and code ☕',             hoursAgo: 3 },
-      { user: realJayden, image: 'https://picsum.photos/seed/flock4/400/600', caption: 'Late night study session 📚',    hoursAgo: 4 },
+      { user: realUserId, image: 'https://picsum.photos/seed/flock4/400/600', caption: 'Late night study session 📚',    hoursAgo: 4 },
       { user: alex,       image: 'https://picsum.photos/seed/flock5/400/600', caption: 'Downtown adventures 🌃',         hoursAgo: 5 },
       { user: jordan,     image: 'https://picsum.photos/seed/flock6/400/600', caption: 'Cooking something up 🍳',        hoursAgo: 6 },
       { user: emma,       image: 'https://picsum.photos/seed/flock7/400/600', caption: 'Art gallery finds 🎨',           hoursAgo: 8 },
@@ -628,7 +628,7 @@ async function seed() {
        WHERE f.id IN (SELECT flock_id FROM flock_members WHERE user_id = $1)
        GROUP BY f.id, f.name, f.status
        ORDER BY f.id`,
-      [realJayden]
+      [realUserId]
     );
     if (flockCheck.rows.length === 0) {
       console.error('  ❌ WARNING: No flocks found for real user!');
@@ -643,15 +643,15 @@ async function seed() {
     // Check messages
     const msgCheck = await client.query(
       `SELECT COUNT(*) as count FROM messages WHERE flock_id IN (SELECT flock_id FROM flock_members WHERE user_id = $1)`,
-      [realJayden]
+      [realUserId]
     );
     console.log(`  ✅ Messages across flocks: ${msgCheck.rows[0].count}`);
 
     const myMsgCheck = await client.query(
       `SELECT COUNT(*) as count FROM messages WHERE sender_id = $1`,
-      [realJayden]
+      [realUserId]
     );
-    console.log(`  ✅ Messages from the maintainer: ${myMsgCheck.rows[0].count}`);
+    console.log(`  ✅ Messages from the real account: ${myMsgCheck.rows[0].count}`);
 
     // Check stories
     const storyCheck = await client.query(
@@ -689,7 +689,7 @@ async function seed() {
     console.log(`  Flocks:     ${flockDefs.length}`);
     console.log(`  Messages:   ${messageCount}`);
     console.log(`  Stories:    ${storyCount}`);
-    console.log(`  Real account: ${REAL_EMAIL} -> id ${realJayden}`);
+    console.log(`  Real account: ${REAL_EMAIL} -> id ${realUserId}`);
     console.log('\n  Login with your configured credentials.');
     console.log('========================================\n');
   } catch (err) {

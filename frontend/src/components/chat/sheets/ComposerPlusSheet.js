@@ -11,8 +11,8 @@
  *   THIS SHEET HOLDS EVERYTHING THE HEADER USED TO.
  *
  * It began as "only things you send into the stream", with reading and
- * configuring left to the profile sheet. the maintainer settled it the other way on
- * 2026-09-05, looking at the shipped screen: the flock header carried a
+ * configuring left to the profile sheet. It was settled the other way on
+ * 2026-09-05, off the shipped screen: the flock header carried a
  * "Features" pill wide enough to push the plan's name into an ellipsis, and
  * behind it a rail of five more controls. Snapchat's header carries a name and
  * three small glyphs, and everything else lives behind the plus. "The plus

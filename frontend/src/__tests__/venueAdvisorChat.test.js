@@ -285,9 +285,9 @@ describe('Roost chat: the three answers are told apart', () => {
 // ---------------------------------------------------------------------------
 // IT HAS TO READ AS A CHAT, NOT AS A FORM.
 //
-// the maintainer looked at the shipped card and said the input "should be a bit more
-// clean, like you actually should be typing it, like how you would type to
-// a conversational AI assistant." Everything below pins the parts of that which are
+// The report on the shipped card said the input "should be a bit more
+// clean, like you actually should be typing it, like how you would type to a
+// conversational AI assistant." Everything below pins the parts of that which are
 // behaviour rather than taste: the turns accumulate, they survive the tab
 // strip that unmounts the card, the chips get out of the way once a
 // conversation exists, and the keyboard does what a keyboard does.
@@ -777,7 +777,7 @@ describe('Roost chat: the keyboard behaves like a keyboard', () => {
 // ---------------------------------------------------------------------------
 // BIRDIE IS IN THE ROOM.
 //
-// the maintainer, TestFlight build 26 (2026-08-21): "have Birdie pop out when it's
+// From TestFlight build 26 (2026-08-21): "have Birdie pop out when it's
 // talking so that it feels interactive. Like you're not just talking to a
 // blank wall. And then still have Birdie as the background. It should feel
 // like a regular chat." The component shipped that on 2026-08-25 and nothing
@@ -922,7 +922,7 @@ describe('Roost chat: Birdie is in the room', () => {
     expect(parseInt(SRC.match(/const AVATAR_SIZE = (\d+);/)[1], 10)).toBeGreaterThanOrEqual(40);
   });
 
-  test('the composer the maintainer verified is unchanged: grows to 132, Enter sends, Shift+Enter breaks', async () => {
+  test('the verified composer is unchanged: grows to 132, Enter sends, Shift+Enter breaks', async () => {
     mount();
     const input = await waitFor(field);
     expect(parseInt(SRC.match(/const COMPOSER_MAX_HEIGHT = (\d+);/)[1], 10)).toBe(132);

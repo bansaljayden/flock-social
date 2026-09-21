@@ -840,7 +840,7 @@ const Icons = {
   ),
 
   /* SAFETY. Two birds lifting a shield, with the tick knocked clean out of it.
-     Chosen by the maintainer 2026-09-05 to replace the plain stroked shield on the SOS
+     Chosen 2026-09-05 to replace the plain stroked shield on the SOS
      control: the old glyph was a generic security mark that said nothing about
      this product, and the birds are the one piece of Flock's language that
      appears on every other surface.

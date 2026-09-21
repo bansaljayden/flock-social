@@ -170,7 +170,7 @@ describe('signup and login failures', () => {
   });
 
   test('a success still identifies by account id and by nothing else', async () => {
-    respondWith(200, { token: 't', user: { id: 42, name: 'the maintainer', email: 'a@b.com' } });
+    respondWith(200, { token: 't', user: { id: 42, name: 'Casey', email: 'a@b.com' } });
     await api.login('a@b.com', 'pw');
     await flush();
     expect(mockIdentify).toHaveBeenCalledWith('42');

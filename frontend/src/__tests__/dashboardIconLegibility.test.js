@@ -2,7 +2,7 @@
  * DASHBOARD ICON LEGIBILITY — the four icon defects that shipped to the venue
  * and admin dashboards, locked shut.
  *
- * WHY THIS FILE EXISTS. the maintainer reported the venue and admin dashboard icons as
+ * WHY THIS FILE EXISTS. The venue and admin dashboard icons were reported as
  * "outdated and bad" twice. An earlier audit answered the wrong question: it
  * checked that the icons came FROM components/ui/Icons.js and reported 26 of 26
  * did. They did. The complaint was about the drawings and the choices, and a

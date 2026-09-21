@@ -3,7 +3,7 @@
 // ===========================================================================
 // A LOOKUP THAT DID NOT SUCCEED MUST NOT BECOME A SOURCED FACT.
 //
-// code review finding 6. services/mlPredictor.js getNearbyEvents answered
+// Code review finding 6. services/mlPredictor.js getNearbyEvents answered
 // with one indistinguishable `hasEvent: false` object in five situations, and
 // only one of them was an observation:
 //

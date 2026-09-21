@@ -1,7 +1,7 @@
 # Design System: Flock
 
 > **THIS FILE IS NOT THE SOURCE OF TRUTH, AND HAS NOT BEEN SINCE 2026-08-14.**
-> `DESIGN-STANDARD.md` wins over this file by the maintainer's decision. That precedence is
+> `DESIGN-STANDARD.md` wins over this file by an explicit decision. That precedence is
 > recorded at the top of `frontend/public/DESIGN-STANDARD.md` and it specifically
 > voids two instructions that used to live here: the overshoot easing
 > `cubic-bezier(0.34, 1.56, 0.64, 1)`, and the instruction to add `.scroll-fade`

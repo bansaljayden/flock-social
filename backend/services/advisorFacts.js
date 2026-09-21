@@ -598,7 +598,7 @@ const intakeAsOf = (profile) =>
 
 // ─── The venue's own curve, and the hours it actually runs ───────────────────
 //
-// Roost serves ANY venue type (the maintainer's directive 2026-08-19): a breakfast
+// Roost serves ANY venue type (product directive 2026-08-19): a breakfast
 // cafe peaks at 8 AM, so nothing here may hardcode an evening window. The
 // venue's Google-derived weekly curve says which hours the building actually
 // runs, per weekday, and every scan below walks THOSE hours. No dayparts are

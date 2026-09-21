@@ -1,4 +1,4 @@
-// Birdie is present in the flock chat. the maintainer's TestFlight note of
+// Birdie is present in the flock chat. From the TestFlight note of
 // 2026-08-21; wired 2026-09-04. Source contracts.
 const fs = require('fs');
 const path = require('path');

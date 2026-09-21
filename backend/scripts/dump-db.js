@@ -214,7 +214,7 @@ const OUT = path.resolve(
 
 // Round 17 re-audit: the first version of this compared paths case-SENSITIVELY,
 // and path.resolve() preserves case on Windows down to the drive letter. So
-// `node scripts/dump-db.js c:/users/jayden/flock-app/leak.sql` did not look like
+// `node scripts/dump-db.js c:/users/dev/flock-app/leak.sql` did not look like
 // an in-repo path at all, and with DUMP_ALLOW_ANY_PATH=1 it was allowed to
 // write a full credential dump into the tracked worktree. Measured, then fixed.
 //

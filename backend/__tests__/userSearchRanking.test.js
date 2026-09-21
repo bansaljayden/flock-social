@@ -188,9 +188,9 @@ test('the buckets are exact, then starts-with, then contains', async () => {
 });
 
 test('the ranking is case-insensitive on both sides, so SHOUTING still ranks first', async () => {
-  await seed(['Joanna Reyes', 'jayden bansal']);
-  const { names } = await search('JAYDEN BANSAL');
-  assert.equal(names[0], 'jayden bansal');
+  await seed(['Joanna Reyes', 'noor haddad']);
+  const { names } = await search('NOOR HADDAD');
+  assert.equal(names[0], 'noor haddad');
 });
 
 test('the same search twice gives the same twenty rows, in the same order', async () => {
@@ -227,9 +227,9 @@ test('a non-breaking space still finds them, because a phone keyboard inserts on
 });
 
 test('a full-width name still finds them, because a keyboard layout can type one', async () => {
-  await seed(['the maintainer']);
-  const { names } = await search('Ｊａｙｄｅｎ');
-  assert.deepEqual(names, ['the maintainer'], 'NFKC folding is not being applied to the term');
+  await seed(['Daniel']);
+  const { names } = await search('Ｄａｎｉｅｌ');
+  assert.deepEqual(names, ['Daniel'], 'NFKC folding is not being applied to the term');
 });
 
 test('leading and trailing space is not part of the name', async () => {

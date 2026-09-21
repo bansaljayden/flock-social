@@ -1,6 +1,6 @@
 """
 Scores the SHIPPED artifact and the two-head CANDIDATE on the identical served
-holdout, prints one table, and decides go or no-go against the maintainer's conditions.
+holdout, prints one table, and decides go or no-go against the stated conditions.
 
 WHAT IS COMPARED, AND HOW. Both sides are read from their ONNX files with
 onnxruntime, the way the backend reads them. Not from best_model.pkl, not from
@@ -517,7 +517,7 @@ def main():
                                 "this holdout size."}')
     else:
         print('  VERDICT: NO-GO. The candidate does not beat the shipped artifact on the '
-              'served population under the maintainer\'s conditions. Do not ship it.')
+              'served population under the stated conditions. Do not ship it.')
 
     verdict = {
         'overall_pass': go,

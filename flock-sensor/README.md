@@ -229,7 +229,7 @@ Waveshare SIM7600 boards are usually a UART pair plus a power-key line and can
 alternatively be run over USB, but nobody has read the datasheet for the exact
 board against this pin list, and guessing at it is how a unit gets built twice.
 
-Four ways out, in the order they cost least. **This is the maintainer's call, not the
+Four ways out, in the order they cost least. **This is a hardware call, not the
 code's**, and none of them is picked here:
 
 1. **Stacking header.** A 2x20 extra-tall header raises the HAT and leaves the
@@ -837,8 +837,8 @@ Things that are still open, so nobody has to rediscover them.
    accepted for that reason.
 9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C but a
    40-pin cellular HAT still covers the pins the break-beam and the mic's ADC
-   need. See "The pin conflict, which is still open". the maintainer's decision, and it
-   blocks ordering the modem, not the sensors.
+   need. See "The pin conflict, which is still open". It is an open hardware
+   decision, and it blocks ordering the modem, not the sensors.
 10. **The Lepton path is executed but barely exercised.** Every V4L2 ioctl in
    `ThermalCamera` was written from documentation, and on 2026-09-06 they all
    worked on the first board: the camera enumerates, opens raw Y16, reports

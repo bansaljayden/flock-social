@@ -260,7 +260,7 @@ describe('past flocks screen', () => {
 
   it('the real empty state names itself, and carries a bird', () => {
     // This used to read "one quiet sentence, no illustration" and pinned the
-    // absence of any mark. the maintainer, TestFlight build 26: "Birds on empty and
+    // absence of any mark. From TestFlight build 26: "Birds on empty and
     // error states. Yes. It should be everywhere." So the sentence became a
     // BirdNote. What is still pinned is the part that mattered: this state
     // says plainly that there is nothing here, rather than looking like a

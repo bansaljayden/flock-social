@@ -944,7 +944,7 @@ describe('the header says whether the connection is actually up', () => {
   });
 
   test('with the device itself offline the header says offline, not reconnecting', () => {
-    // the maintainer's rule: "reconnecting" only while something really is trying.
+    // The rule: "reconnecting" only while something really is trying.
     // With navigator.onLine false the device knows no retry can succeed, and
     // printing "reconnecting" over airplane mode is the hardcoded "online"
     // lie again, wearing amber.

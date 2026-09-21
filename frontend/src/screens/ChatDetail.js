@@ -961,7 +961,7 @@ export default function ChatDetail({
     // fatal-auth teardown or a session expiry, so a listener welded to one
     // instance goes quiet for good. Reading `.connected` is instance-agnostic
     // and costs a boolean, and the timer only runs while a chat is open.
-    // Three states, not two, and the middle one earns its word. the maintainer's rule,
+    // Three states, not two, and the middle one earns its word. The rule,
     // 2026-08-26: say "reconnecting" only while something really is trying, and
     // "offline" when the device already knows nothing can succeed.
     //   'online'        the socket is connected.
@@ -2524,7 +2524,7 @@ export default function ChatDetail({
                 arrow, a title, a member count, a presence dot and an overflow
                 button. Snapchat's chat header is a name and three small
                 glyphs; everything else is behind the plus, and that is where
-                these five went (the maintainer, 2026-09-05, looking at the shipped
+                these five went (2026-09-05, off the shipped
                 screen).
 
                 Ask Birdie, Vote on a venue, Invite friends, Search messages

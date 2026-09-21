@@ -2,7 +2,7 @@
 // THE ROOST SYSTEM PROMPT, in full, in one place.
 //
 // This is the operator document for the advisor's phrasing model (Layer C of
-// ADVISOR-GROUNDING.md). It is deliberately long: the maintainer's direction is a
+// ADVISOR-GROUNDING.md). It is deliberately long, by direction: it is a
 // comprehensive, unambiguous document, nearly ten pages, that any model can
 // follow cold, for ANY venue category, breakfast cafe to nightclub. Clarity
 // beats brevity everywhere in it; critical rules repeat at section
@@ -562,7 +562,7 @@ Emit the object. Nothing before it, nothing after it.`;
 //      the server substitutes, exactly as in the grounded prompt, so the
 //      advice path cannot become a side door for a fabricated statistic.
 //
-// The voice is the other half of the brief: the maintainer wants Roost to read like an
+// The voice is the other half of the brief: Roost must read like an
 // operator who has run rooms, not a content mill. That means picking one
 // answer, naming what it costs, and being willing to say a popular idea is a
 // bad one. Hedging into a list of five options is the failure mode this

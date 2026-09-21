@@ -4,7 +4,7 @@
  * THE BUG THIS EXISTS TO STOP COMING BACK. Flock ships as a Capacitor app, so
  * every screen is a WKWebView. WKWebView zooms the whole viewport when a
  * focused <input>, <select> or <textarea> has a computed font-size under 16px.
- * the maintainer hit it on a real device on the Birdie composer and on the venue and
+ * It was hit on a real device on the Birdie composer and on the venue and
  * admin dashboards. It is not a design choice and no screen benefits from it.
  *
  * THE FIX UNDER TEST is two rules in src/index.css, and only 16px on the

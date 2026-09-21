@@ -75,7 +75,7 @@ const PHOTO_SKU = RATES.places.skus.photos;
 // ---------------------------------------------------------------------------
 // THE BUDGET. One number. Everything else is derived from it.
 // ---------------------------------------------------------------------------
-// the maintainer's instruction, verbatim: "make sure it's rate limited to the point
+// The instruction, verbatim: "make sure it's rate limited to the point
 // where I'm not paying thousands a year, make sure the max I'd pay per year
 // would be like a hundred bucks per year, and that's regardless of how many
 // users I'll have", then raised to three hundred within the same conversation.
@@ -303,8 +303,8 @@ async function chargePhotoFetch() {
   if (r.rows.length > 0) {
     const dayFetches = Number(r.rows[0].fetches);
     // Say something while it is still possible to act on it. Eighty percent of
-    // a month's budget is a number the maintainer can decide to raise; a hard stop on
-    // the 22nd is one he can only find out about from a blank card.
+    // a month's budget is a number an operator can decide to raise; a hard stop
+    // on the 22nd can only be found out about from a blank card.
     if (dayFetches >= Math.floor(PHOTO_FETCH_BURST_PER_DAY * 0.8)) {
       logOncePerHour(
         'day-80',

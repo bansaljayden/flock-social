@@ -870,7 +870,7 @@ describe('an open receipt is only ever claimed for somebody who could see it', (
     expect(block).toContain("currentScreen !== 'chatDetail'");
     expect(block).toContain('!selectedFlockId');
     // docVisible is React STATE fed by visibilitychange, not a read at effect
-    // time. code review found the difference on 2026-09-01 for the badge cursor: a
+    // time. the review found the difference on 2026-09-01 for the badge cursor: a
     // tab parked on the chat and then hidden kept claiming to be reading off
     // one stale evaluation, forever.
     expect(block).toContain('!docVisible');

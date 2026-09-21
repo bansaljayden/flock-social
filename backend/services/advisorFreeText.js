@@ -4,7 +4,7 @@
 // Until 2026-08-20 the advisor had no way for an owner to type. Layer A was a
 // closed chip registry and routes/advisor.js answered 400 to any body carrying
 // prose, which is what made the one-way valve airtight: no user text existed on
-// the surface at all. the maintainer's direction reopened it. "The venue can ask any
+// the surface at all. The product direction reopened it. "The venue can ask any
 // question about its business and how it can promote, drive, or have better
 // business. It can ask any question in the chat." That is the T2 tier
 // ADVISOR-PRODUCT-SHAPE.md already designed, brought forward by decision, and
@@ -607,8 +607,9 @@ const REFUSAL_BUSY = "We can't answer that yet. We could not get to it just now.
 // A SPENT ALLOWANCE IS NOT A FAULT, and until 2026-08-20 it was reported as
 // one. Both refusals came out of a charge that returned a bare false, so an
 // owner who had used the day's twenty typed questions read that we could not
-// get to it just now and that it would take another go shortly. the maintainer hit this
-// on his own preview and spent several minutes diagnosing a broken product,
+// get to it just now and that it would take another go shortly. That was hit
+// on a real preview, costing several minutes diagnosing a working ceiling as a
+// broken product,
 // which is the exact cost of a sentence that misdescribes itself: the copy
 // promised a retry that would refuse identically until midnight.
 //

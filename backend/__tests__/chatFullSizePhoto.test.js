@@ -4,8 +4,8 @@
 //
 // History deliberately ships only the thumbnail for image messages (the CASE
 // in both history SELECTs, chatImageThumbs round), and the full image stays in
-// the row "for a future full-size viewer". That viewer exists now (the maintainer,
-// 2026-08-27: images are wanted in full, the bandwidth saving stays), and
+// the row "for a future full-size viewer". That viewer exists now
+// (2026-08-27: images are wanted in full, the bandwidth saving stays), and
 // these two endpoints are the only door to the stored original. What is
 // pinned: the flock read is membership-gated, the DM read answers 404 to a
 // stranger (not 403, which would confirm the id exists), and a hidden

@@ -15,9 +15,9 @@
  * This regression is invisible. Putting `import { getMessaging } from
  * 'firebase/messaging'` back at the top of the file changes no behaviour, logs
  * no warning, and fails no other test. The only symptom is a number in a build
- * report that nobody reads, on a metric the maintainer cares about for a growth reason:
+ * report that nobody reads, on a metric that matters for a growth reason:
  * the audience is teenagers on mid-range Android phones, so first paint is how
- * fast the app feels to the users he is trying to get.
+ * fast the app feels to the users the product is trying to win.
  *
  * The second half of this file is the more subtle half. A lazy import returns a
  * promise, and the one thing in this module that cannot wait on a promise is

@@ -477,7 +477,7 @@ function getVenueContextBonus(types, dayOfWeek, hour, priceLevel, reviews) {
     // Late night mex. `hour <= 24` never fired: hours run 0 to 23, so the
     // bonus stopped at 23 and midnight fell through to the `hour <= 10`
     // penalty below, scoring a Friday midnight taqueria 18 points BELOW an
-    // ordinary hour. the maintainer's call 2026-08-26: midnight is late night, which
+    // ordinary hour. Decided 2026-08-26: midnight is late night, which
     // is what the comment always said. Weekday midnight is untouched and still
     // takes the early-hours penalty.
     else if ((hour >= 22 || hour === 0) && weekend) bonus += 8;

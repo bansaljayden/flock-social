@@ -2,7 +2,7 @@
 //
 // THE THREE GUARDS THAT STAND BETWEEN THE BESTTIME BUDGET AND THE TRAPS.
 //
-// the maintainer approved paying for two fresh collection windows (2026-08-28, ~$205).
+// Two fresh collection windows were approved for purchase (2026-08-28, ~$205).
 // The spend research found three ways that money destroys itself, and each got
 // a code guard. These pins hold the guards still, as source pins, because the
 // scripts construct their own Pool against DATABASE_URL and running them in a

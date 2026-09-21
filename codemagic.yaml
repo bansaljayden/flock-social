@@ -494,7 +494,7 @@ workflows:
   #     performed. Login does not require it, and the reply already says
   #     "if prompted".
   #   * Accounts: three. A and B are FIXED, pre-verified, persistent accounts
-  #     that the maintainer creates once by ordinary signup and confirms by email;
+  #     created once by ordinary signup and confirmed by email;
   #     their credentials arrive as REVIEW_EMAIL_A, REVIEW_EMAIL_B and
   #     REVIEW_PASSWORD from the flock_web env group, and the first step below
   #     refuses to build if any is missing. Every shot that needs a verified
@@ -508,7 +508,7 @@ workflows:
   #     committed password is written anywhere.
   #
   # Nothing here signs, uploads or touches App Store Connect. The only output
-  # is an .mp4 in the build artifacts, which the maintainer attaches to the reply.
+  # is an .mp4 in the build artifacts, which is attached to the reply by hand.
   ios-review-recording:
     name: Flock iOS review recording (Simulator, unattended)
     instance_type: mac_mini_m2

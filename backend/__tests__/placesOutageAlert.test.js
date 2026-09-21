@@ -10,7 +10,7 @@
 //
 // So the detection was worth nothing without this file, and the thing worth
 // testing here is not "does it send an email" but the two rules that decide
-// whether the maintainer's inbox tells him the truth: one mail a day, and NEVER a
+// whether the operator's inbox tells the truth: one mail a day, and NEVER a
 // silent day bought by a send that failed.
 const test = require('node:test');
 const assert = require('node:assert');

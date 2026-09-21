@@ -1171,7 +1171,7 @@ test('availability: an expired pulse is invisible to me and to my friends', asyn
 // 8. FIELD BOUNDS — every ceiling derived from the column or the interface
 // ===========================================================================
 //
-// The global JSON body limit dropped from 1MB to 64KB this session, so any
+// The global JSON body limit dropped from 1MB to 64KB in the same change, so any
 // field that leaned on it as its only maximum changed silently. These are the
 // derivations, one per field:
 //

@@ -1,6 +1,6 @@
 /**
  * BIRD BRAND MOMENTS — the photoreal mascots are the brand identity now
- * (the maintainer, 2026-08-14: "just use the new ones that we made... the warm one
+ * (decided 2026-08-14: "just use the new ones that we made... the warm one
  * and the cobalt one"), and this file locks the rules that placement pass
  * followed so a later edit cannot silently unwind them:
  *
@@ -17,7 +17,7 @@
  *      dashboards are work tools and the rAF loop is a per-instance cost.
  *
  *   3. RETIRED 2026-08-25, and replaced, not deleted. The rule used to be
- *      "the bird marks genuine-empty, never an error". the maintainer, reviewing
+ *      "the bird marks genuine-empty, never an error". From the review of
  *      TestFlight build 26: "Birds on empty and error states. Yes. It should
  *      be everywhere." So errors get birds now.
  *
@@ -36,7 +36,7 @@
  *
  *   4. Both birds, on purpose. Cobalt where the subject is Flock users, warm
  *      where it is the owner's or the flock's own space. If one of them drops
- *      to zero uses, the mix the maintainer asked for twice is gone.
+ *      to zero uses, the mix asked for twice is gone.
  *
  *   5. Never a tiny functional glyph. Below ~40px the photograph is a smudge;
  *      that register belongs to Icons.birdie.
@@ -300,7 +300,7 @@ describe('empty AND error states carry a bird', () => {
     expect(failedBranch).not.toContain('No reviews yet');
   });
 
-  test('the states the maintainer named by hand all have one', () => {
+  test('the states named by hand in the report all have one', () => {
     // "The Reviews tab that failed to load, lists with nothing in them,
     // failed fetches, blocked-users-empty, no-friends, no-flocks,
     // no-search-results, and so on."
@@ -380,7 +380,7 @@ describe('BirdieStill source hygiene', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The 2026-09-01 sweep. the maintainer, TestFlight 2026-08-21: "Any error page or
+// The 2026-09-01 sweep. From the TestFlight pass of 2026-08-21: "Any error page or
 // no-content page needs a bird. We have five birds, and we can add multiple
 // of them." The first pass covered the venue dashboard, blocked accounts,
 // past flocks and the friend search; this one covered what was left. Each

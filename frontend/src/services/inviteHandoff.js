@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // INVITE HANDOFF — carrying an invite token across the auth round trip.
 //
-// The problem this exists for, in the maintainer's words: "when I send an invite they
+// The problem this exists for, as reported: "when I send an invite they
 // don't get a direct link to being able to text in that flock". Someone opens
 // /i/<token> in a group chat, taps the primary action, and has to make an
 // account before they can be in the conversation. Making an account is not one

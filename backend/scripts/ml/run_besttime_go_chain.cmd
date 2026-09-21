@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-cd /d C:\path\to\flock-app\backend
+cd /d "%~dp0..\.."
 set LOG=scripts\ml\go_chain.log
 echo [CHAIN] start %date% %time% > %LOG%
 

@@ -413,12 +413,12 @@
   height: 64px;
 }
 /* The direct door into the app. The corner block still opens the site menu,
-   but opening Flock no longer requires it (the maintainer, 2026-08-27: people should
+   but opening Flock no longer requires it (2026-08-27: people should
    not have to tap the hamburger and then tap again). Anchored to the CORNER,
    not to the wrap: the first version used margin-left auto inside .lp-nav-in,
    whose right edge sits under the 64px absolute corner block on a phone, so
    the button rendered half beneath the hamburger and, with the menu open, its
-   hit area sat on top of the X (the maintainer's phone screenshot, 2026-08-27).
+   hit area sat on top of the X (reported from a phone screenshot, 2026-08-27).
    Absolute against the sticky nav puts it a fixed 14px left of the corner at
    every width, and it hides while the menu is open because the panel carries
    its own Open Flock CTA and nothing may fight the X. */
@@ -974,8 +974,8 @@ html:has(.lp) body { overflow-x: clip; }
 @media (min-width: 900px) {
   /* Half-and-half was the real bug here. At 1fr/1fr the split card, a ~420px
      table, sat alone in a 560px column: top-aligned it left a hole under
-     itself, centered it floated, and both got reported (the maintainer, 2026-08-27,
-     from the MacBook; the phone stacks and was always fine). Same cure as
+     itself, centered it floated, and both got reported (2026-08-27,
+     from a MacBook; the phone stacks and was always fine). Same cure as
      .lp-birdie and the demo head: the card column is the card's own width,
      the text column is the measure the words set in, space-between owns the
      gutter, and center is correct once both blocks have deliberate sizes. */
@@ -1086,7 +1086,7 @@ html:has(.lp) body { overflow-x: clip; }
   border: 1px solid var(--rule);
   border-radius: 18px;
   background: var(--plate);
-  /* Scaled up 2026-08-27: the maintainer's read of the section was that the card sat
+  /* Scaled up 2026-08-27: the read of the section was that the card sat
      small in a lot of open space. Wider column (500px, .lp-row above), more
      generous padding, and the rows sized to be read rather than to fit. */
   padding: clamp(24px, 3.4vw, 34px);
@@ -1122,7 +1122,7 @@ html:has(.lp) body { overflow-x: clip; }
   align-items: start;
 }
 @media (min-width: 900px) {
-  /* Hierarchy, not symmetry (the maintainer, 2026-08-27: "some are supposed to be
+  /* Hierarchy, not symmetry (reported 2026-08-27: "some are supposed to be
      bigger than others"). This section's headline is "Free for your friend
      group", so the Free card is the subject and reads wider; the venue card
      is the aside it actually is. Equal auto-fit columns said the two
@@ -1450,7 +1450,7 @@ html:has(.lp) body { overflow-x: clip; }
   /* The Birdie composition, on purpose: this ran 1.35fr/1fr for a while,
      which handed the five claims a quarter of the page and let them float in
      it, first bottom-aligned, then centered, and both read as misplacement
-     on a MacBook (the maintainer, twice, 2026-08-27: "the weirdest orientation I've
+     on a MacBook (reported twice, 2026-08-27: "the weirdest orientation I've
      seen"). Fractions were the problem, not the alignment: the text column
      gets the measure it actually sets in (38rem, same as .lp-birdie, and the
      lead's 56ch cap lands inside it), the claims get a fixed 340px block,

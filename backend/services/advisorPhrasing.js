@@ -24,7 +24,7 @@
 // from this exact dashboard on 2026-08-14 (DESIGN-STANDARD rule 5). An
 // unconstrained phrasing layer is a machine for regenerating that box.
 //
-// MODEL. ADVISOR_MODEL env var, default gemini-3.7-flash (the maintainer's pick,
+// MODEL. ADVISOR_MODEL env var, default gemini-3.7-flash (chosen
 // 2026-08-19). The repo validates no model string anywhere — BIRDIE_MODEL is
 // the same raw env-var idiom (routes/ai.js) — so the guard against a bad name
 // is at runtime: a model the API answers 404 for is swapped once, in-process,
@@ -71,7 +71,7 @@ const { upstreamSignal } = require('../utils/upstream');
 // output, placeholders included.
 // The product's name, in exactly one backend place (its frontend twin is the
 // fallback constant in components/VenueAdvisorChat.js, which prefers what
-// this serves). Decided by the maintainer 2026-08-19; renaming the whole feature is
+// this serves). Decided 2026-08-19; renaming the whole feature is
 // this line. The name stays quiet: a surface title, never a mascot voice.
 const ADVISOR_NAME = 'Roost';
 
@@ -187,8 +187,8 @@ function isKnownIntent(intentId) {
 // ── Flag ─────────────────────────────────────────────────────────────────────
 // DEFAULT ON since 2026-08-20. It shipped default OFF and stayed there, which
 // meant the whole phrasing layer, and with it the typed question field that
-// depends on it, was dark on every deploy including the maintainer's own preview: he
-// had never once seen the feature he asked for. A flag whose off state is
+// depends on it, was dark on every deploy including the owner-facing preview,
+// so the feature nobody could find was the feature just built. A flag whose off state is
 // invisible is not a safe default, it is a feature nobody can find.
 //
 // Off is still one env var away (ADVISOR_PHRASING_ENABLED=false), and every
@@ -278,9 +278,9 @@ const PER_VENUE_DAILY_QUESTIONS = 20;
 // count, so we are refusing". The free-text surface then served one sentence
 // for both, and it was the sentence for the second: an owner who had simply
 // used up the day's twenty questions was told we could not get to it just now
-// and that it would take another go shortly. the maintainer hit exactly that on his own
-// preview and spent several minutes reading a working ceiling as a broken
-// product, which is the whole cost of the conflation.
+// and that it would take another go shortly. That happened on a real preview,
+// costing several minutes of reading a working ceiling as a broken product,
+// which is the whole cost of the conflation.
 //
 // A ceiling is a fact about the owner's own day and it has a time attached. An
 // unavailable meter is a fault on our side with no time attached. They are not
@@ -511,7 +511,7 @@ async function ceilingResetPhrase(now = new Date()) {
 // it asks for is ALSO enforced by the valve below, because no guard may live
 // in the prompt alone (grounding doc, guard 7).
 // The system prompt lives in its own module: it is a ten-page operator
-// document (the maintainer's direction) and the one file to edit when the voice or
+// document (by product direction) and the one file to edit when the voice or
 // the contract changes. Every rule in it is also enforced by the valve below.
 const { SYSTEM_PROMPT } = require('./advisorPrompt');
 

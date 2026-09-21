@@ -3,7 +3,7 @@
 // THE ALARM FOR THE OUTAGE NOBODY PAID FOR.
 //
 // Google Places answered 429 from 2026-09-01 to 2026-09-05. Venue pins and
-// photos were dead for five days and the only thing that noticed was the maintainer,
+// photos were dead for five days and the only thing that noticed was a human,
 // by eye, on day five. Railway's log had been printing
 // "[PublicDemo] Places search failed: HTTP 429" the entire time.
 //

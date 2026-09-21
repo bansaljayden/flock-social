@@ -5,7 +5,7 @@
 // services/photoStore.js charges Google Place Photos in one statement, and the
 // statement is the whole control. It has to be exact, because it is the only
 // thing standing between "photos always render" and a Google invoice with a
-// four-figure number on it, and because the maintainer set the budget in dollars per
+// four-figure number on it, and because the budget is set in dollars per
 // YEAR rather than in requests per day.
 //
 // The statement is subtle enough that a unit test with a fake pool proves

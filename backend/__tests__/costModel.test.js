@@ -518,7 +518,7 @@ test('the infrastructure and tooling split is published and adds up', () => {
   const sum = Math.round((f.infrastructureMonthlyUsd + f.toolingMonthlyUsd) * 100) / 100;
   assert.equal(sum, f.effectiveMonthlyUsd, 'infrastructure plus tooling must equal the effective monthly total');
   const tooling = cm.FIXED_MONTHLY.filter((e) => e.kind === 'tooling').map((e) => e.id).sort();
-  assert.deepEqual(tooling, ['development-tooling', 'code-review'], 'exactly the two developer tools are tagged as tooling');
+  assert.deepEqual(tooling, ['ai-assistant-subscription', 'code-review-tool'], 'exactly the two developer tools are tagged as tooling');
   assert.ok(f.toolingMonthlyUsd > 0, 'tooling is a real recurring bill and must not read as zero');
   assert.ok(f.infrastructureMonthlyUsd > f.toolingMonthlyUsd, 'serving the product costs more than the tools used to build it');
 });

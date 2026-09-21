@@ -20,7 +20,7 @@
 //   is a lower priority than the Places counter because OpenWeatherMap is the
 //   cheaper vendor and the 30-minute cache absorbs most of the traffic.
 //
-//   DECIDED 2026-08-14 (the maintainer: "do everything on my list"): WX_DAILY sits at
+//   DECIDED 2026-08-14: WX_DAILY sits at
 //   950, UNDER OpenWeatherMap's free allowance of 1,000/day, with 50 calls of
 //   headroom for clock skew between our day window and theirs. The old value
 //   was 3000, which was willing to spend past free into billed usage on a plan

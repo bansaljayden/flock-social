@@ -1778,8 +1778,8 @@ router.get('/search',
       // Three spellings of the same question were three different searches:
       //
       //   * NFKC folds compatibility variants. An iOS keyboard set to a
-      //     full-width layout types "Ｊａｙｄｅｎ", which is a different string
-      //     from "the maintainer" at every byte and matched nobody.
+      //     full-width layout types "Ｄａｎｉｅｌ", which is a different string
+      //     from "Daniel" at every byte and matched nobody.
       //   * \s+ collapses whitespace RUNS. "John  Smith" pasted out of a
       //     message, or a "John Smith" carrying the U+00A0 non-breaking space an
       //     iOS autocorrect inserts, both failed against a stored "John Smith"
@@ -1789,7 +1789,7 @@ router.get('/search',
       //     (U+2000 and friends fold to U+0020).
       //
       // Case needs nothing here: the match is ILIKE and the ranking below uses
-      // lower(), so "jayden", "the maintainer" and "JAYDEN" were already one search.
+      // lower(), so "daniel", "Daniel" and "DANIEL" were already one search.
       // Diacritics are NOT folded and this is the one thing left undone: "Jose"
       // does not find "José". Folding it properly wants the `unaccent`
       // extension, which this database does not have (no migration issues a

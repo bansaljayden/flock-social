@@ -3189,7 +3189,7 @@ function reconstructScore(rawDelta, baseline) {
 }
 
 // ---------------------------------------------------------------------------
-// SCORE-QMAP — ARMED 2026-08-28, BY JAYDEN'S DECISION. Flag: CROWD_QMAP_ENABLED.
+// SCORE-QMAP — ARMED 2026-08-28, BY PRODUCT DECISION. Flag: CROWD_QMAP_ENABLED.
 //
 // The decision this block used to wait for has been made: within-10 is the
 // primary accuracy metric, because the one number on the card is the product
@@ -3217,7 +3217,7 @@ function reconstructScore(rawDelta, baseline) {
 // number sits in the middle of it at sd 21.4, 0.58 of the truth's spread. A
 // point estimate cannot be near both modes: MAE is minimised by the conditional
 // median of a bimodal target, within-10 by committing to a mode. So this is a
-// product choice between two metrics, not a bug fix, and it is the maintainer's to make.
+// product choice between two metrics, not a bug fix, and it is a product call.
 // Full write-up: scripts/ml/train/QMAP-DECISION.md.
 //
 // WHAT IT IS WORTH, re-derived 2026-08-20 against the reconstruction production

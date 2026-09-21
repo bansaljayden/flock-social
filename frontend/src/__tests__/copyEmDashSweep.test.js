@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // DESIGN-STANDARD A2, APPLIED TO THE WHOLE APP INSTEAD OF EIGHT PINNED REGIONS.
 //
-// "Remove ALL em dashes from the site." It is the maintainer's own rule, taken off
+// "Remove ALL em dashes from the site." It is a house rule, taken off
 // camera from the review videos, and DESIGN-STANDARD calls it the number one
 // regression risk on any new copy. Until now there was no app wide guard for
 // it. Roughly eight regions were pinned by name (`handleSendFlockInvites`, the
