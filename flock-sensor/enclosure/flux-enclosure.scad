@@ -40,11 +40,27 @@ pi_hole_dy      = 49.0;
 pi_hole_inset   = 3.5;
 pi_hole_dia     = 2.7;   // clearance for M2.5
 
-// Raspberry Pi Touch Display 2, 7 inch. 720x1280 native, so its long axis is
-// the portrait axis.
-screen_outer_w  = 120.24;  // short edge
-screen_outer_h  = 189.32;  // long edge
-screen_thick    = 14.50;
+// THE SCREEN IS NOT THE PART THIS FILE FIRST ASSUMED. It was written for a
+// Raspberry Pi Touch Display 2, a 720x1280 portrait DSI panel, because that is
+// what an early build plan named. The panel in hand is a Lebula/ROADOM 7 inch
+// 1024x600 HDMI touchscreen: landscape, and not a bare panel at all. It is a
+// carrier board with two speakers, five buttons and a Raspberry Pi Zero
+// mounting outline on the back, so the PCB is noticeably larger than the 7 inch
+// LCD bonded to it, and the PCB is what a box has to swallow.
+//
+// Measured photogrammetrically: the board was photographed beside a US one
+// dollar note, which is 155.956 x 66.294 mm on every note ever printed and is
+// therefore a better ruler than most rulers. Scaling the board against the
+// note's two edges gives 178.1 x 125.6 and 182.6 x 128.8; the 2.5% spread
+// between them is the camera's perspective and the note's creases, so the
+// honest reading is 180 x 127 with about 5 mm of doubt either way.
+//
+// That doubt is why screen_slack exists and why the fit test comes first. Do
+// not cut acrylic against these numbers.
+screen_outer_w  = 180.0;   // long edge, horizontal: the PCB, not the LCD
+screen_outer_h  = 127.0;   // short edge, vertical
+screen_thick    = 12.0;    // MEASURE: board plus the LCD behind it
+screen_slack    = 5.0;     // the measurement's own uncertainty
 
 // Anker Prime 20K 200W, model A1336 confirmed off the unit's own label:
 // 124 x 53 x 48.
@@ -59,20 +75,19 @@ batt_h          = 53.0;
 batt_d          = 48.0;
 batt_contacts_face = "bottom";   // where the five dock pins look
 
-// The glass's ACTIVE area, inside the black border. The cutout is sized to this
-// and not to the module's outer size, or the border shows through.
+// The lit area of the LCD. 1024x600 on a 7 inch diagonal works out to
+// 154.2 x 86.0, and the panel vendors publish exactly that, so the size is
+// settled.
 //
-// These are the published 155 x 88, and they check out independently: a 7 inch
-// diagonal at the panel's 9:16 ratio is 87.2 x 155.0, so the spec and the
-// geometry agree. Worth stating because the first pass at this file guessed
-// 99 x 165 from the outer size, which would have cut an opening wider than the
-// glass behind it and shown the frame on all four sides.
-//
-// The module is 120.24 x 189.32 overall, so the screen's own frame is about
-// 16 mm on each side and 17 mm top and bottom. That is a wide border already,
-// which is why the panel's own bezel below is kept modest.
-screen_active_w = 88.0;
-screen_active_h = 155.0;
+// WHERE it sits on the 180 x 127 board is NOT settled, and that is the number
+// that decides whether the window looks centred or looks like a mistake. The
+// board is wider than the LCD by about 26 mm and taller by about 41 mm, and
+// none of that margin is symmetric: the buttons run down one side and the
+// speakers along the bottom. Waiting on the face-up photo.
+screen_active_w = 154.2;   // horizontal, landscape
+screen_active_h = 86.0;    // vertical
+screen_active_offset_x = 0;   // MEASURE: from the board's left edge
+screen_active_offset_y = 0;   // MEASURE: from the board's bottom edge
 
 // PureThermal 3 carrier: 25.8 x 28.9 from the October 2022 datasheet.
 pt3_w           = 25.8;
@@ -94,17 +109,21 @@ lens_dia        = 11.0;    // MEASURE
 // DESIGN CHOICES. These are yours to change.
 // ===========================================================================
 
-// THE ONE THAT MATTERS. Portrait is what display_loop draws for (720x1280) and
-// what the code is written and tested against.
+// The portrait question is CLOSED, and it closed itself. The panel is
+// 1024x600, which is landscape, so the 11.5 mm shortfall that was going to
+// force the box to 8.75 inches tall never existed: it came from the DSI panel
+// this file was first written against. The locked 9 x 7 inch box holds a
+// 180 x 127 board with 48 mm spare across and 50 mm up, which is room for the
+// bezel and then some.
 //
-// The locked 9 x 7 inch box CANNOT hold this screen in portrait: it is 11.5 mm
-// short before any bezel at all. So either the box gets taller, which is what
-// portrait = true does below, or the screen turns landscape and the display
-// code has to be rewritten for 1280x720. Taller box is the cheaper of the two.
-portrait        = true;
-
-box_w           = 228.6;                      // 9 inch, unchanged
-box_h           = portrait ? 221.0 : 177.8;   // 8.70 inch portrait, 7 inch landscape
+// main.py now reads its layout from whatever the framebuffer reports and lays
+// the three readings out in columns when the panel is wider than it is tall,
+// so nothing in the code depends on this either way. There is no `portrait`
+// variable any more: screen_outer_w and screen_active_w mean horizontal and
+// the _h pair mean vertical, full stop. The flag survived one edit after the
+// panel changed and by then it was swapping the axes the wrong way round.
+box_w           = 228.6;   // 9 inch
+box_h           = 177.8;   // 7 inch, back to the original lock
 box_d           = 88.9;                       // 3.5 inch
 
 wall            = 4.0;    // 3 mm acrylic later; 4 mm prints stronger
@@ -142,8 +161,8 @@ module pi_hole_pattern(depth) {
 // the panel overlaps the glass edge and no black border shows through.
 module screen_opening(t) {
     overlap = 1.0;
-    w = (portrait ? screen_active_w : screen_active_h) - 2 * overlap;
-    h = (portrait ? screen_active_h : screen_active_w) - 2 * overlap;
+    w = screen_active_w - 2 * overlap;
+    h = screen_active_h - 2 * overlap;
     translate([(box_w - w) / 2, (box_h - h) / 2, -1])
         cube([w, h, t + 2]);
 }
@@ -156,19 +175,22 @@ module screen_opening(t) {
 // can be checked against the real part for the cost of an hour of filament.
 module screen_fit_test() {
     m = 24;  // margin of material around the module
-    w = (portrait ? screen_outer_w : screen_outer_h) + 2 * m;
-    h = (portrait ? screen_outer_h : screen_outer_w) + 2 * m;
-    ow = (portrait ? screen_active_w : screen_active_h) - 2;
-    oh = (portrait ? screen_active_h : screen_active_w) - 2;
+    w = screen_outer_w + 2 * m;
+    h = screen_outer_h + 2 * m;
+    ow = screen_active_w - 2;
+    oh = screen_active_h - 2;
     difference() {
         rounded_plate(w, h, wall, corner_r);
         translate([(w - ow) / 2, (h - oh) / 2, -1]) cube([ow, oh, wall + 2]);
         // A shallow rebate the module drops into, so it sits flush.
-        translate([(w - (portrait ? screen_outer_w : screen_outer_h)) / 2,
-                   (h - (portrait ? screen_outer_h : screen_outer_w)) / 2,
+        // Cut to the upper end of the measurement, so a board that turns out
+        // to be 5 mm bigger than the photo said still drops in. A test piece
+        // that is too tight teaches nothing except that it is too tight.
+        translate([(w - screen_outer_w - screen_slack) / 2,
+                   (h - screen_outer_h - screen_slack) / 2,
                    wall - 1.6])
-            cube([portrait ? screen_outer_w : screen_outer_h,
-                  portrait ? screen_outer_h : screen_outer_w, 2]);
+            cube([screen_outer_w + screen_slack,
+                  screen_outer_h + screen_slack, 2]);
     }
 }
 
@@ -272,6 +294,6 @@ else {
     color("blue", 0.3) translate([(box_w - screen_outer_w) / 2,
                                   (box_h - screen_outer_h) / 2,
                                   box_d - wall - screen_thick])
-        cube([portrait ? screen_outer_w : screen_outer_h,
-              portrait ? screen_outer_h : screen_outer_w, screen_thick]);
+        cube([screen_outer_w,
+              screen_outer_h, screen_thick]);
 }
