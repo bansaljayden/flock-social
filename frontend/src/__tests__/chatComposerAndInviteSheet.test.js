@@ -376,7 +376,7 @@ describe('the send button', () => {
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
 
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'on my way' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: 'on my way' } });
 
     const send = screen.getByLabelText('Send message');
     expect(send.disabled).toBe(false);
@@ -402,12 +402,12 @@ describe('the send button', () => {
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
 
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: '     ' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: '     ' } });
     noSendOffered();
     expect(p.sendChatMessage).not.toHaveBeenCalled();
 
     // Tabs and newlines are whitespace too, and a paste is the way they arrive.
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: '\t\n  \t' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: '\t\n  \t' } });
     noSendOffered();
   });
 
@@ -418,7 +418,7 @@ describe('the send button', () => {
     // side.
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
-    const input = screen.getByLabelText('Message');
+    const input = screen.getByLabelText('Message Friday');
 
     fireEvent.change(input, { target: { value: 'see you there' } });
     expect(screen.getByLabelText('Send message')).toBeTruthy();
@@ -435,7 +435,7 @@ describe('the send button', () => {
     // was emptied out from under it.
     const p = chatProps({ chatInputHasText: true });
     const { rerender } = render(React.createElement(ChatDetail, p));
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'sent already' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: 'sent already' } });
     expect(screen.getByLabelText('Send message')).toBeTruthy();
 
     rerender(React.createElement(ChatDetail, { ...p, chatInputHasText: false }));
@@ -448,7 +448,7 @@ describe('the send button', () => {
     // sendChatMessage's silent trim guard on a boxful of spaces.
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
-    const input = screen.getByLabelText('Message');
+    const input = screen.getByLabelText('Message Friday');
 
     fireEvent.change(input, { target: { value: '   ' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -467,7 +467,7 @@ describe('the send button', () => {
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
 
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'ty' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: 'ty' } });
     expect(p.handleChatInputChange).toHaveBeenCalledTimes(1);
     expect(p.handleChatInputChange.mock.calls[0][0].target.value).toBe('ty');
   });
@@ -774,7 +774,7 @@ describe('leaving the flock chat leaves the half-written message behind', () => 
     const { getSelectedFlock } = { getSelectedFlock: () => FLOCK_WITH_VENUE };
     const p = chatProps({ getSelectedFlock });
     render(React.createElement(ChatDetail, p));
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'half typed' } });
+    fireEvent.change(screen.getByLabelText('Message Friday'), { target: { value: 'half typed' } });
     // The menu has to be opened before the item exists to click.
     fireEvent.click(screen.getByRole('button', { name: /^Options for/ }));
     fireEvent.click(screen.getByText('Change place'));

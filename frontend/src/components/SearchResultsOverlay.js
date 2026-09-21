@@ -72,6 +72,7 @@ export default function SearchResultsOverlay({
   userLocation,
   venueLoadError,
   venueQuery,
+  SearchInputLocal,
   venueSearching,
 }) {
             const calcDist = (vLoc) => {
@@ -112,11 +113,19 @@ export default function SearchResultsOverlay({
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
                   <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <div style={{ flex: 1, position: 'relative' }}>
-                      <input aria-label="Search venues"
-                        ref={searchResultsInputRef}
+                      {/* LOCAL STATE, COMMITTED ON A DEBOUNCE. This was a
+                          controlled input whose value lived at the top of the
+                          app, so every character re-rendered the whole tree AND
+                          this list of venue cards underneath it. Nothing here
+                          is timing-sensitive: the network search behind
+                          handleVenueQueryChange is already on an 800ms debounce
+                          of its own, so the only thing the 120ms commit delays
+                          is the box's own echo. */}
+                      <SearchInputLocal aria-label="Search venues"
+                        inputRef={searchResultsInputRef}
                         type="text"
-                        value={venueQuery}
-                        onChange={(e) => handleVenueQueryChange(e.target.value)}
+                        initialValue={venueQuery}
+                        onCommit={handleVenueQueryChange}
                         placeholder="Search restaurants, bars, venues..."
                         /* NO autoFocus. Both doors into this list are "View
                            all" / "All N results" buttons: the person tapped to

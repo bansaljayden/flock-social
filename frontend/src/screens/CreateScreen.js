@@ -752,10 +752,12 @@ export default function CreateScreen({
 
               {/* Search input */}
               <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name"
+                {/* Local state, committed on a debounce. See the flock-name
+                    field above: the same reason, the same component. */}
+                <SearchInputLocal aria-label="Search people by name"
                   type="text"
-                  value={inviteSearch}
-                  onChange={(e) => handleInviteSearch(e.target.value)}
+                  initialValue={inviteSearch}
+                  onCommit={handleInviteSearch}
                   placeholder="Search by name..."
                   style={{ ...styles.input, paddingLeft: '36px', paddingRight: inviteSearch ? '36px' : '12px', fontSize: 'var(--t-meta)' }}
                   autoComplete="off"

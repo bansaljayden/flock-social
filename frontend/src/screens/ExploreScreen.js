@@ -101,6 +101,7 @@ export default function ExploreScreen({
   confirmClick,
   connectResults,
   connectSearch,
+  SearchInputLocal,
   connectSearchError,
   connectSearching,
   discoverNavOpen,
@@ -120,6 +121,10 @@ export default function ExploreScreen({
   isDark,
   loadVenuesAtLocation,
   locationEnabled,
+  // Whether Discover is actually the screen on show. It is kept mounted when
+  // it is not, so the map has to be told, or it goes on doing marker work
+  // behind a hidden layer for the rest of the session.
+  isExploreVisible = true,
   locationError,
   locationLoading,
   mapVenuesLoaded,
@@ -348,6 +353,7 @@ export default function ExploreScreen({
           flockMemberLocations={flockMemberLocations}
           calcDistance={calcDistance}
           locationAllowed={locationEnabled}
+          mapVisible={isExploreVisible}
         />
 
         {/* Live location sharing indicator on map */}
@@ -403,10 +409,13 @@ export default function ExploreScreen({
             {/* Search input */}
             <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name"
+                {/* Local state, committed on a debounce: as a controlled input
+                    owned by App.js this re-rendered the whole app, and the
+                    results list under it, once per character. */}
+                <SearchInputLocal aria-label="Search people by name"
                   type="text"
-                  value={connectSearch}
-                  onChange={(e) => handleConnectSearch(e.target.value)}
+                  initialValue={connectSearch}
+                  onCommit={handleConnectSearch}
                   placeholder="Search by name..."
                   style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                   autoComplete="off"

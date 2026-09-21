@@ -2487,7 +2487,18 @@ router.post('/reset-password/check', [
       return res.json({ valid: false, reason: 'invalid' });
     }
     const result = await inspectReset(req.body.token);
-    res.json({ valid: result.ok === true, reason: result.ok ? null : result.reason });
+    // The address is returned ONLY on a valid token, and only the address that
+    // token was mailed to — whoever holds it already received mail there, so
+    // this discloses nothing they do not have. It is here so the set-password
+    // form can name the account the new password belongs to, which is what a
+    // password manager needs in order to save it against the right entry
+    // instead of under a blank username. An invalid, used or expired token
+    // still answers with the reason and nothing else.
+    res.json({
+      valid: result.ok === true,
+      reason: result.ok ? null : result.reason,
+      ...(result.ok ? { email: result.row.current_email } : {}),
+    });
   } catch (err) {
     console.error('Reset password check error:', err);
     res.status(500).json({ error: 'Could not check that link' });

@@ -72,6 +72,18 @@
 	    redirect when it fetches the association file: whichever host the link
 	    names has to answer it directly. Vercel serves both from the same
 	    deployment.
+
+	    The webcredentials: pair is what lets iOS and third-party password
+	    managers offer to SAVE and FILL a Flock password. It is the string that
+	    tells iOS this app shares a credential store with the website; without
+	    it the association covers universal links only and the Passwords key
+	    above the keyboard has nothing to offer. The server half was already
+	    written for it — apple-app-site-association.js has emitted a
+	    `webcredentials` section since it was added — so this entry completes a
+	    capability that was otherwise only half built. Same portal note as
+	    above applies: Associated Domains is already ticked on the App ID, so
+	    no portal trip is needed, but the next build must regenerate its
+	    profile, which the fetch-signing-files step does on its own.
 -->
 <plist version="1.0">
 <dict>
@@ -85,6 +97,8 @@
 	<array>
 		<string>applinks:flockcorp.com</string>
 		<string>applinks:www.flockcorp.com</string>
+		<string>webcredentials:flockcorp.com</string>
+		<string>webcredentials:www.flockcorp.com</string>
 	</array>
 </dict>
 </plist>

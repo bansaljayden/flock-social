@@ -350,6 +350,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           <label className="auth-label" htmlFor="signup-email">Email</label>
           <input
             id="signup-email"
+            name="username"
             className="auth-field"
             type="email"
             value={email}
@@ -376,6 +377,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           <div className="auth-pw-wrap">
             <input
               id="signup-password"
+              name="new-password"
               className="auth-field"
               type={showPassword ? 'text' : 'password'}
               value={password}

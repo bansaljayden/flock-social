@@ -602,8 +602,12 @@ describe('the keyboard dock reads the state the chat opens into', () => {
       expect(jest.getTimerCount()).toBe(0);
       expect(vv.bound).toEqual({});
       plugin.handles.forEach((handle) => expect(handle.remove).toHaveBeenCalledTimes(1));
-      // The whole app's keyboard depends on this one going back.
-      expect(plugin.keyboard.setResizeMode).toHaveBeenLastCalledWith({ mode: 'native' });
+      // The whole app's keyboard depends on this one going back — to the app's
+      // baseline, which is `none` (declared in capacitor.config.ts), not
+      // `native`. Restoring `native` here left every screen the composer had
+      // been opened from resizing its WebView on each keyboard change,
+      // including the accessory-bar toggles iOS fires per keystroke.
+      expect(plugin.keyboard.setResizeMode).toHaveBeenLastCalledWith({ mode: 'none' });
       expect(removeInputListener).toHaveBeenCalledWith('focusout', expect.any(Function));
     } finally {
       jest.useRealTimers();

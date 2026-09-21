@@ -88,6 +88,34 @@ const AuthBackdrop = () => {
     return () => { cancelled = true; cancelIdle(idle); };
   }, []);
 
+  /* PAUSE IT WHILE ANYONE IS TYPING. The clip carries a CSS filter, so WebKit
+     runs a filter pass over a hero-sized surface on every frame it plays, on
+     the main thread, competing with the keystroke the person is waiting on.
+     Nothing on this screen needs motion while a field has focus — the poster
+     underneath is the same frame geometry and the same filter, so the picture
+     does not visibly change. It resumes on blur. */
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return undefined;
+    const isField = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+    const onFocus = (e) => { if (isField(e.target)) { try { v.pause(); } catch { /* nothing to pause */ } } };
+    const onBlur = (e) => {
+      if (!isField(e.target)) return;
+      /* A tap from one field straight into another fires blur before the next
+         focus, so settle first rather than restarting the clip between them. */
+      window.setTimeout(() => {
+        if (isField(document.activeElement) || !v.src) return;
+        v.play().catch(() => {});
+      }, 120);
+    };
+    document.addEventListener('focusin', onFocus);
+    document.addEventListener('focusout', onBlur);
+    return () => {
+      document.removeEventListener('focusin', onFocus);
+      document.removeEventListener('focusout', onBlur);
+    };
+  }, []);
+
   return (
     <div className="auth-bg" aria-hidden="true">
       <img className="auth-plate" src={POSTER} alt="" decoding="async" fetchPriority="high" />
@@ -288,8 +316,10 @@ const AUTH_CSS = `
   display: flex; flex-direction: column;
   /* The analytics bar publishes its footprint as --cb-height while it is
      open and removes it when answered. Padding by it keeps "Create an
-     account" / "Sign in" above the bar rather than under it. Zero otherwise. */
-  padding-bottom: var(--cb-height, 0px);
+     account" / "Sign in" above the bar rather than under it. --kb-pad is the
+     keyboard's own footprint, quantized so the QuickType bar cannot move it
+     (see useKeyboardPad). Both are zero most of the time. */
+  padding-bottom: calc(var(--cb-height, 0px) + var(--kb-pad, 0px));
 }
 .auth-hero {
   position: relative;
@@ -539,9 +569,57 @@ const AUTH_CSS = `
 }
 `;
 
-const AuthShell = ({ hero, children }) => (
+/* THE KEYBOARD, WITHOUT THE FLASHING.
+ *
+ * The WebView no longer resizes for the keyboard (capacitor.config.ts sets
+ * `resize: none` app-wide, and the reason is written there), so this screen
+ * pads for it instead. The measurement comes from the visual viewport, which
+ * is the one number that reflects what is actually covering the page.
+ *
+ * IT IS QUANTIZED ON PURPOSE. iOS shows and hides the QuickType / Passwords
+ * accessory bar as it re-scores autofill candidates against each letter typed,
+ * and that bar is about 45px tall. Re-padding on every one of those toggles is
+ * exactly the per-keystroke relayout this screen is being fixed for, so a
+ * change has to clear STEP px to be worth a commit — a real keyboard show or
+ * hide is 250px or more and clears it easily, an accessory bar toggle never
+ * does. Rounding down to the step also means the committed value is stable
+ * across the small height differences between keyboard layouts.
+ */
+const KB_STEP = 80;
+
+const useKeyboardPad = () => {
+  const [pad, setPad] = useState(0);
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv) return undefined;
+    let frame = 0;
+    const read = () => {
+      frame = 0;
+      const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      const stepped = covered < KB_STEP ? 0 : Math.floor(covered / KB_STEP) * KB_STEP;
+      setPad((prev) => (prev === stepped ? prev : stepped));
+    };
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(read);
+    };
+    vv.addEventListener('resize', schedule);
+    vv.addEventListener('scroll', schedule);
+    read();
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      vv.removeEventListener('resize', schedule);
+      vv.removeEventListener('scroll', schedule);
+    };
+  }, []);
+  return pad;
+};
+
+const AuthShell = ({ hero, children }) => {
+  const keyboardPad = useKeyboardPad();
+  return (
   <div className="auth-root">
-    <div className="auth-col">
+    <div className="auth-col" style={{ '--kb-pad': `${keyboardPad}px` }}>
       {/* The picture is sized to the hero, not to the window. A full-screen
           cover of a 16:9 clip on a 19.5:9 phone puts the skyline behind the
           sheet and leaves nothing but sky on screen, and upscales the source
@@ -555,6 +633,7 @@ const AuthShell = ({ hero, children }) => (
     </div>
     <style>{AUTH_CSS}</style>
   </div>
-);
+  );
+};
 
 export default AuthShell;

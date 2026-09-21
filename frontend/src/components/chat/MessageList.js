@@ -183,7 +183,7 @@ function rowTop(el, id) {
   return node ? node.offsetTop : NaN;
 }
 
-export default function MessageList({
+function MessageList({
   rows,
   syntheticIds,
   threadKey,
@@ -586,3 +586,15 @@ export default function MessageList({
     </div>
   );
 }
+
+/* MEMOISED, because the composer above it re-renders this screen on every
+   character typed. The rows themselves already bail out -- MessageGroup and
+   MessageRow are memo, and their handlers come through useStableFn -- but
+   without a memo here React still walked the whole run list and allocated an
+   element per run per keystroke, which is work proportional to the length of
+   the thread for a change that cannot affect a single row.
+
+   The props this takes are all stable by construction: `rows` keeps its
+   identity through rememberRows, and every callback is a useStableFn wrapper.
+   A shallow compare is therefore the right compare, and it hits. */
+export default React.memo(MessageList);

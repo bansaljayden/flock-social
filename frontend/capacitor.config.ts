@@ -4,6 +4,26 @@ const config: CapacitorConfig = {
   appId: 'com.flockcorp.flock',
   appName: 'Flock',
   webDir: 'build',
+  // THE APP RUNS ON ITS OWN ORIGIN, NOT capacitor://localhost.
+  //
+  // Assets are still served from the bundle — this is not a remote-loaded
+  // shell, there is no `url` here, and nothing is fetched over the network to
+  // paint. Only the origin the WebView reports changes, and it has to, because
+  // iOS Password AutoFill and every third-party password manager key saved
+  // credentials to an https origin. On capacitor://localhost the save prompt
+  // never fires at all, and a password saved for flockcorp.com in Safari can
+  // never be offered. Together with the webcredentials: entries in
+  // App.entitlements this is what turns saving a Flock password on.
+  //
+  // THIS CHANGES THE ORIGIN, SO IT ORPHANS EVERYTHING STORED UNDER THE OLD
+  // ONE: localStorage (including flockToken), sessionStorage, IndexedDB. Every
+  // install carried over from a build before this one is signed out exactly
+  // once and signs back in normally.
+  server: {
+    hostname: 'www.flockcorp.com',
+    iosScheme: 'https',
+    androidScheme: 'https',
+  },
   ios: {
     // The app manages all scrolling in inner containers; the WebView's own
     // scroll view only ever produced the "whole frame drags up and down"
@@ -24,6 +44,30 @@ const config: CapacitorConfig = {
     backgroundColor: '#0b1a2e',
   },
   plugins: {
+    // THE KEYBOARD IS OUT OF LAYOUT, APP-WIDE.
+    //
+    // Capacitor's default is `native`, which resizes the WebView frame every
+    // time the keyboard's height changes. Two things went wrong with that:
+    //
+    //   * The iOS QuickType / Passwords accessory bar counts as a keyboard
+    //     height change, and iOS shows and hides it per letter as it re-scores
+    //     autofill candidates. On the sign-in screen — a viewport-height
+    //     scroll container — each toggle relayed out the whole column and
+    //     re-scrolled the focused field, which is what read as the Passwords
+    //     bar flashing on every keystroke and the screen re-rendering on tap.
+    //   * The chat composer focuses on entry, so the keyboard began rising
+    //     while the app was still in `native` mode: iOS shrank the WebView,
+    //     the composer hook's own switch to `none` landed a moment later and
+    //     it grew back. Two full relayouts of an un-virtualised message list
+    //     during the entry animation.
+    //
+    // Declaring `none` here means the mode is already right at first paint, so
+    // neither race can happen. The composer hook measures the keyboard and
+    // lifts with a transform, which does not touch layout at all; screens that
+    // do not use it pad by the visual viewport instead.
+    Keyboard: {
+      resize: 'none',
+    },
     // @capgo/capacitor-social-login ships four providers and links all four
     // SDKs unless told otherwise. Only Google is wanted here, and the other
     // three are not neutral omissions:
