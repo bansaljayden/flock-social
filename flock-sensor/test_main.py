@@ -2010,5 +2010,70 @@ class ChannelHealth(unittest.TestCase):
                       'a stale channel is invisible to an operator again')
 
 
+class CrossingSensorWiring(unittest.TestCase):
+    """The crossing sensor diagnoses its own wiring, because the microphone did not.
+
+    An evening went on the microphone, and almost all of it went on not knowing
+    which half of the problem to look at. Every way a crossing sensor can be
+    wrong is visible in the pattern of one pin, so --beam names which one it is
+    rather than leaving somebody to guess between a dead part, the wrong pin,
+    and a part wired the other way up.
+    """
+
+    def test_a_pin_that_never_moves_is_not_wired(self):
+        ok, why = main.diagnose_beam([True] * 200, active_low=True)
+        self.assertFalse(ok)
+        self.assertIn('never changed', why)
+
+    def test_a_pin_stuck_blocked_names_the_polarity_setting(self):
+        ok, why = main.diagnose_beam([False] * 200, active_low=True)
+        self.assertFalse(ok)
+        self.assertIn('IR_ACTIVE_LOW', why)
+
+    def test_a_part_wired_the_other_way_up_is_caught_before_it_is_total(self):
+        # The likely real-world version: mostly triggered, occasionally not. A
+        # doorway is not blocked 90% of the time; a backwards part looks exactly
+        # like that, and a check that only caught the 100% case would miss it.
+        ok, why = main.diagnose_beam([False] * 180 + [True] * 20, active_low=True)
+        self.assertFalse(ok)
+        self.assertIn('IR_ACTIVE_LOW', why)
+
+    def test_a_working_sensor_passes(self):
+        ok, _ = main.diagnose_beam([True] * 170 + [False] * 30, active_low=True)
+        self.assertTrue(ok)
+
+    def test_it_reads_the_other_polarity_the_other_way(self):
+        # The same samples mean the opposite thing for an active-high part.
+        # Getting this backwards would have the tool confidently name the wrong
+        # fault, which is worse than saying nothing.
+        mostly_high = [True] * 180 + [False] * 20
+        self.assertFalse(main.diagnose_beam(mostly_high, active_low=False)[0])
+        self.assertTrue(main.diagnose_beam(mostly_high, active_low=True)[0])
+
+    def test_no_samples_is_not_a_pass(self):
+        self.assertFalse(main.diagnose_beam([])[0])
+
+    def test_the_pin_and_polarity_are_configurable(self):
+        # All three were hardcoded, which meant a part signalling the other way
+        # round needed a code change before it would work at all.
+        self.assertEqual(main.IR_GPIO_PIN, 17)
+        self.assertTrue(main.IR_ACTIVE_LOW)
+        self.assertGreater(main.IR_DEBOUNCE_SECONDS, 0.0)
+
+    def test_init_reads_the_configured_pin_not_a_literal(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('def init_ir():')
+        window = source[idx:idx + 2200]
+        self.assertIn('GPIO.setup(IR_GPIO_PIN', window,
+                      'the crossing sensor pin is hardcoded again')
+        self.assertIn('IR_ACTIVE_LOW', window)
+
+    def test_the_resting_pull_follows_the_polarity(self):
+        # An unpowered or unconnected sensor has to rest quiet. Pulled the wrong
+        # way it floats at the triggered level and counts noise as a crowd.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('def init_ir():')
+        window = source[idx:idx + 2200]
+        self.assertIn('GPIO.PUD_UP if IR_ACTIVE_LOW else GPIO.PUD_DOWN', window)
 if __name__ == '__main__':
     unittest.main()
