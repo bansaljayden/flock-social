@@ -269,13 +269,19 @@ const applyLift = (el, px, ms) => {
 };
 
 /**
- * Put the WebView's own keyboard resizing back. Called from the teardown and
+ * Put the resize mode back to the app's baseline. Called from the teardown and
  * from the cancelled-mount path, both of which can be the only one that runs.
+ *
+ * That baseline is `none`, declared for the whole app in capacitor.config.ts —
+ * NOT `native`, which is what this restored before. Restoring to `native` left
+ * every screen the composer had been opened from resizing its WebView on each
+ * keyboard change, including on the accessory-bar toggles iOS fires per
+ * keystroke. The config block documents why that is unwanted everywhere.
  */
 const restoreResizeMode = (Keyboard) => {
   if (!Keyboard || typeof Keyboard.setResizeMode !== 'function') return;
   try {
-    const result = Keyboard.setResizeMode({ mode: 'native' });
+    const result = Keyboard.setResizeMode({ mode: 'none' });
     if (result && typeof result.catch === 'function') result.catch(() => {});
   } catch (err) {
     /* Leaving the screen. A failed restore is not worth a crash. */

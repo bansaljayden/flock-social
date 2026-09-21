@@ -824,7 +824,10 @@ test('checking a link reports its state without spending it', async () => {
   const token = tokenFromLastMail();
 
   const good = await (await post('/api/auth/reset-password/check', { token })).json();
-  assert.deepStrictEqual(good, { valid: true, reason: null });
+  // A valid token also reports the address it was mailed to, so the form can
+  // name the account for a password manager. It is disclosed ONLY here, to the
+  // holder of a live token, who already received mail at that address.
+  assert.deepStrictEqual(good, { valid: true, reason: null, email: user.email });
   assert.strictEqual(resets[0].used_at, null, 'checking must never consume the link');
 
   resets[0].expires_at = new Date(Date.now() - 1000).toISOString();

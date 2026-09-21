@@ -183,6 +183,11 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  // The address this link was mailed to, returned by the check endpoint on a
+  // valid token. It is never shown; it exists so the hidden username field in
+  // the form can name the account, which is what a password manager pairs the
+  // new password with when it offers to save it.
+  const [account, setAccount] = useState('');
 
   // Take the credential out of the address bar. It has already been read into
   // state, and leaving it there puts it in browser history, in any screenshot
@@ -214,7 +219,7 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
     })
       .then((data) => {
         if (cancelled) return;
-        if (data && data.valid) setPhase('ready');
+        if (data && data.valid) { setAccount(data.email || ''); setPhase('ready'); }
         else setPhase(DEAD_LINK_COPY[data?.reason] ? data.reason : 'invalid');
       })
       .catch(() => {
@@ -311,11 +316,29 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
       <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
+        {/* THE USERNAME THIS PASSWORD BELONGS TO, so a manager has something
+            to pair the new one with. This form has no visible identifier
+            field, and a manager offered a new password with no username
+            either skips the save or files it under a blank one. `display:
+            none` is the pattern managers honour here; an <input type="hidden">
+            is not — they ignore hidden inputs by design. */}
+        <input
+          type="text"
+          name="username"
+          autoComplete="username"
+          value={account}
+          readOnly
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{ display: 'none' }}
+        />
+
         <div className="auth-field-row">
           <label className="auth-label" htmlFor="reset-password">New password</label>
           <div className="auth-pw-wrap">
             <input
               id="reset-password"
+              name="new-password"
               className="auth-field"
               type={showPassword ? 'text' : 'password'}
               value={password}

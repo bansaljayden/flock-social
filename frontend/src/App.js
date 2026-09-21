@@ -1701,6 +1701,9 @@ const openExternal = (u) => {
 // upload with no progress bar behind it.
 const CHAT_IMAGE_MAX_EDGE = 1600;
 const CHAT_IMAGE_MAX_CHARS = 700 * 1024;
+// What the in-chat viewfinder asks its track for. Module scope so the hook
+// that uses it keeps a stable dependency list.
+const CAMERA_RES = { width: { ideal: 2560 }, height: { ideal: 1440 } };
 const CHAT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const dataUrlMime = (u) => (typeof u === 'string' ? ((/^data:([^;,]+)[;,]/.exec(u) || [])[1] || '') : '');
 
@@ -1776,7 +1779,12 @@ const prepareChatImage = (dataUrl) => new Promise((resolve) => {
     }
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     let out = canvas.toDataURL('image/jpeg', 0.82);
-    for (let q = 0.65; out.length > CHAT_IMAGE_MAX_CHARS && q >= 0.4; q -= 0.15) {
+    // Step down in small increments rather than in thirds. The old ladder went
+    // 0.82, 0.65, 0.50, 0.40, so a photo a few kilobytes over the cap landed at
+    // 0.65 and one a little over that fell to 0.50 -- a visible drop paid for a
+    // budget it had nearly met. Eight hundredths at a time stops at the first
+    // quality that fits.
+    for (let q = 0.74; out.length > CHAT_IMAGE_MAX_CHARS && q >= 0.4; q -= 0.08) {
       out = canvas.toDataURL('image/jpeg', q);
     }
     if (out.length > CHAT_IMAGE_MAX_CHARS) {
@@ -6558,6 +6566,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [cameraShutter, setCameraShutter] = useState(false);
   const [cameraFocusPoint, setCameraFocusPoint] = useState(null);
+  // The frame just taken, held for review before it is accepted. Taking a
+  // photo used to close the camera outright and drop a 44px thumbnail into the
+  // composer, so the only way to judge the shot was a chip the size of a
+  // fingernail and the only way to redo it was to reopen the camera. The shot
+  // now stays full-screen with Retake and Use Photo under it.
+  const [cameraReview, setCameraReview] = useState(null); // { dataUrl, source }
+  const [cameraBusy, setCameraBusy] = useState(false);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
@@ -10667,15 +10682,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
 
   // Acquire (or re-acquire) the preview stream for one facing direction.
+  //
+  // ASK FOR A RESOLUTION. Left unconstrained, WebKit hands back its default
+  // 640x480 track, so every photo taken in a chat was a 480p video frame --
+  // visibly soft beside anything the phone's own camera produces, and softer
+  // again once the JPEG ladder in prepareChatImage has been down it. `ideal`
+  // rather than `exact` so a device that cannot reach 1440 quietly gives what
+  // it has instead of rejecting the whole request.
   const startCameraStream = useCallback(async (facing) => {
     stopCameraTracks();
     setCameraTorch(false);
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false });
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, ...CAMERA_RES }, audio: false,
+      });
     } catch {
       // Some devices have exactly one camera and reject the hint outright.
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      // Drop the facing hint first and only then the resolution, so a phone
+      // with a single camera still gets a sharp one.
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { ...CAMERA_RES }, audio: false });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
     }
     cameraStreamRef.current = stream;
     const v = cameraVideoRef.current;
@@ -10714,6 +10744,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCameraCaps({});
     setCameraTorch(false);
     setCameraFocusPoint(null);
+    setCameraReview(null);
+    setCameraBusy(false);
   }, [stopCameraTracks]);
 
   // Last line of defence: if this component ever unmounts with the viewfinder
@@ -10786,16 +10818,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ctx.scale(-1, 1);
     }
     ctx.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    const source = showCameraViewfinder;
+    // Reviewed at the quality it was taken at. The wire-sizing pass happens on
+    // accept instead, so what is judged on screen is the real frame.
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
     setCameraShutter(true);
     setTimeout(() => setCameraShutter(false), 160);
-    closeCameraViewfinder();
-    // A full-resolution frame off a modern phone camera is several megabytes of
-    // base64. Size it for the wire before it becomes the preview — same step
-    // the library picker takes, so both routes send the same shape of file.
+    // The shot is held for review rather than sent straight to the composer.
+    // The preview is a still, so the live track has no more work to do and the
+    // camera light goes out while the photo is being looked at.
+    setCameraReview({ dataUrl, source: showCameraViewfinder });
+    setCameraFocusPoint(null);
+    stopCameraTracks();
+  }, [showCameraViewfinder, cameraFacing, stopCameraTracks]);
+
+  // Back to the viewfinder, same lens as before.
+  const retakePhoto = useCallback(async () => {
+    setCameraReview(null);
+    setCameraFocusPoint(null);
+    try {
+      await startCameraStream(cameraFacing);
+    } catch {
+      showToast('Could not reopen the camera', 'error');
+      closeCameraViewfinder();
+    }
+  }, [cameraFacing, startCameraStream, showToast, closeCameraViewfinder]);
+
+  // Accept the reviewed shot. A full-resolution frame off a phone camera is
+  // several megabytes of base64, so it is sized for the wire here — the same
+  // step the library picker takes, so both routes send the same shape of file.
+  const acceptCameraPhoto = useCallback(() => {
+    if (!cameraReview || cameraBusy) return;
+    const { dataUrl, source } = cameraReview;
+    setCameraBusy(true);
     prepareChatImage(dataUrl).then(({ dataUrl: sized, error }) => {
+      setCameraBusy(false);
       if (error) { showToast(error, 'error'); return; }
+      closeCameraViewfinder();
       if (source === 'flock') {
         setPendingImage(sized);
         setShowImagePreview(true);
@@ -10804,7 +10862,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setShowDmImagePreview(true);
       }
     });
-  }, [showCameraViewfinder, closeCameraViewfinder, cameraFacing, showToast]);
+  }, [cameraReview, cameraBusy, closeCameraViewfinder, showToast]);
 
   // Crop flow state
   const [cropImageSrc, setCropImageSrc] = useState(null); // raw image data URL for cropping
@@ -16195,6 +16253,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // here and travel as props: a copy inside the module would be a second
   // definition free to drift from the one every other surface draws.
   const searchResultsOverlayProps = {
+    SearchInputLocal,
     DialogBehavior,
     EmptyMark,
     ListSkeleton,
@@ -16233,6 +16292,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // and travel: a copy inside the module would be a second definition free to
   // drift from the one every other surface draws.
   const exploreScreenProps = {
+    isExploreVisible,
+    SearchInputLocal,
     DialogBehavior,
     EmptyMark,
     ListSkeleton,
@@ -16576,7 +16637,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             <button aria-label="Close the camera" className="hit44" onClick={closeCameraViewfinder} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
             {/* Torch is drawn only when the track reports it. On iOS Safari and
                 every desktop browser it never appears, which is correct. */}
-            {cameraCaps.torch ? (
+            {cameraCaps.torch && !cameraReview ? (
               <button aria-label={cameraTorch ? 'Turn the flash off' : 'Turn the flash on'} aria-pressed={cameraTorch} className="hit44" onClick={toggleCameraTorch} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: cameraTorch ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.zap(cameraTorch ? '#0f172a' : 'white', 20)}
               </button>
@@ -16588,8 +16649,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               a portrait sensor. The front camera is mirrored, the way every
               selfie camera is, and capturePhoto mirrors the file to match. */}
           <div
-            onPointerDown={focusCameraAt}
-            style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', cursor: cameraCaps.focus ? 'crosshair' : 'default' }}
+            onPointerDown={cameraReview ? undefined : focusCameraAt}
+            style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', cursor: cameraCaps.focus && !cameraReview ? 'crosshair' : 'default' }}
           >
             <video
               ref={cameraVideoRef}
@@ -16598,6 +16659,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               muted
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transform: cameraFacing === 'user' ? 'scaleX(-1)' : 'none' }}
             />
+            {/* The shot under review, laid over the (now stopped) preview at
+                the same crop, so accepting it holds no surprises. */}
+            {cameraReview && (
+              <img
+                src={cameraReview.dataUrl}
+                alt="What you just captured, ready to send or retake"
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+            )}
             {cameraFocusPoint && (
               <div aria-hidden="true" style={{ position: 'absolute', left: cameraFocusPoint.x - 34, top: cameraFocusPoint.y - 34, width: '68px', height: '68px', borderRadius: '34px', border: '2px solid rgba(255,255,255,0.9)', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)', pointerEvents: 'none' }} />
             )}
@@ -16606,7 +16676,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </div>
 
           {/* Zoom, again only where the track supports it. */}
-          {cameraCaps.zoom && (
+          {cameraCaps.zoom && !cameraReview && (
             <div style={{ padding: '10px 24px 0', display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: 'rgba(0,0,0,0.6)' }}>
               <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Zoom</span>
               <input
@@ -16622,6 +16692,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </div>
           )}
 
+          {cameraReview ? (
+            /* REVIEW. The shot is judged at full size and either kept or
+               retaken here, rather than as a thumbnail in the composer with no
+               way back to the camera. */
+            <div style={{ padding: '18px 24px calc(28px + var(--safe-bottom))', display: 'flex', gap: '12px', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+              <button
+                onClick={retakePhoto}
+                disabled={cameraBusy}
+                style={{ flex: 1, height: '52px', borderRadius: '26px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: cameraBusy ? 'default' : 'pointer' }}
+              >
+                Retake
+              </button>
+              <button
+                onClick={acceptCameraPhoto}
+                disabled={cameraBusy}
+                style={{ flex: 1, height: '52px', borderRadius: '26px', border: 'none', backgroundColor: cameraBusy ? 'rgba(255,255,255,0.5)' : '#ffffff', color: '#0f172a', fontSize: 'var(--t-body)', fontWeight: '700', cursor: cameraBusy ? 'default' : 'pointer' }}
+              >
+                {cameraBusy ? 'Preparing…' : 'Use Photo'}
+              </button>
+            </div>
+          ) : (
           <div style={{ padding: '18px 24px calc(28px + var(--safe-bottom))', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}>
             {/* Straight to the camera roll from inside the camera, so the two
                 photo routes are one decision instead of two screens. */}
@@ -16651,6 +16742,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {Icons.repeat('white', 20)}
             </button>
           </div>
+          )}
         </div>
       )}
 
@@ -17174,10 +17266,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           /* Highlight is a translucent white sweep, not a theme token — the
              dark theme's skeleton-bg and border-default are near-identical
              navies, which made skeletons invisible on device. */
-          background: linear-gradient(90deg, var(--skeleton-bg) 30%, rgba(255,255,255,0.12) 45%, var(--skeleton-bg) 60%);
-          background-size: 400% 100%;
-          animation: loadingShimmer 1.4s ease infinite;
+          background: var(--skeleton-bg);
           border-radius: 8px;
+          /* THE SWEEP IS A TRANSFORM, NOT A BACKGROUND POSITION.
+             Animating background-position is a main-thread repaint of every
+             skeleton on every frame, and the place this is used most is the
+             chat loading state -- eight of these repainting during the exact
+             window the keyboard is animating and the history is arriving.
+             A translated overlay is composited instead, so the sweep costs
+             nothing on the main thread. The hidden overflow keeps it inside
+             the rounded box; isolation stops it painting over siblings. */
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+        }
+        .skeleton::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 50%, transparent 100%);
+          transform: translateX(-100%);
+          animation: skeletonSweep 1.4s ease infinite;
+          will-change: transform;
+        }
+        @keyframes skeletonSweep {
+          to { transform: translateX(100%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .skeleton::after { animation: none; opacity: 0.5; transform: none; }
         }
         /* Premium glass effect */
         .glass {

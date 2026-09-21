@@ -408,7 +408,7 @@ function setPinHidden(entry, hidden, behind = 0) {
   }
 }
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true }) => {
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -1356,9 +1356,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   }, [venues, openVenueDetail, setActiveVenue, buildMarkerEl]);
 
   // ---------- flock member live location markers ----------
+  //
+  // GATED ON THE MAP BEING ON SCREEN. Discover is never unmounted once it has
+  // been visited -- it is parked behind visibility:hidden so returning to it is
+  // instant -- which meant this effect went on doing real work for the rest of
+  // the session. Every sharing member emits a position every ten seconds, and
+  // each tick parsed an HTML string into a popup and moved a MapLibre marker,
+  // on the main thread, behind a hidden layer, while the person was reading a
+  // chat. That is exactly when people share location, so the cost landed at the
+  // worst possible moment.
+  //
+  // `mapVisible` is in the dependency list, so nothing is lost: returning to
+  // Discover re-runs this pass against the current data and reconciles in one
+  // go, including removing anyone who stopped sharing while it was hidden.
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!mapReady || !map || !flockMemberLocations) return;
+    if (!mapVisible || !mapReady || !map || !flockMemberLocations) return;
     const ml = mapLibreRef.current;
     if (!ml) return;
     const run = (mlMod) => {
@@ -1409,7 +1422,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
     };
     run(ml);
-  }, [mapReady, flockMemberLocations, userLocation, calcDistance]);
+  }, [mapVisible, mapReady, flockMemberLocations, userLocation, calcDistance]);
 
   // ---------- render ----------
   return (

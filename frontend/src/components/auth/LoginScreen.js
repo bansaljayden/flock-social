@@ -330,6 +330,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               field is contact data and new-password does the pairing. */}
           <input
             id="login-email"
+            name="username"
             className="auth-field"
             type="email"
             value={email}
@@ -360,6 +361,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           <div className="auth-pw-wrap">
             <input
               id="login-password"
+              name="password"
               className="auth-field"
               type={showPassword ? 'text' : 'password'}
               value={password}

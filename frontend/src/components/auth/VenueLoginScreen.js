@@ -463,12 +463,17 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           <label className="auth-label" htmlFor="venue-email">Email</label>
           <input
             id="venue-email"
+            name="username"
             className="auth-field"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            autoComplete="email"
+            // "email" is right when creating an account and wrong when signing
+            // in: it asks the manager for an address to fill, not for the saved
+            // credential whose username this is. The password field beside it
+            // already switches on the same flag.
+            autoComplete={isSignup ? 'email' : 'username'}
             autoCapitalize="none"
             spellCheck="false"
             required
@@ -495,6 +500,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           <div className="auth-pw-wrap">
             <input
               id="venue-password"
+              name="password"
               className="auth-field"
               type={showPassword ? 'text' : 'password'}
               value={password}

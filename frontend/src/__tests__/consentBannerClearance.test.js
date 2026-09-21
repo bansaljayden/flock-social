@@ -86,7 +86,11 @@ test('the auth column pads its bottom by that footprint, so the footer links sta
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'auth', 'AuthShell.js'), 'utf8');
-  expect(src).toMatch(/\.auth-col \{[\s\S]*?padding-bottom: var\(--cb-height, 0px\);/);
+  // The banner's footprint is now one term in a sum: the keyboard's own
+  // quantized footprint (--kb-pad) is the other, added when the WebView stopped
+  // resizing for the keyboard. What this test guards is that --cb-height is
+  // still what the column clears, not that it is the only thing it clears.
+  expect(src).toMatch(/\.auth-col \{[\s\S]*?padding-bottom: calc\(var\(--cb-height, 0px\)[^;]*\);/);
   const bar = fs.readFileSync(require.resolve('../components/ConsentBanner.js'), 'utf8');
   expect(bar).toMatch(/style\.setProperty\(HEIGHT_VAR/);
   expect(bar).toMatch(/style\.removeProperty\(HEIGHT_VAR\)/);
