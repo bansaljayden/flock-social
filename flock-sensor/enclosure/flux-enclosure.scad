@@ -264,14 +264,32 @@ module slot_fit_test() {
 // Panels
 // ===========================================================================
 
+// The two indicators. Deliberately two and not five: every light on a box has
+// to mean something a person can act on, and the screen already says
+// everything else.
+//
+//   POWER  green, solid.        The battery is alive.
+//   LINK   amber, blinks.       The head is talking and readings are going out.
+//
+// LINK is the one that earns its place. A sensor whose cable has come out
+// looks exactly like a sensor in an empty room, which is the confusion this
+// whole project keeps running into, and a light that stops blinking is the
+// cheapest possible answer to it.
+led_dia         = 3.2;    // 3 mm LED, press fit
+led_gap         = 14.0;   // between the two
+led_y           = 15.0;   // up from the bottom edge, in the strip below the board
+
 module front_panel() {
     difference() {
         rounded_plate(box_w, box_h, wall, corner_r);
         screen_opening(wall);
-        // Thermal lens, low on the front face, below the screen.
-        translate([box_w / 2, bezel + 6, -1]) cylinder(h = wall + 2, d = lens_dia);
-        // Microphone pinhole, well away from the lens.
-        translate([box_w / 2 + 40, bezel + 6, -1]) cylinder(h = wall + 2, d = 3.0);
+        // Below the screen, centred, in the 29 mm of panel the board leaves.
+        // No thermal lens and no microphone on this box: both moved to the
+        // sensor head when the device split in two, and a second set of holes
+        // here would be holes into an empty space.
+        for (dx = [-led_gap / 2, led_gap / 2])
+            translate([box_w / 2 + dx, led_y, -1])
+                cylinder(h = wall + 2, d = led_dia);
     }
 }
 
@@ -288,8 +306,9 @@ module back_panel() {
         cube([box_w, box_h, wall]);
         // USB-C charging port, the only cable a judge ever sees.
         translate([box_w - 40, 30, -1]) cube([10, 5, wall + 2]);
-        // Status LED beside it.
-        translate([box_w - 22, 32, -1]) cylinder(h = wall + 2, d = 3.2);
+        // The head's cable, in on the same side as the charging port so all
+        // the wiring lives at one end and the other three faces stay clean.
+        translate([box_w - 62, 28, -1]) cylinder(h = wall + 2, d = 10.0);
         // Vents. The Pi 5 and the modem both make heat in a sealed box.
         for (x = [0 : 12 : 90], y = [0 : 12 : 60])
             translate([40 + x, box_h - 110 + y, -1]) cylinder(h = wall + 2, d = 5);

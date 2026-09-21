@@ -56,6 +56,20 @@ tof_win     = 8.0;    // the window it looks through
 
 mic_port    = 3.0;    // the pinhole the microphone hears through
 
+// THE MICROPHONE LIVES HERE, not in the base, and its converter comes with it.
+//
+// The obvious build puts the MAX4466 in the head and runs its analog output
+// down the cable to the converter next to the Pi. Do not. Analog audio over
+// three metres of cable beside a 4G modem picks up everything, and this build
+// already has a noise problem of exactly that kind: the microphone's usable
+// window is about 27 dB against a venue's 45, and the part's own noise is
+// under one count, so the floor is all wiring.
+//
+// So the MCP3008 goes in here too, wired to the microphone with centimetres
+// of trace, and what leaves the head is SPI: digital, and indifferent to the
+// noise that was eating the analog. Six conductors for SPI and four more for
+// the counter's I2C fit one Cat6 run, twisted pairs included.
+
 screw_dia   = 3.4;    // clearance for M3
 insert_dia  = 4.2;    // for an M3 heat-set insert
 
@@ -129,6 +143,11 @@ module shell() {
         // the same patch of floor and a disagreement between them means
         // something rather than meaning they were aimed differently.
         translate([0, 0, 22]) through_wedge(tof_win);
+
+        // A single indicator beside the lens: alive, and dim enough not to be
+        // a light source in a dark venue. One light, because the only thing
+        // anybody standing under this can act on is whether it is running.
+        translate([0, 0, -20]) through_wedge(3.2);
 
         // The microphone, on the underside and well away from the lens, so the
         // camera's shutter click does not land straight in it.
