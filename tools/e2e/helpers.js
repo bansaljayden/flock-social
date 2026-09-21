@@ -69,10 +69,13 @@ async function signUp(page, tag, name = 'Ada Tester') {
   await page.getByRole('textbox', { name: /email/i }).fill(email);
   await page.getByRole('textbox', { name: /password/i }).first().fill('E2eTesting!2026');
 
-  // The date of birth screen is deliberately neutral: it prints no threshold
-  // and caps nothing, so this fills a real date rather than picking an option.
+  // The birth screen is deliberately neutral: it prints no threshold and caps
+  // nothing, so this types a real value rather than picking an option. Account
+  // creation asks for the YEAR only and the field holds four characters, so the
+  // year is sliced out rather than a whole date being pushed at it and silently
+  // truncated.
   const dob = page.getByRole('textbox', { name: /birth|date/i }).first();
-  if (await dob.count()) await dob.fill(adultDob());
+  if (await dob.count()) await dob.fill(adultDob().slice(0, 4));
 
   await page.getByRole('button', { name: /create account|sign up|continue/i }).first().click();
   return { email, name, offences };

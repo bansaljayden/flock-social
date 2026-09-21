@@ -3120,10 +3120,26 @@ const isFullBleedNow = () => (typeof window !== 'undefined') && (
 // Capacitor bridge landed) — makeStyles now takes fullBleed as a parameter and
 // the app re-checks after mount.
 const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
+  // THE ANALYTICS BAR COVERS WHATEVER IS AT THE BOTTOM, ON EVERY SCREEN.
+  //
+  // It is fixed, it sits at the top of the stacking order, and it publishes its
+  // own height as --cb-height. Until now only the auth column padded by that,
+  // so every signed-in screen drew its bottom control underneath the bar and
+  // the bar swallowed the tap. On a brand new account that includes the primary
+  // call to action: Create Flock could not be pressed at all until the banner
+  // was answered, and the banner only appears on a fresh install, which is
+  // exactly the state an App Store reviewer is in.
+  //
+  // Padding the shell moves every screen up by the bar's height while it is
+  // open and back down the moment it is answered, which is what the auth screen
+  // has always done. Zero when the banner is not mounted, so nothing moves in
+  // the normal case.
   phoneContainer: fullBleed ? {
     width: '100%',
     maxWidth: '100%',
     height: '100dvh',
+    paddingBottom: 'var(--cb-height, 0px)',
+    boxSizing: 'border-box',
     margin: 0,
     borderRadius: 0,
     border: 'none',
@@ -3137,6 +3153,8 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     maxWidth: '375px',
     height: '100vh',
     maxHeight: '812px',
+    paddingBottom: 'var(--cb-height, 0px)',
+    boxSizing: 'border-box',
     margin: '20px auto',
     borderRadius: '44px',
     border: `6px solid ${isDark ? '#1e293b' : colorsLight.navy}`,
