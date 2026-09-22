@@ -716,15 +716,36 @@ export default function FlockDetail({
                 // Stripping the last voter drops the row because a venue with no
                 // votes and no guests is not in the server's tally either, so
                 // leaving it would be a row that vanishes on the next load.
-                return (
-                  <button key={v.venue} className="hit44 glass-btn" aria-pressed={isMyVote} onClick={() => {
-                    const newVotes = isMyVote
-                      ? flock.votes
-                        .map(vt => ({ ...vt, voters: vt.voters.filter(x => x !== 'You') }))
-                        .filter(vt => vt.voters.length > 0 || (vt.guestCount || 0) > 0)
-                      : flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? [...vt.voters, 'You'] : vt.voters.filter(x => x !== 'You') }));
-                    updateFlockVotes(selectedFlockId, newVotes);
-                  }} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: vi < flock.votes.length - 1 ? '1px solid var(--border-subtle)' : 'none', padding: '10px 0', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                  // A CLOSED PLAN'S TALLY IS A RECORD, NOT A BALLOT. Every
+                  // other control on this screen is gated on isCompleted,
+                  // which covers cancelled as well as completed -- the venue
+                  // action, the time editor and Lock it in all disappear. This
+                  // block had no gate at all, so a cancelled plan offered live
+                  // vote rows: the tick moved, the count moved, and then both
+                  // snapped back under a red toast reading "This plan was
+                  // cancelled, so its venue vote is closed", which is the
+                  // server refusing what the screen had just offered. The
+                  // 2026-09-05 lifecycle audit fixed the neighbours and missed
+                  // this one.
+                  //
+                  // Rendered as a row rather than a disabled button: a control
+                  // that cannot succeed does not belong on screen, and the
+                  // tally is still worth reading after the night.
+                  const VoteRow = isCompleted ? 'div' : 'button';
+                  const voteRowProps = isCompleted ? {} : {
+                    className: 'hit44 glass-btn',
+                    'aria-pressed': isMyVote,
+                    onClick: () => {
+                      const newVotes = isMyVote
+                        ? flock.votes
+                          .map(vt => ({ ...vt, voters: vt.voters.filter(x => x !== 'You') }))
+                          .filter(vt => vt.voters.length > 0 || (vt.guestCount || 0) > 0)
+                        : flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? [...vt.voters, 'You'] : vt.voters.filter(x => x !== 'You') }));
+                      updateFlockVotes(selectedFlockId, newVotes);
+                    },
+                  };
+                  return (
+                  <VoteRow key={v.venue} {...voteRowProps} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: vi < flock.votes.length - 1 ? '1px solid var(--border-subtle)' : 'none', padding: '10px 0', cursor: isCompleted ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '5px' }}>{isMyVote && Icons.check(colors.steel, 12)}{v.venue}</span>
                       {v.type && <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</span>}
@@ -736,7 +757,7 @@ export default function FlockDetail({
                     <span style={{ padding: '4px 12px', borderRadius: '14px', fontSize: 'var(--t-meta)', fontWeight: '600', backgroundColor: isMyVote ? colors.navyMidBg : 'var(--bg-tertiary)', color: isMyVote ? 'white' : colors.navy, flexShrink: 0 }}>
                       {count}
                     </span>
-                  </button>
+                  </VoteRow>
                 );
               })}
             </div>
