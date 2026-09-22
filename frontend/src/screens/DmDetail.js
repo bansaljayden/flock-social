@@ -1440,7 +1440,15 @@ export default function DmDetail({
         loadingState={dmMessagesLoading && selectedDm.messages.length === 0 ? (
           <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
         ) : null}
-        emptyState={dmMessagesError && !dmSearchQuery ? (
+        // NULL WHENEVER THERE ARE ROWS, which is nearly always, and that is
+        // the whole point: MessageList is React.memo and draws this node only
+        // when the list is empty, but a fresh element here is a fresh prop
+        // identity on every render, so the memo never held on this screen. It
+        // is state in this component that changes per keystroke, so every
+        // character typed re-rendered the whole thread to throw it away.
+        // ChatDetail's equivalent terminates in null and is the shape this
+        // follows.
+        emptyState={dmRows.length > 0 ? null : dmMessagesError && !dmSearchQuery ? (
           /* THE READ FAILED, and the branch below it says "Say hi to start the
              conversation" -- a claim about the reader's own history, made over
              a thread that exists and did not arrive. The blocked-pair notice
