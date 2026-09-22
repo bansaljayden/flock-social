@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 21, 2026';
+const EFFECTIVE_DATE = 'September 21, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO. The long note
@@ -579,7 +579,7 @@ export default function TermsOfService() {
           address in the contact section, which is why OPERATOR_ADDRESS exists
           at the top of this file and why it renders as soon as it is set. */}
       <section>
-        <h2>16. Terms that apply because Flock is on the App Store</h2>
+        <h2>16. Terms that apply if you got Flock from the App Store</h2>
         <p>
           If you got Flock from Apple's App Store, the following applies, and it prevails over
           anything in these Terms that conflicts with it.

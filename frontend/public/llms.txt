@@ -5,8 +5,8 @@
 > It is built for the part of a night out that usually dies in the group chat:
 > deciding.
 
-Flock runs in a web browser at https://www.flockcorp.com. An iPhone app has
-been submitted to the App Store and cannot be downloaded yet. You and your
+Flock runs in a web browser at https://www.flockcorp.com. An iPhone app is not
+on the App Store yet and cannot be downloaded. You and your
 friends do not pay today. Venues are the side Flock is built to charge, and no
 venue is being charged today.
 
@@ -17,7 +17,7 @@ the home page, /about, /support, /privacy and /terms. /guidelines and
 /delete-account are not among them and need JavaScript to read. This file is
 the summary and the index.
 
-Updated: September 21, 2026.
+Updated: September 22, 2026.
 
 ## What Flock does
 
