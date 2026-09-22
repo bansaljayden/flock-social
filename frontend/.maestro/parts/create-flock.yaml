@@ -25,9 +25,14 @@ appId: com.flockcorp.flock
 # THE TAB BAR CAN BE UNDER SOMETHING WHEN THIS PART STARTS, and this tap is
 # required, so when it is, the run ends here. Build 64 died exactly here:
 # `Element not found: Text matching regex: Nest` at step 85, six and a half
-# minutes in, with the previous steps showing the Discover part closing a venue
-# card TWICE (step 74 and step 78) before tapping Map. Two Closes in a row is a
-# full-screen sheet still on top, and that sheet covers the tab bar.
+# minutes in, immediately after the Discover part.
+#
+# WHAT IS COVERING IT IS NOT KNOWN YET. The two Close taps visible in that
+# run's step list are this repo's own -- the Discover part has two by design,
+# one for the results list and one for the venue sheet -- so they are not
+# evidence of anything. The candidates are the results list, the venue sheet
+# and the map itself; the failure dump added to codemagic.yaml in the same
+# change prints the screen's own text next time, which answers it outright.
 #
 # Every step below is guarded on Nest being absent, so a healthy run does none
 # of them and films nothing extra. The order is least invasive first: the
