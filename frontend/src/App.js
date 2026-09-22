@@ -6266,6 +6266,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
+
+  /* CLOSING THE SHEET HAS TO INVALIDATE WHAT IS STILL IN FLIGHT.
+     openVenueDetail guards its writes with a sequence number so two taps in a
+     row cannot overwrite each other, but only an OPEN ever advanced that
+     number. A close did not, so a read that landed after the user tapped X
+     still satisfied the guard and called setVenueDetailModal with a finished
+     venue, re-mounting a full-screen overlay at zIndex 9998 over whatever
+     screen they had moved to. On a slow connection that reads as: tap a pin,
+     get a spinner, close it, go back to the map or another tab, and seconds
+     later the card you dismissed is over the top of everything.
+
+     Every close outside openVenueDetail goes through this instead of the raw
+     setter, and advancing the sequence first makes the late write find itself
+     stale. Guarded on a falsy value so it stays correct if a caller ever
+     passes a venue through it. */
+  const closeVenueDetailSheet = useCallback((next) => {
+    if (!next) venueDetailSeqRef.current += 1;
+    setVenueDetailModal(next || null);
+  }, []);
   // Null until a read lands, so "No reviews yet. Be the first!" is only ever
   // said about a venue the server actually answered for. It used to be said
   // about every venue opened on a bad connection, which is an invitation to
@@ -7941,6 +7960,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      name in it must bind to something never reassigned. So the per-flock flag
      is narrowed to THIS flock here rather than inline at the call site. */
   const votesLoading = votesLoadingFor === selectedFlockId;
+
   const loadFlockVotes = useCallback((flockId) => {
     if (typeof flockId !== 'number') return;
     setVotesLoadingFor(flockId);
@@ -8647,6 +8667,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // that runs under a thread the user is already reading and must not replace
   // it with a skeleton.
   const [dmMessagesLoading, setDmMessagesLoading] = useState(false);
+
+  /* A THREAD NOBODY COULD READ IS NOT AN EMPTY THREAD. Both history loaders
+     caught a refused read, released the catch-up throttle and set nothing
+     else, so the screen fell through to its empty state: "Nothing here yet.
+     This is where {flock} gets sorted out. Say hi" printed over a two hundred
+     message conversation, with no retry and nothing to say the read had
+     failed. The DM twin greeted months of history with "Say hi to start the
+     conversation". That is the same class of lie the vote tally already has
+     votesError for, and the same one this file's own ListSkeleton header
+     forbids: an empty state is a claim
+     about the user's data and must not be made before the data is known. */
+  const [messagesError, setMessagesError] = useState('');
+  const [dmMessagesError, setDmMessagesError] = useState('');
   const prevFlockIdRef = useRef(null);
   const newlyCreatedFlockRef = useRef(null);
 
@@ -8736,6 +8769,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadFlockMessages = useCallback((flockId, { showSpinner = false, keepOlder = false } = {}) => {
     historyReadAtRef.current[`flock:${flockId}`] = Date.now();
     if (showSpinner) setMessagesLoading(true);
+    setMessagesError('');
     return getMessages(flockId)
       .then((data) => {
         const msgs = (data.messages || []).map(m => mapFlockRow(m, meRef.current?.id));
@@ -8809,11 +8843,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const newestHere = msgs.reduce((best, m) => (isServerId(m.id) && m.id > best ? m.id : best), 0);
         if (newestHere > 0) sendFlockAck(flockId, newestHere);
       })
-      .catch(() => {
+      .catch((err) => {
         // A failed read must not look like a successful one to the throttle,
         // or a reconnect into a still-broken backend would be rate-limited
         // out of the retry it actually needs.
         historyReadAtRef.current[`flock:${flockId}`] = 0;
+        // And it must not look like an empty one to the reader either.
+        setMessagesError(err?.message || 'This conversation did not load.');
       })
       .finally(() => { if (showSpinner) setMessagesLoading(false); });
   }, []);
@@ -8822,6 +8858,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false } = {}) => {
     historyReadAtRef.current[`dm:${userId}`] = Date.now();
     if (showSkeleton) setDmMessagesLoading(true);
+    setDmMessagesError('');
     return getDMs(userId)
       .then((data) => {
         // A block in either direction. The server sends no messages with it,
@@ -8897,9 +8934,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // only to be thrown away.
         sendDmAck(userId);
       })
-      .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; })
+      .catch((err) => {
+        historyReadAtRef.current[`dm:${userId}`] = 0;
+        setDmMessagesError(err?.message || 'This conversation did not load.');
+      })
       .finally(() => { if (showSkeleton) setDmMessagesLoading(false); });
   }, []);
+
+  /* The Try again behind a failed history read, one per surface.
+
+     DEFINED HERE, NOT BESIDE THE OTHER CHAT STATE. Both bodies name
+     loadFlockMessages / loadDmMessages in a dependency array, which is
+     evaluated on every render, so placing these above those consts is a
+     temporal dead zone error on the first paint rather than a lint warning.
+     The same shape cost this file a crash once already.
+
+     Shorthand-only prop bags (see votesLoading) mean the id is closed over
+     here rather than passed at the call site. */
+  const reloadFlockMessages = useCallback(
+    () => { if (selectedFlockId) loadFlockMessages(selectedFlockId, { showSpinner: true }); },
+    [loadFlockMessages, selectedFlockId],
+  );
+  const reloadDmMessages = useCallback(
+    () => { if (selectedDmId) loadDmMessages(selectedDmId, { showSkeleton: true }); },
+    [loadDmMessages, selectedDmId],
+  );
 
   // ── Scrollback ──────────────────────────────────────────────────────────
   // Both message routes take a `before` message-id cursor and have taken one
@@ -15447,6 +15506,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venuesFromLabel,
         locationBannerDismissed,
         messagesLoading,
+        messagesError,
+        reloadFlockMessages,
         notifAskDismissed,
         notifStatus,
         olderLoading,
@@ -15567,6 +15628,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         dmIsTyping,
         dmMemberLocation,
         dmMessagesLoading,
+        dmMessagesError,
+        reloadDmMessages,
         dmNavOpen,
         dmNotConnected,
         dmPendingImage,
@@ -16917,7 +16980,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             httpUrl={httpUrl}
             colors={colors}
             venueDetailModal={venueDetailModal}
-            setVenueDetailModal={setVenueDetailModal}
+            setVenueDetailModal={closeVenueDetailSheet}
             venueDetailPhotoIdx={venueDetailPhotoIdx}
             setVenueDetailPhotoIdx={setVenueDetailPhotoIdx}
             venueDetailPlaceId={venueDetailPlaceId}

@@ -98,6 +98,8 @@ function dmProps(over = {}) {
     dmIsTyping: false,
     dmMemberLocation: null,
     dmMessagesLoading: false,
+    dmMessagesError: '',
+    reloadDmMessages: jest.fn(),
     dmNavOpen: false,
     dmNotConnected: false,
     dmPendingImage: null,

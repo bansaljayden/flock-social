@@ -191,6 +191,8 @@ export default function DmDetail({
   dmIsTyping,
   dmMemberLocation,
   dmMessagesLoading,
+  dmMessagesError,
+  reloadDmMessages,
   dmNavOpen,
   dmNotConnected,
   dmPendingImage,
@@ -1438,7 +1440,19 @@ export default function DmDetail({
         loadingState={dmMessagesLoading && selectedDm.messages.length === 0 ? (
           <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
         ) : null}
-        emptyState={dmSearchQuery ? (
+        emptyState={dmMessagesError && !dmSearchQuery ? (
+          /* THE READ FAILED, and the branch below it says "Say hi to start the
+             conversation" -- a claim about the reader's own history, made over
+             a thread that exists and did not arrive. The blocked-pair notice
+             further down already refuses to let that sentence stand for the
+             same reason; this covers the other way a thread comes back empty. */
+          <div role="alert" style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 12px' }} />
+            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This conversation did not load</h3>
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Nothing has been lost. The messages are on the server and this screen could not reach them.</p>
+            <button className="hit44 glass-btn glass-navy" onClick={reloadDmMessages} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+          </div>
+        ) : dmSearchQuery ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{dmChatSearch}"</p>
           </div>

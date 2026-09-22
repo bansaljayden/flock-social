@@ -178,7 +178,7 @@ export default function EventDetailOverlay({
             {eventDetailError && (
               <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
                 {eventDetailError}{' '}
-                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null }))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
+                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
               </p>
             )}
             {/* Distance */}
