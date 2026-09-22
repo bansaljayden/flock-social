@@ -38,11 +38,13 @@
  * itself is composited afterwards from the recording's own frames rather than
  * drawn here, so the clock, the island and the battery are the real ones.
  *
- * ORDER MATTERS. The beats change state as they run, the way a person would:
- * the budget beat settles the budget, the vote beat then locks the venue, and
- * the chat behind both moves forward rather than resetting. Running one beat
- * alone is fine; running them out of order will film a screen further ahead
- * than its line describes.
+ * ORDER MATTERS, AND IT IS THE FILM'S ORDER, NOT A CONVENIENT ONE. Each beat
+ * consumes the state it films: the vote beat locks the venue, the budget beat
+ * settles the budget. Shot in the other order the clips still look right one
+ * at a time and the cut does not: the first take had the budget settling
+ * first, so the plan read as locked in the vote beat and went back to still
+ * voting in the budget beat that follows it. Anything added here goes in the
+ * position its line holds in the narration.
  *
  * WEBM, THEN MP4. Playwright writes webm and only on context close, so each
  * beat gets its own context and is converted afterwards. ffmpeg must be on
@@ -148,7 +150,8 @@ const openFlock = async (page, name) => {
 /* ── The beats ──────────────────────────────────────────────────────────── */
 
 const BEATS = {
-  /* Beat 9, and it runs first because it is the one that moves the plan on.
+  /* Beat 9, filmed after the vote, because that is the order the film runs
+     them in and this plan carries both.
      The line under this is about everyone quietly saying what they can afford
      and one number coming back that clears for all of them, with nobody's
      own amount on screen. So: the strip that says how many have answered, the
@@ -213,19 +216,14 @@ const BEATS = {
   bill: {
     who: 'camera',
     async drive(page) {
-      await openFlock(page, 'Trivia Night');
+      /* THE SAME PLAN AS THE TWO BEATS BEFORE IT. The bill only appears once a
+         plan is locked in, which the vote beat has just done, so the whole run
+         from the vote through the group number to the split is one night with
+         one set of names on it. Shot on a second plan it still reads correctly
+         beat by beat, and the film then changes plan twice in thirty seconds
+         under narration about one Friday. */
+      await openFlock(page, 'Friday Night Crew');
       await tap(page, page.getByRole('button', { name: 'Open group cash pool' }).first(), { after: 1500 });
-      const submit = page.getByRole('button', { name: 'Submit', exact: true }).first();
-      if (await submit.count()) {
-        /* This account has not answered on this plan, so the sheet opens on the
-           ask. Answer it off camera's interest and reopen: the beat is the
-           bill, not the budget, and that one already has its own beat. */
-        await page.getByRole('button', { name: '$40', exact: true }).first().click().catch(() => {});
-        await hold(page, 400);
-        await submit.click();
-        await hold(page, 2000);
-        await tap(page, page.getByRole('button', { name: 'Open group cash pool' }).first(), { after: 1500 });
-      }
       await still(page, 'bill-1-pool');
       await tap(page, page.getByRole('button', { name: /Split the Bill/i }).first(), { after: 1600 });
       await still(page, 'bill-2-form');
@@ -234,7 +232,12 @@ const BEATS = {
       await tap(page, total, { after: 400 });
       /* Typed, not filled. A total that appears whole is a screenshot; the
          beat is a person entering it. */
-      await total.type('84.20', { delay: 130 });
+      /* Five people and a number that lands UNDER the group's own published
+         ceiling. The budget beat settles at twenty-five a head, so a subtotal
+         of 104.60 plus the eighteen per cent tip is 24.69 each: the plan came
+         in inside the number the group agreed, which is the whole point of
+         having asked. */
+      await total.type('104.60', { delay: 130 });
       await hold(page, 1100);
       await still(page, 'bill-3-typed');
       await tap(page, page.getByRole('button', { name: '18%', exact: true }).first(), { after: 1300 });
@@ -328,7 +331,8 @@ const BEATS = {
 };
 
 // The order they change state in. --only picks a subset without reordering it.
-const ORDER = ['budget', 'vote', 'bill', 'venue', 'override'];
+// The order the narration runs in: beat 8 is the vote, beat 9 the budget.
+const ORDER = ['vote', 'budget', 'bill', 'venue', 'override'];
 
 /* ── The camera ─────────────────────────────────────────────────────────────
  *
