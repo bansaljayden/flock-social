@@ -22,6 +22,43 @@
 # into a direct message (CreateScreen.js:156 dmTarget).
 appId: com.flockcorp.flock
 ---
+# THE TAB BAR CAN BE UNDER SOMETHING WHEN THIS PART STARTS, and this tap is
+# required, so when it is, the run ends here. Build 64 died exactly here:
+# `Element not found: Text matching regex: Nest` at step 85, six and a half
+# minutes in, with the previous steps showing the Discover part closing a venue
+# card TWICE (step 74 and step 78) before tapping Map. Two Closes in a row is a
+# full-screen sheet still on top, and that sheet covers the tab bar.
+#
+# Every step below is guarded on Nest being absent, so a healthy run does none
+# of them and films nothing extra. The order is least invasive first: the
+# sheet's own Close, then the results list's own Map, then a tap on the map
+# itself, which dismisses a card by tapping the backdrop behind it.
+- runFlow:
+    when:
+      notVisible: "Nest"
+    commands:
+      - tapOn:
+          text: "Close"
+          optional: true
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: "Nest"
+    commands:
+      - tapOn:
+          text: "Map"
+          optional: true
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: "Nest"
+    commands:
+      # The upper middle of the screen is the map itself on Discover and the
+      # scrim on any sheet over it. Nothing there is a control.
+      - tapOn:
+          point: "50%,35%"
+          optional: true
+      - waitForAnimationToEnd
 - tapOn: "Nest"
 - tapOn:
     text: "Start a flock"                       # App.js:12374 header button (flocks exist) or :12434 empty state; same text, either opens the create screen
