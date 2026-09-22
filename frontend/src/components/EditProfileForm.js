@@ -38,6 +38,7 @@
 import React from 'react';
 import Icons from './ui/Icons';
 import { updateProfile, resendVerificationEmail } from '../services/api';
+import { connectSocket } from '../services/socket';
 
 const EditProfileForm = ({
   authUser,
@@ -191,6 +192,21 @@ const EditProfileForm = ({
                     if (newPw) payload.new_password = newPw;
 
                     const data = await updateProfile(payload);
+                    // A NEW PASSWORD ENDS EVERY SESSION, INCLUDING THE ONE
+                    // THIS SOCKET IS HOLDING. The server bumps
+                    // users.token_version and mints a replacement token in
+                    // the same answer, which api.js stores, so every later
+                    // HTTP call is fine. The websocket is not: it
+                    // authenticated at handshake time with the token that
+                    // was just revoked, and nothing re-dialled it. It kept
+                    // working until the connection next dropped and was
+                    // then refused, so messages, votes, typing, live
+                    // location and read receipts all went quiet with no
+                    // sign anything was wrong, until the app was restarted.
+                    // connectSocket rebuilds when the token has changed,
+                    // which it has, and carries the push token up again
+                    // with it.
+                    if (newPw) connectSocket();
                     // Push the row of record up to the app shell. `authUser` is
                     // a prop that is read at sign-in and never refetched, so an
                     // address changed here stayed stale everywhere above: the

@@ -9017,6 +9017,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // could be one. Named so the reconnect catch-up can re-read it: it used to
   // re-read the messages alone, and a budget that locked or a bill that
   // landed while the phone was in a pocket stayed off the screen.
+  /* A MONEY READ THAT FAILED IS NOT A FLOCK WITH NO MONEY IN IT. Both reads
+     below answered every failure by setting null, and null is the same value
+     that means "there is no bill" and "the budget is off". So a refused read
+     put the Split the Bill CREATION form in front of someone whose flock
+     already had a bill, and bill_splits is UNIQUE(flock_id) with an
+     ON CONFLICT DO UPDATE behind it: entering a total there rewrites the live
+     bill's total, tip, split type and payer and re-pushes everyone's share.
+     Payments already made survive as credit (migration 061) and a member who
+     is neither payer nor creator is refused with NOT_PAYER, so nothing is
+     lost -- but the bill the group agreed on is silently replaced.
+
+     A 404 is the honest empty answer and keeps the old behaviour. Anything
+     else raises this, and the screen says the money did not load instead of
+     offering to make it again. */
+  const [moneyError, setMoneyError] = useState('');
   const moneyStateSeqRef = useRef(0);
   const loadMoneyState = useCallback((flockId) => {
     // Same guard openVenueDetail uses on its own async result. Without it a
@@ -9024,9 +9039,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // new flock's budget and bill card.
     const seq = ++moneyStateSeqRef.current;
     const current = () => seq === moneyStateSeqRef.current;
+    setMoneyError('');
     getBudgetStatus(flockId)
       .then(data => { if (!current()) return; if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
-      .catch(() => { if (current()) setBudgetStatus(null); });
+      .catch((err) => {
+        if (!current()) return;
+        setBudgetStatus(null);
+        if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
+      });
     // A bill only exists after someone splits one, and the UI only offers
     // that on a confirmed or completed flock. Asking for one on every open
     // meant a 404 (and a red line in the console) every single time a plan
@@ -9036,11 +9056,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
       getBillSplit(flockId)
         .then(data => { if (current()) setBillSplit(data.bill); })
-        .catch(() => { if (current()) setBillSplit(null); });
+        .catch((err) => {
+          if (!current()) return;
+          setBillSplit(null);
+          if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
+        });
     } else {
       setBillSplit(null);
     }
   }, []);
+
+  /* The Try again behind a failed money read. Same reason as
+     reloadFlockMessages: the prop bag binds names, so the id closes over
+     here, and it sits below loadMoneyState because it names it in a
+     dependency array. */
+  const reloadMoneyState = useCallback(
+    () => { if (selectedFlockId) loadMoneyState(selectedFlockId); },
+    [loadMoneyState, selectedFlockId],
+  );
 
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
@@ -15507,6 +15540,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         locationBannerDismissed,
         messagesLoading,
         messagesError,
+        moneyError,
+        reloadMoneyState,
         reloadFlockMessages,
         notifAskDismissed,
         notifStatus,

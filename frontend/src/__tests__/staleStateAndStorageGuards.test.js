@@ -228,9 +228,17 @@ test('loadMoneyState drops a response that belongs to an earlier call', () => {
   expect(fn).toContain('const seq = ++moneyStateSeqRef.current;');
   expect(fn).toContain('const current = () => seq === moneyStateSeqRef.current;');
   expect(fn).toContain('.then(data => { if (!current()) return; if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })');
-  expect(fn).toContain('.catch(() => { if (current()) setBudgetStatus(null); })');
   expect(fn).toContain('.then(data => { if (current()) setBillSplit(data.bill); })');
-  expect(fn).toContain('.catch(() => { if (current()) setBillSplit(null); })');
+  // Both catches now tell a 404 (there is genuinely no bill or budget) apart
+  // from a refused read, so they are several lines rather than one. What this
+  // test is about is the staleness guard, and it has to be the FIRST thing
+  // either of them does or a late failure still clears the chat you are in.
+  for (const m of ['setBudgetStatus(null);', 'setBillSplit(null);']) {
+    const i = fn.indexOf(m);
+    expect(i).toBeGreaterThan(-1);
+    expect(fn.slice(Math.max(0, i - 140), i)).toContain('if (!current()) return;');
+  }
+  expect((fn.match(/if \(!current\(\)\) return;/g) || []).length).toBeGreaterThanOrEqual(3);
   // Leaving the chat retires whatever is still in flight for it.
   const exit = region(APP, "} else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {", 'setBillSplit(null);');
   expect(exit).toContain('moneyStateSeqRef.current += 1;');
