@@ -292,7 +292,15 @@ describe('dashboard map behavior', () => {
     // read as broken when the dashboard's behaviour had not changed at all.
     expect(APP).toContain('initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng }');
     expect(APP).toMatch(/const located = \(initialCenter \|\|[^)]*\)/);
-    expect(APP).toMatch(/\{followUser && \(\s*\n\s*<button aria-label="My Location"/);
+    /* The property again, not the characters, for the same reason the three
+       assertions above it were loosened. followUser has to be a required term
+       in front of the My Location button, so a dashboard map never offers a
+       control whose only job is to ask for the phone's position. It gained a
+       second term on 2026-09-22 (the control is also withheld when the map
+       surface is too short to show it), which narrows the guard further and
+       cannot weaken this rule. What is pinned is that followUser leads the
+       condition and nothing is ORed around it. */
+    expect(APP).toMatch(/\{followUser &&[^|\n]*\(\s*\n\s*<button aria-label="My Location"/);
   });
 
   it('the map mounts centered on the venue with the consumer pin list', () => {
