@@ -393,13 +393,13 @@ export default function ExploreScreen({
             eleven, and the overlay only explains itself at exactly zero. Both
             ends read the one list now, so the promise and the screen cannot
             drift apart again. */}
-        {budgetFilteredVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
+        {(budgetFilteredVenues || []).length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
           <button
             className="hit44 glass-btn"
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
             style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
-            All {budgetFilteredVenues.length} results
+            All {(budgetFilteredVenues || []).length} results
           </button>
         )}
 
