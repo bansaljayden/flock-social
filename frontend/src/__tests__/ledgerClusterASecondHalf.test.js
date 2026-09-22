@@ -182,7 +182,11 @@ describe('A6: a failed flock message and its retry survive reopening the app', (
   });
 
   it('history load rehydrates the failed sends and self-cleans ones that landed', () => {
-    const loader = between(APP, 'const loadFlockMessages = useCallback', '.catch(() => {', 200, 3000);
+    // The catch signature is the end anchor and it now takes the error: a
+    // refused history read raises messagesError so the thread stops rendering
+    // as an empty one. Anchored on the real line rather than widened, because
+    // between()'s size floor exists to catch exactly this drift.
+    const loader = between(APP, 'const loadFlockMessages = useCallback', '.catch((err) => {', 200, 3000);
     expect(loader).toContain('readFailedFlockMessages(flockId)');
     expect(loader).toContain('writeFailedFlockMessages(flockId, failed)');
     // The rehydrated failures ride through mergeHistory as local, unsettled rows.

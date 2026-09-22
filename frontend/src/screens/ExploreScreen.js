@@ -719,7 +719,11 @@ export default function ExploreScreen({
                         getEventDetails(event.id)
                           // Merge, and keep the list's distance: the single-event
                           // payload has none, so the miles line used to vanish.
-                          .then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null })))
+                          // AND ONLY INTO AN OVERLAY THAT IS STILL OPEN. Spreading
+                          // into a null prev yields {}, which is truthy, so a read
+                          // landing after the user closed the card built a new one
+                          // out of nothing and put it back on screen.
+                          .then(data => setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null)))
                           .catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.'))
                           .finally(() => setEventDetailLoading(false));
                       }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>

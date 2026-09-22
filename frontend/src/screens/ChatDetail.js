@@ -687,6 +687,8 @@ export default function ChatDetail({
   loadPopularVenues,
   locationBannerDismissed,
   messagesLoading,
+  messagesError,
+  reloadFlockMessages,
   notifAskDismissed,
   notifStatus,
   olderLoading,
@@ -2373,6 +2375,20 @@ export default function ChatDetail({
           </p>
         )}
       </div>
+    ) : (!messagesLoading && messagesError && flock.messages.length === 0 ? (
+      /* THE READ FAILED. Below this branch is the empty state, and it makes a
+         claim about the user's own data: "Nothing here yet... Say hi". Said
+         over a thread that exists and simply did not arrive, that is the app
+         telling somebody their conversation is gone. Same shape and same
+         reasoning as the vote tally's votesError further down. */
+      <div role="alert" style={{ textAlign: 'center', padding: '40px 24px 48px' }}>
+        <BirdieStill bird={WARM_BIRD} size={96} style={{ margin: '0 auto 10px' }} />
+        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This conversation did not load</p>
+        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
+          Nothing has been lost. The messages are on the server and this screen could not reach them.
+        </p>
+        <button className="hit44 glass-btn glass-navy" onClick={reloadFlockMessages} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+      </div>
     ) : (!messagesLoading && flock.messages.length === 0 ? (
       /* A brand-new flock lands you here with nothing on screen at all, which
          is the first thing anyone sees after creating one. Say what this room
@@ -2404,7 +2420,7 @@ export default function ChatDetail({
           </button>
         </div>
       </div>
-    ) : null);
+    ) : null));
 
     // THE MESSAGE ACTIONS ARE A LONG PRESS NOW, and the trigger is the only
     // thing about them that changed. A tap used to open this row, which meant
