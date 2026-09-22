@@ -122,7 +122,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     expect(watch.length).toBeGreaterThan(200);
     // The guard sits above the call, in the same effect.
     const guard = sliceMap(
-      'if (!mapReady || !followUser',
+      'if (!mapVisible || !mapReady || !followUser',
       'watchIdRef.current = watchPosition(',
       20,
       600,
@@ -145,7 +145,14 @@ describe('every door that can raise the OS location prompt checks the switch', (
       200,
       1600,
     );
-    expect(deps).toContain('}, [mapReady, followUser, locationAllowed]);');
+    // mapVisible leads the list now. Discover is parked behind
+    // visibility:hidden rather than unmounted, so without it this armed a
+    // high-accuracy watch on the first visit and held it for the session,
+    // moving a marker and rebuilding a 64-point accuracy polygon on a map
+    // nobody could see. It is in the CONDITION and the DEPENDENCIES for the
+    // same reason locationAllowed is in both: a gate read but not depended on
+    // only applies at the next unrelated re-run.
+    expect(deps).toContain('}, [mapVisible, mapReady, followUser, locationAllowed]);');
   });
 
   it('the switch is actually handed to the map, not just accepted by it', () => {

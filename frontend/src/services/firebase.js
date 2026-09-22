@@ -512,8 +512,24 @@ async function syncPushForSession() {
 // would otherwise stay unregistered for the whole page load. Coming back to
 // the tab or regaining connectivity re-arms it — but only when permission is
 // already settled in our favour, so nobody is prompted twice.
+// A LATCH, THE SAME ONE syncPushForSession CARRIES. This is bound to focus,
+// online, storage and visibilitychange, and iOS fires focus and
+// visibilitychange together on foreground -- so every return to the app ran
+// two FirebaseMessaging.checkPermissions() bridge round trips, on the exact
+// frame the person is waiting for the app to come back, and on a device that
+// has refused notifications it could never resolve and so never stopped.
+let rearmInFlight = false;
 async function rearmIfUnresolved() {
-  if (currentPushToken) return;
+  if (currentPushToken || rearmInFlight) return;
+  rearmInFlight = true;
+  try {
+    await rearmIfUnresolvedInner();
+  } finally {
+    rearmInFlight = false;
+  }
+}
+
+async function rearmIfUnresolvedInner() {
   let status = getNotificationStatus();
   if (status === 'denied' && isNativeApp()) {
     // The sticky marker says denied, but the person may have turned
@@ -554,7 +570,19 @@ export function startPushSessionWatcher() {
   // re-arm it whenever the answer could have changed underneath us: a sign
   // out clears handledAuthToken, and another tab's sign-in arrives as storage.
   let pollId = null;
-  const settled = () => handledAuthToken !== null && currentPushToken !== null;
+  // SETTLED IS ABOUT THE SESSION, NOT ABOUT HAVING A TOKEN, and requiring both
+  // meant this timer could never stop for the people it runs on most.
+  // syncPushForSession sets handledAuthToken on BOTH outcomes -- a granted
+  // permission that produced a token, and a status that is not granted, which
+  // leaves currentPushToken null forever. The comment above says who that is:
+  // every signed-in web user, and the overwhelming majority of them have never
+  // granted notification permission. For all of them the AND could never be
+  // true, stopPoll was never reached, and a 2s interval ran for the life of
+  // the page doing a localStorage read and an early return.
+  //
+  // handledAuthToken already means "this session has been answered", which is
+  // exactly the question the poll is open on.
+  const settled = () => handledAuthToken !== null;
   const stopPoll = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
 
   const tick = () => { syncPushForSession(); if (settled()) stopPoll(); };

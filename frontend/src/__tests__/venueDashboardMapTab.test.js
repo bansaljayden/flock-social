@@ -278,7 +278,14 @@ describe('dashboard map behavior', () => {
     // raising its own "localhost" prompt), and a term with parentheses in it
     // broke a pattern that had assumed the condition contained none. The rest
     // of the line is still somebody else's rule.
-    expect(APP).toMatch(/if \(!mapReady \|\| !followUser \|\|[^\n]*\) return;/);
+    // Position-independent now. The guard gained `!mapVisible` at the FRONT on
+    // 2026-09-22 — the watch was running for the whole session behind a map
+    // parked at visibility:hidden — and pinning `!followUser` as the second
+    // term made that read as the dashboard's rule changing when nothing about
+    // the dashboard had. What this test needs is only that a false followUser
+    // returns before watchPosition; where it sits among the other terms is
+    // somebody else's rule, which is what the note above already says.
+    expect(APP).toMatch(/if \([^\n]*!followUser[^\n]*\) return;/);
     // The property, not the spelling: initialCenter has to short-circuit the
     // geolocation call. That expression gained a second skip on 2026-08-26 for
     // the Settings location switch, and pinning its exact characters made this
