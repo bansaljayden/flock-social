@@ -434,6 +434,29 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // A rejected tile key or a style that never loads used to be an endless
   // spinner (Explore audit, 2026-09-05).
   const [mapFailed, setMapFailed] = useState(false);
+  /* The map surface's own height, watched because the controls on it are
+     positioned from its bottom edge and this box has no floor: it is the
+     flex remainder under a search bar, whatever banners are up and the
+     filter row. Measured at 390x664 with location denied and the analytics
+     bar unanswered it came back 131px and stayed there, which is less than
+     the stack of controls is tall. See the guards at each control. */
+  const [surfaceHeight, setSurfaceHeight] = useState(null);
+  /* A CONTROL THAT CANNOT BE SEEN IS NOT OFFERED. Each of these sits a fixed
+     distance up from the bottom edge and the box clips what overflows it, so
+     on a short surface the zoom pair and the satellite toggle were painted
+     above their own container's top and vanished while staying in the tab
+     order: three stops a keyboard reaches and an eye cannot find. Drawing one
+     only when its own height fits is the honest answer, and it leaves the
+     ordinary case alone, where there is room for all of them.
+
+     Until the first measurement lands surfaceHeight is null and everything
+     renders, so nothing flickers in and an environment with no ResizeObserver
+     keeps its controls. */
+  const roomFor = (px) => surfaceHeight === null || surfaceHeight >= px;
+  // bottom offset + the control's own height + a margin off the top edge.
+  const FITS_MY_LOCATION = 80 + 44 + 8;
+  const FITS_SATELLITE = 132 + 44 + 8;
+  const FITS_ZOOM = 184 + 81 + 8;
   const mapLoadedRef = useRef(false);
   // The category filter hid every pin on the map. Rendered as a sentence,
   // because an empty map reads as broken.
@@ -856,7 +879,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // (leaves a navy gap below the map). ResizeObserver fixes that for good
       // and also handles orientation changes / window resize.
       if (typeof ResizeObserver !== 'undefined') {
-        resizeObs = new ResizeObserver(() => { try { map.resize(); } catch {} });
+        resizeObs = new ResizeObserver((entries) => {
+          try { map.resize(); } catch {}
+          const box = entries && entries[0] && entries[0].contentRect;
+          if (box) setSurfaceHeight(box.height);
+        });
         resizeObs.observe(mapRef.current);
       } else {
         // Fallback: nudge once after layout settles
@@ -1599,7 +1626,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           viewer (venue dashboard): with no tracked position it could only
           ever re-center on nothing, and a button that cannot succeed does
           not render. */}
-      {followUser && (
+      {followUser && roomFor(FITS_MY_LOCATION) && (
       <button aria-label="My Location" className="hit44"
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
@@ -1621,6 +1648,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       )}
 
       {/* Zoom controls */}
+      {roomFor(FITS_ZOOM) && (
       <div style={{
         position: 'absolute', bottom: '184px', right: '12px',
         display: 'flex', flexDirection: 'column',
@@ -1647,13 +1675,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           </svg>
         </button>
       </div>
+      )}
 
       {/* Map / Satellite toggle. Hidden outright when there is no MapTiler key,
           because MapTiler hybrid is now the only satellite imagery Flock is
           licensed to draw — a button that swaps to nothing is worse than no
           button. Every shipping build sets the key, so this renders in all of
           them. */}
-      {SATELLITE_AVAILABLE && (
+      {SATELLITE_AVAILABLE && roomFor(FITS_SATELLITE) && (
       <button className="hit44"
         aria-label={mapType === 'roadmap' ? 'Switch to satellite view' : 'Switch to map view'}
         onClick={toggleMapType}
