@@ -741,11 +741,17 @@ test('deleting a promotion or an event reports the server refusal', () => {
   for (const [name, api] of [['deletePromo', 'deleteVenuePromotion'], ['deleteEvent', 'deleteVenueEvent']]) {
     const start = dashboard.indexOf(`const ${name} = `);
     assert.ok(start > 0, `${name} not found`);
-    const fn = dashboard.slice(start, start + 500);
+    // Bounded on the handler's own closing line rather than a byte count. Both
+    // of these gained a window.confirm naming the row, which pushed the toast
+    // past a fixed 500 and failed this test for a reason that had nothing to
+    // do with whether the refusal is reported.
+    const after = dashboard.slice(start);
+    const close = after.indexOf(['', '    };'].join('\n'));
+    const fn = close === -1 ? after.slice(0, 1200) : after.slice(0, close);
     assert.ok(new RegExp(`await ${api}\\(`).test(fn));
     assert.ok(/showToast\(e\?\.message \|\|/.test(fn),
       `${name} still swallows the refusal — the trash icon does nothing at all when the server says no`);
-    assert.ok(!/console\.error/.test(fn.slice(0, fn.indexOf('};'))),
+    assert.ok(!/console\.error/.test(fn),
       `${name} must not log the refusal instead of showing it`);
   }
 });

@@ -563,7 +563,12 @@ test('everything the form asks is answerable again in settings', () => {
   // PUT and exposed in settings by nothing, so they could be set exactly once.
   const start = APP_JS.indexOf('About Your Venue');
   assert.notStrictEqual(start, -1, 'the venue settings intake card is gone');
-  const card = APP_JS.slice(start, start + 12000);
+  // 14000, not 12000: the last key in the list sat 22 characters outside the
+  // old window after an unrelated edit above the card, and a fixed window that
+  // narrow fails for reasons that have nothing to do with what it is testing.
+  // The slack is cheap here -- a false pass needs an unrelated mention of one
+  // of these exact names inside the same card.
+  const card = APP_JS.slice(start, start + 14000);
   for (const key of [
     'category', 'description', 'goals', 'capacity', 'serviceStyle', 'hasOutdoorSeating',
     'reservationPolicy', 'largestWalkinGroup', 'typicalDwellMinutes', 'typicalSpendPerPerson',

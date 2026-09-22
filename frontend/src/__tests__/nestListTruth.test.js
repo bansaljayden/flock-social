@@ -31,7 +31,13 @@ test('the Nest counts, gates and lists one live, sorted array', () => {
   expect(home).toMatch(/\{liveFlocks\.map\(\(f, idx\) => \{/);
   expect(home).toMatch(/\{flocks\.length > 0 \? 'Nothing coming up' : 'No flocks yet'\}/);
   expect(home).toMatch(/\{f\.timePassed \? 'Time passed' : f\.status === 'voting' \? 'Needs Votes'/);
-  expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && votesLoadedRef/);
+  // The per-reader half is a named helper now, because the flock list read
+  // answers it too: a tally that has not been read this session falls back to
+  // the list's own iVoted rather than staying silent, which is what kept this
+  // card from ever appearing on the screen it lives on. Both halves are still
+  // pinned, which is what this line is for.
+  expect(home).toMatch(/const needsMyVote = \(f\) => \(votesLoadedRef\.current\.has\(f\.id\)/);
+  expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\)\);/);
 });
 
 test('a waiting invite is said on the badge and on the Nest, with when, where and who', () => {

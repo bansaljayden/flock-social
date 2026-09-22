@@ -161,16 +161,28 @@ describe('the question the home card should have been asking', () => {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 describe('the home screen stops asking once the vote is cast', () => {
-  /** The real filter expression from App.js, run over fixtures. */
-  const needsAction = (() => {
+  /** The real predicate from App.js, run over fixtures.
+   *
+   *  LIFTED AS A PAIR. The question moved into its own helper when the flock
+   *  list read started answering it: a flock whose tally has not been read
+   *  this session now falls back to the list's own `iVoted` instead of staying
+   *  silent for ever, which is what kept this card off the screen it lives on.
+   *  The filter alone no longer runs, so both lines come across together. */
+  const liftPredicate = () => {
+    const from = APP.indexOf('const needsMyVote = (f) =>');
+    expect(from).toBeGreaterThan(-1);
     const marker = 'const needsAction = liveFlocks.filter(';
-    const at = APP.indexOf(marker);
-    expect(at).toBeGreaterThan(-1);
-    const line = APP.slice(at, APP.indexOf(';', at) + 1);
-    expect(line.length).toBeGreaterThan(marker.length);
-    expect(line.length).toBeLessThan(300);
+    const at = APP.indexOf(marker, from);
+    expect(at).toBeGreaterThan(from);
+    const src = APP.slice(from, APP.indexOf(';', at) + 1);
+    expect(src.length).toBeGreaterThan(marker.length);
+    expect(src.length).toBeLessThan(700);
+    return src;
+  };
+  const needsAction = (() => {
+    const src = liftPredicate();
     // eslint-disable-next-line no-new-func
-    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${line}\nreturn needsAction;`);
+    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${src}\nreturn needsAction;`);
     return (flocks) => build(flocks, hasCastMyVote, { current: new Set(flocks.map((f) => f.id)) });
   })();
 
@@ -178,11 +190,9 @@ describe('the home screen stops asking once the vote is cast', () => {
     // Cold boot seeds votes as [], so before this gate the card said
     // "Needs your vote" about plans the person voted in yesterday until
     // they happened to open one. An unloaded [] is not evidence.
-    const marker = 'const needsAction = liveFlocks.filter(';
-    const at = APP.indexOf(marker);
-    const line = APP.slice(at, APP.indexOf(';', at) + 1);
+    const src = liftPredicate();
     // eslint-disable-next-line no-new-func
-    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${line}
+    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${src}
 return needsAction;`);
     const unloaded = build([{ id: 9, status: 'voting', votes: [] }], hasCastMyVote, { current: new Set() });
     expect(unloaded).toEqual([]);

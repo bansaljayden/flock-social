@@ -170,10 +170,24 @@ test('Delete still renders on a taken-down promotion and event', () => {
   // The counterpart rule, and the one that stops this becoming a dead end:
   // DELETE has no is_hidden predicate on either resource, so it genuinely works
   // on a hidden row, and it is the only thing the owner can do about one.
-  for (const [what, body] of [['promotion', promoListBody], ['event', eventListBody]]) {
-    assert.match(body, /<button aria-label="Delete"/, `${what} row lost its Delete control`);
+  // ANCHORED ON THE HANDLER, NOT THE LABEL. The accessible name used to be the
+  // bare word "Delete" four times over on one screen; it now names the row it
+  // deletes, so it is an expression rather than a literal. The handler is what
+  // identifies the control either way, and it is what this test is about.
+  for (const [what, body, handler] of [
+    ['promotion', promoListBody, 'deletePromo('],
+    ['event', eventListBody, 'deleteEvent('],
+  ]) {
+    assert.ok(body.includes(handler), `${what} row lost its Delete control`);
+    assert.match(body, /aria-label=\{(promo|event)\.title \?/, `${what} Delete lost its accessible name`);
+    // No regex here: the control's own text carries braces, parens and an
+    // arrow, and escaping all of it into a built pattern is how this
+    // assertion stopped meaning anything twice before. Read backwards from
+    // the handler instead and look at what actually precedes it.
+    const before = body.slice(Math.max(0, body.indexOf(handler) - 200), body.indexOf(handler));
+    const lastButton = before.lastIndexOf('<button');
     assert.ok(
-      !/\{!hidden && \(\s*<button aria-label="Delete"/.test(body),
+      lastButton === -1 || !before.slice(0, lastButton).includes('{!hidden && ('),
       `the ${what} Delete button was gated on the takedown flag; deleting a hidden row is ` +
       'exactly what the server tells the owner to do.'
     );
