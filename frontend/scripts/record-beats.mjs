@@ -125,8 +125,21 @@ const still = async (page, name) => {
   await page.screenshot({ path: path.join(dir, `${name}.png`) });
 };
 
-async function openApp(page, { venue = false } = {}) {
+async function openApp(page, { venue = false, chooser = false } = {}) {
   await page.goto(`${WEB_ORIGIN}/app${venue ? '?venue=true' : ''}`, { waitUntil: 'domcontentloaded' });
+  if (chooser) {
+    // The screen a signed-in account with no mode chosen lands on. The consent
+    // bar is up here too and is not in the film, so it is answered before the
+    // early return rather than after it.
+    await page.getByRole('button', { name: /Venue Dashboard/i }).first().waitFor({ timeout: 40_000 });
+    const ask = page.locator('.cb-wrap .cb-btn', { hasText: 'No thanks' });
+    if (await ask.count()) {
+      await ask.first().click();
+      await page.locator('.cb-wrap').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+    }
+    await hold(page, 1200);
+    return;
+  }
   if (venue) {
     await page.getByText('Welcome,').first().waitFor({ timeout: 40_000 });
   } else {
@@ -273,18 +286,41 @@ const BEATS = {
     },
   },
 
-  /* Beat 13. The same login the app uses, landing somewhere else entirely. */
+  /* Beat 13. The same login the app uses, landing somewhere else entirely, so
+     the beat has to START at the chooser rather than inside the dashboard. It
+     also has to be THIS bar: the film has just spent three beats on the plan
+     that picked it, and the line says "the bar", so a dashboard belonging to
+     some other business in another state is a different claim than the one
+     being made. */
   venue: {
     who: 'owner',
+    chooser: true,
     async drive(page) {
-      await hold(page, 2200);
-      await still(page, 'venue-1-home');
-      await page.mouse.wheel(0, 420);
+      await hold(page, 2600);
+      await still(page, 'venue-1-chooser');
+      await tap(page, page.getByRole('button', { name: /Venue Dashboard/i }).first(), { after: 1200 });
+      await page.getByText('Welcome,').first().waitFor({ timeout: 40_000 });
+      const no = page.locator('.cb-wrap .cb-btn', { hasText: 'No thanks' });
+      if (await no.count()) await no.first().click();
+      await hold(page, 3400);
+      await still(page, 'venue-2-landed');
       await hold(page, 1800);
-      await still(page, 'venue-2-tiles');
-      await page.mouse.wheel(0, 520);
-      await hold(page, 1800);
-      await still(page, 'venue-3-week');
+    },
+  },
+
+  /* Beat 14. What the bar can do once it is in there: see who is circling it
+     tonight, put up a deal or an event, and answer the reviews where they were
+     left. Four windows in the cut, so four places to stop. */
+  tabs: {
+    who: 'owner',
+    async drive(page) {
+      await hold(page, 2000);
+      await still(page, 'tabs-1-analytics');
+      for (const [label, frame] of [['Promotions', 'tabs-2-promotions'], ['Events', 'tabs-3-events'], ['Reviews', 'tabs-4-reviews']]) {
+        await tap(page, page.getByRole('button', { name: label, exact: true }).first(), { after: 2400 });
+        await still(page, frame);
+        await hold(page, 1200);
+      }
     },
   },
 
@@ -334,7 +370,7 @@ const BEATS = {
 
 // The order they change state in. --only picks a subset without reordering it.
 // The order the narration runs in: beat 8 is the vote, beat 9 the budget.
-const ORDER = ['vote', 'budget', 'bill', 'venue', 'override'];
+const ORDER = ['vote', 'budget', 'bill', 'venue', 'tabs', 'override'];
 
 /* ── The camera ─────────────────────────────────────────────────────────────
  *
@@ -438,6 +474,9 @@ async function recordBeat(name, beat, browser, tokens) {
   const raw = path.join(OUT_DIR, '_raw', name);
   fs.mkdirSync(raw, { recursive: true });
   const isOwner = beat.who === 'owner';
+  /* A beat that opens on the mode chooser must arrive with no mode chosen,
+     which is the one thing the deep link and the stored mode both skip. */
+  const onChooser = !!beat.chooser;
   const context = await browser.newContext({
     viewport: { width: 402, height: 874 },
     deviceScaleFactor: 3,
@@ -453,7 +492,7 @@ async function recordBeat(name, beat, browser, tokens) {
     localStorage.setItem('flock-theme-mode', 'manual');
     localStorage.setItem('flock-theme', 'light');
     localStorage.setItem('flock_notif_denied', 'true');
-    localStorage.setItem('flockUserMode', mode);
+    if (mode) localStorage.setItem('flockUserMode', mode);
     if (mode === 'venue') localStorage.setItem('flockVenueOnboardingComplete', 'true');
     localStorage.setItem('flock_user_lat', '39.9526');
     localStorage.setItem('flock_user_lng', '-75.1652');
@@ -464,7 +503,8 @@ async function recordBeat(name, beat, browser, tokens) {
     const attach = () => document.head && document.head.appendChild(el);
     if (document.head) attach();
     else document.addEventListener('DOMContentLoaded', attach);
-  }, [isOwner ? tokens.owner : tokens.camera, isOwner ? 'venue' : 'user', SAFE_TOP, SAFE_BOTTOM]);
+  }, [isOwner ? tokens.owner : tokens.camera,
+    onChooser ? '' : (isOwner ? 'venue' : 'user'), SAFE_TOP, SAFE_BOTTOM]);
 
   const page = await context.newPage();
   const errors = [];
@@ -472,7 +512,7 @@ async function recordBeat(name, beat, browser, tokens) {
 
   const cam = await startScreencast(context, page, raw);
   try {
-    await openApp(page, { venue: isOwner });
+    await openApp(page, { venue: isOwner && !onChooser, chooser: onChooser });
     await beat.drive(page);
   } finally {
     await cam.stop();
