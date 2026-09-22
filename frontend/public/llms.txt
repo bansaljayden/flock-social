@@ -27,7 +27,8 @@ Updated: September 22, 2026.
   person has to be the decider.
 - Budget matching: each person privately types what they can spend. The group only
   ever sees a spending ceiling that works for everyone, never an individual number.
-  The ceiling stays hidden until three people have submitted.
+  No figure at all is published until every member has answered and at least three
+  have shared an amount; what is published then is a rounded-down band, once.
 - Bill splitting: after the night, the total splits across the group and Flock
   generates Venmo, Cash App, and Zelle links.
 - Crowd levels: Flock estimates how busy a venue will be tonight from the hour, the

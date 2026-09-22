@@ -131,7 +131,7 @@ export default function SupportPage() {
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
         </p>
         <p>
-          Please include your username, your device (iPhone model + iOS version, or Android model
+          Please include the email on your account, your device (iPhone model + iOS version, or Android model
           + version), and a short description of what you were doing when the issue happened.
           Screenshots help.
         </p>
