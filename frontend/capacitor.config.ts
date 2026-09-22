@@ -4,26 +4,29 @@ const config: CapacitorConfig = {
   appId: 'com.flockcorp.flock',
   appName: 'Flock',
   webDir: 'build',
-  // THE APP RUNS ON ITS OWN ORIGIN, NOT capacitor://localhost.
+  // THE ORIGIN CHANGE IS PARKED, NOT ABANDONED.
   //
-  // Assets are still served from the bundle — this is not a remote-loaded
-  // shell, there is no `url` here, and nothing is fetched over the network to
-  // paint. Only the origin the WebView reports changes, and it has to, because
-  // iOS Password AutoFill and every third-party password manager key saved
-  // credentials to an https origin. On capacitor://localhost the save prompt
-  // never fires at all, and a password saved for flockcorp.com in Safari can
-  // never be offered. Together with the webcredentials: entries in
-  // App.entitlements this is what turns saving a Flock password on.
+  // Running the WebView on https://www.flockcorp.com instead of
+  // capacitor://localhost is what would let iOS offer to save a Flock
+  // password, and the webcredentials: entries in App.entitlements are already
+  // in place for it. It was reverted on 2026-09-21 without ever reaching a
+  // device, for two reasons that both point the same way:
   //
-  // THIS CHANGES THE ORIGIN, SO IT ORPHANS EVERYTHING STORED UNDER THE OLD
-  // ONE: localStorage (including flockToken), sessionStorage, IndexedDB. Every
-  // install carried over from a build before this one is signed out exactly
-  // once and signs back in normally.
-  server: {
-    hostname: 'www.flockcorp.com',
-    iosScheme: 'https',
-    androidScheme: 'https',
-  },
+  //   * It shipped in the build that answers a "cannot sign in" rejection.
+  //     That is the worst possible place for an untested change, and the app
+  //     has now been rejected twice on that guideline.
+  //   * The first recording run that carried it signed in three times and
+  //     never reached the home screen. That is NOT proof it was the cause --
+  //     the flow has a documented character-dropping flake on simulator
+  //     typing, which is why it retries -- but it is the only untested thing
+  //     in the build, and the cheapest way to tell them apart is to remove it.
+  //
+  // The real hazard to check before trying again: the app would claim an
+  // origin that genuinely exists and is served over HTTPS with HSTS from
+  // helmet, so WKWebView has a real host policy for it. Test it in a build of
+  // its own, on a device, with nothing else in flight, and remember that it
+  // signs every existing install out once because storage is keyed to the
+  // origin.
   ios: {
     // The app manages all scrolling in inner containers; the WebView's own
     // scroll view only ever produced the "whole frame drags up and down"
