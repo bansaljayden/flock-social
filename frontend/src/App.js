@@ -2996,6 +2996,48 @@ const colorsDark = {
 // eslint-disable-next-line no-unused-vars
 const colors = colorsLight;
 
+/* DECLARED HERE, NOT INSIDE THE COMPONENT, and this file already states the
+   rule: "Call functions directly instead of JSX to prevent component
+   recreation". Every other inline helper obeys it -- BottomNav(), SOSModal(),
+   CropModal(), HomeScreen() are all CALLED. These two were mounted as JSX
+   while being declared in the render body, which gives them a new function
+   identity every render; React compares element TYPES, sees a mismatch, and
+   throws the DOM subtree away and builds a new one rather than updating it.
+
+   NavIcon is five per nav bar, and the nav renders twice (the live screen and
+   the hidden Discover layer that stays mounted), so that was ~10 remounts and
+   ~60 inline SVG trees allocated per App render -- it builds all six icons to
+   return one. Toggle is handed to ProfileSettings and CreateScreen as a prop,
+   so nine switches had their button and knob torn out and rebuilt on every
+   render, which is also why the knob's `transition: left 0.2s` could never
+   play: there was never an old node left to animate from.
+
+   Both read only `colors`, which is module scope, so nothing had to be
+   threaded to move them. */
+// Toggle Component
+// role="switch" + aria-checked is the only thing that makes an unlabelled
+// 44x24 pill announce as a control with a state. `label` is passed by every
+// caller that has a visible row title next to it.
+const Toggle = ({ on, onChange, label }) => (
+  <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
+    <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+  </button>
+);
+
+// SVG Icons for navigation
+const NavIcon = ({ id, active }) => {
+  const color = active ? colors.navy : colors.textTertiary;
+  const icons = {
+    home: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
+    explore: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
+    calendar: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
+    chat: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
+    revenue: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
+    profile: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
+  };
+  return icons[id] || null;
+};
+
 // The decorative phone bezel is a DESKTOP-ONLY preview shell. On the real device
 // (Capacitor) or any phone-sized viewport it must not render — otherwise the app
 // draws a fake phone border inside the actual phone. Native detection + width
@@ -11246,30 +11288,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast(err?.message || "That photo didn't come off. Try again.", 'error');
     }
   }, [profilePic, showToast]);
-
-  // Toggle Component
-  // role="switch" + aria-checked is the only thing that makes an unlabelled
-  // 44x24 pill announce as a control with a state. `label` is passed by every
-  // caller that has a visible row title next to it.
-  const Toggle = ({ on, onChange, label }) => (
-    <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
-      <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-    </button>
-  );
-
-  // SVG Icons for navigation
-  const NavIcon = ({ id, active }) => {
-    const color = active ? colors.navy : colors.textTertiary;
-    const icons = {
-      home: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
-      explore: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
-      calendar: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
-      chat: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
-      revenue: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
-      profile: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
-    };
-    return icons[id] || null;
-  };
 
   // Bottom Navigation — hidden only when actually on venue/admin dashboard screens
   const BottomNav = () => {

@@ -396,7 +396,12 @@ describe('the venue card posted when a flock is created', () => {
  * user reads that as the app losing their avatar.
  */
 describe('an avatar that did not save', () => {
-  const avatar = () => region(APP, 'const generateAIAvatar = useCallback', 'const Toggle = ');
+  // The end marker was `const Toggle = `, which was only ever "whatever is
+  // declared next" -- Toggle moved to module scope on 2026-09-22 (declared in
+  // the render body, it was remounting nine switches on every App render) and
+  // took this region's floor with it, above the block instead of below. The
+  // anchor is the nav that really does follow this handler.
+  const avatar = () => region(APP, 'const generateAIAvatar = useCallback', 'const BottomNav = ');
 
   test('the picture on screen goes back to the one the server has', () => {
     const fn = avatar();

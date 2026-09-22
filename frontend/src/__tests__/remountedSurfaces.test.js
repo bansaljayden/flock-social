@@ -53,7 +53,19 @@
  * that screen moved out on 2026-09-01 the only mounts of it left App.js with
  * it. The hazard did not move. The binding is still rebuilt on every render
  * of the shell, so the element the screen returns is still a new component
- * type on every render. The second walk reads the props objects instead and
+ * type on every render.
+ *
+ * TOGGLE IS OUT OF THE SET NOW, and so is NavIcon. Both moved to module scope
+ * on 2026-09-22: they were the last two that were still MOUNTED as JSX while
+ * declared in the render body, which is the hazard in its pure form. Nine
+ * switches and the whole bottom nav were being torn out and rebuilt on every
+ * App render, and the toggle knob's `transition: left 0.2s` could never play
+ * because there was never an old node to animate from. They are still named
+ * here because this file's reasoning was built on Toggle, and a reader who
+ * comes looking should find out where it went rather than assume the walk
+ * stopped seeing it.
+ *
+ * The second walk reads the props objects instead and
  * takes any capitalised shorthand name whose binding is inside FlockAppInner
  * and whose initialiser is a function, which also pulled in BottomNav,
  * MissingFlockPanel and SafetyButton. Those three had been out of every
