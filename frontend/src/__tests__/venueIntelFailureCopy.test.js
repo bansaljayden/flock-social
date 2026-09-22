@@ -19,18 +19,21 @@ const path = require('path');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
-/** The helper, as written. */
-const helper = (() => {
-  const at = APP.indexOf('const intelFailure = (err) => ({');
+/** The two helpers, as written. */
+const source = (() => {
+  const at = APP.indexOf('const servedReason = (err) => (');
   expect(at).toBeGreaterThan(-1);
-  return APP.slice(at, APP.indexOf('});', at) + 3);
+  const end = APP.indexOf('});', APP.indexOf('const intelFailure = (err) => ({', at)) + 3;
+  return APP.slice(at, end);
 })();
 
-/* Run the real source rather than a copy of it. The helper is a pure
-   expression over one argument, so it can be evaluated on its own, and a test
-   that re-implements the branch it is checking proves nothing. */
+/* Run the real source rather than a copy of it. Both are pure expressions over
+   one argument, so they evaluate on their own, and a test that re-implements
+   the branch it is checking proves nothing. */
 // eslint-disable-next-line no-new-func
-const intelFailure = new Function(`${helper} return intelFailure;`)();
+const { intelFailure, servedReason } = new Function(
+  `${source} return { intelFailure, servedReason };`
+)();
 
 describe('a refusal the server wrote is what the owner reads', () => {
   test('the metered-lookup 429 is passed through word for word', () => {
@@ -91,6 +94,18 @@ describe('both readers go through it', () => {
     );
     // Once, inside the helper. Anywhere else is a call site that skipped it.
     expect(inline).toHaveLength(1);
+  });
+
+  test('the map card on the next tab over goes through the same rule', () => {
+    /* The Map tab loads through the same metered venue lookup and had the same
+       line. Its card takes the served sentence when there is one, so the two
+       tabs cannot drift into telling an owner different things about one
+       refusal. */
+    expect(APP).toMatch(/setVenueMapState\(\{ available: false, reason: 'load_failed', detail: servedReason\(e\) \}\)/);
+    const dash = fs.readFileSync(
+      path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8'
+    ).replace(/\r\n/g, '\n');
+    expect(dash).toMatch(/venueMapState\.detail\s*\n?\s*\|\| 'The venue lookup failed\./);
   });
 
   test('the effect and the retry both call it', () => {
