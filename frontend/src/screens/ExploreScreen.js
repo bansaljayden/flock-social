@@ -58,8 +58,12 @@
  * `const colors = colorsLight` in App.js, so a screen that imported a palette
  * instead would compile, pass, and paint the light one over dark mode.
  *
- * No hook is called anywhere in the block, so nothing about the move changes
- * hook order in FlockAppInner.
+ * The move itself called no hook, so nothing about it changed hook order in
+ * FlockAppInner. That constraint did not survive the move and no longer binds
+ * this file: the screen is mounted as its own element (ExploreScreenView in
+ * App.js), so a hook declared here belongs to this component and FlockAppInner
+ * never sees it. There is exactly one, below the parameter list, and the Live
+ * Events drawer it serves says why.
  *
  * The state and the effects behind these props deliberately did NOT move. They
  * live in FlockAppInner, which does not unmount when the user leaves this tab,
@@ -71,6 +75,12 @@
  * indentation, so it can be diffed against the deleted lines character for
  * character. Nothing was renamed, reformatted or improved on the way across,
  * and no defect was fixed in transit: this is a move.
+ *
+ * ONE THING HAS CHANGED SINCE, and it is deliberately kept cheap to diff: the
+ * Live Events drawer's contents sit behind a mount gate now. The gated lines
+ * keep their old indentation instead of being shifted a level, so that
+ * character-for-character comparison still holds for everything except the two
+ * lines that open and close the gate.
  */
 import React from 'react';
 import { AnimatePresence } from 'framer-motion';
@@ -175,6 +185,37 @@ export default function ExploreScreen({
   venueResults,
   venueSearching,
 }) {
+  // WHETHER THE LIVE EVENTS DRAWER'S CONTENTS EXIST AT ALL.
+  //
+  // The drawer's wrapper is mounted for the whole session and so was
+  // everything inside it. Discover is parked at visibility:hidden rather than
+  // unmounted, this screen is not memoised, and featuredEvents fills itself
+  // from loadVenuesAtLocation whether or not anybody opens the drawer -- so
+  // every render of the app re-ran the whole events list behind a hidden tab.
+  // At the twenty the backend caps that list at (routes/events.js /featured
+  // asks for size 20 and slices its top-up to the same) that is twenty
+  // Date.parse calls in the filter, then per event a new Date, a
+  // toLocaleDateString, a toLocaleTimeString (two fresh Intl.DateTimeFormat
+  // builds), a regex pair, a haversine and about thirty-nine elements, plus
+  // forty backdrop-filter badges kept in the compositor for a panel parked
+  // off the right edge.
+  //
+  // Held for the length of the slide rather than dropped on the tap: the panel
+  // takes 0.35s to leave, and unmounting on the tap would animate an empty
+  // rectangle off screen. That is the same 0.35s the wrapper's visibility
+  // delay already waits out, for the same reason. Opening is NOT delayed --
+  // showEventsView alone puts the contents back, so the slide in has them from
+  // its first frame, and the wrapper and the sliding panel themselves stay
+  // mounted so the transform has an old value to animate from.
+  const [eventsDrawerHeld, setEventsDrawerHeld] = React.useState(false);
+  const eventsDrawerMounted = showEventsView || eventsDrawerHeld;
+  React.useEffect(() => {
+    if (showEventsView) { setEventsDrawerHeld(true); return undefined; }
+    if (!eventsDrawerHeld) return undefined;
+    const t = setTimeout(() => setEventsDrawerHeld(false), 350);
+    return () => clearTimeout(t);
+  }, [showEventsView, eventsDrawerHeld]);
+
   return (
     <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
       {/* Discover's title is the map itself, so there was no h1 at all here and
@@ -514,6 +555,10 @@ export default function ExploreScreen({
             modal={false}: this is a push with the tab bar still beside it. */}
         {showEventsView && <DialogBehavior modal={false} onClose={() => { setShowEventsView(false); setEventsSearchQuery(''); }} />}
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', transform: showEventsView ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)', willChange: 'transform' }}>
+        {/* The gate. eventsDrawerMounted is declared at the top of this file
+            and the comment there is the whole argument. The lines it wraps are
+            deliberately not re-indented. */}
+        {eventsDrawerMounted && (<>
           {/* Events header */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
             <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -743,6 +788,7 @@ export default function ExploreScreen({
               );
             })}
           </div>
+        </>)}
         </div>
       </div>
 

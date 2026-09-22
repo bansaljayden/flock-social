@@ -15,7 +15,20 @@ const SYNCED_KEYS = {
   sosCorner: 'flock_sos_corner',
   pinnedFlockIds: 'flock_pinned',
   flockOrder: 'flock_order',
-  onboardingComplete: 'flockOnboardingComplete',
+  // `onboardingComplete: 'flockOnboardingComplete'` used to sit here and
+  // synced nothing in either direction: no line in frontend/src writes
+  // flockOnboardingComplete, so readLocalSettings never found it to push and
+  // pullSettings only ever wrote it back for a reader that does not exist.
+  //
+  // DROPPED RATHER THAN REPOINTED at flockVenueOnboardingComplete, which is
+  // the key that is really used. Two reasons, and the second is the one that
+  // matters. It is written once (screens/VenueOnboarding.js) and read nowhere,
+  // so syncing it would only put a write-only flag on the account. And the
+  // server side of this map is a free-form JSONB merge with no key list
+  // (routes/users.js PATCH /settings), so a stored `onboardingComplete` from
+  // when this entry was live outlives the entry — repointing would make the
+  // next pull write that unrelated value into the venue key, ready for
+  // whichever reader gets added later.
   userMode: 'flockUserMode',
   locationEnabled: 'flock_location_enabled',
   // App.js queueSync()s both of these on change, but until they were listed
