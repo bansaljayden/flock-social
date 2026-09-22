@@ -781,6 +781,28 @@ workflows:
             --debug-output /tmp/maestro-debug/recording \
             $MAESTRO_FLOWS
           RESULT=$?
+          # PRINT THE PER-STEP RESULT INTO THIS LOG WHEN THE SHOT LIST FAILS.
+          # Maestro off a TTY prints one line per flow and nothing else, so
+          # three failed runs in a row said only "Element not found: Nest"
+          # five minutes in, with no way to tell which step lost the take or
+          # what was on screen. Everything needed is already written to the
+          # debug directory and collected as an artifact, but reading it means
+          # downloading a ~190 MB zip for a few kilobytes of text. So the text
+          # goes in the log too, and only on failure, where it costs nothing.
+          if [ $RESULT -ne 0 ]; then
+            echo "---- maestro debug (failure only) ----"
+            # The commands log is the step-by-step; the screenshots are still
+            # only in the artifacts, and their names say which step they are.
+            find /tmp/maestro-debug -type f \( -name '*.txt' -o -name '*.log' -o -name '*commands*' \) \
+              | head -20 | while read -r f; do
+                echo "===== $f ====="
+                tail -c 20000 "$f"
+                echo
+              done
+            echo "---- files written by maestro ----"
+            find /tmp/maestro-debug -type f | sed 's|^|  |' | head -60
+            echo "---- end maestro debug ----"
+          fi
           sleep 2
           kill -INT "$REC"
           wait "$REC"
