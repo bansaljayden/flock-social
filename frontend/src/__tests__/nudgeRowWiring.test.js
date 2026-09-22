@@ -75,7 +75,15 @@ describe('dismissal', () => {
       chatDetailSrc.indexOf('const nudgeIsDismissed = React.useCallback'),
       chatDetailSrc.indexOf('}, [nudgeDismissed]);')
     );
-    expect(reader).toMatch(/catch \(err\) \{\s*\n\s*return false;/);
+    /* The catch assigns rather than returns now: the reader remembers the
+       storage answer in a ref, because it is called from the render body and
+       was doing a synchronous getItem per keystroke. The safe direction is
+       unchanged and that is what this asserts. A throw produces false, and the
+       only `true` the function can reach is the state check on its first line,
+       before storage is touched at all. */
+    expect(reader).toMatch(/catch \(err\) \{\s*\n\s*stored = false;/);
+    const afterStateCheck = reader.slice(reader.indexOf('const cache = nudgeStorageRef.current;'));
+    expect(afterStateCheck).not.toMatch(/return true|= true/);
   });
 
   test('the key is scoped to the flock, so one dismissal is not all of them', () => {
