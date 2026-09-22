@@ -7590,6 +7590,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (cached && Date.now() - cached.timestamp < 300000) {
       setAllVenues(venuesToMapPins(cached.data));
       setMapVenuesLoaded(true);
+      // A cache HIT is a successful answer and has to clear a failure the
+      // same way the fetch path does. It did not, so one refused search left
+      // its sentence standing over every later list this cache served.
+      setVenueLoadError('');
       requestCrowdScores(cached.data);
       return;
     }
@@ -7603,7 +7607,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         requestCrowdScores(venues);
       })
       .catch((err) => {
+        // THE SAME ANSWER ITS SIBLING GIVES, and for the same reason. This
+        // catch was a console line and nothing else, so a refused search left
+        // mapVenuesLoaded false and venueLoadError empty: zero pins, a banner
+        // blaming the location, and a Try again that re-ran the search that
+        // had just failed. The Discover tab handler re-runs this on every
+        // switch back, so it spent Places quota on the same refusal all
+        // session with nothing on screen ever saying why.
         console.error('[Geo] Fallback venue browse failed:', err);
+        setAllVenues([]);
+        setMapVenuesLoaded(true);
+        setVenueLoadError(err?.message || 'Venues are not loading right now. Try again in a moment.');
       });
   }, [venuesToMapPins, requestCrowdScores]);
 
@@ -7618,6 +7632,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (cached && Date.now() - cached.timestamp < 300000) {
       setAllVenues(venuesToMapPins(cached.data));
       setMapVenuesLoaded(true);
+      // A cache HIT is a successful answer and has to clear a failure the
+      // same way the fetch path does. It did not, so one refused search left
+      // its sentence standing over every later list this cache served.
+      setVenueLoadError('');
       requestCrowdScores(cached.data);
       return;
     }
@@ -14073,6 +14091,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [savingVenueIntake, setSavingVenueIntake] = useState(false);
   const [operatingHours, setOperatingHours] = useState([]);
   const [showHoursModal, setShowHoursModal] = useState(false);
+  /* CANCEL HAS TO PUT THE HOURS BACK, and there was nothing to put back with.
+     The editor has no draft: every keystroke in it writes operatingHours,
+     which is the live value, so Cancel closed a dialog over edits that had
+     already happened. They then went up with the NEXT save of anything on the
+     Settings tab, and parseOperatingWindows reads that column, so an abandoned
+     edit could make the advisor tell people the venue is shut.
+
+     A ref rather than another piece of state: nothing renders the snapshot,
+     it only has to survive between the tap that opens the editor and the tap
+     that abandons it. */
+  const hoursBeforeEditRef = useRef([]);
+  const openHoursEditor = useCallback(() => {
+    hoursBeforeEditRef.current = operatingHours;
+    setShowHoursModal(true);
+  }, [operatingHours]);
+  const cancelHoursEditor = useCallback(() => {
+    setOperatingHours(hoursBeforeEditRef.current);
+    setShowHoursModal(false);
+  }, []);
   const [dealDescription, setDealDescription] = useState('');
   const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
@@ -15827,6 +15864,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setSelectedVenueForCreate,
         setShowEventModal,
         setShowHoursModal,
+        openHoursEditor,
+        cancelHoursEditor,
         setShowPromoModal,
         setShowUpgradeModal,
         setVenueBusyDraft,
@@ -16492,6 +16531,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     SafetyButton,
     activeVenue,
     allVenues,
+    budgetFilteredVenues,
     budgetStatus,
     calcDistance,
     category,
