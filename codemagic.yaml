@@ -801,6 +801,26 @@ workflows:
               done
             echo "---- files written by maestro ----"
             find /tmp/maestro-debug -type f | sed 's|^|  |' | head -60
+            # THE SCREEN THE STEP GAVE UP ON. Maestro writes the accessibility
+            # hierarchy it was searching for every element lookup, named
+            # step-NNN-<command>-<target>.json, and the highest-numbered one in
+            # a failed flow IS the failure: it holds every string that WAS on
+            # screen when the one being looked for was not. Run 64 said
+            # "Element not found: Nest" at step 85 and the answer to why was
+            # sitting in that file, inside a 190 MB zip. Only the text is kept
+            # here, because the raw dump is mostly geometry.
+            for flow in /tmp/maestro-debug/recording/.maestro/tests/*/*; do
+              [ -d "$flow/screen-hierarchy" ] || continue
+              last=$(ls -1 "$flow/screen-hierarchy" | sort | tail -1)
+              [ -n "$last" ] || continue
+              echo "===== last screen in $(basename "$flow"): $last ====="
+              # Every "text" and "accessibilityText" value, deduplicated, which
+              # is what a selector actually matches against.
+              tr ',' '\n' < "$flow/screen-hierarchy/$last" \
+                | grep -oE '"(text|accessibilityText|hintText)":"[^"]{1,80}"' \
+                | sed 's/.*":"//; s/"$//' | grep -v '^$' | sort -u | head -80
+              echo
+            done
             echo "---- end maestro debug ----"
           fi
           sleep 2
