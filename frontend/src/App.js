@@ -3223,6 +3223,34 @@ const colors = colorsLight;
 // role="switch" + aria-checked is the only thing that makes an unlabelled
 // 44x24 pill announce as a control with a state. `label` is passed by every
 // caller that has a visible row title next to it.
+/* WHY THE FORECAST DID NOT LOAD, IN THE SERVER'S OWN WORDS.
+ *
+ * Both readers of this endpoint used to answer every rejection with one line
+ * telling the owner to check their connection. The commonest refusal it
+ * actually gets is not a connection at all: the venue lookups behind these
+ * numbers are metered, and the server answers 429 with a sentence that says so
+ * and says when they come back. Printing "check your connection" over that is
+ * a wrong instruction on a screen whose whole claim is that it names its
+ * sources, and it sends somebody to their router over something that fixes
+ * itself.
+ *
+ * So the split is on whether the request reached anyone at all. A status means
+ * a server answered and refused, and every message the api client builds for
+ * one is either the server's own sentence or a line written for that status,
+ * so it is shown as it stands. No status means the request never landed, which
+ * is what the connection line describes and the only case it is used for.
+ *
+ * Matching the api client's generic fallback by its text would be the other
+ * way to do this and would rot the first time that sentence is improved.
+ */
+const intelFailure = (err) => ({
+  available: false,
+  code: 'load_failed',
+  reason: err && err.status && typeof err.message === 'string' && err.message.trim()
+    ? err.message
+    : 'The forecast request did not come back. Check your connection and try again.',
+});
+
 const Toggle = ({ on, onChange, label }) => (
   <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
     <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
@@ -14558,7 +14586,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // it too; forecasts, the strip and this-week stay Analytics-only reads.
     getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
     if (venueTab === 'analytics') {
-    getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, code: 'load_failed', reason: 'The forecast request did not come back. Check your connection and try again.' }); });
+    getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch((e) => { if (!cancelled) setVenueIntel(intelFailure(e)); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
     // A refusal is not a failed read: this-week sits behind the Pro gate, so a
     // 403 renders as locked, not as "try again".
@@ -14575,7 +14603,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVenueIntel(null);
     getVenueIntelligence()
       .then((d) => setVenueIntel(d))
-      .catch(() => setVenueIntel({ available: false, code: 'load_failed', reason: 'The forecast request did not come back. Check your connection and try again.' }));
+      .catch((e) => setVenueIntel(intelFailure(e)));
   };
 
   // THE ONE PLACE a verification request is made, shared by both surfaces that
