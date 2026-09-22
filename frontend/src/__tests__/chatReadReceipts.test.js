@@ -343,6 +343,7 @@ function chatProps(over = {}) {
     openBirdie: fn(),
     votesError: '',
     votesLoading: false,
+    votesLoaded: true,
     pendingImage: null,
     popularVenues: [],
     // Null means "a real location produced this list", which is the state a

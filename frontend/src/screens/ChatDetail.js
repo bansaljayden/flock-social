@@ -700,6 +700,7 @@ export default function ChatDetail({
   openBirdie,
   votesError,
   votesLoading,
+  votesLoaded,
   pendingImage,
   popularVenues,
   venuesFromLabel,
@@ -1657,6 +1658,12 @@ export default function ChatDetail({
       && flock.status !== 'cancelled'
       && (flock.messages || []).length > 0
       && !isTyping
+      // AND ONLY ONCE THE TALLY HAS BEEN READ. pollVoteRows is flock.votes,
+      // and an unread tally is an empty one, so "Nobody has picked a place
+      // yet" was printed over flocks that already had venues on the table for
+      // as long as the read took. It is the same rule the Nest's vote card
+      // carries: an empty list is not evidence until the server has answered.
+      && votesLoaded
       && !nudgeIsDismissed(nudgeKey)
     )
       ? { key: nudgeKey, text: 'Nobody has picked a place yet.', actionLabel: 'Open the vote' }
