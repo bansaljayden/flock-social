@@ -521,10 +521,10 @@ test.describe('flock chat, with two people watching it', () => {
     await bo.page.getByRole('button', { name: 'React with ❤️' }).click();
 
     // Bo sees his own reaction, counted once and marked as his.
-    await expect(bo.page.getByRole('button', { name: /^❤️ 1, including you/ })).toBeVisible({ timeout: 15_000 });
+    await expect(bo.page.getByRole('button', { name: /^❤️ 1 reaction, including you/ })).toBeVisible({ timeout: 15_000 });
     // Ada sees it arrive without reloading. This is the half that could never
     // fire while the send was local-only state.
-    await expect(ada.page.getByRole('button', { name: /^❤️ 1\. Tap to react/ })).toBeVisible({ timeout: 20_000 });
+    await expect(ada.page.getByRole('button', { name: /^❤️ 1 reaction\. Tap to react/ })).toBeVisible({ timeout: 20_000 });
 
     // And it survives. A reaction that vanishes on reload was never stored.
     await reopenApp(bo);
@@ -543,7 +543,7 @@ test.describe('flock chat, with two people watching it', () => {
 
     await pressAndHold(bo.page, bo.page.getByText(said));
     await bo.page.getByRole('button', { name: 'React with 🔥' }).click();
-    await expect(bo.page.getByRole('button', { name: /^🔥 1, including you/ })).toBeVisible({ timeout: 15_000 });
+    await expect(bo.page.getByRole('button', { name: /^🔥 1 reaction, including you/ })).toBeVisible({ timeout: 15_000 });
 
     // Now come back to it the way anybody would: close the app, open it again.
     // The pill has to still know it is yours, because tapping your own pill is
@@ -552,7 +552,7 @@ test.describe('flock chat, with two people watching it', () => {
     await openFlockChat(bo.page, flockName);
     const pill = bo.page.getByRole('button', { name: /^🔥 1/ });
     await expect(pill).toBeVisible({ timeout: 20_000 });
-    await expect(bo.page.getByRole('button', { name: /^🔥 1, including you/ })).toBeVisible();
+    await expect(bo.page.getByRole('button', { name: /^🔥 1 reaction, including you/ })).toBeVisible();
 
     await pill.click();
 
@@ -647,9 +647,9 @@ test.describe('flock chat, with two people watching it', () => {
     await requireLive(ada, bo);
     const photo = path.join(__dirname, '..', '..', 'frontend', 'public', 'logo192.png');
 
-    // Since e6863f3 a photo message's alt names its sender ("From Ada"), the
+    // Since e6863f3 a photo message's alt names its sender ("Photo from Ada"), the
     // screen-reader fix, so the count keys on that prefix.
-    const imagesBefore = await bo.page.locator('img[alt^="From "]').count();
+    const imagesBefore = await bo.page.locator('img[alt^="Photo from "]').count();
     await ada.page.locator('input[type="file"]').first().setInputFiles(photo);
 
     // The preview is the confirm step. If it never appears the picker is dead.
@@ -664,7 +664,7 @@ test.describe('flock chat, with two people watching it', () => {
     await expect(ada.page.getByRole('button', { name: 'Remove photo' })).toBeVisible({ timeout: 20_000 });
     await ada.page.getByRole('button', { name: 'Send message' }).click();
 
-    await expect(bo.page.locator('img[alt^="From "]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
+    await expect(bo.page.locator('img[alt^="Photo from "]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
     await expect(ada.page.getByText(/^didn't send$/i)).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
@@ -960,7 +960,7 @@ test.describe('direct messages, with two people watching them', () => {
     await eli.page.getByRole('button', { name: 'React with ❤️' }).click({ timeout: 15_000 });
 
     // The reaction pill is a button whose accessible name leads with the
-    // emoji and the count ("❤️ 1. Tap to react"), not a bare span.
+    // emoji and the count ("❤️ 1 reaction. Tap to react"), not a bare span.
     const pill = (page) => page.getByRole('button', { name: /^❤️ / }).first();
     await expect(pill(eli.page)).toBeVisible({ timeout: 15_000 });
     // Dee sees it without reloading.
