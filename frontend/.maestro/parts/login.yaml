@@ -58,9 +58,9 @@ appId: com.flockcorp.flock
     file: signup-to-login.yaml
 - runFlow:
     when:
-      notVisible: "Welcome back"
+      notVisible: "Welcome back|Plan the night"
     file: logout.yaml
-- assertVisible: "Welcome back"                 # LoginScreen.js:146 <h1>
+- assertVisible: "Welcome back|Plan the night"                 # LoginScreen.js:146 <h1>
 # TYPING INTO THE SIMULATOR DROPS CHARACTERS, AND IT DOES IT SILENTLY.
 #
 # Build 38 failed both flows here, and the failure hierarchy says exactly what
@@ -82,7 +82,7 @@ appId: com.flockcorp.flock
 - repeat:
     times: 3
     while:
-      visible: "Welcome back"
+      visible: "Welcome back|Plan the night"
     commands:
       - tapOn:
           text: "you@example.com"                     # LoginScreen.js:261 placeholder

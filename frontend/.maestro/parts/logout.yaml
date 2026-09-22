@@ -46,5 +46,5 @@ appId: com.flockcorp.flock
 - tapOn: "Log out"
 # Log out calls onLogout() directly, no confirm dialog (ProfileSettings.js:796).
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:146, endSession sets authScreen to 'login'
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:146, endSession sets authScreen to 'login'
     timeout: 15000

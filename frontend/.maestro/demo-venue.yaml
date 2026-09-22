@@ -65,7 +65,7 @@ appId: com.flockcorp.flock
 #
 # So: wait for EITHER screen, then cross to login if we landed on signup.
 - extendedWaitUntil:
-    visible: "Welcome back|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
+    visible: "Welcome back|Plan the night|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
     timeout: 90000
 # The analytics consent bar is up on every take, because clearState wipes the
 # stored answer and ConsentBanner.js renders whenever the question is
@@ -83,7 +83,7 @@ appId: com.flockcorp.flock
 - runFlow:
     file: parts/signup-to-login.yaml
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:164
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:164
     timeout: 30000
 
 - runFlow:
