@@ -108,6 +108,17 @@ appId: com.flockcorp.flock
       - inputText: ${PASSWORD}
       - pressKey: Enter                               # LoginScreen.js:183 <form onSubmit={handleSubmit} noValidate>
       - waitForAnimationToEnd
+      # A CORRECT PASSWORD DOES NOT ALWAYS END THE LOGIN. An account whose row
+      # has no date of birth gets 403 {needsDob} after the password matches
+      # (enforceDobOnLogin), and the screen answers by adding a birth field to
+      # this same form. The heading does not change, so the loop above reads
+      # that as "still not signed in" and retypes correct credentials until it
+      # runs out of passes. Answer the prompt here instead, inside the pass
+      # that raised it. The part is guarded on a birth field being visible and
+      # costs nothing on the normal path.
+      - runFlow:
+          file: answer-birth-prompt.yaml
+      - waitForAnimationToEnd
 # Fallback only. If Enter already submitted, the button is gone or busy and
 # both steps are no-ops.
 - scrollUntilVisible:
@@ -118,4 +129,9 @@ appId: com.flockcorp.flock
 - tapOn:
     text: "Sign in"
     optional: true
+- waitForAnimationToEnd
+# Same guard again for the fallback path: if it was that tap and not Enter that
+# submitted, the birth prompt would appear here, after the loop has exited.
+- runFlow:
+    file: answer-birth-prompt.yaml
 - waitForAnimationToEnd

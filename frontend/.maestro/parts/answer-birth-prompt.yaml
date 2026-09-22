@@ -1,0 +1,126 @@
+# Answer the birth prompt the LOGIN screen can raise, then submit again.
+#
+# WHY THIS EXISTS. Sign-in does not always end at the home screen. An account
+# whose row has no date of birth gets a 403 {needsDob} AFTER its password has
+# already matched (backend/routes/auth.js, enforceDobOnLogin), and LoginScreen
+# answers that by adding a birth field to the form it is already showing and
+# waiting. The form stays on screen, the heading does not change, and nothing
+# says a password was wrong, because none was.
+#
+# The filmed flows could not answer that prompt at all, so a sign-in that hit it
+# retried three times, typed the same correct credentials three times, and then
+# went looking for a home screen that was never going to arrive. Recording runs
+# 62 and 63 both died that way: "Element not found: Nest", five minutes in, with
+# no failing assertion anywhere near the login.
+#
+# TWO SHAPES, AND WHICH ONE APPEARS IS THE SERVER'S CHOICE.
+#   * An existing account being backfilled gets the FULL DATE: an <input
+#     type="date"> labelled "Date of birth" (LoginScreen.js), which on iOS is a
+#     native picker rather than a keyboard field.
+#   * A brand new OAuth account gets the YEAR only, through BirthYearField,
+#     labelled "Year of birth", which is an ordinary text input.
+# Both are handled below, each guarded, so whichever one is on screen is the one
+# that gets answered and the other costs nothing.
+#
+# The whole file is guarded on a birth field being visible, so calling it when
+# sign-in went straight through is a no-op.
+#
+# The date-picker steps are the ones parts/signup.yaml already proved on device,
+# copied rather than shared on purpose: that file is the compliance take's
+# working path, a run costs real money and forty minutes, and refactoring it to
+# be reusable is a change that can only cost something here.
+appId: com.flockcorp.flock
+---
+# ---------------------------------------------------------------------------
+# The year-only shape. An ordinary text field, so this is just typing.
+# ---------------------------------------------------------------------------
+- runFlow:
+    when:
+      visible: "Year of birth"
+    commands:
+      - tapOn:
+          text: "YYYY"                          # BirthYearField placeholder
+          optional: true
+      - inputText: "2000"
+      - tapOn:
+          text: "Done"
+          optional: true
+      - pressKey: Enter
+      - waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# The full-date shape. A native picker: the same sequence signup.yaml uses,
+# including why each step is there.
+# ---------------------------------------------------------------------------
+- runFlow:
+    when:
+      visible: "Date of birth"
+    commands:
+      # Index 1 is the input; index 0 is the <label>. Tapping the input swaps
+      # whatever keyboard is up for the date popover.
+      - tapOn:
+          text: "Date of birth"
+          index: 1
+          optional: true
+      - waitForAnimationToEnd
+      # If index 1 did not exist, no popover is open yet; tap the label, which
+      # focuses the input through htmlFor.
+      - runFlow:
+          when:
+            notVisible: "[A-Z][a-z]+ 20[0-9][0-9]"
+          commands:
+            - tapOn:
+                text: "Date of birth"
+                optional: true
+            - waitForAnimationToEnd
+      # Calendar to wheels.
+      - tapOn:
+          text: "[A-Z][a-z]+ 20[0-9][0-9]"
+          index: 0
+          optional: true
+      - waitForAnimationToEnd
+      # XCTest exposes a wheel as ONE element whose value is the selected row,
+      # so a year cannot be scrolled to and tapped. Swipe it blind, finger
+      # moving DOWN, which brings earlier years into the selection. Three
+      # swipes take 2026 well past the age floor.
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                from:
+                  text: "19[0-9][0-9]|20[0-9][0-9]"
+                direction: DOWN
+                duration: 500
+                optional: true
+            - waitForAnimationToEnd
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                start: "72%,58%"
+                end: "72%,86%"
+                duration: 500
+                optional: true
+            - waitForAnimationToEnd
+      # Close the popover by tapping the hero above the form. Static content.
+      - tapOn:
+          point: "50%,10%"
+          optional: true
+      - waitForAnimationToEnd
+      # The screen may also ask the date to be confirmed before it will send
+      # (LoginScreen's dobNeedsCheck guard). Answering it is harmless when it
+      # is absent.
+      - tapOn:
+          text: "login-dob-check"
+          optional: true
+      - waitForAnimationToEnd
+
+# Submit whichever shape was filled. The button is the same one either way.
+- runFlow:
+    when:
+      visible: "Year of birth|Date of birth"
+    commands:
+      - tapOn:
+          text: "Sign in"
+          optional: true
+      - waitForAnimationToEnd
