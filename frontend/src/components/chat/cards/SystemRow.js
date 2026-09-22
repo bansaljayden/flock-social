@@ -81,7 +81,9 @@ export const formatMoney = (value) => {
 /* ===========================================================================
  * CardShell
  *
- * Every card in the stream: full width less a 16px gutter each side, radius
+ * Every card in the stream sits in the same box a line of message text does:
+ * 18px in from the left, which is the rail MessageGroup already applies, and
+ * 16px in from the right, which is what `.chat-row-body` reserves. Radius
  * 16, padding 14, one hairline, no bubble tail and no sender name. Those are
  * measured from the capture and they are the same on all six cards on
  * purpose, so a bill and a poll read as the same class of object.
@@ -147,7 +149,16 @@ export function CardShell({
       onClick={tappable ? onOpen : undefined}
       onKeyDown={onKeyDown}
       style={{
-        margin: '6px 16px',
+        /* NO LEFT MARGIN. The gutter on that side is already spent: every
+           card is drawn inside MessageGroup's run block, which carries
+           the content rail as a left padding, which is the 18px the message
+           text starts on. A 16 here was added to it, so a card began at 34
+           while the text beside it began at 18, and the stream had two left
+           edges. The right stays 16 because that is exactly what
+           `.chat-row-body` reserves with its own paddingRight, so a card and
+           a line of text now occupy the same box: 18 in from the left, 16 in
+           from the right. */
+        margin: '6px 16px 6px 0',
         padding: '14px',
         borderRadius: '16px',
         backgroundColor: paint.bg,

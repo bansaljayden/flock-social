@@ -88,7 +88,18 @@ function MessageGroup({
        running, a budget that just locked) can be drawn by whoever owns them.
        What is left over is a sentence, and a sentence is drawn here. */
     return (
-      <div style={{ padding: '4px var(--chat-content-x) 8px' }}>
+      /* THE RAIL ON THE LEFT ONLY, so a card in a system run is the same box
+         as a card in a sender run. This wrapper used to pad
+         `var(--chat-content-x)` on BOTH sides. A card carries its own 16 on
+         the right (CardShell) and inherits the rail on the left, so the
+         symmetric padding put a system card's right edge 18px further in than
+         a venue card's four rows above it, and the stream had two right edges
+         as well as two left ones. Measured off the capture at 390 wide: a
+         sender-run card ended at 374 and a system-run card at 356.
+
+         The sentence below still wants the gutter on both sides -- it is
+         centred and it is not a card -- so it carries its own. */
+      <div style={{ padding: '4px 0 8px', paddingLeft: 'var(--chat-content-x)' }}>
         {run.messages.map((m) => {
           const node = renderCard ? renderCard(m) : null;
           if (node) return <div key={m.id}>{node}</div>;
@@ -97,6 +108,10 @@ function MessageGroup({
             key={m.id}
             style={{
               margin: 0,
+              /* The rail is on the wrapper, so pull back off it to stay
+                 optically centred in the column. */
+              marginLeft: 'calc(-1 * var(--chat-content-x))',
+              paddingInline: 'var(--chat-content-x)',
               textAlign: 'center',
               fontSize: 'var(--chat-notice-size)',
               lineHeight: 'var(--chat-notice-line)',
