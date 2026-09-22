@@ -526,13 +526,26 @@ code {
 }
 
 /* GLASS BUTTON SYSTEM - refined (2026-07 redesign).
-   One material for every button: modest blur, 1px hairline, a single
-   inner highlight, whisper outer shadow. No glow stacks, no teal.
-   Primary = navy glass (light) / cream glass (dark) - login language. */
+   One material for every button: 1px hairline, a single inner highlight,
+   whisper outer shadow. No glow stacks, no teal.
+   Primary = navy glass (light) / cream glass (dark) - login language.
+
+   NO backdrop-filter HERE, AND IT IS NOT AN OVERSIGHT. This class is written
+   at roughly 180 call sites, several of them inside list renders, so the live
+   count on a busy screen is higher than that. Every one of the four faces
+   below is between 62% and 100% opaque, and each one sits on an app surface
+   that is a flat token colour; a blur behind a flat colour returns that same
+   flat colour, so the pixels were identical with it and without. The cost was
+   not identical: each one promoted its own compositing layer and asked WebKit
+   to re-read and re-blur the region behind it whenever anything in front of or
+   behind it moved, which on the Capacitor shell is every scroll frame and
+   every keyboard open. The controls that really do float on a photograph or a
+   map carry their own opaque face at the call site instead (the results chip on
+   Discover and the footer action on the venue sheet are the two to look at).
+   If a future button genuinely needs frosting, give THAT button the property.
+   Do not put it back on the shared class. */
 
 .glass-btn {
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
   transition: transform 0.15s ease, filter 0.15s ease !important;
   cursor: pointer;
 }

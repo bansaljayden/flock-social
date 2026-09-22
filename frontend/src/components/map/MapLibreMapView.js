@@ -1518,14 +1518,21 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .maplibregl-marker { z-index: 1; }
         .maplibregl-canvas-container { z-index: 0; }
 
-        /* ---- Apple-Maps-style name label under each pin ---- */
+        /* ---- Apple-Maps-style name label under each pin ----
+           The plate is flat. It was 0.78 over an 8px backdrop-filter, which is
+           the single worst place in the app to ask for one: there is a label
+           per visible pin, they sit on the basemap, and the basemap redraws on
+           every frame of a pan, a zoom and a fly-to, so each label made WebKit
+           re-read and re-blur its own patch of canvas the whole way through
+           the gesture. Nothing about it can be hoisted, because each label is
+           over different tiles. 0.92 flat holds the name off a busy basemap
+           harder than 0.78 over a blur did, and the plate still reads as glass
+           rather than a solid chip. */
         .mlb-marker-label {
           margin-top: 4px;
           padding: 3px 7px;
           border-radius: 8px;
-          background: rgba(15,23,42,0.78);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
+          background: rgba(15,23,42,0.92);
           color: #f1f5f9;
           font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
           font-size: 12px;

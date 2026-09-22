@@ -234,20 +234,35 @@ export default function SearchResultsOverlay({
                                  0-100 ladder, not a share of capacity, and
                                  calling it a percentage would be a claim about
                                  how full the room is that nothing here can
-                                 support. */
+                                 support.
+
+                                 THE PLATE IS OPAQUE, the same shape as the Top
+                                 Rated chip on the other corner of this photo.
+                                 It was a 9% wash of the crowd hue over an 8px
+                                 backdrop-filter: one per result row, each over
+                                 its own photograph, so a scrolled list of
+                                 twenty was twenty live blur regions and none of
+                                 it could be hoisted to the list. The wash was
+                                 also doing no work of its own on an unscored
+                                 row, because crowdColor falls back to a var()
+                                 reference there and a var() with two hex digits
+                                 glued to the end of it is not a colour at all,
+                                 so those rows had no plate and the blur alone.
+                                 Solid now, with the ink token the no-photo
+                                 variant of this same badge already takes. */
                               <div
                                 role="img"
                                 aria-label={ownerReportShown(prediction)
                                   ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`
                                   : `Crowd level ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`}
-                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {/* An owner-asserted number carries its source
                                     even at list size — "{venue-type} says" is
                                     the label that keeps it honest (noun is
                                     category-derived server-side), and the
                                     detail card one tap away says the rest. */}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{ownerReportShown(prediction) ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
+                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk }}>{ownerReportShown(prediction) ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
                               </div>
                               )}
                             </>

@@ -197,8 +197,10 @@ export default function ExploreScreen({
   // Date.parse calls in the filter, then per event a new Date, a
   // toLocaleDateString, a toLocaleTimeString (two fresh Intl.DateTimeFormat
   // builds), a regex pair, a haversine and about thirty-nine elements, plus
-  // forty backdrop-filter badges kept in the compositor for a panel parked
-  // off the right edge.
+  // forty photograph badges kept alive for a panel parked off the right edge.
+  // Those badges used to carry a backdrop-filter each, which made the parked
+  // drawer a compositor cost as well as a render one; they are flat scrims
+  // now, so what is left to avoid here is the render work.
   //
   // Held for the length of the slide rather than dropped on the tap: the panel
   // takes 0.35s to leave, and unmounting on the tap would animate an empty
@@ -426,7 +428,10 @@ export default function ExploreScreen({
             fine over an app surface and invisible over the dark basemap — and
             the !important beat any inline colour. This chip floats on tiles, so
             it carries its own opaque face: cream with navy text in dark, the
-            same inversion the pins use. `glass-btn` (blur + press only) stays. */}
+            same inversion the pins use. `glass-btn` stays for the press feel,
+            which is all it carries now. It used to add a blur as well, and a
+            blur under an opaque face over a redrawing basemap is the most
+            expensive way in the app to render nothing. */}
         {/* THE COUNT THE OVERLAY WILL ACTUALLY SHOW. This printed
             allVenues.length, the unfiltered list, while the screen it opens
             lists budgetFilteredVenues -- the same venues with anything above
@@ -721,9 +726,17 @@ export default function ExploreScreen({
                     gap: '8px',
                     padding: '10px',
                   }}>
-                    <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
+                    {/* Both plates are flat, at the same 0.62 the header's own
+                        gradient ends on. They were 0.45 over an 8px
+                        backdrop-filter, two per event over a list the backend
+                        caps at twenty, so a drawer nobody had opened still held
+                        forty blurred patches of photograph in the compositor.
+                        A denser flat scrim suppresses the art underneath at
+                        least as well as a thinner blurred one, and white on it
+                        goes from about 3.1:1 in the bad case to about 5:1. */}
+                    <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
                     {dateStr && (
-                      <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
+                      <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
                     )}
                   </div>
                   {/* Event details */}
