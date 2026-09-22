@@ -845,6 +845,117 @@ test('nothing on a shell counts as paid, so a departed committer is neither cred
   assert.strictEqual(log.filter((q) => /UPDATE bill_split_shares SET amount/.test(q.sql)).length, 0);
 });
 
+// ── THE PAYER MUST BE ON THE ROSTER, AND "ON THE ROSTER" MEANS ACCEPTED ────
+//
+// GET /api/flocks/:id returns the roster with no status predicate, so the array
+// the bill sheet's "Who paid?" picker renders carries `invited` and `declined`
+// rows beside the accepted ones and can post either as `paidBy`. That is not a
+// cosmetic mistake: `paid_by` is what GET /payment-links resolves into a Venmo,
+// Cash App and Zelle handle, and every other member is pushed "you owe
+// {payerName}". A bill payable to somebody who said no, or who never answered,
+// sends the whole flock's money to a person with no claim on it.
+//
+// routes/billing.js refuses that under the flock lock. The refusal is a 400 and
+// not a 403 because it judges the BODY rather than the caller, which is the
+// division the rest of this route already draws: every 403 here is about the
+// caller's standing ("You are not a member of this flock", "Only the person who
+// paid can start the bill"), and the neighbouring body refusal, "All custom
+// shares must be for members of this flock", is a 400.
+//
+// The fixture answers from a status-per-user map and honours whatever status
+// predicate the SQL carries, rather than hard-coding a row. Dropping
+// `AND status = 'accepted'` from the route would then make the declined and
+// invited rows visible to the check and turn these refusals into writes, which
+// is the regression worth catching; a fixture that answered `noMember()` by id
+// alone would stay green through it.
+function scriptRosterStatuses(statusById) {
+  handlers[0] = [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, (params, sql) => {
+    const status = statusById[params[1]];
+    if (!status) return noMember();
+    const wanted = /status = '(\w+)'/.exec(sql);
+    if (wanted && wanted[1] !== status) return noMember();
+    return isMember();
+  }];
+}
+
+test('an accepted member can be named as the payer', async () => {
+  // The control. Ava is the creator, so the first-bill rule lets her open the
+  // bill in Ben's name; what is on trial here is only that an accepted payer
+  // survives the membership check and reaches the column.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({ existingBill: null, members: THREE, creatorId: 1 });
+  scriptRosterStatuses({ 1: 'accepted', 2: 'accepted', 3: 'accepted' });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 2 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(inserts('bill_splits')[0].params[3], 2, 'the bill was written against a different payer');
+  assert.strictEqual(res.body.bill.paidBy.id, 2);
+});
+
+test('a payer with no membership row at all is refused', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({ existingBill: null, members: THREE, creatorId: 1 });
+  scriptRosterStatuses({ 1: 'accepted', 2: 'accepted', 3: 'accepted' });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 99 });
+
+  assert.strictEqual(res.status, 400, `a bill was attributed to a stranger: ${res.text}`);
+  assert.strictEqual(res.body.error, 'Payer must be a member of the flock');
+  assert.strictEqual(inserts('bill_splits').length, 0);
+  assert.strictEqual(inserts('bill_split_shares').length, 0);
+});
+
+test('a member who has not accepted cannot be named as the payer', async () => {
+  // The case the picker actually offers. Ben HAS a flock_members row in both
+  // states, so an id-only membership check finds him and only the status
+  // predicate refuses him.
+  for (const status of ['declined', 'invited']) {
+    CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+    log = [];
+    scriptBillCreate({
+      existingBill: null,
+      members: [{ id: 1, name: 'Ava' }, { id: 3, name: 'Cy' }],
+      creatorId: 1,
+    });
+    scriptRosterStatuses({ 1: 'accepted', 2: status, 3: 'accepted' });
+
+    const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 2 });
+
+    assert.strictEqual(res.status, 400, `a ${status} member was made the payer: ${res.text}`);
+    assert.strictEqual(res.body.error, 'Payer must be a member of the flock');
+    assert.strictEqual(inserts('bill_splits').length, 0, `a bill was written against a ${status} member`);
+    assert.strictEqual(inserts('bill_split_shares').length, 0);
+
+    // The predicate itself, stated rather than inferred. The fixture above
+    // already refuses to answer a status-less lookup with this row, so dropping
+    // the clause turns the refusal into a 201 and fails the assertions above —
+    // but this says out loud which column decides it, so a rewrite that reaches
+    // the same answer another way has to move this line deliberately.
+    const payerLookup = log.find((q) => /^SELECT id FROM flock_members/.test(q.sql) && q.params[1] === 2);
+    assert.match(payerLookup.sql, /status = 'accepted'/, 'the payer lookup stopped asking for an accepted row');
+  }
+});
+
+test('a guest RSVP cannot be named as the payer', async () => {
+  // Guests answer the share link and have no account, so utils/guestRsvp.js
+  // gives them a namespaced string id ("guest:12") and routes/flocks.js returns
+  // them in their own array rather than in `members`. Three independent things
+  // stop one reaching `paid_by`, and this pins the outermost: the id shape is
+  // refused by the validator before any query runs. (The membership check is
+  // the second — a guest has no flock_members row — and bill_splits.paid_by
+  // REFERENCES users(id) is the third.)
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({ existingBill: null, members: THREE, creatorId: 1 });
+  scriptRosterStatuses({ 1: 'accepted', 2: 'accepted', 3: 'accepted' });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 'guest:2' });
+
+  assert.strictEqual(res.status, 400, res.text);
+  assert.strictEqual(res.body.error, 'Invalid payer ID');
+  assert.strictEqual(inserts('bill_splits').length, 0);
+});
+
 test('who is in the flock and who the money goes to are read under the flock lock', async () => {
   // THE RACE (adversarial audit 2026-09-04). The membership check, the payer
   // check and the roster were read on the pool before BEGIN, with the row lock

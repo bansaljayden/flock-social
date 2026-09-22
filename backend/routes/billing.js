@@ -268,6 +268,14 @@ router.post('/:flockId/create',
     // GET /:flockId hands back as the split type the client renders. Not a 500;
     // a bill that says one thing and did another.
     scalarOnly(body('splitType').optional({ values: 'null' }), 'split type').isIn(['equal', 'custom']).withMessage('Split type must be equal or custom'),
+    // SHAPE ONLY. Whether this id may be the payer is decided in the handler,
+    // under the flock lock, against `status = 'accepted'` — a validator cannot
+    // ask the database who is in the flock, so reading this line alone reads as
+    // an open hole and has been mistaken for one. The roster
+    // GET /api/flocks/:id returns carries `invited` and `declined` rows beside
+    // the accepted ones, and the bill sheet's payer picker renders that array,
+    // so a payer who never agreed to come is an ordinary thing for the client
+    // to post. See "Verify payer is a member" below.
     body('paidBy').optional({ values: 'null' }).isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid payer ID'),
     // Round 16: no maximum. Every element is reduced over, mapped, and pushed
     // into a Set before the "must be a member" check can reject it, so a
@@ -435,7 +443,19 @@ router.post('/:flockId/create',
           return refuse(403, { error: 'You are not a member of this flock' });
         }
 
-        // Verify payer is a member
+        // Verify payer is a member, and 'member' means ACCEPTED. `paid_by` is
+        // what GET /payment-links resolves into a Venmo, Cash App and Zelle
+        // handle and what every "you owe {payerName}" push names, so a bill
+        // attributed to somebody who declined, or who never answered the
+        // invite, points the whole flock's money at a person with no claim on
+        // it — and they cannot reach the sheet to hand it back, because every
+        // route in this file gates on the same accepted status.
+        //
+        // A 400 and not a 403: this judges the BODY, not the caller. The 403s
+        // on this route are all about the caller's standing (not a member, not
+        // the payer, not the creator); the other refusal that reads a body
+        // field for membership, "All custom shares must be for members of this
+        // flock", is a 400 for the same reason.
         const payerCheck = await client.query(
           "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
           [flockId, payerId]
