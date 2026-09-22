@@ -54,6 +54,22 @@ appId: com.flockcorp.flock
           text: "Map"
           optional: true
       - waitForAnimationToEnd
+# RUN 65 SAYS IT IS NOT A COVERED TAB BAR. The two guards above both fired
+# (step 86 Close, step 89 Map), so Nest was genuinely absent, and it was still
+# absent at step 94. A sheet on top would have left the tab bar in the
+# hierarchy underneath it; nothing was there to find. So the app is on a screen
+# that does not draw a tab bar at all, which on this tab means currentScreen is
+# not 'main' -- the create screen and the flock detail screen are both like
+# that, and a stray tap on a "Start Flock" button inside an event card would
+# put us on the first one. Those screens have a Back.
+- runFlow:
+    when:
+      notVisible: "Nest"
+    commands:
+      - tapOn:
+          text: "Back"
+          optional: true
+      - waitForAnimationToEnd
 - runFlow:
     when:
       notVisible: "Nest"
