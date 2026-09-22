@@ -5769,11 +5769,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setFlocks(prev => fresh.map((f) => {
           const old = Array.isArray(prev) ? prev.find(p => p.id === f.id) : null;
           if (!old) return f;
+          // THE LIST ROW IS A SUBSET, so `...f` is a subtraction. Everything
+          // the DETAIL read added is absent from GET /api/flocks and becomes
+          // undefined here: the guest roster, the momentum block and the
+          // night-of reconfirm window. A reconnect calls this unconditionally
+          // (a gap is not a recovery), and socket.js releases the connection
+          // while the document is hidden, so this is the ordinary
+          // background-and-return path, not an edge case. The plan screen is
+          // not covered by the catch-up either -- runCatchUp only handles
+          // chatDetail and dmDetail -- so nothing put any of it back until the
+          // person left the screen and came back.
+          //
+          // Carried, not defaulted: `undefined` means this row never had one,
+          // and a nullish fallback keeps a server-sent null as a null.
           return {
             ...f,
             members: old.members && old.members.length ? old.members : f.members,
             votes: old.votes && old.votes.length ? old.votes : f.votes,
             messages: old.messages && old.messages.length ? old.messages : f.messages,
+            guests: old.guests !== undefined ? old.guests : f.guests,
+            momentum: old.momentum !== undefined ? old.momentum : f.momentum,
+            reconfirm: old.reconfirm !== undefined ? old.reconfirm : f.reconfirm,
+            hiddenAccepted: old.hiddenAccepted !== undefined ? old.hiddenAccepted : f.hiddenAccepted,
           };
         }));
         // An invite to a night that already happened is not an invitation,
@@ -8269,8 +8286,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (accepted.length === 0) return false;
     setAttendanceFlockId(flockId);
     setAttendanceMembers(accepted);
-    // SEEDED FROM THE ROSTER, not from true. The loader carries `attendance`
-    // (refreshFlockRoster maps `m.attendance || 'unmarked'`) and this ignored
+    // SEEDED FROM THE ROSTER, not from true. The loader carries `attendance`
+    // (both it and refreshFlockRoster map `m.attendance || 'unmarked'` --
+    // the second of those only since 2026-09-22) and this ignored
     // it, so every reopening of the sheet arrived with everybody ticked. The
     // sheet is reopenable by design: the host slides "done", and the banner on
     // the plan screen offers "Mark it" again. So a host who correctly recorded
@@ -8737,7 +8755,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const accepted = (data.members || []).filter(m => m.status === 'accepted');
       const members = accepted
         .filter(m => !blockedIdsRef.current.has(String(m.id)))
-        .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, reconfirmed: m.reconfirmed === true }));
+        // STATUS AND ATTENDANCE TRAVEL WITH THE ROW, and leaving them off cost
+        // the host two things.
+        //
+        // openAttendanceSheet keeps members with `status === 'accepted'`, and
+        // this list is pre-filtered to exactly those -- but it did not SAY so
+        // on each row, so that filter matched nothing, returned false, and the
+        // "Mark it" button on a finished plan did nothing at all: no sheet, no
+        // error, no second chance. Attendance is the only thing that writes a
+        // reliability score, so that night scored nobody. (The plan screen's
+        // own test is looser -- it accepts a member with no status -- so one
+        // half of the pair showed the button and the other half refused it.)
+        //
+        // Attendance is what the banner reads. AttendanceModal writes it back
+        // onto these rows when a sheet is saved, precisely so "Who showed up?"
+        // stops asking; the next roster refresh replaced the array and dropped
+        // it, and the banner came back with the dead button beside it.
+        //
+        // The comment at openAttendanceSheet claimed this function already
+        // mapped `attendance`. It did not. That is why the seeding fix written
+        // against it never worked from this path.
+        .map(m => ({
+          id: m.id,
+          name: m.name,
+          image: m.profile_image_url || null,
+          status: m.status || 'accepted',
+          attendance: m.attendance || 'unmarked',
+          reconfirmed: m.reconfirmed === true,
+        }));
       // The headcount has to come down with the faces. "3 going" over two faces
       // is the kind of mismatch that makes someone go looking for the third.
       //

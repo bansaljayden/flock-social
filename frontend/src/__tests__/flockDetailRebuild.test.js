@@ -239,7 +239,13 @@ describe('theme parity and copy hygiene', () => {
     // voted and unvoted states identically there.
     const votes = R.slice(R.indexOf('Venue votes</h4>'), R.indexOf('Details</h4>'));
     expect(votes).toContain('backgroundColor: isMyVote ? colors.navyMidBg');
-    expect(votes).toContain('aria-pressed={isMyVote}');
+    // The row is a button only while the plan is open. A completed or
+    // cancelled one renders the same tally as static rows, because the server
+    // refuses a vote on either and a control that cannot succeed does not
+    // belong on screen. So the toggle semantics are asserted on the props the
+    // button branch carries, not on the element unconditionally.
+    expect(votes).toContain("'aria-pressed': isMyVote");
+    expect(votes).toContain("const VoteRow = isCompleted ? 'div' : 'button'");
     expect(votes).toMatch(/isMyVote && Icons\.check\(colors\.steel, 12\)/);
   });
 
