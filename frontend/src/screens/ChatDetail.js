@@ -1020,13 +1020,32 @@ export default function ChatDetail({
         /* The dismissal still holds for this session through the state above. */
       }
     }, []);
+    /* THE STORAGE ANSWER IS REMEMBERED, because this is called from the render
+       body. The `&&` chain above it only reaches here on an early-planning
+       flock, which is the state the nudge exists for, and `isTyping` is the
+       OTHER person's indicator so it stays false while you type. So this was a
+       synchronous localStorage.getItem per keystroke.
+
+       A miss is cached too: `false` is the answer that costs a read every
+       time, and it is the common one. Dismissing during the session goes
+       through `nudgeDismissed` state, which is checked first and which the
+       dismiss handler writes alongside the storage key, so the cache cannot
+       hold a stale `false` for this tab. Another tab dismissing it will not be
+       seen until this screen is remounted, which was also true before: the old
+       read only ran on a render, and nothing here listens for storage. */
+    const nudgeStorageRef = React.useRef({});
     const nudgeIsDismissed = React.useCallback((key) => {
       if (nudgeDismissed[key]) return true;
+      const cache = nudgeStorageRef.current;
+      if (key in cache) return cache[key];
+      let stored = false;
       try {
-        return localStorage.getItem(`flock_nudge_${key}`) === '1';
+        stored = localStorage.getItem(`flock_nudge_${key}`) === '1';
       } catch (err) {
-        return false;
+        stored = false;
       }
+      cache[key] = stored;
+      return stored;
     }, [nudgeDismissed]);
     React.useEffect(() => {
       const sample = () => setConnectionState(readConnection());
@@ -1835,6 +1854,32 @@ export default function ChatDetail({
        MessageRow is React.memo over the row object: see voteOnCard above,
        where the vote a shared place is carrying is stamped onto its row for
        exactly that reason. */
+    /* KNOWN, MEASURED, NOT DONE: this compares its inputs at the END.
+
+       Everything between `needsDressing` and the call below runs first and is
+       then thrown away on a hit, which is every keystroke. On a hit that is:
+       two `.some()` passes over the visible messages; a full `.map()`
+       allocating a new object per venue card and per reply row (one reply
+       anywhere makes needsDressing permanently true, so that is the normal
+       case); up to four `spliceByTime` calls, each doing an unconditional
+       whole-array `slice()` and, for the bill anchor, a `findIndex` that
+       constructs a Date per row and usually scans to the end because a bill is
+       the newest thing in the room; and a `.find()` for `pollAnchorMs` with
+       the identical predicate the first `.some()` already ran twenty lines
+       earlier. Two full scans for one answer.
+
+       The fix is to hoist this comparison to just after `flock` is read and
+       skip the build on a hit. It is not done here because that is 185 lines
+       of dense, invariant-carrying code that would have to move inside a
+       guard, and the notes through it record decisions that cost real bugs to
+       learn -- the copy-on-miss below, the one-commit useStableFn lag, which
+       screen values must invalidate the cache and why. Re-indenting that at
+       speed is how one of them gets dropped. The keystroke cost is real and it
+       is smaller than the four wasted full-screen renders the keyboard hook
+       was doing, which is fixed.
+
+       Whoever takes it: the inputs list is already assembled at the call site
+       and is twelve plain references, so building it early is free. */
     const rememberRows = (built, inputs) => {
       const last = rowsCacheRef.current;
       const same = last.rows !== null
