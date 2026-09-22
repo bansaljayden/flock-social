@@ -3243,12 +3243,16 @@ const colors = colorsLight;
  * Matching the api client's generic fallback by its text would be the other
  * way to do this and would rot the first time that sentence is improved.
  */
+const servedReason = (err) => (
+  err && err.status && typeof err.message === 'string' && err.message.trim()
+    ? err.message
+    : null
+);
 const intelFailure = (err) => ({
   available: false,
   code: 'load_failed',
-  reason: err && err.status && typeof err.message === 'string' && err.message.trim()
-    ? err.message
-    : 'The forecast request did not come back. Check your connection and try again.',
+  reason: servedReason(err)
+    || 'The forecast request did not come back. Check your connection and try again.',
 });
 
 const Toggle = ({ on, onChange, label }) => (
@@ -14570,7 +14574,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       requestCrowdScores(raw);
       setVenueMapState({ available: true, center: { lat: loc.latitude, lng: loc.longitude } });
     } catch (e) {
-      setVenueMapState({ available: false, reason: 'load_failed' });
+      // Same rule as the forecast card above it: a status means a server
+      // answered and said why, and the metered venue lookup behind this map is
+      // the same one, so it refuses the same way.
+      setVenueMapState({ available: false, reason: 'load_failed', detail: servedReason(e) });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueProfile?.google_place_id, venuesToMapPins, requestCrowdScores]);

@@ -920,7 +920,8 @@ export default function VenueDashboard({
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to hello@flockcorp.com to link one and the map fills in.'
                       : venueMapState.reason === 'no_coords' ? "Your listing exists but Google returned no location for it, so there is nothing to place a pin on. Users' maps have the same gap."
-                      : 'The venue lookup failed. Check your connection and try again.'}
+                      : venueMapState.detail
+                        || 'The venue lookup failed. Check your connection and try again.'}
                   </p>
                   {venueMapState.reason === 'load_failed' && (
                     <button className="hit44" onClick={loadVenueMap} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
