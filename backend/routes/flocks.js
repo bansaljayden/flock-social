@@ -646,7 +646,20 @@ router.get('/', async (req, res) => {
                    ORDER BY (mu.id = f.creator_id) DESC, mfm.id
                    LIMIT 4
                  ) m
-              ) AS member_previews
+              ) AS member_previews,
+              -- HAVE YOU VOTED IN THIS ONE. The Nest's "needs your vote" card
+              -- is addressed to the reader and names one flock, so it may only
+              -- appear when the app KNOWS the reader has not voted. It had no
+              -- way to know at launch: the only source was the per-flock tally
+              -- read, which runs when a chat is opened, so the card could not
+              -- fire on the screen it lives on. One EXISTS against the
+              -- (flock_id, user_id) pair answers it for every flock in the
+              -- list, on a read the first screen is already waiting for,
+              -- instead of one extra request per open flock.
+              EXISTS (
+                SELECT 1 FROM venue_votes vv
+                 WHERE vv.flock_id = f.id AND vv.user_id = $1
+              ) AS i_voted
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id

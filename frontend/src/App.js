@@ -5699,6 +5699,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // Server truth for the row badge (the migration 056 cursor): the
           // socket handler increments it live and opening the chat zeroes it.
           unread: Number(f.unread_count) || 0,
+          // Has this reader voted in this flock, answered by the list read
+          // itself. The Nest's "needs your vote" card is addressed to YOU and
+          // may only appear when the app knows the answer; before this the
+          // only source was the per-flock tally, which is read when a chat is
+          // opened, so the card could never fire on the screen it lives on.
+          // undefined on a backend that does not send it yet, which keeps the
+          // card hidden rather than guessing.
+          iVoted: typeof f.i_voted === 'boolean' ? f.i_voted : undefined,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           // going_count includes guests who RSVPed through the share link;
@@ -13581,7 +13589,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // its content being wrong.
           // Only flocks whose votes were actually read may be accused: an
           // unloaded [] is not evidence the person has not voted.
-          const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && votesLoadedRef.current.has(f.id) && !hasCastMyVote(f));
+          // Local tally first when there is one: it is the freshest answer and
+          // it is what changes the moment the reader votes. Otherwise the
+          // list read's own boolean. Neither present means we do not know, and
+          // the card stays away.
+          const needsMyVote = (f) => (votesLoadedRef.current.has(f.id)
+            ? !hasCastMyVote(f)
+            : f.iVoted === false);
+          const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && needsMyVote(f));
           if (needsAction.length === 0) return null;
           return (
             <button className="hit44"
