@@ -814,11 +814,19 @@ workflows:
               last=$(ls -1 "$flow/screen-hierarchy" | sort | tail -1)
               [ -n "$last" ] || continue
               echo "===== last screen in $(basename "$flow"): $last ====="
-              # Every "text" and "accessibilityText" value, deduplicated, which
-              # is what a selector actually matches against.
-              tr ',' '\n' < "$flow/screen-hierarchy/$last" \
-                | grep -oE '"(text|accessibilityText|hintText)":"[^"]{1,80}"' \
-                | sed 's/.*":"//; s/"$//' | grep -v '^$' | sort -u | head -80
+              # Every string value in the dump, deduplicated. Run 65 printed
+              # this header and nothing under it: the filter was keyed on
+              # "text":"value" with no space, and the file writes
+              # "text" : "value". So it matches any quoted value now, and the
+              # raw head is printed underneath either way, because a diagnostic
+              # that can come back empty is a diagnostic that costs a build to
+              # learn nothing from.
+              tr '{},' '\n\n\n' < "$flow/screen-hierarchy/$last" \
+                | grep -oE '"[^"]{1,70}"[[:space:]]*:[[:space:]]*"[^"]{1,70}"' \
+                | sed 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//; s/"$//' \
+                | grep -vE '^[[:space:]]*$|^[0-9.,[:space:]]+$' | sort -u | head -90
+              echo "----- raw head of that file -----"
+              head -c 1800 "$flow/screen-hierarchy/$last"
               echo
             done
             echo "---- end maestro debug ----"
