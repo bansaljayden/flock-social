@@ -31,6 +31,20 @@
  *      sheet's focus restore put the caret on <body> and a keyboard user was
  *      returned to the top of the screen.
  *
+ * ONE OF THE THREE COLLAPSING NAVS IS GONE, AND TEST 1 CHANGED SHAPE FOR IT.
+ * The flock chat's header rail was deleted in the chat rebuild: its five
+ * controls are tiles in the composer's plus sheet now, and that sheet returns
+ * null when it is shut rather than hiding itself. So the chat no longer HAS a
+ * collapsed group to interrogate and collapsedGroupOf cannot be pointed at
+ * one. What (1) is really about survives the move, and is what test 1 asserts
+ * instead: the controls behind that door must not be focusable while the door
+ * is shut, and must be focusable once it is open. Unmounting is the strongest
+ * way to satisfy the first half, so the test pins that the sheet is ABSENT
+ * rather than merely hidden. The day somebody re-renders it behind
+ * visibility: hidden or maxWidth: 0, this goes red again for exactly the
+ * reason it was written. Discover's rail still collapses the old way and test
+ * 2 still reads it with collapsedGroupOf.
+ *
  * WHAT IS DELIBERATELY NOT HERE. No screen reader is driven. VoiceOver cannot
  * be scripted from Playwright, and a spec that claimed to speak for it would
  * be fiction. What is asserted instead is the tree it reads: roles, names,
@@ -118,7 +132,20 @@ async function createFlock(page, name) {
   await page.getByLabel(/what.s the plan/i).fill(name);
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: /create flock/i }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  // Creating ends on the share step the guest-link work added, not in the
+  // chat: "<name> is made." and a choice between sending the link and going in
+  // quietly. "Not now" is the quiet door.
+  await expect(page.getByRole('heading', { name: `${name} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  // THE CHAT NO LONGER HAS A HEADING TO WAIT FOR. The header carried the plan's
+  // name as an <h2> until the rebuild made it a <span> inside the button that
+  // opens the plan, on the ground that ARIA gives a button presentational
+  // children and the heading was therefore announced by nothing. The name is
+  // still on screen, in the one control that carries it, so that is what says
+  // the chat is open.
+  await expect(page.getByRole('button', { name: 'Open the plan' }))
+    .toContainText(name, { timeout: 25_000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -209,12 +236,15 @@ async function tabWalk(page, steps) {
   return seen;
 }
 
-// The four in the flock chat header. "Invite friends" is deliberately NOT in
-// this list even though the header holds one: the empty chat body has a second
-// button by that exact name which is on screen and must stay reachable, so a
-// name-only assertion cannot tell the two apart. The header group as a whole is
-// checked by `collapsedGroupOf` instead, which reads the DOM rather than names.
-const CHAT_NAV_UNIQUE = ['Vote on a venue', 'Search messages', 'Group cash pool'];
+// Three of the tiles behind the flock chat's "+". These descend from the four
+// that used to hang off the header's "Features" pill, and two were renamed on
+// the way ("Search messages" became "Search chat", "Group cash pool" became
+// "Cash pool"). "Invite friends" is deliberately NOT in this list even though
+// the sheet holds one: the empty chat body has a second button by that exact
+// name which is on screen and must stay reachable, so a name-only assertion
+// cannot tell the two apart. Same exclusion, same reason, as when these lived
+// in the header.
+const CHAT_PLUS_UNIQUE = ['Vote on a venue', 'Search chat', 'Cash pool'];
 const DISCOVER_NAV = ['Recenter the map on me', 'Events', 'Friends'];
 
 /**
@@ -237,33 +267,46 @@ async function collapsedGroupOf(page, anchorLabel) {
 }
 
 // ===========================================================================
-// 1. THE COLLAPSED FLOCK CHAT HEADER
+// 1. THE FLOCK CHAT'S HIDDEN CONTROLS
 // ===========================================================================
 
-test('the flock chat header nav is out of the keyboard and the tree while collapsed', async ({ browser }) => {
+/** The tiles inside the composer's plus sheet, and whether the sheet is there. */
+async function plusSheetTiles(page) {
+  return page.evaluate(`(() => {
+    const sheet = document.querySelector('[data-testid="composer-plus-sheet"]');
+    if (!sheet) return { mounted: false, tiles: [] };
+    const tiles = Array.from(sheet.querySelectorAll('button')).map((b) => ({
+      name: (b.getAttribute('aria-label') || b.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 30),
+      vis: getComputedStyle(b).visibility,
+    }));
+    return { mounted: true, tiles };
+  })()`);
+}
+
+test("the flock chat keeps the plus sheet's controls out of the keyboard until it is open", async ({ browser }) => {
   test.setTimeout(150_000);
   const me = await newPerson(browser, 'Wren');
   const page = me.page;
-  await createFlock(page, `Collapsed Nav ${Math.random().toString(36).slice(2, 6)}`);
+  await createFlock(page, `Plus Sheet ${Math.random().toString(36).slice(2, 6)}`);
   await page.waitForTimeout(1200);
 
-  // The whole group, read out of the DOM. All four are still there, which is
-  // the point: the defect was never that they exist, it is that the browser
-  // would focus them. The count floor is what stops this passing on an empty
-  // querySelectorAll after somebody restructures the header.
-  const collapsedGroup = await collapsedGroupOf(page, 'Vote on a venue');
-  expect(collapsedGroup.found, 'no "Vote on a venue" control in the flock chat header').toBe(true);
-  expect(collapsedGroup.buttons.length).toBeGreaterThanOrEqual(4);
-  expect(collapsedGroup.vis).toBe('hidden');
-  for (const b of collapsedGroup.buttons) {
-    expect(b.vis, `"${b.name}" is still visible inside the collapsed header group`).toBe('hidden');
-  }
+  // NOT MOUNTED, not hidden, and the distinction is the whole test. The
+  // controls these replaced were hidden with `maxWidth: 0` on a container that
+  // kept them focusable, which is the defect this file was opened for.
+  // ComposerPlusSheet answers `open === false` with null, so there is nothing
+  // for the browser to focus at all. Asserting the absence rather than the
+  // visibility is what keeps this honest: re-render it behind a hidden style
+  // and this line goes red before anybody tabs into a sheet they cannot see.
+  const shut = await plusSheetTiles(page);
+  expect(shut.mounted, 'the plus sheet is in the DOM while it is closed').toBe(false);
 
-  const collapsed = await focusableNames(page);
-  for (const label of CHAT_NAV_UNIQUE) {
-    expect(collapsed, `"${label}" is focusable while the header nav is collapsed`).not.toContain(label);
+  const closed = await focusableNames(page);
+  for (const label of CHAT_PLUS_UNIQUE) {
+    expect(closed, `"${label}" is focusable while the plus sheet is closed`).not.toContain(label);
   }
-  expect(collapsed).toContain('Features');
+  // The door itself is reachable, which is the other half: hiding the controls
+  // by removing the way to them would "pass" the line above.
+  expect(closed).toContain('More to send');
 
   // And nothing else on this screen is a tab stop the eye cannot find.
   expect(await invisibleTabStops(page)).toEqual([]);
@@ -272,22 +315,30 @@ test('the flock chat header nav is out of the keyboard and the tree while collap
   // anywhere off screen.
   const walk = await tabWalk(page, 14);
   for (const stop of walk) {
-    expect(CHAT_NAV_UNIQUE, `Tab landed on the collapsed "${stop.name}"`).not.toContain(stop.name);
+    expect(CHAT_PLUS_UNIQUE, `Tab landed on the closed sheet's "${stop.name}"`).not.toContain(stop.name);
     expect(stop.onScreen, `Tab landed off screen on "${stop.name}"`).toBe(true);
   }
 
-  // Opening the group puts all four back, which is the other half of the fix:
-  // hiding them permanently would "pass" this test and break the product.
-  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  // Opening it puts every one of them back, which is the other half of the fix:
+  // dropping them permanently would "pass" this test and break the product. The
+  // count floor is what stops this passing on an empty querySelectorAll after
+  // somebody restructures the sheet.
+  await page.getByRole('button', { name: 'More to send', exact: true }).click();
   await page.waitForTimeout(700);
-  const openedGroup = await collapsedGroupOf(page, 'Vote on a venue');
-  for (const b of openedGroup.buttons) {
-    expect(b.vis, `"${b.name}" is unreachable even with the nav open`).not.toBe('hidden');
+  const open = await plusSheetTiles(page);
+  expect(open.mounted, 'the plus sheet did not open').toBe(true);
+  expect(open.tiles.length).toBeGreaterThanOrEqual(4);
+  for (const t of open.tiles) {
+    expect(t.vis, `"${t.name}" is unreachable even with the sheet open`).not.toBe('hidden');
   }
   const opened = await focusableNames(page);
-  for (const label of CHAT_NAV_UNIQUE) {
-    expect(opened, `"${label}" is unreachable even with the nav open`).toContain(label);
+  for (const label of CHAT_PLUS_UNIQUE) {
+    expect(opened, `"${label}" is unreachable even with the sheet open`).toContain(label);
   }
+  // The sheet scrolls inside its own maximum height, so it owns an `overflow`
+  // of its own and can clip its last row out of sight while leaving it
+  // focusable. That is the same defect, one surface along.
+  expect(await invisibleTabStops(page)).toEqual([]);
   await me.context.close();
 });
 
@@ -310,6 +361,18 @@ test('Discover hides its collapsed nav and its closed events panel from the keyb
   await page.getByRole('navigation', { name: 'Main' })
     .getByRole('button', { name: tabName('Discover') }).click();
   // The map and its "we could not place you" path both settle inside this.
+  //
+  // THE PAUSE WAS NOT THE PROBLEM, AND LENGTHENING IT WAS THE WRONG FIX. A
+  // previous pass read the clipped zoom controls below as a settle artefact and
+  // recommended waiting longer. Measured on 2026-09-22, at 390x664 with
+  // location denied and the analytics banner still unanswered: the map surface
+  // is [0, 147, 390, 131] at 1.5s and still [0, 147, 390, 131] at 11s, with
+  // MapLibre's canvas up and "Loading map..." long gone. It does not grow. The
+  // controls sit at y 13 to 142, above the surface's own top edge, because they
+  // are anchored 184px, 132px and 80px off the BOTTOM of a flex:1 box that is
+  // shorter than 184px. So three of them paint nothing and stay in the
+  // tab order, which is this file's founding defect, and it is the product's.
+  // The wait stays where it was; the assertion below is right to be red.
   await page.waitForTimeout(2500);
 
   const collapsed = await focusableNames(page);
@@ -362,20 +425,32 @@ test('a sheet takes focus, traps Tab, closes on Escape and hands focus back to s
   await page.waitForTimeout(1200);
 
   // Reach the vote sheet the way somebody with no pointer does: Tab to the
-  // Features pill, open it with a key, Tab to the control, open it with a key.
+  // plus at the end of the composer, open it with a key, Tab to the control,
+  // open it with a key. That route used to run through a "Features" pill in
+  // the header; the pill is gone and the plus is the door now, and the point
+  // of the test is that the door can be worked without a pointer at all.
   await page.evaluate('if (document.activeElement && document.activeElement.blur) document.activeElement.blur();');
+  // MATCHED ON THE ACCESSIBLE NAME, not on aria-label alone. The header's
+  // controls were icon-only and carried labels; the sheet's tiles are a glyph
+  // and a VISIBLE word, so the word is the name and there is no aria-label to
+  // read. An aria-label-only match walks past every tile and then reports that
+  // Tab never reached one.
   const reach = async (label) => {
-    for (let i = 0; i < 25; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       await page.keyboard.press('Tab');
-      const at = await page.evaluate(`(document.activeElement && (document.activeElement.getAttribute('aria-label') || '')) || ''`);
+      const at = await page.evaluate(`(() => {
+        const el = document.activeElement;
+        if (!el) return '';
+        return (el.getAttribute('aria-label') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      })()`);
       if (at === label) return true;
     }
     return false;
   };
-  expect(await reach('Features'), 'Tab never reached the Features button').toBe(true);
+  expect(await reach('More to send'), "Tab never reached the composer's plus button").toBe(true);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(600);
-  expect(await reach('Vote on a venue'), 'Tab never reached the vote control once the nav was open').toBe(true);
+  expect(await reach('Vote on a venue'), 'Tab never reached the vote tile once the plus sheet was open').toBe(true);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(900);
 
@@ -400,11 +475,24 @@ test('a sheet takes focus, traps Tab, closes on Escape and hands focus back to s
   await page.waitForTimeout(700);
 
   // Closed, and focus is on something a sighted keyboard user can see. This is
-  // the assertion that used to fail: the control that opened this sheet hides
-  // itself on the way, focus() on it is a silent no-op, and the caret ended up
-  // on <body> with the screen scrolled back to the top.
+  // the assertion that used to fail: the control that opened this sheet hid
+  // itself on the way, focus() on a hidden element is a silent no-op, and the
+  // caret ended up on <body> with the screen scrolled back to the top.
+  //
+  // The route is new and the trap is WORSE on it, which is why this assertion
+  // still earns its lines. The tile that opened the vote sheet lived in the
+  // plus sheet, and the plus sheet shut itself on the way through and
+  // UNMOUNTED: the element to hand focus back to is not hidden now, it is gone
+  // from the document. Anything restoring to a detached node lands on <body>
+  // just the same, and this catches it the same way.
   const after = await page.evaluate(`(() => {
-    const dialogs = document.querySelectorAll('[role="dialog"]').length;
+    // THE VOTE SHEET, not every dialog on the page. The analytics consent
+    // banner is a role="dialog" of its own and it sits on every signed-in
+    // screen until somebody answers it, so a bare count is never 0: this read
+    // "Escape did not close the vote sheet" about a chat that had closed it
+    // perfectly. Naming the sheet is the stricter claim anyway, because a
+    // count can also fall to zero because the wrong thing closed.
+    const dialogs = document.querySelectorAll('[role="dialog"][aria-label="Vote on a venue"]').length;
     const el = document.activeElement;
     if (!el || el === document.body) return { dialogs, name: '(body)', onScreen: false, vis: 'n/a' };
     const r = el.getBoundingClientRect();
@@ -456,12 +544,20 @@ test('no screen in the core loop has a tab stop the eye cannot find', async ({ b
   await page.getByLabel(/what.s the plan/i).fill(flockName);
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: /create flock/i }).click();
-  await expect(page.getByRole('heading', { name: flockName, exact: true })).toBeVisible({ timeout: 25_000 });
+  // The share step is a screen of the core loop too, and it is the one every
+  // new flock passes through, so it gets swept before "Not now" goes past it.
+  await expect(page.getByRole('heading', { name: `${flockName} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  await check('The share step');
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  await expect(page.getByRole('button', { name: 'Open the plan' }))
+    .toContainText(flockName, { timeout: 25_000 });
   await page.waitForTimeout(1500);
   await check('Flock chat');
 
-  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  // The five controls the header used to carry are behind this now.
+  await page.getByRole('button', { name: 'More to send', exact: true }).click();
   await page.waitForTimeout(700);
-  await check('Flock chat, features open');
+  await check('Flock chat, plus sheet open');
   await me.context.close();
 });

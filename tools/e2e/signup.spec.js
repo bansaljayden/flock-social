@@ -383,7 +383,13 @@ test('every empty panel a brand new account meets explains itself', async ({ pag
   // is that the empty state EXPLAINS ITSELF, so they take the first rather than
   // failing strict mode on an app that got more helpful, not less.
   await expect(page.getByText(/location is off/i).first()).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/search for a place by name/i)).toBeVisible();
+  // TWO BANNERS CAN CARRY THIS INSTRUCTION and neither says "for a place" any
+  // more. The location banner offers "search any place by name" and the
+  // no-venues status line offers "Search a place by name"; which one is up
+  // depends on whether the map has anything on it, and on this stack, with no
+  // Places key, it can be either. The claim is unchanged: the empty state says
+  // what to do next instead of just being empty.
+  await expect(page.getByText(/search (a|any) place by name/i)).toBeVisible();
 
   // Past flocks, reached from home.
   await page.getByRole('button', { name: 'Nest', exact: true }).click();
