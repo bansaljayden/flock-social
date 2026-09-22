@@ -7986,6 +7986,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      name in it must bind to something never reassigned. So the per-flock flag
      is narrowed to THIS flock here rather than inline at the call site. */
   const votesLoading = votesLoadingFor === selectedFlockId;
+  /* HAS THIS FLOCK'S TALLY BEEN READ AT ALL. Same shorthand-only contract as
+     votesLoading above, and the same reason the Nest card needs it: the chat's
+     nudge says "Nobody has picked a place yet" off flock.votes being empty,
+     and an unread tally is empty too. So the sentence was shown over flocks
+     with venues already on the table, for as long as the read took. A ref
+     rather than state because nothing renders off the set itself; the flock id
+     it is narrowed to is what changes. */
+  const votesLoaded = votesLoadedRef.current.has(selectedFlockId);
 
   const loadFlockVotes = useCallback((flockId) => {
     if (typeof flockId !== 'number') return;
@@ -15613,6 +15621,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadFlockVotes,
         votesError,
         votesLoading,
+        votesLoaded,
         openBirdie,
         pendingImage,
         popularVenues,
