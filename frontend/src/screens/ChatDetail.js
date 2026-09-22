@@ -1153,6 +1153,16 @@ export default function ChatDetail({
        the `!flock` return is the rest of the screen. */
     const rowsCacheRef = React.useRef({ inputs: null, rows: null });
 
+    /* THE SAME TRICK FOR THE id -> ROW INDEX, and for the same reason it has
+       to be a ref: a hook cannot go below the `!flock` return, and that is
+       where the index is used. DmDetail memoises the identical Map with
+       React.useMemo (search dmRowsById) because its hooks are above its own
+       guard; this one was rebuilt from scratch in the render body on every
+       pass, so a 300-message thread allocated ~600 entries per character
+       typed to answer a question that is only ever asked at touch time -- the
+       readers are a long-press handler and the actions sheet. */
+    const rowIndexCacheRef = React.useRef({ source: null, byId: null });
+
     /* THE CLOCK THAT CACHE IS REMEMBERED AGAINST, and it is state because
        state is the only thing here that can cause a render. POSITION_FRESH_MS
        is a window on the clock (the note at POSITION_CLOCK_MS), so a
@@ -1669,7 +1679,18 @@ export default function ChatDetail({
       ? { key: nudgeKey, text: 'Nobody has picked a place yet.', actionLabel: 'Open the vote' }
       : null;
 
-    const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
+    // Keyed on the array's identity: App.js replaces flock.messages when it
+    // changes and leaves it alone when it does not, which is exactly the
+    // signal wanted here.
+    const sourceRows = flock.messages || [];
+    const sourceRowById = (() => {
+      const cache = rowIndexCacheRef.current;
+      if (cache.source === sourceRows && cache.byId) return cache.byId;
+      const byId = new Map();
+      for (const m of sourceRows) byId.set(m.id, m);
+      rowIndexCacheRef.current = { source: sourceRows, byId };
+      return byId;
+    })();
     const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
     /* THE VOTE ON A SHARED PLACE, AND IT HAS TO TRAVEL ON THE ROW.
 

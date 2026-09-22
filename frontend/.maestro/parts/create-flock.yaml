@@ -213,3 +213,36 @@ appId: com.flockcorp.flock
                 text: "Create Flock"
                 optional: true
             - waitForAnimationToEnd
+
+# CREATING NO LONGER LANDS IN THE CHAT. It ends on the share step the guest
+# link work added: "<name> is made.", "Now put it where your friends already
+# are.", Send the link / Not now. Run 67 proved it -- demo-person got all the
+# way here for the first time and then failed waiting for the composer, and the
+# failure dump lists exactly those four strings as what was on screen.
+#
+# This is the same change that had left fourteen specs in tools/e2e red since it
+# shipped: a flow that waits for a screen is a claim about the product, and a
+# new screen retires the claim.
+#
+# Not now, not Send the link. The share sheet is the OS one and a filmed take
+# cannot dismiss it reliably; the invite is filmed later from inside the chat,
+# which is the shot the narration actually calls for. Guarded so a build that
+# somehow skips the step passes straight through.
+- runFlow:
+    when:
+      visible: "Now put it where your friends already are"
+    commands:
+      - tapOn:
+          text: "Not now"
+          optional: true
+      - waitForAnimationToEnd
+# Belt and braces: the heading carries the flock's own name, so match the
+# sentence that does not.
+- runFlow:
+    when:
+      visible: "Send the link"
+    commands:
+      - tapOn:
+          text: "Not now"
+          optional: true
+      - waitForAnimationToEnd
