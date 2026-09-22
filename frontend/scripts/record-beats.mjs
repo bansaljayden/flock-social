@@ -286,6 +286,53 @@ const BEATS = {
     },
   },
 
+  /* Beat 4. The invite, and this one replaces a window that was frozen for
+     6.7 of its 8.9 seconds AND had "Sam Review" in it, which is the App Store
+     reviewer account rather than anybody in the story. The sheet here carries
+     the plan's own friends, and the share row above them is the second half of
+     the line: a link that wants no account. */
+  invite: {
+    who: 'camera',
+    async drive(page) {
+      await openFlock(page, 'Sunday Brunch');
+      await tap(page, page.getByRole('button', { name: 'Open the plan' }).first(), { after: 1800 });
+      await still(page, 'invite-1-plan');
+      await tap(page, page.getByRole('button', { name: 'Invite', exact: true }).first(), { after: 2000 });
+      await still(page, 'invite-2-sheet');
+      await hold(page, 2200);
+      /* The friend the line names, BY NAME. Taking the second Add control in
+         the list added whoever happened to be sorted there, which was not the
+         person the narration says gets one. */
+      const sheet = page.locator('[role="dialog"]').last();
+      /* MATCHED BY ROW, NOT BY ANCESTOR TEXT. Walking up from the control to
+         find a container mentioning the name climbs past the row into the list
+         itself, whose text mentions everybody, so the first control matched and
+         the wrong friend was added. The name and its own control share a line;
+         that is the thing that identifies the row. */
+      const adds = sheet.getByRole('button', { name: 'Add' });
+      const nameBox = await sheet.getByText('Sam Rivera', { exact: true }).first().boundingBox();
+      let add = null;
+      let best = Infinity;
+      for (let i = 0; i < await adds.count(); i += 1) {
+        const box = await adds.nth(i).boundingBox();
+        if (!box || !nameBox) continue;
+        const gap = Math.abs((box.y + box.height / 2) - (nameBox.y + nameBox.height / 2));
+        if (gap < best) { best = gap; add = adds.nth(i); }
+      }
+      if (add && best < 24) {
+        await tap(page, add, { after: 1600 });
+        await still(page, 'invite-3-picked');
+        // Adding stages the pick; the button under the list is what sends it.
+        const send = sheet.getByRole('button', { name: /^Invite \d+ Friend/ }).first();
+        if (await send.count()) await tap(page, send, { after: 2600 });
+      } else {
+        log('  invite: no Add control for the friend the line names');
+      }
+      await still(page, 'invite-4-sent');
+      await hold(page, 2000);
+    },
+  },
+
   /* Beat 5. The map, coloured by what the model expects right now.
 
      THIS BEAT MAKES PAID CALLS. Opening Discover runs a venue search against
@@ -470,7 +517,7 @@ const BEATS = {
 
 // The order they change state in. --only picks a subset without reordering it.
 // The order the narration runs in: beat 8 is the vote, beat 9 the budget.
-const ORDER = ['discover', 'list', 'vote', 'budget', 'bill', 'venue', 'tabs', 'override'];
+const ORDER = ['invite', 'discover', 'list', 'vote', 'budget', 'bill', 'venue', 'tabs', 'override'];
 
 /* ── The camera ─────────────────────────────────────────────────────────────
  *
