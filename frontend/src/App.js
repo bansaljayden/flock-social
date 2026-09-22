@@ -14146,7 +14146,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [venueListErrors, setVenueListErrors] = useState({
     promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
   });
-  const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null, hasMore: false, nextBefore: null, loadingOlder: false });
+  /* `loaded` IS SEPARATE FROM `stats`, and it has to be. The empty state under
+     this list says "No reviews yet. Reviews from Flock users will appear here",
+     which a venue owner reads as "nobody has reviewed us" -- a claim about
+     their own standing, made before the read has landed. The failed read
+     already suppresses it (venueListErrors.reviews); the SECONDS BEFORE the
+     read lands did not, so the sentence was shown on the way in every time the
+     tab was opened. `stats` cannot stand in for this: the server may answer a
+     venue with no reviews without one, so null means both "nothing yet" and
+     "nothing back yet". */
+  const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null, loaded: false, hasMore: false, nextBefore: null, loadingOlder: false });
   const [replyingToReview, setReplyingToReview] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [venueLogoUrl, setVenueLogoUrl] = useState(null);
@@ -14450,6 +14459,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueReviewsData({
         reviews: d?.reviews || [],
         stats: d?.stats || null,
+        loaded: true,
         hasMore: !!d?.hasMore,
         nextBefore: d?.nextBefore || null,
         loadingOlder: false,

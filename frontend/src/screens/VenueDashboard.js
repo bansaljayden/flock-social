@@ -1844,6 +1844,12 @@ export default function VenueDashboard({
                   // their content is gone.
                   venueListErrors.reviews ? (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>Ratings unavailable right now.</p>
+                  ) : !venueReviewsData.loaded ? (
+                    // AND NOT BEFORE THE READ LANDS. The sentence below is a
+                    // claim about this venue's standing, and for the seconds
+                    // between opening the tab and the answer arriving it was
+                    // telling an owner nobody had reviewed them.
+                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>Loading your reviews…</p>
                   ) : (
                     // Warm bird on the true-empty only. The failed-read branch
                     // above stays plain text: "unavailable" is an error, and
