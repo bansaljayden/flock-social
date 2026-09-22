@@ -41,5 +41,7 @@ test('a quiet hold releases the debounce, and a retry row that waits for morning
   const helper = read('services/pushHelper.js');
   assert.match(helper, /const nothingSent = !result \|\| result\.skipped \|\| \(result\.sent === 0\);/);
   assert.ok(!/result\.skipped && !held/.test(helper), 'the hold no longer keeps the claim');
-  assert.match(helper, /SET next_attempt_at = \$2,\n\s+reason = 'quiet',/);
+  // $2 is cast now, and has to be: bare, the planner reads the arithmetic
+  // below it as interval plus interval and GREATEST refuses the statement.
+  assert.match(helper, /SET next_attempt_at = \$2(::timestamptz)?,\n\s+reason = 'quiet',/);
 });

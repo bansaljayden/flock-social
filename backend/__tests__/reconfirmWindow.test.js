@@ -812,9 +812,20 @@ test('a guest who says out loses their night-of answer in the RSVP statement its
   assert.deepStrictEqual(res.body, { guestToken: GUEST_TOKEN, status: 'out' });
   const writes = ran(/^UPDATE guest_rsvps SET name = \$1/);
   assert.strictEqual(writes.length, 1);
-  assert.strictEqual(writes[0].sql,
-    "UPDATE guest_rsvps SET name = $1, status = $2, updated_at = NOW(), reconfirmed_at = CASE WHEN $2::text = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false RETURNING id, guest_token",
+  /* THE RULE, NOT THE SPELLING. This pinned the statement character for
+     character, and the statement has since had to cast $2 in both places:
+     assigned bare into a VARCHAR column and compared as ::text, Postgres
+     cannot give the parameter one type and refuses the whole UPDATE, which is
+     a 500 on the only path a returning guest has. A fixture demanding the old
+     spelling is demanding a statement the database will not run. What this
+     test is for is unchanged: one statement, and the CASE inside it is what
+     decides whether the night-of answer survives. */
+  assert.match(writes[0].sql,
+    /reconfirmed_at = CASE WHEN \$2(::text)? = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END/,
     'the night-of answer survives only an in that stays in, decided in the statement');
+  assert.match(writes[0].sql,
+    /WHERE guest_token = \$3 AND flock_id = \$4 AND COALESCE\(is_hidden, false\) = false/,
+    'a hidden row is never edited by this path');
   assert.deepStrictEqual(writes[0].params, ['Cass', 'out', GUEST_TOKEN, FLOCK]);
   assert.strictEqual(ran(/SET reconfirmed_at = COALESCE/).length, 0, 'an RSVP edit never records a reconfirmation');
 

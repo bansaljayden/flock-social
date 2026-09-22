@@ -898,7 +898,10 @@ test('contacts: editing an address moves the address date, editing a name does n
     });
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     const update = calls.find((c) => c.text.includes('UPDATE trusted_contacts'));
-    assert.match(update.text, /email_set_at = CASE WHEN contact_email IS DISTINCT FROM \$3 THEN NOW\(\)/,
+    // The comparison, whether or not $3 carries the cast it now needs to be
+    // a statement Postgres will accept at all.
+    assert.match(update.text,
+      /email_set_at = CASE WHEN contact_email IS DISTINCT FROM \$3(::text)? THEN NOW\(\)/,
       'an edited address keeps the date of the address it replaced');
   } finally { restore(); }
 });
