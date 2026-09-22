@@ -303,9 +303,24 @@ const clearLift = (el) => {
 export default function useKeyboardComposer(options = {}) {
   const { enabled = true } = options;
 
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  /* REFS, NOT STATE, AND NOTHING READS THEM ANYWAY.
+
+     `bottomInset` below is state because the list's padding is drawn from it.
+     These two are not: grep both chat screens and neither destructures
+     either, so every write was a render of a four-thousand-line component
+     that changed not one pixel. A keyboard show cost three renders where one
+     is wanted and a hide cost three more, and the wasted four land on the
+     worst frames there are -- the tick that starts the 250ms lift, and the
+     one right after the snap effect's synchronous scrollTop restore. Those
+     are the exact frames this hook exists to keep smooth, which is why the
+     flock chat felt sticky opening and closing.
+
+     They stay on the returned object because they are worth reading and
+     because chatInputBar.test.js asserts both; a getter serves the current
+     value without asking React to paint. */
+  const keyboardHeightRef = useRef(0);
+  const transitioningRef = useRef(false);
   const [bottomInset, setBottomInset] = useState(0);
-  const [transitioning, setTransitioning] = useState(false);
   /* Bumped once per commit and nothing else. See decision 10. */
   const [snapTick, setSnapTick] = useState(0);
 
@@ -355,7 +370,7 @@ export default function useKeyboardComposer(options = {}) {
   const moveTo = useCallback((height, { hiding = false, instant = false } = {}) => {
     if (!mountedRef.current) return;
     const nextHeight = Math.max(0, Number(height) || 0);
-    setKeyboardHeight(nextHeight);
+    keyboardHeightRef.current = nextHeight;
 
     const target = Math.max(0, nextHeight - safeBottomRef.current);
 
@@ -388,7 +403,7 @@ export default function useKeyboardComposer(options = {}) {
 
     if (ms > 0) {
       setCaretHidden(true);
-      setTransitioning(true);
+      transitioningRef.current = true;
       applyLift(barRef.current, delta, ms);
       applyLift(listRef.current, delta, ms);
     }
@@ -430,7 +445,7 @@ export default function useKeyboardComposer(options = {}) {
     }
 
     setCaretHidden(false);
-    setTransitioning(false);
+    transitioningRef.current = false;
   }, [snapTick, setCaretHidden]);
 
   /* One read of where the keyboard IS, for the two moments no event covers:
@@ -699,8 +714,9 @@ export default function useKeyboardComposer(options = {}) {
   }, [hideKeyboard]);
 
   return {
-    keyboardHeight,
-    transitioning,
+    /* Getters: same values, read on access, no render to publish them. */
+    get keyboardHeight() { return keyboardHeightRef.current; },
+    get transitioning() { return transitioningRef.current; },
     bottomInset,
     dismissOnDrag,
     /* The shell needs this as much as the drag does: the "+" sheet, the flock
