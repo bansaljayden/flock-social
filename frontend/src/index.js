@@ -303,8 +303,29 @@ export function startAnalytics() {
   }).catch(() => { /* analytics is never load-bearing */ });
 }
 
-// Already answered yes on a previous visit: start straight away, no banner.
-startAnalytics();
+/* Already answered yes on a previous visit: no banner, nothing to ask, and
+   nothing on screen waiting on this.
+
+   IT USED TO BE A BARE CALL HERE, at module scope, hundreds of lines above
+   root.render(). For every returning consented visitor that put
+   import('posthog-js') (~70 KB gzipped), the SDK init above and a cold DNS +
+   TLS handshake to PostHog into the queue AHEAD of the App or route chunk the
+   person is actually waiting for — which is precisely the rule the comment
+   above afterLoad states, and the reason the api.js import and reportWebVitals
+   are already deferred. Analytics is now behind the same helper, so it starts
+   once the page the visitor came for has loaded. afterLoad is a hoisted
+   function declaration at the foot of this file, so calling it here is safe;
+   it no-ops without a window, which is also the only case startAnalytics could
+   not run in anyway.
+
+   THE CONSENT GATE IS UNCHANGED. startAnalytics still refuses without an
+   explicit yes, and ConsentBanner's onAnswer still calls it DIRECTLY so a
+   fresh yes starts immediately rather than waiting for a load event that has
+   long since fired. The hasAnalyticsConsent() test here is what keeps those
+   two paths from both firing: the banner only renders when nobody has
+   answered, so deferring only the already-answered case means init can never
+   be queued twice for one visit. */
+if (hasAnalyticsConsent()) afterLoad(startAnalytics);
 
 // ---------------------------------------------------------------------------
 // WHERE ARE WE
@@ -962,6 +983,12 @@ if (page) {
 // a thrown capture all end in the same place: the page renders and the event
 // is lost, which is the correct trade for a number.
 // ---------------------------------------------------------------------------
+
+// THREE CALLERS NOW, and one of them is above this line. A hoisted function
+// declaration on purpose: startAnalytics for a returning consented visitor is
+// deferred here too, and that call sits next to startAnalytics itself, several
+// hundred lines up, where the reasoning for it belongs. Keep this a
+// declaration rather than a const, or that call breaks at boot.
 function afterLoad(fn) {
   if (typeof window === 'undefined') return;
   if (document.readyState === 'complete') { setTimeout(fn, 0); return; }
