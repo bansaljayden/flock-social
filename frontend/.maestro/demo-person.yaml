@@ -408,6 +408,48 @@ appId: com.flockcorp.flock
 - assertVisible:
     text: "Create a bill split after your hangout|Split the Bill"   # ChatDetail.js:2946
     optional: true
+
+# FILL THE BILL IN. The take used to open this form and close it again, so the
+# only frames that existed showed "$ 0.00" with Create Split greyed out, under a
+# line about everyone getting a link to settle up. An empty form is the one
+# thing this shot must not be.
+#
+# Every step below is optional: a selector that misses leaves the form open on
+# camera, which is no worse than the take this replaces, rather than aborting
+# the run and spending the machine time for nothing.
+- tapOn:
+    text: "0.00"                                # ChatDetail.js:3489 placeholder on the Bill total field
+    optional: true
+- inputText: "84.20"
+# The total is a SearchInputLocal and commits on a 120 ms debounce, so the
+# keyboard has to be closed for real before anything is tapped. Runs 7 to 11 of
+# the compliance take were lost to exactly this: on iOS a tap on a button does
+# not take focus off a text field, so the tap lands and the value never
+# committed. Done bar first, then Return, then wait.
+- tapOn:
+    text: "Done"
+    optional: true
+- pressKey: Enter
+- waitForAnimationToEnd
+- tapOn:
+    text: "18%"                                 # ChatDetail.js:3495 tip chips are None/15%/18%/20%/25%
+    optional: true
+- waitForAnimationToEnd
+# With a total entered, ChatDetail.js:3503 draws the Subtotal / Tip / per-person
+# summary. Hold on it: that panel IS the shot.
+- assertVisible:
+    text: "Subtotal"
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Create Split"                        # ChatDetail.js:3547; enabled once the total is above zero
+    optional: true
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Bill split created|Settle Up|owes"
+    timeout: 15000
+    optional: true
+- waitForAnimationToEnd
 - tapOn:
     text: "Close"
     optional: true
