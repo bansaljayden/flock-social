@@ -5,9 +5,10 @@
 > It is built for the part of a night out that usually dies in the group chat:
 > deciding.
 
-Flock runs in a web browser at https://www.flockcorp.com. An iPhone app is in
-App Store review and cannot be downloaded yet. Users never pay. Venues are the
-side Flock is built to charge, and no venue is being charged today.
+Flock runs in a web browser at https://www.flockcorp.com. An iPhone app has
+been submitted to the App Store and cannot be downloaded yet. You and your
+friends do not pay today. Venues are the side Flock is built to charge, and no
+venue is being charged today.
 
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
@@ -16,7 +17,7 @@ the home page, /about, /support, /privacy and /terms. /guidelines and
 /delete-account are not among them and need JavaScript to read. This file is
 the summary and the index.
 
-Updated: August 26, 2026.
+Updated: September 21, 2026.
 
 ## What Flock does
 
@@ -64,7 +65,7 @@ as of the August 18, 2026 training run (version 2.6.0 "Starling").
 ## Who it is for
 
 Flock is aimed at people roughly 15 to 22 who plan things in group chats. The
-enforced minimum age is 13, checked from a stored date of birth.
+enforced minimum age is 13, checked from a stored year of birth.
 
 ## Pricing
 

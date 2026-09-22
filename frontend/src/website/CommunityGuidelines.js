@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 18, 2026';
+const EFFECTIVE_DATE = 'September 21, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 // Deliberately the same mailbox as SUPPORT_EMAIL. A designated child-safety
 // contact is a real commitment, and safety@ was named here before it existed,

@@ -49,3 +49,54 @@ test('llms.txt counts the static pages correctly', () => {
   expect(s).toMatch(/Five of the pages/);
   expect(s).toMatch(/the home page, \/about, \/support, \/privacy and \/terms\./);
 });
+
+// THE SIGN-UP SCREEN ASKS FOR A YEAR, AND THE POLICY HAS TO AGREE.
+//
+// Account creation stopped collecting a full date of birth on 2026-09-14, as
+// the answer to an App Store rejection under 5.1.1(v). Three public passages
+// were updated the next day and four were missed, so the Privacy Policy
+// contradicted itself on the same page: one section said "we ask for the year
+// only" while the Children section still described a date of birth. A reviewer
+// checking the fix reads the policy denying it.
+//
+// The crawler mirror in api/marketing-page.js matters as much as the React
+// pages: it is the static HTML served to answer engines, so a stale sentence
+// there is the version that gets quoted back.
+//
+// Nothing pinned any of it. This does.
+test('no public page or crawler mirror says sign-up asks for a date of birth', () => {
+  const surfaces = [
+    'website/PrivacyPolicy.js',
+    'website/TermsOfService.js',
+    'website/CommunityGuidelines.js',
+    'website/AboutPage.js',
+    'website/LandingPage.js',
+    '../api/marketing-page.js',
+    '../public/llms.txt',
+  ];
+  for (const rel of surfaces) {
+    const body = read(rel).replace(/\s+/g, ' ');
+    expect(body).not.toMatch(/asks for a date of birth/i);
+    expect(body).not.toMatch(/asks for your date of birth/i);
+    expect(body).not.toMatch(/stored date of birth/i);
+  }
+});
+
+// "Never" is the promise the house copy rules ban outright, and it is false the
+// moment a flag flips: PaywallSheet.js ships a consumer subscription behind
+// PAYWALL_ENABLED. The Terms and the landing page already use the present
+// tense, which stays true either way.
+test('no public surface promises that users never pay', () => {
+  const surfaces = [
+    'website/AboutPage.js',
+    'website/LandingPage.js',
+    '../api/marketing-page.js',
+    '../public/llms.txt',
+  ];
+  for (const rel of surfaces) {
+    const body = read(rel).replace(/\s+/g, ' ');
+    expect(body).not.toMatch(/never pay/i);
+    expect(body).not.toMatch(/users never do/i);
+    expect(body).not.toMatch(/you never do/i);
+  }
+});
