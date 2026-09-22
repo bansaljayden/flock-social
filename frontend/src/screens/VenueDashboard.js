@@ -167,6 +167,8 @@ export default function VenueDashboard({
   setSelectedVenueForCreate,
   setShowEventModal,
   setShowHoursModal,
+  openHoursEditor,
+  cancelHoursEditor,
   setShowPromoModal,
   setShowUpgradeModal,
   setVenueBusyDraft,
@@ -1423,21 +1425,33 @@ export default function VenueDashboard({
                 </button>
               ))}
             </div>
+            {/* A DOUBLE TAP USED TO POST THE DEAL TWICE. The route is a plain
+                INSERT with no uniqueness behind it, the text was only cleared
+                once the promise resolved, and the button's own disabled rule
+                is "there is text in the box" -- so for the whole round trip it
+                stayed live with the same text under it and a second press sent
+                a second public promotion. The box is cleared BEFORE the
+                request, which disables the button on the same tap, and put
+                back if the post is refused so nothing anyone typed is lost.
+                No new state: the existing disabled rule already does the job
+                once the value it reads is honest about what is in flight. */}
             <button className="hit44" onClick={async () => {
-              if (!dealDescription.trim()) return;
+              const text = dealDescription.trim();
+              if (!text) return;
+              setDealDescription('');
               try {
                 const created = await createVenuePromotion({
-                  title: dealDescription.trim(),
-                  description: dealDescription.trim(),
+                  title: text,
+                  description: text,
                   timeSlot: dealTimeSlot,
                   days: 'Daily',
                 });
                 setPromotions(prev => [created, ...prev]);
-                setDealDescription('');
                 showToast(venueIsVerified ? 'Deal posted. It is on your venue card now.' : 'Saved. It goes on your card once your venue is verified.', 'success');
                 setVenueTab('promotions');
               } catch (e) {
                 console.error('Post deal failed:', e);
+                setDealDescription(text);
                 showToast(e?.message || "That deal didn't post. Try again.", 'error');
               }
             }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!can.postDeals || !dealDescription.trim()}>
@@ -2028,7 +2042,7 @@ export default function VenueDashboard({
                 )) : (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set. Tap Edit Hours to add</p>
                 )}
-                <button className="hit44" onClick={() => setShowHoursModal(true)} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                <button className="hit44" onClick={openHoursEditor} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   Edit Hours
                 </button>
               </div>
@@ -2555,7 +2569,7 @@ export default function VenueDashboard({
           {/* Hours Modal */}
           {showHoursModal && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-            <DialogBehavior onClose={() => setShowHoursModal(false)} label="Venue hours" />
+            <DialogBehavior onClose={cancelHoursEditor} label="Venue hours" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -2571,7 +2585,7 @@ export default function VenueDashboard({
                   <button className="hit44" onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: '6px', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button className="hit44" onClick={() => setShowHoursModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44" onClick={cancelHoursEditor} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                   {/* Same fix as the Venue Information Save above: the modal
                       used to close before the request and discard its failure,
                       so rejected hours vanished looking saved. */}

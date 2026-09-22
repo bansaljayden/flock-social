@@ -399,8 +399,15 @@ export default function AddFriends({
                 </div>
                 {myFriendCode && (
                   <div style={{ marginTop: '14px' }}>
+                    {/* AWAITED, INSIDE A CATCH. This was an optional chain on
+                        an un-awaited promise with a success toast printed
+                        underneath it, so a refused write -- denied permission,
+                        a document that is not focused, both routine in a
+                        WKWebView -- became an unhandled rejection under the
+                        word "copied". Every other clipboard write in the app
+                        already does it this way. */}
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Code</p>
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => { navigator.clipboard?.writeText(myFriendCode); showToast('Code copied.'); }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { await navigator.clipboard.writeText(myFriendCode); showToast('Code copied.'); } catch { showToast('Could not copy. Read it off the button instead.', 'error'); } }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
                   </div>
                 )}
