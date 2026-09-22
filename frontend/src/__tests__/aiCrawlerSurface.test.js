@@ -85,7 +85,14 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 const EXCLUDE = {
   home: [
     '.lp-skip', 'header.lp-nav', '#lp-menu', '.lp-chat', '.lp-split',
-    '.lp-sos-mail', '.lp-appstore', 'form.lp-form', '.lp-form-status',
+    // `.lp-appstore` was in this list and is not any more. Everything else
+    // here is navigation chrome, a form control or a synthetic illustration;
+    // that one is a status badge whose visible text is "Coming soon to the App
+    // Store". Stripping it left the bot document saying nothing at all about
+    // availability, beside a Terms heading that used to assert the app WAS on
+    // the store. An answer engine read the claim and never read the caveat,
+    // which is the cloaking line this file exists to hold.
+    '.lp-sos-mail', 'form.lp-form', '.lp-form-status',
     'figure', 'footer.lp-footer',
   ],
   pp: ['.pp-skip', '.pp-back', 'nav', 'footer'],

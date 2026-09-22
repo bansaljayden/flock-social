@@ -778,7 +778,7 @@ export default function ProfileSettings({
                 )}
               </div>
               {notifStatus === 'unsupported' && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0 44px', lineHeight: 1.45 }}>This browser cannot show notifications. Install Flock from the App Store to get them.</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0 44px', lineHeight: 1.45 }}>This browser cannot show notifications. The iPhone app can, once it is out.</p>
               )}
               {notifStatus === 'denied' && (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0 44px', lineHeight: 1.35 }}>

@@ -532,7 +532,7 @@ const PAGE_BLOCKS = {
   ],
   terms: [
     ["h1", "Terms of Service & EULA"],
-    ["p", "Effective August 21, 2026"],
+    ["p", "Effective September 21, 2026"],
     ["h2", "The short version"],
     ["li", "You have to be 13 or older, and under 18 you need a parent's say-so."],
     ["li", "Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears."],
@@ -639,7 +639,7 @@ const PAGE_BLOCKS = {
     ["p", "If someone brings a claim against Flock Corp because of content you posted, because you broke these Terms or the law, or because you infringed someone else's rights, you agree to cover our costs for that claim, including reasonable legal fees."],
     ["p", "If you use Flock as a venue, that also covers claims brought against us because a fact you asserted through the dashboard was false or misleading: hours, prices, deals, events, capacity, or occupancy reports. It is deliberately narrow. It covers what you asserted. It does not cover what users or source distributions said about you."],
     ["p", "We will tell you about any claim we want covered, and you may not settle it in a way that admits anything on our behalf without our agreement."],
-    ["h2", "16. Terms that apply because Flock is on the App Store"],
+    ["h2", "16. Terms that apply if you got Flock from the App Store"],
     ["p", "If you got Flock from Apple's App Store, the following applies, and it prevails over anything in these Terms that conflicts with it."],
     ["li", "This agreement is with us, not Apple. These Terms are between you and Flock Corp only. Apple is not a party to them and is not responsible for Flock or its content."],
     ["li", "Scope of the licence. The licence in section 3 is non-transferable and is limited to using Flock on any Apple-branded product that you own or control, as permitted by the Usage Rules in the Apple Media Services Terms and Conditions, except that Flock may be accessed by other accounts associated with you through Family Sharing or volume purchasing."],
