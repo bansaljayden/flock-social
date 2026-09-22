@@ -570,8 +570,8 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
     // Migration 052 carries the whole reasoning.
     const result = await pool.query(
       `UPDATE trusted_contacts
-          SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4,
-              email_set_at = CASE WHEN contact_email IS DISTINCT FROM $3 THEN NOW()
+          SET contact_name = $1, contact_phone = $2, contact_email = $3::text, relationship = $4,
+              email_set_at = CASE WHEN contact_email IS DISTINCT FROM $3::text THEN NOW()
                                   ELSE COALESCE(email_set_at, created_at) END
         WHERE id = $5 AND user_id = $6 RETURNING *`,
       [name, phone, email, relationship, id, req.user.id]

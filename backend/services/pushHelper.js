@@ -1145,10 +1145,18 @@ async function sweepPushOutbox() {
       const at = result.releaseAt instanceof Date && !Number.isNaN(result.releaseAt.getTime()) ? result.releaseAt : null;
       if (at) {
         await pool.query(
+          /* $2 IS CAST IN BOTH PLACES. Assigned bare it is unknown to the
+             planner, so `$2 + INTERVAL '1 hour'` resolves as interval plus
+             interval and GREATEST is then asked to match a timestamptz against
+             an interval, which it refuses. The driver sends parameters
+             untyped, so the server makes that same deduction at run time: this
+             statement could never reschedule a row. It fails into a catch that
+             only logs, which is why a quiet-hours row quietly kept its old
+             wake-up time instead of moving to the end of the window. */
           `UPDATE push_outbox
-              SET next_attempt_at = $2,
+              SET next_attempt_at = $2::timestamptz,
                   reason = 'quiet',
-                  expires_at = GREATEST(expires_at, $2 + INTERVAL '1 hour')
+                  expires_at = GREATEST(expires_at, $2::timestamptz + INTERVAL '1 hour')
             WHERE id = $1`,
           [row.id, at]
         ).catch((err) => console.error('[Push] outbox reschedule failed:', err.message));

@@ -72,6 +72,10 @@ const SUITE_SLOTS = {
                                  // range collides exactly the way this file's
                                  // header warns (code review, 2026-09-01).
   mlOpenHoursSkip: 17,           // new in 2026-09-03; the open-hours call filter
+  sqlParameterTypes: 18,         // new in 2026-09-22; prepares every static
+                                 // statement in the app against a migrated
+                                 // schema, so Postgres is the judge of
+                                 // whether a parameter's types agree.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

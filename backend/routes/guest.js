@@ -860,7 +860,17 @@ router.post('/:token/rsvp',
         const prior = existing.rows[0] || null;
         const changed = !prior || prior.name !== name || prior.status !== status;
         const upd = await pool.query(
-          `UPDATE guest_rsvps SET name = $1, status = $2, updated_at = NOW(),
+          /* $2 IS CAST IN BOTH PLACES, and it has to be. Assigned bare into a
+             VARCHAR(10) column and compared as ::text in the same statement,
+             Postgres cannot settle on one type for it and refuses the whole
+             UPDATE with "inconsistent types deduced for parameter $2". That
+             is a 500 on the only path a returning guest has, so a guest could
+             answer once and never change their mind, rename, or come back:
+             the first answer takes the INSERT path below, which carries no
+             CASE and was never affected. The cast that broke it arrived with
+             the night-of reconfirm window. The test beside this runs the
+             statement against a real database rather than reading it. */
+          `UPDATE guest_rsvps SET name = $1, status = $2::text, updated_at = NOW(),
                   reconfirmed_at = CASE WHEN $2::text = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END
            WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
            RETURNING id, guest_token`,
