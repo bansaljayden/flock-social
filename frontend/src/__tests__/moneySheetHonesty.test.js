@@ -61,7 +61,10 @@ test('the bill form opens over a payerless shell, which is the state it is for',
   // nowhere in the app to post the bill the sheet was asking them for.
   expect(chat).toMatch(/const billSplitIsShell = !!billSplit && billSplit\.hasPayer === false;/);
   expect(chat).toMatch(/\{showCreateBill && \(!billSplit \|\| billSplitIsShell\) && \(/);
-  expect(chat).toMatch(/\{!hasBudget && !showCreateBill && \(!billSplit \|\| billSplitIsShell\) && \(/);
+  // `!moneyError &&` leads it now: null also means "the read failed", and that
+  // form rewrites a live bill through ON CONFLICT DO UPDATE, so it must not be
+  // offered about a bill nobody has actually looked at.
+  expect(chat).toMatch(/\{!moneyError && !hasBudget && !showCreateBill && \(!billSplit \|\| billSplitIsShell\) && \(/);
   // And the estimate steps aside while the real total is being typed.
   expect(chat).toMatch(/\{billSplit && !\(showCreateBill && billSplitIsShell\) && \(/);
 });

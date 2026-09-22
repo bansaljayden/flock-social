@@ -688,6 +688,8 @@ export default function ChatDetail({
   locationBannerDismissed,
   messagesLoading,
   messagesError,
+  moneyError,
+  reloadMoneyState,
   reloadFlockMessages,
   notifAskDismissed,
   notifStatus,
@@ -1947,29 +1949,6 @@ export default function ChatDetail({
       }
     };
 
-    /* PUT THREE PLACES ON THE TABLE. The empty-state generator.
-       Options, not votes: each entry goes up with an empty `voters`, so the
-       group arrives at a decision to make rather than at somebody's pick.
-       Nothing new is fetched — popularVenues is already in hand, from the
-       cached Places search the vote panel runs, so this costs no quota. */
-    const seedVenueOptions = () => {
-      const already = new Set(flockVotesAll.map((v) => v.venue));
-      const picks = (popularVenues || [])
-        .filter((v) => v && v.name && !already.has(v.name))
-        .slice(0, 3);
-      if (picks.length === 0) return;
-      updateFlockVotes(selectedFlockId, [
-        ...flockVotesAll,
-        ...picks.map((v) => ({
-          venue: v.name,
-          type: v.type || 'Venue',
-          place_id: v.place_id || null,
-          voters: [],
-        })),
-      ]);
-      setShowVotePanel(true);
-    };
-
     const handleUnvote = () => {
       const newVotes = flockVotesAll
         .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
@@ -2407,14 +2386,10 @@ export default function ChatDetail({
           <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.userPlus('white', 14)} Invite friends
           </button>
-          {/* Only when there are three to offer. Without a location
-              popularVenues is empty and this would be a button that does
-              nothing, which is worse than not being here. */}
-          {(popularVenues || []).length >= 3 && (
-            <button className="hit44 glass-btn glass-secondary" onClick={seedVenueOptions} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.mapPin(colors.navy, 14)} Put 3 places up for a vote
-            </button>
-          )}
+          {/* "Put 3 places up for a vote" was here and it wrote nothing to
+              the server. See the long note in the vote panel below: an option
+              nobody has voted for has nowhere to live. Suggest a place, on the
+              right, opens the panel that really does offer places to vote on. */}
           <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.mapPin(colors.navy, 14)} Suggest a place
           </button>
@@ -3513,8 +3488,23 @@ export default function ChatDetail({
                   </div>
                 )}
 
+                {/* THE MONEY DID NOT LOAD, which is not the same as there being
+                    no money. A failed read leaves billSplit null, and null is
+                    also what "nobody has split a bill yet" looks like, so the
+                    branch below used to offer the CREATION form over a bill
+                    that already existed. bill_splits is UNIQUE(flock_id) with
+                    ON CONFLICT DO UPDATE behind it, so a total entered there
+                    quietly replaces the one the group agreed on. Say what
+                    happened and offer the read again instead. */}
+                {moneyError && !showCreateBill && (
+                  <div role="alert" style={{ padding: '16px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px' }}>
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', fontWeight: '500' }}>{moneyError}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing has been lost. Any bill or budget for this plan is still on the server.</p>
+                    <button className="hit44 glass-btn glass-navy" onClick={reloadMoneyState} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+                  </div>
+                )}
                 {/* Budget disabled — direct to bill split */}
-                {!hasBudget && !showCreateBill && (!billSplit || billSplitIsShell) && (
+                {!moneyError && !hasBudget && !showCreateBill && (!billSplit || billSplitIsShell) && (
                   <div>
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '16px' }}>Split the bill after the night out</p>
                     <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
@@ -3885,12 +3875,34 @@ export default function ChatDetail({
                             These are in {venuesFromLabel}. Flock does not know where you are yet.
                           </p>
                         )}
-                        {/* THE BRANCH THAT HAD NO BUTTON. "Be the first to
+                        {/* A BUTTON USED TO SIT HERE AND IT COULD NEVER DO
+                            ANYTHING. It was added because "Be the first to
                             suggest a venue" was an instruction with no control
-                            under it, on a panel showing nothing. */}
-                        {(popularVenues || []).length >= 3 && suggestedVenues.length === 0 && (
-                          <button className="hit44 glass-btn glass-navy" onClick={seedVenueOptions} style={{ marginTop: '10px', padding: '9px 14px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Put 3 places on the table</button>
-                        )}
+                            under it, and the control it got put three places
+                            up as options with nobody voting for them.
+
+                            There is no such thing. A row in venue_votes IS a
+                            person's vote (schema.sql: flock_id, user_id,
+                            venue_name), the flock has one per person, and the
+                            only writes are POST /vote and DELETE /vote. So a
+                            "place on the table that nobody picked" cannot be
+                            sent, cannot be stored and cannot reach anyone
+                            else: the three options appeared locally and were
+                            gone at the next read. Worse, the sync derives what
+                            to send from whichever row has YOU in its voters,
+                            and options with no voters made that undefined, so
+                            pressing it sent a DELETE of your own vote.
+
+                            And its own render condition made it dead even
+                            locally: it showed only when suggestedVenues was
+                            empty, which means every popular venue is already
+                            a vote row, which means its picks list filters to
+                            nothing and it returns on the first line.
+
+                            The suggestion list below is the real version of
+                            this and it works, so the sentence points there
+                            rather than at a button. Do not re-add one without
+                            a table to put the options in. */}
                       </>
                     ) : (
                       /* Nothing to show at all, which after the fallback means

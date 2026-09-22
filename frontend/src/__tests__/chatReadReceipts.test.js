@@ -328,6 +328,8 @@ function chatProps(over = {}) {
     locationBannerDismissed: true,
     messagesLoading: false,
     messagesError: '',
+    moneyError: '',
+    reloadMoneyState: jest.fn(),
     reloadFlockMessages: jest.fn(),
     // null is a plain share or none; an object here means the viewer said an
     // intent and the chat draws the mode chips.
