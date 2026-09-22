@@ -164,7 +164,18 @@ async function createFlockNamed(page, name) {
   await expect(page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
   await typeInto(page.getByLabel(/what.s the plan/i), name);
   await page.getByRole('button', { name: /create flock/i }).click();
-  // Creating drops you straight into the flock's own chat.
+  // CREATING NO LONGER DROPS YOU STRAIGHT INTO THE CHAT, and this helper is
+  // why fourteen specs in this suite were red. The create screen ends on a
+  // share step now -- "<name> is made.", "Now put it where your friends
+  // already are", Send the link / Not now -- because a flock with nobody in it
+  // is the thing that kills a plan, and the link is how people get in.
+  // Waiting for the chat heading skipped that screen entirely and timed out on
+  // a product that was working.
+  await expect(page.getByRole('heading', { name: `${name} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  // Not now is the quiet way past it and lands in the flock's own chat, which
+  // is where every caller of this helper expects to be.
+  await page.getByRole('button', { name: /^not now$/i }).click();
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
 }
 
@@ -180,7 +191,11 @@ async function openInviteSheet(page) {
   if ((await invite.count()) > 1) {
     await invite.last().click();
   } else {
-    await page.getByRole('button', { name: 'Features', exact: true }).click();
+    // THE HEADER RAIL IS GONE. It held five tiles and a button named
+    // "Features"; the chat rebuild moved all five into the composer's plus
+    // sheet, whose control is labelled "More to send". Six specs here were
+    // still clicking a button that has not existed for weeks.
+    await page.getByRole('button', { name: /^more to send$/i }).click();
     await invite.first().click();
   }
   await expect(page.getByRole('heading', { name: /invite friends/i })).toBeVisible();
