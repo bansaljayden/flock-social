@@ -255,7 +255,7 @@ async function openFlockChat(page, flockName) {
   await leaveOpenThread(page);
   await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(escapeRe(flockName)) }).first().click({ timeout: 25_000 });
-  await expect(page.locator('#chat-input')).toBeVisible({ timeout: 20_000 });
+  await expect(composer(page)).toBeVisible({ timeout: 20_000 });
 }
 
 /**
@@ -272,10 +272,58 @@ async function reopenApp(person, budgetMs = 45_000) {
   await waitForLive(person.page, person.live, budgetMs);
 }
 
+/**
+ * The message field, in a flock thread or in a DM.
+ *
+ * NEITHER OF THE TWO HANDLES THIS FILE USED STILL EXISTS. `#chat-input` and
+ * `[data-dm-input]` both went with the chat rebuild: the two composers are one
+ * component now (components/chat/ChatInputBar), a controlled <textarea> with no
+ * id and no data attribute. App.js records the same discovery from the other
+ * side, at setChatInput, where two DOM writes that named those selectors had
+ * been guarded no-ops for weeks. A locator that matches nothing does not fail,
+ * it waits, so every one of these was a 20 to 25 second timeout on a composer
+ * that was on the screen the whole time.
+ *
+ * What the field does carry is an accessible name saying which conversation it
+ * belongs to, and that is the better handle: it is what a screen reader is
+ * told, and it cannot be satisfied by the wrong thread's box.
+ */
+const composer = (page) => page.getByRole('textbox', { name: /^Message / });
+
+/**
+ * Press and hold a message, the way a thumb does, to raise its actions.
+ *
+ * A TAP NO LONGER RAISES A MESSAGE. The rebuilt row opens its actions on a
+ * LONG press (components/chat/MessageRow.js, LONG_PRESS_MS = 350) and keeps
+ * the tap for the row's own business, so `getByText(said).click()` returns
+ * with nothing open and the next line waits out its timeout on a picker
+ * nobody asked for.
+ *
+ * Playwright has no long-press, so this is the gesture spelled out: put the
+ * pointer on the row, hold past the threshold, let go. Slower than the 350ms
+ * on purpose, because the timer starts on the press and a hold measured to
+ * the millisecond is a flake waiting to happen. The row's keyboard door
+ * ("Actions for ...'s message") reaches the same menu and would need the row
+ * located first; this presses the words, which is what a person does.
+ */
+async function pressAndHold(page, locator) {
+  await locator.hover();
+  await page.mouse.down();
+  await page.waitForTimeout(600);
+  await page.mouse.up();
+}
+
 /** Type into the flock composer and press Send. */
 async function sendInFlock(page, text) {
-  await page.locator('#chat-input').fill(text);
+  await composer(page).fill(text);
   await page.getByRole('button', { name: 'Send message' }).click();
+  // WAIT FOR THE BOX TO CLEAR before handing back, because every caller then
+  // asserts on the words it just sent. The screen empties its draft in an
+  // effect one commit after App.js drops the has-text flag, so for a moment
+  // the sentence is in the stream AND in the composer, and a getByText for it
+  // is a strict-mode violation across the two rather than a wait that
+  // resolves. The box going quiet is part of a send having finished anyway.
+  await expect(composer(page)).toHaveValue('', { timeout: 10_000 });
 }
 
 /**
@@ -296,7 +344,7 @@ async function openDmWith(page, personName) {
     await page.getByRole('textbox', { name: /search people by name/i }).fill(personName);
     await page.getByText(personName, { exact: true }).first().click({ timeout: 25_000 });
   }
-  await expect(page.locator('[data-dm-input]')).toBeVisible({ timeout: 25_000 });
+  await expect(composer(page)).toBeVisible({ timeout: 25_000 });
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +399,16 @@ test.describe('flock chat, with two people watching it', () => {
     // texts, the count sitting at the right edge of the label row.
     await expect(ada.page.getByText('2 invited', { exact: true })).toBeVisible();
     await ada.page.getByRole('button', { name: 'Create Flock' }).click();
-    await expect(ada.page.locator('#chat-input')).toBeVisible({ timeout: 25_000 });
+    // CREATING ENDS ON A SHARE STEP, NOT IN THE CHAT, and every spec in this
+    // describe was failing in this one line because of it. The guest-link work
+    // put "<name> is made. / Now put it where your friends already are" between
+    // Create Flock and the thread, because a flock nobody can find is what
+    // kills a plan. "Not now" is the quiet way past it and lands in the chat,
+    // which is where the rest of this file expects to be.
+    await expect(ada.page.getByRole('heading', { name: `${flockName} is made.`, exact: true }))
+      .toBeVisible({ timeout: 25_000 });
+    await ada.page.getByRole('button', { name: /^not now$/i }).click();
+    await expect(composer(ada.page)).toBeVisible({ timeout: 25_000 });
 
     // Bo takes the invite, through the invite card on the Messages screen.
     // The reload is a fallback, not an assertion: whether an invite appears
@@ -410,32 +467,44 @@ test.describe('flock chat, with two people watching it', () => {
     // this assertion exists to catch.
     await expect(ada.page.getByText(said)).toBeVisible();
     await ada.page.waitForTimeout(9_000);
-    await expect(ada.page.getByText("Didn't send. Tap to retry")).toHaveCount(0);
+    await expect(ada.page.getByText(/^didn't send$/i)).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
 
   test('the other person sees you typing, and sees it stop', async () => {
     const before = errors.length;
     await requireLive(ada, bo);
-    // The indicator is always in the DOM at opacity 0, so visibility is the
-    // wrong question to ask it. Opacity is the thing a person can see.
-    const typingOpacity = () => ada.page.evaluate(() => {
-      const nodes = [...document.querySelectorAll('div')];
-      const row = nodes.find((n) => n.style && n.style.height === '58px' && n.style.overflow === 'hidden');
-      return row ? Number(getComputedStyle(row).opacity) : -1;
+    // THE STRIP COLLAPSES NOW, IT DOES NOT SIT AT OPACITY 0. The old slot held
+    // 58pt of a phone screen at all times to show something true for a few
+    // seconds an hour, and components/chat/TypingRow.js says so in as many
+    // words while removing it. So an opacity read of a fixed-height row has
+    // nothing to find and answered -1 on every run.
+    //
+    // What IS still always mounted is the live region, and deliberately: a
+    // screen reader only notices text arriving inside a region that was
+    // already in the tree, so a region created together with its first
+    // sentence is an element insertion VoiceOver routinely says nothing about.
+    // That sentence is what a non-sighted person is actually given, so it is
+    // the thing to read. null means the region is not mounted at all, which is
+    // the regression the component's own comment is guarding against.
+    const typingSays = () => ada.page.evaluate(() => {
+      const el = document.querySelector('.chat-sr-only[aria-live]');
+      return el ? el.textContent.trim() : null;
     });
 
-    expect(await typingOpacity()).toBe(0);
-    await bo.page.locator('#chat-input').fill('typing this out');
-    await expect.poll(typingOpacity, { timeout: 15_000 }).toBe(1);
+    expect(await typingSays(), 'the typing live region is not mounted').not.toBeNull();
+    expect(await typingSays()).not.toContain('is typing');
+    await composer(bo.page).fill('typing this out');
+    await expect.poll(typingSays, { timeout: 15_000 }).toContain('is typing');
     // And it names who it is, in the header, rather than leaving the bubble's
     // "Someone" placeholder to speak for a named person.
     await expect(ada.page.getByText(`${bo.name} is typing...`)).toBeVisible();
 
-    // Stops on its own two seconds after the last keystroke.
-    await expect.poll(typingOpacity, { timeout: 15_000 }).toBe(0);
+    // Stops on its own two seconds after the last keystroke: the strip goes
+    // quiet on its own, with nobody touching anything.
+    await expect.poll(typingSays, { timeout: 15_000 }).not.toContain('is typing');
     await expect(ada.page.getByText('online')).toBeVisible();
-    await bo.page.locator('#chat-input').fill('');
+    await composer(bo.page).fill('');
     expect(errors.slice(before)).toEqual([]);
   });
 
@@ -448,7 +517,7 @@ test.describe('flock chat, with two people watching it', () => {
     await expect(bo.page.getByText(said)).toBeVisible({ timeout: 20_000 });
 
     // Bo taps Ada's message, then taps a heart in the picker.
-    await bo.page.getByText(said).click();
+    await pressAndHold(bo.page, bo.page.getByText(said));
     await bo.page.getByRole('button', { name: 'React with ❤️' }).click();
 
     // Bo sees his own reaction, counted once and marked as his.
@@ -472,7 +541,7 @@ test.describe('flock chat, with two people watching it', () => {
     await sendInFlock(ada.page, said);
     await expect(bo.page.getByText(said)).toBeVisible({ timeout: 20_000 });
 
-    await bo.page.getByText(said).click();
+    await pressAndHold(bo.page, bo.page.getByText(said));
     await bo.page.getByRole('button', { name: 'React with 🔥' }).click();
     await expect(bo.page.getByRole('button', { name: /^🔥 1, including you/ })).toBeVisible({ timeout: 15_000 });
 
@@ -497,15 +566,22 @@ test.describe('flock chat, with two people watching it', () => {
   test('the Send button is never offered for a message with nothing in it', async () => {
     const before = errors.length;
     const send = ada.page.getByRole('button', { name: 'Send message' });
-    const input = ada.page.locator('#chat-input');
+    const input = composer(ada.page);
 
+    // NOT DISABLED, ABSENT, and that is this test's own claim in its stronger
+    // form. The bar keeps one slot at the right end and puts the plus in it
+    // until there is something to send: "There is never a disabled send button
+    // here" (components/chat/ChatInputBar.js). So there is no disabled Send to
+    // find, which a toBeDisabled reads as a missing element rather than as the
+    // product being right.
     await input.fill('');
-    await expect(send).toBeDisabled();
+    await expect(send).toHaveCount(0);
+    await expect(ada.page.getByRole('button', { name: 'More to send' })).toBeVisible();
 
     // Spaces are nothing. A button that lights up, takes the tap and does
     // absolutely nothing with it is the dead control DESIGN-STANDARD rule 5 bans.
     await input.fill('     ');
-    await expect(send).toBeDisabled();
+    await expect(send).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
 
@@ -577,11 +653,19 @@ test.describe('flock chat, with two people watching it', () => {
     await ada.page.locator('input[type="file"]').first().setInputFiles(photo);
 
     // The preview is the confirm step. If it never appears the picker is dead.
-    await expect(ada.page.getByRole('button', { name: 'Send photo' })).toBeVisible({ timeout: 20_000 });
-    await ada.page.getByRole('button', { name: 'Send photo' }).click();
+    //
+    // It is a strip above the composer now rather than a screen of its own
+    // with a "Send photo" button: the thumbnail, a line saying what it is, and
+    // a way to take it back. There is nothing named "Send photo" any more, and
+    // nothing to send it with but the ordinary Send, which the bar draws for a
+    // pending image even with no caption typed. "Remove photo" is the control
+    // that only exists while a photo is waiting, so it is what says the
+    // confirm step arrived.
+    await expect(ada.page.getByRole('button', { name: 'Remove photo' })).toBeVisible({ timeout: 20_000 });
+    await ada.page.getByRole('button', { name: 'Send message' }).click();
 
     await expect(bo.page.locator('img[alt^="From "]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
-    await expect(ada.page.getByText("Didn't send. Tap to retry")).toHaveCount(0);
+    await expect(ada.page.getByText(/^didn't send$/i)).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
 
@@ -599,10 +683,15 @@ test.describe('flock chat, with two people watching it', () => {
     // Newest at the bottom, oldest pushed off the top: the arrangement every
     // chat on earth uses, and the one thing a person notices instantly if it
     // is wrong.
+    // MESSAGE TEXT IS NOT IN A <p> ANY MORE. The rebuild draws each line in
+    // `div.chat-row-body` (components/chat/MessageRow.js), so a sweep over
+    // paragraphs came back empty and the order assertion compared two empty
+    // arrays, which passes, before falling over on the last-line check.
     const order = await bo.page.evaluate(() => {
-      const texts = [...document.querySelectorAll('p')].map((p) => p.textContent);
+      const texts = [...document.querySelectorAll('.chat-row-body')].map((n) => n.textContent);
       return texts.filter((t) => /^filler line \d+$/.test(t));
     });
+    expect(order.length, 'no message rows were found at all').toBeGreaterThan(0);
     expect(order).toEqual(order.slice().sort((a, b) => Number(a.split(' ')[2]) - Number(b.split(' ')[2])));
     expect(order[order.length - 1]).toBe('filler line 14');
 
@@ -617,33 +706,51 @@ test.describe('flock chat, with two people watching it', () => {
     expect(errors.slice(before)).toEqual([]);
   });
 
-  test('the chat header controls all open something, and close again', async () => {
+  test('every control in the composer\'s plus sheet opens something, and closes again', async () => {
     const before = errors.length;
-    // Every one of these sits behind the Features toggle in the chat header,
-    // and a header control that opens nothing is the dead button DESIGN-STANDARD
-    // rule 5 bans. The vote panel is the one worth naming: on this stack there
-    // is no Places key and location is denied, so it has nothing to list, and
-    // an empty sheet with no sentence in it is where a user with location off
-    // actually lands.
-    await ada.page.getByRole('button', { name: 'Features' }).click();
+    // WHAT THIS GUARDS IS THE DEAD BUTTON, not where the buttons live. These
+    // three sat behind a "Features" pill in the chat header until the header
+    // rebuild moved the whole rail into the composer's plus sheet, labelled
+    // "More to send"; the pill, and the header rail behind it, are gone. The
+    // rule is unchanged and so is the test: a control that opens nothing is
+    // what DESIGN-STANDARD rule 5 bans, and this drives each one and watches for the
+    // thing it promises. Two labels moved with the controls -- "Search
+    // messages" is "Search chat" on the tile and "Group cash pool" is "Cash
+    // pool" -- and the sheet shuts itself on the way, which is why each leg
+    // opens it again.
+    //
+    // The vote panel is the one worth naming: on this stack there is no Places
+    // key and location is denied, so it has nothing to list, and an empty sheet
+    // with no sentence in it is where a user with location off actually lands.
+    await ada.page.getByRole('button', { name: 'More to send' }).click();
     await ada.page.getByRole('button', { name: 'Vote on a venue' }).click();
-    // Two legitimate empty sentences: one when location is known, one when
-    // the app is still without it, which is the state a denied-permission
-    // phone can be in for a moment; either proves the sheet opened empty.
-    await expect(ada.page.getByText(/^No votes yet\. (Be the first to suggest a venue!|To see places to suggest, Flock needs your location\.)$/)).toBeVisible({ timeout: 15_000 });
+    // THREE LEGITIMATE EMPTY SENTENCES now, and the one this stack lands on is
+    // the third. The panel used to answer an empty tally two ways; it splits
+    // the "nothing to vote on" case out since, because "be the first to
+    // suggest a venue" is not advice you can take when the list of venues is
+    // also empty, which is exactly where a run with no Places key and no
+    // location ends up. Any of the three proves the sheet opened and said
+    // something honest rather than drawing an empty box, which is the claim.
+    await expect(ada.page.getByText(new RegExp('^(' + [
+      'No votes yet\\. Be the first to suggest a venue!',
+      'No votes yet\\. Vote for a place below, or share one of your own\\.',
+      'No votes yet, and no places to suggest just now\\. Search for one instead\\.',
+    ].join('|') + ')$'))).toBeVisible({ timeout: 15_000 });
     await ada.page.getByRole('button', { name: 'Close', exact: true }).first().click();
-    await expect(ada.page.locator('#chat-input')).toBeVisible();
+    await expect(composer(ada.page)).toBeVisible();
 
-    await ada.page.getByRole('button', { name: 'Features' }).click();
-    await ada.page.getByRole('button', { name: 'Invite friends' }).first().click();
+    await ada.page.getByRole('button', { name: 'More to send' }).click();
+    // .last() because the empty-room body draws its own "Invite friends" as
+    // well, and the sheet is drawn over it rather than instead of it.
+    await ada.page.getByRole('button', { name: 'Invite friends' }).last().click();
     await expect(ada.page.getByRole('heading', { name: 'Invite Friends' })).toBeVisible({ timeout: 15_000 });
     await ada.page.getByRole('button', { name: 'Close', exact: true }).first().click();
 
-    await ada.page.getByRole('button', { name: 'Features' }).click();
-    await ada.page.getByRole('button', { name: 'Search messages' }).first().click();
+    await ada.page.getByRole('button', { name: 'More to send' }).click();
+    await ada.page.getByRole('button', { name: 'Search chat' }).first().click();
     await expect(ada.page.getByRole('textbox', { name: /search messages in this flock/i })).toBeVisible({ timeout: 15_000 });
     await ada.page.getByRole('button', { name: 'Close search' }).click();
-    await expect(ada.page.locator('#chat-input')).toBeVisible();
+    await expect(composer(ada.page)).toBeVisible();
     expect(errors.slice(before)).toEqual([]);
   });
 
@@ -658,8 +765,11 @@ test.describe('flock chat, with two people watching it', () => {
     await sendInFlock(ada.page, needle);
     await expect(ada.page.getByText(needle)).toBeVisible({ timeout: 20_000 });
 
-    await ada.page.getByRole('button', { name: 'Features' }).click();
-    await ada.page.getByRole('button', { name: 'Search messages' }).first().click();
+    // Search is a tile in the composer's plus sheet now, named for the thing it
+    // searches rather than for what it searches through. Only the door moved:
+    // what opens is the same in-thread search box, with the same label.
+    await ada.page.getByRole('button', { name: 'More to send' }).click();
+    await ada.page.getByRole('button', { name: 'Search chat' }).first().click();
     const box = ada.page.getByRole('textbox', { name: /search messages in this flock/i });
     await box.fill(needle);
 
@@ -686,7 +796,7 @@ test.describe('flock chat, with two people watching it', () => {
 
     // Ada starts writing to the whole flock, and does not send it.
     await openFlockChat(ada.page, flockName);
-    await ada.page.locator('#chat-input').fill(draft);
+    await composer(ada.page).fill(draft);
 
     // Then leaves the way the screen itself offers, by going to put a place on
     // the table, rather than by the back arrow. The back arrow is the only
@@ -696,8 +806,8 @@ test.describe('flock chat, with two people watching it', () => {
 
     // And opens a one-to-one conversation with one of the people in it.
     await openDmWith(ada.page, bo.name);
-    const box = ada.page.locator('[data-dm-input]');
-    const send = ada.page.getByRole('button', { name: 'Send', exact: true });
+    const box = composer(ada.page);
+    const send = ada.page.getByRole('button', { name: 'Send message' });
 
     // This box is empty. There is nothing here to send to this person, and a
     // Send button that is armed over an empty box is an invitation to send
@@ -795,8 +905,8 @@ test.describe('direct messages, with two people watching them', () => {
     await requireLive(dee);
     // Dee has never met Fay, so this is the cold-start case.
     await openDmWith(dee.page, fay.name);
-    await dee.page.locator('[data-dm-input]').fill('are you there');
-    await dee.page.getByRole('button', { name: 'Send', exact: true }).click();
+    await composer(dee.page).fill('are you there');
+    await dee.page.getByRole('button', { name: 'Send message' }).click();
 
     // Nothing is delivered until the request is accepted, so the screen has to
     // say that in words rather than leave a sent-looking bubble sitting there.
@@ -819,16 +929,16 @@ test.describe('direct messages, with two people watching them', () => {
     // in question. A unique line each run keeps the assertion about delivery.
     const tag = Math.random().toString(36).slice(2, 6);
     const said = `meet at the corner by nine ${tag}`;
-    await dee.page.locator('[data-dm-input]').fill(said);
-    await dee.page.getByRole('button', { name: 'Send', exact: true }).click();
+    await composer(dee.page).fill(said);
+    await dee.page.getByRole('button', { name: 'Send message' }).click();
 
     await expect(eli.page.getByText(said)).toBeVisible({ timeout: 25_000 });
     await expect(dee.page.getByText(said)).toBeVisible();
 
     // And back the other way, because a one-directional socket is still broken.
     const replied = `yes, bring the cards ${tag}`;
-    await eli.page.locator('[data-dm-input]').fill(replied);
-    await eli.page.getByRole('button', { name: 'Send', exact: true }).click();
+    await composer(eli.page).fill(replied);
+    await eli.page.getByRole('button', { name: 'Send message' }).click();
     await expect(dee.page.getByText(replied)).toBeVisible({ timeout: 25_000 });
     expect(errors.slice(before)).toEqual([]);
   });
@@ -841,12 +951,12 @@ test.describe('direct messages, with two people watching them', () => {
     await openDmWith(eli.page, dee.name);
 
     const said = `pin this one ${Math.random().toString(36).slice(2, 6)}`;
-    await dee.page.locator('[data-dm-input]').fill(said);
-    await dee.page.getByRole('button', { name: 'Send', exact: true }).click();
+    await composer(dee.page).fill(said);
+    await dee.page.getByRole('button', { name: 'Send message' }).click();
     await expect(eli.page.getByText(said)).toBeVisible({ timeout: 25_000 });
 
     // Eli taps Dee's message and picks a heart.
-    await eli.page.getByText(said).click();
+    await pressAndHold(eli.page, eli.page.getByText(said));
     await eli.page.getByRole('button', { name: 'React with ❤️' }).click({ timeout: 15_000 });
 
     // The reaction pill is a button whose accessible name leads with the

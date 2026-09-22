@@ -132,9 +132,25 @@ async function createFlock(page, inviteeNames, { budget = false } = {}) {
     await page.getByRole('button', { name: new RegExp(who) }).first().click();
   }
   await page.getByRole('button', { name: /create flock/i }).click();
-  // The creator lands straight in the flock chat.
-  await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 40_000 });
+  // Creating ends on the guest-link share step; "Not now" goes quietly past it
+  // into the flock chat.
+  await expect(page.getByRole('heading', { name: `${FLOCK_NAME} is made.`, exact: true }))
+    .toBeVisible({ timeout: 40_000 });
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  await expect(IN_CHAT(page)).toBeVisible({ timeout: 40_000 });
 }
+
+/**
+ * THE MARKER FOR "THIS IS A CHAT", which used to be the header's Features pill.
+ *
+ * That pill is gone: the rebuild moved the five controls behind it into the
+ * composer's plus sheet, whose own control is the "More to send" button at the
+ * end of the input bar. It is as good a marker as the pill was and for the same
+ * reason -- it exists on a chat screen and nowhere else -- with one thing to
+ * know: the composer swaps the plus for Send while there is text in the field,
+ * so this only answers on an idle composer, which is where every caller stands.
+ */
+const IN_CHAT = (page) => page.getByRole('button', { name: 'More to send' });
 
 /** Accept the invite from where the product actually puts it, the Messages tab. */
 async function acceptInvite(page) {
@@ -146,10 +162,10 @@ async function acceptInvite(page) {
 
 /** Open the flock chat from wherever we are. */
 async function openFlock(page) {
-  if (await page.getByRole('button', { name: 'Features' }).count()) return;
+  if (await IN_CHAT(page).count()) return;
   await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
-  await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
+  await expect(IN_CHAT(page)).toBeVisible({ timeout: 25_000 });
 }
 
 /**
@@ -169,12 +185,12 @@ async function reenterFlock(page) {
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
-  await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
+  await expect(IN_CHAT(page)).toBeVisible({ timeout: 25_000 });
 }
 
-/** The vote panel lives behind the collapsed header nav. */
+/** The vote panel is a tile in the composer's plus sheet. */
 async function openVotePanel(page) {
-  await page.getByRole('button', { name: 'Features' }).click();
+  await IN_CHAT(page).click();
   await page.getByRole('button', { name: 'Vote on a venue' }).click();
   await expect(page.getByRole('heading', { name: /vote for a venue/i })).toBeVisible({ timeout: 20_000 });
 }
@@ -186,8 +202,9 @@ async function openVotePanel(page) {
  * below. Everything else about the budget has to be testable regardless.
  */
 async function openCashPool(page) {
-  await page.getByRole('button', { name: 'Features' }).click();
-  await page.getByRole('button', { name: 'Group cash pool', exact: true }).click();
+  await IN_CHAT(page).click();
+  // "Group cash pool" on the old header rail, "Cash pool" on the tile.
+  await page.getByRole('button', { name: 'Cash pool', exact: true }).click();
   await expect(sheet(page)).toBeVisible({ timeout: 20_000 });
 }
 

@@ -93,7 +93,14 @@ async function openEditProfile(page) {
 /** The find-people screen, searched by name. Returns the row for that person. */
 async function searchPeople(page, name) {
   await openSettings(page);
-  await page.getByRole('button', { name: /^Add Friends/ }).click();
+  // CASE-INSENSITIVE, and that is the whole fix for three specs that hung for
+  // their full 150 second timeout here. The settings row reads "Add friends"
+  // now; a sentence-case copy pass moved the F, and this was the only matcher
+  // in the suite spelling it "Add Friends" without an /i. A role matcher that
+  // finds nothing does not fail, it waits, so the three blocked-account specs
+  // reported "Test timeout of 150000ms exceeded" with a correct Nest on screen
+  // and nothing naming the locator that was starving.
+  await page.getByRole('button', { name: /^add friends/i }).click();
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const box = page.getByRole('textbox', { name: 'Search by name' });
   await expect(box).toBeVisible({ timeout: 15_000 });
@@ -217,7 +224,13 @@ test('a block shuts the chat on the other screen while it is open, and empties s
     await openDmWith(alpha.page, betaName);
     await alpha.page.getByRole('textbox', { name: 'Message' }).fill('are you out tonight');
     await alpha.page.getByRole('textbox', { name: 'Message' }).press('Enter');
-    await expect(alpha.page.getByText('are you out tonight')).toBeVisible({ timeout: 15_000 });
+    // TWO PLACES HOLD THIS SENTENCE for a moment, and a bare getByText is a
+    // strict-mode violation across them rather than a wait. The stream paints
+    // the sent line optimistically, and the composer is a controlled textarea
+    // whose value clears on the next commit, so there is a frame where the
+    // words are in both. The claim is about the message, so this names the
+    // one in the stream: it comes first in the document, the composer last.
+    await expect(alpha.page.getByText('are you out tonight').first()).toBeVisible({ timeout: 15_000 });
     await expect(alpha.page.getByText('Sending')).toHaveCount(0, { timeout: 15_000 });
 
     // Beta reads it, then blocks Alpha from the person card on the chat header.

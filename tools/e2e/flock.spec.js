@@ -145,6 +145,23 @@ const tabName = (label) => new RegExp(`^${label}(,|$)`);
  * flock's detail screen both draw over it, and the only way out of either is
  * their own back arrow. So this steps back first when the bar is not there,
  * which is exactly what a person does.
+ *
+ * THIS HELPER WAS ACCUSED OF SOMETHING IT DID NOT DO, and the record is worth
+ * keeping because the accusation was reasonable. Twelve specs in this file
+ * failed with a screenshot of the flock chat -- Back, Open the plan, the
+ * composer, "Nothing here yet" -- taken 25 seconds after goTab was supposed to
+ * have left it, which reads exactly like a tab bar that was clicked and did not
+ * take. It is not: goTab was never reached. The 25 seconds are the timeout on
+ * the line ABOVE the call, `createFlockNamed` waiting for a heading the chat
+ * header stopped drawing (see expectInFlockChat), so the app was sitting in
+ * the chat because nothing had yet asked it to leave. Probed directly: from a
+ * freshly created chat the header's Back sets the screen to 'main', the nav is
+ * visible on the next frame, and the tab click lands. Nothing here needed a
+ * retry, and adding one would have buried a stale assertion under a loop.
+ *
+ * The one thing that DID change is the last line. A nav that never appears
+ * used to spend the whole test timeout inside a click with nothing on screen
+ * to explain it; asserting it first turns that into a named failure.
  */
 async function goTab(page, label) {
   const nav = page.getByRole('navigation', { name: 'Main' });
@@ -154,7 +171,29 @@ async function goTab(page, label) {
     if (!(await back.count())) break;
     await back.click();
   }
+  await expect(nav, `no bottom tab bar to reach "${label}" from, after backing out`).toBeVisible();
   await nav.getByRole('button', { name: tabName(label) }).click();
+}
+
+/**
+ * Assert the page is inside THIS flock's chat.
+ *
+ * THE CHAT HAS NO HEADING TO WAIT FOR ANY MORE, and half this file was waiting
+ * for one. The header carried the plan's name as an <h2> until the rebuild
+ * turned it into a <span> inside the button that opens the plan, because ARIA
+ * gives a button presentational children: the <h2> was announced by nothing and
+ * reachable by no rotor, a heading in name only (screens/ChatDetail.js, "WHY
+ * THE HEADING BECAME A SPAN"). So `getByRole('heading', { name })` matches
+ * nothing on a chat that opened perfectly, and every one of those calls was a
+ * 25 second timeout rather than a failed assertion.
+ *
+ * The name is still on the screen, in the one control that carries it, and the
+ * assertion is the same claim it always was: this is the chat for THIS plan,
+ * not just some chat.
+ */
+async function expectInFlockChat(page, name, timeout = 25_000) {
+  await expect(page.getByRole('button', { name: 'Open the plan' }))
+    .toContainText(name, { timeout });
 }
 
 /** Create a flock from the home screen with nothing but a name. */
@@ -176,27 +215,37 @@ async function createFlockNamed(page, name) {
   // Not now is the quiet way past it and lands in the flock's own chat, which
   // is where every caller of this helper expects to be.
   await page.getByRole('button', { name: /^not now$/i }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  await expectInFlockChat(page, name);
 }
 
 /**
  * Open the flock chat's invite sheet.
  *
  * A brand new flock puts the control in the empty chat. Once there are
- * messages it only exists behind the Features button in the header, which is
- * why this has two doors rather than one.
+ * messages that copy is gone and the only one left is a tile in the composer's
+ * plus sheet, which is why this has two doors rather than one.
  */
 async function openInviteSheet(page) {
-  const invite = page.getByRole('button', { name: /^invite friends$/i });
-  if ((await invite.count()) > 1) {
-    await invite.last().click();
+  // The empty chat's own copy, while there is one. It is on the screen and it
+  // is the one a person would reach for.
+  const inBody = page.getByRole('button', { name: /^invite friends$/i });
+  if (await inBody.count()) {
+    await inBody.first().click();
   } else {
     // THE HEADER RAIL IS GONE. It held five tiles and a button named
     // "Features"; the chat rebuild moved all five into the composer's plus
-    // sheet, whose control is labelled "More to send". Six specs here were
-    // still clicking a button that has not existed for weeks.
+    // sheet, whose control is labelled "More to send".
+    //
+    // SCOPED TO THE SHEET, and that is not tidiness. Once the sheet is open
+    // there are two buttons by this name, the body's and the tile's, and the
+    // body's comes first in the DOM while the sheet's backdrop is on top of
+    // it. Taking .first() aims at a button nothing can click, and Playwright
+    // does not fail it: it retries for the whole 135 second test timeout
+    // reporting that "Send something" intercepts the pointer. Naming the
+    // sheet says which of the two is meant.
     await page.getByRole('button', { name: /^more to send$/i }).click();
-    await invite.first().click();
+    await page.locator('[data-testid="composer-plus-sheet"]')
+      .getByRole('button', { name: /^invite friends$/i }).click();
   }
   await expect(page.getByRole('heading', { name: /invite friends/i })).toBeVisible();
 }
@@ -279,9 +328,13 @@ test('a flock with no name is refused on the field, not silently', async ({ brow
   await expect(host.page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
   await host.page.getByRole('button', { name: /create flock/i }).click();
 
-  // Said twice on purpose: an alert under the field and a toast.
-  await expect(host.page.getByRole('alert')).toContainText(/give the plan a name/i);
-  await expectToast(host.page, /name your plan first/i);
+  // Said twice on purpose: an alert under the field and a toast. The words are
+  // "flock" in both now, not "plan"; a copy pass settled on the one noun the
+  // create screen uses everywhere else, and both matchers were still on the
+  // other one. The contract is that it is said in both places, not which of
+  // the product's two nouns the sentence picks, so these match the shape.
+  await expect(host.page.getByRole('alert')).toContainText(/give the flock a name/i);
+  await expectToast(host.page, /name your flock first/i);
   // And nothing was created.
   await expect(host.page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
 
@@ -322,7 +375,13 @@ test('the day and time you pick are the day and time the flock says', async ({ b
   await expect(page.getByText(/8:00 PM/).first()).toBeVisible();
 
   await page.getByRole('button', { name: /create flock/i }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  // The share step, then the chat. Written out here rather than through
+  // createFlockNamed because this spec fills the form itself, with chips the
+  // helper does not touch.
+  await expect(page.getByRole('heading', { name: `${name} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  await expectInFlockChat(page, name);
 
   // Now off the server, which is the only version anybody else will ever see.
   // Reload first so nothing here is the value the create screen was holding.
@@ -359,16 +418,23 @@ test('a group budget asked for at create time is there in the flock', async ({ b
   await expect(page.getByText(/just you so far, venue by vote/i)).toBeVisible();
 
   await page.getByRole('button', { name: /create flock/i }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('heading', { name: `${name} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  await expectInFlockChat(page, name);
 
   // Reload so this reads the server's copy, not the create screen's.
   await page.reload();
   await goTab(page, 'Messages');
   await page.locator('button').filter({ hasText: name }).first().click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  await expectInFlockChat(page, name);
 
-  await page.getByRole('button', { name: 'Features', exact: true }).click();
-  await page.getByRole('button', { name: 'Group cash pool', exact: true }).click();
+  // The cash pool is a tile in the composer's plus sheet now, named "Cash
+  // pool"; it was "Group cash pool" behind the header's Features pill, and
+  // both the door and the word moved with the rebuild. What it opens, and
+  // every assertion below, is unchanged.
+  await page.getByRole('button', { name: 'More to send', exact: true }).click();
+  await page.getByRole('button', { name: 'Cash pool', exact: true }).click();
   await expect(page.getByRole('heading', { name: /group budget/i })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/what.s your budget tonight\?/i)).toBeVisible();
   // The context, which is what picks the preset amounts everyone is offered.
@@ -612,7 +678,7 @@ test('leaving a flock removes you from it and from everyone else', async ({ brow
   // Bea walks out through the chat's own menu.
   await goTab(mate.page, 'Messages');
   await mate.page.locator('button').filter({ hasText: name }).first().click();
-  await expect(mate.page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  await expectInFlockChat(mate.page, name);
   await mate.page.getByRole('button', { name: /more options/i }).click();
   await mate.page.getByRole('button', { name: /leave flock/i }).click();
   await mate.page.getByRole('button', { name: 'Leave', exact: true }).click();
@@ -725,9 +791,11 @@ test('the share link opened by a different signed-in account puts them in the fl
   await other.page.getByRole('button', { name: /sign in and join/i }).click();
 
   // Already signed in, so the app finishes the join itself and lands him in
-  // the plan rather than on a login screen or an empty home.
+  // the plan rather than on a login screen or an empty home. inviteHandoff
+  // opens the flock's CHAT, so the plan's name is read off the chat header's
+  // one control rather than off a heading the header no longer draws.
   await expect(other.page.getByRole('heading', { name: /welcome back|plan the night/i })).toHaveCount(0, { timeout: 30_000 });
-  await expect(other.page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 30_000 });
+  await expectInFlockChat(other.page, name, 30_000);
 
   // He is a real member: the flock is on his list after a reload.
   await other.page.reload();

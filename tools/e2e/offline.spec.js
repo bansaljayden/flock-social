@@ -145,24 +145,86 @@ async function typeInto(locator, value) {
   await locator.page().waitForTimeout(250);
 }
 
+/**
+ * Assert the page is inside THIS flock's chat.
+ *
+ * The chat header carried the plan's name as an <h2> until the rebuild turned
+ * it into a <span> inside the button that opens the plan (ARIA gives a button
+ * presentational children, so the heading was announced by nothing). There is
+ * no heading on that screen to wait for now, and waiting for one is a timeout
+ * on a chat that opened correctly.
+ */
+async function expectInFlockChat(page, name, timeout = 25_000) {
+  await expect(page.getByRole('button', { name: 'Open the plan' }))
+    .toContainText(name, { timeout });
+}
+
 async function createFlockNamed(page, name) {
   await goTab(page, 'Nest');
   await page.getByRole('button', { name: /start a flock/i }).first().click();
   await expect(page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
   await typeInto(page.getByLabel(/what.s the plan/i), name);
   await page.getByRole('button', { name: /create flock/i }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
+  // Creating ends on the guest-link share step, not in the chat. "Not now" is
+  // the quiet way past it.
+  await expect(page.getByRole('heading', { name: `${name} is made.`, exact: true }))
+    .toBeVisible({ timeout: 25_000 });
+  await page.getByRole('button', { name: /^not now$/i }).click();
+  await expectInFlockChat(page, name);
 }
 
 async function openFlockChat(page, flockName) {
   await goTab(page, 'Messages');
   await page.getByRole('button', { name: new RegExp(flockName) }).first().click({ timeout: 25_000 });
-  await expect(page.locator('#chat-input')).toBeVisible({ timeout: 20_000 });
+  await expect(composer(page)).toBeVisible({ timeout: 20_000 });
 }
 
+/**
+ * The message field. `#chat-input` went with the chat rebuild: both composers
+ * are components/chat/ChatInputBar now, a controlled <textarea> carrying no id
+ * at all, only an accessible name that says which thread it belongs to. A
+ * locator matching nothing waits rather than failing, so each of these was a
+ * silent timeout on a composer that was on screen throughout.
+ */
+const composer = (page) => page.getByRole('textbox', { name: /^Message / });
+
 async function sendInFlock(page, text) {
-  await page.locator('#chat-input').fill(text);
+  await composer(page).fill(text);
   await page.getByRole('button', { name: 'Send message' }).click();
+  // The box clears on send even when the send then fails, which the specs
+  // below say out loud ("the composer is cleared on send, so the failed bubble
+  // is the only copy that exists"). Waiting for it matters because the screen
+  // empties its draft an effect later than the stream draws the line, so for a
+  // moment the sentence is in both and a getByText for it is a strict-mode
+  // violation across the two rather than a wait that resolves.
+  await expect(composer(page)).toHaveValue('', { timeout: 10_000 });
+}
+
+/**
+ * The mark a message wears when it did not go out, and the way back.
+ *
+ * "Didn't send. Tap to retry" was ONE sentence, and the tap target was the
+ * sentence. The rebuilt status line is a label beside two real buttons
+ * (components/chat/StatusLine.js): "Didn't send", Retry, Remove. Same promise,
+ * kept properly, and nothing on the screen carries the old string, so every
+ * matcher for it was a timeout on a correctly marked message.
+ */
+const failedMark = (page) => page.getByText(/^didn.t send$/i);
+const retryButton = (page) => page.getByRole('button', { name: /^retry$/i });
+
+/**
+ * Press and hold a message, the way a thumb does, to raise its actions.
+ *
+ * A tap no longer opens the picker: the rebuilt row wants a long press
+ * (components/chat/MessageRow.js, LONG_PRESS_MS = 350). Held well past the
+ * threshold on purpose, because the timer starts on the press and a hold
+ * measured to the millisecond is a flake waiting to happen.
+ */
+async function pressAndHold(page, locator) {
+  await locator.hover();
+  await page.mouse.down();
+  await page.waitForTimeout(600);
+  await page.mouse.up();
 }
 
 /**
@@ -198,8 +260,10 @@ async function copyInviteLink(page) {
   if ((await invite.count()) > 1) {
     await invite.last().click();
   } else {
-    await page.getByRole('button', { name: 'Features', exact: true }).click();
-    await invite.first().click();
+    // The header rail and its "Features" pill are gone; all five of its
+    // controls are tiles in the composer's plus sheet, behind "More to send".
+    await page.getByRole('button', { name: 'More to send', exact: true }).click();
+    await invite.last().click();
   }
   await expect(page.getByRole('heading', { name: /invite friends/i })).toBeVisible();
   await page.getByRole('button', { name: /share invite link/i }).click();
@@ -221,7 +285,7 @@ test('going offline is said in words, and coming back does not cost you what you
   await createFlockNamed(ada.page, name);
 
   // Half a message, composed and not sent. Losing this is the worst outcome.
-  await ada.page.locator('#chat-input').fill('meet you out front in ten');
+  await composer(ada.page).fill('meet you out front in ten');
 
   await ada.context.setOffline(true);
   await expect(ada.page.getByRole('heading', { name: /you.re offline/i }))
@@ -236,8 +300,8 @@ test('going offline is said in words, and coming back does not cost you what you
     .toHaveCount(0, { timeout: 20_000 });
 
   // Still signed in, still in the same chat, still holding the sentence.
-  await expect(ada.page.getByRole('heading', { name, exact: true })).toBeVisible();
-  await expect(ada.page.locator('#chat-input')).toHaveValue('meet you out front in ten');
+  await expectInFlockChat(ada.page, name);
+  await expect(composer(ada.page)).toHaveValue('meet you out front in ten');
 
   expect(ada.errors).toEqual([]);
   expect(ada.offences).toEqual([]);
@@ -355,7 +419,7 @@ test('a send that cannot reach Flock says so, and the sentence stays on the scre
   await expect(ada.page.getByText(/couldn.t reach flock\. give it a second and try again\./i))
     .toBeVisible({ timeout: 20_000 });
   // And the bubble is marked, so the failure outlives the toast.
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible();
+  await expect(failedMark(ada.page).first()).toBeVisible();
   // The words themselves are still on screen. The composer is cleared on send,
   // so the failed bubble is the only copy that exists.
   await expect(ada.page.getByText('running twenty minutes late sorry')).toBeVisible();
@@ -373,7 +437,7 @@ test('the message that did not send is still there the next time the app opens',
 
   await cutTheWire(ada.page);
   await sendInFlock(ada.page, 'i got us a table by the window');
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible({ timeout: 20_000 });
+  await expect(failedMark(ada.page).first()).toBeVisible({ timeout: 20_000 });
 
   // Signal comes back and the app is opened again. On a phone this is the
   // ordinary case, not an unusual one: the tab reloads, or iOS evicts the web
@@ -434,7 +498,7 @@ test('a 502 and a 500 both mark the message as not sent instead of leaving it lo
   await sendInFlock(ada.page, 'five oh two');
   await expect(ada.page.getByText(/flock.s servers are having a moment\. try again in a minute\./i))
     .toBeVisible({ timeout: 20_000 });
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible();
+  await expect(failedMark(ada.page).first()).toBeVisible();
   await expect(ada.page.getByText(/bad gateway|nginx/i)).toHaveCount(0);
   await ada.page.unroute(SEND);
 
@@ -444,7 +508,7 @@ test('a 502 and a 500 both mark the message as not sent instead of leaving it lo
     status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Server error' }),
   }));
   await sendInFlock(ada.page, 'five hundred');
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toHaveCount(2, { timeout: 20_000 });
+  await expect(failedMark(ada.page)).toHaveCount(2, { timeout: 20_000 });
   // Nothing raw from the runtime reaches a person.
   await expect(ada.page.getByText(/\[object Object\]|TypeError|Failed to fetch/i)).toHaveCount(0);
 
@@ -477,14 +541,14 @@ test('a send that hangs is given up on and reported, and the composer works agai
   // DEFAULT_TIMEOUT_MS is 15s. Much past that and a person has put the phone
   // away believing the message went.
   expect(waited, 'seconds a person waited before being told').toBeLessThan(25);
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible();
+  await expect(failedMark(ada.page).first()).toBeVisible();
 
   // And the screen is usable afterwards: no spinner still running and no dead
   // composer. Send is disabled while the box is empty by design, so this types
   // first; asserting it enabled on an empty composer was a spec bug, not a
   // product one, and it cost a run to find out.
-  await ada.page.locator('#chat-input').fill('typing again');
-  await expect(ada.page.locator('#chat-input')).toHaveValue('typing again');
+  await composer(ada.page).fill('typing again');
+  await expect(composer(ada.page)).toHaveValue('typing again');
   await expect(ada.page.getByRole('button', { name: 'Send message' })).toBeEnabled();
 
   await ada.context.close();
@@ -528,7 +592,7 @@ test('a reaction the server never got is taken back off the screen, and the toas
   await expect(ada.page.getByText('react to me')).toBeVisible({ timeout: 20_000 });
 
   await cutTheWire(ada.page);
-  await ada.page.getByText('react to me').first().click();
+  await pressAndHold(ada.page, ada.page.getByText('react to me').first());
   const heart = ada.page.getByRole('button', { name: 'React with ❤️' });
   await expect(heart).toBeVisible({ timeout: 10_000 });
   await heart.click();
@@ -585,19 +649,19 @@ test('coming back online sends nothing by itself, and a tapped retry sends exact
 
   await cutTheWire(ada.page);
   await sendInFlock(ada.page, 'we are at the bar upstairs');
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible({ timeout: 20_000 });
+  await expect(failedMark(ada.page).first()).toBeVisible({ timeout: 20_000 });
 
   // Signal returns. Nothing is tapped. A write that re-fires itself on
   // reconnect is how one message becomes two, and a duplicate is worse than a
   // failure because nobody can tell which one the group answered.
   await ada.page.unroute('**/api/**');
   await ada.page.waitForTimeout(8000);
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toBeVisible();
+  await expect(failedMark(ada.page).first()).toBeVisible();
   await expect(ada.page.getByText('we are at the bar upstairs')).toHaveCount(1);
 
   // The person decides, and it goes exactly once.
-  await ada.page.getByText(/didn.t send\. tap to retry/i).click();
-  await expect(ada.page.getByText(/didn.t send\. tap to retry/i)).toHaveCount(0, { timeout: 20_000 });
+  await retryButton(ada.page).first().click();
+  await expect(failedMark(ada.page)).toHaveCount(0, { timeout: 20_000 });
   await expect(ada.page.getByText('we are at the bar upstairs')).toHaveCount(1);
 
   // And exactly once in the database, which is what a reload reads back.
