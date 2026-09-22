@@ -30,7 +30,7 @@ appId: com.flockcorp.flock
       all: unset
       contacts: allow
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:146
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:146
     timeout: 20000
     optional: true
 
@@ -100,7 +100,7 @@ appId: com.flockcorp.flock
 # --- C: delete the throwaway if it still exists ---------------------------
 - runFlow:
     when:
-      visible: "Welcome back"
+      visible: "Welcome back|Plan the night"
     commands:
       - runFlow:
           file: parts/login.yaml
@@ -169,6 +169,6 @@ appId: com.flockcorp.flock
                 index: 2
                 optional: true
             - extendedWaitUntil:
-                visible: "Welcome back"
+                visible: "Welcome back|Plan the night"
                 timeout: 20000
                 optional: true

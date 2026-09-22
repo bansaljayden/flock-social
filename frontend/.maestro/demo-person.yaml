@@ -77,9 +77,24 @@ appId: com.flockcorp.flock
 # came from; apple-2-1.yaml still carries it in a comment that says a fresh
 # launch shows LoginScreen.
 #
+# AND THE LOGIN HEADING IS NO LONGER ALWAYS "Welcome back" (2026-09-21).
+#
+# Build 61 lost both flows on the very first assertion, 90 seconds in, waiting
+# for a heading that cannot appear. The App Store 2.1 fix made "Welcome back"
+# conditional on a stored token, because a fresh install greeting a stranger as
+# a returning user was the thing that hid the sign-in link: LoginScreen.js now
+# reads `hasSignedInHere ? 'Welcome back' : 'Plan the night'`. clearState
+# guarantees no token, so a filmed take ALWAYS gets "Plan the night". Build 60,
+# the tape the film is cut from, was shot before that change, which is why it
+# worked then and why nothing has re-recorded since.
+#
+# Every assertion that means "the login screen is up" now accepts either
+# heading. The same staleness had been sitting in the e2e specs for the same
+# reason and was fixed the same day.
+#
 # So: wait for EITHER screen, then cross to login if we landed on signup.
 - extendedWaitUntil:
-    visible: "Welcome back|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
+    visible: "Welcome back|Plan the night|Create your account"   # LoginScreen.js:164 / SignupScreen.js:240
     timeout: 90000
 # The analytics consent bar is up on every take, because clearState wipes the
 # stored answer and ConsentBanner.js renders whenever the question is
@@ -97,7 +112,7 @@ appId: com.flockcorp.flock
 - runFlow:
     file: parts/signup-to-login.yaml
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:164
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:164
     timeout: 30000
 
 - runFlow:

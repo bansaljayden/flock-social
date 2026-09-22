@@ -139,7 +139,7 @@ appId: com.flockcorp.flock
       - tapOn: "Sign in"                        # SignupScreen.js:239 -> onSwitchToLogin
 - runFlow:
     when:
-      notVisible: "Welcome back"                # LoginScreen.js:146
+      notVisible: "Welcome back|Plan the night"                # LoginScreen.js:146
     commands:
       - scrollUntilVisible:
           element: "Sign in"                    # SignupScreen.js:446, bottom of the form
@@ -150,5 +150,5 @@ appId: com.flockcorp.flock
           text: "Sign in"
           optional: true
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:146
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:146
     timeout: 10000

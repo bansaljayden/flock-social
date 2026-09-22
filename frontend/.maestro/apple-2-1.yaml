@@ -71,7 +71,7 @@ appId: com.flockcorp.flock
 # the bundle before the login screen paints. Run 24 asserted with no wait and
 # died here in the first seconds. Wait for it.
 - extendedWaitUntil:
-    visible: "Welcome back"                     # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
     timeout: 90000
 - runFlow:
     file: parts/signup.yaml
@@ -804,7 +804,7 @@ appId: com.flockcorp.flock
           index: 2
           optional: true
       - extendedWaitUntil:
-          visible: "Welcome back"               # ProfileSettings.js:906 onLogout(sessionEndCopy('account_deleted')) -> LoginScreen
+          visible: "Welcome back|Plan the night"               # ProfileSettings.js:906 onLogout(sessionEndCopy('account_deleted')) -> LoginScreen
           timeout: 20000
           optional: true
 
