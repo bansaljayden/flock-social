@@ -8286,7 +8286,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (accepted.length === 0) return false;
     setAttendanceFlockId(flockId);
     setAttendanceMembers(accepted);
-    // SEEDED FROM THE ROSTER, not from true. The loader carries `attendance`
+    // SEEDED FROM THE ROSTER, not from true. The loader carries `attendance`
     // (both it and refreshFlockRoster map `m.attendance || 'unmarked'` --
     // the second of those only since 2026-09-22) and this ignored
     // it, so every reopening of the sheet arrived with everybody ticked. The
