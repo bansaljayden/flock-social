@@ -46,8 +46,10 @@
  * voting in the budget beat that follows it. Anything added here goes in the
  * position its line holds in the narration.
  *
- * WEBM, THEN MP4. Playwright writes webm and only on context close, so each
- * beat gets its own context and is converted afterwards. ffmpeg must be on
+ * FRAMES, THEN MP4. The camera is the devtools screencast rather than
+ * Playwright's own recorder; see the note above startScreencast for why. It
+ * writes one JPEG per painted frame with the time it was painted, and those
+ * times drive the encode, so the holds between taps survive. ffmpeg must be on
  * PATH, as it already is for the film.
  */
 import { chromium } from 'playwright';
@@ -116,7 +118,7 @@ async function tap(page, locator, { before = 550, after = 900 } = {}) {
 }
 
 /* Frames pulled out alongside the video, one per named moment, so a beat can
-   be checked without scrubbing a webm. */
+   be checked without scrubbing the clip. */
 const still = async (page, name) => {
   const dir = path.join(OUT_DIR, 'frames');
   fs.mkdirSync(dir, { recursive: true });
