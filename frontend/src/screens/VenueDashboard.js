@@ -197,6 +197,7 @@ export default function VenueDashboard({
   venueIntakeDraft,
   venueIntel,
   venueListErrors,
+  venueListLoaded,
   venueLogoPicker,
   venueLogoPlaceId,
   venueLogoUploading,
@@ -1571,7 +1572,13 @@ export default function VenueDashboard({
                   </div>
                 )}
                 {promotions.length === 0 ? (
-                  venueListErrors.promotions ? null : (
+                  // AND NOT BEFORE THE READ LANDS. An empty array is what both
+                  // "none" and "not asked yet" look like, so this told an owner
+                  // their deals were gone every time the tab was opened, for as
+                  // long as the answer took to arrive.
+                  venueListErrors.promotions ? null : !venueListLoaded.promotions ? (
+                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '14px 0' }}>Loading your deals…</p>
+                  ) : (
                     // The warm bird, because promotions are the owner's own
                     // space (cobalt Birdie marks the states about Flock users,
                     // like the incoming-flocks card). Genuine-empty only: the
@@ -1746,7 +1753,10 @@ export default function VenueDashboard({
                   </div>
                 )}
                 {venueEventsList.length === 0 ? (
-                  venueListErrors.events ? null : (
+                  // Same rule as the promotions list above it.
+                  venueListErrors.events ? null : !venueListLoaded.events ? (
+                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>Loading your events…</p>
+                  ) : (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
                   )
                 ) : venueEventsList.map(event => {

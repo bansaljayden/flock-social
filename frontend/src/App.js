@@ -14154,6 +14154,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [venueListErrors, setVenueListErrors] = useState({
     promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
   });
+  /* AND WHETHER EACH READ HAS LANDED AT ALL, which is a different question from
+     whether it failed. The create-your-first-one lines on the promotions and
+     events tabs are claims about what this venue has published, and an empty
+     array is what BOTH "none" and "not yet asked" look like. The failed read
+     already suppresses those sentences; the seconds before the answer arrived
+     did not, so every visit to either tab opened on the owner being told their
+     deals were gone. Same rule the reviews list carries and the same one
+     ListSkeleton's header sets out.
+
+     The sentences are described rather than quoted on purpose: a sweep in the
+     frontend suite finds them by indexOf across App.js and the screens, and a
+     comment holding the literal text becomes the first match. */
+  const [venueListLoaded, setVenueListLoaded] = useState({ promotions: false, events: false });
   /* `loaded` IS SEPARATE FROM `stats`, and it has to be. The empty state under
      this list says "No reviews yet. Reviews from Flock users will appear here",
      which a venue owner reads as "nobody has reviewed us" -- a claim about
@@ -14422,6 +14435,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const d = await getVenuePromotions();
       setPromotions(d?.promotions || []);
+      setVenueListLoaded(prev => (prev.promotions ? prev : { ...prev, promotions: true }));
       setVenueListErrors(prev => (prev.promotions ? { ...prev, promotions: false } : prev));
       return true;
     } catch (err) {
@@ -14445,6 +14459,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         id: e.id, title: e.title, date: e.event_date, time: e.event_time,
         capacity: e.capacity, hidden_by_moderation: isModerationHidden(e),
       })));
+      setVenueListLoaded(prev => (prev.events ? prev : { ...prev, events: true }));
       setVenueListErrors(prev => (prev.events ? { ...prev, events: false } : prev));
       return true;
     } catch (err) {
@@ -15928,6 +15943,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueIntakeDraft,
         venueIntel,
         venueListErrors,
+        venueListLoaded,
         venueLogoPicker,
         venueLogoPlaceId,
         venueLogoUploading,

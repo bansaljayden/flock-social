@@ -240,7 +240,13 @@ describe('BirdieStill costs nothing at rest', () => {
 
 describe('empty AND error states carry a bird', () => {
   test('promotions: bird rides the branch the error guard already suppresses', () => {
-    const block = before('No promotions yet. Create your first one!');
+    // A wider window than the 900 default: a loading branch now sits between
+    // the error guard and this sentence, because an empty array is what both
+    // "none" and "not asked yet" look like and the owner was being told their
+    // deals were gone on the way in. Both halves this test is about are
+    // unchanged -- the error guard still suppresses the sentence, the bird
+    // still rides the true-empty branch -- so the window moves, not the rule.
+    const block = before('No promotions yet. Create your first one!', 1800);
     expect(block).toContain('venueListErrors.promotions ? null');
     expect(block).toContain('BirdieStill');
   });
