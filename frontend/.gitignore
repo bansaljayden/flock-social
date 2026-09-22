@@ -7,3 +7,8 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Video the beat recorder writes when --out is left off. Its real output goes
+# to the film's own footage directory, outside this repo; this is the fallback
+# it falls into when somebody runs it bare, and it is tens of megabytes.
+/beat-footage/
