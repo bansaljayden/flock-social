@@ -34,21 +34,40 @@ import { pullSettings, queueSync } from './services/userSettings';
 // static import of it comes back.
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
-import VenueLoginScreen from './components/auth/VenueLoginScreen';
-import ModerationSheet from './components/ModerationSheet';
+// VenueLoginScreen and ModerationSheet are NOT imported here any more. Both
+// are fetched, at the lazy block below, for the reason the overlays there
+// already are: neither can be on the first paint. The venue door is behind a
+// link on the consumer login, and the report sheet is behind a long-press on
+// somebody else's content.
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
-import { deliverExport } from './services/dataExport';
+// deliverExport is NOT imported here. It is the one caller, it runs inside a
+// click handler that is already async, and the file it lives in carries the
+// Capacitor filesystem and share plumbing. An `await import()` at the call
+// site keeps all of it off the boot path.
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet } from './lib/storage';
-import PaywallSheet from './components/PaywallSheet';
-import { initPurchases } from './services/purchases';
+// PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
+// The paywall is dormant behind PAYWALL_ENABLED, so for every session that
+// ships today the sheet is a chunk nothing can open.
+//
+// initPurchases is not imported here either. It is called once, from an
+// effect, and the RevenueCat wrapper it lives in is a no-op everywhere except
+// the native shell, so it has no business being downloaded before the Nest
+// paints.
 import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
-import { MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
+//
+// domAnimation is NOT imported here either, and that is the point of the
+// loadMotionFeatures function below. LazyMotion takes either a feature bundle
+// or a function returning one, and a static `domAnimation` made the second
+// form pointless: the animation engine it names was in the blocking boot
+// chunk whether or not anything animated. See the note at the LazyMotion
+// wrapper at the bottom of this file.
+import { MotionConfig, LazyMotion } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
 // the cream bird; the default is cobalt Birdie. Both are used deliberately:
@@ -544,6 +563,147 @@ const rearmBirdiePanel = () => {
   BirdiePanel = React.lazy(loadBirdiePanel);
 };
 
+/* THE REPORT AND BLOCK SHEET, and the first of three things in this file that
+   were still static imports after the overlays above had moved. It is the
+   sheet a long-press on a message, a review, a deal or a person opens, and
+   nothing can reach it until somebody decides to report or block: the state
+   behind it starts null and only a deliberate control sets it.
+
+   THE GATE MOVED TO THE MOUNT with it, for the reason the wrap-up sheet
+   records: this sheet returned null on a null target, which is free when the
+   component is already in the chunk and is the whole cost back again when it
+   is not. Mounted unconditionally, a lazy sheet fetches its chunk during boot
+   and buys nothing.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH the overlays above carry. The sheet
+   is mounted beside the screen ErrorBoundary rather than inside it, so a
+   rejected chunk would be rethrown past it into index.js's app-root and
+   replace the whole signed-in app with the reload card, costing the session
+   and the socket, for a report. */
+const loadModerationSheet = () => import('./components/ModerationSheet')
+  .catch((err) => {
+    console.warn('Report sheet chunk did not load', err);
+    return { default: ModerationSheetUnavailable };
+  });
+let ModerationSheet = React.lazy(loadModerationSheet);
+
+/* RE-ARMING JUST THIS ONE, for the same reason the overlays above have their
+   own narrow helpers. Whoever is reporting is standing on a live screen with a
+   scroll position and possibly a half-typed message, and rearmLazyScreens
+   rebuilds the lazy of every screen in the file, which changes their element
+   types and unmounts them. */
+const rearmModerationSheet = () => {
+  ModerationSheet = React.lazy(loadModerationSheet);
+};
+
+/* THE FLOCK PRO PAYWALL, the second of the three. It is the upgrade sheet the
+   Birdie meter and Settings open, and it is DORMANT: the whole consumer
+   subscription sits behind PAYWALL_ENABLED, which is unset in production, so
+   in every session shipping today this is a sheet no control can reach at all.
+   It was still parsed on every launch.
+
+   THE GATE MOVED TO THE MOUNT for the same reason the report sheet's did: the
+   sheet's own `if (!open) return null` is free in a static import and is the
+   entire cost back again in a lazy one.
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH, and the mount site is the same:
+   beside the screen ErrorBoundary rather than inside it, so a rejected chunk
+   would take the whole signed-in app down to the reload card for a sheet. */
+const loadPaywallSheet = () => import('./components/PaywallSheet')
+  .catch((err) => {
+    console.warn('Paywall sheet chunk did not load', err);
+    return { default: PaywallSheetUnavailable };
+  });
+let PaywallSheet = React.lazy(loadPaywallSheet);
+
+const rearmPaywallSheet = () => {
+  PaywallSheet = React.lazy(loadPaywallSheet);
+};
+
+/* THE VENUE SIGN-IN, the third, and the only one of the three that is a whole
+   screen. It is the door to the product Flock charges bars for: the sign-in
+   and sign-up forms, the operator date of birth field and the venue side of
+   the password reset. A consumer never sees it, and it was 11,416 raw bytes of
+   the blocking chunk every teenager downloads before the Nest can paint. The
+   venue signup it hands off to has been fetched rather than shipped since
+   2026-08-27; this is the screen in front of it.
+
+   IT CAN BE THE FIRST SCREEN OF A SESSION, which is the one thing that makes
+   this different from the two sheets above. Most arrivals are a tap on "For
+   venues" at the bottom of the consumer sign-in, but the marketing site's
+   venue card links straight here with ?venue=true, and the authScreen
+   initialiser reads that on the very first render. So the fetch is started
+   from module scope on that path, below, rather than waited for at render:
+   it then overlaps the rest of this file's module evaluation and React's
+   first render instead of beginning after them.
+
+   THE CATCH IS LOAD-BEARING HERE TOO, for a reason the sheets above do not
+   have. Nothing is mounted behind this screen, so a rejected chunk rethrown
+   from render lands in index.js's app-root boundary and replaces the product's
+   paid front door with the generic reload card. An owner who came from the
+   website's venue card would be looking at a crash screen instead of a sign-in
+   form. Resolving to a panel that says the download failed keeps the venue
+   door looking like the venue door and puts a way back to the consumer sign-in
+   on it.
+
+   `let`, and re-armed by that panel's own way out, for the reason every lazy
+   in this file is: React.lazy remembers a rejection for the life of the page,
+   so without a re-arm the second attempt would replay the stored error without
+   going near the network. The re-arm is narrow rather than rearmLazyScreens
+   because no screen is mounted to remount.
+
+   THE SUSPENSE FALLBACK IS THE SHELL'S OWN BACKGROUND, not null and not a
+   spinner. `auth-root` is the class all three auth screens paint on and it is
+   in the boot stylesheet already, so the fetch reads as the background holding
+   still for a beat instead of as a white flash between two dark screens. */
+const loadVenueLoginScreen = () => import('./components/auth/VenueLoginScreen')
+  .catch((err) => {
+    console.warn('Venue sign-in chunk did not load', err);
+    return { default: VenueLoginUnavailable };
+  });
+let VenueLoginScreen = React.lazy(loadVenueLoginScreen);
+
+const rearmVenueLoginScreen = () => {
+  VenueLoginScreen = React.lazy(loadVenueLoginScreen);
+};
+
+/* AND THE ONE ARRIVAL THAT CANNOT AFFORD TO WAIT FOR A RENDER. ?venue=true is
+   read by the authScreen initialiser on the very first render, so on that path
+   this chunk is wanted immediately. Starting the request here, while this
+   module is still evaluating, overlaps it with the rest of this file and with
+   React's first render rather than queueing it behind them. Nothing awaits it:
+   the lazy above asks for the same module a moment later and webpack hands
+   back the request already in flight. */
+try {
+  if (typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search || '').get('venue') === 'true') {
+    loadVenueLoginScreen();
+  }
+} catch { /* a search string this cannot parse is not a venue arrival */ }
+
+/* WHAT AN OWNER SEES IF THE VENUE SIGN-IN CHUNK CANNOT BE FETCHED, the other
+   half of loadVenueLoginScreen's catch. It paints on the same auth background
+   as the real screen, so the venue door still looks like the venue door, and
+   its way out re-arms the lazy so the next attempt is a real second request.
+   Not an overlay and no DialogBehavior: this IS the screen, there is nothing
+   behind it to trap focus away from. */
+const VenueLoginUnavailable = ({ onSwitchToUserLogin }) => {
+  const back = () => { rearmVenueLoginScreen(); onSwitchToUserLogin?.(); };
+  return (
+    <div className="auth-root">
+      <div className="auth-col">
+        <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '380px', boxSizing: 'border-box', margin: '0 auto' }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h1>
+          <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+            The venue sign-in could not be downloaded, so you are not signed in. Check your connection and try again.
+          </p>
+          <button className="hit44" onClick={back} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to sign in</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* AND THE VENUE CARD A MAP PIN OPENS, the seventh thing in this file that is
    fetched rather than shipped and the only one of them that is not opened by a
    control the user can see. It is the card that slides up on Discover when a
@@ -995,6 +1155,51 @@ const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           Birdie could not be downloaded, so nothing was asked and nothing was sent. Close this, check your connection and tap him again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT SOMEBODY REPORTING SEES IF THE REPORT SHEET CHUNK CANNOT BE FETCHED,
+   the other half of loadModerationSheet's catch. It is handed the real sheet's
+   prop bag and reads one of it. It states the one fact that decides what they
+   do next, which is that nothing was sent, so nobody waits on a report that
+   never left the phone. Closing re-arms this one lazy, so the next long-press
+   is a real second request; rearmModerationSheet says why not the blanket one.
+   DialogBehavior is the module-level one every overlay in this file uses, read
+   from scope rather than taken as a prop, because the real sheet does not take
+   it and inventing a prop for the fallback alone would drift. */
+const ModerationSheetUnavailable = ({ onClose }) => {
+  const close = () => { rearmModerationSheet(); onClose?.(); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <DialogBehavior onClose={close} label="Report did not load" />
+      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          The report options could not be downloaded, so nothing has been reported and nobody has been blocked. Close this, check your connection and try again.
+        </p>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+/* WHAT THE UPGRADE TAP SHOWS IF THE PAYWALL CHUNK CANNOT BE FETCHED, the other
+   half of loadPaywallSheet's catch. Same shape and the same reason as the
+   report sheet above, and the fact it states is the one that matters about a
+   paywall: nothing was charged. */
+const PaywallSheetUnavailable = ({ onClose }) => {
+  const close = () => { rearmPaywallSheet(); onClose?.(); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+      <DialogBehavior onClose={close} label="Flock Pro did not load" />
+      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+          Flock Pro could not be downloaded, so nothing has been bought and nothing has been charged. Close this, check your connection and try again.
         </p>
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
@@ -7185,7 +7390,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     refreshEntitlements();
     // Safe no-op on web; on iOS links RevenueCat's app_user_id to our user id
     // so the webhook can flip is_premium for the right row.
-    if (authUser?.id) initPurchases(authUser.id).catch(() => {});
+    //
+    // FETCHED RATHER THAN BUNDLED. Everything in services/purchases.js is
+    // already guarded by isPurchasesAvailable, so on the web it is a file that
+    // downloads to decide to do nothing, and even natively there is no reason
+    // for it to land before the Nest has painted. The import is fire and
+    // forget: a chunk that does not arrive leaves the RevenueCat link unmade,
+    // which is the same state a web session is always in, and the next launch
+    // tries again.
+    if (authUser?.id) {
+      import('./services/purchases')
+        .then(({ initPurchases }) => initPurchases(authUser.id))
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -11351,10 +11568,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <nav aria-label="Main" style={{
         ...styles.bottomNav,
         boxShadow: 'var(--nav-shadow)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
+        // No backdropFilter here any more. The bar's own face is --bg-nav:
+        // fully opaque in dark, 95% white in light, so there was never more
+        // than a five percent sliver of page for a blur to act on and nobody
+        // could see the difference. What it did cost was a full-width
+        // compositing layer across the bottom of EVERY screen plus a
+        // re-rasterise of the strip of page behind it on each scroll frame and
+        // each keyboard animation. The tab bar is up on all five screens, so
+        // that was charged constantly for an effect that did not render.
+        //
         // No `padding` here on purpose. It lives in styles.bottomNav so the
-        // home-indicator inset survives — see the comment at that definition.
+        // home-indicator inset survives. See the comment at that definition.
       }}>
         {[
           { id: 'home', label: 'Nest' },
@@ -11904,6 +12128,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setExportError('');
     try {
       const payload = await exportMyData(exportPassword || undefined);
+      // Fetched here rather than imported at the top of the file. This handler
+      // is already awaiting the server, so the chunk arrives alongside a
+      // request that takes far longer, and a failure to fetch it lands in the
+      // same catch below that a failed delivery does.
+      const { deliverExport } = await import('./services/dataExport');
       const how = await deliverExport(payload);
       if (how === 'cancelled') {
         // They saw the share sheet and said no. The export slot is spent, so
@@ -15206,7 +15435,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             autoComplete="off" data-lpignore="true" data-form-type="other"
             style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
           {showSuggestions && suggestions.length > 0 && (
-            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
+            /* The 95% face carries this on its own. A blur used to sit under
+               it, reading a flat navy onboarding background and returning the
+               same flat navy, for the cost of a compositing layer that
+               re-rasterised on every keystroke in the field above it. */
+            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', zIndex: 10 }}>
               {suggestions.map((v, i) => (
                 <button className="hit44" key={v.place_id || i} onClick={() => pickVenue(v)} style={{
                   width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
@@ -16802,23 +17035,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </ErrorBoundary>
           </main>
 
-          {/* UGC moderation sheet (report / block) — global so it works from chat + DMs */}
-          <ModerationSheet
-            target={moderationTarget}
-            onClose={() => setModerationTarget(null)}
-            showToast={showToast}
-            onBlocked={handleUserBlocked}
-            onReported={(ev) => {
-              setFlocks(prev => applyTakedownToFlocks(prev, ev));
-              setDirectMessages(prev => applyTakedownToDms(prev, ev));
-              // The two the reducers above do not cover. Without these a
-              // reported review or deal sat on the reporter's own screen
-              // while a reported message vanished, which is the promise this
-              // handler makes for every type.
-              if (ev.contentType === 'venue_review') setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
-              if (ev.contentType === 'venue_promotion') setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
-            }}
-          />
+          {/* UGC moderation sheet (report / block) — global so it works from chat + DMs.
+              FETCHED, not shipped, since the sheet is only ever opened by a
+              deliberate long-press. The `moderationTarget &&` gate is what
+              makes that true: the sheet's own null-target return would leave it
+              mounted, and a mounted lazy fetches its chunk during boot.
+              fallback={null} because this opens over a painted screen, where a
+              skeleton sheet turning into a real sheet reads worse than a beat
+              of nothing. */}
+          {moderationTarget && (
+            <React.Suspense fallback={null}>
+              <ModerationSheet
+                target={moderationTarget}
+                onClose={() => setModerationTarget(null)}
+                showToast={showToast}
+                onBlocked={handleUserBlocked}
+                onReported={(ev) => {
+                  setFlocks(prev => applyTakedownToFlocks(prev, ev));
+                  setDirectMessages(prev => applyTakedownToDms(prev, ev));
+                  // The two the reducers above do not cover. Without these a
+                  // reported review or deal sat on the reporter's own screen
+                  // while a reported message vanished, which is the promise this
+                  // handler makes for every type.
+                  if (ev.contentType === 'venue_review') setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
+                  if (ev.contentType === 'venue_promotion') setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
+                }}
+              />
+            </React.Suspense>
+          )}
 
           {/* Person card (report / block someone who has posted nothing) */}
           {userProfileTarget && (
@@ -16906,14 +17150,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </div>
           )}
 
-          {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings */}
-          <PaywallSheet
-            open={!!paywallTrigger}
-            trigger={paywallTrigger}
-            onClose={() => setPaywallTrigger(null)}
-            showToast={showToast}
-            onUpgraded={confirmUpgrade}
-          />
+          {/* Flock Pro paywall — global sheet, opened by the Birdie meter or Settings.
+              FETCHED, not shipped, and the `paywallTrigger &&` gate is what
+              makes that true: the sheet's own `if (!open) return null` would
+              leave it mounted, and a mounted lazy fetches its chunk during
+              boot. `open` is a literal now because the gate above has already
+              decided it; the prop stays rather than being dropped because the
+              sheet's effects read it and the sheet is also what the venue
+              dashboard's teaser would open. */}
+          {paywallTrigger && (
+            <React.Suspense fallback={null}>
+              <PaywallSheet
+                open
+                trigger={paywallTrigger}
+                onClose={() => setPaywallTrigger(null)}
+                showToast={showToast}
+                onUpgraded={confirmUpgrade}
+              />
+            </React.Suspense>
+          )}
 
           {/* THE FULL-SCREEN RESULTS LIST IS components/SearchResultsOverlay.js
               AS OF 2026-09-13. Its 232 lines are the panel behind "See All
@@ -17393,9 +17648,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           from { transform: translateY(0) scale(1); opacity: 1; }
           to { transform: translateY(-100%) scale(0.9); opacity: 0; }
         }
+        /* THE SCRIM FADES. THE BLUR DOES NOT ANIMATE.
+           This used to run backdrop-filter from 0px to 8px alongside the
+           colour, which is about eighteen full-viewport blurs at a growing
+           radius for every modal that opens, none of which the compositor can
+           hand off. The end state is unchanged: the static rule on
+           .modal-backdrop below holds the 8px, so what an open modal looks like
+           is the same and only the ramp is gone. Keep any new property added
+           here to one the compositor owns outright, which is opacity,
+           transform and a plain colour. */
         @keyframes modalBlurIn {
-          from { backdrop-filter: blur(0px); background-color: rgba(0,0,0,0); }
-          to { backdrop-filter: blur(8px); background-color: rgba(0,0,0,0.5); }
+          from { background-color: rgba(0,0,0,0); }
+          to { background-color: rgba(0,0,0,0.5); }
         }
         @keyframes modalSlideIn {
           from { transform: translateY(50px) scale(0.95); opacity: 0; }
@@ -17453,6 +17717,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           animation: toastSlideIn 0.3s ease-out;
         }
         .modal-backdrop {
+          /* Static, so the frosting is rasterised once on open instead of
+             once per frame of the fade. See the keyframes above. */
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
           animation: modalBlurIn 0.3s ease-out forwards;
         }
         .modal-content {
@@ -17645,13 +17913,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         @media (prefers-reduced-motion: reduce) {
           .skeleton::after { animation: none; opacity: 0.5; transform: none; }
         }
-        /* Premium glass effect */
-        .glass {
-          background: rgba(255,255,255,0.85);
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
-          border: 1px solid rgba(255,255,255,0.5);
-        }
+        /* A bare .glass frosted-panel rule stood here with zero call sites:
+           nothing in src/ has ever carried the class on its own, and every
+           frosted surface in the app is either .glass-btn or an inline style.
+           Deleted rather than left as a trap, because the one thing it was
+           guaranteed to do if somebody reached for it was add a
+           full-panel backdrop-filter.
+
+           NO BACKTICKS IN THIS BLOCK, EVER. It is the children of a style
+           element written as a template literal, so a backtick ends the
+           string: the first draft of the note above quoted the class name in
+           backticks and turned everything from the top of this stylesheet into
+           a tagged template call. The app compiled, every unit test passed, and
+           the signed-in shell died on its first render with the whole
+           stylesheet as the error message. Name a class in plain text. */
         /* Interactive card hover */
         .interactive-card {
           transition: box-shadow 0.2s ease, transform 0.2s ease;
@@ -18168,13 +18443,15 @@ const FlockApp = () => {
         onSwitchToLogin={() => setAuthScreen('login')}
       />
     ) : authScreen === 'venue-login' ? (
-      <VenueLoginScreen
-        onLoginSuccess={(user) => {
-          beginSession(user);
-          setVenueLoginFlag(true);
-        }}
-        onSwitchToUserLogin={() => setAuthScreen('login')}
-      />
+      <React.Suspense fallback={<div className="auth-root" />}>
+        <VenueLoginScreen
+          onLoginSuccess={(user) => {
+            beginSession(user);
+            setVenueLoginFlag(true);
+          }}
+          onSwitchToUserLogin={() => setAuthScreen('login')}
+        />
+      </React.Suspense>
     ) : (
       <LoginScreen
         onLoginSuccess={beginSession}
@@ -18282,13 +18559,34 @@ const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
  * regress unnoticed. It wraps the whole app because `m` components are added in
  * this file often, and a provider below the root would reach only what is under
  * it.
+ *
+ * AND THE FEATURE SET IS FETCHED, NOT BUNDLED, which is the half this was
+ * missing. `features={domAnimation}` is a static import of the animation
+ * engine, so the whole of it sat in the blocking boot chunk: measured, 79 KB
+ * raw of motion-dom and framer-motion in the chunk group `import('./App')`
+ * waits on, downloaded before the Nest can paint by every session including
+ * the ones that never animate anything. LazyMotion accepts a function
+ * returning the bundle instead, and it calls that function from an effect
+ * after mount, so the engine arrives while the app is already on screen.
+ *
+ * NOTHING ANIMATES ON THE FIRST PAINT, which is what makes this safe. Every
+ * `m` component in the app is inside a lazily fetched chunk of its own: the
+ * venue card, the Discover screen and the venue dashboard. Their chunks cannot
+ * resolve before this one does, so by the time an `m` component exists the
+ * features it wants are already here. An `m` component that did render first
+ * would still render, as plain DOM at its target style, and animate from the
+ * next state change on. It would not throw and it would not disappear.
  */
+/* A module-scope const, not an inline arrow. LazyMotion re-runs the loader
+   whenever the identity of `features` changes, and an arrow written in the
+   JSX below is a new identity on every render of this component. */
+const loadMotionFeatures = () => import('framer-motion').then((mod) => mod.domAnimation);
 /* GoogleOAuthProvider is NOT here any more. It moved down to the three auth
    screens, which are the only things under it that ever needed it, because
    mounting it is what fetches Google's gsi/client script. The reasoning is
    written out at the new site, above the auth return in FlockApp. */
 const FlockAppWithProviders = () => (
-  <LazyMotion features={domAnimation} strict>
+  <LazyMotion features={loadMotionFeatures} strict>
     <MotionConfig reducedMotion="user">
       <OfflineGate />
       <FlockApp />

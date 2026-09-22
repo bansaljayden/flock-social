@@ -939,9 +939,11 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // no CSS animation and no CSS transition exists for the media query above
     // to shorten. Without this the Discover venue card still slides and
     // scales in on delays past a second for somebody who asked it not to.
-    // The import is the lean one: `m` plus LazyMotion with domAnimation, not
-    // the full `motion` component, so a regression back to the heavy bundle
-    // fails these lines as well as the wrapper assertion below. App.js stopped
+    // The import is the lean one: `m` plus LazyMotion, not the full `motion`
+    // component, so a regression back to the heavy bundle fails these lines as
+    // well as the wrapper assertion below. domAnimation is no longer named on
+    // the import line because it is no longer imported statically; it is what
+    // the loader pinned below resolves to. App.js stopped
     // importing `m` itself on 2026-09-13, when the last component in it that
     // animated went to components/venue/ConsumerVenueCard.js, so the lean
     // import is pinned where it is now used and the provider half is pinned in
@@ -954,7 +956,7 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // two named imports rather than one, because a single line that merged
     // them again would be asserting on a file layout rather than on the
     // property, which is that every framer-motion import here is a lean one.
-    expect(code).toMatch(/import \{ MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
+    expect(code).toMatch(/import \{ MotionConfig, LazyMotion \} from 'framer-motion';/);
     expect(code).toMatch(/import \{ AnimatePresence \} from 'framer-motion';/);
     expect(code).toMatch(/import \{ m \} from 'framer-motion';/);
     expect(code).toMatch(/<MotionConfig reducedMotion="user">/);
@@ -966,7 +968,14 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // and exit and nothing else, so it ships `m` with the domAnimation feature
     // set instead. `strict` makes a stray `motion` component throw rather than
     // silently pulling the full set back in, which is what defends the saving.
-    expect(code).toMatch(/<LazyMotion features=\{domAnimation\} strict>/);
+    // `features` is a loader, not the bundle. domAnimation was a static import
+    // of the animation engine, so the whole of it rode the blocking boot chunk
+    // whether or not anything animated; LazyMotion takes a function returning
+    // the bundle and calls it after mount. Both halves are pinned, because a
+    // loader that resolved to the wrong export would leave every `m` component
+    // in the app permanently un-animated with nothing throwing.
+    expect(code).toMatch(/<LazyMotion features=\{loadMotionFeatures\} strict>/);
+    expect(code).toMatch(/const loadMotionFeatures = \(\) => import\('framer-motion'\)\.then\(\(mod\) => mod\.domAnimation\);/);
     expect(code).not.toMatch(/import \{[^}]*\bmotion\b[^}]*\} from 'framer-motion'/);
   });
 
