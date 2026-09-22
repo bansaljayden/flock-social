@@ -69,6 +69,12 @@ import Icons from '../components/ui/Icons';
    only on sessions that opened the tab. */
 const QRCodeSVG = React.lazy(() => import('qrcode.react').then((m) => ({ default: m.QRCodeSVG })));
 
+/* A friend code is printed and read as upper case, so the box types in upper
+   case. Declared here rather than inline so its identity holds still across
+   renders: SearchInputLocal watches this function alongside the value it was
+   handed, and a new one on every render would wake that effect every time. */
+const upperCase = (value) => value.toUpperCase();
+
 export default function AddFriends({
   // Module-level helpers and components that live in App.js and are shared
   // with screens that are not this one, so they stay there and come in here.
@@ -410,7 +416,12 @@ export default function AddFriends({
                 <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Or Enter Code Manually</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Ask your friend for their Flock code</p>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input aria-label="Friend code" type="text" value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="FLOCK-XXXX" maxLength={15}
+                  {/* The code lives in the box while it is being typed, and
+                      reaches App.js when the typing pauses, so ten characters
+                      no longer cost ten renders of the whole app. Add reads
+                      the code from App.js on the tap, and the box publishes a
+                      pending value on pointerdown for exactly that reason. */}
+                  <SearchInputLocal aria-label="Friend code" type="text" initialValue={friendCodeInput} onCommit={setFriendCodeInput} transform={upperCase} placeholder="FLOCK-XXXX" maxLength={15}
                     style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
                   />
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
@@ -586,9 +597,14 @@ export default function AddFriends({
                   <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>By number</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Add one person with the number you already have for them</p>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <input aria-label="Phone number" type="tel" inputMode="tel" autoComplete="tel" value={phoneLookupInput}
-                      onChange={(e) => { setPhoneLookupInput(e.target.value); setPhoneLookupError(''); setPhoneLookupUsers(null); }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !phoneLookupLoading) handleLookupByNumber(); }}
+                    {/* Same as the friend code box above: the number is typed
+                        into the box and reaches App.js on a pause. Return does
+                        not go through a tap, so it hands the number it can see
+                        to the lookup rather than trusting the commit to have
+                        landed first. */}
+                    <SearchInputLocal aria-label="Phone number" type="tel" inputMode="tel" autoComplete="tel" initialValue={phoneLookupInput}
+                      onCommit={(value) => { setPhoneLookupInput(value); setPhoneLookupError(''); setPhoneLookupUsers(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !phoneLookupLoading) handleLookupByNumber(e.currentTarget.value); }}
                       placeholder="(555) 555-0123" maxLength={20}
                       style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${phoneLookupInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />

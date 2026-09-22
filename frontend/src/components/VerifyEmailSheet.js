@@ -43,7 +43,7 @@ const VerifyEmailSheet = ({
 }) => verifyPrompt && (
     <div
       onClick={() => setVerifyPrompt(null)}
-      style={{ position: 'fixed', inset: 0, zIndex: 300, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 300, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }}
     >
       {/* The one sheet in the file that was missing this: no Escape, no focus
           trap, and Tab walked straight out into the screen behind it. */}

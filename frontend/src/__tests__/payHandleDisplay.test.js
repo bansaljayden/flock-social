@@ -415,7 +415,12 @@ describe('the sheet still says who, how much, and what for', () => {
     expect(PAY_SHEET).toMatch(/overflowWrap: 'anywhere'/);
     expect(PAY_SHEET).toMatch(/minWidth: 0/);
     expect(PAY_SHEET).toMatch(/flexShrink: 0/);
-    expect(count(PAY_SHEET, /boxSizing: 'border-box'/g)).toBe(2);
+    // Two of these are the handle row's own boxes, which is what this test is
+    // about. The third is the sheet backdrop: it carries
+    // paddingBottom: var(--cb-height) so the consent bar cannot sit on top of
+    // the sheet's last control, and a padding added to a fixed, full-height
+    // element only stays inside it with border-box.
+    expect(count(PAY_SHEET, /boxSizing: 'border-box'/g)).toBe(3);
   });
 });
 

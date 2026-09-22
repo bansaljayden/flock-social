@@ -47,6 +47,9 @@ import { lsSet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 
 export default function VenueOnboarding({
+  // App.js's own input component, shared with screens that are not this one,
+  // so it stays there and comes in here the way the field renderers do.
+  SearchInputLocal,
   VENUE_MAX_ANCHORS,
   parseGoogleHours,
   renderVenueChips,
@@ -251,7 +254,12 @@ export default function VenueOnboarding({
           {/* maxLength mirrors the server's bounds (venueProfile.js: location
               255, description 2000). Without them the form let someone type
               past the limit and only found out at the very last step. */}
-          <input aria-label="Venue address" maxLength={255} value={venueOnboardingData.location} onChange={(e) => setVenueOnboardingData(d => ({ ...d, location: e.target.value }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          {/* Every free-text answer in this flow holds its own characters and
+              publishes them into the draft when the typing pauses, because a
+              keystroke here used to re-render the whole app behind the step.
+              Continue reads the draft on the tap, and the box publishes
+              anything pending on pointerdown, before the click lands. */}
+          <SearchInputLocal aria-label="Venue address" maxLength={255} initialValue={venueOnboardingData.location} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, location: v }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -285,7 +293,7 @@ export default function VenueOnboarding({
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
-          <textarea aria-label="Venue description" maxLength={2000} value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} initialValue={venueOnboardingData.description} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, description: v }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
       // ── Steps 6 to 11: the things only the owner knows ──────────────────────
@@ -382,8 +390,8 @@ export default function VenueOnboarding({
           {venueOnboardingData.eventNights.length > 0 && renderVenueField({
             label: 'What runs on those nights',
             children: (
-              <input aria-label="What runs on those nights" maxLength={120} value={venueOnboardingData.eventNote}
-                onChange={(e) => setVenueOnboardingData(d => ({ ...d, eventNote: e.target.value }))}
+              <SearchInputLocal aria-label="What runs on those nights" maxLength={120} initialValue={venueOnboardingData.eventNote}
+                onCommit={(v) => setVenueOnboardingData(d => ({ ...d, eventNote: v }))}
                 placeholder="e.g. Trivia at 8, live band after 10"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
@@ -411,8 +419,8 @@ export default function VenueOnboarding({
           {venueOnboardingData.anchorTypes.length > 0 && renderVenueField({
             label: 'Name it', hint: 'The name is what lets us look up a schedule.',
             children: (
-              <input aria-label="Nearby anchor detail" maxLength={200} value={venueOnboardingData.anchorNote}
-                onChange={(e) => setVenueOnboardingData(d => ({ ...d, anchorNote: e.target.value }))}
+              <SearchInputLocal aria-label="Nearby anchor detail" maxLength={200} initialValue={venueOnboardingData.anchorNote}
+                onCommit={(v) => setVenueOnboardingData(d => ({ ...d, anchorNote: v }))}
                 placeholder="e.g. Across from Lincoln Financial Field"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
                 style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
@@ -425,9 +433,13 @@ export default function VenueOnboarding({
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Anything a stranger would not guess?</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px', lineHeight: 1.5 }}>The back room being quiet when the front is packed. Parking that fills by seven. Cash only after midnight. Write it how you would say it.</p>
-          <textarea aria-label="What a stranger would not guess" maxLength={1000} rows={6}
-            value={venueOnboardingData.quirks}
-            onChange={(e) => setVenueOnboardingData(d => ({ ...d, quirks: e.target.value }))}
+          {/* The last box in the flow, and the one Launch Dashboard is tapped
+              straight after. The tap publishes what is still pending before
+              the click reaches the button, so the profile is created with the
+              whole note. */}
+          <SearchInputLocal as="textarea" aria-label="What a stranger would not guess" maxLength={1000} rows={6}
+            initialValue={venueOnboardingData.quirks}
+            onCommit={(v) => setVenueOnboardingData(d => ({ ...d, quirks: v }))}
             placeholder="e.g. The patio holds 40 more but we close it when it drops below 55."
             autoComplete="off" data-lpignore="true" data-form-type="other"
             style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />

@@ -513,20 +513,27 @@ export default function ExploreScreen({
                 {Icons.arrowLeft(colors.navy, 18)}
               </button>
               <div style={{ flex: 1, position: 'relative' }}>
-                <input aria-label="Search events"
+                {/* The typed value lives in the box, not in App.js. Every
+                    keystroke here used to set state at the top of the app and
+                    re-render the whole tree behind this drawer, which is what
+                    typing into it felt like on a phone. The box commits upward
+                    once the typing pauses; the Ticketmaster call is still
+                    debounced behind that, at 280ms instead of 400 so the wait
+                    from the last keystroke to the request is the 400ms it
+                    always was. */}
+                <SearchInputLocal aria-label="Search events"
                   type="text"
                   placeholder={userLocation ? 'Search concerts, games, shows...' : 'Turn on location to search events'}
                   disabled={!userLocation}
-                  value={eventsSearchQuery}
-                  onChange={(e) => {
-                    setEventsSearchQuery(e.target.value);
-                    if (e.target.value.length >= 2 && userLocation) {
+                  initialValue={eventsSearchQuery}
+                  onCommit={(typed) => {
+                    setEventsSearchQuery(typed);
+                    if (typed.length >= 2 && userLocation) {
                       clearTimeout(eventsSearchTimerRef.current);
-                      const typed = e.target.value;
                       eventsSearchTimerRef.current = setTimeout(() => {
                         fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, typed);
-                      }, 400);
-                    } else if (e.target.value.length === 0 && userLocation) {
+                      }, 280);
+                    } else if (typed.length === 0 && userLocation) {
                       fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
                     }
                   }}

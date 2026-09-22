@@ -336,7 +336,7 @@ export default function ProfileSettings({
 
                 {/* Add Contact Modal */}
                 {showAddContact && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000 }}>
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000, paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }}>
                     {/* A four-field form sheet over the safety settings, and
                         until now it moved no focus, answered no Escape and
                         let Tab walk out into the settings list behind it. */}
@@ -866,12 +866,17 @@ export default function ProfileSettings({
                 {!exportNeedsReauth && authUser?.sign_in_method && authUser.sign_in_method !== 'password' && (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>You sign in with {authUser.sign_in_method === 'apple' ? 'Apple' : 'Google'}. If it has been more than five minutes since you signed in, Flock will ask you to sign in again first.</p>
                 )}
+                {/* Typed in the box, published to App.js on a pause, the way
+                    every other field on this screen works. Get my data reads
+                    the password from App.js on the tap and the box publishes a
+                    pending value on pointerdown, so the tap cannot send the
+                    password a character short. */}
                 {!exportNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
-                  <input
+                  <SearchInputLocal
                     type="password"
                     autoComplete="current-password"
-                    value={exportPassword}
-                    onChange={(e) => { setExportPassword(e.target.value); if (exportError) setExportError(''); }}
+                    initialValue={exportPassword}
+                    onCommit={(value) => { setExportPassword(value); if (exportError) setExportError(''); }}
                     placeholder="Your password"
                     aria-label="Your password"
                     disabled={exportingData}
@@ -916,12 +921,17 @@ export default function ProfileSettings({
                 {!deleteNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
                   <>
                     <label htmlFor="delete-password" style={{ display: 'block', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Your password</label>
-                    <input
+                    {/* Typed in the box and published to App.js on a pause.
+                        The confirm box below it is the last thing touched
+                        before the tap, so this one has always committed by
+                        then, and the tap itself publishes anything pending
+                        before the click reaches the button. */}
+                    <SearchInputLocal
                       id="delete-password"
                       type="password"
                       autoComplete="current-password"
-                      value={deletePassword}
-                      onChange={(e) => { setDeletePassword(e.target.value); if (deleteError) setDeleteError(''); }}
+                      initialValue={deletePassword}
+                      onCommit={(value) => { setDeletePassword(value); if (deleteError) setDeleteError(''); }}
                       placeholder="Password"
                       enterKeyHint="done"
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
@@ -947,6 +957,15 @@ export default function ProfileSettings({
                 )}
 
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Type <strong>DELETE</strong> to confirm</p>
+                {/* THIS ONE STAYS CONTROLLED BY App.js, unlike the password
+                    above it and every other field on this screen. The Delete
+                    button is disabled until this reads exactly DELETE, and a
+                    disabled button receives no tap at all, so a box that
+                    published on a pause would leave the button dead for that
+                    pause after the final letter and eat the first tap. Six
+                    characters typed once in the life of an account are not
+                    worth a dead tap on the one screen where a second attempt
+                    feels like the app refusing. */}
                 <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" enterKeyHint="done" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button className="hit44" onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
@@ -1111,6 +1130,49 @@ export default function ProfileSettings({
                 }}
               >
                 {Icons.shield(colors.navy, 14)} Privacy Policy
+              </button>
+              {/* SUPPORT AND GUIDELINES, REACHABLE FROM INSIDE THE APP.
+                  Guideline 1.2 wants a way to contact someone about user
+                  content, and 1.2(d) is normally satisfied by the Support URL
+                  filed in App Store Connect. Both pages already exist and ship
+                  (/support publishes a real address, /guidelines is the same
+                  document the sign-in screen links), so leaving them reachable
+                  only from the website was a gap with no reason behind it. */}
+              <button
+                className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/support')}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${colors.creamDark}`,
+                  backgroundColor: 'var(--bg-card-solid)',
+                  color: colors.navy,
+                  fontSize: 'var(--t-meta)',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {Icons.helpCircle ? Icons.helpCircle(colors.navy, 14) : Icons.fileText(colors.navy, 14)} Support
+              </button>
+              <button
+                className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/guidelines')}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${colors.creamDark}`,
+                  backgroundColor: 'var(--bg-card-solid)',
+                  color: colors.navy,
+                  fontSize: 'var(--t-meta)',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {Icons.users ? Icons.users(colors.navy, 14) : Icons.shield(colors.navy, 14)} Community Guidelines
               </button>
             </div>
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginTop: '16px', textAlign: 'center' }}>Flock v1.0.0</p>

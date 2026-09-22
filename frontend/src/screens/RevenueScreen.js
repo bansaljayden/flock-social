@@ -227,7 +227,7 @@ export default function RevenueScreen({
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button aria-label="Back" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             {/* Cobalt Birdie, still. This slot held a generic briefcase glyph,

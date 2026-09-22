@@ -59,9 +59,17 @@ export default function ConsentBanner({ onAnswer }) {
   React.useEffect(() => {
     if (!open) return undefined;
     let frame = 0;
+    let observer = null;
     const measure = () => {
       frame = 0;
       const h = visibleNavHeight();
+      // THE WATCH ENDS THE MOMENT IT HAS ITS ANSWER. The observer below exists
+      // for one event, the tab bar mounting after sign-in, and until it was
+      // stopped it kept a callback on every node the app added or removed for
+      // the whole time the bar was open, each one scheduling two
+      // getBoundingClientRect reads on the next frame. A measured tab bar is
+      // the question answered, and resize still re-measures after it.
+      if (h > 0 && observer) { observer.disconnect(); observer = null; }
       setClearance((prev) => (prev === h ? prev : h));
       // The bar's own footprint: its height plus the 12px it floats above
       // whatever is under it. Published so a page can keep its own footer
@@ -74,14 +82,16 @@ export default function ConsentBanner({ onAnswer }) {
       if (frame) return;
       frame = window.requestAnimationFrame(measure);
     };
+    // The tab bar mounts after sign-in, while the bar can already be showing,
+    // so watch for it rather than measuring once. Watch the app's own root
+    // rather than the whole document: the navigation is rendered inside it,
+    // and everything outside it is this bar and the page furniture.
+    if (typeof MutationObserver === 'function') {
+      observer = new MutationObserver(schedule);
+      observer.observe(document.getElementById('root') || document.body, { childList: true, subtree: true });
+    }
     measure();
     window.addEventListener('resize', schedule);
-    // The tab bar mounts after sign-in, while the bar can already be showing,
-    // so watch the document for it rather than measuring once.
-    const observer = typeof MutationObserver === 'function'
-      ? new MutationObserver(schedule)
-      : null;
-    if (observer) observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       window.removeEventListener('resize', schedule);
       if (observer) observer.disconnect();

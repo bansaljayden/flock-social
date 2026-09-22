@@ -203,10 +203,19 @@ function controlClassNames() {
   return names;
 }
 
-/** Every <input>/<textarea>/<select> opening tag in a JS source, with line no. */
+/**
+ * Every <input>/<textarea>/<select> opening tag in a JS source, with line no.
+ *
+ * SearchInputLocal counts as one. It is App.js's own field component and it
+ * renders an input or, with as="textarea", a textarea, passing the style prop
+ * that decides the font size straight through. Fields move to it one at a
+ * time to keep typing off the app's render path, and each one that moved used
+ * to leave this scan, which is the only place the 16px focus-zoom floor is
+ * checked against the JSX rather than against the stylesheet.
+ */
 function controlTags(source) {
   const out = [];
-  const re = /<(input|textarea|select)\b/g;
+  const re = /<(input|textarea|select|SearchInputLocal)\b/g;
   let m;
   while ((m = re.exec(source))) {
     // Walk to the '>' that closes the tag, ignoring any inside JSX braces.
