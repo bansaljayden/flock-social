@@ -286,6 +286,99 @@ const BEATS = {
     },
   },
 
+  /* Beat 5. The map, coloured by what the model expects right now.
+
+     THIS BEAT MAKES PAID CALLS. Opening Discover runs a venue search against
+     Google Places, charged to the shared daily budget in
+     backend/utils/placesBudget.js, and the same budget meters the owner
+     dashboard, so a run here takes lookups away from that. The crowd scores
+     painted over the pins are by-id and are not metered. Take the footage in
+     one pass rather than iterating on the framing.
+
+     The map debug handle is what the camera move goes through. It is a
+     read-and-zoom handle the app only exposes under a flag, so nothing about
+     what is drawn changes; a wheel gesture would do the same job with less
+     control over how long the move takes. */
+  discover: {
+    who: 'camera',
+    mapDebug: true,
+    async drive(page) {
+      const nav = page.getByRole('navigation', { name: 'Main' });
+      await tap(page, nav.getByRole('button', { name: 'Discover' }), { after: 1000 });
+      await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 90_000 }).catch(() => {});
+      await page.locator('.mlb-venue-marker').first().waitFor({ timeout: 90_000 });
+      /* MapLibre draws its credit expanded and it reads as a bar of legal text
+         across the shot. Dropping the class is the state one tap reaches, and
+         the credit stays one tap away, so it is still carried. */
+      await page.evaluate(() => {
+        document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
+          .forEach((el) => el.classList.remove('maplibregl-compact-show'));
+      }).catch(() => {});
+      /* Every pin paints a lettered placeholder first and swaps to the venue's
+         photo when it resolves. Filming before the swap makes the map look
+         like it failed to load. */
+      await page.waitForFunction(
+        () => document.querySelectorAll('.mlb-venue-marker img').length > 2,
+        { timeout: 60_000 }
+      ).catch(() => {});
+      /* WARM THE TILES BEFORE THE CAMERA MOVES. The basemap fetches a fresh
+         set per zoom level, and a push in that arrives before they do lands on
+         MapLibre's empty background: the first take of this beat zoomed into a
+         screen of flat dark blue. Jumping to the end of the move with no
+         duration, waiting for the tiles, and jumping back leaves them cached,
+         so the move that gets filmed has something to draw. */
+      const zoom = (z, ms) => page.evaluate(([to, dur]) => {
+        const m = window.__flockMapDebug;
+        if (m && m.zoomTo) m.zoomTo(to, dur);
+      }, [z, ms]).catch(() => {});
+
+      await zoom(14.8, 0);
+      await hold(page, 7000);
+      await zoom(13.4, 0);
+      await hold(page, 2600);
+
+      await still(page, 'discover-1-map');
+      await hold(page, 3000);
+      await zoom(14.8, 3500);
+      await hold(page, 4600);
+      await still(page, 'discover-2-closer');
+      await hold(page, 2400);
+    },
+  },
+
+  /* Beat 6. The same places as a list, each carrying the model's number beside
+     the star rating it is not. Same paid search as the beat above. */
+  list: {
+    who: 'camera',
+    async drive(page) {
+      const nav = page.getByRole('navigation', { name: 'Main' });
+      await tap(page, nav.getByRole('button', { name: 'Discover' }), { after: 900 });
+      await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 90_000 }).catch(() => {});
+      const search = page.locator('#search-input');
+      await search.waitFor({ timeout: 30_000 });
+      const batch = page.waitForResponse((r) => r.url().includes('/api/crowd/batch'), { timeout: 120_000 }).catch(() => null);
+      await tap(page, search, { after: 300 });
+      await search.type('bars', { delay: 160 });
+      await batch;
+      await hold(page, 1600);
+      await tap(page, page.getByText(/See All Results/).first(), { after: 1800 });
+      /* The pill by its accessible name, not by a percent sign: a crowd score
+         is a position on a 0 to 100 ladder, not a share of a room's capacity,
+         and the app is right not to print one. */
+      await page.getByLabel(/out of 100/).first().waitFor({ timeout: 60_000 });
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      await hold(page, 2600);
+      await still(page, 'list-1-results');
+      // Scrolled slowly, so more than one number passes the camera.
+      for (let i = 0; i < 5; i += 1) {
+        await page.mouse.wheel(0, 230);
+        await hold(page, 820);
+      }
+      await still(page, 'list-2-scrolled');
+      await hold(page, 1800);
+    },
+  },
+
   /* Beat 13. The same login the app uses, landing somewhere else entirely, so
      the beat has to START at the chooser rather than inside the dashboard. It
      also has to be THIS bar: the film has just spent three beats on the plan
@@ -370,7 +463,7 @@ const BEATS = {
 
 // The order they change state in. --only picks a subset without reordering it.
 // The order the narration runs in: beat 8 is the vote, beat 9 the budget.
-const ORDER = ['vote', 'budget', 'bill', 'venue', 'tabs', 'override'];
+const ORDER = ['discover', 'list', 'vote', 'budget', 'bill', 'venue', 'tabs', 'override'];
 
 /* ── The camera ─────────────────────────────────────────────────────────────
  *
@@ -488,7 +581,7 @@ async function recordBeat(name, beat, browser, tokens) {
     permissions: ['geolocation'],
     geolocation: { latitude: 39.9526, longitude: -75.1652 },
   });
-  await context.addInitScript(([jwt, mode, top, bottom]) => {
+  await context.addInitScript(([jwt, mode, top, bottom, mapDebug]) => {
     localStorage.setItem('flock-theme-mode', 'manual');
     localStorage.setItem('flock-theme', 'light');
     localStorage.setItem('flock_notif_denied', 'true');
@@ -497,6 +590,7 @@ async function recordBeat(name, beat, browser, tokens) {
     localStorage.setItem('flock_user_lat', '39.9526');
     localStorage.setItem('flock_user_lng', '-75.1652');
     localStorage.setItem('flockToken', jwt);
+    if (mapDebug) window.__FLOCK_MAP_DEBUG__ = true;
     // The handset's insets, which a browser reports as zero. See the header.
     const el = document.createElement('style');
     el.textContent = `:root{--safe-area-inset-top:${top}px;--safe-area-inset-bottom:${bottom}px;}`;
@@ -504,7 +598,7 @@ async function recordBeat(name, beat, browser, tokens) {
     if (document.head) attach();
     else document.addEventListener('DOMContentLoaded', attach);
   }, [isOwner ? tokens.owner : tokens.camera,
-    onChooser ? '' : (isOwner ? 'venue' : 'user'), SAFE_TOP, SAFE_BOTTOM]);
+    onChooser ? '' : (isOwner ? 'venue' : 'user'), SAFE_TOP, SAFE_BOTTOM, !!beat.mapDebug]);
 
   const page = await context.newPage();
   const errors = [];
