@@ -590,7 +590,17 @@ export default function LandingPage() {
               <li>The best time to show up</li>
               <li>Every spot near you, scored the same way</li>
               <li>A quieter pick nearby when your first choice is slammed</li>
-              <li>Crowd reports from people at the venue fold in live</li>
+              {/* This read "Crowd reports from people at the venue fold in
+                  live", which describes a real-time override the product does
+                  not have. backend/services/crowdEngine.js needs
+                  MIN_CALIBRATION_REPORTERS (3) distinct VERIFIED reporters in
+                  the same weekly day-and-hour bucket, inside
+                  CALIBRATION_MAX_AGE_MS (28 days), one vote per account, with
+                  MAX_SINGLE_REPORT_LEVERAGE capping what any one of them moves.
+                  Below the floor the model's own answer stands and the reports
+                  change nothing at all. The floor is the interesting part and
+                  it is the part the line now says. */}
+              <li>Three reports from people at a venue move its score for that night and hour</li>
             </ul>
           </div>
 
@@ -609,11 +619,31 @@ export default function LandingPage() {
               the corpus changes, that test goes red and this sentence gets
               corrected rather than quietly becoming a lie. "venue-hour
               observations" is the unit /about uses; do not round it into
-              "hours" or "venues", which are different quantities. */}
+              "hours" or "venues", which are different quantities.
+
+              THIS LINE IS READ BY TWO AUDIENCES AND ONE OF THEM HAS NO MAP.
+              It used to open "Everything below is live" and close "Pick a pin",
+              both of which point at the demo underneath. api/marketing-page.js
+              serves this same paragraph to AI crawlers with LiveDemo stubbed
+              out, so the bot document promised a map, then went straight to the
+              Birdie heading: a claim about a feature that is not in the
+              document, which is the one thing that file exists not to do.
+
+              Two fixes were available. Excluding the paragraph from the bot
+              document (the rationale the synthetic mocks get) was rejected: the
+              corpus figures are the most checkable thing this site owns, /about
+              is the page nobody reads, and an answer engine asked why Flock's
+              crowd numbers should be believed would get no answer. The
+              exclusion list in aiCrawlerSurface.test.js already records
+              `.lp-appstore` being stripped and leaving the bot document silent
+              on availability, which is the same mistake. So the deixis goes
+              instead. What is left is a claim about where Flock's map, pins and
+              numbers come from, which is true whether or not a map follows it,
+              and the human still reads it directly above a live one. */}
           <p className="lp-demo-proof" id="try">
-            Everything below is live. The map, the pins, and the numbers come
-            from the same model that ships inside Flock, trained on 1.9 million
-            venue-hour observations across 30 cities. Pick a pin.
+            The map, the pins, and the numbers are live. They come from the same
+            model that ships inside Flock, trained on 1.9 million venue-hour
+            observations across 30 cities.
           </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always

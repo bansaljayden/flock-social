@@ -2,6 +2,15 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
+// This page had no date for as long as it existed, while Privacy, Terms and
+// the Guidelines all printed one. DESIGN-STANDARD Q4 asks for a last-updated date on
+// every legal and policy page, and this is the page Google Play sends people to
+// when they have already uninstalled the app: it makes retention commitments of
+// its own (the 90-day backup rule, the 12-month ban tombstone, Apple token
+// revocation) and an undated commitment is one nobody can tell has changed.
+// It moves on its own, not with the other three, because its words move on
+// their own. Bump it in the same edit that changes what this page promises.
+const EFFECTIVE_DATE = 'September 22, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // Public account-deletion page (Google Play requires a public URL where users
@@ -44,6 +53,7 @@ export default function DeleteAccount() {
 
       <header className="pp-header" id="pp-content" tabIndex={-1}>
         <h1>Delete your Flock account</h1>
+        <p className="pp-meta">Effective {EFFECTIVE_DATE}</p>
       </header>
 
       <section>

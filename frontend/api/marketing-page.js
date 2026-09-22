@@ -11,9 +11,10 @@
 // received the empty 2.9 KB CRA shell. llms.txt and the JSON-LD in
 // public/index.html describe the site; this function IS the site for those
 // crawlers. It serves a full static HTML rendering of the five marketing
-// routes (/, /about, /support, /privacy, /terms), reached through
-// user-agent-conditional rewrites in vercel.json - the exact pattern
-// api/invite-preview.js already ships for link-preview bots on /i/<token>.
+// routes (/, /about, /support, /privacy, /terms), reached through a
+// user-agent-conditional redirect and two rewrites in vercel.json - the same
+// pattern api/invite-preview.js already ships for link-preview bots on
+// /i/<token>, plus one extra hop on "/" that the wiring note below explains.
 // Humans keep getting the React app at the same URLs.
 //
 // WHY THIS IS NOT CLOAKING, AND WHAT KEEPS IT THAT WAY
@@ -46,22 +47,37 @@
 // against Vercel's own schema and can carry no comments; same arrangement as
 // api/invite-preview.js).
 //
-//   Two rewrites sit between the /i/:token invite rules and the SPA fallback:
+//   It is THREE rules, not two, and the third one is the whole reason the
+//   other two work. One bot-only redirect, then two rewrites that sit between
+//   the /i/:token invite rules and the SPA fallback:
 //
-//     /                          + AI user-agent -> /api/marketing-page?page=home
-//     /:page(about|support|privacy|terms)
-//                                + AI user-agent -> /api/marketing-page?page=:page
+//     redirect  /            + AI user-agent -> /landing        (302)
+//     rewrite   /landing     + AI user-agent -> /api/marketing-page?page=home
+//     rewrite   /:page(about|support|privacy|terms)
+//                            + AI user-agent -> /api/marketing-page?page=:page
 //
-//   KNOWN LIMIT ON "/": Vercel gives "precedence to the filesystem prior to
-//   rewrites being applied" (project-configuration docs), and the root path
-//   resolves to the built index.html at the filesystem stage. The "/" rule may
-//   therefore never fire; it is kept because it is correct if Vercel routes it
-//   and harmless (today's behaviour) if not. AFTER DEPLOY, VERIFY with:
-//     curl -A "GPTBot" https://www.flockcorp.com/        (want: this document)
-//     curl -A "GPTBot" https://www.flockcorp.com/about   (want: this document)
-//   If "/" still returns the shell, the fix is Vercel routing middleware,
-//   which runs before the filesystem - a follow-up, not a config tweak.
-//   The four subpage routes are not files and rewrite unconditionally.
+//   WHY "/" IS A REDIRECT AND NOT A REWRITE. Vercel gives "precedence to the
+//   filesystem prior to rewrites being applied" (project-configuration docs),
+//   and "/" resolves to the built index.html at the filesystem stage, so a
+//   REWRITE on "/" never fired and crawlers hitting the home page got the empty
+//   CRA shell. Measured against production, not reasoned about. Redirects run
+//   ahead of the filesystem, so the bot is sent to /landing - which is not a
+//   file - and the rewrite there catches it. Shipped 2026-09-04.
+//
+//   It is 302, not 301, because "/" is the canonical home page for humans and
+//   a permanent redirect is a statement about the URL rather than about this
+//   one request. /landing carries a canonical Link header pointing back at "/"
+//   for the same reason, and /api/marketing-page carries X-Robots-Tag: noindex
+//   so the function's own address is never the indexed copy. The four subpage
+//   routes are not files and rewrite without any of this.
+//
+//   The user-agent list is duplicated by hand across all three rules, because
+//   vercel.json has no variables. aiCrawlerSurface.test.js asserts the three
+//   copies are identical, that the redirect exists and is non-permanent, and
+//   that the rewrites sit after the invite rules and before the SPA fallback.
+//   AFTER ANY DEPLOY THAT TOUCHES ROUTING, VERIFY BOTH ARMS:
+//     curl -A "GPTBot" -L https://www.flockcorp.com/       (want: this document)
+//     curl -A "GPTBot" https://www.flockcorp.com/about     (want: this document)
 //
 // THE RULES THIS FILE IS HELD TO (same charter as invite-preview.js)
 //   1. Never return a non-200 and never throw out of the handler. A crawler
@@ -146,8 +162,8 @@ const PAGE_BLOCKS = {
     ["li", "The best time to show up"],
     ["li", "Every spot near you, scored the same way"],
     ["li", "A quieter pick nearby when your first choice is slammed"],
-    ["li", "Crowd reports from people at the venue fold in live"],
-    ["p", "Everything below is live. The map, the pins, and the numbers come from the same model that ships inside Flock, trained on 1.9 million venue-hour observations across 30 cities. Pick a pin."],
+    ["li", "Three reports from people at a venue move its score for that night and hour"],
+    ["p", "The map, the pins, and the numbers are live. They come from the same model that ships inside Flock, trained on 1.9 million venue-hour observations across 30 cities."],
     ["h2", "“Idk, you pick.” Birdie picks."],
     ["p", "Ask Birdie the way you’d ask a friend who knows the city. It comes back with real places near you."],
     ["p", "Birdie is AI. It runs on Google Gemini, and the crowd numbers it quotes are the app’s own."],
@@ -232,7 +248,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective September 21, 2026"],
+    ["p", "Effective September 22, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -319,7 +335,7 @@ const PAGE_BLOCKS = {
     ["h2", "Our legal bases"],
     ["p", "If you are in the EEA or the UK, the law wants us to say why each kind of processing is lawful. Here it is, plainly."],
     ["li", "Performing our agreement with you: your account, your flocks, chat and direct messages, votes, RSVPs, budgets, bill splits, the calendar, venue search, crowd predictions, the venue dashboard, and the transactional email that keeps an account working. Without these there is no product to deliver."],
-    ["li", "Your consent: location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and the anonymous page-view count described in Analytics, error reports, and email, which is off until you agree to it and changes nothing if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened."],
+    ["li", "Your consent: location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and every analytics event described in Analytics, error reports, and email, the page views and the hand-written events tied to your account number alike, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened."],
     ["li", "Our legitimate interests: keeping Flock safe and working. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, and improving the crowd model from reports people choose to file. We have weighed these against your interests, which is why the analytics are configured the way Analytics, error reports, and email describes and why the model's training data carries no account identifiers."],
     ["li", "Legal obligation: responding to lawful requests, and reporting apparent child sexual abuse material to the National Center for Missing and Exploited Children or the relevant authority."],
     ["li", "Vital interests: the SOS feature. When you press it, we email your trusted contacts your location because you are telling us something is wrong."],
@@ -379,6 +395,7 @@ const PAGE_BLOCKS = {
     ["h3", "They receive nothing about anyone"],
     ["li", "BestTime is where the crowd model's training corpus comes from. Collection stopped in May 2026 and started again on 1 September 2026. It runs as a scheduled job that reads public busyness figures for venues, it sends nothing about you, and no part of the running product calls it."],
     ["li", "SeatGeek is a second event source used only by offline training scripts. No server code reads it."],
+    ["li", "TheSportsDB supplies the game schedules those same offline scripts read. No server code reads it either."],
     ["li", "Venmo, Cash App and Zelle are opened as links from your phone. There is no integration and no account. Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock."],
     ["li", "Codemagic builds the iOS app, GitHub Actions scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data."],
     ["h3", "The people around you"],
@@ -389,6 +406,7 @@ const PAGE_BLOCKS = {
     ["h2", "Analytics, error reports, and email"],
     ["h3", "Product analytics, with PostHog"],
     ["p", "We use PostHog to understand how Flock is used: pages viewed, and a short list of events we write by hand, such as signing up, logging in, creating a flock, sharing an invite link, and submitting a crowd report. Events are tied to your account number, never to your name or your email, and only signed-in people get a profile at all. Like any web request, the one that carries an event also carries your IP address to PostHog's servers."],
+    ["p", "None of this happens until you agree to it. Before you answer, and after you decline, PostHog is never started, nothing is written to your device for it, and no event is sent. If you agreed and then change your mind, declining also clears the identifier PostHog stored."],
     ["p", "The youngest person allowed on Flock is 13, so the settings are written to collect as little as they can, in code rather than in a dashboard where a toggle could widen them later:"],
     ["li", "Automatic capture of clicks and typing is switched off, so no message text, budget amount or form content reaches PostHog."],
     ["li", "Session replay is off. Nothing records your screen."],
@@ -441,12 +459,13 @@ const PAGE_BLOCKS = {
     ["li", "Moderation records. Reports filed about content and the actions taken on them stay, with your account unlinked from them, so somebody cannot erase an open report about themselves by deleting their account. The de-attribution and the delete happen together: either both worked or neither did."],
     ["li", "A ban tombstone, but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up. Nothing like it is kept for an account that was not banned."],
     ["li", "One row per finished plan, with no names, no messages and no individual amounts, as described under How long we keep it."],
+    ["li", "Push notification bookkeeping, which is a delivery ledger that records that a notification was sent, with no message text, kept for thirty days and de-attributed the same way a report is. While you have an account, a notification held for quiet hours keeps its text on our server until it is delivered or a day past its expiry, and a device's push token is dropped after 270 days of silence."],
     ["li", "Sensor readings, which never contained anything belonging to you. See section 3."],
     ["li", "Your address on the do-not-mail list, if it is on it. That list is keyed on the address itself and has no link to your account, so deleting your account does not remove it, and it has no expiry. It exists so that an address that bounced or reported us as spam is not mailed again, which is a promise to whoever holds that mailbox rather than to the account. You can ask us to take an address off it at social@flockcorp.com."],
     ["li", "Two references, emptied rather than removed. If a plan you did not create had a bill split, that split's record of who paid stops pointing at you rather than being deleted, because it belongs to the plan and the plan is somebody else's. The same is true of an invite link somebody else's flock still holds: it stops saying who made it. Neither carries anything about you once your account is gone."],
     ["li", "Backups, until they age out."],
     ["li", "Anything already learned by the crowd model. A trained model is not a database and cannot have one row removed from it. The training data itself carries no account numbers."],
-    ["p", "If you would rather have a copy of your data before you delete it, you can get one yourself in the app, under You and then Get a copy of my data. You can save it or copy it out, depending on your device. If you would rather we sent it, ask us at social@flockcorp.com. Push notification bookkeeping survives too: a delivery ledger that records that a notification was sent, with no message text, kept for thirty days and de-attributed the same way a report is. While you have an account, a notification held for quiet hours keeps its text on our server until it is delivered or a day past its expiry, and a device's push token is dropped after 270 days of silence."],
+    ["p", "If you would rather have a copy of your data before you delete it, you can get one yourself in the app, under You and then Get a copy of my data. You can save it or copy it out, depending on your device. If you would rather we sent it, ask us at social@flockcorp.com."],
     ["h2", "Your choices and rights"],
     ["li", "Access, correction, export, deletion: you can export your data yourself in the app, under You (the last tab) and then Get a copy of my data, and it asks for your password first so that somebody holding your phone cannot lift it. For access or correction, or for the four things named below that the file leaves out, email social@flockcorp.com. An export is a machine-readable copy of your account, your settings, your plans and calendar entries, the messages you sent, your votes, budgets, reactions, reviews, crowd reports, check-ins, bill-split shares, SOS records, friends, reports you filed, your trusted contacts, and your reliability score. Four things are not in that file today and we would rather say so than let you assume otherwise: the record of which crowd predictions we showed you, the list of accounts you have blocked, your registered push notification tokens, and your venue profile if you run a venue. Ask and we will send those too. The file itself also lists what it leaves out and why. You can delete your account yourself in the app (You → Delete account) or from our account deletion page. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google."],
     ["li", "Location: Flock asks before it reads your location and never reads it in the background. You can turn the permission off for Flock in your device settings at any time. The map then opens on a default area and venue search asks you where to look."],
@@ -532,7 +551,7 @@ const PAGE_BLOCKS = {
   ],
   terms: [
     ["h1", "Terms of Service & EULA"],
-    ["p", "Effective September 21, 2026"],
+    ["p", "Effective September 22, 2026"],
     ["h2", "The short version"],
     ["li", "You have to be 13 or older, and under 18 you need a parent's say-so."],
     ["li", "Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears."],
@@ -591,10 +610,10 @@ const PAGE_BLOCKS = {
     ["h3", "9.3 What you assert has to be true"],
     ["p", "You are responsible for every fact you assert through the dashboard: hours, prices, deals, events, menu details, capacity, photos, and occupancy reports. Do not post a deal you will not honour. Do not post hours that are wrong. Do not upload photos of another venue or photos you have no right to use. Do not claim a venue you do not control."],
     ["h3", "9.4 Occupancy reports"],
-    ["p", "The dashboard lets you report how busy your venue is right now, on a scale of 0 to 100. This is free on every tier and it will stay free: we will not charge for the ability to post an occupancy report, or for how prominently a truthful one is labelled."],
+    ["p", "The dashboard lets you report how busy your venue is right now, on a scale of 0 to 100. It costs nothing on every tier today, and nothing about how prominently a truthful report is labelled is for sale. If that ever changes, it changes on the terms in 9.6: at least 30 days' notice to the email on the venue account before we charge any venue anything."],
     ["li", "Your report is shown to users as coming from your venue, and never as Flock's own estimate. The wording around it is ours and is built from your venue's category, so a cafe reads as a cafe. It is not text you write."],
     ["li", "It expires by itself 90 minutes after you set it. After that, users see our estimate again. You do not have to turn it off, and you can retract it early."],
-    ["li", "Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. You cannot pay to change that, at any tier."],
+    ["li", "Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. That precedence is not something you can buy."],
     ["li", "Reports are attributable. We keep a record of who set what and when, and we keep it after a report expires or is retracted."],
     ["li", "You allow us to use your reports to correct predictions at your venue, to train the crowd model that serves every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five owners other than you have reported into the same comparison and at least three of their readings land on the figure itself."],
     ["p", "Misreporting is the one venue behaviour that can cost you the feature, or the account, without notice. Saying you are quiet to fill seats, or packed to look popular, when it is not true, corrupts the one thing users open Flock for. Repeated, material divergence between your reports and what users in the room report is grounds for suspension."],
@@ -719,7 +738,7 @@ const SITE_GRAPH = [
     '@id': 'https://www.flockcorp.com/#app',
     name: 'Flock',
     url: 'https://www.flockcorp.com/',
-    applicationCategory: 'SocialNetworkingApplication',
+    applicationCategory: 'LifestyleApplication',
     operatingSystem: 'Any (runs in a web browser)',
     browserRequirements: 'Requires JavaScript.',
     description: 'Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.',

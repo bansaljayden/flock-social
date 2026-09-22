@@ -94,6 +94,17 @@ const EXCLUDE = {
     // which is the cloaking line this file exists to hold.
     '.lp-sos-mail', 'form.lp-form', '.lp-form-status',
     'figure', 'footer.lp-footer',
+    // `.lp-demo-proof` is deliberately NOT here, and it was considered on
+    // 2026-09-22. It is the caption over LiveDemo, which IS excluded (it is
+    // stubbed to null above and its content is fetched at runtime), so the
+    // symmetrical move would be to strip its caption too. Rejected for the
+    // reason written two entries up about `.lp-appstore`: the paragraph is not
+    // illustration, it carries the corpus figures that are the whole answer to
+    // "why should these numbers be believed", and /about is the page nobody
+    // reads. Stripping it would leave the bot document asserting crowd scores
+    // with nothing behind them. The paragraph was reworded instead, so it no
+    // longer points at a map the bot document does not contain; see the long
+    // note above it in LandingPage.js.
   ],
   pp: ['.pp-skip', '.pp-back', 'nav', 'footer'],
 };

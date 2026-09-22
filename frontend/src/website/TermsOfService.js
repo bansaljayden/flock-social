@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 21, 2026';
+const EFFECTIVE_DATE = 'September 22, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO. The long note
@@ -346,16 +346,30 @@ export default function TermsOfService() {
         </p>
 
         <h3>9.4 Occupancy reports</h3>
+        {/* THIS CLAUSE USED TO PROMISE THE FEATURE WOULD BE FREE FOREVER
+            ("this is free on every tier and it will stay free"), and further
+            down the list, that no tier could ever buy its way past a user
+            report. Nothing in the codebase constrains venue pricing, these
+            Terms are enforceable against Flock rather than by it, and a
+            perpetual price promise is the one commitment a document like this
+            can never take back. Present tense states the same fact without
+            selling a future nobody has decided.
+
+            The notice period is NOT invented here. It is the one 9.6 already
+            gives for any venue charge, quoted so the two clauses cannot drift
+            into saying different things about the same event. Change one and
+            change the other. */}
         <p>
           The dashboard lets you report how busy your venue is right now, on a scale of 0 to
-          100. This is free on every tier and it will stay free: we will not charge for the
-          ability to post an occupancy report, or for how prominently a truthful one is
-          labelled.
+          100. It costs nothing on every tier today, and nothing about how prominently a
+          truthful report is labelled is for sale. If that ever changes, it changes on the
+          terms in 9.6: at least 30 days' notice to the email on the venue account before we
+          charge any venue anything.
         </p>
         <ul>
           <li>Your report is shown to users as coming from your venue, and never as Flock's own estimate. The wording around it is ours and is built from your venue's category, so a cafe reads as a cafe. It is not text you write.</li>
           <li>It expires by itself 90 minutes after you set it. After that, users see our estimate again. You do not have to turn it off, and you can retract it early.</li>
-          <li>Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. You cannot pay to change that, at any tier.</li>
+          <li>Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. That precedence is not something you can buy.</li>
           <li>Reports are attributable. We keep a record of who set what and when, and we keep it after a report expires or is retracted.</li>
           <li>You allow us to use your reports to correct predictions at your venue, to train the crowd model that serves every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five owners other than you have reported into the same comparison and at least three of their readings land on the figure itself.</li>
         </ul>
