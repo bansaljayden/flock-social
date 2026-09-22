@@ -600,7 +600,10 @@ test.describe('flock chat, with two people watching it', () => {
     // And what he must NOT end up with is any of it as elements. Read off the
     // bubble itself rather than the page, because the page legitimately holds
     // the app's own script tags and counting those proves nothing.
-    const bubble = bo.page.locator('p', { hasText: '5 < 3 and 4 > 2' }).first();
+    // .chat-row-body, not a tag. The bubble stopped being a <p> in the chat
+    // rebuild, and a selector on the old tag matched nothing, so this waited
+    // out its whole timeout on a message that had arrived correctly.
+    const bubble = bo.page.locator('.chat-row-body', { hasText: '5 < 3 and 4 > 2' }).first();
     const html = await bubble.innerHTML();
     expect(html).not.toMatch(/<\s*\/?\s*(script|b|i|img|svg)\b/i);
     // The angle brackets arrived as characters, which is the whole point.
@@ -647,9 +650,14 @@ test.describe('flock chat, with two people watching it', () => {
     await requireLive(ada, bo);
     const photo = path.join(__dirname, '..', '..', 'frontend', 'public', 'logo192.png');
 
-    // Since e6863f3 a photo message's alt names its sender ("Photo from Ada"), the
-    // screen-reader fix, so the count keys on that prefix.
-    const imagesBefore = await bo.page.locator('img[alt^="Photo from "]').count();
+    /* COUNT THE BUTTON, NOT THE IMAGE. A photo in a chat that has a viewer
+       is wrapped in a button carrying the name ("Open the photo from Ada")
+       and the img inside is given an empty alt on purpose, so a screen
+       reader announces the control once instead of the picture twice. This
+       counted the alt, which is the one thing that is silent by design, so
+       it counted nothing whether or not the photo ever arrived. */
+    const photos = (page) => page.getByRole('button', { name: /^Open the photo from / });
+    const imagesBefore = await photos(bo.page).count();
     await ada.page.locator('input[type="file"]').first().setInputFiles(photo);
 
     // The preview is the confirm step. If it never appears the picker is dead.
@@ -664,7 +672,7 @@ test.describe('flock chat, with two people watching it', () => {
     await expect(ada.page.getByRole('button', { name: 'Remove photo' })).toBeVisible({ timeout: 20_000 });
     await ada.page.getByRole('button', { name: 'Send message' }).click();
 
-    await expect(bo.page.locator('img[alt^="Photo from "]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
+    await expect(photos(bo.page)).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
     await expect(ada.page.getByText(/^didn't send$/i)).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
@@ -798,10 +806,22 @@ test.describe('flock chat, with two people watching it', () => {
     await openFlockChat(ada.page, flockName);
     await composer(ada.page).fill(draft);
 
-    // Then leaves the way the screen itself offers, by going to put a place on
-    // the table, rather than by the back arrow. The back arrow is the only
-    // exit that clears the composer, and nothing on the screen says so.
-    await ada.page.getByRole('button', { name: /add a venue/i }).first().click();
+    /* OUT BY THE ONLY DOOR THERE IS. This used to leave "the way the screen
+       itself offers", by a control that put a place on the table, so the
+       composer would still be holding the draft on the way out. Neither
+       control does that any more: "Vote on a venue" in the plus sheet and
+       "Suggest a place" in an empty room both open a panel OVER the chat, and
+       a chat carries no main nav, so Back is the only exit. The rule is
+       checked in both directions below instead, which is stronger than the
+       single direction this had. */
+    await ada.page.getByRole('button', { name: 'Back' }).first().click();
+    await expect(ada.page.getByRole('button', { name: /^Messages(,|$)/ })).toBeVisible({ timeout: 20_000 });
+
+    // HALF ONE: the flock keeps what was being written to it. Without this,
+    // the check below passes on an app that simply throws every draft away.
+    await openFlockChat(ada.page, flockName);
+    await expect(composer(ada.page)).toHaveValue(draft);
+    await ada.page.getByRole('button', { name: 'Back' }).first().click();
     await expect(ada.page.getByRole('button', { name: /^Messages(,|$)/ })).toBeVisible({ timeout: 20_000 });
 
     // And opens a one-to-one conversation with one of the people in it.
@@ -809,15 +829,16 @@ test.describe('flock chat, with two people watching it', () => {
     const box = composer(ada.page);
     const send = ada.page.getByRole('button', { name: 'Send message' });
 
-    // This box is empty. There is nothing here to send to this person, and a
-    // Send button that is armed over an empty box is an invitation to send
-    // something you cannot see.
+    // HALF TWO: and the private thread has never heard of it. This box is
+    // empty, and over an empty box there is no Send button to be armed: it is
+    // absent rather than disabled, which is the rule the spec three tests
+    // above this one states outright. Asking whether it was disabled, and
+    // then force-clicking it, were both waits on a control that is not there.
     await expect(box).toHaveValue('');
-    expect.soft(await send.isDisabled()).toBe(true);
+    await expect(send).toHaveCount(0);
 
-    // Whatever tapping it does, the sentence Ada was writing to a group of
-    // people must not turn up in a private thread with one of them.
-    await send.click({ force: true });
+    // And the sentence Ada was writing to a group of people is nowhere in a
+    // private thread with one of them, however long the socket is given.
     await ada.page.waitForTimeout(4_000);
     await expect(ada.page.getByText(draft)).toHaveCount(0);
 
