@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 21, 2026';
+const EFFECTIVE_DATE = 'September 22, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO.
@@ -428,7 +428,15 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li><strong>Performing our agreement with you:</strong> your account, your flocks, chat and direct messages, votes, RSVPs, budgets, bill splits, the calendar, venue search, crowd predictions, the venue dashboard, and the transactional email that keeps an account working. Without these there is no product to deliver.</li>
-                <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and the anonymous page-view count described in <a href="#analytics">Analytics, error reports, and email</a>, which is off until you agree to it and changes nothing if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
+                {/* "The anonymous page-view count" understated this for as long
+                    as it stood. One answer gates ALL of PostHog, not the page
+                    views alone: src/index.js refuses to call posthog.init
+                    without it, and services/api.js returns before every
+                    hand-written capture, which is the set that carries your
+                    account number. Naming the smallest thing the consent covers
+                    is the same failure as naming a feature that does not ship,
+                    pointed the other way. */}
+                <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and every analytics event described in <a href="#analytics">Analytics, error reports, and email</a>, the page views and the hand-written events tied to your account number alike, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
                 <li><strong>Our legitimate interests:</strong> keeping Flock safe and working. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, and improving the crowd model from reports people choose to file. We have weighed these against your interests, which is why the analytics are configured the way <a href="#analytics">Analytics, error reports, and email</a> describes and why the model's training data carries no account identifiers.</li>
                 <li><strong>Legal obligation:</strong> responding to lawful requests, and reporting apparent child sexual abuse material to the National Center for Missing and Exploited Children or the relevant authority.</li>
                 <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts your location because you are telling us something is wrong.</li>
@@ -643,6 +651,15 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>BestTime</strong> is where the crowd model's training corpus comes from. Collection stopped in May 2026 and started again on 1 September 2026. It runs as a scheduled job that reads public busyness figures for venues, it sends nothing about you, and no part of the running product calls it.</li>
                 <li><strong>SeatGeek</strong> is a second event source used only by offline training scripts. No server code reads it.</li>
+                {/* The paragraph above this list calls it "the whole list, taken
+                    from the dependency inventory", so an entry in that inventory
+                    with no entry here makes the sentence false. TheSportsDB is
+                    id 'sportsdb' in backend/services/costModel.js DEPENDENCIES,
+                    read by backend/scripts/ml/collectSportsSchedules.js and by
+                    nothing the server runs, which is exactly SeatGeek's shape,
+                    so it sits beside SeatGeek. Check this list against that
+                    inventory when a dependency is added. */}
+                <li><strong>TheSportsDB</strong> supplies the game schedules those same offline scripts read. No server code reads it either.</li>
                 <li><strong>Venmo, Cash App and Zelle</strong> are opened as links from your phone. There is no integration and no account. Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock.</li>
                 <li><strong>Codemagic</strong> builds the iOS app, <strong>GitHub Actions</strong> scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data.</li>
               </ul>
@@ -682,6 +699,20 @@ export default function PrivacyPolicy() {
                 account number, never to your name or your email, and only signed-in people get
                 a profile at all. Like any web request, the one that carries an event also
                 carries your IP address to PostHog's servers.
+              </p>
+              {/* The section this page's consent clause points AT never said the
+                  word consent, so a reader who followed the link to check the
+                  claim found no mention of it. The gate is real and it is in two
+                  places: src/index.js will not call posthog.init without a yes,
+                  and services/api.js returns before every capture without one,
+                  read live so a yes mid-session starts working on the next
+                  event. Not "we ask before we use it" in the abstract: the SDK
+                  is not even downloaded. */}
+              <p>
+                None of this happens until you agree to it. Before you answer, and after you
+                decline, PostHog is never started, nothing is written to your device for it,
+                and no event is sent. If you agreed and then change your mind, declining also
+                clears the identifier PostHog stored.
               </p>
               <p>
                 The youngest person allowed on Flock is 13, so the settings are written to
@@ -810,6 +841,14 @@ export default function PrivacyPolicy() {
                 <li><strong>Moderation records.</strong> Reports filed about content and the actions taken on them stay, with your account unlinked from them, so somebody cannot erase an open report about themselves by deleting their account. The de-attribution and the delete happen together: either both worked or neither did.</li>
                 <li><strong>A ban tombstone,</strong> but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up. Nothing like it is kept for an account that was not banned.</li>
                 <li><strong>One row per finished plan,</strong> with no names, no messages and no individual amounts, as described under <a href="#how-long">How long we keep it</a>.</li>
+                {/* This lived welded onto the end of the export paragraph below,
+                    which made a retention disclosure read as part of "how to get
+                    a copy of your data". It is a survival, so it belongs in the
+                    list of survivals. The figures are the ones in
+                    backend/services/pushHelper.js: LEDGER_RETENTION_DAYS 30, the
+                    push_outbox sweep at one day past expires_at, and
+                    TOKEN_MAX_IDLE_DAYS 270. Change one of those and change this. */}
+                <li><strong>Push notification bookkeeping,</strong> which is a delivery ledger that records that a notification was sent, with no message text, kept for thirty days and de-attributed the same way a report is. While you have an account, a notification held for quiet hours keeps its text on our server until it is delivered or a day past its expiry, and a device's push token is dropped after 270 days of silence.</li>
                 <li><strong>Sensor readings,</strong> which never contained anything belonging to you. See section 3.</li>
                 <li><strong>Your address on the do-not-mail list,</strong> if it is on it. That list is keyed on the address itself and has no link to your account, so deleting your account does not remove it, and it has no expiry. It exists so that an address that bounced or reported us as spam is not mailed again, which is a promise to whoever holds that mailbox rather than to the account. You can ask us to take an address off it at {mail}.</li>
                 <li><strong>Two references, emptied rather than removed.</strong> If a plan you did not create had a bill split, that split's record of who paid stops pointing at you rather than being deleted, because it belongs to the plan and the plan is somebody else's. The same is true of an invite link somebody else's flock still holds: it stops saying who made it. Neither carries anything about you once your account is gone.</li>
@@ -819,7 +858,7 @@ export default function PrivacyPolicy() {
               <p>
                 If you would rather have a copy of your data before you delete it, you can get one
                 yourself in the app, under You and then Get a copy of my data. You can save it or copy it out, depending on your device. If you would rather we sent it, ask us at {mail}.
-               Push notification bookkeeping survives too: a delivery ledger that records that a notification was sent, with no message text, kept for thirty days and de-attributed the same way a report is. While you have an account, a notification held for quiet hours keeps its text on our server until it is delivered or a day past its expiry, and a device's push token is dropped after 270 days of silence.</p>
+              </p>
             </section>
 
             <section id="your-choices">

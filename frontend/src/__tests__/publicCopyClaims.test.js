@@ -7,8 +7,23 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('the landing page does not claim check-ins feed the crowd number', () => {
   const s = read('website/LandingPage.js');
-  expect(s).toMatch(/Crowd reports from people at the venue fold in live/);
+  expect(s).toMatch(/Three reports from people at a venue move its score for that night and hour/);
   expect(s).not.toMatch(/Check-ins from people who are actually there fold in live/);
+  // "fold in live" went on 2026-09-22. Reports do move the published score and
+  // they never move it in real time: crowdEngine.js blends nothing at all until
+  // MIN_CALIBRATION_REPORTERS (3) distinct verified reporters land in the same
+  // weekly day-and-hour bucket inside a 28-day window, one vote per account.
+  // Below that floor the model's own answer is what ships.
+  //
+  // The negative is pinned on the CRAWLER MIRROR, not on LandingPage.js, and
+  // that is deliberate. The mirror holds copy and nothing else, while the page
+  // quotes the retired wording inside the comment that records why it went, so
+  // a source-level negative there would be red for the note explaining itself.
+  // The page is still covered: its rendered text must deep-equal these blocks
+  // under aiCrawlerSurface.test.js, so the phrase cannot come back on one
+  // surface without coming back on both. Whitespace is flattened first, because
+  // a line break is not a different claim.
+  expect(read('../api/marketing-page.js').replace(/\s+/g, ' ')).not.toMatch(/fold in live/);
 });
 
 test('a permanent ban comes with a published way to contest it, and it is tappable', () => {
