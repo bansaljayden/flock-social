@@ -336,8 +336,14 @@ export default function PrivacyPolicy() {
               <p>
                 Budget submissions are stored on our servers but the system is designed so
                 individual amounts are <strong>never</strong> returned to other flock
-                members. Other members only see aggregated values (group ceiling, count of
-                submissions, ready state). This is a core product guarantee enforced in code.
+                members. Until the budget settles, the only things other members see are
+                counts: how many have answered, how many are in the flock, and whether it is
+                ready. No number at all. The budget settles when the last member has answered
+                and at least three have shared an amount; only then is a single group figure
+                published, and what is published is a rounded-down band rather than anyone's
+                actual figure. It is published once and never moves, because a ceiling is a
+                minimum and a number that moved when the fourth person answered would name
+                whoever has the least. This is a core product guarantee enforced in code.
               </p>
             </section>
 
