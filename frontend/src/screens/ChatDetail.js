@@ -3560,7 +3560,29 @@ export default function ChatDetail({
                     <div style={{ marginBottom: '14px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Who paid?</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id)).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
+                        {/* ACCEPTED MEMBERS ONLY, and the roster does not
+                            always arrive that way. Two loaders write
+                            flock.members: refreshFlockRoster pre-filters to
+                            accepted (its own comment names this picker as the
+                            reason), and the flock-detail loader does not -- it
+                            keeps invited and declined rows so the plan screen
+                            can show a pending section. Both write the same
+                            array on the same object, so which shape is live
+                            depends on which ran last, and the detail loader's
+                            mixed one survives whenever a roster refresh fails,
+                            because its catch deliberately keeps what is on
+                            screen.
+
+                            So this offered people who had declined the plan as
+                            "Who paid?". The server refuses them with 400
+                            "Payer must be a member of the flock", which is the
+                            gate that counts, but a name on a button that
+                            cannot be chosen is a control that cannot succeed.
+
+                            A row with no status at all is kept: that is the
+                            pre-filtered shape, where every row is already
+                            accepted. */}
+                        {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id) && (!m.status || m.status === 'accepted')).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
                           <button key={m.id || m.name} className="hit44 glass-btn glass-secondary" aria-pressed={(billPaidBy || authUser?.id) === m.id} onClick={() => setBillPaidBy(m.id || authUser?.id)}
                             style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {m.name}
