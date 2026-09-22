@@ -611,9 +611,11 @@
   background: var(--bg-card-solid);
   border: 1px solid var(--border-default);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
-  /* The one scale the spec allows, and it is over a blur. */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  /* The one scale the spec allows. It used to run over an 8px
+     backdrop-filter, which never rendered: the face above is --bg-card-solid,
+     opaque in both themes, so the blur was reading the chat behind the menu
+     and then throwing every pixel of it away. Removed, since the animation
+     made the compositor redo that discarded work on each of its frames. */
   transform-origin: top right;
   animation: cs-menu-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }

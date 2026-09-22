@@ -257,7 +257,16 @@
    neutral scrim rather than the crowd colours, because it sits on an arbitrary
    photograph: only the ARC takes the colour, since a green or red plate on a
    photo of a green or red room reads as decoration while a ring reads as a
-   gauge. */
+   gauge.
+
+   The scrim is flat and it used to be a lighter scrim over a 6px
+   backdrop-filter. One of these rides every venue card in the thread, so a
+   conversation with a dozen shared places handed WebKit a dozen separate
+   compositing layers to re-read as the stream scrolled and as the keyboard
+   came up. It cannot be hoisted to a parent, since each dial sits over its own
+   photo, so the density moved into the colour instead: 0.72 flat suppresses an
+   arbitrary photograph at least as well as 0.62 over a blur did, and the white
+   numeral gains contrast rather than losing it. */
 .chat-venue-dial {
   position: absolute;
   left: 5px;
@@ -268,9 +277,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.62);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.72);
 }
 
 .chat-venue-dial svg {

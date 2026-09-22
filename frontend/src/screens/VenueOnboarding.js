@@ -166,7 +166,11 @@ export default function VenueOnboarding({
             autoComplete="off" data-lpignore="true" data-form-type="other"
             style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
             {venueSearchResults.length > 0 && (
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)', zIndex: 10 }}>
+              /* The 95% face carries this on its own. A blur used to sit under
+                 it, reading a flat navy onboarding background and returning the
+                 same flat navy, for the cost of a compositing layer that
+                 re-rasterised on every keystroke in the field above it. */
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', zIndex: 10 }}>
                 {venueSearchResults.map((v, i) => (
                   <button className="hit44" key={v.place_id || i} onClick={() => {
                     const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';

@@ -167,9 +167,9 @@ const VenueDetailSheet = ({
         // That class sets background, border and color with !important, so
         // leaving it on paints a solid navy slab straight over every outlined
         // value in the style object and the change looks like it silently did
-        // not apply. Plain glass-btn keeps the press-scale and the blur, which
-        // carry no color of their own, and .hit44 keeps the 44pt target in both
-        // states. The two paints also keep the same 2px border box rather than
+        // not apply. Plain glass-btn keeps the press-scale, which carries no
+        // color of its own, and .hit44 keeps the 44pt target in both states.
+        // The two paints also keep the same 2px border box rather than
         // swapping one side to `border: none`, so promoting or demoting never
         // moves the row by four pixels.
         const footerReturnsToChat = !pickingVenueForDm && !!venueDetailReturnTo;
