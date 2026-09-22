@@ -3355,14 +3355,26 @@ export default function ChatDetail({
             : ctx?.includes('concert') ? [30, 50, 75, 100]
             : [20, 40, 60, 80];
           const userSubmitted = budgetStatus?.userSubmitted;
-          const showBillCreate = isConfirmedOrComplete || billSplit;
 
           return (
             <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => { setShowChatPool(false); setShowCreateBill(false); }} label="Cash pool" />
               <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showBillCreate && !hasBudget ? 'Split the Bill' : hasBudget ? 'Group Budget' : 'Split the Bill'}</h2>
+                  {/* THE HEADING NAMED THE WRONG HALF OF THE SHEET. A local
+                      called showBillCreate held "the plan has got far enough
+                      that a bill is possible", one letter away from
+                      showCreateBill, the state that says the creation form is
+                      open right now. The heading tested the first, and against
+                      a flock carrying a budget its two branches collapsed to
+                      the same answer, so the sheet kept announcing the budget
+                      while the form underneath it asked who paid, what the
+                      total came to and whether you were tipping. That local had
+                      no other reader and is gone. Whatever the sheet is showing
+                      is what it should be called, so an open form wins the
+                      title and the budget only takes it when no form is over
+                      it. */}
+                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the Bill' : 'Group Budget'}</h2>
                   <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
 
