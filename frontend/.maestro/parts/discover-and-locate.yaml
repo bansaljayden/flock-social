@@ -22,9 +22,10 @@
 # 2. IT IS BEAT 5 OF THE NARRATION. "The crowd card" is the model's whole
 #    visible surface, and it lives on this screen.
 #
-# The dialog itself is no longer part of this: the launch block grants location
-# up front (see the permissions note in demo-person.yaml), so the app never
-# asks. What this part still does is open the tab and let the venues land.
+# The launch block grants location up front (see the permissions note in
+# demo-person.yaml), which is why this part does not wait on the dialog. It is
+# NOT true that the app never asks: run 66 caught the iOS location alert on
+# screen mid-take and it ended the run. There is a guarded answer below.
 appId: com.flockcorp.flock
 ---
 # THE BANNER FILMS, ON PURPOSE. Builds 46 to 48 opened Discover on "Could not
@@ -38,9 +39,26 @@ appId: com.flockcorp.flock
 # nor the map, so the honest state is what the take shows: the fallback city,
 # with every venue, number and card real.
 - tapOn: "Discover"                             # App.js tab table, label: 'Discover'
-# NO WAIT FOR THE PERMISSION DIALOG. Location is granted in the launch block
-# (`location: inuse`), so the dialog never appears, and a 20-second wait for it
-# was 20 seconds of Maestro polling the accessibility tree for nothing.
+# THE DIALOG DOES APPEAR, SOMETIMES, AND SAYING IT NEVER DOES COST THREE RUNS.
+# This part used to state that the launch block's `location: inuse` means the
+# app never asks, and the line above it in this file's header still said so.
+# Run 66's failure dump prints every string that was on screen when the take
+# died, and it reads "Allow Once / Allow While Using App / Don't Allow" -- the
+# iOS location alert, up, owning the screen, with nothing of ours in the
+# hierarchy underneath it. That is why the next required tap could not find the
+# tab bar and read as a covered screen rather than a system alert.
+#
+# Still no WAIT for it: a blocking wait would be twenty seconds of polling on
+# every run that does not get one, which is most of them. A guarded tap costs
+# nothing when the alert is absent and saves the take when it is not.
+- runFlow:
+    when:
+      visible: "Allow While Using App|Allow Once|Don.t Allow"
+    commands:
+      - tapOn:
+          text: "Allow While Using App|Allow Once"
+          optional: true
+      - waitForAnimationToEnd
 #
 # AND NO WAIT FOR A CROWD LABEL. The 30-second wait that used to sit here was
 # for "busy", "Quiet" or "Packed" on the map, and the map pins carry no such

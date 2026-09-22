@@ -38,6 +38,36 @@ appId: com.flockcorp.flock
 # of them and films nothing extra. The order is least invasive first: the
 # sheet's own Close, then the results list's own Map, then a tap on the map
 # itself, which dismisses a card by tapping the backdrop behind it.
+# IT IS A SYSTEM ALERT, AND RUN 66 PRINTED IT. The failure dump lists every
+# string that was on screen when Nest could not be found, and it reads:
+#
+#     Allow Once / Allow While Using App / Don't Allow
+#
+# That is the iOS location permission alert. It belongs to the system, it owns
+# the whole screen, and nothing of ours is in the hierarchy underneath it --
+# which is exactly why Nest was absent rather than covered, and why the Close,
+# Map and Back taps below all did nothing: none of them is a button on that
+# alert. demo-venue's own failure is the same alert still up after its relaunch.
+#
+# The flow answers this alert at LAUNCH (parts/login.yaml does, and so does the
+# top of this take) and never again. iOS asks a second time -- a new launch, or
+# an "Allow Once" grant that has lapsed -- and the second one landed here.
+#
+# So it is answered first, before anything else, because while it is up no tap
+# of ours can reach the app at all. "Allow While Using App" is the grant this
+# product asks for and the one every shot after Discover needs a coordinate for.
+- runFlow:
+    when:
+      notVisible: "Nest"
+    commands:
+      - tapOn:
+          text: "Allow While Using App|Allow Once"
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Allow"
+          optional: true
+      - waitForAnimationToEnd
 - runFlow:
     when:
       notVisible: "Nest"
