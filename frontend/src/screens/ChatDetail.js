@@ -445,6 +445,11 @@ const POSITION_FRESH_MS = 10 * 60 * 1000;
    enough that a burst of typing does not rebuild the thread per character. */
 const POSITION_CLOCK_MS = 30 * 1000;
 
+/* How long "Start the budget over" stays armed after the first tap. Long
+   enough to read the changed label and mean it, short enough that the armed
+   state cannot still be sitting there when the screen is next looked at. */
+const BUDGET_RESET_ARM_MS = 6000;
+
 /* The reconfirm deadline as a clock time in the reader's zone ("9:00 PM").
    The server sends ISO. The window opens a few hours before the plan, so
    the day is understood and printing it would only push the strip's one
@@ -1168,6 +1173,23 @@ export default function ChatDetail({
        twice. State rather than a ref because the disabled attribute has to
        repaint, and above the guard for the reason every hook here is. */
     const [reconfirmPending, setReconfirmPending] = React.useState(false);
+
+    /* ARMING FOR "Start the budget over". That link is the only irreversible
+       one-tap action left on a screen any member's creator can reach: it
+       deletes every private amount in the flock and unpublishes the number.
+       The sentence under it has always said so, which is why there was no
+       modal, but a sentence is not a guard, and the thing being destroyed is
+       data other people entered and cannot re-enter for each other.
+       Arm-then-confirm rather than a dialog, because that is the pattern the
+       safety sheet already uses for its own irreversible tap and because a
+       modal over a settled budget is heavier than the action deserves. The
+       arm times out on its own, so a stray tap left alone comes to nothing. */
+    const [budgetResetArmed, setBudgetResetArmed] = React.useState(false);
+    React.useEffect(() => {
+      if (!budgetResetArmed) return undefined;
+      const id = setTimeout(() => setBudgetResetArmed(false), BUDGET_RESET_ARM_MS);
+      return () => clearTimeout(id);
+    }, [budgetResetArmed]);
 
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
@@ -3435,8 +3457,38 @@ export default function ChatDetail({
                         the number, and it says what it costs before the tap. */}
                     {isCreator && budgetStatus?.budgetLocked && !showCreateBill && (
                       <div style={{ marginBottom: '12px' }}>
-                        <button className="hit44" onClick={async () => { try { await resetBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: false, ceiling: null, submissionCount: 0, isReady: false, skipCount: null, userSubmitted: false, userAmount: null, userSkipped: false })); showToast('Budget cleared. Everyone can answer again.'); } catch (err) { showToast(err.message, 'error'); } }} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}>Start the budget over</button>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.5 }}>Clears every answer, the group number with them, and asks everyone again.</p>
+                        <button
+                          className="hit44"
+                          onClick={async () => {
+                            // First tap arms, second tap clears. The label and
+                            // the sentence below both change, so the state is
+                            // readable without a dialog.
+                            if (!budgetResetArmed) { setBudgetResetArmed(true); return; }
+                            setBudgetResetArmed(false);
+                            try {
+                              await resetBudget(selectedFlockId);
+                              setBudgetStatus(prev => ({ ...prev, budgetLocked: false, ceiling: null, submissionCount: 0, isReady: false, skipCount: null, userSubmitted: false, userAmount: null, userSkipped: false }));
+                              showToast('Budget cleared. Everyone can answer again.');
+                            } catch (err) { showToast(err.message, 'error'); }
+                          }}
+                          style={{ background: 'none', border: 'none', padding: 0, color: budgetResetArmed ? 'var(--accent-red-text)' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}
+                        >
+                          {budgetResetArmed ? 'Tap again to clear every answer' : 'Start the budget over'}
+                        </button>
+                        {budgetResetArmed && (
+                          <button
+                            className="hit44"
+                            onClick={() => setBudgetResetArmed(false)}
+                            style={{ background: 'none', border: 'none', padding: '0 0 0 14px', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
+                          >
+                            Keep it
+                          </button>
+                        )}
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                          {budgetResetArmed
+                            ? 'This cannot be undone. Nobody else can re-enter their amount for them.'
+                            : 'Clears every answer, the group number with them, and asks everyone again.'}
+                        </p>
                       </div>
                     )}
                     {isConfirmedOrComplete && (

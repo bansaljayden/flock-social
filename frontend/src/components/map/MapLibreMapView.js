@@ -1335,10 +1335,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     };
 
     window.__flockGoToMyLocation = () => {
-      if (!map) return;
+      // READ THE REF AT CLICK TIME, not the `map` this effect closed over.
+      // The map is built in a different, async effect (behind `await
+      // import('maplibre-gl')`), so on first mount this one can run first and
+      // capture null. A ref assignment does not re-run an effect, so the only
+      // thing that heals it is one of this effect's own dependencies changing
+      // identity afterwards -- normally `venues` arriving, which is why the
+      // button usually works. Let the venue list settle before the maplibre
+      // chunk resolves and nothing else changes, and the button is inert for
+      // the rest of the session with no way to tell from the outside. Zoom in
+      // and Zoom out, twenty lines below, already read the ref at click time;
+      // this was the one control that did not.
+      const liveMap = mapInstanceRef.current;
+      if (!liveMap) return;
       if (userMarkerRef.current) {
         const ll = userMarkerRef.current.getLngLat();
-        mapEase(map, { center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
+        mapEase(liveMap, { center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
         // Pulse the dot — box-shadow on the inner div only (transform is owned by MapLibre on the outer)
         if (userElRef.current) {
           userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
@@ -1348,8 +1360,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         }
         return;
       }
-      const center = map.getCenter();
-      if (center) mapEase(map, { center: [center.lng, center.lat], zoom: 15 });
+      const center = liveMap.getCenter();
+      if (center) mapEase(liveMap, { center: [center.lng, center.lat], zoom: 15 });
     };
 
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };

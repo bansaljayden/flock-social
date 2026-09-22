@@ -914,7 +914,7 @@ const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
 const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPaymentFallback }) => {
   const close = () => { rearmPaymentSheets(); setShowPaymentPicker(false); setPaymentFallback(null); };
   return (
-    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={close}>
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
       <DialogBehavior onClose={close} label="Payment options did not load" />
       <div role="alert" onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h3>
@@ -3634,15 +3634,36 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
     committedRef.current = initialValue;
     setVal(transform ? transform(initialValue) : initialValue);
   }, [initialValue, transform]);
+  // A TAP OUTRUNS THE DEBOUNCE, and in WKWebView a tap on a button does not
+  // blur the field it was typed in, so nothing else would publish the last
+  // keystroke first. A handler that reads the parent's value on that tap (Add
+  // by code, Look up a number, Save this profile) would read the value from
+  // one keystroke ago and send it. pointerdown is dispatched before click, so
+  // the pending value is published there instead and the parent has
+  // re-rendered with it by the time the tap becomes a click. The listener is
+  // only attached while a commit is actually armed, and it publishes exactly
+  // what the timer would have published a moment later.
+  const armedRef = React.useRef(null);
+  const disarm = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    if (armedRef.current) { document.removeEventListener('pointerdown', armedRef.current, true); armedRef.current = null; }
+  };
+  // Same rule as the timer above: a field that is gone publishes nothing.
+  React.useEffect(() => () => {
+    if (armedRef.current) document.removeEventListener('pointerdown', armedRef.current, true);
+  }, []);
   const handleChange = (e) => {
     const raw = e.target.value;
     const next = transform ? transform(raw) : raw;
     setVal(next);
-    if (timerRef.current) clearTimeout(timerRef.current);
+    disarm();
     // committedRef is set to the value we are about to publish, BEFORE onCommit
     // fires the parent update, so the initialValue echo it produces is
     // recognised as our own and skipped by the effect above.
-    timerRef.current = setTimeout(() => { committedRef.current = next; onCommit(next); }, debounceMs);
+    const publish = () => { disarm(); committedRef.current = next; onCommit(next); };
+    armedRef.current = publish;
+    timerRef.current = setTimeout(publish, debounceMs);
+    document.addEventListener('pointerdown', publish, true);
   };
   if (as === 'textarea') {
     return <textarea {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
@@ -5027,8 +5048,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // One number, typed. No permission, no plugin, no address book, and metered
   // on the server as the friend probe rather than as a contact sync.
-  const handleLookupByNumber = useCallback(async () => {
-    const value = phoneLookupInput.trim();
+  //
+  // typed is the number as the box itself sees it, which is what the Return
+  // key hands over. The box holds the characters while they are being typed
+  // and publishes them here on a pause, so a Return pressed inside that pause
+  // would otherwise look up the number one digit short. A tap on Look up has
+  // no such gap: the box publishes on pointerdown, before the click.
+  const handleLookupByNumber = useCallback(async (typed) => {
+    const value = (typeof typed === 'string' ? typed : phoneLookupInput).trim();
     if (!value) return;
     setPhoneLookupLoading(true);
     setPhoneLookupError('');
@@ -10885,7 +10912,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Crop flow state
   const [cropImageSrc, setCropImageSrc] = useState(null); // raw image data URL for cropping
   const [cropZoom, setCropZoom] = useState(1);
-  const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 });
+  // WHERE THE DRAGGED PICTURE SITS, HELD IN A REF AND NOT IN STATE. This was
+  // state, set on every pointermove, and every one of those set a value at the
+  // top of FlockAppInner: one finger dragging a photo a few hundred pixels
+  // re-rendered the entire app a hundred times, and the picture it was
+  // dragging lagged the finger. The only two readers are the transform on the
+  // image and the maths in confirmCrop, and neither needs a render to be
+  // correct, so the drag writes the transform straight onto the element and
+  // confirmCrop reads the same ref. Renders that DO happen mid-drag (a toast,
+  // a socket event) paint the ref's value, so the picture never jumps back.
+  const cropOffsetRef = useRef({ x: 0, y: 0 });
+  // The two Edit Photo buttons reopen the cropper on a picture that is already
+  // saved and centre it as they go, so the write has to stay something they can
+  // be handed. It sets the ref above and asks for no render of its own: the
+  // render they want is the one setCropImageSrc beside it already causes, and
+  // that render reads this value.
+  const setCropOffset = useCallback((next) => { cropOffsetRef.current = next; }, []);
   const cropDragRef = useRef(null);
   const cropImgRef = useRef(null);
 
@@ -10907,7 +10949,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     reader.onload = () => {
       setCropImageSrc(reader.result);
       setCropZoom(1);
-      setCropOffset({ x: 0, y: 0 });
+      // A new picture opens centred, the way a new zoom does.
+      cropOffsetRef.current = { x: 0, y: 0 };
       setShowPicModal(false);
     };
     reader.onerror = () => {
@@ -10942,6 +10985,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // The visible circle is centered in the container; compute source coords
     const visibleCenterX = containerSize / 2;
     const visibleCenterY = containerSize / 2;
+    // The ref, not state: it is what the last pointermove wrote and what the
+    // picture on screen is showing.
+    const cropOffset = cropOffsetRef.current;
     const imgDrawX = (containerSize - drawW) / 2 + cropOffset.x;
     const imgDrawY = (containerSize - drawH) / 2 + cropOffset.y;
     // Source pixels
@@ -10970,7 +11016,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast(err?.message || "That photo didn't upload. Try again.", 'error');
       }
     }, 'image/jpeg', 0.9);
-  }, [cropImageSrc, cropZoom, cropOffset, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cropImageSrc, cropZoom, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other button in this same sheet, confirmCrop above, has had the honest
   // contract for weeks: the toast comes after the await and a refusal says so.
@@ -11954,7 +12000,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       sending={sosAlertSending}
       onAlertContacts={handleEmergencyAlert}
       onShareLocation={handleShareLocationWithContacts}
-      onAddContacts={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }}
+      onAddContacts={() => {
+        /* THE YOU TAB IS A TAB, NOT A SCREEN. This set currentScreen to
+           'profile', which the screen switch matches nowhere: it tests currentScreen
+           against nfcCheckin, addFriends, create, pastFlocks, detail,
+           chatDetail, dmDetail, venueDashboard and adminRevenue, then falls
+           through to currentTab. So the sheet closed and nothing moved, and on
+           Discover it was worse than nothing: the explore case returns null and
+           the persistent map is gated on currentScreen === 'main', so the
+           content area went blank under the tab bar.
+
+           This is the one control offered when somebody has no trusted contacts
+           at all, on the safety surface, so it is reachable by every new
+           account. The working idiom is the push-intent handler's friends
+           branch: set the TAB and put the screen back to 'main'. */
+        setShowSOS(false);
+        setProfileScreen('safety');
+        setCurrentTab('profile');
+        setCurrentScreen('main');
+        loadTrustedContacts();
+      }}
       alertLive={sosAlertLive}
       standingDown={sosStandingDown}
       onStandDown={handleStandDown}
@@ -12015,13 +12080,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <div
         style={{ width: '280px', height: '280px', borderRadius: '50%', overflow: 'hidden', position: 'relative', cursor: 'grab', border: '3px solid rgba(255,255,255,0.3)', touchAction: 'none' }}
         onPointerDown={(e) => {
-          cropDragRef.current = { startX: e.clientX - cropOffset.x, startY: e.clientY - cropOffset.y };
+          cropDragRef.current = { startX: e.clientX - cropOffsetRef.current.x, startY: e.clientY - cropOffsetRef.current.y };
           try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* synthetic/stale pointer ids */ }
           e.currentTarget.style.cursor = 'grabbing';
         }}
         onPointerMove={(e) => {
           if (!cropDragRef.current) return;
-          setCropOffset({ x: e.clientX - cropDragRef.current.startX, y: e.clientY - cropDragRef.current.startY });
+          // The move writes the ref and the element, and asks for no render.
+          // The string built here is the same one the style below builds, so
+          // an unrelated render during the drag repaints what is already on
+          // screen rather than the position the drag started from.
+          cropOffsetRef.current = { x: e.clientX - cropDragRef.current.startX, y: e.clientY - cropDragRef.current.startY };
+          const img = cropImgRef.current;
+          if (img) img.style.transform = `translate(calc(-50% + ${cropOffsetRef.current.x}px), calc(-50% + ${cropOffsetRef.current.y}px)) scale(${cropZoom})`;
         }}
         onPointerUp={(e) => { cropDragRef.current = null; e.currentTarget.style.cursor = 'grab'; }}
         onWheel={(e) => { e.preventDefault(); setCropZoom(z => Math.max(0.5, Math.min(4, z + (e.deltaY > 0 ? -0.1 : 0.1)))); }}
@@ -12034,7 +12105,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           style={{
             position: 'absolute',
             top: '50%', left: '50%',
-            transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px)) scale(${cropZoom})`,
+            transform: `translate(calc(-50% + ${cropOffsetRef.current.x}px), calc(-50% + ${cropOffsetRef.current.y}px)) scale(${cropZoom})`,
             maxWidth: 'none', maxHeight: 'none',
             width: '100%', height: 'auto',
             objectFit: 'contain',
@@ -15003,6 +15074,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const venueOnboardingProps = {
         onUserPatch,
         setShowModeSelection,
+        SearchInputLocal,
         VENUE_MAX_ANCHORS,
         parseGoogleHours,
         renderVenueChips,
@@ -16646,7 +16718,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       {/* Camera Viewfinder */}
       {showCameraViewfinder && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000', zIndex: 9999, display: 'flex', flexDirection: 'column', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }}>
           {/* Full-screen fixed overlay: the close button would land under the
               Dynamic Island and the shutter under the home indicator without
               these insets (SAFE-AREA CONTRACT in index.css). */}

@@ -352,7 +352,20 @@ export default function BirdiePanel({
                   {msg.navigate && (
                     <button className="hit44" onClick={() => {
                       const nav = msg.navigate;
-                      if (nav.screen) setCurrentScreen(nav.screen);
+                      // 'profile' is the SAME CLASS OF DRIFT as the 'chats'
+                      // clamp below, and the server allowlist still admits it
+                      // (routes/ai.js pick(toolInput.screen, [...'profile'])).
+                      // The You tab is a TAB; there is no 'profile' screen, so
+                      // setting it drops the app on a screen renderScreen does
+                      // not match, and on Discover that paints a blank content
+                      // area because the map is gated on currentScreen 'main'.
+                      // Translate it to the tab it means rather than trusting
+                      // the model to have sent `tab` as well, which its own
+                      // schema says is optional.
+                      if (nav.screen === 'profile') {
+                        setCurrentTab('profile');
+                        setCurrentScreen('main');
+                      } else if (nav.screen) setCurrentScreen(nav.screen);
                       else setCurrentScreen('main');
                       // 'chats' was the tab id Birdie's tool contract taught
                       // and no such tab exists (the real id is 'chat'), so

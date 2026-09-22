@@ -39,7 +39,10 @@ test('events without location do not promise a search that does nothing', () => 
   // back in either the screen that draws the drawer or the file it left.
   expect(exploreScreen).not.toMatch(/or search for an event by name/);
   expect(app).not.toMatch(/or search for an event by name/);
-  expect(exploreScreen).toMatch(/disabled=\{!userLocation\}\s*value=\{eventsSearchQuery\}/);
+  // The box is a SearchInputLocal now, so the query it starts from is
+  // initialValue rather than value. What this line guards is unchanged: the
+  // one box is disabled without a location and it is bound to the query.
+  expect(exploreScreen).toMatch(/disabled=\{!userLocation\}\s*initialValue=\{eventsSearchQuery\}/);
 });
 
 test('a Ticketmaster failure is the list failing, and an older answer cannot overwrite a newer one', () => {

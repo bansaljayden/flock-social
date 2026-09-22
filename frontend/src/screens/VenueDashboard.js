@@ -402,10 +402,20 @@ export default function VenueDashboard({
     // not exist any more — leaving it on screen means the delete button appears
     // to have failed and every further tap on it fails the same way. Deleting
     // is what they asked for and it is already true, so the row goes.
-    const deletePromo = async (id) => {
+    // A TRASH ICON IS ONE TAP FROM A ROW A VENUE WROTE, and until now that tap
+    // was the whole transaction: no confirm, no undo, and no word back when it
+    // worked. Every other destructive path in the app has a gate -- window.confirm
+    // on a trusted contact and on every moderation action, "type DELETE" for an
+    // account, a two-step for block. These two were the exception. The confirm
+    // names the row so the answer is about the thing being deleted rather than
+    // about the word "delete".
+    const deletePromo = async (id, title) => {
+      if (typeof window !== 'undefined'
+        && !window.confirm(title ? `Delete "${title}"? Groups looking at your venue will stop seeing it.` : 'Delete this deal? Groups looking at your venue will stop seeing it.')) return;
       try {
         await deleteVenuePromotion(id);
         setPromotions(prev => prev.filter(p => p.id !== id));
+        showToast('Deal deleted');
       } catch (e) {
         if (e?.status === 404) {
           setPromotions(prev => prev.filter(p => p.id !== id));
@@ -423,10 +433,13 @@ export default function VenueDashboard({
 
     // Same dead-button fix as deletePromo above, and the same 404
     // reconciliation, for the same reasons.
-    const deleteEvent = async (id) => {
+    const deleteEvent = async (id, title) => {
+      if (typeof window !== 'undefined'
+        && !window.confirm(title ? `Delete "${title}"? Groups looking at your venue will stop seeing it.` : 'Delete this event? Groups looking at your venue will stop seeing it.')) return;
       try {
         await deleteVenueEvent(id);
         setVenueEventsList(prev => prev.filter(e => e.id !== id));
+        showToast('Event deleted');
       } catch (e) {
         if (e?.status === 404) {
           setVenueEventsList(prev => prev.filter(e2 => e2.id !== id));
@@ -728,7 +741,7 @@ export default function VenueDashboard({
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <button aria-label="Back" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1575,7 +1588,7 @@ export default function VenueDashboard({
                         {!hidden && (
                           <button aria-label="Edit" className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <button aria-label="Delete" className="hit44" onClick={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <button aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" onClick={() => deletePromo(promo.id, promo.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="promotion" />}
@@ -1741,7 +1754,7 @@ export default function VenueDashboard({
                         {!hidden && (
                           <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <button aria-label="Delete" className="hit44" onClick={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <button aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" onClick={() => deleteEvent(event.id, event.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="event" />}
@@ -2077,8 +2090,16 @@ export default function VenueDashboard({
                 ) : (
                   <div>
                     {renderVenueField({ dark: false, label: 'Type of venue', children: renderVenueChips({ dark: false, label: 'Category', options: venueCategories.map(c => ({ value: c, label: c })), value: venueIntakeDraft.category, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, category: v })) }) })}
+                    {/* The four free-text answers in this form are the only
+                        ones typed a character at a time, and each character
+                        used to set state at the top of App.js and re-render
+                        the whole app behind this panel. They hold their own
+                        text now and publish it into the draft when the typing
+                        pauses. Save reads the draft from App.js on the tap,
+                        and the boxes publish anything pending on pointerdown,
+                        so the tap cannot save a sentence one letter short. */}
                     {renderVenueField({ dark: false, label: 'Description', children: (
-                      <textarea aria-label="Venue description" maxLength={2000} rows={3} value={venueIntakeDraft.description} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, description: e.target.value }))} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                      <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} rows={3} initialValue={venueIntakeDraft.description} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, description: v }))} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
                     ) })}
                     {renderVenueField({ dark: false, label: 'Goals', children: renderVenueChips({ dark: false, label: 'Goals', options: venueGoals.map(g => ({ value: g, label: g })), value: venueIntakeDraft.goals, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, goals: v })), multi: true }) })}
 
@@ -2103,18 +2124,18 @@ export default function VenueDashboard({
 
                     {renderVenueField({ dark: false, label: 'Nights you run something', children: renderVenueChips({ dark: false, label: 'Event nights', options: venueWeekdays, value: venueIntakeDraft.eventNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, eventNights: v })), multi: true }) })}
                     {venueIntakeDraft.eventNights.length > 0 && renderVenueField({ dark: false, label: 'What runs on those nights', children: (
-                      <input aria-label="What runs on those nights" maxLength={120} value={venueIntakeDraft.eventNote} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, eventNote: e.target.value }))} placeholder="e.g. Trivia at 8" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <SearchInputLocal aria-label="What runs on those nights" maxLength={120} initialValue={venueIntakeDraft.eventNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, eventNote: v }))} placeholder="e.g. Trivia at 8" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                     ) })}
                     {renderVenueField({ dark: false, label: 'Nights you think are your busiest', children: renderVenueChips({ dark: false, label: 'Busy nights', options: venueWeekdays, value: venueIntakeDraft.ownerBusyNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, ownerBusyNights: v })), multi: true }) })}
                     {renderVenueField({ dark: false, label: 'The one night you want fuller', children: renderVenueChips({ dark: false, label: 'Night you want fuller', options: venueWeekdays, value: venueIntakeDraft.targetNight, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, targetNight: v })) }) })}
 
                     {renderVenueField({ dark: false, label: `Within a short walk (pick up to ${VENUE_MAX_ANCHORS})`, children: renderVenueChips({ dark: false, label: 'Nearby anchors', options: venueAnchorTypes, value: venueIntakeDraft.anchorTypes, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, anchorTypes: v })), multi: true, max: VENUE_MAX_ANCHORS }) })}
                     {venueIntakeDraft.anchorTypes.length > 0 && renderVenueField({ dark: false, label: 'Name it', children: (
-                      <input aria-label="Nearby anchor detail" maxLength={200} value={venueIntakeDraft.anchorNote} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, anchorNote: e.target.value }))} placeholder="e.g. Across from the arena" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <SearchInputLocal aria-label="Nearby anchor detail" maxLength={200} initialValue={venueIntakeDraft.anchorNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, anchorNote: v }))} placeholder="e.g. Across from the arena" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                     ) })}
 
                     {renderVenueField({ dark: false, label: 'Anything a stranger would not guess', children: (
-                      <textarea aria-label="What a stranger would not guess" maxLength={1000} rows={4} value={venueIntakeDraft.quirks} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, quirks: e.target.value }))} placeholder="e.g. Parking fills by seven." style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                      <SearchInputLocal as="textarea" aria-label="What a stranger would not guess" maxLength={1000} rows={4} initialValue={venueIntakeDraft.quirks} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, quirks: v }))} placeholder="e.g. Parking fills by seven." style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
                     ) })}
                   </div>
                 )}
