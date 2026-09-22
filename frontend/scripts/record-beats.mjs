@@ -332,17 +332,24 @@ const BEATS = {
         if (m && m.zoomTo) m.zoomTo(to, dur);
       }, [z, ms]).catch(() => {});
 
-      await zoom(14.8, 0);
-      await hold(page, 7000);
-      await zoom(13.4, 0);
-      await hold(page, 2600);
+      await zoom(14.0, 0);
+      await hold(page, 5000);
+      await zoom(13.7, 0);
+      await hold(page, 2800);
 
+      /* IT PULLS BACK, IT DOES NOT PUSH IN, and the reason is a threshold in
+         the basemap rather than taste. Somewhere just above zoom 13.7 the
+         style swaps to dark building footprints, and across that line the heat
+         this beat is about stops being the thing you look at: two takes pushed
+         in and both ended on a street map with the colour washed out of it.
+         Pulling back stays under the threshold the whole way and finishes on
+         the widest, reddest frame, which is the one the line is describing. */
       await still(page, 'discover-1-map');
-      await hold(page, 3000);
-      await zoom(14.8, 3500);
-      await hold(page, 4600);
-      await still(page, 'discover-2-closer');
-      await hold(page, 2400);
+      await hold(page, 2200);
+      await zoom(13.05, 6000);
+      await hold(page, 6600);
+      await still(page, 'discover-2-wider');
+      await hold(page, 2000);
     },
   },
 
