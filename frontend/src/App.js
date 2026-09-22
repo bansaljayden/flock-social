@@ -5605,7 +5605,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [newEventTime, setNewEventTime] = useState('');
   const [newEventCategory, setNewEventCategory] = useState('social');
 
-  // Load persisted calendar events on boot and every Plans visit (server is source of truth)
+  // Load persisted calendar events when Plans is opened (server is source of truth).
   const [calendarLoading, setCalendarLoading] = useState(true);
   // A failed read used to be swallowed, and the screen then showed "Nothing
   // on this day" with the birds: the person's plans looked deleted. Named so
@@ -5620,10 +5620,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => setCalendarError(err?.message || 'Your plans are not loading right now.'))
       .finally(() => setCalendarLoading(false));
   }, []);
+  // ON ARRIVAL ONLY. The dependency used to be the expression
+  // `currentTab === 'calendar'`, and React re-runs an effect on ANY change to
+  // a dependency, false included -- so this fired a GET /api/calendar/events
+  // every time the person LEFT Plans as well, for a screen they had just
+  // walked away from. Two round trips and six renders where one of each was
+  // wanted. The comment above says "every Plans visit"; a departure is not a
+  // visit.
+  const onCalendarTab = currentTab === 'calendar';
   useEffect(() => {
+    if (!onCalendarTab) return;
     loadCalendar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTab === 'calendar']);
+  }, [onCalendarTab]);
 
 
   // Activity feed

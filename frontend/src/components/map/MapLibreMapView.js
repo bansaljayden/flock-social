@@ -1087,8 +1087,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // similar ones. followUser stays in the condition: it is the separate
   // question of whether THIS map is the one that follows you, and a venue
   // dashboard map answers no to it whatever the switch says.
+  //
+  // AND ON THE MAP BEING ON SCREEN, which it was not, and that cost battery
+  // for the rest of the session. Discover is never unmounted once visited --
+  // it is parked behind visibility:hidden so returning to it is instant -- so
+  // this armed watchPosition with enableHighAccuracy on the first visit and
+  // never released it. Every fix after that moved a marker and rebuilt a
+  // 64-point accuracy polygon on a map nobody could see, and if the person was
+  // also sharing their location there were two full-precision watches running
+  // at once. The member-marker effect below is gated exactly this way and says
+  // why; this one was written before that pass and was missed by it.
+  //
+  // Nothing is lost by stopping: no React state is written from here, the
+  // app's own userLocation is fed independently, and coming back to Discover
+  // re-arms and reconciles in one go.
   useEffect(() => {
-    if (!mapReady || !followUser || !locationAllowed || !geolocationAvailable()) return;
+    if (!mapVisible || !mapReady || !followUser || !locationAllowed || !geolocationAvailable()) return;
     if (watchIdRef.current !== null) clearWatch(watchIdRef.current);
     watchIdRef.current = watchPosition(
       (pos) => {
@@ -1103,7 +1117,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
     return () => { if (watchIdRef.current !== null) clearWatch(watchIdRef.current); };
-  }, [mapReady, followUser, locationAllowed]);
+  }, [mapVisible, mapReady, followUser, locationAllowed]);
 
   // ---------- venue markers ----------
   useEffect(() => {
