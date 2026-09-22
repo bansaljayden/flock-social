@@ -26,7 +26,7 @@ const READABLE = { color: 'var(--pp-ink-2)' };
 // manager in this app and adding one is a dependency, so the mechanism is the
 // one LandingPage.js already uses: rewrite the tag index.html ships, from this
 // route's own effect. Googlebot renders JS and reads the rewritten value.
-const DESCRIPTION = 'What Flock is, why group plans fall apart, how the crowd model works, and why venues pay while you never do.';
+const DESCRIPTION = 'What Flock is, why group plans fall apart, how the crowd model works, and why venues pay while you do not.';
 
 export default function AboutPage() {
   useEffect(() => {
@@ -146,7 +146,7 @@ export default function AboutPage() {
           between two text lines eats the whitespace on both sides of itself,
           so a comment dropped mid-sentence renders "chartsare". */}
       <section>
-        <h2>Why venues pay (and users never do)</h2>
+        <h2>Why venues pay, and you don't</h2>
         <p>
           Every vote inside a flock is a group actively deciding where to go
           tonight. For a bar or restaurant, that is the moment every ad channel

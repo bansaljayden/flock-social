@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 26, 2026';
+const EFFECTIVE_DATE = 'September 21, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO.
@@ -904,8 +904,8 @@ export default function PrivacyPolicy() {
             <section id="children">
               <h2>{num('children')} Children</h2>
               <p>
-                Flock is for people <strong>13 and older</strong>. Sign-up asks for a date of
-                birth and our server recalculates the age from it rather than trusting the app,
+                Flock is for people <strong>13 and older</strong>. Sign-up asks for a year of
+                birth and our server works the age out from it rather than trusting the app,
                 so an under-13 account is refused rather than merely discouraged. We do not
                 knowingly collect personal information from children under 13. If you believe a
                 child under 13 has created an account, write to {mail} and we will delete it.
