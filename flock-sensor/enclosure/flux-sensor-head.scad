@@ -3,7 +3,7 @@
 // The part that goes on the venue's wall. A wedge-faced black box on a ball
 // mount, with the thermal camera looking out of the angled lower face at the
 // doorway below it. No screen and no battery: those are in the base unit, on a
-// table or in a back room, joined by one USB cable. A 20,000 mAh battery and a
+// table or in a back room, joined by one Cat6 run. A 20,000 mAh battery and a
 // seven inch screen do not belong on a ceiling.
 //
 // Open in OpenSCAD (free, openscad.org). Set `part`, press F6, export STL.
