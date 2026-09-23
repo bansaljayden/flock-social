@@ -18,7 +18,7 @@
 const path = require('path');
 const { createRequire } = require('module');
 const { test, expect, devices } = require('@playwright/test');
-const { newEmail, adultDob, pinToLocalApi, failOnPageErrors } = require('./helpers');
+const { newEmail, adultDob, pinToLocalApi, failOnPageErrors, randomTag } = require('./helpers');
 
 const WEB_BASE = `http://127.0.0.1:${process.env.E2E_WEB_PORT || 3199}`;
 
@@ -239,7 +239,7 @@ async function seedVenuesOnLatestFlock(suggesterName) {
 }
 
 function tag() {
-  return Math.random().toString(36).slice(2, 7);
+  return randomTag(5);
 }
 
 // ===========================================================================

@@ -11,6 +11,32 @@ const { test, expect } = require('@playwright/test');
 const { signUp } = require('./helpers');
 
 test.setTimeout(180_000);
+/* NO PLACES KEY, NO RESULTS LIST. stack.js sets no GOOGLE_PLACES_API_KEY on
+   purpose (venue.spec.js says why: a run that presses buttons hundreds of
+   times must not be able to spend money), so on the local stack every venue
+   request is refused and "All N results" can never appear. Both specs here
+   were red on every local run for that reason alone, and a suite that is
+   always a little red teaches everyone to read red as noise. So they SKIP,
+   saying why, when the server answers that search is turned off, and run in
+   full against any stack that has a key. The listener starts at the first
+   navigation because Discover is mounted with the shell and may ask for
+   venues before its tab is ever opened. */
+const SEARCH_OFF = /turned off right now/i;
+function searchIsOff(page) {
+  return page.waitForResponse(
+    (r) => r.url().includes('/api/venues/') && r.status() === 500,
+    { timeout: 150_000 },
+  ).then(async (r) => SEARCH_OFF.test(await r.text().catch(() => ''))).catch(() => false);
+}
+
+async function resultsOrSkip(page, off) {
+  const all = page.getByRole('button', { name: /All \d+ results/ }).first();
+  const shown = all.waitFor({ state: 'visible', timeout: 60_000 }).then(() => 'shown', () => 'missing');
+  const first = await Promise.race([shown, off.then((isOff) => (isOff ? 'off' : shown))]);
+  test.skip(first === 'off', 'venue search is turned off on this stack (no GOOGLE_PLACES_API_KEY), so there is no results list to open');
+  return all;
+}
+
 
 test('closing a venue sheet opened from the results list does not crash Discover', async ({ page }) => {
   const errors = [];
@@ -27,6 +53,7 @@ test('closing a venue sheet opened from the results list does not crash Discover
 
   // The analytics choice sheet sits over the auth screen on a fresh profile
   // and intercepts every click until it is answered.
+  const off = searchIsOff(page);
   await page.goto('/app');
   const noThanks = page.getByRole('button', { name: /no thanks/i }).first();
   try { await noThanks.click({ timeout: 8_000 }); } catch { /* not shown */ }
@@ -45,8 +72,8 @@ test('closing a venue sheet opened from the results list does not crash Discover
 
   // No geolocation permission in this context, so the app takes its fallback
   // city, which is the same path the recording rig takes.
-  const all = page.getByRole('button', { name: /All \d+ results/ }).first();
-  await expect(all).toBeVisible({ timeout: 60_000 });
+  const all = await resultsOrSkip(page, off);
+  await expect(all).toBeVisible();
   await all.evaluate((el) => el.click());
 
   const pill = page.getByRole('img', { name: /Crowd level \d+ out of 100/ }).first();
@@ -89,13 +116,14 @@ test('tapping a map pin opens the card with the dial and closing it does not cra
     } catch { /* ignore */ }
     errors.push(entry);
   });
+  const off = searchIsOff(page);
   await page.goto('/app');
   try { await page.getByRole('button', { name: /no thanks/i }).first().click({ timeout: 8_000 }); } catch { /* not shown */ }
   await signUp(page, 'pin');
   try { await page.getByText(/Continue for now, confirm later/i).first().click({ timeout: 15_000 }); } catch { /* not shown */ }
   try { await page.getByText(/I'm Going Out/i).first().click({ timeout: 10_000 }); } catch { /* not shown */ }
   await page.getByRole('button', { name: /^discover$/i }).first().click({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: /All \d+ results/ }).first()).toBeVisible({ timeout: 60_000 });
+  await resultsOrSkip(page, off);
   await page.waitForTimeout(1500);
   const pin = page.locator('[role="button"][aria-label*=", crowd "]').first();
   await expect(pin).toBeAttached({ timeout: 20_000 });
