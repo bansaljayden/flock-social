@@ -257,7 +257,7 @@ was never carried forward with the app after that.
 | `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook and ship gate |
 | `backend/scripts/ml/MODEL-METRICS.md` | Measured model numbers and what they mean |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
-| `LICENSE` / `CONTRIBUTING.md` | PolyForm Noncommercial 1.0.0, and how contributions are accepted under it |
+| `LICENSE` / `CONTRIBUTING.md` | MIT License, and how contributions are accepted under it |
 
 Internal working notes (submission packets, decision memos, session docs) are
 kept out of the repo on purpose.
@@ -308,9 +308,8 @@ a throwaway Postgres through `embedded-postgres`, which the first run downloads.
 
 ## License
 
-[PolyForm Noncommercial License 1.0.0](LICENSE). You may read, run, modify and
-share this code for any noncommercial purpose. Commercial use requires a separate
-agreement: email social@flockcorp.com.
+[MIT](LICENSE). Use it, change it, ship it, sell it; keep the copyright and
+permission notice with any copy.
 
 ---
 
