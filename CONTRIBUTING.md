@@ -2,26 +2,20 @@
 
 ## License
 
-This repo is licensed under the **PolyForm Noncommercial License 1.0.0**. The full
-text is in [`LICENSE`](LICENSE) at the repo root.
+This repo is licensed under the **MIT License**. The full text is in
+[`LICENSE`](LICENSE) at the repo root.
 
-What that permits: read it, run it, modify it, and share it (including your
-modified versions) for any noncommercial purpose. Personal study, hobby projects,
-research, teaching, and use by schools, charities, public research bodies and
-government all count as noncommercial.
+You may use, copy, modify, merge, publish, distribute, sublicense and sell copies
+of it, for any purpose, commercial included. The one condition is that the
+copyright notice and the permission notice in `LICENSE` travel with every copy or
+substantial portion of the software. The software comes without warranty.
 
-What it does not permit: commercial use of any kind. If you want to use Flock, or
-anything derived from it, in a commercial product or service, that needs a
-separate agreement. Email social@flockcorp.com.
+Pull requests are welcome and are accepted under the same terms: by opening one
+you agree your contribution is licensed under the MIT License.
 
-Pull requests are welcome and are accepted under these same terms: by opening one
-you agree your contribution is licensed under PolyForm Noncommercial 1.0.0, and
-that the maintainer may also license the project (including your contribution)
-commercially.
-
-Anyone you hand a copy to has to get these terms, or the URL for them, along with
-the `Required Notice:` line at the top of `LICENSE`. The Notices section is what
-requires all of it to travel with the software.
+The repo was published under PolyForm Noncommercial 1.0.0 from 2026-08-18 to
+2026-09-23. Copies taken in that window carry those terms; everything from this
+commit on is MIT.
 
 ## Running the test suites
 
