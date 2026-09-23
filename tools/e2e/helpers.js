@@ -18,6 +18,27 @@ function newEmail(tag) {
   return `e2e-${tag}-${Date.now().toString(36)}-${rand}@example.com`;
 }
 
+/* A RANDOM TAG THE SERVER WILL ACCEPT.
+ *
+ * Specs name plans, people and messages with a random base-36 suffix so that
+ * parallel runs cannot collide. The server screens every one of those strings
+ * against a word list, and about one suffix in ten thousand spells a listed
+ * word: "ayir" did, the plan was refused as against the community guidelines,
+ * and an accessibility spec failed waiting for a chat that was never made.
+ * That is a coin the suite flips on every run, so the tag is drawn again until
+ * the server's own filter passes it. moderateText is the strictest of the
+ * lists (chat and venue text use subsets of it), so a tag it accepts is
+ * accepted everywhere.
+ */
+const { moderateText } = require('../../backend/utils/moderation');
+
+function randomTag(length = 4) {
+  for (;;) {
+    const tag = Math.random().toString(36).slice(2, 2 + length);
+    if (tag.length === length && moderateText(`tag ${tag}`).allowed) return tag;
+  }
+}
+
 /** Old enough to pass the 13 floor with room to spare, as YYYY-MM-DD. */
 function adultDob() {
   const d = new Date();
@@ -105,4 +126,4 @@ function failOnPageErrors(page, errors) {
   });
 }
 
-module.exports = { API_BASE, newEmail, adultDob, signUp, expectToast, pinToLocalApi, failOnPageErrors };
+module.exports = { API_BASE, newEmail, randomTag, adultDob, signUp, expectToast, pinToLocalApi, failOnPageErrors };

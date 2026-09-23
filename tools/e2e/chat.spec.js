@@ -46,7 +46,7 @@ const os = require('os');
 const path = require('path');
 const { createRequire } = require('module');
 const { test, expect, devices } = require('@playwright/test');
-const { signUp, failOnPageErrors, pinToLocalApi } = require('./helpers');
+const { signUp, failOnPageErrors, pinToLocalApi, randomTag } = require('./helpers');
 
 const backendRequire = createRequire(path.join(__dirname, '..', '..', 'backend', 'package.json'));
 const { Client } = backendRequire('pg');
@@ -373,7 +373,7 @@ test.describe('flock chat, with two people watching it', () => {
     test.setTimeout(300_000);
 
     const { people, extra } = await cast('flock-chat', browser, errors, async () => {
-      const tag = Math.random().toString(36).slice(2, 7);
+      const tag = randomTag(5);
       const madeAda = await newPerson(browser, `Ada Zq${tag}`, errors);
       const madeBo = await newPerson(browser, `Bo Zq${tag}`, errors);
       // Cy exists only to make the flock a flock. Nobody ever drives that
@@ -385,7 +385,7 @@ test.describe('flock chat, with two people watching it', () => {
     [ada, bo] = people;
 
     // A brand new flock every run, so the empty-room spec has an empty room.
-    flockName = `Zq${Math.random().toString(36).slice(2, 7)} Night`;
+    flockName = `Zq${randomTag(5)} Night`;
 
     ada.page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
     bo.page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
@@ -764,7 +764,7 @@ test.describe('flock chat, with two people watching it', () => {
 
   test('searching the chat finds a message you can see and says so when nothing matches', async () => {
     const before = errors.length;
-    const tag = Math.random().toString(36).slice(2, 6);
+    const tag = randomTag(4);
     const needle = `needle ${tag}`;
     const haystack = `haystack ${tag}`;
     // Both sent here, so this spec owns everything it filters and cannot pass
@@ -800,7 +800,7 @@ test.describe('flock chat, with two people watching it', () => {
     const before = errors.length;
     test.setTimeout(120_000);
     await requireLive(ada, bo);
-    const draft = `not meant for one person ${Math.random().toString(36).slice(2, 6)}`;
+    const draft = `not meant for one person ${randomTag(4)}`;
 
     // Ada starts writing to the whole flock, and does not send it.
     await openFlockChat(ada.page, flockName);
@@ -866,7 +866,7 @@ test.describe('direct messages, with two people watching them', () => {
   test.beforeAll(async ({ browser }) => {
     test.setTimeout(300_000);
     const { people } = await cast('direct-messages', browser, errors, async () => {
-      const tag = Math.random().toString(36).slice(2, 7);
+      const tag = randomTag(5);
       return {
         people: [
           await newPerson(browser, `Dee Wm${tag}`, errors),
@@ -948,7 +948,7 @@ test.describe('direct messages, with two people watching them', () => {
     // file, so a fixed string accumulates in the thread and a second run finds
     // two of it, which trips Playwright's strict mode before the socket is ever
     // in question. A unique line each run keeps the assertion about delivery.
-    const tag = Math.random().toString(36).slice(2, 6);
+    const tag = randomTag(4);
     const said = `meet at the corner by nine ${tag}`;
     await composer(dee.page).fill(said);
     await dee.page.getByRole('button', { name: 'Send message' }).click();
@@ -971,7 +971,7 @@ test.describe('direct messages, with two people watching them', () => {
     await openDmWith(dee.page, eli.name);
     await openDmWith(eli.page, dee.name);
 
-    const said = `pin this one ${Math.random().toString(36).slice(2, 6)}`;
+    const said = `pin this one ${randomTag(4)}`;
     await composer(dee.page).fill(said);
     await dee.page.getByRole('button', { name: 'Send message' }).click();
     await expect(eli.page.getByText(said)).toBeVisible({ timeout: 25_000 });

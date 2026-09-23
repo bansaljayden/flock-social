@@ -59,7 +59,7 @@
 const path = require('path');
 const { createRequire } = require('module');
 const { test, expect, devices } = require('@playwright/test');
-const { newEmail, adultDob, pinToLocalApi, failOnPageErrors } = require('./helpers');
+const { newEmail, adultDob, pinToLocalApi, failOnPageErrors, randomTag } = require('./helpers');
 
 const WEB = `http://127.0.0.1:${process.env.E2E_WEB_PORT || 3199}`;
 const PG_PORT = Number(process.env.E2E_PG_PORT || 59610);
@@ -103,7 +103,7 @@ async function newPerson(browser, firstName) {
   await page.setExtraHTTPHeaders({ 'X-Forwarded-For': clientIp() });
 
   const email = newEmail('a11y');
-  const name = `${firstName} Q${Math.random().toString(36).slice(2, 7)}`;
+  const name = `${firstName} Q${randomTag(5)}`;
 
   await page.goto('/app');
   await page.getByRole('button', { name: /create an account/i }).click();
@@ -287,7 +287,7 @@ test("the flock chat keeps the plus sheet's controls out of the keyboard until i
   test.setTimeout(150_000);
   const me = await newPerson(browser, 'Wren');
   const page = me.page;
-  await createFlock(page, `Plus Sheet ${Math.random().toString(36).slice(2, 6)}`);
+  await createFlock(page, `Plus Sheet ${randomTag(4)}`);
   await page.waitForTimeout(1200);
 
   // NOT MOUNTED, not hidden, and the distinction is the whole test. The
@@ -421,7 +421,7 @@ test('a sheet takes focus, traps Tab, closes on Escape and hands focus back to s
   test.setTimeout(150_000);
   const me = await newPerson(browser, 'Lark');
   const page = me.page;
-  await createFlock(page, `Sheet Focus ${Math.random().toString(36).slice(2, 6)}`);
+  await createFlock(page, `Sheet Focus ${randomTag(4)}`);
   await page.waitForTimeout(1200);
 
   // Reach the vote sheet the way somebody with no pointer does: Tab to the
@@ -540,7 +540,7 @@ test('no screen in the core loop has a tab stop the eye cannot find', async ({ b
   await expect(page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
   await check('Start a flock');
 
-  const flockName = `Sweep ${Math.random().toString(36).slice(2, 6)}`;
+  const flockName = `Sweep ${randomTag(4)}`;
   await page.getByLabel(/what.s the plan/i).fill(flockName);
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: /create flock/i }).click();

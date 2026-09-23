@@ -39,7 +39,7 @@
 const path = require('path');
 const { createRequire } = require('module');
 const { test, expect, devices } = require('@playwright/test');
-const { newEmail, adultDob, pinToLocalApi, failOnPageErrors } = require('./helpers');
+const { newEmail, adultDob, pinToLocalApi, failOnPageErrors, randomTag } = require('./helpers');
 
 const WEB = `http://127.0.0.1:${process.env.E2E_WEB_PORT || 3199}`;
 const PG_PORT = Number(process.env.E2E_PG_PORT || 59610);
@@ -94,7 +94,7 @@ async function newPerson(browser, tag, firstName = 'Ada') {
   await page.setExtraHTTPHeaders({ 'X-Forwarded-For': clientIp() });
 
   const email = newEmail(tag);
-  const surname = `Z${Math.random().toString(36).slice(2, 7)}`;
+  const surname = `Z${randomTag(5)}`;
   const name = `${firstName} ${surname}`;
 
   await page.goto('/app');
