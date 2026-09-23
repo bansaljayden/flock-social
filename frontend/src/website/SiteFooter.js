@@ -105,7 +105,7 @@ export default function SiteFooter({
             </div>
           </div>
           <div className="lp-footer-base">
-            <span>&copy; {year} Flock Corp.</span>
+            <span>&copy; {year} Flock Social LLC.</span>
             {/* The data credit doubles as BestTime's standing backlink offer
                 (free credits for a link). A plain factual credit in the base
                 row, the same register as the copyright beside it: crowd
@@ -124,7 +124,7 @@ export default function SiteFooter({
   return (
     <footer className={className}>
       {children}
-      <span>&copy; {year} Flock Corp.</span>
+      <span>&copy; {year} Flock Social LLC.</span>
       <span>
         {LEGAL_LINKS.map((l, i) => (
           <React.Fragment key={l.href}>

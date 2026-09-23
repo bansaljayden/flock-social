@@ -2,20 +2,21 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 22, 2026';
+const EFFECTIVE_DATE = 'September 23, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
-// THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO. The long note
-// at the top of PrivacyPolicy.js explains why this is one constant in one
-// place: no file in this repository records a company registration, a state of
-// incorporation, or a business address behind "Flock Corp", and a EULA has to
-// name a real counterparty. Settle the entity question, then change it here,
-// in PrivacyPolicy.js and in SiteFooter.js together.
+// THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
+// company, which replaced the unregistered "Flock Corp" placeholder once the
+// company existed. The note at the top of PrivacyPolicy.js has the rest: one
+// string, changed here, in PrivacyPolicy.js, in SiteFooter.js and in
+// api/marketing-page.js together.
 //
 // OPERATOR_ADDRESS is null on purpose, and Apple's minimum EULA terms ask for
 // the developer's name AND address in the contact section. Nothing renders
-// while it is null, because an invented address is worse than a missing one.
-const OPERATOR = 'Flock Corp';
+// while it is null, because an invented address is worse than a missing one;
+// choosing the address to publish is a separate decision from registering.
+const OPERATOR = 'Flock Social LLC';
+const OPERATOR_KIND = 'a Pennsylvania limited liability company';
 const OPERATOR_ADDRESS = null;
 
 // PER-ROUTE <meta name="description">. CRA has no server rendering, so
@@ -71,7 +72,7 @@ export default function TermsOfService() {
       <section>
         <p>
           These Terms of Service ("Terms") are a binding agreement between you and{' '}
-          {OPERATOR} ("Flock", "we", "us"). They are also the end user licence agreement for the Flock
+          {OPERATOR}, {OPERATOR_KIND} ("Flock", "we", "us"). They are also the end user licence agreement for the Flock
           app. By creating an account, by opening a Flock invite link, or by using the Flock
           app or flockcorp.com, you agree to these Terms and to our{' '}
           <a href="/privacy">Privacy Policy</a> and{' '}
@@ -626,8 +627,9 @@ export default function TermsOfService() {
           STATE's law; federal law applies of its own force wherever it applies.
           That error is corrected below. The three questions flag 3 actually
           raises are still open and still need counsel:
-            1. is Pennsylvania the right choice, given the contracting entity is
-               undecided (flag 1) and the operator is a minor;
+            1. is Pennsylvania the right choice. Flag 1 is settled: the
+               contracting entity is a Pennsylvania LLC, which points here,
+               but its sole member is a minor;
             2. what the forum is, which this section still does not say;
             3. arbitration and class waiver, yes or no.
           Do not read the corrected sentence as those questions being answered. */}

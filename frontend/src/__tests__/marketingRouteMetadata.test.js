@@ -219,7 +219,7 @@ describe('the register matches the company that exists', () => {
     expect(guidelines).toMatch(/Every report is reviewed and acted on promptly/);
     const terms = collapse(readJs('TermsOfService.js'));
     expect(terms).toMatch(/We act on reports of objectionable content and abusive behavior promptly/);
-    // "we"/"us" in the Terms is a defined term for Flock Corp, which is why it
+    // "we"/"us" in the Terms is a defined term for Flock Social LLC, which is why it
     // was left alone. If that definition ever goes, the pronoun becomes the
     // same unbacked claim the rest of this pass removed.
     expect(terms).toMatch(/\("Flock", "we", "us"\)/);

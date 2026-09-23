@@ -123,7 +123,7 @@ describe('the contract every footer carries', () => {
     // DESIGN-STANDARD A2 covers the component's copy too; the page-level scans in
     // the other suites no longer see this text because it left those files.
     expect(footer.textContent).not.toMatch(/—/);
-    expect(footer.textContent).toContain('Flock Corp.');
+    expect(footer.textContent).toContain('Flock Social LLC.');
     unmount();
   });
 });
