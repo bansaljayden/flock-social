@@ -248,7 +248,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective September 22, 2026"],
+    ["p", "Effective September 23, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -260,7 +260,7 @@ const PAGE_BLOCKS = {
     ["li", "You can delete your account from inside the app. It's a real delete, not a deactivation."],
     ["p", "The full detail is below. It's written in plain language on purpose. If anything is unclear, email social@flockcorp.com."],
     ["h2", "Who we are"],
-    ["p", "Flock is a social coordination app that helps you plan nights out with friends. Flock (\"we\", \"us\", \"our\") is operated by Flock Corp. We are the data controller for personal information processed through the Flock app, flockcorp.com, the venue dashboard, and the venue sensors described in section 3."],
+    ["p", "Flock is a social coordination app that helps you plan nights out with friends. Flock (\"we\", \"us\", \"our\") is operated by Flock Social LLC, a Pennsylvania limited liability company. We are the data controller for personal information processed through the Flock app, flockcorp.com, the venue dashboard, and the venue sensors described in section 3."],
     ["p", "This policy covers all of those. It applies whether you use Flock on iOS, on Android, or in a browser, whether you have an account or answer an invite link as a guest, and whether you use Flock to make plans or to run a venue. Write to us at social@flockcorp.com."],
     ["h2", "What we collect"],
     ["h3", "You provide directly"],
@@ -476,7 +476,7 @@ const PAGE_BLOCKS = {
     ["li", "Blocking and reporting: you can block anyone and report any message, profile, review or guest from inside the app. Our Community Guidelines say where every one of those controls is."],
     ["li", "Complaints: if you think we have handled your information badly, tell us first at social@flockcorp.com. If you are in the EEA or the UK you can also complain to your national data protection authority."],
     ["h2", "If you are in the EEA or the UK"],
-    ["p", "Flock Corp is the controller for the processing described here, and Our legal bases says which basis covers what. You have the following rights, and you exercise all of them the same way, by writing to social@flockcorp.com:"],
+    ["p", "Flock Social LLC is the controller for the processing described here, and Our legal bases says which basis covers what. You have the following rights, and you exercise all of them the same way, by writing to social@flockcorp.com:"],
     ["li", "Access. A copy of the personal data we hold about you, and the information in this policy about how it is used."],
     ["li", "Rectification. Corrections to anything inaccurate. Most of it you can edit yourself in the app."],
     ["li", "Erasure. Deletion, which you can also do yourself. Deleting your account says exactly what goes and what does not."],
@@ -551,7 +551,7 @@ const PAGE_BLOCKS = {
   ],
   terms: [
     ["h1", "Terms of Service & EULA"],
-    ["p", "Effective September 22, 2026"],
+    ["p", "Effective September 23, 2026"],
     ["h2", "The short version"],
     ["li", "You have to be 13 or older, and under 18 you need a parent's say-so."],
     ["li", "Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears."],
@@ -560,7 +560,7 @@ const PAGE_BLOCKS = {
     ["li", "Nothing costs money today. If that changes, the price and the term are on the purchase screen before you buy, and you cancel through Apple or Google."],
     ["li", "You can delete your account at any time, and it really deletes."],
     ["p", "The full terms are below. If anything is unclear, email social@flockcorp.com."],
-    ["p", "These Terms of Service (\"Terms\") are a binding agreement between you and Flock Corp (\"Flock\", \"we\", \"us\"). They are also the end user licence agreement for the Flock app. By creating an account, by opening a Flock invite link, or by using the Flock app or flockcorp.com, you agree to these Terms and to our Privacy Policy and Community Guidelines, both of which are part of this agreement. If you do not agree, do not use Flock."],
+    ["p", "These Terms of Service (\"Terms\") are a binding agreement between you and Flock Social LLC, a Pennsylvania limited liability company (\"Flock\", \"we\", \"us\"). They are also the end user licence agreement for the Flock app. By creating an account, by opening a Flock invite link, or by using the Flock app or flockcorp.com, you agree to these Terms and to our Privacy Policy and Community Guidelines, both of which are part of this agreement. If you do not agree, do not use Flock."],
     ["p", "Flock is a social coordination app: it helps a group of friends pick where to go, see how busy a place is likely to be, keep track of who is in, and split the bill afterwards. It also has a side for venue owners, which section 9 covers."],
     ["h2", "1. Eligibility and age"],
     ["p", "You must be at least 13 years old to use Flock. Sign-up asks for your year of birth, our server works out your age from it, and an account for anyone under 13 is refused. If you are under 18, you may use Flock only with the agreement of a parent or legal guardian, and by using it you tell us you have that agreement. Where you live, the age at which you can agree to an online service on your own may be higher than 13; if you are below it, the same rule applies."],
@@ -641,7 +641,7 @@ const PAGE_BLOCKS = {
     ["p", "If we ever bill venues directly rather than through a store, section 9.6 governs that and we will publish the billing terms before the first charge."],
     ["p", "We never collect or store card numbers, bank details, or any other payment credential. Bill splitting inside Flock moves no money: it opens Venmo, Cash App or Zelle on your phone, and what happens there is between you and them."],
     ["h2", "11. Intellectual property & copyright"],
-    ["p", "Flock, its name, its logo, its birds, its designs and the software behind the service are owned by Flock Corp and protected by copyright and trade mark law. Nothing in these Terms transfers any of that to you. You may not use our name or logo without our written permission, except to refer to Flock accurately."],
+    ["p", "Flock, its name, its logo, its birds, its designs and the software behind the service are owned by Flock Social LLC and protected by copyright and trade mark law. Nothing in these Terms transfers any of that to you. You may not use our name or logo without our written permission, except to refer to Flock accurately."],
     ["p", "If you believe content on Flock infringes your copyright, send a notice to social@flockcorp.com with: enough detail to identify the copyrighted work; enough detail to find the content you say infringes it; your contact details; a statement that you believe in good faith that the use is not authorised by the owner, its agent, or the law; a statement that the information in your notice is accurate and, under penalty of perjury, that you are the owner or authorised to act for the owner; and your signature, electronic or physical. We will respond in accordance with the Digital Millennium Copyright Act and other applicable law, which can include removing the content and terminating a repeat infringer's account. If your content was removed and you believe that was a mistake, you can send a counter-notice to the same address."],
     ["h2", "12. Termination, bans, and deleting your account"],
     ["p", "You may stop using Flock and delete your account at any time from the app (You → Delete account, at the bottom of that tab) or via our account deletion page. Deleting your account also deletes every flock you created, including its chat, RSVPs, and votes, for everyone who was in it, and it removes your direct message threads from the other person's app as well. Deletion is irreversible. Our Privacy Policy lists exactly what is erased and the few things that survive."],
@@ -651,23 +651,23 @@ const PAGE_BLOCKS = {
     ["p", "Flock is provided \"as is\" and \"as available\", without warranties of any kind, express or implied. To the maximum extent permitted by law we disclaim the implied warranties of merchantability, fitness for a particular purpose, title and non-infringement. We do not warrant that Flock will be uninterrupted, secure, error-free, or available at any particular time; that any prediction, listing, price, opening time, event or answer is accurate or complete; or that any defect will be corrected. Flock depends on services run by other companies, and we do not control them."],
     ["p", "We are not responsible for the conduct of any user, for any venue, or for anything that happens when you meet someone or go somewhere. Some places do not allow the exclusion of implied warranties, so parts of this may not apply to you."],
     ["h2", "14. Limitation of liability"],
-    ["p", "To the maximum extent permitted by law, Flock Corp is not liable for indirect, incidental, special, consequential, exemplary or punitive damages, or for lost profits, lost revenue, lost data, lost goodwill or business interruption, arising from or relating to your use of Flock, whatever the theory of liability and even if we were told such damages were possible."],
+    ["p", "To the maximum extent permitted by law, Flock Social LLC is not liable for indirect, incidental, special, consequential, exemplary or punitive damages, or for lost profits, lost revenue, lost data, lost goodwill or business interruption, arising from or relating to your use of Flock, whatever the theory of liability and even if we were told such damages were possible."],
     ["p", "To the maximum extent permitted by law, our total liability to you for all claims relating to Flock is limited to the greater of one hundred United States dollars or the amount you actually paid us in the twelve months before the claim arose. Since Flock is free today, for most people that figure is one hundred dollars."],
     ["p", "These limits do not apply to liability that cannot be excluded or limited by law, including for fraud, for death or personal injury caused by negligence, and, depending on where you live, to your statutory consumer rights. If you live somewhere that does not allow some of these limits, they apply to you only as far as that law allows."],
     ["h2", "15. Indemnity"],
-    ["p", "If someone brings a claim against Flock Corp because of content you posted, because you broke these Terms or the law, or because you infringed someone else's rights, you agree to cover our costs for that claim, including reasonable legal fees."],
+    ["p", "If someone brings a claim against Flock Social LLC because of content you posted, because you broke these Terms or the law, or because you infringed someone else's rights, you agree to cover our costs for that claim, including reasonable legal fees."],
     ["p", "If you use Flock as a venue, that also covers claims brought against us because a fact you asserted through the dashboard was false or misleading: hours, prices, deals, events, capacity, or occupancy reports. It is deliberately narrow. It covers what you asserted. It does not cover what users or source distributions said about you."],
     ["p", "We will tell you about any claim we want covered, and you may not settle it in a way that admits anything on our behalf without our agreement."],
     ["h2", "16. Terms that apply if you got Flock from the App Store"],
     ["p", "If you got Flock from Apple's App Store, the following applies, and it prevails over anything in these Terms that conflicts with it."],
-    ["li", "This agreement is with us, not Apple. These Terms are between you and Flock Corp only. Apple is not a party to them and is not responsible for Flock or its content."],
+    ["li", "This agreement is with us, not Apple. These Terms are between you and Flock Social LLC only. Apple is not a party to them and is not responsible for Flock or its content."],
     ["li", "Scope of the licence. The licence in section 3 is non-transferable and is limited to using Flock on any Apple-branded product that you own or control, as permitted by the Usage Rules in the Apple Media Services Terms and Conditions, except that Flock may be accessed by other accounts associated with you through Family Sharing or volume purchasing."],
     ["li", "Support. We are solely responsible for any maintenance and support for Flock. Apple has no obligation to furnish any maintenance or support services."],
     ["li", "Warranty. We are solely responsible for any product warranties, whether express or implied by law, to the extent they are not effectively disclaimed. If Flock fails to conform to any applicable warranty, you may notify Apple, and Apple will refund the purchase price, if any, for the app. To the maximum extent permitted by applicable law, Apple has no other warranty obligation whatsoever with respect to Flock, and any other claims, losses, liabilities, damages, costs or expenses attributable to any failure to conform to any warranty are our responsibility."],
     ["li", "Product claims. We, not Apple, are responsible for addressing any claims by you or a third party relating to Flock or your possession and use of it, including product liability claims, any claim that Flock fails to conform to any legal or regulatory requirement, and claims arising under consumer protection, privacy or similar legislation, including in connection with Flock's use of the HealthKit and HomeKit frameworks, which Flock does not use."],
     ["li", "Intellectual property claims. If a third party claims that Flock or your possession and use of it infringes their intellectual property rights, we, not Apple, are solely responsible for the investigation, defence, settlement and discharge of that claim."],
     ["li", "Legal compliance. You represent and warrant that you are not located in a country subject to a United States Government embargo or designated as a \"terrorist supporting\" country, and that you are not listed on any United States Government list of prohibited or restricted parties."],
-    ["li", "Contact. Questions, complaints and claims about Flock go to Flock Corp at social@flockcorp.com."],
+    ["li", "Contact. Questions, complaints and claims about Flock go to Flock Social LLC at social@flockcorp.com."],
     ["li", "Third-party terms. You must comply with any applicable third-party terms of agreement when using Flock."],
     ["li", "Apple as third-party beneficiary. Apple and Apple's subsidiaries are third-party beneficiaries of these Terms, and upon your acceptance of them Apple will have the right, and is deemed to have accepted the right, to enforce these Terms against you as a third-party beneficiary of them."],
     ["p", "If you got Flock from Google Play, Google's terms for the Play Store apply to the download and to any purchase, alongside these Terms."],
@@ -707,6 +707,7 @@ const SITE_GRAPH = [
     '@type': 'Organization',
     '@id': 'https://www.flockcorp.com/#organization',
     name: 'Flock',
+    legalName: 'Flock Social LLC',
     url: 'https://www.flockcorp.com/',
     email: 'social@flockcorp.com',
     description: 'Flock makes a free group planning app that turns a group chat into an actual plan.',
@@ -900,7 +901,7 @@ function renderPage(key) {
     + '</article>\n'
     + '<nav aria-label="Flock pages">\n'
     + '<ul>\n' + nav + '\n</ul>\n'
-    + '<p>Flock Corp · <a href="mailto:' + CONTACT_EMAIL + '">' + CONTACT_EMAIL + '</a> · '
+    + '<p>Flock Social LLC · <a href="mailto:' + CONTACT_EMAIL + '">' + CONTACT_EMAIL + '</a> · '
     + '<a href="' + CANONICAL_HOST + '/llms.txt">llms.txt</a></p>\n'
     + '</nav>\n'
     + '</main>\n'

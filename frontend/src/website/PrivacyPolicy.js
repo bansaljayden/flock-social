@@ -2,30 +2,30 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 22, 2026';
+const EFFECTIVE_DATE = 'September 23, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-// THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO.
+// THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
 //
-// "Flock Corp" is the name this page, TermsOfService.js and SiteFooter.js have
-// always printed, and no file anywhere in the repository records a company
-// registration, a state of incorporation, a registered agent or a business
-// address behind it. AboutPage.js says Flock is built by one student in
-// Bethlehem, Pennsylvania, and VENUE-TOS-DRAFT.md's own lawyer-flag list says
-// the contracting entity is undecided and that nothing is safe to publish with
-// it blank.
+// Flock Social LLC is a Pennsylvania limited liability company, organized with
+// the Department of State in September 2026. Before that this page printed
+// "Flock Corp", a name with no registration behind it, because nothing else
+// existed to name; a privacy policy has to identify the controller (GDPR
+// Article 13 wants its identity and contact details) and a EULA has to name a
+// real counterparty, so the placeholder was the gap. The state record is
+// public and anyone can look the company up by name at file.dos.pa.gov.
 //
-// A privacy policy has to name the controller correctly (GDPR Article 13 wants
-// the identity AND contact details of the controller, and a postal address is
-// what regulators expect there). A EULA has to name a real counterparty. So
-// this constant is deliberately ONE string in ONE place: when the entity
-// question is settled, change it here and in TermsOfService.js and
-// SiteFooter.js, and fill in OPERATOR_ADDRESS below.
+// ONE STRING, FOUR FILES. If the name ever changes, change it here, in
+// TermsOfService.js, in SiteFooter.js and in api/marketing-page.js, which is a
+// block-for-block text mirror of this page for crawlers that run no script.
 //
-// OPERATOR_ADDRESS is null on purpose. An invented address is worse than a
-// missing one, so nothing renders while it is null. Set it to a real postal
-// address and the "Who we are" section prints it without any other edit.
-const OPERATOR = 'Flock Corp';
+// OPERATOR_ADDRESS is null on purpose. Registering the company did not choose
+// an address to PUBLISH, which is a separate decision, and an invented or
+// premature address is worse than a missing one. Nothing renders while it is
+// null; set it to the chosen postal address and "Who we are" prints it without
+// any other edit.
+const OPERATOR = 'Flock Social LLC';
+const OPERATOR_KIND = 'a Pennsylvania limited liability company';
 const OPERATOR_ADDRESS = null;
 
 // EVERY CLAIM ON THIS PAGE IS SOURCED TO CODE. If you change behaviour in the
@@ -236,7 +236,7 @@ export default function PrivacyPolicy() {
               <h2>{num('who-we-are')} Who we are</h2>
               <p>
                 Flock is a social coordination app that helps you plan nights out with
-                friends. Flock ("we", "us", "our") is operated by {OPERATOR}. We are the
+                friends. Flock ("we", "us", "our") is operated by {OPERATOR}, {OPERATOR_KIND}. We are the
                 data controller for personal information processed through the Flock app,
                 flockcorp.com, the venue dashboard, and the venue sensors described in
                 section 3.
