@@ -8,7 +8,7 @@ This is the only part of Flock that runs on hardware, in a building we do not
 control, on wifi we do not control, with nobody around to restart it. Every
 design choice below follows from that.
 
-> ## Status: two of the three sensors have been read on a Pi. The beam has not.
+> ## Status: two of the three sensors have been read on a Pi. The crossing sensor has not.
 >
 > Read this before you trust anything below. On 2026-09-06 this directory was
 > installed on a Raspberry Pi 5, `main.py` ran on the board, and the thermal
@@ -54,10 +54,12 @@ design choice below follows from that.
 >
 > **Not verified:**
 >
-> - **The IR break-beam, the only sensor that has never been read.** Nothing is
->   wired. `--selftest` reports it NOT DETECTED and the device reports 0
->   crossings. The receiver voltage question below is still open, and getting
->   that one wrong damages the Pi rather than returning a bad number.
+> - **The IR crossing sensor, the only sensor that has never been read.**
+>   Nothing is wired. `--selftest` reports it NOT DETECTED and the device
+>   reports 0 crossings. `main.py --beam` is the tool for bringing it up. The
+>   receiver voltage question below applies if a two-part break-beam is used,
+>   and getting that one wrong damages the Pi rather than returning a bad
+>   number; a one-sided proximity module powered from 3V3 avoids it.
 > - **The noise figure.** The mic reads. The number it produces is uncalibrated
 >   and needs a sound level meter beside a running unit, and until then it is a
 >   relative loudness index rather than dB SPL.
@@ -91,7 +93,7 @@ Three numbers, every 30 seconds:
 
 | Field | What it is | How it is measured |
 |---|---|---|
-| `ir_beam_count` | Doorway crossings since the last reading | An infrared beam across the doorway; each break counts once |
+| `ir_beam_count` | Doorway crossings since the last reading | An infrared sensor on one GPIO pin, a one-sided proximity module or a two-part break-beam; each crossing counts once |
 | `thermal_headcount` | Warm bodies in the camera's field of view | Heat clusters in a 160×120 thermal grid |
 | `noise_db` | Ambient loudness | RMS level from a microphone |
 
@@ -156,23 +158,25 @@ The one thing to be careful about: it is a promise about a device that has
 only been switched on once. As of 2026-09-06 the thermal camera and the
 microphone have been brought up on a Pi and the claims above held: no image
 library is present, no frame reaches a file, and the payload is three integers.
-The beam has never been wired. Before the first venue install, re-read section
+The crossing sensor has never been wired. Before the first venue install, re-read section
 3 against the running unit rather than against this file.
 
 ---
 
 ## Hardware
 
-Buy this list. It is the build plan's, and as of 2026-08-26 the code drives it.
+Buy this list. It is the build plan's, and as of 2026-09-21 the code drives
+every row but the last.
 
 | Part | Connects to | Pi pins |
 |---|---|---|
 | Raspberry Pi 5, 8GB | | |
 | FLIR Lepton 3.5 (radiometric) on a PureThermal 3 breakout | USB | none. This is the whole point of the USB part |
-| IR break-beam receiver | GPIO 17 (falling edge, internal pull-up) | signal to pin 11 |
+| IR crossing sensor: a one-sided IR proximity module (preferred) or a two-part break-beam | GPIO 17 by default (`IR_GPIO_PIN`). `IR_ACTIVE_LOW=1` (default): falling edge, internal pull-up. `IR_ACTIVE_LOW=0`: rising edge, pull-down | signal to pin 11, plus 3V3 and GND |
 | MCP3008 ADC | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
 | MAX4466 microphone | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
-| 7 inch 720×1280 DSI panel, mounted portrait (demo units only) | DSI | ribbon, no header pins |
+| 7 inch 1024x600 HDMI touchscreen, landscape (demo units only) | HDMI | none |
+| VL53L8CX time-of-flight counter (sensor head, **designed only**) | I2C. **`main.py` has no support for it** | none yet |
 
 Two things about that list that are decisions, not details.
 
@@ -188,14 +192,58 @@ capture device and an audio library on the box, and "no audio recording" in the
 privacy policy is currently backed by the fact that neither exists here. The
 MAX4466 into an MCP3008 is load-bearing for that claim.
 
-**Portrait is an OS setting.** `display_loop` asks the framebuffer for 720x1280
-and draws into whatever it is given. If the panel comes up landscape, rotate it
-in Raspberry Pi OS; the program cannot and does not try to.
+**The panel is whatever the framebuffer says it is.** `display_loop` asks for
+`DISPLAY_W` x `DISPLAY_H` (default 1024x600), then reads back the size
+`set_mode` actually granted and lays out against that. `display_metrics` puts
+the three readings in columns on a wide panel and stacks them on a tall one, so
+a different panel needs no rotation and no code change. An earlier version
+hardcoded 720x1280 for a portrait DSI panel, and on the 600 pixel panel the
+third block ran off the bottom.
+
+**The crossing sensor does not care which part is on the end of it.** All the
+code watches is one pin changing state, so a one-sided IR proximity module and
+a two-part break-beam both work with no change to the counting. The one-sided
+module is the better build: one thing to mount instead of two, nothing to keep
+aligned, three wires instead of six, and no 5V receiver in front of a pin that
+cannot take 5V. Three settings cover the difference between parts:
+`IR_GPIO_PIN`, `IR_DEBOUNCE_SECONDS` (0.5 s), and `IR_ACTIVE_LOW`, which is the
+one that matters. Most parts pull the line low when something is there, which is
+the default; a part that pulls it high needs `IR_ACTIVE_LOW=0`. The internal
+pull follows the polarity, so an unconnected or unpowered sensor rests quiet
+instead of floating and counting noise.
+
+**Bring it up with `main.py --beam`,** not the service. It polls the pin, counts
+crossings live, and at the end names the wiring fault from the pattern of the
+samples: a pin that never moves (not wired, wrong pin, no power, out of range),
+a pin stuck in the triggered state (obstructed, or the polarity is backwards),
+or a pin triggered 80% of the time or more (more likely wired the other way
+round than a doorway that busy). `--seconds N` bounds the run.
 
 > ⚠️ **Confirm with a unit in hand before the first install:** many break-beam
 > receivers are 5V parts. The Pi's GPIO is **not** 5V tolerant. Use a receiver
 > with an open-collector output pulled up to 3V3, or put a level shifter in
-> line. Wiring a 5V signal straight into GPIO 17 will damage the Pi.
+> line. Wiring a 5V signal straight into GPIO 17 will damage the Pi. A
+> proximity module powered from 3V3 does not have this problem, which is most
+> of the reason to prefer it.
+
+### The sensor head, designed and not built
+
+The enclosure splits the device in two (`enclosure/README.md`). The Pi, the
+battery and the screen stay in a base unit; a wall-mounted head carries the
+Lepton, the MAX4466 with its MCP3008, and a VL53L8CX time-of-flight counter,
+joined to the base by one Cat6 run carrying SPI and I2C. The converter goes in
+the head so the analog run is centimetres rather than three metres beside a 4G
+modem.
+
+None of that is in the code yet, and three things follow:
+
+- **`main.py` has no VL53L8CX or I2C support.** The crossing count still comes
+  from one GPIO pin. The head's time-of-flight window is drawn; nothing reads
+  what is behind it.
+- **SPI over three metres of cable is untested.** `main.py` opens the MCP3008
+  at 1 MHz. Try it on the bench with the real cable before building around it.
+- **The base's two indicator lights (POWER, LINK) and the head's one are holes
+  in a panel.** `main.py` drives no LED.
 
 ### Pi 5
 
@@ -211,12 +259,14 @@ running on as its first line.
 ### The pin conflict, which is still open
 
 Moving the thermal camera to USB freed the I2C pins (3 and 5), and that is a
-real reduction. It did not dissolve the problem, and it is worth being precise
+real reduction. The sensor head as drawn would take I2C back for its
+time-of-flight counter. It did not dissolve the problem, and it is worth being precise
 about what is left rather than declaring it solved.
 
 What this code still needs on the 40-pin header:
 
-- **GPIO 17** (pin 11) for the break-beam, plus 3V3 and a ground.
+- **GPIO 17** (pin 11) for the crossing sensor, plus 3V3 and a ground.
+  `IR_GPIO_PIN` moves it if the HAT needs 17.
 - **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24.
 
 What the build plan puts on the same header: a SIM7600 4G HAT, with the note
@@ -673,9 +723,10 @@ knowing: at bin 4 two regions have to be closer in raw pixels before they join
 at all, which is why `test_main.py` had to move a fixture that only touched on
 the finer grid.
 
-**IR beam.** `ir_beam_count` is **crossings, not entries**: it counts a break in
-either direction, so a doorway used both ways roughly doubles the true entry
-count, and someone loitering in the beam inflates it further. Anything built on
+**Crossing sensor.** `ir_beam_count` is **crossings, not entries**: it counts a
+crossing in either direction, so a doorway used both ways roughly doubles the
+true entry count, and someone loitering in front of the sensor inflates it
+further. Anything built on
 this field has to treat it as a relative activity signal.
 
 ---
@@ -713,7 +764,8 @@ Commit it and have `setup.sh` install from it.
 | Headcount stuck at 1 in a busy room | Ambient too warm | Raise `THERMAL_MARGIN_C` |
 | An empty room reports several people | `THERMAL_MIN_CLUSTER` too low for this mounting distance | Raise it. The default is derived, not measured |
 | Crossings stuck at 0, `--selftest` says the board is a Pi 5 | `RPi.GPIO` cannot drive Pi 5 GPIO | `sudo pip3 uninstall RPi.GPIO && sudo pip3 install --break-system-packages rpi-lgpio`, then restart |
-| Crossings stuck at 0 | Beam misaligned or receiver unpowered | Break the beam by hand and watch the log |
+| Crossings stuck at 0 | Not wired, wrong pin, unpowered, out of range, or (break-beam) misaligned | Stop the service and run `main.py --beam`; wave a hand through and read which fault it names |
+| Crossings count constantly with nothing there, and stop when blocked | The part signals the other way round | Flip `IR_ACTIVE_LOW`, then run `--beam` again |
 | `has not read successfully for over 90s` in the log | A sensor answered once and then stopped: a USB camera that dropped off the bus, or a locked SPI bus | The device is reporting 0 for that signal on purpose. Reseat the USB cable or the wiring; a reboot clears a wedged bus |
 | `--selftest` says READING NOTHING USEFUL, every sample 1023 | VREF has no power. The converter divides by VREF, so zero there pins every channel to full scale | Check VREF and VDD both reach 3.3V. They are the two pins at the notch end of the chip |
 | Same, every sample 0 | No ground, or the chip is never selected | Check AGND and DGND both reach ground, and that CS reaches CE0 |
@@ -792,7 +844,7 @@ Things that are still open, so nobody has to rediscover them.
 1. **The beam has never been read, and no sensor has run for longer than a
    selftest.** As of 2026-09-06 `setup.sh`, the config load, the clock, the
    backend credential check, the thermal camera and the microphone are all
-   verified on a Pi 5. The IR break-beam is not wired at all, the display has
+   verified on a Pi 5. The crossing sensor is not wired at all, the display has
    never drawn, and `thermal_loop` and `noise_loop` have never run a shift. See
    the status box at the top.
 2. **No provisioning UI.** Creating, rotating and revoking a device key is
@@ -832,12 +884,12 @@ Things that are still open, so nobody has to rediscover them.
    The conversion from frame to pixels is pure and tested, and the draw path is
    exercised against a stub, but no part of `display_loop` has ever run on a
    framebuffer, so the first time this meets a real panel expect the layout to
-   be wrong somewhere. The touch event is the other unknown: a DSI panel may
+   be wrong somewhere. The touch event is the other unknown: the panel may
    report MOUSEBUTTONDOWN or FINGERDOWN depending on the driver, and both are
    accepted for that reason.
 9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C but a
-   40-pin cellular HAT still covers the pins the break-beam and the mic's ADC
-   need. See "The pin conflict, which is still open". It is an open hardware
+   40-pin cellular HAT still covers the pins the crossing sensor and the mic's
+   ADC need. See "The pin conflict, which is still open". It is an open hardware
    decision, and it blocks ordering the modem, not the sensors.
 10. **The Lepton path is executed but barely exercised.** Every V4L2 ioctl in
    `ThermalCamera` was written from documentation, and on 2026-09-06 they all
@@ -847,3 +899,8 @@ Things that are still open, so nobody has to rediscover them.
    PureThermal firmware, and more than one person in frame. The cluster
    thresholds are calibrated against exactly one body at two distances. See
    Calibration.
+11. **The sensor head is ahead of the code.** `enclosure/flux-sensor-head.scad`
+   draws a VL53L8CX window and a Cat6 run carrying SPI and I2C. `main.py` has
+   no I2C code, SPI has only ever run on the bench, and none of the enclosure
+   has been rendered, because OpenSCAD is not installed where it was written.
+   See "The sensor head, designed and not built".
