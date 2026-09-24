@@ -185,7 +185,7 @@ function WhenNear({ margin = '700px', className, hold, children }) {
    buy and never prints a price the checkout would not charge. A failed request
    is the same as "not on sale". The limits in the list are the ones the
    backend enforces with the paywall on: services/birdieUsage.js (10 a day
-   free, 150 with Pro) and services/forecastUsage.js (10 a month free). */
+   free, 150 with Pro) and services/forecastUsage.js (30 a month free). */
 function useProOffer() {
   const [offer, setOffer] = useState(null);
   useEffect(() => {
@@ -219,7 +219,7 @@ function ProOfferCard({ offer }) {
       <ul className="lp-list">
         <li>Everything in Free</li>
         <li>150 Birdie messages a day instead of 10</li>
-        <li>Crowd forecasts without the monthly limit of 10</li>
+        <li>Crowd forecasts without the monthly limit of 30</li>
       </ul>
       <a className="lp-btn lp-btn-navy" href="/pro">Get Flock Pro</a>
     </div>

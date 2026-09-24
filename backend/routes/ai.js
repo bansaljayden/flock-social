@@ -976,7 +976,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // the wrong thing (`!freeTier`, i.e. all-or-nothing by tier). `best_time`
       // and `peak_hours` — two thirds of what the forecast meter actually sells
       // — went out unconditionally. So a user who had just been told "you have
-      // used your 10 forecasts this month" on the venue card could type "when
+      // used your 30 forecasts this month" on the venue card could type "when
       // should I go to X" and be told, by us, for free. Birdie's own meter is
       // 10 MESSAGES A DAY, so that door was worth roughly 300 best-times a
       // month against an allowance of 10, and PAYWALL-DECISION.md's test for
@@ -988,7 +988,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // identified user spending one of their own metered turns on a venue they
       // named, which is a different act from scraping — so it is not gated to
       // zero. It draws on the SAME allowance as the card, because it is the
-      // same answer about the same venue. Ten forecasts a month means ten,
+      // same answer about the same venue. Thirty forecasts a month means thirty,
       // wherever you ask from.
       //
       // Charged ONCE PER TURN, not once per venue, by the caller (see the tool
@@ -1320,7 +1320,7 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
   // Telling the model otherwise makes it refuse something the user has paid
   // nothing for and is entitled to, which is its own kind of dishonesty.
   const tierLine = freeTier
-    ? `\n- The user is on the free tier: 10 Birdie messages a day, and the AI forecast (best time to go, peak hours, hour by hour) is free for the first 10 venues they ask about each month, then it is Flock Pro. If a crowd lookup comes back without those, their month is spent. You can mention Pro exists (150 Birdie messages a day + unlimited forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
+    ? `\n- The user is on the free tier: 10 Birdie messages a day, and the AI forecast (best time to go, peak hours, hour by hour) is free for the first 30 venues they ask about each month, then it is Flock Pro. If a crowd lookup comes back without those, their month is spent. You can mention Pro exists (150 Birdie messages a day + unlimited forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
     : '';
   return `You are Birdie, the assistant inside Flock, a social coordination app for Gen Z. You help people figure out where to go, how busy it is, and get their group out the door.
 

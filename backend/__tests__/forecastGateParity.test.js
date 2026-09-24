@@ -5,7 +5,7 @@
 // `PAYWALL_ENABLED` is unset, so none of this is live yet. That is exactly why
 // it matters: PAYWALL-DECISION.md is a pending decision about whether the wall
 // is worth turning on, and its own test for that is whether anybody ever hits
-// the meter ("if nobody hits the 10 forecasts/month or 10 Birdie/day cap, the
+// the meter ("if nobody hits the 30 forecasts/month or 10 Birdie/day cap, the
 // wall is invisible and pointless"). A meter with an open door beside it can
 // never be hit, so the decision would have been made on a number that was not
 // measuring anything.
@@ -656,8 +656,8 @@ test('what Birdie is told about the free tier matches what the gate does', async
   await birdieCrowd(['BIRDIE_PROMPT']);
   const prompt = String(sendCalls[0].config.systemInstruction);
   assert.match(prompt, /free tier/, 'the free-tier line vanished from the prompt');
-  assert.match(prompt, /first 10 venues/,
-    'Birdie is told the forecast is Pro outright, while the gate in fact gives the first 10 away');
+  assert.match(prompt, new RegExp(`first ${FREE_MONTHLY_FORECASTS} venues`),
+    'Birdie is told the forecast is Pro outright, while the gate in fact gives the first FREE_MONTHLY_FORECASTS away');
   assert.ok(!/hour-by-hour crowd forecasts are a Flock Pro feature/.test(prompt),
     'the prompt still carries the pre-gate claim');
   // Scoped to the tier sentence, not the whole prompt, because that is the one

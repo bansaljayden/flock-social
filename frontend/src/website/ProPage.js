@@ -28,7 +28,7 @@ import { planSavingsPercent } from '../lib/proPricing';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
-const FORECASTS_FREE_MONTHLY = 10;
+const FORECASTS_FREE_MONTHLY = 30;
 
 const DESCRIPTION = 'Flock Pro raises the Birdie and crowd forecast limits. What it costs, what changes, and how to cancel.';
 

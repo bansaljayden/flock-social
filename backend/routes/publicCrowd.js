@@ -439,7 +439,7 @@ function withAge(card) {
 // WHAT THE HONEST DEMO IS. "Try it live" exists to show people without accounts
 // what the product does. What it must show is what they will actually get when
 // they sign up, and a signed-out visitor is strictly LESS entitled than a free
-// account: the free account has ten forecasts a month, the visitor has none.
+// account: the free account has thirty forecasts a month, the visitor has none.
 // So the demo shows the free half in full — real venues near them, real live
 // busyness scores on every pin, the dial, the label, the confidence, open or
 // closed — and stops where the paid product starts. That is a better demo
