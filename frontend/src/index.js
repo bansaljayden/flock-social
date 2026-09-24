@@ -807,6 +807,16 @@ const PAGES = [
     Loading: PaperLoading,
   },
   {
+    // Flock Pro on the web. WEB ONLY: inside the native shell this route does
+    // not match, so the WebView falls through to the app like any other path.
+    // Apple does not allow the app to point at a web price outside the US, and
+    // the page repeats the check itself in case it is ever mounted another way.
+    id: 'pro',
+    test: (p) => p === '/pro' && !isNativeShell,
+    load: () => import('./website/ProPage'),
+    Loading: PaperLoading,
+  },
+  {
     // Every physical NFC tag Flock has points at this one URL: the acrylic
     // table stand at the DECA booth (/tap?s=stand) and the business cards
     // handed to judges (/tap?s=card). A chip holds exactly one URL, so the

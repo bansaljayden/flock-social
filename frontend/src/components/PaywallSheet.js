@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { isPurchasesAvailable, getProOffering, purchase, restore } from '../services/purchases';
+import { yearlySavingsPercent } from '../lib/proPricing';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
 // (overlay, 440px max, 20px top radius, drag handle, fadeInUp).
@@ -22,9 +23,12 @@ const HEADLINES = {
   settings: 'Get more out of every night out',
 };
 
+// Shown only while the offering loads. The amounts are here so the savings
+// figure below can be computed for the skeleton too; once the App Store
+// offering arrives, both the prices and the saving come from it instead.
 const FALLBACK_PLANS = {
-  yearly: { price: '$24.99/yr' },
-  monthly: { price: '$3.99/mo' },
+  yearly: { price: '$29.99/yr', amount: 29.99 },
+  monthly: { price: '$3.99/mo', amount: 3.99 },
 };
 
 const TERMS_URL = 'https://www.flockcorp.com/terms';
@@ -71,7 +75,9 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
 
-  const [selected, setSelected] = useState('yearly');
+  // Monthly first: it is the smaller commitment, and the web checkout
+  // (website/ProPage.js) opens on it too.
+  const [selected, setSelected] = useState('monthly');
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
   // 'loading' | 'ready' | 'web' | 'unavailable'
@@ -81,7 +87,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setSelected('yearly');
+    setSelected('monthly');
     setBusy(false);
     setRestoring(false);
     if (!isPurchasesAvailable()) {
@@ -172,6 +178,16 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   const monthlyPkg = pickPackage(packages, 'monthly');
   const yearlyPrice = yearlyPkg?.product?.priceString ? `${yearlyPkg.product.priceString}/yr` : FALLBACK_PLANS.yearly.price;
   const monthlyPrice = monthlyPkg?.product?.priceString ? `${monthlyPkg.product.priceString}/mo` : FALLBACK_PLANS.monthly.price;
+  // The saving is worked out from the two prices on screen, never typed in:
+  // a typed-in percentage outlived the price pair it was true for. A store
+  // package's numeric price is used when it has one; otherwise the fallback
+  // pair, and only when BOTH prices on screen are fallbacks, so a real price is
+  // never compared with a made-up one.
+  const numericPrice = (pkg) => (typeof pkg?.product?.price === 'number' ? pkg.product.price : null);
+  const bothFallback = !yearlyPkg?.product?.priceString && !monthlyPkg?.product?.priceString;
+  const savePct = bothFallback
+    ? yearlySavingsPercent(FALLBACK_PLANS.monthly.amount, FALLBACK_PLANS.yearly.amount)
+    : yearlySavingsPercent(numericPrice(monthlyPkg), numericPrice(yearlyPkg));
 
   const headline = HEADLINES[trigger] || HEADLINES.settings;
 
@@ -231,8 +247,8 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
           <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>{title}</span>
-          {kind === 'yearly' && (
-            <span style={{ fontSize: '10px', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: '999px', padding: '1px 7px' }}>Save 48%</span>
+          {kind === 'yearly' && savePct && (
+            <span style={{ fontSize: '10px', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: '999px', padding: '1px 7px' }}>Save {savePct}%</span>
           )}
         </div>
         <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '2px' }}>{price}</div>

@@ -442,14 +442,14 @@ export default function TermsOfService() {
       <section>
         <h2>10. Payments and subscriptions</h2>
         <p>
-          <strong>Flock is free to use today. Nothing in the app is for sale, no subscription
-          is on offer, and no payment method is collected from anyone.</strong> The rest of
-          this section is the agreement that will apply if and when that changes, so it is
-          written down before it can catch anybody out.
+          <strong>Flock is free to use.</strong> Making plans, inviting people, voting on where to go, the budget, splitting the bill, chat and the safety features cost nothing. Flock Pro is an optional subscription for more Birdie and more crowd forecasts, and the purchase screen lists exactly what it includes. If Flock Pro is not offered where you use Flock, nothing in this section applies to you and nothing is charged.
         </p>
         <p>
-          Any consumer subscription will be an auto-renewable subscription sold through the
-          App Store or Google Play, not by us. The following will always be true of it:
+          Flock Pro can be bought in two places. Where you bought it decides who charges you, how you cancel and how refunds work.
+        </p>
+        <h3>10.1 Bought in the iOS app</h3>
+        <p>
+          A subscription bought in the app is an auto-renewable subscription sold through the App Store (or Google Play), not by us. The following is true of it:
         </p>
         <ul>
           <li><strong>What it is:</strong> the title of the subscription, what it unlocks, the length of one term, and the price of one term, including any introductory or free trial period, are shown on the purchase screen and in the store listing before you buy. Nothing is charged until you confirm the purchase with your store account.</li>
@@ -457,18 +457,32 @@ export default function TermsOfService() {
           <li><strong>How to cancel:</strong> you manage and cancel the subscription in your Apple ID or Google Play account settings, not in Flock. We cannot cancel it for you.</li>
           <li><strong>Cancelling does not end the term you already paid for.</strong> Turning off auto-renewal stops the next charge. It does not shorten, refund or pro-rate the period you are in, and you keep the paid features until that period ends.</li>
           <li><strong>Free trials:</strong> if a free trial is offered and you buy the subscription during it, the unused part of the trial is forfeited. A trial converts to a paid term unless you cancel before it ends.</li>
-          <li><strong>Refunds</strong> are handled by Apple or Google under their own policies. We do not process payments and cannot issue a refund on their behalf.</li>
+          <li><strong>Refunds</strong> for purchases made in the app are handled by Apple or Google under their own policies. We cannot issue a refund on their behalf.</li>
           <li><strong>Price changes</strong> take effect only on a renewal, after the store notifies you and, where the store requires it, obtains your agreement.</li>
           <li><strong>Deleting your Flock account does not cancel a store subscription.</strong> Cancel it in your store account as well, or it keeps renewing.</li>
         </ul>
+        <h3>10.2 Bought on flockcorp.com</h3>
         <p>
-          If we ever bill venues directly rather than through a store, section 9.6 governs
-          that and we will publish the billing terms before the first charge.
+          When you buy Flock Pro on flockcorp.com, the seller is Flock Social LLC and the payment is processed by Stripe. You enter your card details with Stripe, and we never see or store them.
+        </p>
+        <ul>
+          <li><strong>Before you pay,</strong> the plan, its price in US dollars, any tax, how often it renews and how to cancel are shown on the page and at checkout. You agree to the renewal by ticking the box at checkout, and nothing is charged until you do.</li>
+          <li><strong>It renews by itself.</strong> Your card is charged the same price every month, or every year on a yearly plan, until you cancel. Before a yearly plan renews, we email you.</li>
+          <li><strong>How to cancel:</strong> on flockcorp.com, open You, then Flock Pro, then Manage subscription, and cancel there. It takes a few taps and there is nobody to call. You can also write to social@flockcorp.com and we will cancel it for you.</li>
+          <li><strong>Cancelling stops the next charge.</strong> You keep Pro until the end of the period you already paid for.</li>
+          <li><strong>Refunds:</strong> if you change your mind, write to social@flockcorp.com within 14 days of your first payment and we refund it in full. After that, payments are not refunded except where the law requires it.</li>
+          <li><strong>Under 18:</strong> a parent or guardian needs to make the purchase with their own payment method. If someone under 18 bought Flock Pro, a parent or guardian can write to us and we will cancel it and refund it.</li>
+          <li><strong>Price changes:</strong> we email you at least 30 days before a new price applies to your plan, and you can cancel before it does.</li>
+          <li><strong>Tax:</strong> where sales tax applies, it is added at checkout and shown before you pay.</li>
+          <li><strong>If a payment fails,</strong> Stripe tries again for a short time. If it still fails, Pro ends.</li>
+          <li><strong>Deleting your Flock account cancels a web subscription at once</strong> and ends Pro. If that is within 14 days of your first payment, write to us and we refund it.</li>
+          <li><strong>Buying in both places means paying twice.</strong> If you already have Pro from the App Store, do not buy it again on the web, and the other way round.</li>
+        </ul>
+        <p>
+          If we ever bill venues directly rather than through a store, section 9.6 governs that and we will publish the billing terms before the first charge.
         </p>
         <p>
-          We never collect or store card numbers, bank details, or any other payment
-          credential. Bill splitting inside Flock moves no money: it opens Venmo, Cash App or
-          Zelle on your phone, and what happens there is between you and them.
+          We never collect or store card numbers, bank details, or any other payment credential. Card payments on flockcorp.com are taken by Stripe. Bill splitting inside Flock moves no money: it opens Venmo, Cash App or Zelle on your phone, and what happens there is between you and them.
         </p>
       </section>
 

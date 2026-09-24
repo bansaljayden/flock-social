@@ -75,14 +75,28 @@ describe('the page only sells things that exist', () => {
   });
 
   test('the page does not say venues are paying, because none is', () => {
-    // No `stripe` dependency in backend/package.json, VENUE_BILLING_ENABLED
-    // unset on Railway, and the only writer of venue_profiles.tier is the admin
-    // comp route. Present tense here is a straight falsehood, and it is the
-    // claim a venue would rely on when it opens the mailto.
-    const pkg = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '..', '..', '..', 'backend', 'package.json'), 'utf8'
-    ));
-    expect(Object.keys(pkg.dependencies || {})).not.toContain('stripe');
+    // Nothing bills a venue: VENUE_BILLING_ENABLED is unset on Railway, the only
+    // writer of venue_profiles.tier is the admin comp route, and the one file in
+    // the backend that loads Stripe is the CONSUMER Flock Pro service. This used
+    // to be pinned as "there is no stripe dependency at all"; that stopped being
+    // the evidence on 2026-09-23 when consumer web checkout arrived, so the pin
+    // now checks the thing the claim is about. Present tense here would be a
+    // straight falsehood, and it is the claim a venue would rely on when it
+    // opens the mailto.
+    const backend = path.join(__dirname, '..', '..', '..', 'backend');
+    const loaders = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (['node_modules', '__tests__', 'scripts', 'backups'].includes(e.name)) continue;
+        const f = path.join(dir, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (e.name.endsWith('.js') && /require\(['"]stripe['"]\)/.test(fs.readFileSync(f, 'utf8'))) {
+          loaders.push(path.relative(backend, f).replace(/\\/g, '/'));
+        }
+      }
+    };
+    walk(backend);
+    expect(loaders).toEqual(['services/proBilling.js']);
     expect(visible).not.toMatch(/venues pay\b/i);
     expect(visible).not.toMatch(/venues are paying/i);
   });

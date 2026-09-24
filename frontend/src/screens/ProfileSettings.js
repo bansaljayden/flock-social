@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -801,18 +801,7 @@ export default function ProfileSettings({
             </div>
           </div>
 
-            {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
-            {(entitlements?.paywallEnabled || isPro) && (
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>
-                <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Flock Pro</span>
-                {isPro ? (
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>
-                ) : (
-                  <span style={{ color: 'var(--text-tertiary)' }}>›</span>
-                )}
-              </button>
-            )}
+            <ProRow isPro={isPro} entitlements={entitlements} colors={colors} setPaywallTrigger={setPaywallTrigger} showToast={showToast} />
             {/* .glass-danger paints this solid red with white text (both !important),
                 so the icon must be white too — colors.red on red was invisible. */}
             {/* Every device at once. The server route has existed since the
@@ -903,7 +892,7 @@ export default function ProfileSettings({
                 {/* Only once there is a subscription to speak of; Apple expects
                     the sheet to say deletion does not cancel one. */}
                 {(entitlements?.paywallEnabled || isPro) && (
-                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel a Flock Pro subscription. Cancel it first in your Apple ID settings, under Subscriptions.</p>
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
                 )}
                 {/* Both inputs below close the keyboard on Return
                     (enterKeyHint done + blur). In WKWebView a tap on a button
@@ -1184,4 +1173,107 @@ export default function ProfileSettings({
         {BottomNav()}
       </div>
     );
+}
+
+/* THE FLOCK PRO ROW, and why it is its own component.
+ *
+ * It needs GET /api/pro/status (whether web checkout is on, and whether this
+ * account has a web subscription to manage), and ProfileSettings has an early
+ * return for its subscreens, so a hook in its body would be a conditional
+ * hook. Declared at module level, never inside a render, for the remount rule
+ * remountedSurfaces.test.js pins.
+ *
+ * WEB: a web subscriber gets Manage subscription (the Stripe portal). Anyone
+ * not Pro gets a link to /pro, but only while checkout is actually on; with it
+ * off there is no row, because a row that leads to "not on sale" is a dead end.
+ * Pro bought through Apple shows as Active and nothing else.
+ *
+ * NATIVE iOS: no web link and no web price, anywhere (Apple, outside the US;
+ * storefront gating comes later). Pro shows as on; a web purchase is named as
+ * plain text with no link. Not Pro, the row is the existing App Store sheet,
+ * behind PAYWALL_ENABLED exactly as before.
+ */
+function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
+  const native = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+  const [status, setStatus] = React.useState(null);
+  const [opening, setOpening] = React.useState(false);
+  React.useEffect(() => {
+    // Natively, /status only matters once somebody is Pro: it says whether
+    // the purchase was a web one. Nothing on the native row sells anything.
+    if (native && !isPro) return undefined;
+    let live = true;
+    getProStatus().then((data) => { if (live) setStatus(data); }).catch(() => {});
+    return () => { live = false; };
+  }, [native, isPro]);
+
+  const premium = isPro || !!status?.isPremium;
+  const rowStyle = { width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', textDecoration: 'none', boxSizing: 'border-box' };
+  const icon = <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>;
+  const title = (text) => <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{text}</span>;
+  const on = <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>;
+  const chevron = <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>›</span>;
+
+  if (native) {
+    if (premium) {
+      return (
+        <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
+          {icon}
+          {title('Flock Pro is on')}
+          {/* Nothing here points at the website. Outside the US storefront
+              that is steering under App Store guideline 3.1.1, and the web
+              subscriber already has the manage link in every Stripe email. */}
+        </div>
+      );
+    }
+    if (!entitlements?.paywallEnabled) return null;
+    return (
+      <button className="hit44 glass-btn glass-secondary" onClick={() => setPaywallTrigger('settings')} style={{ ...rowStyle, cursor: 'pointer' }}>
+        {icon}
+        {title('Flock Pro')}
+        {chevron}
+      </button>
+    );
+  }
+
+  // Manage shows whenever the account has a web subscription, Pro or not: a
+  // failed renewal or a subscription RevenueCat has not reported yet is still
+  // billing, and the Terms tell that person to cancel from here.
+  if (status?.canManageWeb) {
+    const manage = async () => {
+      if (opening) return;
+      setOpening(true);
+      try {
+        const { url } = await openProPortal();
+        if (!url) throw new Error('Could not open billing. Try again.');
+        window.location.assign(url);
+      } catch (err) {
+        setOpening(false);
+        showToast?.(err?.message || 'Could not open billing. Try again.', 'error');
+      }
+    };
+    return (
+      <button className="hit44 glass-btn glass-secondary" onClick={manage} disabled={opening} aria-busy={opening || undefined} style={{ ...rowStyle, cursor: opening ? 'default' : 'pointer' }}>
+        {icon}
+        {title('Flock Pro')}
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>{opening ? 'Opening' : 'Manage subscription'}</span>
+      </button>
+    );
+  }
+  if (premium) {
+    return (
+      <div style={rowStyle}>
+        {icon}
+        {title('Flock Pro')}
+        {on}
+      </div>
+    );
+  }
+  if (!status?.checkoutAvailable) return null;
+  return (
+    <a className="hit44 glass-btn glass-secondary" href="/pro" style={{ ...rowStyle, cursor: 'pointer' }}>
+      {icon}
+      {title('Get Flock Pro')}
+      {chevron}
+    </a>
+  );
 }
