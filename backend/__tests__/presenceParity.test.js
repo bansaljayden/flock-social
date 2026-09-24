@@ -236,6 +236,7 @@ async function reviewPresenceSql() {
   return q.sql;
 }
 
+const { FREE_MONTHLY_FORECASTS } = require('../services/forecastUsage');
 test('a review needs a flock somebody else accepted, exactly as feedback does', async () => {
   const sql = await reviewPresenceSql();
 
@@ -468,14 +469,14 @@ test('a spent allowance strips every field that carries the best-time answer', a
   scriptMeter({ premium: false });
 
   // Burn the month's allowance. The venue and the hour are constant, so
-  // requests 2..10 are cache hits — which must still be metered, or refreshing
+  // requests after the first are cache hits — which must still be metered, or refreshing
   // the same card would be a free forecast forever.
   let open = null;
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= FREE_MONTHLY_FORECASTS; i++) {
     const res = await call('GET', '/api/crowd/PW_METER?localHour=20&localDay=5');
     assert.strictEqual(res.status, 200, res.text);
     assert.strictEqual(res.body.forecastAccess.locked, false);
-    assert.strictEqual(res.body.forecastAccess.remaining, 10 - i, `view ${i} did not consume the meter`);
+    assert.strictEqual(res.body.forecastAccess.remaining, FREE_MONTHLY_FORECASTS - i, `view ${i} did not consume the meter`);
     if (i === 1) open = res.body;
   }
 
@@ -536,7 +537,7 @@ test('list previews do not spend the single-venue allowance', async () => {
   assert.strictEqual(alts.status, 200, alts.text);
 
   const first = await call('GET', '/api/crowd/PW_FIRST?localHour=20&localDay=5');
-  assert.strictEqual(first.body.forecastAccess.remaining, 9,
+  assert.strictEqual(first.body.forecastAccess.remaining, FREE_MONTHLY_FORECASTS - 1,
     'a preview consumed the forecast meter');
 });
 
