@@ -19,14 +19,15 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 // TermsOfService.js, in SiteFooter.js and in api/marketing-page.js, which is a
 // block-for-block text mirror of this page for crawlers that run no script.
 //
-// OPERATOR_ADDRESS is null on purpose. Registering the company did not choose
-// an address to PUBLISH, which is a separate decision, and an invented or
-// premature address is worse than a missing one. Nothing renders while it is
-// null; set it to the chosen postal address and "Who we are" prints it without
-// any other edit.
+// OPERATOR_ADDRESS is the company's registered office, the address on its
+// public state record, chosen for publication so the controller has a postal
+// address as GDPR Article 13 expects. "Who we are" prints it; set it to null
+// and the sentence disappears without any other edit. It is also the address
+// in the terms' EULA contact line and the footer of the waitlist emails
+// (backend/services/emailService.js SENDER_POSTAL), so the three move together.
 const OPERATOR = 'Flock Social LLC';
 const OPERATOR_KIND = 'a Pennsylvania limited liability company';
-const OPERATOR_ADDRESS = null;
+const OPERATOR_ADDRESS = '2610 Long Ridge Dr, Hellertown, PA 18055';
 
 // EVERY CLAIM ON THIS PAGE IS SOURCED TO CODE. If you change behaviour in the
 // backend or the client, change this page in the same commit. The rule that
