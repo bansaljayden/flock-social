@@ -446,10 +446,11 @@ function withAge(card) {
 // argument than the old one, because it shows what you are buying instead of
 // giving it away, and it is the only version that is honest about the price.
 //
-// WHAT IS NOT GATED, deliberately: `score`, `label`, `confidence`, `is_open`
-// and the per-venue scores in the pin list. "How busy is it right now" is the
-// commodity Google gives away and this product promises to keep free forever.
-// Gating it would leave a demo of nothing.
+// WHAT IS NOT GATED BY THIS BLOCK: `score`, `label`, `confidence`, `is_open`
+// and the per-venue scores in the pin list. Gating them for everyone would
+// leave a demo of nothing. With the paywall on they are shown for three venues
+// a visitor a day and covered after that; THE LIVE LEVEL, THREE VENUES A DAY
+// below says why and how.
 //
 // `forecast_locked` is published so the marketing page can say what is behind
 // the wall instead of just rendering less. NOTE for whoever flips the switch:
@@ -474,13 +475,132 @@ function gateDemoCard(card) {
   return { ...card, ...DEMO_LOCKED_FORECAST, forecast_locked: true };
 }
 
+// ---------------------------------------------------------------------------
+// THE LIVE LEVEL, THREE VENUES A DAY PER VISITOR, ONCE THE PAYWALL IS ON.
+//
+// The app covers the live level once a free account has spent its thirty
+// venues for the month (routes/crowd.js lockedCard and crowdVisibility). This
+// demo went on printing it for any venue to anyone, so an account at its limit
+// could sign out and read the map here instead: allowDemo above allows 20
+// requests an address an hour, and a cache HIT never consults it at all, which
+// left hundreds of venues a day behind a door with no meter on it.
+//
+// With PAYWALL_ENABLED on, a visitor is shown the crowd level (the dial, the
+// label, the confidence, the number on a pin) for at most DEMO_FREE_VENUES
+// distinct venues per UTC day. Pins and cards draw on the same three, a venue
+// already shown stays shown, and past three a card or pin comes back with venue
+// facts only and `crowd_locked`, the flag LiveDemo.js reads to say what an
+// account gets instead of drawing an empty dial. With the paywall off nothing
+// in this block runs.
+//
+// KEYED ON THE ADDRESS allowDemo KEYS ON, WITH THE SAME CAVEAT ("WHOSE 20
+// REQUESTS" above): in production the demo arrives through the Vercel relay, so
+// req.ip is the relay's egress address and the three are shared by everyone who
+// comes through that edge on a given day. That is the strict direction for a
+// meter: it hides too much from honest visitors rather than too little from
+// anyone, and the relay header that fixes allowDemo's key fixes this one in the
+// same edit. Checked on EVERY response, hit or miss, because the cache is shared
+// by every visitor and allowDemo only runs on a miss.
+// ---------------------------------------------------------------------------
+const DEMO_FREE_VENUES = 3;
+const REVEAL_MAX_ENTRIES = 5000;
+const REVEAL_LOW_WATER = Math.floor(REVEAL_MAX_ENTRIES * 0.9);
+const demoReveals = new Map(); // address -> { day: 'YYYY-MM-DD', ids: Set<place id> }, at most three ids
+
+function evictDemoReveals(today) {
+  // Yesterday's entries first: a visitor whose day rolled over has nothing
+  // left to remember. Then least consumed first, for the reason evictIpHits
+  // gives: an address that has already spent its three is the entry somebody
+  // cycling addresses wants forgotten, so it is the last to go. Never clear().
+  for (const [k, v] of demoReveals) {
+    if (v.day !== today) demoReveals.delete(k);
+  }
+  if (demoReveals.size <= REVEAL_MAX_ENTRIES) return;
+  const byConsumption = [...demoReveals.entries()].sort((a, b) => a[1].ids.size - b[1].ids.size);
+  for (const [k] of byConsumption) {
+    if (demoReveals.size <= REVEAL_LOW_WATER) break;
+    demoReveals.delete(k);
+  }
+}
+
+// Whether this visitor may be shown the crowd level for this venue, and if so,
+// records that they were. A missing id is never shown: it cannot be counted.
+function mayShowCrowd(req, placeId) {
+  if (!paywallEnabled()) return true;
+  if (typeof placeId !== 'string' || !placeId) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  const key = (req && req.ip) || 'unknown';
+  let entry = demoReveals.get(key);
+  if (!entry || entry.day !== today) entry = { day: today, ids: new Set() };
+  if (!entry.ids.has(placeId)) {
+    if (entry.ids.size >= DEMO_FREE_VENUES) return false;
+    entry.ids.add(placeId);
+  }
+  demoReveals.set(key, entry);
+  if (demoReveals.size > REVEAL_MAX_ENTRIES) evictDemoReveals(today);
+  return true;
+}
+
+// What a covered card or pin keeps: facts about the place, never a reading. An
+// allowlist for the reason routes/crowd.js LOCKED_CARD_KEEP gives: a field
+// added to the card later stays off a covered response by default instead of
+// shipping by default.
+const DEMO_CARD_KEEP = Object.freeze([
+  'place_id', 'name', 'photo_url', 'address', 'rating', 'reviews', 'price_level', 'is_open', 'as_of', 'age_ms',
+]);
+const DEMO_PIN_KEEP = Object.freeze([
+  'place_id', 'name', 'address', 'rating', 'price_level', 'lat', 'lng', 'is_open', 'photo_url',
+]);
+
+function keepOnly(obj, keys) {
+  const out = {};
+  for (const k of keys) {
+    if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+  }
+  return out;
+}
+
+function coverDemoCard(card) {
+  return {
+    ...keepOnly(card, DEMO_CARD_KEEP),
+    score: null,
+    label: null,
+    confidence_basis: null,
+    // Null beside null: no number here for a measurement block to describe.
+    confidence: null,
+    confidence_measurement: null,
+    ...DEMO_LOCKED_FORECAST,
+    forecast_locked: true,
+    crowd_locked: true,
+  };
+}
+
+// A pin never carries a confidence (see the pin row below), so a covered one
+// does not grow the key either.
+function coverDemoPin(v) {
+  return { ...keepOnly(v, DEMO_PIN_KEEP), score: null, label: null, confidence_basis: null, crowd_locked: true };
+}
+
 // Everything that leaves this file as a card goes through here: age stamped per
-// response, forecast gated per response. Both are per-response for the same
-// reason — the card object itself is SHARED CACHE, so writing either into it
-// would hand the next caller a stale age and would bake whatever the paywall
-// happened to be at build time into a 20-minute entry.
-function presentCard(card) {
-  return gateDemoCard(withAge(card));
+// response, the crowd level counted against the visitor per response, forecast
+// gated per response. All three are per-response for the same reason: the card
+// object itself is SHARED CACHE, so writing any of them into it would hand the
+// next caller a stale age, somebody else's three venues, or whatever the
+// paywall happened to be at build time, baked into a 20-minute entry.
+function presentCard(card, req) {
+  const aged = withAge(card);
+  if (aged && !mayShowCrowd(req, aged.place_id)) return coverDemoCard(aged);
+  return gateDemoCard(aged);
+}
+
+// The area search, card and pins together. The embedded card is counted first:
+// it is the hero of the section and its venue is one of the pins, so showing it
+// costs the visitor one of their three, not two.
+function presentArea(result, req) {
+  if (!result || !Array.isArray(result.venues)) return result;
+  const card = result.card ? presentCard(result.card, req) : null;
+  const venues = result.venues.map((v) => (mayShowCrowd(req, v.place_id) ? v : coverDemoPin(v)));
+  return card ? { ...result, venues, card } : { ...result, venues };
 }
 
 // ---------------------------------------------------------------------------
@@ -548,7 +668,7 @@ router.get('/demo/venues',
       const cached = getCache(cacheKey);
       // A cache hit is minutes old and says so. Stamping age at build time
       // would let a 19-minute-old card claim "updated just now".
-      if (cached) return res.json(cached.card ? { ...cached, card: presentCard(cached.card) } : cached);
+      if (cached) return res.json(presentArea(cached, req));
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
       // allowDemo caps REQUESTS per IP and per day; it never touched the shared
@@ -699,7 +819,7 @@ router.get('/demo/venues',
       };
 
       setCache(cacheKey, result, 20 * 60_000);
-      res.json(card ? { ...result, card: presentCard(card) } : result);
+      res.json(presentArea(result, req));
       warmDemoPhotos(result.venues, req);
     } catch (err) {
       console.error('[PublicDemo] venues error:', err.message);
@@ -727,7 +847,7 @@ router.get('/demo/venue/:placeId',
       const { time: scoreTime, localHour, localDay } = clientNow(req);
       const cacheKey = `venue:${placeId}:${localDay}:${localHour}`;
       const cached = getCache(cacheKey);
-      if (cached) return res.json(presentCard(cached));
+      if (cached) return res.json(presentCard(cached, req));
 
       if (!allowDemo(req)) return res.status(429).json({ error: DEMO_BUSY_MSG });
       // One paid Place Details call per cache miss. Same reasoning as the area
@@ -770,7 +890,7 @@ router.get('/demo/venue/:placeId',
 
       const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }), null, p);
       setCache(cacheKey, result, 10 * 60_000);
-      res.json(presentCard(result));
+      res.json(presentCard(result, req));
     } catch (err) {
       console.error('[PublicDemo] venue error:', err.message);
       res.status(500).json({ error: DEMO_BUSY_MSG });
@@ -784,6 +904,7 @@ router.get('/demo/venue/:placeId',
 function resetDemoLimitsForTest() {
   ipHits.clear();
   cache.clear();
+  demoReveals.clear();
   dayKey = new Date().toISOString().slice(0, 10);
   dayCount = 0;
 }
@@ -792,8 +913,16 @@ module.exports = router;
 // Two of the subtlest card bugs live in these two helpers (a weekday
 // difference read as a day count, and a cached card claiming to be fresh), so
 // they are reachable from the tests rather than only from a live Google key.
+// Only the three-a-day memory, for a test that needs a fresh visitor without
+// throwing away the cache it is asserting about.
+function resetDemoRevealsForTest() {
+  demoReveals.clear();
+}
+
 module.exports.__testables = {
-  clockFor, withAge, buildCard, toVenueShape, gateDemoCard, presentCard,
+  clockFor, withAge, buildCard, toVenueShape, gateDemoCard, presentCard, presentArea,
+  mayShowCrowd, evictDemoReveals, demoReveals, resetDemoRevealsForTest,
+  coverDemoCard, coverDemoPin, DEMO_FREE_VENUES, REVEAL_MAX_ENTRIES, REVEAL_LOW_WATER,
   // Round 15 — the abuse-limit internals, so __tests__/publicDemoAbuse.test.js
   // can pin the eviction ORDER and the ceilings on a seeded map instead of
   // trusting the comments above (documented-but-untested is how the clear()

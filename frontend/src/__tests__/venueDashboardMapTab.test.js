@@ -194,10 +194,11 @@ describe('owner view of the card', () => {
   });
 
   it('the locked-forecast tease does not open the consumer paywall on a venue account', () => {
-    expect(card).not.toContain("e.stopPropagation(); setPaywallTrigger('forecast')");
-    const guarded = card.split("if (!venueOwnerView) setPaywallTrigger('forecast')").length - 1;
-    // Three blurred teasers plus the locked hour-by-hour row (2026-09-24).
-    expect(guarded).toBe(4);
+    expect(card).not.toContain("e.stopPropagation(); setPaywallTrigger('forecast'");
+    // The venue rides along so the trip back from Stripe reopens this card.
+    const guarded = card.split("if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id)").length - 1;
+    // Three blurred teasers, the locked hour-by-hour row and the covered dial (2026-09-24).
+    expect(guarded).toBe(5);
   });
 });
 

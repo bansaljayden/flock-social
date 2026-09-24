@@ -683,11 +683,24 @@ function birdieSearchSet(key, data) {
 // The note is addressed to the model, not the user. "Do not invent" is
 // load-bearing: the system prompt's hard rules already forbid making up crowd
 // data, and this repeats it at the exact moment the data is missing.
-const LOCKED_FORECAST_NOTE = 'Best time to go, peak hours and the hour-by-hour forecast are Flock Pro, and this user has used their free forecasts for this month. Do not guess, estimate or infer any of them. Say it is a Pro feature if they ask.';
+const LOCKED_FORECAST_NOTE = 'This user has used their free venues for this month, so this venue\'s crowd level, best time to go, peak hours and hour-by-hour forecast are Flock Pro. There is no crowd reading here: do not guess, estimate or infer how busy it is, now or later. Say it is a Pro feature if they ask.';
+// A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
+// (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
+// level as well as the forecast, for any venue not already opened this month.
+// Every field that states or implies a reading goes, including the owner's
+// attribution and the confidence block, because anything left in this object
+// is text the model can say back. The venue's name and open state stay: those
+// are Google's facts, not a reading.
 function lockForecastResult(result) {
   delete result.best_time;
   delete result.peak_hours;
   delete result.hourly_forecast;
+  delete result.crowd_score;
+  delete result.crowd_label;
+  delete result.crowd_source;
+  delete result.crowd_attribution;
+  delete result.confidence;
+  delete result.confidence_measurement;
   result.forecast_locked = true;
   result.forecast_note = LOCKED_FORECAST_NOTE;
   return result;
@@ -923,9 +936,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         }
       }
 
-      // The free half: how busy is it RIGHT NOW. Same commodity the card, the
-      // pin list and the public demo all give away, and the same one this
-      // product promised to keep free forever.
+      // How busy is it RIGHT NOW. Free for any venue until the month is spent,
+      // then only for venues this account already opened this month; a locked
+      // venue has all of this stripped by lockForecastResult below, the same
+      // rule the card applies.
       const result = {
         // Sanitized where it enters the MODEL's context rather than on `venue`
         // itself: `venue.name` above is also what mlPredictor and the baseline
@@ -1012,15 +1026,14 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       //
       // Charged PER VENUE by the caller (see the tool loop below), on the same
       // rule as the card: a venue this account already opened this month is
-      // free, a new one costs one of the thirty, and a spent month gets the
-      // free half. It was once per TURN, and one turn could then return full
+      // free, a new one costs one of the thirty, and a spent month gets no
+      // crowd reading at all. It was once per TURN, and one turn could then return full
       // forecasts for thirty venues while the meter moved by one.
       //
-      // Nothing that survives into the locked result reconstructs the curve:
-      // `crowd_score` is one number for right now, which is the free product,
-      // and the tool takes no hour argument, so there is no way to ask it for
-      // 8 PM. The 24-hour walk is skipped entirely when locked rather than
-      // computed and thrown away.
+      // Nothing survives into the locked result that states a reading: no
+      // score, label or confidence, and the tool takes no hour argument, so
+      // there is no way to ask it for 8 PM either. The 24-hour walk is skipped
+      // entirely when locked rather than computed and thrown away.
       if (opts.includeForecast) {
         // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
         // Birdie must never suggest an hour that already passed, and its answer
@@ -1336,7 +1349,7 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
   // Telling the model otherwise makes it refuse something the user has paid
   // nothing for and is entitled to, which is its own kind of dishonesty.
   const tierLine = freeTier
-    ? `\n- The user is on the free tier: 10 Birdie messages a day, and the AI forecast (best time to go, peak hours, hour by hour) is free for the first 30 venues they ask about each month, then it is Flock Pro. If a crowd lookup comes back without those, their month is spent. You can mention Pro exists (150 Birdie messages a day + unlimited forecasts + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
+    ? `\n- The user is on the free tier: 10 Birdie messages a day, and crowd levels plus the AI forecast (how busy it is now, best time to go, peak hours, hour by hour) are free for the first 30 venues they ask about each month, then it is Flock Pro. A venue they already asked about this month stays open. If a crowd lookup comes back with no crowd reading, their month is spent: say so plainly and never guess how busy it is. You can mention Pro exists (150 Birdie messages a day + crowd levels and forecasts for every venue + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
     : '';
   return `You are Birdie, the assistant inside Flock, a social coordination app for Gen Z. You help people figure out where to go, how busy it is, and get their group out the door.
 
@@ -1759,8 +1772,8 @@ router.post('/chat',
       //
       // Each venue the model looks up is its own question. A venue this account
       // already opened this month is free and stays open; a new one costs one
-      // of the free venues; once they are spent a new venue gets the free half
-      // only. That is GET /api/crowd/:placeId's rule on the same meter, so
+      // of the free venues; once they are spent a new venue gets no crowd
+      // reading at all. That is GET /api/crowd/:placeId's rule on the same meter, so
       // "thirty venues a month" is thirty however the user asks. Until
       // 2026-09-24 this was charged once per TURN: one turn could then return
       // full forecasts for thirty venues while the meter moved by one, and five

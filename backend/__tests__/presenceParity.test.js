@@ -439,7 +439,13 @@ test('no calibration row can arrive without an account attached to it', () => {
 // which is the whole product of the gate; the free half below answers "how busy
 // is it right now", which is the commodity Google gives away.
 const PREMIUM_FIELDS = ['bestTime', 'hourly', 'peak', 'bestHour', 'bestIndex', 'bestIsNow'];
-const FREE_FIELDS = ['score', 'label', 'isOpen', 'hoursToday', 'capacity', 'waitEstimate', 'calibration'];
+// Since 2026-09-24 a locked card carries no reading of any kind (routes/crowd.js
+// lockedCard). CROWD_FIELDS must be null or absent on it; FACT_FIELDS are the
+// venue's own facts and must survive, or the card would lose its name and hours.
+const CROWD_FIELDS = ['score', 'label', 'capacity', 'waitEstimate', 'confidence', 'rawEngineScore',
+  'confidenceMeasurement', 'calibration', 'baselineData', 'ownerReport', 'factors', 'supported',
+  'confidenceBasis', 'confidenceMeans', 'predictionMethod'];
+const FACT_FIELDS = ['name', 'isOpen', 'hoursToday'];
 
 function scriptMeter({ premium }) {
   handlers = [
@@ -463,7 +469,7 @@ test('with the paywall dormant nothing is metered and nothing is stripped', asyn
   assert.ok(res.body.hourly.length > 0);
 });
 
-test('a spent allowance strips every field that carries the best-time answer', async () => {
+test('a spent allowance covers the whole card for a new venue, and an opened venue stays open', async () => {
   process.env.PAYWALL_ENABLED = 'true';
   meterUser();
   scriptMeter({ premium: false });
@@ -503,13 +509,23 @@ test('a spent allowance strips every field that carries the best-time answer', a
     assert.ok(emptied,
       `a locked forecast still ships \`${field}\` = ${JSON.stringify(v)} — frontend gating is cosmetic, so this is sold and given away`);
   }
-  // ...and the free half is untouched. A paywall that also took the live score
-  // would be selling the one thing this product promised to keep free.
-  for (const field of FREE_FIELDS) {
-    assert.ok(locked[field] !== undefined && locked[field] !== null, `the live half lost \`${field}\``);
+  // ...and so is every reading of the live half. The dial is covered too: a
+  // spent month shows no crowd number for a venue it has not opened.
+  for (const field of CROWD_FIELDS) {
+    const v = locked[field];
+    assert.ok(v === null || v === undefined, `a locked card still ships \`${field}\` = ${JSON.stringify(v)}`);
   }
-  assert.strictEqual(locked.score, open.score);
-  assert.strictEqual(locked.label, open.label);
+  // The venue's own facts stay, so the card is still a card.
+  for (const field of FACT_FIELDS) {
+    assert.ok(locked[field] !== undefined && locked[field] !== null, `the locked card lost the fact \`${field}\``);
+  }
+  assert.ok(Number.isFinite(open.score), 'the open card had no score; this comparison proves nothing');
+
+  // A venue this account opened before the month ran out is not covered.
+  const reopened = (await call('GET', '/api/crowd/PW_METER_1?localHour=20&localDay=5')).body;
+  assert.strictEqual(reopened.forecastAccess.locked, false);
+  assert.strictEqual(reopened.score, open.score);
+  assert.ok(reopened.bestTime, 'an opened venue lost its forecast when the month ran out');
 });
 
 test('a Pro subscriber is never metered', async () => {
@@ -764,6 +780,125 @@ test('a refused neighbour search is never cached as a list of venues', async () 
   NEARBY = [];
   const retry = await call('GET', '/api/crowd/ALT_REFUSED/alternatives?localHour=20&localDay=5');
   assert.strictEqual(retry.status, 200, 'the refusal was cached and outlived the outage');
+});
+
+// ===========================================================================
+// THE DIAL IS COVERED ON THE LISTS TOO (2026-09-24)
+//
+// A spent month shows no crowd number for a venue it has not opened, on the
+// card (above) and on every list: the batch behind the map pins, the heatmap,
+// the vote list and a plan's event-time scores, and "less crowded nearby".
+// ===========================================================================
+
+const spendMonthExcept = (uid, kept) => {
+  for (const id of kept) recordView(uid, id);
+  for (let i = kept.length; i < FREE_MONTHLY_FORECASTS; i++) recordView(uid, `SPENT_${uid}_${i}`);
+};
+const batchBody = (ids) => ({
+  venues: ids.map((id) => (id
+    ? { place_id: id, name: id, location: { latitude: 39.74, longitude: -104.98 } }
+    : { name: 'No id', location: { latitude: 39.74, longitude: -104.98 } })),
+  localHour: 20,
+  localDay: 5,
+});
+const WITHHELD = ['score', 'label', 'confidence', 'confidenceMeasurement', 'ownerReport',
+  'calibration', 'baselineData', 'rawEngineScore'];
+
+test('a spent month withholds list numbers for every venue it has not opened, and records no serve for them', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  meterUser();
+  scriptMeter({ premium: false });
+  spendMonthExcept(CURRENT_USER.id, ['PW_SEEN']);
+
+  const res = await call('POST', '/api/crowd/batch', batchBody(['PW_SEEN', 'PW_NEW', null]));
+  assert.strictEqual(res.status, 200, res.text);
+  const byId = Object.fromEntries(res.body.predictions.map((p) => [p.placeId || 'none', p]));
+  assert.ok(Number.isFinite(byId.PW_SEEN.score), 'a venue opened this month lost its number on the list');
+  assert.ok(byId.PW_SEEN.label);
+  for (const key of ['PW_NEW', 'none']) {
+    const row = byId[key];
+    assert.ok(row, `the ${key} row vanished instead of being withheld`);
+    assert.strictEqual(row.crowdLocked, true);
+    for (const field of WITHHELD) {
+      assert.ok(row[field] === null || row[field] === undefined, `a withheld ${key} row still ships ${field}`);
+    }
+  }
+  const served = ran(/INSERT INTO served_predictions/).map((q) => JSON.stringify(q.params));
+  assert.ok(served.some((p) => p.includes('PW_SEEN')), 'the shown number was not recorded; this check proves nothing');
+  assert.ok(!served.some((p) => p.includes('PW_NEW')), 'a withheld number was recorded as served');
+});
+
+test('a month not yet spent, a Pro subscriber and a dormant paywall all see every list number', async () => {
+  const cases = [
+    ['free, month not spent', () => { process.env.PAYWALL_ENABLED = 'true'; meterUser(); scriptMeter({ premium: false }); }],
+    ['Pro, month spent', () => {
+      process.env.PAYWALL_ENABLED = 'true'; meterUser(); scriptMeter({ premium: true });
+      spendMonthExcept(CURRENT_USER.id, []);
+    }],
+    ['paywall off, month spent', () => {
+      delete process.env.PAYWALL_ENABLED; meterUser(); scriptMeter({ premium: false });
+      spendMonthExcept(CURRENT_USER.id, []);
+    }],
+  ];
+  for (const [name, setup] of cases) {
+    setup();
+    const res = await call('POST', '/api/crowd/batch', batchBody(['PW_ANY']));
+    assert.strictEqual(res.status, 200, `${name}: ${res.text}`);
+    const row = res.body.predictions[0];
+    assert.ok(Number.isFinite(row.score), `${name}: a list number was withheld`);
+    assert.ok(!row.crowdLocked, `${name}: the row was marked withheld`);
+  }
+});
+
+test('a plan lookup that fails withholds list numbers for that request instead of failing open or erroring', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  meterUser();
+  handlers = [
+    [/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => { throw new Error('connection terminated unexpectedly'); }],
+    [/[\s\S]*/, () => ({ rows: [] })],
+  ];
+  const batch = await call('POST', '/api/crowd/batch', batchBody(['PW_BLIP']));
+  assert.strictEqual(batch.status, 200, 'the map behind a background refresh must not get an error');
+  assert.strictEqual(batch.body.predictions[0].crowdLocked, true);
+  assert.strictEqual(batch.body.predictions[0].score, null, 'an unknown plan was shown the number');
+
+  const alts = await call('GET', '/api/crowd/PW_BLIP/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(alts.status, 200, alts.text);
+  assert.deepStrictEqual(alts.body.alternatives, []);
+});
+
+test('a covered venue lists nothing quieter and buys no search; an opened one lists only opened neighbours', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  meterUser();
+  scriptMeter({ premium: false });
+  NEARBY = [place('PW_NEAR_NEW')];
+  spendMonthExcept(CURRENT_USER.id, ['PW_ALT_SEEN', 'PW_NEAR_SEEN']);
+
+  fetched = [];
+  const covered = await call('GET', '/api/crowd/PW_ALT_NEW/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(covered.status, 200, covered.text);
+  assert.deepStrictEqual(covered.body.alternatives, []);
+  assert.strictEqual(covered.body.crowdLocked, true);
+  assert.strictEqual(fetched.length, 0, 'a covered venue still paid Google for a neighbour search');
+
+  // A cached list holding one opened and one unopened quieter neighbour.
+  crowdRouter.__test.seedCache('alt:PW_ALT_SEEN:20:5', {
+    currentVenue: { name: 'PW_ALT_SEEN', score: 60, label: 'Usually busy' },
+    alternatives: [
+      { placeId: 'PW_NEAR_NEW', name: 'PW_NEAR_NEW', score: 20, label: 'Usually quiet' },
+      { placeId: 'PW_NEAR_SEEN', name: 'PW_NEAR_SEEN', score: 25, label: 'Usually quiet' },
+    ],
+  });
+  const open = await call('GET', '/api/crowd/PW_ALT_SEEN/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(open.status, 200, open.text);
+  assert.deepStrictEqual(open.body.alternatives.map((a) => a.placeId), ['PW_NEAR_SEEN'],
+    'an unopened neighbour was listed with its number');
+
+  // A Pro subscriber reading the same cached list sees all of it.
+  meterUser();
+  scriptMeter({ premium: true });
+  const pro = await call('GET', '/api/crowd/PW_ALT_SEEN/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(pro.body.alternatives.length, 2);
 });
 
 // ===========================================================================

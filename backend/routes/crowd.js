@@ -137,11 +137,9 @@ async function forecastAccess(userId, { count, premium, placeId } = {}) {
 // Frontend gating is cosmetic (DESIGN-STANDARD rule 7), so anything left in this
 // payload is shipped.
 //
-// What deliberately STAYS is the free half: score, label, capacity,
-// waitEstimate and the live calibration all describe "how busy is it right
-// now", plus hoursToday/isOpen, which are Google's posted hours and were never
-// ours to sell. __tests__/presenceParity.test.js pins both halves — add a field
-// to the premium set and it must be added here too.
+// These are the forecast half. Since 2026-09-24 a locked card drops the live
+// half too (lockedCard below); this list is kept because every other surface
+// names the same three answers, and __tests__/presenceParity.test.js sweeps it.
 // Frozen, and the empty array with it. This used to be written inline at the
 // one call site, so every locked response got its own `[]`; hoisting it into a
 // constant means every locked response now shares ONE array by reference, and
@@ -155,6 +153,51 @@ const LOCKED_FORECAST_FIELDS = Object.freeze({
   bestIsNow: null,
 });
 
+// A LOCKED CARD CARRIES NO CROWD NUMBER AT ALL (2026-09-24).
+//
+// A spent month used to take the forecast half only and leave "how busy is it
+// right now" on the card, on the old rule that the live number was free
+// forever. That rule is retired: a free account gets crowd levels AND
+// forecasts for thirty distinct venues a month, and once the thirty are spent a
+// venue it has not opened this month shows neither. Venues it already opened
+// stay fully open (forecastAccess, hasViewed).
+//
+// An ALLOWLIST, not a list of fields to blank, because this gate has leaked
+// through secondary fields before (bestHour beside a null bestTime, above): a
+// field added to the card later is left off a locked response by default
+// rather than shipped by default. What survives is venue fact, never a
+// reading: Google's posted hours and open state, the category and price level,
+// the weather, a Ticketmaster event or a game night on the calendar, and the
+// card's own clock. Everything the model, the reporters or the owner produced
+// (score, label, capacity, wait, confidence and its measurement, the owner's
+// reading, the calibration, the baseline) is gone.
+const LOCKED_CARD_KEEP = Object.freeze([
+  'placeId', 'name', 'venueTypes', 'priceLevel', 'isOpen', 'openHour', 'closeHour',
+  'hoursToday', 'weather', 'eventAlert', 'gameNight', 'lastUpdated', 'venueClock',
+]);
+const LOCKED_CROWD_FIELDS = Object.freeze({
+  score: null,
+  label: null,
+  capacity: null,
+  waitEstimate: null,
+  // Null beside null: no number here to say what it measures.
+  confidence: null,
+  confidenceMeasurement: null,
+  ...LOCKED_FORECAST_FIELDS,
+});
+function lockedCard(result) {
+  const out = {};
+  for (const k of LOCKED_CARD_KEEP) {
+    if (result && Object.prototype.hasOwnProperty.call(result, k)) out[k] = result[k];
+  }
+  return { ...out, ...LOCKED_CROWD_FIELDS };
+}
+
+// Whether a gated card was locked, which is also whether it showed a number.
+function cardLocked(card) {
+  return !!(card && card.forecastAccess && card.forecastAccess.locked === true);
+}
+
 // Returns a per-request copy so the shared cache stays ungated.
 async function gateForecast(result, userId, { count, placeId } = {}) {
   if (!paywallEnabled()) return result;
@@ -164,7 +207,55 @@ async function gateForecast(result, userId, { count, placeId } = {}) {
   // ride out to clients by accident.
   const forecastAccessField = { locked: access.locked, remaining: access.remaining, limit: access.limit };
   if (!access.locked) return { ...result, forecastAccess: forecastAccessField };
-  return { ...result, ...LOCKED_FORECAST_FIELDS, forecastAccess: forecastAccessField };
+  return { ...lockedCard(result), forecastAccess: forecastAccessField };
+}
+
+// WHO MAY SEE A CROWD NUMBER FOR WHICH VENUE on the list surfaces: POST /batch
+// (map pins, the heatmap, the vote list and a plan's event-time scores) and
+// "less crowded nearby". Neither ever charges a view. One answer per request,
+// as a predicate over place ids:
+//   * paywall off, Pro, the first week, or a month not yet spent: every venue;
+//   * a spent month: only the venues this account opened this month, the same
+//     set the card keeps open. Without this the pins and lists went on printing
+//     the number the card had just covered, which made covering it pointless,
+//     and the batch stayed a free oracle for the whole map;
+//   * a tier lookup that FAILED: no venue, for this request only. The card
+//     answers that case with a retryable 503; a list cannot, because the map
+//     and the vote list call it in the background and a 503 there is an error
+//     over the map. So the list comes back whole with its numbers withheld and
+//     the next refresh asks again. Failing open instead would hand every spent
+//     account the numbers during any database blip, the direction a meter must
+//     not fail in.
+const SEE_ALL = () => true;
+const SEE_NONE = () => false;
+async function crowdVisibility(userId) {
+  if (!paywallEnabled()) return SEE_ALL;
+  const state = await getPremiumState(userId);
+  if (!state.known) return SEE_NONE;
+  if (state.premium || state.inGrace === true) return SEE_ALL;
+  if (getUsedThisMonth(userId) < FREE_MONTHLY_FORECASTS) return SEE_ALL;
+  return (placeId) => hasViewed(userId, placeId);
+}
+
+// A list row with its number withheld: venue facts only, and `crowdLocked` so a
+// client can say why there is no number instead of drawing an empty one.
+function lockedListRow(v, clock) {
+  return {
+    placeId: v.place_id || null,
+    name: v.name,
+    venueTypes: v.types || [],
+    score: null,
+    label: null,
+    crowdLocked: true,
+    ...(clock ? {
+      venueClock: {
+        hour: clock.hour,
+        day: clock.day,
+        utcOffsetMinutes: clock.local ? Number(v.utcOffsetMinutes) : null,
+        local: clock.local,
+      },
+    } : {}),
+  };
 }
 // HOW OLD IS THE DATA UNDER THE SCORE.
 //
@@ -695,7 +786,8 @@ router.get('/:placeId',
         // too, because a cached card puts exactly the same number on exactly
         // the same screen as a fresh one.
         const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true, placeId }));
-        recordServedPredictions(req.user.id, [{
+        // A locked card showed no number, so there is no serve to record.
+        if (!cardLocked(gated)) recordServedPredictions(req.user.id, [{
           placeId,
           score: published.score,
           // What actually stood behind the published number, because this row
@@ -1089,9 +1181,10 @@ router.get('/:placeId',
         { feedbackRows }
       );
       const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true, placeId }));
-      // The score survives gating (the free "right now" half stays on locked
-      // responses), so it is recorded for locked users too — it was shown.
-      recordServedPredictions(req.user.id, [{
+      // Recorded only when a number was shown. A locked card carries none
+      // (lockedCard), so recording its score would claim a serve that never
+      // reached the screen.
+      if (!cardLocked(gated)) recordServedPredictions(req.user.id, [{
         placeId,
         score: published.score,
         method: published.confidenceBasis === 'owner_report' ? 'owner_report' : result.predictionMethod,
@@ -1103,7 +1196,7 @@ router.get('/:placeId',
       // The gate could not find out who is looking (forecastAccess threw:
       // paywall on, entitlement lookup failed). Not a refusal and not this
       // server erring — a retryable 503, with NOTHING else in the body: no
-      // free half, no forecastAccess field, no meter numbers. Anything served
+      // crowd level, no forecastAccess field, no meter numbers. Anything served
       // here would be served to a caller whose tier we do not know, and this
       // gate has already once leaked the paid answer through secondary fields.
       // The meter was never read or spent (the throw precedes it), so the
@@ -1160,6 +1253,12 @@ router.get('/:placeId',
 //
 // If the paywall is ever switched on and this matters commercially, the
 // longitude check is the change to make, with the fallback tested.
+//
+// NARROWED 2026-09-24. A spent month now withholds the number for every venue
+// the account has not opened this month (crowdVisibility), so a spent account
+// can probe only the venues whose full forecast it already holds. What is left
+// is an account that has NOT spent its month probing a venue by hand, one hour
+// at a time, which costs it nothing it had not been given already.
 // ---------------------------------------------------------------------------
 router.post('/batch',
   body('venues').isArray({ min: 1, max: 20 }).withMessage('venues must be an array (1-20 items)'),
@@ -1353,6 +1452,11 @@ router.post('/batch',
         ? await getWeather(firstLoc.latitude, firstLoc.longitude, { userId: req.user.id })
         : null;
 
+      // A spent month covers the number on the list surfaces too. A venue
+      // whose number is withheld is not scored, not read for feedback, and not
+      // recorded as served below.
+      const canSee = await crowdVisibility(req.user.id);
+
       // Bulk query feedback for all venues at once (non-blocking).
       //
       // One (venue_place_id, day_of_week, hour) tuple per venue per window
@@ -1372,7 +1476,7 @@ router.post('/batch',
       const fbHours = [];
       const seenSlot = new Set();
       venues.forEach((v, i) => {
-        if (!v.place_id) return;
+        if (!v.place_id || !canSee(v.place_id)) return;
         for (const [d, h] of feedbackWindow(clocks[i].day, clocks[i].hour)) {
           const slot = `${v.place_id}|${d}|${h}`;
           if (seenSlot.has(slot)) continue;
@@ -1446,6 +1550,7 @@ router.post('/batch',
       // degrades to "no crowd badge on that row" instead of an empty list.
       const predictions = (await Promise.all(venues.map(async (v, i) => {
         const clock = clocks[i];
+        if (!canSee(v.place_id)) return lockedListRow(v, clock);
         try {
           // `userId` is what gives the Ticketmaster leg of this fan-out a
           // caller dimension. Before it, this route's only identified upstream
@@ -1540,10 +1645,14 @@ router.post('/batch',
       // row the same way the card applies it — this list is what the card sits
       // under, so a row quoting the model's 42 beside a card saying "the bar
       // says 85" would be the two-surfaces-disagree bug in its newest clothes.
-      const ownerByPlace = await ownerReports.getLiveOwnerReports(predictions.map((p) => p.placeId));
-      const published = predictions.map((p) => ownerReports.applyOwnerReport(
+      // A withheld row skips the owner override too: the owner's reading is a
+      // number like any other.
+      const ownerByPlace = await ownerReports.getLiveOwnerReports(
+        predictions.filter((p) => !p.crowdLocked).map((p) => p.placeId)
+      );
+      const published = predictions.map((p) => (p.crowdLocked ? p : ownerReports.applyOwnerReport(
         p, ownerByPlace[p.placeId], { feedbackRows: feedbackByVenue[p.placeId] || [] }
-      ));
+      )));
 
       // STAMPED 'batch', AND THAT STAMP IS THE POINT (migration 038). Every
       // scoring input on this route arrives in the request body — the venue's
@@ -1561,7 +1670,7 @@ router.post('/batch',
       // The clock is recorded anyway, unused by the read side. It is the only
       // way to ask afterwards WHICH hour a forged serve was aimed at, and a
       // column that is written but not yet trusted costs nothing.
-      recordServedPredictions(req.user.id, published.map((p) => ({
+      recordServedPredictions(req.user.id, published.filter((p) => !p.crowdLocked).map((p) => ({
         placeId: p.placeId,
         score: p.score,
         method: p.confidenceBasis === 'owner_report' ? 'owner_report' : p.predictionMethod,
@@ -1631,9 +1740,21 @@ router.get('/:placeId/alternatives',
       // the oldest of BOTH kinds. That is the right direction — an evicted entry
       // costs a re-fetch, and the cap is what stops unique-key spam growing the
       // map — but it does mean the card's effective cache depth is now shared.
+      // "Quieter than this venue" is a crowd claim about the venue itself, so
+      // when its card is covered (crowdVisibility) there is nothing to list,
+      // and no Places search is spent finding it. When it is not covered, a
+      // spent month still lists only the neighbours it has opened.
+      const canSee = await crowdVisibility(req.user.id);
+      if (!canSee(placeId)) {
+        return res.json({ currentVenue: null, alternatives: [], crowdLocked: true });
+      }
+      const onlyVisible = (payload) => (canSee === SEE_ALL || !payload || !Array.isArray(payload.alternatives)
+        ? payload
+        : { ...payload, alternatives: payload.alternatives.filter((a) => a && canSee(a.placeId)) });
+
       const cacheKey = `alt:${placeId}:${localHour}:${localDay}`;
       const cachedAlts = getCached(cacheKey);
-      if (cachedAlts) return res.json(cachedAlts);
+      if (cachedAlts) return res.json(onlyVisible(cachedAlts));
 
       // Up to two paid Google calls per request — a Place Details for the target
       // and a Text Search for the neighbours — so charge for the ones that will
@@ -2025,7 +2146,7 @@ router.get('/:placeId/alternatives',
       const anyOwnerAsserted = carriesOwnerReport(payload.currentVenue)
         || alternatives.some(carriesOwnerReport);
       if (!anyOwnerAsserted) setCache(cacheKey, payload);
-      res.json(payload);
+      res.json(onlyVisible(payload));
     } catch (err) {
       console.error('[Crowd] Alternatives error:', err);
       res.status(500).json({ error: 'Failed to find alternatives' });
@@ -2090,4 +2211,8 @@ module.exports.__test = {
       if (k.startsWith(`alt:${placeId}:`)) crowdCache.delete(k);
     }
   },
+  // Put a known alternatives payload in the cache, so a test can check what a
+  // spent account is shown from it without depending on which fake neighbour
+  // the predictor happens to score as quieter.
+  seedCache: (key, data) => setCache(key, data),
 };

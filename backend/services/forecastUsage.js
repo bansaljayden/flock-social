@@ -1,9 +1,12 @@
-// Monthly per-user meter for the AI crowd FORECAST (best-time / hourly / peak).
+// Monthly per-user meter for crowd levels AND the AI crowd forecast.
 //
-// Product intent (Flock Pro): the "how busy right now" score stays free forever
-// (it's the Google-Maps-equivalent commodity). The richer AI prediction — best
-// time to go, the hourly curve, the peak window — is free for the first
-// FREE_MONTHLY_FORECASTS venue views each calendar month, then Pro-only.
+// Product rule (Flock Pro, 2026-09-24): a free account gets the crowd level
+// ("how busy right now") and the forecast (best time to go, the hourly curve,
+// the peak window) for FREE_MONTHLY_FORECASTS distinct venues each calendar
+// month. Once those are spent, a venue it has not opened this month shows
+// neither (routes/crowd.js lockedCard and crowdVisibility); a venue it already
+// opened stays fully open. The live level used to be free forever; that rule
+// was retired on this date.
 //
 // Enforced from memory, per calendar month (UTC), mirroring
 // services/birdieUsage.js. It used to reset on every deploy, and Railway

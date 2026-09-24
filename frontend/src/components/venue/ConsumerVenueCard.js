@@ -547,6 +547,33 @@ export default function ConsumerVenueCard({
                 // state for whichever place it has open, and an untagged read
                 // put venue A's score and chart on venue B's card.
                 const cdTagged = crowdData && crowdData.forPlaceId === activeVenue.place_id ? crowdData : null;
+                // THE DIAL IS COVERED. Once a free account has spent its month,
+                // a venue it has not opened this month gets no crowd reading
+                // from the server at all (routes/crowd.js lockedCard): no score,
+                // no label, no wait. Falling through would draw the "---" ring,
+                // and genHourly below would invent a chart out of a zero. So the
+                // whole widget becomes one block that says what is behind it.
+                if (cdTagged && cdTagged.forecastAccess?.locked === true && !Number.isFinite(cdTagged.score)) {
+                  const limit = Number.isFinite(cdTagged.forecastAccess.limit) ? cdTagged.forecastAccess.limit : null;
+                  return (
+                    <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '12px', marginBottom: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div aria-hidden="true" style={{ width: '48px', height: '48px', borderRadius: '24px', flexShrink: 0, border: '3px dashed var(--border-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Crowd level is part of Flock Pro</p>
+                        <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                          {limit ? `You've checked ${limit} venues this month. ` : "You've used this month's venues. "}Places you already opened stay open.
+                        </p>
+                      </div>
+                      {!venueOwnerView && (
+                        <button type="button" className="hit44" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: '4px 0', cursor: 'pointer', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          See Pro
+                        </button>
+                      )}
+                    </m.div>
+                  );
+                }
                 // A read without a finite score is a read with no estimate:
                 // the dial drew it as "NaN%".
                 const cd = cdTagged && Number.isFinite(cdTagged.score) ? cdTagged : null;
@@ -923,7 +950,7 @@ export default function ConsumerVenueCard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
                             {Icons.clock(colors.steel, 12)}
                             {cd?.forecastAccess?.locked ? (
-                              <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                              <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                                 Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                               </button>
                             ) : (
@@ -940,7 +967,7 @@ export default function ConsumerVenueCard({
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.steel, 12)}
                           {cd?.forecastAccess?.locked ? (
-                            <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                               Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                             </button>
                           ) : (
@@ -1017,7 +1044,7 @@ export default function ConsumerVenueCard({
                     blurred best-time line. */}
                 {cd?.forecastAccess?.locked ? (
                   <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>The hour-by-hour chart is part of Flock Pro.</span>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, whiteSpace: 'nowrap' }}>See Pro</span>
                     </button>
@@ -1133,7 +1160,7 @@ export default function ConsumerVenueCard({
                     {closedAllDay ? (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.redText }}>Closed Today</span>
                     ) : cd?.forecastAccess?.locked ? (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                         <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                       </button>
                     ) : (
