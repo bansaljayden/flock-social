@@ -367,11 +367,76 @@ function withCheckoutLock(userId, fn) {
   return run;
 }
 
-function createCheckout(user, plan) {
-  return withCheckoutLock(user && user.id, () => buildCheckout(user, plan));
+// WHERE A BUYER CAME FROM, so the trip back from Stripe lands on the thing
+// they were blocked from rather than on the home screen. A fixed list, checked
+// again here although the route already validates it: this string becomes part
+// of a URL Stripe will send the buyer to.
+const RETURN_FROM = new Set(['forecast', 'birdie', 'settings', 'pro_page']);
+const RETURN_PLACE_RE = /^[A-Za-z0-9_-]{6,128}$/;
+// A promotion code as a person types it. Stripe's own codes are letters and
+// digits; anything else is not looked up at all.
+const PROMO_CODE_RE = /^[A-Za-z0-9]{3,32}$/;
+
+function successUrl(web, { from, place } = {}) {
+  let url = `${web}/app?pro=success&session_id={CHECKOUT_SESSION_ID}`;
+  if (RETURN_FROM.has(from)) {
+    url += `&from=${from}`;
+    if (from === 'forecast' && typeof place === 'string' && RETURN_PLACE_RE.test(place)) url += `&place=${place}`;
+  }
+  return url;
 }
 
-async function buildCheckout(user, plan) {
+// A code in a shared link (/pro?code=FLOCKFRIENDS) is applied for the buyer, so
+// they never meet the code field at all. Only an ACTIVE promotion code is
+// used, found by its code; anything else, including a lookup that fails,
+// leaves the ordinary "Add promotion code" link on Stripe's page instead.
+async function activePromotionCode(code) {
+  if (typeof code !== 'string' || !PROMO_CODE_RE.test(code)) return null;
+  try {
+    const list = await stripe().promotionCodes.list({ code, active: true, limit: 1 }, { timeout: 5000, maxNetworkRetries: 0 });
+    const pc = list && Array.isArray(list.data) ? list.data[0] : null;
+    return pc && pc.active !== false ? pc.id : null;
+  } catch (err) {
+    console.warn('[pro] promotion code lookup failed; checkout keeps the code field:', err?.message || err);
+    return null;
+  }
+}
+
+// A live code can still be refused for this buyer: first-time customers only,
+// a minimum amount, or a code tied to another customer. The buyer came to pay,
+// so the session is made again with the ordinary code field instead of
+// failing the checkout over a discount.
+function isStripeRequestError(err) {
+  return !!err && (err.type === 'StripeInvalidRequestError' || err.rawType === 'invalid_request_error');
+}
+
+async function createSession(params) {
+  try {
+    return await stripe().checkout.sessions.create(params);
+  } catch (err) {
+    if (!params.discounts || !isStripeRequestError(err)) throw err;
+    console.warn('[pro] checkout refused the shared code; offering the code field instead:', err?.message || err);
+    const { discounts, ...rest } = params; // eslint-disable-line no-unused-vars
+    return stripe().checkout.sessions.create({ ...rest, allow_promotion_codes: true });
+  }
+}
+
+// The sentence directly above Stripe's Pay button. California's automatic
+// renewal law wants these five things there, in plain words and before the
+// buyer agrees: that it renews until cancelled, the amount, how often, how to
+// cancel, and that there is no minimum term. The refund window rides along
+// because it is the other thing a buyer asks about at that moment.
+function submitText({ amount, every, tax }) {
+  return `Flock Pro renews every ${every} at ${amount}${tax ? ' plus tax' : ''} until you cancel, or at the lower price shown above while a code applies. `
+    + `There is no minimum term. Cancel any time in Flock on the web (You, Flock Pro, Cancel subscription) or by emailing social@flockcorp.com, and you keep Pro until the paid ${every} ends. `
+    + 'Full refund within 14 days of your first payment.';
+}
+
+function createCheckout(user, plan, options = {}) {
+  return withCheckoutLock(user && user.id, () => buildCheckout(user, plan, options));
+}
+
+async function buildCheckout(user, plan, options = {}) {
   const prices = planPrices();
   const priceId = prices[plan];
   if (!priceId) {
@@ -401,7 +466,8 @@ async function buildCheckout(user, plan) {
   const trial = trialDays() && !(await hasEverSubscribed(customerId)) ? trialDays() : 0;
   const web = webBase();
   const appUserId = String(user.id);
-  const session = await stripe().checkout.sessions.create({
+  const promotionCode = await activePromotionCode(options.code);
+  const session = await createSession({
     mode: 'subscription',
     customer: customerId,
     client_reference_id: appUserId,
@@ -417,7 +483,9 @@ async function buildCheckout(user, plan) {
     // and testers). A code that brings the total to zero should not demand a
     // card, so collection is 'if_required'; any real charge still needs one.
     // A trial keeps 'always' so the card is on file before the trial ends.
-    allow_promotion_codes: true,
+    // A code from a shared link is applied here and the field is not shown;
+    // Stripe refuses a session that carries both.
+    ...(promotionCode ? { discounts: [{ promotion_code: promotionCode }] } : { allow_promotion_codes: true }),
     payment_method_collection: trial ? 'always' : 'if_required',
     // The renewal terms sit next to an unchecked box the buyer has to tick,
     // which is what California's automatic renewal law asks of the consent.
@@ -429,8 +497,9 @@ async function buildCheckout(user, plan) {
       terms_of_service_acceptance: {
         message: `I agree that Flock Pro renews every ${every} until I cancel, at ${formatAmount(price)}${tax ? ' plus tax' : ''} or the lower price shown above if a code applies, and to the [Terms](${web}/terms).`,
       },
+      submit: { message: submitText({ amount: formatAmount(price), every, tax }) },
     },
-    success_url: `${web}/app?pro=success&session_id={CHECKOUT_SESSION_ID}`,
+    success_url: successUrl(web, options),
     cancel_url: `${web}/pro?checkout=cancelled`,
   });
   return session.url;
@@ -468,8 +537,75 @@ async function confirmCheckout(userId, sessionId) {
   await postStripeReceipt(userId, subscriptionId).catch((err) => {
     console.warn('[pro] RevenueCat receipt post failed:', err?.message || err);
   });
-  return { complete: true };
+  return { complete: true, session };
 }
+
+// ---------------------------------------------------------------------------
+// Cancelling from inside Flock
+// ---------------------------------------------------------------------------
+//
+// STRIPE'S PORTAL IS FOR ADULTS. Its customer portal terms require the person
+// using it to be 18 or over, and much of Flock's audience is younger, so the
+// way to stop a web subscription is a Flock button: cancel at the end of the
+// paid period, or take that back before it arrives. The portal stays for a card
+// or an invoice, which is the parent's business when a parent paid.
+//
+// Only this account's own Pro subscriptions are touched: live, carrying this
+// account's app_user_id, and never a Roost one (kind=venue).
+function proSubscriptionsOf(list, userId) {
+  const data = list && Array.isArray(list.data) ? list.data : [];
+  return data.filter((s) => LIVE_STATUSES.has(s.status) && s.metadata
+    && s.metadata.app_user_id === String(userId) && s.metadata.kind !== 'venue');
+}
+
+// The end of the period already paid for, as ISO. Newer Stripe API versions
+// keep it on the subscription item rather than the subscription.
+function periodEndOf(s) {
+  if (!s) return null;
+  const item = s.items && Array.isArray(s.items.data) ? s.items.data[0] : null;
+  const end = s.cancel_at || (item && item.current_period_end) || s.current_period_end || null;
+  return Number.isFinite(end) ? new Date(end * 1000).toISOString() : null;
+}
+
+function noWebSubscription() {
+  const err = new Error('There is no web subscription on this account.');
+  err.status = 404;
+  err.code = 'NO_WEB_SUBSCRIPTION';
+  return err;
+}
+
+// For /status: whether the live web subscription is set to end, and when.
+// null with nothing live. A short timeout and no retries, like
+// hasEverSubscribed, because the checkout return polls this route.
+async function webSubscriptionState(userId) {
+  const customerId = await customerIdFor(userId);
+  if (!customerId) return null;
+  const list = await stripe().subscriptions.list(
+    { customer: customerId, status: 'all', limit: 10 },
+    { timeout: 5000, maxNetworkRetries: 0 }
+  );
+  const subs = proSubscriptionsOf(list, userId);
+  if (!subs.length) return null;
+  // "Set to end" only when nothing live will renew; otherwise the page offers
+  // Cancel, which reaches every one of them.
+  return { cancelAtPeriodEnd: subs.every((s) => !!s.cancel_at_period_end), periodEnd: periodEndOf(subs[0]) };
+}
+
+async function setCancelAtPeriodEnd(userId, cancel) {
+  const customerId = await customerIdFor(userId);
+  if (!customerId) throw noWebSubscription();
+  const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 });
+  const subs = proSubscriptionsOf(list, userId);
+  if (!subs.length) throw noWebSubscription();
+  let last = null;
+  for (const s of subs) {
+    last = await stripe().subscriptions.update(s.id, { cancel_at_period_end: !!cancel });
+  }
+  return { cancelAtPeriodEnd: !!cancel, periodEnd: periodEndOf(last) };
+}
+
+const cancelAtPeriodEnd = (userId) => setCancelAtPeriodEnd(userId, true);
+const resumeSubscription = (userId) => setCancelAtPeriodEnd(userId, false);
 
 // Account deletion. Deleting the Stripe customer cancels every subscription it
 // holds at once, which is the point: a deleted account must never be charged
@@ -532,6 +668,9 @@ module.exports = {
   postStripeReceipt,
   createCheckout,
   cancelDisputedSubscriptions,
+  cancelAtPeriodEnd,
+  resumeSubscription,
+  webSubscriptionState,
   createPortal,
   confirmCheckout,
   closeCustomer,
@@ -548,5 +687,5 @@ module.exports = {
   revenueCatApiConfigured,
   PRO_ENTITLEMENT,
   // Tests only.
-  __test: { LIVE_STATUSES, everSubscribed, resetStripe: () => { stripeClient = null; stripeKeySeen = null; priceCache.clear(); everSubscribed.clear(); } },
+  __test: { LIVE_STATUSES, successUrl, submitText, PROMO_CODE_RE, everSubscribed, resetStripe: () => { stripeClient = null; stripeKeySeen = null; priceCache.clear(); everSubscribed.clear(); } },
 };

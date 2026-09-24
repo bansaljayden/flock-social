@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -1199,7 +1199,8 @@ const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
  * hook. Declared at module level, never inside a render, for the remount rule
  * remountedSurfaces.test.js pins.
  *
- * WEB: a web subscriber gets Manage subscription (the Stripe portal). Anyone
+ * WEB: a web subscriber gets Cancel subscription (or Keep Pro once it is set
+ * to end), and Payment method and invoices (the Stripe portal). Anyone
  * not Pro gets a link to /pro, but only while checkout is actually on; with it
  * off there is no row, because a row that leads to "not on sale" is a dead end.
  * Pro bought through Apple shows as Active and nothing else.
@@ -1212,7 +1213,10 @@ const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
 function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
   const native = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
   const [status, setStatus] = React.useState(null);
-  const [opening, setOpening] = React.useState(false);
+  // 'portal' | 'renewal' while one is in flight; only that button says so.
+  const [pending, setPending] = React.useState(null);
+  // The cancel step asks once before it acts.
+  const [confirming, setConfirming] = React.useState(false);
   React.useEffect(() => {
     // Natively, /status only matters once somebody is Pro: it says whether
     // the purchase was a web one. Nothing on the native row sells anything.
@@ -1269,25 +1273,73 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
   // Manage shows whenever the account has a web subscription, Pro or not: a
   // failed renewal or a subscription RevenueCat has not reported yet is still
   // billing, and the Terms tell that person to cancel from here.
+  //
+  // CANCELLING IS FLOCK'S OWN BUTTON. Stripe's customer portal is for people
+  // 18 and over (its portal terms), and much of the audience is younger, so
+  // Cancel subscription and Keep Pro call /api/pro/cancel and /resume. The
+  // portal stays for the card and the invoices, which are the payer's.
   if (status?.canManageWeb) {
+    const busy = pending !== null;
     const manage = async () => {
-      if (opening) return;
-      setOpening(true);
+      if (busy) return;
+      setPending('portal');
       try {
         const { url } = await openProPortal();
         if (!url) throw new Error('Could not open billing. Try again.');
         window.location.assign(url);
       } catch (err) {
-        setOpening(false);
+        setPending(null);
         showToast?.(err?.message || 'Could not open billing. Try again.', 'error');
       }
     };
+    const change = async (cancel) => {
+      if (busy) return;
+      setPending('renewal');
+      try {
+        const result = cancel ? await cancelProSubscription() : await resumeProSubscription();
+        setStatus((s) => (s ? { ...s, hasWebSubscription: true, cancelAtPeriodEnd: !!result?.cancelAtPeriodEnd, periodEnd: result?.periodEnd || s.periodEnd } : s));
+        setConfirming(false);
+        showToast?.(cancel ? 'Cancelled. You keep Pro until the paid period ends.' : 'Flock Pro will renew as before.', 'success');
+      } catch (err) {
+        showToast?.(err?.message || 'Could not change your subscription. Try again.', 'error');
+      } finally {
+        setPending(null);
+      }
+    };
+    const until = status.periodEnd && Number.isFinite(Date.parse(status.periodEnd))
+      ? new Date(status.periodEnd).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
+    let line = premium ? 'Active' : null;
+    if (status.hasWebSubscription && status.cancelAtPeriodEnd) line = until ? `Ends ${until}` : 'Ends when the paid period does';
+    else if (status.hasWebSubscription && until) line = `Renews ${until}`;
+    const action = { background: 'none', border: 'none', padding: '6px 0', cursor: busy ? 'default' : 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy };
+    const live = !!status.hasWebSubscription;
     return (
-      <button className="hit44 glass-btn glass-secondary" onClick={manage} disabled={opening} aria-busy={opening || undefined} style={{ ...rowStyle, cursor: opening ? 'default' : 'pointer' }}>
+      <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
         {icon}
         {title('Flock Pro')}
-        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>{opening ? 'Opening' : 'Manage subscription'}</span>
-      </button>
+        {line && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>{line}</span>}
+        <div style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: '18px', paddingLeft: '44px' }}>
+          {live && !status.cancelAtPeriodEnd && confirming && (
+            <span style={{ flexBasis: '100%', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+              {until ? `Cancel Flock Pro? You keep it until ${until}.` : 'Cancel Flock Pro? You keep it until the paid period ends.'}
+            </span>
+          )}
+          {live && !status.cancelAtPeriodEnd && !confirming && (
+            <button type="button" className="hit44" onClick={() => setConfirming(true)} disabled={busy} style={action}>Cancel subscription</button>
+          )}
+          {live && !status.cancelAtPeriodEnd && confirming && (
+            <>
+              <button type="button" className="hit44" onClick={() => change(true)} disabled={busy} aria-busy={pending === 'renewal' || undefined} style={action}>Yes, cancel</button>
+              <button type="button" className="hit44" onClick={() => setConfirming(false)} disabled={busy} style={action}>Keep Pro</button>
+            </>
+          )}
+          {live && status.cancelAtPeriodEnd && (
+            <button type="button" className="hit44" onClick={() => change(false)} disabled={busy} aria-busy={pending === 'renewal' || undefined} style={action}>Keep Pro</button>
+          )}
+          <button type="button" className="hit44" onClick={manage} disabled={busy} aria-busy={pending === 'portal' || undefined} style={action}>{pending === 'portal' ? 'Opening' : 'Payment method and invoices'}</button>
+        </div>
+      </div>
     );
   }
   if (premium) {

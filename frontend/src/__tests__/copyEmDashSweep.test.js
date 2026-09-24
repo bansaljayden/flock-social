@@ -309,7 +309,7 @@ const ANCHORS = [
   ['src/screens/ChatDetail.js', 'Your share is marked unpaid again'],
   ['src/screens/AddFriends.js', 'Matches the number you typed'],
   ['src/screens/VenueDashboard.js', 'Set your live crowd number, on any plan'],
-  ['src/components/PaywallSheet.js', 'See the whole night before it happens'],
+  ['src/components/PaywallSheet.js', 'Get more out of every night out'],
   ['src/website/LandingPage.js', 'Coming soon to the App Store. Join the waitlist.'],
   // One per root outside src/, for the same reason: these three files are the
   // ones the sweep was widened to reach, and a walk that stopped reaching them

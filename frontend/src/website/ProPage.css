@@ -100,6 +100,30 @@
   .pro-plan input { color-scheme: dark; }
 }
 
+/* The yearly plan's label. A word, not a claim: never "Most popular". */
+.pro .pro-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--pp-accent);
+  border-radius: 999px;
+  color: var(--pp-accent);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+
+/* Cancel, or take a cancel back: the line and its buttons, stacked with room. */
+.pro .pro-renewal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.pro .pro-renewal .pro-note { flex-basis: 100%; margin: 0; }
+
 /* Signed out: the prices, as plain lines, above the sign-in button. */
 /* Written through .pro so it outranks the legal pages' .pp ul (0,1,1),
    which indented these lines like a bulleted list. */

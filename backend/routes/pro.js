@@ -5,10 +5,17 @@
 //   GET  /status    what the web can sell this account right now, and whether
 //                   it has a web subscription to manage. Always answers, even
 //                   with checkout switched off, so the page can say so.
-//   POST /checkout  { plan: 'monthly' | 'yearly' } -> { url } of a Stripe
-//                   Checkout Session tied to this account.
-//   POST /portal    -> { url } of the Stripe customer portal, where a web
-//                   subscriber cancels or changes their card.
+//   POST /checkout  { plan: 'monthly' | 'yearly', from?, place?, code? }
+//                   -> { url } of a Stripe Checkout Session tied to this
+//                   account. `from` (a fixed list) and `place` send the buyer
+//                   back to what they were blocked from; `code` applies an
+//                   active promotion code from a shared link.
+//   POST /cancel    ends this account's web subscription at the end of the paid
+//                   period. POST /resume takes that back before it arrives.
+//                   Flock's own buttons, because Stripe's portal is for people
+//                   18 and over and much of the audience is younger.
+//   POST /portal    -> { url } of the Stripe customer portal, for the card and
+//                   the invoices.
 //   POST /confirm   { sessionId } after the redirect back: checks the session
 //                   is this account's, tells RevenueCat, re-reads Pro.
 //
@@ -23,10 +30,14 @@ const { authenticate } = require('../middleware/auth');
 const { getPremiumState } = require('../services/entitlements');
 const billing = require('../services/proBilling');
 const { syncPremiumFromRevenueCat } = require('./revenuecat');
+const { acknowledgePurchase } = require('../services/proAcknowledgment');
+const { PLACE_ID_RE } = require('../utils/places');
 
 const router = express.Router();
 
 const PLANS = ['monthly', 'yearly'];
+// Where a checkout was started from (services/proBilling.js successUrl).
+const RETURN_FROM = ['forecast', 'birdie', 'settings', 'pro_page'];
 
 async function describePlans() {
   const prices = billing.planPrices();
@@ -67,6 +78,17 @@ router.get('/status', async (req, res) => {
     if (customerId && billing.stripeConfigured()) {
       canManageWeb = await billing.hasEverSubscribed(customerId).catch(() => false);
     }
+    // Whether the live web subscription is already set to end, and when, so
+    // the page offers Keep Pro instead of Cancel. A failed read shows neither
+    // state as certain: the fields stay null and the page falls back to the
+    // plain row.
+    let subscription = null;
+    if (canManageWeb) {
+      subscription = await billing.webSubscriptionState(req.user.id).catch((err) => {
+        console.warn('[pro] status could not read the web subscription:', err?.message || err);
+        return null;
+      });
+    }
     // A price lookup that fails hides the offer rather than the page: this
     // route is also how a subscriber finds Manage and how the checkout return
     // learns the purchase landed, and neither should fail because Stripe could
@@ -92,6 +114,10 @@ router.get('/status', async (req, res) => {
       // True once this account has ever been a Stripe customer, which is when
       // the portal has something to show.
       canManageWeb,
+      // A live web subscription: true when it is set to end at periodEnd.
+      hasWebSubscription: !!subscription,
+      cancelAtPeriodEnd: subscription ? subscription.cancelAtPeriodEnd : false,
+      periodEnd: subscription ? subscription.periodEnd : null,
     });
   } catch (err) {
     sendError(res, err, 'Could not load Flock Pro just now.');
@@ -100,6 +126,9 @@ router.get('/status', async (req, res) => {
 
 router.post('/checkout', [
   body('plan').isString().isIn(PLANS).withMessage('Choose monthly or yearly.'),
+  body('from').optional({ values: 'null' }).isString().isIn(RETURN_FROM).withMessage('That return place is not valid.'),
+  body('place').optional({ values: 'null' }).isString().matches(PLACE_ID_RE).withMessage('That venue is not valid.'),
+  body('code').optional({ values: 'null' }).isString().matches(/^[A-Za-z0-9]{3,32}$/).withMessage('That code is not valid.'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -118,12 +147,33 @@ router.post('/checkout', [
     }
     const u = await pool.query('SELECT id, email, name FROM users WHERE id = $1', [req.user.id]);
     if (!u.rows[0]) return res.status(404).json({ error: 'Account not found.' });
-    const url = await billing.createCheckout(u.rows[0], req.body.plan);
+    const url = await billing.createCheckout(u.rows[0], req.body.plan, {
+      from: req.body.from || undefined,
+      place: req.body.from === 'forecast' ? req.body.place || undefined : undefined,
+      code: req.body.code || undefined,
+    });
     res.json({ url });
   } catch (err) {
     sendError(res, err, 'Could not start checkout. Try again.');
   }
 });
+
+async function changeRenewal(req, res, cancel) {
+  try {
+    if (!billing.stripeConfigured()) {
+      return res.status(503).json({ error: 'Web billing is not available right now.', code: 'BILLING_OFF' });
+    }
+    const result = cancel
+      ? await billing.cancelAtPeriodEnd(req.user.id)
+      : await billing.resumeSubscription(req.user.id);
+    res.json(result);
+  } catch (err) {
+    sendError(res, err, cancel ? 'Could not cancel just now. Try again.' : 'Could not keep Pro just now. Try again.');
+  }
+}
+
+router.post('/cancel', (req, res) => changeRenewal(req, res, true));
+router.post('/resume', (req, res) => changeRenewal(req, res, false));
 
 router.post('/portal', async (req, res) => {
   try {
@@ -157,6 +207,13 @@ router.post('/confirm', [
       isPremium = await syncPremiumFromRevenueCat(req.user.id);
     } catch (err) {
       console.warn('[pro] confirm could not reach RevenueCat yet:', err?.message || err);
+    }
+    // The second chance for the purchase acknowledgment, if the webhook's send
+    // did not go through. Not awaited: the buyer is waiting on this answer.
+    if (result.session) {
+      acknowledgePurchase(req.user.id, result.session).catch((err) => {
+        console.warn('[pro] purchase acknowledgment failed:', err?.message || err);
+      });
     }
     res.json({ complete: true, isPremium });
   } catch (err) {

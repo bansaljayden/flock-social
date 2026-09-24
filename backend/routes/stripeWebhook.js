@@ -26,6 +26,7 @@
 const express = require('express');
 const pool = require('../config/database');
 const billing = require('../services/proBilling');
+const { acknowledgePurchase } = require('../services/proAcknowledgment');
 const venueBilling = require('../services/venueBilling');
 const { syncPremiumFromRevenueCat } = require('./revenuecat');
 
@@ -139,6 +140,14 @@ router.post('/', async (req, res) => {
       }
     }
     await syncPremiumFromRevenueCat(userId);
+    // The buyer's record of what they agreed to (services/proAcknowledgment.js).
+    // After the Pro write and never able to undo it: a mail failure is logged,
+    // and the buyer's return to the app tries again.
+    if (event.type === 'checkout.session.completed') {
+      await acknowledgePurchase(userId, obj).catch((err) => {
+        console.warn('[stripe-webhook] purchase acknowledgment failed:', err?.message || err);
+      });
+    }
     if (refreshRefused) throw new Error('RevenueCat did not accept the refreshed receipt');
     res.json({ received: true });
   } catch (err) {

@@ -8,8 +8,13 @@
 // and a refresh or a bookmark must not replay a purchase confirmation.
 
 const SESSION_ID = /^cs_[A-Za-z0-9_]+$/;
+// Where the checkout was started from, so the app can reopen that thing once
+// Pro is on. A fixed list and a place-id shape: nothing else from the address
+// bar ever reaches a navigation.
+const RETURN_FROM = ['forecast', 'birdie', 'settings', 'pro_page'];
+const PLACE_ID = /^[A-Za-z0-9_-]{6,128}$/;
 
-// -> { kind: 'success', sessionId } | { kind: 'manage' } | null
+// -> { kind: 'success', sessionId, from?, place? } | { kind: 'manage' } | null
 export function readProReturn(win = typeof window === 'undefined' ? undefined : window) {
   if (!win || !win.location) return null;
   try {
@@ -17,13 +22,24 @@ export function readProReturn(win = typeof window === 'undefined' ? undefined : 
     const pro = params.get('pro');
     if (!pro) return null;
     const sessionId = params.get('session_id');
+    const from = params.get('from');
+    const place = params.get('place');
     params.delete('pro');
     params.delete('session_id');
+    params.delete('from');
+    params.delete('place');
     const query = params.toString();
     if (win.history && typeof win.history.replaceState === 'function') {
       win.history.replaceState({}, '', `${win.location.pathname}${query ? `?${query}` : ''}${win.location.hash || ''}`);
     }
-    if (pro === 'success' && sessionId && SESSION_ID.test(sessionId)) return { kind: 'success', sessionId };
+    if (pro === 'success' && sessionId && SESSION_ID.test(sessionId)) {
+      const out = { kind: 'success', sessionId };
+      if (RETURN_FROM.includes(from)) {
+        out.from = from;
+        if (from === 'forecast' && place && PLACE_ID.test(place)) out.place = place;
+      }
+      return out;
+    }
     if (pro === 'manage') return { kind: 'manage' };
     return null;
   } catch {
