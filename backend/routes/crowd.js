@@ -38,7 +38,7 @@ const {
 } = mlPredictor;
 const pool = require('../config/database');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
-const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../services/forecastUsage');
+const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView, hasViewed } = require('../services/forecastUsage');
 
 const router = express.Router();
 
@@ -77,7 +77,7 @@ const UNMETERED_ACCESS = Object.freeze({ locked: false, remaining: null, limit: 
 // (only a single-venue detail view counts, not batch/list previews).
 // `premium` lets a caller that has ALREADY resolved the tier pass it in rather
 // than pay for a second `SELECT is_premium` on the same request.
-async function forecastAccess(userId, { count, premium } = {}) {
+async function forecastAccess(userId, { count, premium, placeId } = {}) {
   // Paywall off (or unset) → today's behavior, unlimited, no meter — and no
   // tier lookup at all, so an entitlement outage cannot surface from here
   // while the paywall is dormant.
@@ -102,10 +102,19 @@ async function forecastAccess(userId, { count, premium } = {}) {
   }
   if (pro) return UNMETERED_ACCESS;
   const usedBefore = getUsedThisMonth(userId);
+  // A venue this account already opened this month stays open, even once
+  // the allowance is spent, and costs nothing to look at again.
+  if (hasViewed(userId, placeId)) {
+    return {
+      locked: false,
+      remaining: Math.max(0, FREE_MONTHLY_FORECASTS - usedBefore),
+      limit: FREE_MONTHLY_FORECASTS,
+    };
+  }
   if (usedBefore >= FREE_MONTHLY_FORECASTS) {
     return { locked: true, remaining: 0, limit: FREE_MONTHLY_FORECASTS };
   }
-  const usedNow = count ? recordView(userId) : usedBefore;
+  const usedNow = count ? recordView(userId, placeId) : usedBefore;
   return {
     locked: false,
     remaining: Math.max(0, FREE_MONTHLY_FORECASTS - usedNow),
@@ -141,9 +150,9 @@ const LOCKED_FORECAST_FIELDS = Object.freeze({
 });
 
 // Returns a per-request copy so the shared cache stays ungated.
-async function gateForecast(result, userId, { count } = {}) {
+async function gateForecast(result, userId, { count, placeId } = {}) {
   if (!paywallEnabled()) return result;
-  const access = await forecastAccess(userId, { count });
+  const access = await forecastAccess(userId, { count, placeId });
   // Rebuilt field by field rather than spread: `access` is a policy object and
   // this one is a frontend contract, so a field added to the former must never
   // ride out to clients by accident.
@@ -679,7 +688,7 @@ router.get('/:placeId',
         // serves no score) records nothing — and recorded on the cache path
         // too, because a cached card puts exactly the same number on exactly
         // the same screen as a fresh one.
-        const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true }));
+        const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true, placeId }));
         recordServedPredictions(req.user.id, [{
           placeId,
           score: published.score,
@@ -1073,7 +1082,7 @@ router.get('/:placeId',
         // people in the room (services/ownerReports.js, round 25).
         { feedbackRows }
       );
-      const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true }));
+      const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true, placeId }));
       // The score survives gating (the free "right now" half stays on locked
       // responses), so it is recorded for locked users too — it was shown.
       recordServedPredictions(req.user.id, [{
