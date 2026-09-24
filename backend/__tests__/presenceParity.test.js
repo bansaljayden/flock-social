@@ -236,7 +236,7 @@ async function reviewPresenceSql() {
   return q.sql;
 }
 
-const { FREE_MONTHLY_FORECASTS } = require('../services/forecastUsage');
+const { FREE_MONTHLY_FORECASTS, recordView } = require('../services/forecastUsage');
 test('a review needs a flock somebody else accepted, exactly as feedback does', async () => {
   const sql = await reviewPresenceSql();
 
@@ -468,24 +468,32 @@ test('a spent allowance strips every field that carries the best-time answer', a
   meterUser();
   scriptMeter({ premium: false });
 
-  // Burn the month's allowance. The venue and the hour are constant, so
-  // requests after the first are cache hits — which must still be metered, or refreshing
-  // the same card would be a free forecast forever.
+  // Burn the month's allowance on distinct venues. The meter counts venues,
+  // not requests: re-opening one already opened this month is free (pinned
+  // in predictorCorrectness), so only a NEW venue can spend it.
+  // Three through the route prove each new venue spends one and a re-open
+  // spends nothing; the rest are spent on the meter directly, because the
+  // route's own hourly new-venue limiter would refuse thirty in one burst.
   let open = null;
-  for (let i = 1; i <= FREE_MONTHLY_FORECASTS; i++) {
-    const res = await call('GET', '/api/crowd/PW_METER?localHour=20&localDay=5');
+  for (let i = 1; i <= 3; i++) {
+    const res = await call('GET', `/api/crowd/PW_METER_${i}?localHour=20&localDay=5`);
     assert.strictEqual(res.status, 200, res.text);
     assert.strictEqual(res.body.forecastAccess.locked, false);
     assert.strictEqual(res.body.forecastAccess.remaining, FREE_MONTHLY_FORECASTS - i, `view ${i} did not consume the meter`);
     if (i === 1) open = res.body;
   }
+  const again = await call('GET', '/api/crowd/PW_METER_1?localHour=20&localDay=5');
+  assert.strictEqual(again.body.forecastAccess.remaining, FREE_MONTHLY_FORECASTS - 3, 're-opening a venue spent the allowance');
+  for (let i = 4; i <= FREE_MONTHLY_FORECASTS; i++) recordView(CURRENT_USER.id, `PW_METER_${i}`);
 
   // The test only means something if the open response HAD the answer.
   assert.ok(open.bestTime, 'the unlocked card named no best time; this comparison proves nothing');
   assert.ok(open.hourly.length > 0);
   assert.strictEqual(typeof open.bestIsNow, 'boolean');
 
-  const locked = (await call('GET', '/api/crowd/PW_METER?localHour=20&localDay=5')).body;
+  const lockedRes = await call('GET', `/api/crowd/PW_METER_${FREE_MONTHLY_FORECASTS + 1}?localHour=20&localDay=5`);
+  assert.strictEqual(lockedRes.status, 200, lockedRes.text);
+  const locked = lockedRes.body;
   assert.strictEqual(locked.forecastAccess.locked, true);
   assert.strictEqual(locked.forecastAccess.remaining, 0);
 

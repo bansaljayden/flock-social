@@ -40,6 +40,18 @@ function accountKey(userId) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// A venue already viewed this month is free to view again. The detail card
+// refreshes every few minutes while open, a map pin and the detail modal each
+// fetch, and people re-open the bar they are deciding on; counting requests
+// burned a month's allowance in one evening on one venue. The allowance is
+// "N different venues a month", which is what the upgrade copy says.
+function hasViewed(userId, placeId) {
+  const id = accountKey(userId);
+  if (id === null || typeof placeId !== 'string' || !placeId) return false;
+  const rec = usage.get(id);
+  return !!(rec && rec.month === monthKey() && rec.venues && rec.venues.has(placeId));
+}
+
 function getUsedThisMonth(userId) {
   const id = accountKey(userId);
   if (id === null) return 0;
@@ -51,15 +63,20 @@ function getUsedThisMonth(userId) {
 // Record one forecast view. Returns the post-increment count, or 0 when the
 // caller could not be identified (nothing was recorded). Call this only when
 // a free (non-premium) user is actually consuming a gated forecast.
-function recordView(userId) {
+// With a placeId, a venue already counted this month is not counted again.
+// Without one (Birdie charges one view per turn), every call counts.
+function recordView(userId, placeId) {
   const id = accountKey(userId);
   if (id === null) return 0;
+  const venue = typeof placeId === 'string' && placeId ? placeId : null;
   const month = monthKey();
   const rec = usage.get(id);
   if (!rec || rec.month !== month) {
-    usage.set(id, { month, count: 1 });
+    usage.set(id, { month, count: 1, venues: new Set(venue ? [venue] : []) });
     return 1;
   }
+  if (venue && rec.venues.has(venue)) return rec.count;
+  if (venue) rec.venues.add(venue);
   rec.count += 1;
   return rec.count;
 }
@@ -73,4 +90,4 @@ const cleanup = setInterval(() => {
 }, 3600000);
 if (cleanup.unref) cleanup.unref(); // don't hold the process / test runner open
 
-module.exports = { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView };
+module.exports = { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView, hasViewed };

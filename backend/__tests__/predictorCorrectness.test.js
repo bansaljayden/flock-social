@@ -954,3 +954,15 @@ test('a 24 hour strip buys its events once, not once per hour', async () => {
   // own body swallows a failure rather than seeding a wrong answer.
   assert.match(predictor, /\} catch \{ \/\* seed nothing; every hour below asks for itself, as before \*\/ \}/);
 });
+
+test('the forecast meter counts distinct venues, and a venue already opened stays open', () => {
+  const forecastUsage = require('../services/forecastUsage');
+  const id = 987650;
+  assert.equal(forecastUsage.recordView(id, 'VENUE_A'), 1);
+  assert.equal(forecastUsage.recordView(id, 'VENUE_A'), 1, 're-opening the same venue must not spend the allowance');
+  assert.equal(forecastUsage.recordView(id, 'VENUE_B'), 2);
+  assert.equal(forecastUsage.hasViewed(id, 'VENUE_A'), true);
+  assert.equal(forecastUsage.hasViewed(id, 'VENUE_C'), false);
+  assert.equal(forecastUsage.hasViewed(id, ''), false);
+  assert.equal(forecastUsage.recordView(id), 3, 'a view with no venue (a Birdie turn) still counts');
+});
