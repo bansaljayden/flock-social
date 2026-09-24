@@ -243,6 +243,8 @@ function handle(text, params = []) {
   // fixture is about tombstones, so it models the query and owns no flocks;
   // __tests__/accountDeletionSurface.test.js is where the fan-out is driven.
   if (has('FROM flocks f') && has('WHERE f.creator_id = $1')) return { rows: [], rowCount: 0 };
+  // Whether the account ever bought Pro on the web; nobody here has.
+  if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) return { rows: [{ stripe_customer_id: null }], rowCount: 1 };
 
   // deletion transaction
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };

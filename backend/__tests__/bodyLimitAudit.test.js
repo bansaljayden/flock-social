@@ -479,6 +479,15 @@ test('every route file that takes a body was actually looked at', () => {
     // signature covers the RAW BYTES, so the parser has to keep them. It reads
     // no field longer than an address and runs no express-validator chain.
     'emailWebhook',
+    // routes/pro.js enrolled 2026-09-23: Flock Pro on the web. `plan` is one of
+    // two fixed strings, `sessionId` is capped at 200 chars by its validator,
+    // and the portal POST reads no body. The default ceiling, by a wide margin.
+    'pro',
+    // routes/proOffer.js: one public GET, no body.
+    'proOffer',
+    // routes/stripeWebhook.js: Stripe's signed POST, on the raw-bytes parser
+    // under the webhook ceiling (STRIPE_WEBHOOK_BODY_ROUTE in server.js).
+    'stripeWebhook',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {

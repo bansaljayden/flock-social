@@ -82,6 +82,7 @@ const { createUserBudget } = require('../utils/probeBudget');
 // tombstone digests below, so neither table's rows can be compared with the
 // other's. See utils/phone.js.
 const { phoneDiscoveryHash } = require('../utils/phone');
+const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer } = require('../services/proBilling');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -2498,7 +2499,7 @@ router.get('/export', async (req, res) => {
       // number under a server secret, so it is not a copy of anything the user
       // gave us; the number itself is already exported as `phone`.
       `SELECT id, email, name, phone, interests, role, profile_image_url, bio,
-              venmo_username, cashapp_cashtag, zelle_identifier, is_premium,
+              venmo_username, cashapp_cashtag, zelle_identifier, is_premium, stripe_customer_id,
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
@@ -2744,6 +2745,10 @@ router.get('/export', async (req, res) => {
         cashapp_cashtag: account.cashapp_cashtag,
         zelle_identifier: account.zelle_identifier,
         is_premium: account.is_premium,
+        // The Stripe customer behind a web Pro purchase, if there ever was one.
+        // Stripe holds the billing records it points at; the customer portal
+        // shows them.
+        stripe_customer_id: account.stripe_customer_id ?? null,
         sign_in_method: account.oauth_provider || 'password',
         email_verified: account.email_verified,
         terms_accepted_at: account.terms_accepted_at,
@@ -2902,6 +2907,32 @@ async function deleteAccount(req, res) {
         return res.status(503).json({ error: "We couldn't disconnect your Apple sign-in just now. Try again in a minute." });
       }
       appleRevoked = true;
+    }
+
+    // A WEB SUBSCRIPTION MUST NOT OUTLIVE THE ACCOUNT. Flock Pro bought on
+    // flockcorp.com is billed by Stripe, and nothing at Stripe knows this row is
+    // going away, so without this the card is charged every month for an
+    // account that no longer exists. Deleting the Stripe customer cancels its
+    // subscriptions at once. Same rule as the Apple revocation above: if it
+    // cannot be done, refuse and let the person try again, rather than delete
+    // the only record of which customer to cancel. (An App Store subscription
+    // is the person's to stop in their Apple settings; we cannot cancel it.)
+    const stripeCustomer = await stripeCustomerIdFor(req.user.id);
+    let stripeClosed = false;
+    if (stripeCustomer) {
+      try {
+        stripeClosed = await closeStripeCustomer(stripeCustomer);
+        // Forget the customer at once. If the deletion below then fails, the
+        // account must not keep pointing at a Stripe customer that no longer
+        // exists, which would turn every later checkout or portal visit into
+        // an error.
+        if (stripeClosed) {
+          await pool.query('UPDATE users SET stripe_customer_id = NULL WHERE id = $1 AND stripe_customer_id = $2::text', [req.user.id, stripeCustomer]);
+        }
+      } catch (err) {
+        console.error('[users] Stripe customer close failed during deletion:', err?.message || err);
+        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
+      }
     }
 
     // Moderation evidence survives the account (round 5): cascade deletes let
@@ -3077,7 +3108,9 @@ async function deleteAccount(req, res) {
       return res.status(503).json({
         error: appleRevoked
           ? 'Your Apple sign-in was disconnected, but the account could not be deleted just now. Sign in with Apple again, then try once more.'
-          : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
+          : stripeClosed
+            ? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'
+            : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
       });
     } finally {
       client.release();
