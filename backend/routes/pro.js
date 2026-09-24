@@ -85,7 +85,9 @@ router.get('/status', async (req, res) => {
       isPremium: state.premium,
       checkoutAvailable: sellable,
       plans,
-      trialDays: sellable ? billing.trialDays() : 0,
+      // A trial is for somebody who has never subscribed, which is also the
+      // rule checkout enforces; a returning customer is not offered one.
+      trialDays: sellable && !canManageWeb ? billing.trialDays() : 0,
       taxAdded: sellable ? billing.taxEnabled() : false,
       // True once this account has ever been a Stripe customer, which is when
       // the portal has something to show.

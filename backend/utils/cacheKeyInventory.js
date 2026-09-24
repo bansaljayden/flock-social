@@ -481,6 +481,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'The key space is the set of configured price ids, which is at most four. A caller can only choose which plan to ask about by name, and an unconfigured plan never reaches the map. A stale entry for ten minutes after a price change shows the old figure on the page, while checkout itself charges the price id, so the charge is never wrong.',
   },
+  {
+    file: 'services/proBilling.js', name: 'checkoutQueues', kind: 'inflight',
+    key: 'the authenticated account id (req.user.id), as a string',
+    callerControls: 'nothing but being signed in: the key is the caller\'s own account',
+    protects: 'one person being charged twice: two interleaved checkouts could each create a payable session after the other expired the open ones',
+    denominator: 'n/a, a per-account promise chain, not a counter',
+    bound: 'one entry per account with a checkout being built right now; the entry deletes itself when its chain settles, and /api/pro is behind the 30-per-minute proLimiter',
+    verdict: 'SAFE',
+    why: 'It only orders one account\'s own requests, so a caller can queue behind nobody but themselves. Each entry lives for the length of three Stripe calls and removes itself when the last queued request settles, whether it succeeded or threw, so the map is empty at rest.',
+  },
 
   // ── services/photoStore.js ────────────────────────────────────────────────
   // The durable half of the photo proxy. The CACHE and the LEDGER are Postgres
