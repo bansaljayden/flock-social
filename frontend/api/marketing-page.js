@@ -261,7 +261,7 @@ const PAGE_BLOCKS = {
     ["p", "The full detail is below. It's written in plain language on purpose. If anything is unclear, email social@flockcorp.com."],
     ["h2", "Who we are"],
     ["p", "Flock is a social coordination app that helps you plan nights out with friends. Flock (\"we\", \"us\", \"our\") is operated by Flock Social LLC, a Pennsylvania limited liability company. We are the data controller for personal information processed through the Flock app, flockcorp.com, the venue dashboard, and the venue sensors described in section 3."],
-    ["p", "This policy covers all of those. It applies whether you use Flock on iOS, on Android, or in a browser, whether you have an account or answer an invite link as a guest, and whether you use Flock to make plans or to run a venue. Write to us at social@flockcorp.com."],
+    ["p", "This policy covers all of those. It applies whether you use Flock on iOS, on Android, or in a browser, whether you have an account or answer an invite link as a guest, and whether you use Flock to make plans or to run a venue. Write to us at social@flockcorp.com. Our postal address is 2610 Long Ridge Dr, Hellertown, PA 18055."],
     ["h2", "What we collect"],
     ["h3", "You provide directly"],
     ["li", "Account info: email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional short bio. We send a link to your email at sign-up to confirm it's really yours. Your friend code is worked out from your account number when you ask for it, so there is no separate code stored anywhere."],
@@ -667,7 +667,7 @@ const PAGE_BLOCKS = {
     ["li", "Product claims. We, not Apple, are responsible for addressing any claims by you or a third party relating to Flock or your possession and use of it, including product liability claims, any claim that Flock fails to conform to any legal or regulatory requirement, and claims arising under consumer protection, privacy or similar legislation, including in connection with Flock's use of the HealthKit and HomeKit frameworks, which Flock does not use."],
     ["li", "Intellectual property claims. If a third party claims that Flock or your possession and use of it infringes their intellectual property rights, we, not Apple, are solely responsible for the investigation, defence, settlement and discharge of that claim."],
     ["li", "Legal compliance. You represent and warrant that you are not located in a country subject to a United States Government embargo or designated as a \"terrorist supporting\" country, and that you are not listed on any United States Government list of prohibited or restricted parties."],
-    ["li", "Contact. Questions, complaints and claims about Flock go to Flock Social LLC at social@flockcorp.com."],
+    ["li", "Contact. Questions, complaints and claims about Flock go to Flock Social LLC at social@flockcorp.com, 2610 Long Ridge Dr, Hellertown, PA 18055."],
     ["li", "Third-party terms. You must comply with any applicable third-party terms of agreement when using Flock."],
     ["li", "Apple as third-party beneficiary. Apple and Apple's subsidiaries are third-party beneficiaries of these Terms, and upon your acceptance of them Apple will have the right, and is deemed to have accepted the right, to enforce these Terms against you as a third-party beneficiary of them."],
     ["p", "If you got Flock from Google Play, Google's terms for the Play Store apply to the download and to any purchase, alongside these Terms."],
@@ -678,7 +678,7 @@ const PAGE_BLOCKS = {
     ["h2", "18. Changes to these Terms"],
     ["p", "We may update these Terms. We will post the new effective date at the top and, for material changes, provide in-app notice before the change takes effect. If you keep using Flock after that, you accept the new version. If you do not agree with it, delete your account."],
     ["h2", "19. Contact"],
-    ["p", "Questions about these Terms, or anything else: social@flockcorp.com. A human reads that inbox."],
+    ["p", "Questions about these Terms, or anything else: social@flockcorp.com. A human reads that inbox. Our postal address is 2610 Long Ridge Dr, Hellertown, PA 18055."],
   ],
 };
 

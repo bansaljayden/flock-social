@@ -992,6 +992,13 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
 // their mail. The RFC 8058 header pair is what makes Gmail and Apple Mail show
 // their own one-tap Unsubscribe next to the sender, which is both what the law
 // wants and the strongest deliverability signal a small sending domain has.
+// THE POSTAL ADDRESS CAN-SPAM ASKS FOR. 15 U.S.C. 7704(a)(5)(A)(iii) wants a
+// commercial message to carry the sender's valid physical postal address, and
+// the two waitlist messages are the commercial ones. It is the registered
+// office of Flock Social LLC, the same address the privacy policy and the
+// terms print (OPERATOR_ADDRESS in frontend/src/website).
+const SENDER_POSTAL = 'Flock Social LLC, 2610 Long Ridge Dr, Hellertown, PA 18055';
+
 function unsubscribeUrl(address) {
   const token = mintUnsubscribeToken(address);
   if (!token) return null;
@@ -1030,6 +1037,7 @@ async function sendWaitlistConfirmation({ to }) {
       '',
       `You are getting this because this address was entered on the Flock waitlist at ${baseWebUrl()}.`,
       optOutText,
+      SENDER_POSTAL,
     ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
@@ -1045,7 +1053,7 @@ async function sendWaitlistConfirmation({ to }) {
         </p>
         <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
         <p style="font-size: 13px; color: #a0aec0; margin-top: 32px; line-height: 1.6;">
-          You are getting this because this address was entered on the Flock waitlist. ${optOutHtml}
+          You are getting this because this address was entered on the Flock waitlist. ${optOutHtml}<br />${escapeHtml(SENDER_POSTAL)}
         </p>
       </div>
     `,
@@ -1090,6 +1098,7 @@ async function sendWaitlistLaunchEmail({ to }) {
       '',
       `You are getting this because this address joined the Flock waitlist at ${baseWebUrl()}.`,
       optOutText,
+      SENDER_POSTAL,
     ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
@@ -1105,7 +1114,7 @@ async function sendWaitlistLaunchEmail({ to }) {
         </div>
         <p style="font-size: 14px; color: #718096; line-height: 1.6;">The Flock Team</p>
         <p style="font-size: 12px; color: #a0aec0; line-height: 1.6; margin-top: 32px;">
-          You are getting this because this address joined the Flock waitlist at ${baseWebUrl()}. ${optOutHtml}
+          You are getting this because this address joined the Flock waitlist at ${baseWebUrl()}. ${optOutHtml}<br />${escapeHtml(SENDER_POSTAL)}
         </p>
       </div>
     `,

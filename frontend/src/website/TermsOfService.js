@@ -11,13 +11,13 @@ const SUPPORT_EMAIL = 'social@flockcorp.com';
 // string, changed here, in PrivacyPolicy.js, in SiteFooter.js and in
 // api/marketing-page.js together.
 //
-// OPERATOR_ADDRESS is null on purpose, and Apple's minimum EULA terms ask for
-// the developer's name AND address in the contact section. Nothing renders
-// while it is null, because an invented address is worse than a missing one;
-// choosing the address to publish is a separate decision from registering.
+// OPERATOR_ADDRESS is there because Apple's minimum EULA terms ask for the
+// developer's name AND address in the contact section. It is the registered
+// office on the company's public state record, and it matches PrivacyPolicy.js
+// and the waitlist email footer.
 const OPERATOR = 'Flock Social LLC';
 const OPERATOR_KIND = 'a Pennsylvania limited liability company';
-const OPERATOR_ADDRESS = null;
+const OPERATOR_ADDRESS = '2610 Long Ridge Dr, Hellertown, PA 18055';
 
 // PER-ROUTE <meta name="description">. CRA has no server rendering, so
 // public/index.html is the response for every route and its one static
