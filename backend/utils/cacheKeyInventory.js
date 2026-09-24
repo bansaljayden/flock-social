@@ -470,6 +470,18 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Round 26 applied the fix this row prescribed. The cap was 500 ENTRIES against a full image buffer apiece, so the bytes were unbounded, and single-key eviction let a churn of valid refs push hot photos out one at a time. It is now a byte budget with a per-entry ceiling, a hit re-inserts its key so eviction is least-recently-used rather than FIFO, and eviction runs to a low-water mark so a full cache does not pay the expired-entry scan on every insert. The same round fixed the COST half nobody had filed: the TTL was 1 HOUR on bytes that are immutable by construction: a photo resource name is a handle for one specific photo and Google mints a new name rather than swapping the bytes behind an old one: so a venue card on screen across a day was re-bought roughly 24 times. AND THE LARGER HALF NEITHER ROUND CAUGHT: this map is HEAP, so every Railway deploy threw the whole cache away and re-bought all of it (fifteen deploys in one night on 2026-08-19), which is what was actually reaching the daily cap. It is now L1 in front of a durable L2 in Postgres (services/photoStore.js, migration 046), so a deploy costs nothing. TTL is 30 consecutive calendar days: the Places terms grant that window to latitude and longitude specifically (Maps Service Specific Terms 14.3) and grant photo bytes no caching window at all, so 30 days is the longest window the Places section names for anything rather than an allowance anyone has for this. The clauses are quoted in the photoStore.js header. The key is hashed because the Place Photos reference says a photo NAME cannot be cached. Pinned by __tests__/photoCacheCost.test.js.',
   },
+  // ── services/proBilling.js ────────────────────────────────────────────────
+  {
+    file: 'services/proBilling.js', name: 'priceCache', kind: 'cache',
+    key: 'a Stripe price id read from STRIPE_PRICE_PRO_MONTHLY or STRIPE_PRICE_PRO_YEARLY',
+    callerControls: 'nothing: the key comes from the environment, never from a request',
+    protects: 'one Stripe prices.retrieve per plan per ten minutes on GET /api/pro/status',
+    denominator: 'n/a, not a counter',
+    bound: 'at most two keys, one per configured plan, TTL 10 minutes',
+    verdict: 'SAFE',
+    why: 'The key space is the set of configured price ids, which is two. A caller can only choose which plan to ask about by name, and an unconfigured plan never reaches the map. A stale entry for ten minutes after a price change shows the old figure on the page, while checkout itself charges the price id, so the charge is never wrong.',
+  },
+
   // ── services/photoStore.js ────────────────────────────────────────────────
   // The durable half of the photo proxy. The CACHE and the LEDGER are Postgres
   // tables (migration 046) and so are deliberately absent from this file, which
@@ -1189,14 +1201,14 @@ const LIMITERS = [
   {
     name: 'globalBackstopLimiter',
     windowMs: 15 * 60 * 1000,
-    max: 8500,
+    max: 8900,
     keyKind: 'account',
     key: 'billedImageKey — `user:<jwt.verify\'d id>` when a valid bearer token is present, `addr:<req.ip>` otherwise',
     message: 'Too many requests, please try again later',
     mounts: ['(app-wide, the FIRST middleware on the app: ahead of cors and ahead of the body parsers)'],
     protects: 'the process itself, and specifically the four surfaces that had NO ceiling of any kind',
     verdict: 'SAFE',
-    why: 'Before this existed there was no app-wide ceiling: apiLimiter is one shared instance across ~25 routers (so those DO share one 3000/15min bucket), but /api/revenuecat, /api/email-events, GET /api/health and EVERY unmatched path that falls through to the 404 handler were mounted with no limiter at all, and a caller could spend each per-route ceiling in full and then flood 404s without limit. The number is DERIVED, not chosen: the sum of every other limiter\'s 15-minute-equivalent allowance is 8,403 (apiLimiter 3000 + venueSearch 1800 + venueDashboard 1800 + venueProfile 450 + ai 450 + advisor 300 + digestOptOut 300 + authLimiter 150 + imageSpend 150 + advisorQuestion 3) and 8500 is that rounded up to the next hundred, so by construction it cannot refuse a caller every per-route limiter would have allowed. __tests__/rateLimiterInventory.test.js recomputes that sum and fails if a new limiter pushes it past this number. One correction to that word by construction, measured 2026-08-26: the MemoryStore in express-rate-limit 7.5.1 starts each KEY window at that key first hit, so these ten windows are not aligned with each other or with this one, and a caller bursting at every seam can fit sixteen one-minute windows and two whole apiLimiter windows into one fifteen-minute window here — about 11,800 rather than 8,403. The number is deliberately left at 8,500 anyway: the only caller who reaches that is sustaining thirteen requests a second across every surface of the app at once, and being wrong in that direction costs them a 429 saying try again. It keys on the ACCOUNT where there is one for billedImageKey\'s reason, which also means a NAT full of signed-in users gets a bucket each rather than one to fight over; unauthenticated callers land in `addr:` and are bounded far tighter by apiLimiter first, so this can never be the limiter that bites them. It is mounted AHEAD of express.json, which no other limiter is: a refusal here is the only one in the file that stops the body being read. It is also mounted ahead of cors(), and that was WRONG for the first nine hours of its life: cors does not fall through, it ANSWERS, so a preflight (204, preflightContinue defaults to false) and, far worse, any request carrying an Origin the allowlist does not hold (next(new Error) with the CORS refusal message, straight to the error handlers at the bottom of server.js) both skipped this limiter entirely. That Error carries no status, so Sentry.setupExpressErrorHandler captures it: one request header on any URL, unauthenticated, bought an unbounded stream of Sentry events, which is strictly worse than the unrouted-404 hole this limiter was written to close. The single exemption is skip(): a preflight from an ALLOWED origin, because it carries no Authorization header and therefore keys to addr:, and counting those would put a whole bar of Capacitor clients into one bucket for a request cors answers without reading a body. A preflight cors is about to refuse is not exempt.',
+    why: 'Before this existed there was no app-wide ceiling: apiLimiter is one shared instance across ~25 routers (so those DO share one 3000/15min bucket), but /api/revenuecat, /api/email-events, GET /api/health and EVERY unmatched path that falls through to the 404 handler were mounted with no limiter at all, and a caller could spend each per-route ceiling in full and then flood 404s without limit. The number is DERIVED, not chosen: the sum of every other limiter\'s 15-minute-equivalent allowance is 8,853 (apiLimiter 3000 + venueSearch 1800 + venueDashboard 1800 + venueProfile 450 + ai 450 + proLimiter 450 + advisor 300 + digestOptOut 300 + authLimiter 150 + imageSpend 150 + advisorQuestion 3) and 8900 is that rounded up to the next hundred (it was 8,500 over 8,403 until proLimiter arrived on 2026-09-24), so by construction it cannot refuse a caller every per-route limiter would have allowed. __tests__/rateLimiterInventory.test.js recomputes that sum and fails if a new limiter pushes it past this number. One correction to that word by construction, measured 2026-08-26: the MemoryStore in express-rate-limit 7.5.1 starts each KEY window at that key first hit, so these ten windows are not aligned with each other or with this one, and a caller bursting at every seam can fit sixteen one-minute windows and two whole apiLimiter windows into one fifteen-minute window here — about 11,800 rather than 8,403. The number is deliberately left at 8,500 anyway: the only caller who reaches that is sustaining thirteen requests a second across every surface of the app at once, and being wrong in that direction costs them a 429 saying try again. It keys on the ACCOUNT where there is one for billedImageKey\'s reason, which also means a NAT full of signed-in users gets a bucket each rather than one to fight over; unauthenticated callers land in `addr:` and are bounded far tighter by apiLimiter first, so this can never be the limiter that bites them. It is mounted AHEAD of express.json, which no other limiter is: a refusal here is the only one in the file that stops the body being read. It is also mounted ahead of cors(), and that was WRONG for the first nine hours of its life: cors does not fall through, it ANSWERS, so a preflight (204, preflightContinue defaults to false) and, far worse, any request carrying an Origin the allowlist does not hold (next(new Error) with the CORS refusal message, straight to the error handlers at the bottom of server.js) both skipped this limiter entirely. That Error carries no status, so Sentry.setupExpressErrorHandler captures it: one request header on any URL, unauthenticated, bought an unbounded stream of Sentry events, which is strictly worse than the unrouted-404 hole this limiter was written to close. The single exemption is skip(): a preflight from an ALLOWED origin, because it carries no Authorization header and therefore keys to addr:, and counting those would put a whole bar of Capacitor clients into one bucket for a request cors answers without reading a body. A preflight cors is about to refuse is not exempt.',
   },
   {
     name: 'apiLimiter',
@@ -1263,6 +1275,18 @@ const LIMITERS = [
     protects: 'reaching the Birdie router at all; the invoice is bounded by the token ledger, not by this',
     verdict: 'SAFE',
     why: 'It bounds REQUESTS and Gemini is billed per TOKEN, so this is the cheap early brake and services/birdieUsage.js geminiUserSpend is the cap denominated in money. Neither replaces the other and the pair is the house pattern. Account-keyed for billedImageKey\'s reason.',
+  },
+  {
+    name: 'proLimiter',
+    windowMs: 60 * 1000,
+    max: 30,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'Too many requests. Wait a minute and try again.',
+    mounts: ['/api/pro'],
+    protects: 'Stripe\'s account-wide request budget: a checkout makes two to four Stripe calls and creates a Checkout Session, a confirm retrieves one',
+    verdict: 'SAFE',
+    why: 'Sized for the one real burst, the return from checkout polling /status every two seconds for thirty seconds. Anything past thirty a minute from one account is a loop, and the budget it would spend is the one every other buyer\'s checkout needs.',
   },
   {
     name: 'advisorLimiter',
@@ -1338,6 +1362,10 @@ const LIMITERS = [
 // All four are now covered by globalBackstopLimiter, which is the whole reason
 // it exists. Before it, each of these was genuinely unbounded.
 const UNLIMITED_MOUNTS = [
+  {
+    path: '/api/stripe-webhook',
+    why: 'Stripe\'s webhook, authorised by a signature over the raw bytes. It is what hands a completed web checkout to RevenueCat when the buyer never comes back to the app, so refusing it can leave somebody who paid without Pro. Stripe retries on its own schedule; the body ceiling is the scoped raw-bytes parser, the identity check is the signature, and the backstop is the volume ceiling.',
+  },
   {
     path: '/api/revenuecat',
     why: 'RevenueCat\'s subscription webhook, authorised by a shared secret. Refusing it loses a purchase or an expiry event and RevenueCat\'s retry schedule is its own, so a per-address ceiling here would trade a billing-state bug for a load saving we do not need. The body ceiling is the scoped webhookJsonParser and the identity check is the shared secret; the backstop is the volume ceiling.',

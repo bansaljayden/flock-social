@@ -246,10 +246,12 @@ const server = http.createServer(app);
 //   venueDashboardLimiter    120 / min     = 1800
 //   venueProfileLimiter       30 / min     =  450
 //   digestOptOutLimiter       20 / min     =  300
+//   proLimiter                30 / min     =  450
 //                                           -----
-//                                            8403
+//                                            8853
 //
-// 8500 is that, rounded up to the next hundred. The sum deliberately includes
+// 8900 is that, rounded up to the next hundred (8500 until proLimiter arrived
+// on 2026-09-24 and moved the sum past it). The sum deliberately includes
 // imageSpendLimiter and advisorQuestionLimiter even though both are EXTRA gates
 // on requests already counted elsewhere and add nothing a caller can push
 // through: a sharper model exists, but a backstop derived from a subtle model
@@ -339,7 +341,7 @@ const server = http.createServer(app);
 // Same MemoryStore caveat as every other limiter in this file: it resets on
 // deploy and divides by the instance count.
 const GLOBAL_BACKSTOP_WINDOW_MS = 15 * 60 * 1000;
-const GLOBAL_BACKSTOP_MAX = 8500;
+const GLOBAL_BACKSTOP_MAX = 8900;
 
 // isDev is declared HERE rather than in the rate-limiting section below, which
 // is where it used to live, because this limiter has to be defined before the
@@ -899,6 +901,9 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     and rejected before sanitising if it is longer than 280 characters
 //     (services/advisorFreeText.js FREE_TEXT_MAX_CHARS). The parser's ceiling
 //     is therefore never the binding limit here; the router's own is.
+//   * routes/pro.js — POST /checkout carries `plan`, one of two fixed strings;
+//     POST /confirm carries `sessionId`, capped at 200 chars and matched against
+//     /^cs_[A-Za-z0-9_]+$/; POST /portal reads no body. All under 1KB.
 //   * routes/venueDigest.js — no body it reads: the unsubscribe link is a GET
 //     that renders and a POST that writes, and BOTH take the token from the
 //     query string, capped at 2048 chars by the router's own validator. The
@@ -911,6 +916,8 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     CHAT_IMAGE_MAX_BYTES;
 //   * POST /api/ai/chat, derived from Birdie's own message caps;
 //   * POST /api/revenuecat/webhook, because the sender is not us.
+//   * POST /api/stripe-webhook, the same webhook ceiling through the raw-bytes
+//     parser, because Stripe signs the exact payload.
 const DEFAULT_JSON_BODY_BYTES = 64 * 1024;
 const defaultJsonParser = express.json({ limit: DEFAULT_JSON_BODY_BYTES });
 
@@ -1021,6 +1028,9 @@ const imageRoutePath = (req) => req.path.replace(/\/{2,}/g, '/');
 const AI_CHAT_BODY_ROUTE = /^\/api\/ai\/chat\/?$/i;
 const WEBHOOK_BODY_ROUTE = /^\/api\/revenuecat\/webhook\/?$/i;
 const EMAIL_EVENTS_BODY_ROUTE = /^\/api\/email-events\/?$/i;
+// Stripe's webhook, and it needs the raw bytes for the same reason Resend's
+// does: the signature covers the payload exactly as sent. Same parser.
+const STRIPE_WEBHOOK_BODY_ROUTE = /^\/api\/stripe-webhook\/?$/i;
 
 // One table, one dispatch. A fourth scoped parser is a row here, not a second
 // `if` — two places deciding which ceiling a request gets is how the ceiling
@@ -1032,6 +1042,7 @@ const SCOPED_JSON_PARSERS = [
   [AI_CHAT_BODY_ROUTE, aiChatJsonParser],
   [WEBHOOK_BODY_ROUTE, webhookJsonParser],
   [EMAIL_EVENTS_BODY_ROUTE, emailWebhookParser],
+  [STRIPE_WEBHOOK_BODY_ROUTE, emailWebhookParser],
 ];
 
 // GET/PUT/PATCH/DELETE take the default unconditionally: every route with a
@@ -1409,6 +1420,21 @@ const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 // an advisor caller is always authenticated, so an address key would just be a
 // meter that IP rotation defeats. Twenty a minute is a dashboard open plus a
 // run of question chips, with room to spare and none for a loop.
+// Flock Pro on the web (routes/pro.js). Each checkout makes two to four Stripe
+// calls and creates a Checkout Session, and each confirm retrieves one, so a
+// loop here spends Stripe's account-wide request budget, which checkout for
+// everybody else shares. Keyed on the account for billedImageKey's reason.
+// Thirty a minute covers the one legitimate burst: the return from checkout
+// polls /status every two seconds for up to thirty.
+const proLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Wait a minute and try again.' },
+});
+
 const advisorLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -1499,11 +1525,13 @@ app.use('/api/flocks', apiLimiter, flockRoutes);
 // /api/* request without a Bearer token, which would 401 the Pi (x-api-key) and
 // break the anonymous NFC GET below.
 app.use('/api/revenuecat', revenuecatRoutes);                  // RevenueCat webhook (shared-secret, no JWT) — before messages catch-all
+app.use('/api/stripe-webhook', require('./routes/stripeWebhook')); // Stripe webhook (signed, no JWT, no limiter) — before messages catch-all
 app.use('/api/guest', apiLimiter, require('./routes/guest').router); // Guest link RSVP/vote (token-authed, no JWT) — before messages catch-all
 app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddable live-busyness SVG (public, claimed venues only)
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls
+app.use('/api/pro-offer', apiLimiter, require('./routes/proOffer')); // PUBLIC: homepage Flock Pro card, on sale or not, and the prices
 app.use('/api/public', apiLimiter, publicCrowdRoutes);          // PUBLIC, no auth — website live crowd demo (own per-IP + daily caps inside)
                                                                 // (was mounted after them, which 401'd every landing-page signup)
 // The Monday digest's unsubscribe link. NO JWT — the signed, purpose-labelled
@@ -1556,6 +1584,7 @@ app.use('/api/billing', apiLimiter, billingRoutes);   // Handles /api/billing/:f
 app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/search, /api/events/featured
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 app.use('/api/entitlements', apiLimiter, entitlementsRoutes); // Handles /api/entitlements (Flock Pro paywall status)
+app.use('/api/pro', proLimiter, apiLimiter, require('./routes/pro')); // Flock Pro on the web: Stripe Checkout, portal, confirm
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)

@@ -835,6 +835,7 @@ test('nothing on the rate card, the fixed list or the watchlist is missing from 
     posthog: ['posthog'],
     sentry: ['sentry'],
     revenuecat: ['revenuecat'],
+    stripe: ['stripe'],
     push: ['push'],
     stores: ['apple-commission'],
   };

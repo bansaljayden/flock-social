@@ -53,7 +53,9 @@ const EXPECTED_PUBLIC = {
   venueDigest: 'digest opt-out link from an email, signed token',
   emailWebhook: 'Resend delivery webhook, shared secret',
   revenuecat: 'RevenueCat purchase webhook, shared secret',
+  stripeWebhook: 'Stripe webhook, verified by a signature over the raw bytes before anything is read',
   sensors: 'Pi ingest checks x-api-key in the handler; the read APIs use JWT',
+  proOffer: 'homepage pricing card: whether Flock Pro is on sale and at what price, the same answer for every caller, no account data',
 };
 
 const AUTH_MW = /\b(authenticate|authenticateAllowBanned|requireVerified)\b/;

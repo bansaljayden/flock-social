@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const pool = require('../config/database');
+const proBilling = require('../services/proBilling');
 
 const router = express.Router();
 
@@ -404,6 +405,19 @@ router.post('/webhook', async (req, res) => {
       const from = ids(event.transferred_from);
       const to = ids(event.transferred_to);
 
+      // Under the subscriber re-read, a transfer is a prompt to re-read every
+      // account on both sides. Writing from the event would switch off an
+      // account whose App Store purchase moved away while its Stripe
+      // subscription is still paid. Any read that fails answers 500 so
+      // RevenueCat retries the whole event.
+      if (proBilling.revenueCatApiConfigured()) {
+        for (const id of new Set([...from, ...to])) {
+          await syncPremiumFromRevenueCat(id);
+        }
+        console.log(`[RevenueCat] TRANSFER re-read [${from}] and [${to}]`);
+        return res.json({ ok: true, source: 'subscriber' });
+      }
+
       // An id on BOTH sides keeps its entitlement and is never revoked on the
       // way through. A subscriber's alias set is "every app_user_id this SDK has
       // been logged in as", so an overlap is ordinary rather than exotic. The
@@ -467,8 +481,26 @@ router.post('/webhook', async (req, res) => {
     const appUserId = userIdFrom(event.app_user_id);
     if (!appUserId) return res.status(400).json({ error: 'Missing app_user_id' });
 
+    // ASK, DO NOT INFER, once there are two stores. Pro can be bought from
+    // Apple in the app or from Stripe on the web, and RevenueCat holds both.
+    // Setting the column from this one event's type would let an Apple
+    // EXPIRATION switch off somebody whose Stripe subscription is still paid,
+    // and the reverse. So with the API key configured, every event is only a
+    // prompt to read the subscriber's whole state and write that. A failed
+    // read throws into the catch below, which answers 500, and RevenueCat
+    // retries: nothing is written from a guess.
+    if (proBilling.revenueCatApiConfigured()) {
+      await syncPremiumFromRevenueCat(appUserId);
+      return res.json({ ok: true, source: 'subscriber' });
+    }
+
     // No default. A type this table has never heard of writes nothing.
-    const premium = PREMIUM_BY_EVENT.has(type) ? PREMIUM_BY_EVENT.get(type) : null;
+    let premium = PREMIUM_BY_EVENT.has(type) ? PREMIUM_BY_EVENT.get(type) : null;
+    // A REFUND arrives as CANCELLATION with cancel_reason CUSTOMER_SUPPORT,
+    // and RevenueCat removes the entitlement at once; no EXPIRATION follows.
+    // An ordinary CANCELLATION (auto-renew off) still keeps Pro to the end of
+    // the paid period, which is why the table itself leaves CANCELLATION out.
+    if (type === 'CANCELLATION' && event.cancel_reason === 'CUSTOMER_SUPPORT') premium = false;
 
     if (premium !== null) {
       // No swallowed errors here (round 3): returning 200 on a failed write
@@ -491,6 +523,28 @@ router.post('/webhook', async (req, res) => {
 });
 
 module.exports = router;
+
+// THE ONE WRITE THAT ASKS REVENUECAT. Used by the webhook above whenever the
+// API key is configured, and by routes/pro.js right after a web checkout so
+// the buyer lands in the app already Pro. Returns what it wrote. Throws when
+// RevenueCat could not give a clear answer, and writes nothing in that case.
+async function syncPremiumFromRevenueCat(userId) {
+  const id = userIdFrom(userId);
+  if (!id) throw new Error('syncPremiumFromRevenueCat needs a Flock user id');
+  let active = await proBilling.fetchProActive(id);
+  // A "no" is read twice. Two syncs can overlap (a cancellation and a
+  // re-purchase seconds apart), and a slow read of the old state landing after
+  // a fast read of the new one would switch a payer off until their next
+  // event. Reading again immediately before the write narrows that to nothing
+  // a person can do by hand. A "yes" is never read twice: it cannot hurt.
+  if (!active) active = await proBilling.fetchProActive(id);
+  await pool.query(
+    'UPDATE users SET is_premium = $1 WHERE id = $2 AND is_premium IS DISTINCT FROM $1',
+    [active, id]
+  );
+  return active;
+}
+module.exports.syncPremiumFromRevenueCat = syncPremiumFromRevenueCat;
 // One view of "configured", shared rather than duplicated. The cross-file gap
 // described at the top of this file is closed by services/entitlements.js
 // calling this instead of reading the raw variable: two copies of a security

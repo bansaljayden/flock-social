@@ -282,6 +282,17 @@ const RATES = {
     percentOverFree: 1.0,
   },
 
+  // Stripe. No monthly fee: a share of each successful card payment, plus the
+  // Billing share on a subscription. Stripe Tax adds its own share only where a
+  // tax registration exists. Nothing has been charged, so this costs $0.
+  stripe: {
+    checked: '2026-09-23',
+    source: 'https://stripe.com/pricing',
+    percent: 2.9,
+    fixedUsd: 0.30,
+    billingPercent: 0.7,
+  },
+
   // Push. Both legs are free and neither publishes a per-message price. FCM is
   // listed as no-cost on both Firebase plans; APNs is included with the Apple
   // Developer Program. The APNs line is a conclusion from an ABSENCE of any
@@ -976,14 +987,26 @@ const DEPENDENCIES = [
   {
     id: 'revenuecat',
     label: 'RevenueCat',
-    what: 'Would run the consumer subscription. The paywall has never been switched on.',
-    where: 'the paywall, behind PAYWALL_ENABLED',
+    what: 'The one record of who has Flock Pro, whether it was bought through the App Store or on flockcorp.com through Stripe. The paywall has never been switched on.',
+    where: 'the paywall, behind PAYWALL_ENABLED; routes/revenuecat.js and services/proBilling.js',
     group: 'free',
     pricing: { type: 'free', rateGroup: 'revenuecat' },
-    configuredEnv: ['REVENUECAT_WEBHOOK_SECRET'],
+    configuredEnv: ['REVENUECAT_WEBHOOK_SECRET', 'REVENUECAT_SECRET_API_KEY'],
     observedLineId: null,
     usageNote: 'Tracked revenue is $0 because nothing has ever been sold.',
     costsNothingBecause: 'Free below $2,500 of monthly tracked revenue, then 1% of it.',
+  },
+  {
+    id: 'stripe',
+    label: 'Stripe',
+    what: 'Card payments for Flock Pro bought on flockcorp.com, and the page where a web subscriber cancels. Off until PRO_WEB_CHECKOUT_ENABLED and the paywall are both on.',
+    where: 'backend/services/proBilling.js, routes/pro.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'stripe' },
+    configuredEnv: ['STRIPE_SECRET_KEY'],
+    observedLineId: null,
+    usageNote: 'Nothing has been charged.',
+    costsNothingBecause: 'No monthly fee. Stripe takes a share of each payment, so it costs nothing while nothing is sold.',
   },
   {
     id: 'push',
@@ -1797,6 +1820,8 @@ function freeTierTextFor(groupName) {
       return `${n(g.freeErrorsPerMonth)} errors a month. The next tier is $${g.nextTierUsd.toFixed(2)} a month`;
     case 'revenuecat':
       return `$${n(g.freeMonthlyTrackedRevenueUsd)} of monthly tracked revenue, then ${g.percentOverFree}% of it`;
+    case 'stripe':
+      return `No monthly fee. ${g.percent}% + $${g.fixedUsd.toFixed(2)} per successful card payment, plus ${g.billingPercent}% on subscriptions`;
     case 'maptiler':
       return `${n(g.freeSessionsPerMonth)} map sessions and ${n(g.freeApiRequestsPerMonth)} API requests a month. The next tier is $${g.nextTierUsd.toFixed(2)} a month and it bills overages automatically`;
     case 'push':
