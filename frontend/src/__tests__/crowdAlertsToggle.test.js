@@ -90,7 +90,12 @@ describe('the settings row', () => {
   it('lives inside the Push Notifications card, after the permission row', () => {
     const cardAt = APP.indexOf('Push Notifications</span>');
     const rowAt = APP.indexOf('<Toggle label="Crowd alerts"');
-    const nextCardAt = APP.indexOf('Flock Pro</span>');
+    // The next card is the Flock Pro row. Its markup moved into the ProRow
+    // component (bottom of ProfileSettings.js) when web checkout added states
+    // to it, so its first appearance in the settings body is the mount, not
+    // the literal 'Flock Pro</span>' this used to find there. Same rule: the
+    // crowd toggle sits inside Push Notifications, before the next card.
+    const nextCardAt = APP.indexOf('<ProRow ');
     expect(cardAt).toBeGreaterThan(-1);
     expect(rowAt).toBeGreaterThan(cardAt);
     expect(nextCardAt).toBeGreaterThan(rowAt);

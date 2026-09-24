@@ -45,7 +45,11 @@ test('the mount run of the pin and order effects does not push this device over 
 
 test('the delete sheet mentions the subscription only once there can be one', () => {
   const settings = read('screens/ProfileSettings.js');
-  const at = settings.indexOf('Deleting your account does not cancel a Flock Pro subscription.');
+  // The sentence names both stores since web checkout arrived: deleting the
+  // account cancels a Stripe subscription (routes/users.js deletes the Stripe
+  // customer) and cannot cancel an App Store one. The rule pinned below, that
+  // it only appears once a subscription can exist, is unchanged.
+  const at = settings.indexOf('Flock Pro bought on flockcorp.com is cancelled when you delete your account.');
   expect(at).toBeGreaterThan(-1);
   const before = settings.slice(at - 400, at);
   expect(before).toContain('(entitlements?.paywallEnabled || isPro) && (');

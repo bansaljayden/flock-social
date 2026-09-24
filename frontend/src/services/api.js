@@ -1126,6 +1126,46 @@ export async function getEntitlements() {
   return request('/api/entitlements');
 }
 
+// Flock Pro bought on the web (backend/routes/pro.js). Stripe is the checkout,
+// RevenueCat stays the one record of who is Pro, so /status and /api/entitlements
+// agree once the purchase has been told to RevenueCat.
+//
+// GET /api/pro/status -> { isPremium, checkoutAvailable, plans, trialDays,
+// taxAdded, canManageWeb }. plans is empty whenever checkout is off, and the
+// page must then show no price at all. A 503 with retryable means the plan
+// state is unknown, which the GET retry above already rides out.
+export async function getProStatus() {
+  return request('/api/pro/status');
+}
+
+// POST /api/pro/checkout { plan } -> { url } of a Stripe hosted checkout.
+// 409 ALREADY_PRO / ALREADY_SUBSCRIBED and 503 CHECKOUT_OFF arrive as
+// err.code. retry: false because a replay would open a second session.
+export async function startProCheckout(plan) {
+  return request('/api/pro/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ plan }),
+    retry: false,
+  });
+}
+
+// POST /api/pro/portal -> { url } of the Stripe customer portal, where a web
+// subscriber cancels or changes their card. 404 NO_WEB_SUBSCRIPTION when this
+// account never bought on the web.
+export async function openProPortal() {
+  return request('/api/pro/portal', { method: 'POST', retry: false });
+}
+
+// POST /api/pro/confirm { sessionId } after Stripe sends the buyer back to
+// /app?pro=success&session_id=cs_... -> { complete, isPremium }.
+export async function confirmProCheckout(sessionId) {
+  return request('/api/pro/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+    retry: false,
+  });
+}
+
 // Venue profile
 //
 // THE B2B SURFACE HAD NO INSTRUMENTATION AT ALL, and it is the revenue story.

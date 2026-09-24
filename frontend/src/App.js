@@ -56,7 +56,8 @@ import { lsGet, lsSet } from './lib/storage';
 // effect, and the RevenueCat wrapper it lives in is a no-op everywhere except
 // the native shell, so it has no business being downloaded before the Nest
 // paints.
-import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
+import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout } from './services/api';
+import { readProReturn, settleProCheckout } from './lib/proReturn';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
@@ -7418,6 +7419,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     check();
   }, []);
   useEffect(() => () => clearTimeout(upgradePollRef.current), []);
+  // Back from a web checkout or the billing portal (PRO_RETURN, read at the
+  // bottom of this file). A purchase confirms, then waits up to ~30s for Pro
+  // to show, then re-reads the same entitlements snapshot the boot fetch
+  // reads. The portal only needs that re-read: a cancel or a card change may
+  // have just happened.
+  useEffect(() => {
+    const ret = PRO_RETURN;
+    if (!ret) return undefined;
+    if (ret.kind === 'manage') {
+      PRO_RETURN = null;
+      refreshEntitlements();
+      return undefined;
+    }
+    let cancelled = false;
+    settleProCheckout({
+      sessionId: ret.sessionId,
+      confirm: confirmProCheckout,
+      getStatus: getProStatus,
+      isCancelled: () => cancelled,
+    }).then((outcome) => {
+      if (outcome === 'cancelled') return;
+      PRO_RETURN = null;
+      refreshEntitlements();
+      if (outcome === 'pro') showToast("You're Pro.");
+      else if (outcome === 'pending') showToast('Your payment went through. Pro can take a few minutes to switch on.', 'info');
+      else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Pro will switch on shortly.', 'info');
+      else showToast('We could not confirm your purchase yet. If you paid, Pro will switch on shortly.', 'info');
+    });
+    return () => { cancelled = true; };
+  }, [refreshEntitlements, showToast]);
   useEffect(() => {
     refreshEntitlements();
     // Safe no-op on web; on iOS links RevenueCat's app_user_id to our user id
@@ -18110,6 +18141,12 @@ function readEmailVerifiedOutcome() {
 }
 
 const EMAIL_VERIFIED_OUTCOME = readEmailVerifiedOutcome();
+
+// Back from Stripe: ?pro=success&session_id=... or ?pro=manage. Read and
+// stripped once, here, for the reason readEmailVerifiedOutcome gives above;
+// lib/proReturn.js has the rest. `let` because FlockAppInner clears it once
+// handled, so a sign-out and sign-in in the same tab does not replay it.
+let PRO_RETURN = readProReturn();
 
 // A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
 // return is the ban; the emailVerificationRequired flag is checked anyway so a

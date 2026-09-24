@@ -177,7 +177,57 @@ function WhenNear({ margin = '700px', className, hold, children }) {
   );
 }
 
+/* THE FLOCK PRO CARD EXISTS ONLY WHILE PRO IS ON SALE. It asks the public
+   /api/pro-offer endpoint, which answers available only when web checkout is
+   switched on and every part of it is configured, and carries the prices
+   Stripe will charge. Until then the card does not render and the page reads
+   exactly as it did, so the homepage never advertises something nobody can
+   buy and never prints a price the checkout would not charge. A failed request
+   is the same as "not on sale". The limits in the list are the ones the
+   backend enforces with the paywall on: services/birdieUsage.js (10 a day
+   free, 150 with Pro) and services/forecastUsage.js (10 a month free). */
+function useProOffer() {
+  const [offer, setOffer] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`${API}/api/pro-offer`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live && d && d.available && Array.isArray(d.plans) && d.plans.length) setOffer(d); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return offer;
+}
+
+function ProOfferCard({ offer }) {
+  const monthly = offer.plans.find((p) => p.id === 'monthly');
+  const yearly = offer.plans.find((p) => p.id === 'yearly');
+  const lead = monthly || yearly;
+  const tax = offer.taxAdded ? ' plus tax' : '';
+  return (
+    <div className="lp-plan">
+      <h3>Flock Pro</h3>
+      <div className="lp-plan-price">
+        {lead.label}
+        <small>
+          {lead.id === 'monthly' ? 'a month' : 'a year'}
+          {monthly && yearly ? `, or ${yearly.label} a year` : ''}
+          {tax}
+        </small>
+      </div>
+      <p className="lp-plan-note">For whoever plans the most. Cancel online any time.</p>
+      <ul className="lp-list">
+        <li>Everything in Free</li>
+        <li>150 Birdie messages a day instead of 10</li>
+        <li>Crowd forecasts without the monthly limit of 10</li>
+      </ul>
+      <a className="lp-btn lp-btn-navy" href="/pro">Get Flock Pro</a>
+    </div>
+  );
+}
+
 export default function LandingPage() {
+  const proOffer = useProOffer();
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState('');
   // Both outcomes used to land in one role="status" paragraph, so a failure
@@ -903,9 +953,14 @@ export default function LandingPage() {
                 convincingly than a revenue model would. Caught by screenshot,
                 not by grep — the phrasing dodged every pattern written for the
                 card below. */}
+            {/* Two honest versions of one sentence. Until Flock Pro is on sale
+                nobody pays anything, and saying so answers "so what's the
+                catch". Once it is, "you don't pay" would be false for anyone
+                who wants Pro, so the line says what is free and what is not. */}
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              You and your friends don’t pay. Venues are the side Flock is built
-              to charge, and none of them is being charged yet.
+              {proOffer
+                ? 'Planning with your friends is free. Flock Pro is optional, for whoever plans the most. Venues are the side Flock is built to charge, and none of them is being charged yet.'
+                : 'You and your friends don’t pay. Venues are the side Flock is built to charge, and none of them is being charged yet.'}
             </p>
           </div>
 
@@ -923,6 +978,8 @@ export default function LandingPage() {
               </ul>
               <a className="lp-btn lp-btn-navy" href="/signup">Create your account</a>
             </div>
+
+            {proOffer && <ProOfferCard offer={proOffer} />}
 
             <div className="lp-plan lp-plan-venue">
               <h3>For venues</h3>

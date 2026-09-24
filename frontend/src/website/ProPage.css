@@ -1,0 +1,147 @@
+/* /pro. Sits on top of PrivacyPolicy.css: the same cream paper, navy ink and
+   tokens (.pp), with Fraunces on the headings the way the landing page sets
+   them. Flat colour only: no gradients, no shadows on the button. */
+
+.pro h1,
+.pro h2,
+.pro .pro-panel h3 {
+  font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pro > section {
+  margin-bottom: clamp(32px, 5vw, 48px);
+}
+
+.pro-note {
+  color: var(--pp-ink-2);
+}
+
+.pro-small {
+  font-size: 14px;
+  margin-top: 12px;
+}
+.pro .pro-small { font-size: 14px; }
+
+.pro-error {
+  color: #9b2c2c;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .pro-error { color: #f2a7a7; }
+}
+
+/* ---------- Free and Pro ---------- */
+
+.pro-table {
+  width: 100%;
+  max-width: 520px;
+  border-collapse: collapse;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.pro-table th,
+.pro-table td {
+  padding: 12px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--pp-rule);
+  color: var(--pp-ink-2);
+}
+.pro-table thead th {
+  color: var(--pp-ink);
+  font-weight: 700;
+  font-size: 14px;
+}
+.pro-table tbody th {
+  font-weight: 500;
+}
+.pro-table td {
+  color: var(--pp-ink);
+  font-weight: 600;
+  width: 22%;
+}
+
+/* ---------- plan choice ---------- */
+
+.pro-plans {
+  border: 0;
+  padding: 0;
+  margin: 0 0 18px;
+}
+.pro-plans legend {
+  font-weight: 700;
+  color: var(--pp-ink);
+  margin-bottom: 10px;
+  padding: 0;
+}
+.pro-plan {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--pp-rule);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--pp-ink-2);
+}
+.pro-plan input {
+  margin-top: 5px;
+  accent-color: var(--pp-accent);
+}
+.pro-plan:has(input:checked) {
+  border-color: var(--pp-accent);
+}
+
+/* ---------- before you pay ---------- */
+
+.pro-panel {
+  background: var(--pp-paper-2);
+  border: 1px solid var(--pp-rule-soft);
+  border-radius: 14px;
+  padding: 18px 20px 6px;
+  margin: 0 0 16px;
+  max-width: 560px;
+}
+.pro .pro-panel h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+.pro-panel ul {
+  padding-left: 20px;
+}
+.pro .pro-panel li {
+  font-size: 15px;
+}
+
+/* ---------- the button ---------- */
+
+.pro .pro-cta,
+.pro a.pro-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 26px;
+  border-radius: 12px;
+  border: 1px solid var(--pp-ink);
+  background: var(--pp-ink);
+  color: var(--pp-paper);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.pro .pro-cta:hover { background: var(--pp-accent); border-color: var(--pp-accent); }
+.pro .pro-cta:disabled { opacity: 0.6; cursor: default; }
+.pro .pro-cta:focus-visible {
+  outline: 2px solid var(--pp-accent);
+  outline-offset: 3px;
+}
+.pro .pro-cta-quiet {
+  background: transparent;
+  color: var(--pp-ink);
+}
+.pro .pro-cta-quiet:hover { color: var(--pp-paper); }
