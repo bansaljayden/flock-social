@@ -690,35 +690,120 @@ test('a Pro subscriber is never locked out of Birdie', async () => {
   assert.ok(out.hourly_forecast.length > 0);
 });
 
-test('one turn spends one view however many venues the model looks at', async () => {
+// PER VENUE, THE SAME AS THE CARD (2026-09-24). Birdie used to charge once per
+// TURN, and an adversarial pass showed what that bought: one turn returned the
+// full forecast for thirty venues while the meter moved by one, and five turns
+// racing at 29 of 30 all got through. The allowance is venues, however they are
+// asked for.
+test('one turn spends one view per new venue the model looks at, the same as the card', async () => {
   process.env.PAYWALL_ENABLED = 'true';
   const uid = CURRENT_USER.id;
   notPremium();
   const results = await birdieCrowd(['V1', 'V2', 'V3', 'V4']);
   assert.strictEqual(results.length, 4, 'the model did not actually make four lookups');
-  assert.strictEqual(getUsedThisMonth(uid), 1,
-    'the model looked at four venues on its own initiative and the user lost four months of allowance for one question');
-  // ...and all four answered consistently. A per-venue charge would have flipped
-  // the tenth lookup mid-turn and given two different answers in one reply.
-  for (const r of results) assert.ok(r.best_time, 'the same turn answered some venues and refused others');
+  for (const r of results) assert.ok(r.best_time, 'a venue inside the allowance was refused');
+  assert.strictEqual(getUsedThisMonth(uid), 4,
+    'four venues were forecast and the meter did not count four');
 });
 
-test('a turn that starts on the last free view still answers every venue in it', async () => {
-  // The boundary the memoisation exists for, found by sabotage in round 4.
-  // Peek unlocked at 9 used, charge, and the meter reads 10: re-reading it for
-  // the second venue in the SAME reply would refuse what the first one just
-  // answered. One question gets one answer, and the charge lands once.
+test('thirty new venues in one turn spend all thirty, and the next one is locked without computing anything paid', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  notPremium();
+  const ids = Array.from({ length: FREE_MONTHLY_FORECASTS + 1 }, (_, i) => `MANY_${String(i).padStart(3, '0')}`);
+  const results = await birdieCrowd(ids);
+  assert.strictEqual(results.length, ids.length, 'the model did not make every lookup');
+  const open = results.filter((r) => r.best_time);
+  assert.strictEqual(open.length, FREE_MONTHLY_FORECASTS,
+    'one turn forecast more venues than a month allows');
+  const last = results[results.length - 1];
+  assert.strictEqual(last.forecast_locked, true, 'the venue past the allowance was not locked');
+  assert.ok(!last.best_time && !last.peak_hours && !last.hourly_forecast,
+    'the locked venue still carried part of the paid forecast');
+  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS);
+  // One free score per venue, and the paid 24-hour walk for the thirty that
+  // were open only: the locked one computed nothing it would throw away.
+  assert.strictEqual(scored.length, ids.length + FREE_MONTHLY_FORECASTS,
+    'the locked venue ran the hourly forecast and then discarded it');
+});
+
+test('a venue already opened this month is free through Birdie, even once the month is spent', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  recordView(uid, 'SEEN_BEFORE');
+  for (let i = 1; i < FREE_MONTHLY_FORECASTS; i++) recordView(uid, `SPENT_${i}`);
+  notPremium();
+  const [seen, fresh] = await birdieCrowd(['SEEN_BEFORE', 'NEVER_SEEN']);
+  assert.ok(seen.best_time, 'a venue this account already opened was locked again');
+  assert.strictEqual(fresh.forecast_locked, true, 'a new venue opened past the allowance');
+  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS, 'opening a seen venue was charged again');
+
+  // ...and the same venue twice in one reply costs once.
+  const other = freshUser();
+  handlers = [];
+  notPremium();
+  sendCalls = [];
+  const twice = await birdieCrowd(['SAME_ONE', 'SAME_ONE']);
+  for (const r of twice) assert.ok(r.best_time);
+  assert.strictEqual(getUsedThisMonth(other), 1, 'one venue asked about twice was charged twice');
+});
+
+test('a turn that starts on the last free venue answers the first new venue and locks the rest', async () => {
   process.env.PAYWALL_ENABLED = 'true';
   const uid = CURRENT_USER.id;
   for (let i = 0; i < FREE_MONTHLY_FORECASTS - 1; i++) recordView(uid);
   notPremium();
   const results = await birdieCrowd(['EDGE_A', 'EDGE_B', 'EDGE_C']);
   assert.strictEqual(results.length, 3);
-  for (const r of results) {
-    assert.ok(r.best_time, 'the same reply answered one venue and refused another');
+  assert.ok(results[0].best_time, 'the last free venue was refused');
+  for (const r of results.slice(1)) {
+    assert.strictEqual(r.forecast_locked, true, 'a venue past the allowance was answered');
+    assert.ok(!r.best_time && !r.peak_hours && !r.hourly_forecast);
   }
-  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS,
-    'the turn spent more than the one view it was owed');
+  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS);
+});
+
+test('turns racing at 29 of 30 open exactly one new venue between them', async () => {
+  // The race the per-turn memo lost: every turn peeked at 29, every turn
+  // forecast its venues, and the charge at 30 was a silent no-op. Places is
+  // slowed so every turn is past its peek before any of them charges, which
+  // is the window the check-and-record after delivery has to close.
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  for (let i = 0; i < FREE_MONTHLY_FORECASTS - 1; i++) recordView(uid, `RACE_SPENT_${i}`);
+  notPremium();
+  let turn = 0;
+  sendImpl = (params) => {
+    if (Array.isArray(params.message)) return { candidates: [{ content: { parts: [{ text: 'go at 9' }] } }] };
+    const t = turn++;
+    return {
+      candidates: [{
+        content: { parts: [{ functionCall: { id: `r${t}`, name: 'get_crowd_prediction', args: { place_id: `RACE_NEW_${t}` } } }] },
+      }],
+    };
+  };
+  const savedFetch = global.fetch;
+  global.fetch = (url, opts) => (String(url).startsWith('https://places.googleapis.com/v1/places/')
+    ? new Promise((resolve) => setTimeout(resolve, 80)).then(() => savedFetch(url, opts))
+    : savedFetch(url, opts));
+  let turns;
+  try {
+    turns = await Promise.all([0, 1, 2, 3, 4].map(() => call('POST', '/api/ai/chat', {
+      messages: [{ role: 'user', text: 'when should I go' }],
+    })));
+  } finally {
+    global.fetch = savedFetch;
+  }
+  for (const r of turns) assert.strictEqual(r.status, 200, r.text);
+  const results = toolResultsSentToGemini();
+  assert.strictEqual(results.length, 5, 'every racing turn should have looked a venue up');
+  const open = results.filter((r) => r.best_time || r.peak_hours || (Array.isArray(r.hourly_forecast) && r.hourly_forecast.length));
+  assert.strictEqual(open.length, 1, `${open.length} venues opened from 29 of 30`);
+  for (const r of results.filter((x) => !x.best_time)) {
+    assert.strictEqual(r.forecast_locked, true);
+    assert.ok(r.forecast_note, 'a racing turn that lost was given no instruction not to invent the forecast');
+  }
+  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS);
 });
 
 test('a lookup that failed is not charged to the allowance', async () => {
