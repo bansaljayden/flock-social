@@ -674,6 +674,25 @@ function birdieSearchSet(key, data) {
   }
 }
 
+// THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
+// OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
+// locked and nothing paid was computed, and the tool loop, when another turn
+// took the last free venue between the peek and the charge. One definition,
+// so the two can never disagree about which fields go.
+//
+// The note is addressed to the model, not the user. "Do not invent" is
+// load-bearing: the system prompt's hard rules already forbid making up crowd
+// data, and this repeats it at the exact moment the data is missing.
+const LOCKED_FORECAST_NOTE = 'Best time to go, peak hours and the hour-by-hour forecast are Flock Pro, and this user has used their free forecasts for this month. Do not guess, estimate or infer any of them. Say it is a Pro feature if they ask.';
+function lockForecastResult(result) {
+  delete result.best_time;
+  delete result.peak_hours;
+  delete result.hourly_forecast;
+  result.forecast_locked = true;
+  result.forecast_note = LOCKED_FORECAST_NOTE;
+  return result;
+}
+
 async function executeTool(toolName, toolInput, userId, opts = {}) {
   switch (toolName) {
     case 'search_venues': {
@@ -991,10 +1010,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // same answer about the same venue. Thirty forecasts a month means thirty,
       // wherever you ask from.
       //
-      // Charged ONCE PER TURN, not once per venue, by the caller (see the tool
-      // loop below). The model decides how many venues to look at, and a user
-      // must not lose four months of allowance because it got curious about
-      // four bars in one reply.
+      // Charged PER VENUE by the caller (see the tool loop below), on the same
+      // rule as the card: a venue this account already opened this month is
+      // free, a new one costs one of the thirty, and a spent month gets the
+      // free half. It was once per TURN, and one turn could then return full
+      // forecasts for thirty venues while the meter moved by one.
       //
       // Nothing that survives into the locked result reconstructs the curve:
       // `crowd_score` is one number for right now, which is the free product,
@@ -1018,11 +1038,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // Same array the recommendation came from, so the two can't disagree.
         result.hourly_forecast = next12.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
       } else {
-        result.forecast_locked = true;
-        // Addressed to the model, not the user. "Do not invent" is load-bearing:
-        // the system prompt's hard rules already forbid making up crowd data,
-        // and this repeats it at the exact moment the data is missing.
-        result.forecast_note = 'Best time to go, peak hours and the hour-by-hour forecast are Flock Pro, and this user has used their free forecasts for this month. Do not guess, estimate or infer any of them. Say it is a Pro feature if they ask.';
+        lockForecastResult(result);
       }
       return result;
     }
@@ -1739,21 +1755,28 @@ router.post('/chat',
       let navigationAction = null; // Track navigation commands
       let flockDraftAction = null;  // draft_flock card, at most one per turn
       let venueVoteAction = null;   // add_venue_to_vote card, at most one
-      // THE FORECAST ALLOWANCE, READ AND SPENT AS TWO SEPARATE ACTS.
+      // THE FORECAST ALLOWANCE, PER VENUE, THE SAME WAY THE CARD SPENDS IT.
       //
-      // Read first, because the answer decides what the tool computes; spent
-      // afterwards, and only once the tool has actually DELIVERED a forecast.
-      // Doing both in one call (the obvious version) charged a view for a
-      // lookup that came back "Venue not found" or refused by the Places
-      // budget: the user would have paid, out of ten a month, for an error
-      // message. GET /api/crowd/:placeId has always had this right by accident
-      // of structure, since it returns 502 before it ever reaches its gate.
+      // Each venue the model looks up is its own question. A venue this account
+      // already opened this month is free and stays open; a new one costs one
+      // of the free venues; once they are spent a new venue gets the free half
+      // only. That is GET /api/crowd/:placeId's rule on the same meter, so
+      // "thirty venues a month" is thirty however the user asks. Until
+      // 2026-09-24 this was charged once per TURN: one turn could then return
+      // full forecasts for thirty venues while the meter moved by one, and five
+      // turns racing at 29 of 30 all got through.
       //
-      // Both halves are memoised per TURN, which is what makes the whole turn
-      // answer consistently. The model decides how many venues to look at, and
-      // a user must not lose four months of allowance because it got curious
-      // about four bars in one reply, nor see the tenth lookup in one reply
-      // refuse what the ninth just answered.
+      // Two reads per venue, around the tool:
+      //   * BEFORE, a peek (count: false) decides whether the tool computes the
+      //     paid half at all, so a locked venue never pays for a 24-hour walk
+      //     it would throw away.
+      //   * AFTER DELIVERY, the charge (count: true) is the check-and-record.
+      //     With the tier pre-resolved forecastAccess has no await before it,
+      //     so two turns racing for the last free venue cannot both win, and
+      //     the loser's paid half is stripped here before the model sees it.
+      //     Charging on delivery also keeps the older rule that a lookup Google
+      //     answered "not found", or the Places budget refused, costs nothing:
+      //     the card gets that by returning 502 before it reaches its gate.
       //
       // `premium: !freeTier` is exact rather than an approximation: whenever
       // the paywall is on, freeTier came from a KNOWN getPremiumState answer
@@ -1764,16 +1787,8 @@ router.post('/chat',
       // this saves a duplicate `SELECT is_premium` — and it is also what keeps
       // forecastAccess's own unknown-state throw unreachable from this route:
       // a pre-resolved tier never triggers its lookup.
-      let forecastPeek = null;
-      let forecastCharged = false;
-      async function peekForecastAccess() {
-        if (!forecastPeek) forecastPeek = await forecastAccess(userId, { count: false, premium: !freeTier });
-        return forecastPeek;
-      }
-      async function chargeForecastView() {
-        if (forecastCharged) return;
-        forecastCharged = true;
-        await forecastAccess(userId, { count: true, premium: !freeTier });
+      function venueForecastAccess(placeId, count) {
+        return forecastAccess(userId, { count, premium: !freeTier, placeId });
       }
 
       while (iterations < 5) {
@@ -1797,8 +1812,14 @@ router.post('/chat',
           const { name, args, id } = part.functionCall;
           try {
             const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay };
+            // The exact string the tool fetches, so the meter and Google agree
+            // on which venue this is. No id means every lookup counts, which is
+            // the metered direction.
+            const meterVenue = name === 'get_crowd_prediction' && typeof (args || {}).place_id === 'string' && args.place_id
+              ? args.place_id
+              : undefined;
             if (name === 'get_crowd_prediction') {
-              toolOpts.includeForecast = !(await peekForecastAccess()).locked;
+              toolOpts.includeForecast = !(await venueForecastAccess(meterVenue, false)).locked;
             }
             const toolStart = Date.now();
             const result = await executeTool(name, args || {}, userId, toolOpts);
@@ -1806,9 +1827,12 @@ router.post('/chat',
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
             // an upstream 404, a spent Places budget or a thrown tool all leave
-            // without it and all leave the meter alone.
+            // without it and all leave the meter alone. A charge that finds the
+            // month spent (another turn took the last free venue after this
+            // one's peek) locks the result instead of passing it on.
             if (name === 'get_crowd_prediction' && Array.isArray(result?.hourly_forecast)) {
-              await chargeForecastView();
+              const charged = await venueForecastAccess(meterVenue, true);
+              if (charged.locked) lockForecastResult(result);
             }
 
             // Collect venue data for cards
