@@ -503,6 +503,25 @@ test('a Stripe event RevenueCat cannot confirm answers 500 so Stripe retries', a
   } finally { restore(); global.fetch = prev; }
 });
 
+test('a renewal or cancellation re-sends the subscription so RevenueCat reads Stripe now, then is re-read', async () => {
+  setEnv(ON);
+  for (const type of ['customer.subscription.updated', 'customer.subscription.deleted']) {
+    rcCalls.length = 0;
+    rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+    const { calls, restore } = stubPool(async (sql) => (sql.includes('SELECT 1 FROM users') ? { rows: [{ '?column?': 1 }] } : null));
+    try {
+      const res = await postWebhook({ type, data: { object: { id: 'sub_77', metadata: { app_user_id: '7' } } } }, 't=1,v1=good');
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const receiptAt = rcCalls.findIndex((c) => c[0].endsWith('/receipts'));
+      const readAt = rcCalls.findIndex((c) => c[0].includes('/subscribers/'));
+      assert.ok(receiptAt >= 0, `${type} did not refresh the subscription at RevenueCat`);
+      assert.deepStrictEqual(JSON.parse(rcCalls[receiptAt][2]), { app_user_id: '7', fetch_token: 'sub_77' });
+      assert.ok(readAt > receiptAt, `${type} read RevenueCat before asking it to look at Stripe`);
+      assert.ok(calls.some((c) => c.text.includes('SET is_premium')));
+    } finally { restore(); }
+  }
+});
+
 test('a deleted account is not looked up at RevenueCat when its Stripe customer is deleted', async () => {
   setEnv(ON);
   const { restore } = stubPool(async () => null); // SELECT 1 finds nobody

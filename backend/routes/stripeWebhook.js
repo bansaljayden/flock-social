@@ -106,6 +106,17 @@ router.post('/', async (req, res) => {
       if (!subscriptionId) return res.json({ received: true, ignored: 'no_subscription' });
       const posted = await billing.postStripeReceipt(userId, subscriptionId);
       if (!posted) throw new Error('RevenueCat did not accept the receipt');
+    } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+      // RevenueCat checks Stripe on its own schedule, so right after a renewal,
+      // a cancellation or a refund its answer can still describe the last
+      // period. Re-sending the subscription makes it read Stripe now (its docs:
+      // re-post the same subscription and it is updated immediately), so the
+      // re-read below is of today's state rather than of whenever it last looked.
+      const subscriptionId = typeof obj.id === 'string' && obj.id.startsWith('sub_') ? obj.id : null;
+      if (subscriptionId) {
+        const posted = await billing.postStripeReceipt(userId, subscriptionId);
+        if (!posted) throw new Error('RevenueCat did not accept the refreshed receipt');
+      }
     }
     await syncPremiumFromRevenueCat(userId);
     res.json({ received: true });
