@@ -344,8 +344,8 @@ const INVENTORY = [
   // ── routes/publicCrowd.js ─────────────────────────────────────────────────
   {
     file: 'routes/publicCrowd.js', name: 'ipHits', kind: 'counter',
-    key: 'req.ip',
-    callerControls: 'nothing but the source address',
+    key: 'visitorKey(req): the relay-signed visitor address (HMAC under RELAY_SIGNING_SECRET, two-minute window) when it verifies, else req.ip',
+    callerControls: 'nothing but the source address: an unsigned or badly signed relay header falls back to req.ip',
     protects: 'paid Google Places + weather on the UNAUTHENTICATED marketing demo',
     denominator: 'requests per IP per hour (20), under a 600/day global leg',
     bound: '5k entries, expire-then-least-consumed-first',
@@ -354,13 +354,13 @@ const INVENTORY = [
   },
   {
     file: 'routes/publicCrowd.js', name: 'demoReveals', kind: 'counter',
-    key: 'req.ip (the same address allowDemo keys on), holding the UTC day and the place ids shown that day',
-    callerControls: 'the source address, and which venues it asks for; never how many are remembered',
+    key: 'visitorKey(req) (the same key allowDemo uses), holding the UTC day and the place ids shown that day',
+    callerControls: 'the source address, and which venues it asks for; never how many are remembered, and never the key itself (only the relay can sign one)',
     protects: 'the crowd level on the UNAUTHENTICATED demo once PAYWALL_ENABLED is on: three distinct venues a visitor a day, so an account at its monthly limit cannot sign out and read the map here',
     denominator: 'distinct venues per address per UTC day (3)',
     bound: '5k entries, yesterday first then least consumed first, down to 90%; at most 3 ids per entry',
     verdict: 'SAFE',
-    why: 'An entry holds at most three ids and dies with its day, so the map is bounded by addresses, and eviction keeps a spent entry longest, the one an address cycler wants gone. Behind the Vercel relay req.ip is the relay, so the three are shared per edge per day: strict rather than lax, and fixed by the same relay header allowDemo is waiting on.',
+    why: 'An entry holds at most three ids and dies with its day, so the map is bounded by addresses, and eviction keeps a spent entry longest, the one an address cycler wants gone. Behind the Vercel relay the key is the signed visitor address once RELAY_SIGNING_SECRET is set on both sides; until then it is the relay egress address, so the three are shared per edge per day, strict rather than lax.',
   },
   {
     file: 'routes/publicCrowd.js', name: 'cache', kind: 'cache',
