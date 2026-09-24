@@ -4,11 +4,14 @@
 // venue card, scored by the same ML model the app serves) before they sign up.
 //
 // Cost/abuse controls, since every fresh area search is a Google Places call:
-//  - per-IP limit: 20 requests/hour across both endpoints
+//  - per-visitor limit: 20 requests/hour across both endpoints (visitorKey:
+//    the relay's signed visitor address, or the source address)
 //  - global cap: 600 scored requests/day (after that: 429, the site says
 //    "the demo is resting, see it in the app")
 //  - aggressive caching: area searches 20 min, venue cards 10 min
 // ---------------------------------------------------------------------------
+const crypto = require('crypto');
+const net = require('net');
 const express = require('express');
 const { query, param, validationResult } = require('express-validator');
 const { getWeather } = require('../services/weatherService');
@@ -93,27 +96,31 @@ function evictIpHits(now) {
 // a miss is a ~1km bucket for 20 minutes), which is why the demo does not look
 // broken — but the per-address gate is not metering addresses.
 //
-// WHY THE LEFTMOST ENTRY IS NOT THE FIX ON ITS OWN, AND WHY THIS FILE STILL
-// KEYS ON req.ip. Keying on the FIRST X-Forwarded-For entry would read the
-// visitor for relayed traffic and would read whatever any caller cares to type
-// for everything else: every entry left of our proxy's own is client-written,
-// and relayed and direct requests arrive through the same Railway edge, so
-// nothing in this process can tell them apart. One request header would then
-// mint a fresh allowance on demand, and one address could walk the entire
-// 600/day ceiling this gate exists to keep a single actor away from. That is
-// the round-15 mistake above in a new costume: a defence that gets weaker the
-// harder it is pushed. A shared bucket refuses honest visitors; a spoofable
-// key refuses nobody.
+// WHY THE LEFTMOST ENTRY IS NOT THE FIX, AND WHAT IS. Keying on the FIRST
+// X-Forwarded-For entry would read the visitor for relayed traffic and would
+// read whatever any caller cares to type for everything else: every entry left
+// of our proxy's own is client-written, and relayed and direct requests arrive
+// through the same Railway edge, so that header cannot tell them apart. One
+// request header would then mint a fresh allowance on demand, which is the
+// round-15 mistake above in a new costume: a defence that gets weaker the
+// harder it is pushed. A shared bucket refuses honest visitors; a spoofable key
+// refuses nobody.
 //
-// WHAT ACTUALLY CLOSES IT is a value only the relay can produce — the Vercel
-// side forwarding the visitor's address, or an HMAC of it, in a header keyed by
-// a shared secret, with req.ip as the fallback for anything arriving without
-// it. vercel.json's `headers` block sets RESPONSE headers, so that is a new
-// piece of relay code plus the matching read here, and the relay half is not in
-// this file. Until both land the chain is reported rather than guessed at: the
-// reading above depends on Railway APPENDING to X-Forwarded-For rather than
-// replacing it, which is what the socketClientIp comment already assumes, and
-// one line from a deploy's logs settles it.
+// THE RELAY SIGNS THE ADDRESS. The Vercel side is a function now, not a bare
+// rewrite (frontend/api/demo-relay.js). It reads the visitor's address from
+// the headers Vercel's edge writes itself, and forwards it as x-flock-relay-ip
+// with x-flock-relay-ts (unix seconds) and x-flock-relay-sig, an HMAC-SHA256
+// over `${ip}.${ts}` under RELAY_SIGNING_SECRET, the one value set in both
+// Railway and Vercel. visitorKey below believes that address only when all
+// three headers are present, the timestamp is within two minutes, the address
+// parses as one, and the signature matches in constant time. Anything else,
+// which includes every direct caller, is keyed on req.ip exactly as before. A
+// direct caller can type the three headers but not the signature, so typing
+// them buys nothing; a captured set replays for two minutes at most and only as
+// the address it names, which puts the replayer in somebody else's bucket,
+// never a fresh one. With the secret unset (or under 16 characters) the relay
+// sends no headers and nothing here believes any: the behaviour before this.
+//
 //
 // Hop COUNTS only, never addresses, and once per process: the two facts the fix
 // needs are how many hops the chain carries and whether req.ip is the last of
@@ -130,6 +137,65 @@ function reportForwardingShape(req) {
   console.warn(`[PublicDemo] forwarding chain on the demo gate: ${hops.length} hop(s), req.ip is the last hop: ${ipIsLastHop}`);
 }
 
+const RELAY_MAX_SKEW_S = 120;
+const RELAY_MIN_SECRET = 16;
+
+function relaySecret() {
+  const raw = process.env.RELAY_SIGNING_SECRET;
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim();
+  return v.length >= RELAY_MIN_SECRET ? v : null;
+}
+
+// One string per header or nothing: Node hands a repeated header over as an
+// array, and a request carrying two of these did not come from the relay.
+function singleHeader(req, name) {
+  const v = req && req.headers ? req.headers[name] : undefined;
+  return typeof v === 'string' ? v : null;
+}
+
+// Whether a request's relay headers are believed, and the address if so. The
+// status names why not, for the log line below; it never carries an address.
+function relayVerdict(req, nowMs = Date.now()) {
+  const secret = relaySecret();
+  const ip = singleHeader(req, 'x-flock-relay-ip');
+  const ts = singleHeader(req, 'x-flock-relay-ts');
+  const sig = singleHeader(req, 'x-flock-relay-sig');
+  if (!ip && !ts && !sig) return { status: secret ? 'absent' : 'off' };
+  if (!secret) return { status: 'unconfigured' };
+  if (!ip || !ts || !sig) return { status: 'incomplete' };
+  if (ip.length > 64 || net.isIP(ip) === 0) return { status: 'bad-address' };
+  if (!/^\d{1,12}$/.test(ts)) return { status: 'bad-timestamp' };
+  if (Math.abs(Math.floor(nowMs / 1000) - Number(ts)) > RELAY_MAX_SKEW_S) return { status: 'stale' };
+  if (!/^[0-9a-f]{64}$/i.test(sig)) return { status: 'bad-signature' };
+  const expected = crypto.createHmac('sha256', secret).update(`${ip}.${ts}`).digest();
+  const given = Buffer.from(sig, 'hex');
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return { status: 'bad-signature' };
+  }
+  return { status: 'valid', ip: ip.toLowerCase() };
+}
+
+// Once per verdict per process, so a deploy's logs say whether the relay's
+// signatures are arriving and being believed without printing anyone's address.
+// 'off' (no secret, no headers) is today's quiet state and is not reported.
+const relayStatusesLogged = {};
+function reportRelayVerdict(status) {
+  if (status === 'off' || relayStatusesLogged[status]) return;
+  relayStatusesLogged[status] = true;
+  console.warn(`[PublicDemo] relay signature on the demo gate: ${status}`);
+}
+
+// WHO IS ASKING, for both per-visitor meters in this file: allowDemo's hourly
+// window and the three-venues-a-day cap below. The relay's signed address when
+// it checks out, req.ip otherwise.
+function visitorKey(req, nowMs) {
+  const verdict = relayVerdict(req, nowMs);
+  reportRelayVerdict(verdict.status);
+  if (verdict.status === 'valid') return verdict.ip;
+  return (req && req.ip) || 'unknown';
+}
+
 function allowDemo(req) {
   // Measured from the gate rather than from either route, so both endpoints
   // feed the one report above.
@@ -139,7 +205,7 @@ function allowDemo(req) {
   if (dayCount >= 600) return false;
 
   const now = Date.now();
-  const ip = req.ip || 'unknown';
+  const ip = visitorKey(req, now);
   const hits = (ipHits.get(ip) || []).filter(t => now - t < IP_WINDOW_MS);
   if (hits.length >= IP_LIMIT) return false; // a refusal consumes nothing
   hits.push(now);
@@ -493,14 +559,13 @@ function gateDemoCard(card) {
 // account gets instead of drawing an empty dial. With the paywall off nothing
 // in this block runs.
 //
-// KEYED ON THE ADDRESS allowDemo KEYS ON, WITH THE SAME CAVEAT ("WHOSE 20
-// REQUESTS" above): in production the demo arrives through the Vercel relay, so
-// req.ip is the relay's egress address and the three are shared by everyone who
-// comes through that edge on a given day. That is the strict direction for a
-// meter: it hides too much from honest visitors rather than too little from
-// anyone, and the relay header that fixes allowDemo's key fixes this one in the
-// same edit. Checked on EVERY response, hit or miss, because the cache is shared
-// by every visitor and allowDemo only runs on a miss.
+// KEYED ON visitorKey, the key allowDemo uses: the relay's signed visitor
+// address when it checks out, req.ip otherwise ("THE RELAY SIGNS THE ADDRESS"
+// above). Until RELAY_SIGNING_SECRET is set on both sides, relayed visitors
+// share the relay's egress address, which is the strict direction for a meter:
+// it hides too much from honest visitors rather than too little from anyone.
+// Checked on EVERY response, hit or miss, because the cache is shared by every
+// visitor and allowDemo only runs on a miss.
 // ---------------------------------------------------------------------------
 const DEMO_FREE_VENUES = 3;
 const REVEAL_MAX_ENTRIES = 5000;
@@ -529,7 +594,7 @@ function mayShowCrowd(req, placeId) {
   if (!paywallEnabled()) return true;
   if (typeof placeId !== 'string' || !placeId) return false;
   const today = new Date().toISOString().slice(0, 10);
-  const key = (req && req.ip) || 'unknown';
+  const key = visitorKey(req);
   let entry = demoReveals.get(key);
   if (!entry || entry.day !== today) entry = { day: today, ids: new Set() };
   if (!entry.ids.has(placeId)) {
@@ -928,6 +993,7 @@ module.exports.__testables = {
   // trusting the comments above (documented-but-untested is how the clear()
   // guard shipped in the first place).
   allowDemo, evictIpHits, ipHits, setCache, getCache, cache,
+  visitorKey, relayVerdict, RELAY_MAX_SKEW_S,
   resetDemoLimitsForTest,
   demoState: () => ({ dayKey, dayCount, trackedIps: ipHits.size }),
   IP_LIMIT, IP_WINDOW_MS, IP_MAX_ENTRIES, IP_LOW_WATER,

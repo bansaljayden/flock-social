@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/demo-relay.js": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -299,7 +302,7 @@
     },
     {
       "source": "/relay/public/:path*",
-      "destination": "https://flock-app-production.up.railway.app/api/public/:path*"
+      "destination": "/api/demo-relay?path=:path*"
     },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
