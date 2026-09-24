@@ -2198,6 +2198,8 @@ let flockSweepInterval = null;
 let flockSweepKickoff = null;
 let reconfirmSweepInterval = null;
 let reconfirmSweepKickoff = null;
+let roostNoticeInterval = null;
+let roostNoticeKickoff = null;
 let moneyWatchInterval = null;
 let moneyWatchKickoff = null;
 let heartbeatInterval = null;
@@ -2358,6 +2360,17 @@ async function boot() {
     reconfirmSweepKickoff = setTimeout(() => runReconfirmSweep(io), 100 * 1000);
   }
 
+  // The Roost notice (services/roostNotice.js): one email per venue account
+  // that existed before Roost had a price, sent once VENUE_BILLING_ENABLED is
+  // on. Setting that variable restarts the service, so the boot run is when
+  // the notices go out; the daily run retries any that did not. With the flag
+  // off it reads nothing.
+  const { runRoostNoticeSweep, ROOST_NOTICE_SWEEP_INTERVAL_MS } = require('./services/roostNotice');
+  const roostNoticeSweep = () => runRoostNoticeSweep().catch((e) => console.error('[roost-notice] sweep failed:', e && e.message));
+  roostNoticeInterval = setInterval(roostNoticeSweep, ROOST_NOTICE_SWEEP_INTERVAL_MS);
+  // 110s: after the reconfirm kickoff's 100s, same stagger reason.
+  roostNoticeKickoff = setTimeout(roostNoticeSweep, 110 * 1000);
+
   // The money watch. Registered LAST because it reads what the others spend,
   // and every read is non-consuming. See its block above for why it exists.
   const moneyWatch = () => runMoneyWatch().catch((e) => console.error('[moneyWatch] sweep failed:', e && e.message));
@@ -2423,6 +2436,8 @@ function shutdown(signal) {
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
   if (reconfirmSweepInterval) clearInterval(reconfirmSweepInterval);
   if (reconfirmSweepKickoff) clearTimeout(reconfirmSweepKickoff);
+  if (roostNoticeInterval) clearInterval(roostNoticeInterval);
+  if (roostNoticeKickoff) clearTimeout(roostNoticeKickoff);
   if (moneyWatchInterval) clearInterval(moneyWatchInterval);
   if (moneyWatchKickoff) clearTimeout(moneyWatchKickoff);
 

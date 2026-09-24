@@ -605,9 +605,10 @@ export default function PrivacyPolicy() {
                 that reads this data is structurally forbidden from touching budgets at all.
               </p>
               <p>
-                Venue billing is not switched on. Nothing in the venue dashboard costs money
-                today and no payment method is collected. See the venue section of our{' '}
-                <a href="/terms">Terms of Service</a> for what happens when that changes.
+                Roost, the paid venue plan, is bought on flockcorp.com. Stripe takes the
+                payment, and we never see or store the card. What it costs, and when a venue
+                can be charged, is under Venue fees in our{' '}
+                <a href="/terms">Terms of Service</a>.
               </p>
             </section>
 

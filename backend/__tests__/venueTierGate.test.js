@@ -272,7 +272,11 @@ test('public-promotions gates on tier, not only on verification', async () => {
   // itself decides whether the tier is still alive. See section 3b of
   // venueTierExpiry.test.js for what that predicate does case by case.
   assert.ok(/LEFT JOIN venue_subscriptions vs/.test(q.sql), 'the grant is not consulted');
-  assert.deepStrictEqual(q.params, ['PLACE_A', true, ['premium', 'pro'], ['active', 'trialing', 'past_due']]);
+  // $5 is the moment Roost got a price (Terms 9.6): a venue account from
+  // before it keeps serving its deals until the date its notice named.
+  assert.ok(/LEFT JOIN venue_roost_notices vn/.test(q.sql), 'the notice window is not consulted');
+  assert.deepStrictEqual(q.params, ['PLACE_A', true, ['premium', 'pro'], ['active', 'trialing', 'past_due'],
+    require('../services/venueEntitlements').ROOST_PRICED_FROM]);
 });
 
 test('the promotions tier filter is inert while the kill switch is off', async () => {

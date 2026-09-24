@@ -241,7 +241,9 @@ test('getVenueTier reads the grant and the cache in ONE query, by user id', asyn
   assert.strictEqual(await getVenueTier(4242), 'premium');
   const q = ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/);
   assert.strictEqual(q.length, 1, 'the gate issued more than one read for one decision');
-  assert.deepStrictEqual(q[0].params, [4242]);
+  // $2 is the moment Roost got a price (Terms 9.6): the same read answers
+  // whether this venue account is inside its notice window.
+  assert.deepStrictEqual(q[0].params, [4242, require('../services/venueEntitlements').ROOST_PRICED_FROM]);
 });
 
 test('the dashboard is told the same thing the gate enforces', async () => {

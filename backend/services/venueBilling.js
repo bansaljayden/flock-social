@@ -43,6 +43,8 @@
 const pool = require('../config/database');
 const billing = require('./proBilling');
 const { venueBillingEnabled, getVenueEntitlement } = require('./venueEntitlements');
+const roostNotice = require('./roostNotice');
+const { longDate } = require('../templates/roostNoticeEmail');
 
 const KIND = 'venue';
 // With two tiers still in the product (VENUE-BILLING.md: the collapse to free
@@ -51,6 +53,11 @@ const KIND = 'venue';
 const ROOST_TIER = 'pro';
 // VENUE-PRICING.md: 14-day self-serve trial, card required.
 const TRIAL_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Stripe refuses a Checkout trial_end less than 48 hours out. A notice date
+// closer than that is moved to just past it: later than promised is allowed,
+// earlier is not.
+const STRIPE_MIN_TRIAL_MS = 48 * 60 * 60 * 1000 + 10 * 60 * 1000;
 // A paid-up subscription stays open for three days past its period end, so a
 // renewal webhook that arrives late does not lock a paying venue out at
 // midnight. A missed webhook still cannot grant forever: the next period only
@@ -210,9 +217,12 @@ async function createVenueCheckout(user, plan) {
     throw refusal(409, 'Your venue has to be verified before Roost can be bought. Settings has the request.', 'VENUE_NOT_VERIFIED');
   }
   // A venue already holding a live paid grant from us (a founding comp, a
-  // hand-sold plan) must not be walked into a second, paid one on top.
+  // hand-sold plan) must not be walked into a second, paid one on top. The
+  // GRANT decides this, not the served tier: a venue inside its notice window
+  // is served everything and still needs to be able to buy the plan that
+  // keeps it after the window.
   const ent = await getVenueEntitlement(user.id);
-  if (ent.tier !== 'free') {
+  if (ent.paidTier !== 'free') {
     if (ent.source === 'stripe') throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
     throw refusal(409, 'Your plan is already covered. Write to us if you want to switch to paying for it.', 'PLAN_ALREADY_GRANTED');
   }
@@ -222,6 +232,28 @@ async function createVenueCheckout(user, plan) {
     throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
   }
   const trial = !(await hasEverSubscribed(customerId));
+  // THE NOTICE FLOOR. A venue account from before Roost had a price is not
+  // charged before the date its notice email named (Terms 9.6,
+  // services/roostNotice.js). If the notice has not gone out yet it is sent
+  // now, so the window has an end; if it cannot be sent, the floor is 30 days
+  // from now, which is never earlier than a notice sent now would have named.
+  // Inside the window this applies even to a venue that has had its trial.
+  let noticeFloor = 0;
+  if (ent.inNoticeWindow) {
+    const named = ent.noticeUntil ? Date.parse(ent.noticeUntil) : NaN;
+    if (Number.isFinite(named)) {
+      noticeFloor = named;
+    } else {
+      const sent = await roostNotice.sendNoticeForCheckout(user.id).catch((err) => {
+        console.error(`[venue-billing] notice for venue user ${user.id} could not be sent at checkout:`, err && err.message);
+        return null;
+      });
+      noticeFloor = sent ? sent.getTime() : Date.now() + roostNotice.NOTICE_MS;
+    }
+  }
+  const trialEndMs = noticeFloor
+    ? Math.max(noticeFloor, trial ? Date.now() + TRIAL_DAYS * DAY_MS : 0, Date.now() + STRIPE_MIN_TRIAL_MS)
+    : 0;
   const price = await billing.describePrice(priceId);
   const every = price.interval === 'year' ? 'year' : 'month';
   const tax = billing.taxEnabled();
@@ -237,7 +269,10 @@ async function createVenueCheckout(user, plan) {
     // the subscription, so it is written on both.
     subscription_data: {
       metadata: meta,
-      ...(trial ? {
+      ...(trialEndMs ? {
+        trial_end: Math.ceil(trialEndMs / 1000),
+        trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+      } : trial ? {
         trial_period_days: TRIAL_DAYS,
         trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
       } : {}),
@@ -250,7 +285,7 @@ async function createVenueCheckout(user, plan) {
     consent_collection: { terms_of_service: 'required' },
     custom_text: {
       terms_of_service_acceptance: {
-        message: `I agree that Roost ${trial ? `is free for ${TRIAL_DAYS} days, then ` : ''}renews at ${billing.formatAmount(price)}${tax ? ' plus tax' : ''} every ${every} until I cancel, and to the [Terms](${web}/terms).`,
+        message: `I agree that Roost ${trialEndMs ? `is free until ${longDate(trialEndMs)}, then ` : trial ? `is free for ${TRIAL_DAYS} days, then ` : ''}renews at ${billing.formatAmount(price)}${tax ? ' plus tax' : ''} every ${every} until I cancel, and to the [Terms](${web}/terms).`,
       },
     },
     success_url: `${web}/app?venue_billing=success&session_id={CHECKOUT_SESSION_ID}`,
@@ -444,5 +479,5 @@ module.exports = {
   grantFromSubscription,
   TRIAL_DAYS,
   ROOST_TIER,
-  __test: { SYNC_SQL, venueUserIdFrom, GRACE_MS },
+  __test: { SYNC_SQL, venueUserIdFrom, GRACE_MS, STRIPE_MIN_TRIAL_MS },
 };

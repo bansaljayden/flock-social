@@ -113,6 +113,30 @@ test('a comped venue on its current plan is offered nothing more', async () => {
   expect(container.textContent).toBe('');
 });
 
+test('a venue inside its notice window sees the plans on its current card, with the date nothing is charged before', async () => {
+  getVenueBillingStatus.mockResolvedValue({
+    ...ON_SALE, inNoticeWindow: true, noticeUntil: '2026-10-25T15:00:00.000Z', freeUntil: '2026-10-25T15:00:00.000Z',
+  });
+  startVenueCheckout.mockResolvedValue({ url: null });
+  render(<VenueBillingControl current />);
+  const buttons = await screen.findAllByRole('button', { name: /Free until October 25, 2026/ });
+  expect(buttons[0].textContent).toBe('Free until October 25, 2026, then $990.00 a year');
+  expect(buttons[1].textContent).toBe('Free until October 25, 2026, then $99.00 a month');
+  expect(screen.getByText(/Your venue keeps everything until October 25, 2026\./)).toBeTruthy();
+  expect(screen.getByText(/nothing is charged before then/)).toBeTruthy();
+  fireEvent.click(buttons[0]);
+  await waitFor(() => expect(startVenueCheckout).toHaveBeenCalledWith('yearly'));
+});
+
+test('a venue inside its window that already subscribed sees Manage billing, not the plans', async () => {
+  getVenueBillingStatus.mockResolvedValue({
+    ...ON_SALE, canManage: true, inNoticeWindow: true, freeUntil: '2026-10-25T15:00:00.000Z',
+  });
+  render(<VenueBillingControl current />);
+  expect(await screen.findByRole('button', { name: 'Manage billing' })).toBeTruthy();
+  expect(screen.queryByText(/Free until/)).toBeNull();
+});
+
 describe('the return from Stripe', () => {
   const fakeWindow = (search) => {
     const win = {

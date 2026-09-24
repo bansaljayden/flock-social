@@ -713,7 +713,7 @@ test('the tier read is parameterised, by user id, and is one row', async () => {
   await call('GET', '/venue/premium');
   const q = ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/);
   assert.strictEqual(q.length, 1, 'the gate issued more than one tier read for one request');
-  assert.deepStrictEqual(q[0].params, [4242]);
+  assert.deepStrictEqual(q[0].params, [4242, require('../services/venueEntitlements').ROOST_PRICED_FROM]);
   assert.match(q[0].sql, /WHERE vp\.user_id = \$1$/);
   assert.ok(!/LIMIT|ORDER BY/i.test(q[0].sql),
     'venue_profiles.user_id is UNIQUE; if that changed, this needs an explicit order, not a LIMIT');

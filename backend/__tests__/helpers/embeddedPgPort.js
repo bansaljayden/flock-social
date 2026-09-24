@@ -86,6 +86,10 @@ const SUITE_SLOTS = {
   graceIdentity: 21,             // new in 2026-09-24; the first week once per
                                  // identity, through real signup and
                                  // deletion routes (migration 076).
+  roostNotice: 23,               // new in 2026-09-24; the Roost notice sweep,
+                                 // its window and the deals and digest it keeps
+                                 // on (migration 077). 22 is left for a suite
+                                 // being written alongside this one.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

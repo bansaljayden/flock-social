@@ -77,6 +77,32 @@ function venueBillingEnabled() {
 // string, so no prototype member can answer for a status.
 const GRANT_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
+// ROOST HAS A PRICE FROM THIS MOMENT (Terms 9.6): the start of September 25,
+// 2026, New York time, where both live markets are. A venue account created
+// before it signed up under Terms that said nothing in the dashboard costs
+// money and promised at least 30 days' notice at the account's email before
+// any charge. So once enforcement is on, such a venue keeps everything it has
+// today (every feature, as while enforcement is off) until ROOST_NOTICE_DAYS
+// after that notice is emailed, and keeps it for as long as the notice has not
+// gone out at all. services/roostNotice.js sends the notice and writes
+// venue_roost_notices (migration 077); services/venueBilling.js never lets the
+// first charge land before the date the notice named.
+const ROOST_PRICED_FROM = '2026-09-25T04:00:00.000Z';
+const ROOST_NOTICE_DAYS = 30;
+
+// THE NOTICE WINDOW, from the tier query's own columns: roost_legacy is
+// computed in SQL against ROOST_PRICED_FROM, and roost_notice_until is the
+// notice row's charge_not_before. A row without those columns (a query that
+// does not select them) is in no window, so nothing that reads a tier any other
+// way is widened by this. An unreadable date keeps the window open: that error
+// is in the venue's favour, and the charge side has its own floor.
+function noticeWindowOpen(row, now) {
+  if (!row || row.roost_legacy !== true) return false;
+  if (row.roost_notice_until === null || row.roost_notice_until === undefined) return true;
+  const until = new Date(row.roost_notice_until).getTime();
+  return !(until <= (typeof now === 'number' ? now : Date.now()));
+}
+
 // THE EXPIRY RULE, AND IT IS EVALUATED HERE RATHER THAN BY A JOB.
 //
 // A grant that ran out at 03:00 must not be serving Roost at 04:00. There is no
@@ -120,13 +146,13 @@ function resolveGrantedTier(row, now) {
 // ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg
 // fake that matches on the raw SQL text, and a multi-line template literal
 // arrives at those matchers with newlines in it.
-const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id WHERE vp.user_id = $1';
+const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
 
 // The full entitlement, for the surfaces that have to SAY what a venue holds
 // and until when (GET /api/venue-profile). Same resolution as the gate, so the
 // dashboard cannot show one answer while the gate enforces another.
 async function getVenueEntitlement(userId) {
-  const r = await pool.query(TIER_SQL, [userId]);
+  const r = await pool.query(TIER_SQL, [userId, ROOST_PRICED_FROM]);
   // venue_profiles.user_id is UNIQUE (migration 001) and venue_subscriptions is
   // keyed on user_id, so this join returns exactly one row or none — no ORDER BY
   // is needed to make it deterministic. A driver that answered with no `rows` at
@@ -143,9 +169,26 @@ async function getVenueEntitlement(userId) {
   // verified owner opened Roost to three locked tabs and no advisor while
   // the server would have served all of it. Grant metadata below is still
   // reported as recorded, so a comped venue can be told what it holds.
-  const tier = venueBillingEnabled() ? resolveGrantedTier(row, Date.now()) : 'pro';
+  const enabled = venueBillingEnabled();
+  const now = Date.now();
+  // What the venue holds by grant alone. Checkout asks this, not `tier`: a
+  // venue inside its notice window is served everything and must still be
+  // able to buy the plan that keeps it after the window.
+  const paidTier = enabled ? resolveGrantedTier(row, now) : 'pro';
+  const inNoticeWindow = enabled && noticeWindowOpen(row, now);
+  const tier = inNoticeWindow ? 'pro' : paidTier;
   return {
     tier,
+    paidTier,
+    // True for a venue account created before Roost had a price.
+    legacy: row?.roost_legacy === true,
+    // While true, the venue keeps everything and nothing is charged.
+    // noticeUntil is the date its notice email named, or null while the
+    // notice has not gone out (the window is then open with no end yet).
+    inNoticeWindow,
+    noticeUntil: inNoticeWindow && row.roost_notice_until
+      ? new Date(row.roost_notice_until).toISOString()
+      : null,
     // Null unless a grant row exists, so a caller can tell "granted, with no end
     // date" from "no grant on file" instead of guessing from a null.
     hasGrant: !!(row && row.grant_tier !== null && row.grant_tier !== undefined),
@@ -254,4 +297,14 @@ function requireVenueTier(minTier) {
 // it is bound straight into a query as a text[] parameter.
 const GRANT_LIVE_STATUS_LIST = Object.freeze([...GRANT_LIVE_STATUSES]);
 
-module.exports = { requireVenueTier, getVenueTier, getVenueEntitlement, resolveGrantedTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST };
+module.exports = {
+  requireVenueTier,
+  getVenueTier,
+  getVenueEntitlement,
+  resolveGrantedTier,
+  venueBillingEnabled,
+  noticeWindowOpen,
+  GRANT_LIVE_STATUS_LIST,
+  ROOST_PRICED_FROM,
+  ROOST_NOTICE_DAYS,
+};

@@ -75,8 +75,11 @@ async function venue({ verified }) {
     [`owner${n}@example.com`]
   );
   const id = u.rows[0].id;
+  // Created after Roost had a price (Terms 9.6), so these venues are in no
+  // notice window and the grant alone decides: that is what this suite tests.
+  // The window itself is services/roostNotice.js's, in roostNotice.test.js.
   await testPool.query(
-    "INSERT INTO venue_profiles (user_id, business_name, verified, tier) VALUES ($1, 'The Owl', $2, 'free')",
+    "INSERT INTO venue_profiles (user_id, business_name, verified, tier, created_at) VALUES ($1, 'The Owl', $2, 'free', '2026-10-01T12:00:00Z')",
     [id, verified]
   );
   return id;

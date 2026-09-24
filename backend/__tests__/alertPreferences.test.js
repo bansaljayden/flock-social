@@ -606,7 +606,19 @@ for (const rel of ['routes/flocks.js', 'routes/venueProfile.js', 'services/crowd
 // verification decision. Neither is a booking, a review or a weekly report,
 // and neither recipient is being reached as a venue owner. Same conditional
 // shape: exactly these four subjects, or the file is an offender again.
+//
+// The fifth arrived on 2026-09-24: the Roost notice (services/roostNotice.js),
+// the email Terms 9.6 promises a venue that signed up while venues paid
+// nothing, at least 30 days before it can be charged anything. It is not a
+// booking, a review or a weekly report. It is notice of a change to what the
+// account itself costs, and a notice the owner can switch off is a charge made
+// without notice. Same shape again: one send, with that subject, or the file
+// is an offender.
 function exemptSend(file, code) {
+  if (file === 'roostNotice.js') {
+    const one = code.match(/sendEmail\s*\(/g) || [];
+    return one.length === 1 && /subject: roostNoticeSubject\(/.test(code);
+  }
   if (file !== 'admin.js') return false;
   const sends = code.match(/sendEmail\s*\(/g) || [];
   if (sends.length !== 4) return false;

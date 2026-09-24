@@ -11,12 +11,15 @@ import { getVenueBillingStatus, startVenueCheckout, openVenuePortal } from '../.
 // shows the first true thing, in this order:
 //
 //   1. the venue has a Stripe subscription, now or before: Manage billing;
-//   2. the venue already holds this plan (a comp): nothing more to offer;
-//   3. Roost is on sale and the venue is verified: the plans, from Stripe's
+//   2. the venue is inside its notice window (an account from before Roost
+//      had a price, Terms 9.6): it holds everything until a date, so it is
+//      shown the plans that keep Roost after it, with that date;
+//   3. the venue already holds this plan (a comp): nothing more to offer;
+//   4. Roost is on sale and the venue is verified: the plans, from Stripe's
 //      own prices, so the button can never name a number checkout will not
 //      charge;
-//   4. on sale, not verified: say what unlocks it, and keep the email route;
-//   5. anything else, including a failed status read: the fallback.
+//   5. on sale, not verified: say what unlocks it, and keep the email route;
+//   6. anything else, including a failed status read: the fallback.
 //
 // The component keeps its own state on purpose. screens/VenueDashboard.js
 // holds none by design (its header says why), and this is a self-contained
@@ -41,6 +44,13 @@ const noteStyle = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', m
 
 function perInterval(plan) {
   return plan.interval === 'year' ? `${plan.label} a year` : `${plan.label} a month`;
+}
+
+function longDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime())
+    ? d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : null;
 }
 
 export default function VenueBillingControl({ current = false, fallback = null }) {
@@ -87,7 +97,11 @@ export default function VenueBillingControl({ current = false, fallback = null }
     );
   }
 
-  if (current) return null;
+  // Inside the notice window the venue holds everything, so the card it is
+  // shown on reads as its current plan; the plans still have to be here, or
+  // there is no way to keep Roost once the window closes.
+  const windowUntil = status.inNoticeWindow ? longDate(status.freeUntil) : null;
+  if (current && !windowUntil) return null;
 
   if (status.checkoutAvailable && status.plans?.length) {
     if (!status.verified) {
@@ -103,6 +117,9 @@ export default function VenueBillingControl({ current = false, fallback = null }
     const trial = status.trialDays > 0;
     return (
       <>
+        {windowUntil && (
+          <p style={noteStyle}>Your venue keeps everything until {windowUntil}. Subscribe to keep Roost after that; nothing is charged before then.</p>
+        )}
         {plans.map((plan, i) => (
           <button
             key={plan.id}
@@ -113,11 +130,13 @@ export default function VenueBillingControl({ current = false, fallback = null }
           >
             {busy === plan.id
               ? 'Opening checkout…'
-              : `${trial ? `Try free for ${status.trialDays} days, then` : 'Subscribe,'} ${perInterval(plan)}`}
+              : windowUntil
+                ? `Free until ${windowUntil}, then ${perInterval(plan)}`
+                : `${trial ? `Try free for ${status.trialDays} days, then` : 'Subscribe,'} ${perInterval(plan)}`}
           </button>
         ))}
         <p style={noteStyle}>
-          {trial ? 'Card required. ' : ''}Renews until you cancel{status.taxAdded ? ', plus tax' : ''}. Cancel any time from Manage billing.
+          {trial || windowUntil ? 'Card required. ' : ''}Renews until you cancel{status.taxAdded ? ', plus tax' : ''}. Cancel any time from Manage billing.
         </p>
         {error && <p role="alert" style={noteStyle}>{error}</p>}
       </>

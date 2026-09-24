@@ -25,6 +25,7 @@ const { authenticate } = require('../middleware/auth');
 const { getVenueEntitlement, venueBillingEnabled } = require('../services/venueEntitlements');
 const billing = require('../services/proBilling');
 const venueBilling = require('../services/venueBilling');
+const roostNotice = require('../services/roostNotice');
 
 const router = express.Router();
 
@@ -80,9 +81,22 @@ router.get('/status', async (req, res) => {
         sellable = false;
       }
     }
+    // A venue account from before Roost had a price keeps everything, and
+    // cannot be charged, until the date its notice named (Terms 9.6). freeUntil
+    // is the earliest first charge a checkout started now would carry; with no
+    // notice sent yet the checkout sends it, so 30 days from now is the date.
+    let freeUntil = null;
+    if (ent.inNoticeWindow) {
+      const floor = ent.noticeUntil ? Date.parse(ent.noticeUntil) : Date.now() + roostNotice.NOTICE_MS;
+      const trialEnd = sellable && !canManage ? Date.now() + venueBilling.TRIAL_DAYS * 24 * 60 * 60 * 1000 : 0;
+      freeUntil = new Date(Math.max(floor, trialEnd)).toISOString();
+    }
     res.json({
       billingEnabled: venueBillingEnabled(),
       checkoutAvailable: sellable,
+      inNoticeWindow: ent.inNoticeWindow === true,
+      noticeUntil: ent.noticeUntil || null,
+      freeUntil,
       plans,
       // One trial per venue: an owner who has ever subscribed (which is also
       // exactly when there is a portal to manage) is offered none, matching

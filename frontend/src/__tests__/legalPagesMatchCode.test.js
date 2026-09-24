@@ -148,6 +148,26 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
 describe('stories are not described as something a user can do', () => {
   const app = APP_SOURCE;
 
+  test('Terms 9.6 states the Roost prices, trial and notice the backend enforces', () => {
+    const entitlements = read('backend', 'services', 'venueEntitlements.js');
+    const notice = read('backend', 'templates', 'roostNoticeEmail.js');
+    const billing = read('backend', 'services', 'venueBilling.js');
+    const cutoffIso = entitlements.match(/const ROOST_PRICED_FROM = '([^']+)'/)[1];
+    const noticeDays = Number(entitlements.match(/const ROOST_NOTICE_DAYS = (\d+);/)[1]);
+    const monthly = Number(notice.match(/const ROOST_MONTHLY_USD = (\d+);/)[1]);
+    const yearly = Number(notice.match(/const ROOST_YEARLY_USD = (\d+);/)[1]);
+    const trial = Number(billing.match(/const TRIAL_DAYS = (\d+);/)[1]);
+    const cutoff = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' })
+      .format(new Date(cutoffIso));
+    const flat = terms.replace(/\s+/g, ' ');
+    expect(flat).toContain(`$${monthly} a month, or $${yearly} a year, per location`);
+    expect(flat).toContain(`${trial} days free, once per venue`);
+    expect(flat).toContain(`created before ${cutoff}`);
+    expect(flat).toContain(`at least ${noticeDays} days after that email`);
+    // The old promise is gone rather than contradicted.
+    expect(flat).not.toContain('nothing in the venue dashboard costs money and no payment method');
+  });
+
   test('there is still no story surface in the client', () => {
     // If this fails because a story UI shipped, the policy needs the feature
     // written back in (what is collected, how long it lives), not a test edit.

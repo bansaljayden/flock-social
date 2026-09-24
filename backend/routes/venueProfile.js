@@ -674,6 +674,11 @@ router.get('/', async (req, res) => {
         tier_expires_at: entitlement.expiresAt,
         tier_source: entitlement.source,
         tier_reason: entitlement.reason,
+        // A venue account from before Roost had a price keeps everything
+        // until the date its notice email named, or with no end yet while
+        // that email has not gone out (Terms 9.6).
+        tier_notice_window: entitlement.inNoticeWindow === true,
+        tier_notice_until: entitlement.noticeUntil || null,
       } : {
         // The lookup failed, and "not a downgrade" has to hold HERE too. The
         // spread above carries the raw venue_profiles.tier column, 'free' by
