@@ -648,7 +648,7 @@ const INVENTORY = [
     key: 'accountKey(req.user.id) + calendar month',
     callerControls: 'nothing',
     protects: 'nothing upstream — it is the Flock Pro paywall meter for AI forecasts',
-    denominator: 'forecast views (10 free per calendar month)',
+    denominator: 'forecast views (30 free per calendar month)',
     bound: 'NO size ceiling; an hourly interval drops previous-month entries',
     verdict: 'SAFE',
     why: 'One entry per authenticated account per month, so growth costs an account each; the only map here with no maxEntries, and it is a paywall meter rather than a security control.',

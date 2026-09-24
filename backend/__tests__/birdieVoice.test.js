@@ -346,7 +346,7 @@ test('the free-tier line is still accurate and still tier-scoped', () => {
   // only description of the paywall the user ever reads.
   const free = buildSystemPrompt('Jay', {}, { ageBracket: 'adult', freeTier: true });
   assert.match(free, /free tier/, 'the free-tier line vanished');
-  assert.match(free, /first 10 venues/, 'the forecast allowance was misdescribed');
+  assert.match(free, /first 30 venues/, 'the forecast allowance was misdescribed');
   assert.match(free, /Mention it at most once per conversation, never unprompted/,
     'the once-per-conversation cap on the Pro pitch is gone');
   const paid = buildSystemPrompt('Jay', {}, { ageBracket: 'adult', freeTier: false });

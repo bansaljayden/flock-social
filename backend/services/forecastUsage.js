@@ -8,7 +8,7 @@
 // In-memory + per calendar month, mirroring services/birdieUsage.js. Resets on
 // deploy; acceptable because the paywall is a nudge, not DRM. If this ever needs
 // to survive restarts, back it with a `forecast_views` table keyed (user_id, month).
-const FREE_MONTHLY_FORECASTS = 10;
+const FREE_MONTHLY_FORECASTS = 30;
 
 // account id (positive integer) -> { month: 'YYYY-MM', count: number }
 const usage = new Map();
