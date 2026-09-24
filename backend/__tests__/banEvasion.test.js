@@ -215,6 +215,11 @@ function handle(text, params = []) {
 
   if (/DELETE FROM device_tokens WHERE user_id = \$1/.test(String(text))) return { rows: [], rowCount: 0 };
 
+  // The first week once per identity (migration 076): signup asks and every
+  // deletion records, after the COMMIT. It is not a ban decision, so this
+  // fixture models it and keeps nothing.
+  if (has('grace_spent_identities')) return { rows: [], rowCount: 0 };
+
   unknown.push(text);
   return { rows: [], rowCount: 0 };
 }

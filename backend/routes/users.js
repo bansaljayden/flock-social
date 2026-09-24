@@ -886,6 +886,108 @@ function maybePurgeExpired(now = Date.now()) {
 }
 
 // ---------------------------------------------------------------------------
+// The unmetered first week is once per identity (migration 076)
+// ---------------------------------------------------------------------------
+// services/entitlements.js gives a verified account younger than seven days the
+// limits Pro has. Measured from created_at alone, deleting the account and
+// signing straight back up on the same address or Apple/Google identity handed
+// out another week, over and over. So every deletion leaves keyed one-way
+// digests of the identity it proved, and a new account whose address or sign-in
+// identity matches one is created with grace_forfeited set. Same pepper as the
+// ban tombstones above, under its own HMAC namespace, so the two tables can
+// never be compared with each other.
+const GRACE_IDENTITY_RETENTION_DAYS = 365;
+
+function graceDigests({ email, oauthProvider, oauthId } = {}) {
+  const canonicalMail = typeof email === 'string' ? normalizedAddress(email.trim()) : '';
+  // Apple's no-email placeholder (.invalid) proves nothing about a mailbox and
+  // is derived from the Apple subject anyway, which the oauth digest covers.
+  const mail = canonicalMail && !/\.invalid$/i.test(canonicalMail) ? canonicalMail : '';
+  const oauthKey = oauthProvider && oauthId
+    ? `${String(oauthProvider).toLowerCase()}:${String(oauthId)}`
+    : '';
+  return {
+    emailHash: mail ? identityDigest('grace-email', mail) : null,
+    oauthHash: oauthKey ? identityDigest('grace-oauth', oauthKey) : null,
+  };
+}
+
+// Called after the deletion has COMMITTED, and best-effort: a failure here
+// costs one free week to somebody who comes back, which must never be able to
+// stand in the way of an account deletion (Apple 5.1.1(v)). The address used is
+// the one the account PROVED, never the one it merely holds, for the same
+// poison-pill reason recordBannedIdentity spells out: a squatter who registered
+// a stranger's mailbox must not be able to leave a mark on it.
+async function recordGraceSpentIdentity(user) {
+  try {
+    if (!user) return false;
+    const provenAddress = user.verified_email
+      || (user.email_verified === true ? user.email : null);
+    const { emailHash, oauthHash } = graceDigests({
+      email: provenAddress || undefined,
+      oauthProvider: user.oauth_provider,
+      oauthId: user.oauth_id,
+    });
+    if (!emailHash && !oauthHash) return false;
+    await pool.query(
+      `INSERT INTO grace_spent_identities (email_hash, oauth_hash, expires_at)
+       VALUES ($1::text, $2::text, NOW() + make_interval(days => $3::int))`,
+      [emailHash, oauthHash, GRACE_IDENTITY_RETENTION_DAYS]
+    );
+    return true;
+  } catch (err) {
+    console.error('[grace] could not record the identity of a deleted account; a re-signup on it would get another first week:', err.message);
+    return false;
+  }
+}
+
+// The signup half. One statement: the check and the write cannot come apart,
+// and nothing is refused or reported, so this cannot be used to learn whether
+// an address ever had an account. Fails OPEN (the new account keeps its week)
+// on a database error, loudly, for the reason isIdentityBanned gives: it sits
+// in front of every signup, and a free week is the cheap side of that trade.
+async function forfeitGraceIfReturning(userId, identity) {
+  try {
+    const { emailHash, oauthHash } = graceDigests(identity || {});
+    if (!emailHash && !oauthHash) return false;
+    const r = await pool.query(
+      `UPDATE users SET grace_forfeited = TRUE
+        WHERE id = $1::int
+          AND EXISTS (SELECT 1 FROM grace_spent_identities
+                       WHERE expires_at > NOW()
+                         AND (($2::text IS NOT NULL AND email_hash = $2::text)
+                           OR ($3::text IS NOT NULL AND oauth_hash = $3::text)))`,
+      [userId, emailHash, oauthHash]
+    );
+    maybePurgeExpiredGrace();
+    return Boolean(r && r.rowCount > 0);
+  } catch (err) {
+    console.error('[grace] returning-identity check failed; the new account keeps its first week:', err.message);
+    return false;
+  }
+}
+
+async function purgeExpiredGraceIdentities() {
+  try {
+    const result = await pool.query('DELETE FROM grace_spent_identities WHERE expires_at <= NOW()');
+    return result.rowCount || 0;
+  } catch (err) {
+    console.error('[grace] purge failed:', err.message);
+    return 0;
+  }
+}
+
+// Hung off signups like the ban purge above, at most once an hour per process,
+// fire and forget.
+let lastGracePurgeAt = 0;
+function maybePurgeExpiredGrace(now = Date.now()) {
+  if (now - lastGracePurgeAt < PURGE_INTERVAL_MS) return false;
+  lastGracePurgeAt = now;
+  purgeExpiredGraceIdentities().catch(() => {});
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Field bounds — every ceiling this file owns, and where each number came from
 // ---------------------------------------------------------------------------
 // AUDIT 2026-08-14. Six fields on these routes had no maximum OF THEIR OWN, so
@@ -2504,7 +2606,7 @@ router.get('/export', async (req, res) => {
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
-              phone_discoverable, phone_discoverable_at
+              phone_discoverable, phone_discoverable_at, grace_forfeited
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -2762,6 +2864,10 @@ router.get('/export', async (req, res) => {
         // they agreed to, which is the first thing an export is for.
         phone_discoverable: account.phone_discoverable ?? false,
         phone_discoverable_at: account.phone_discoverable_at ?? null,
+        // Whether this account was made on an address or sign-in that already
+        // had a Flock account, which is why it had no free first week
+        // (migration 076). A decision about the person, so it is theirs to see.
+        grace_forfeited: account.grace_forfeited ?? false,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },
@@ -3143,6 +3249,11 @@ async function deleteAccount(req, res) {
     const io = req.app.get('io');
     revokeUserSessions(io, req.user.id);
 
+    // The first week without free-tier limits is once per identity (migration
+    // 076). After the COMMIT and never able to fail the deletion: see
+    // recordGraceSpentIdentity.
+    await recordGraceSpentIdentity(account);
+
     // The socket half of the cancellation fan-out read above. After the COMMIT,
     // so a rolled-back deletion never tells anybody their plan is off, and with
     // the recipients passed in, because flock_members is already gone and the
@@ -3222,6 +3333,11 @@ module.exports = router;
 module.exports.isIdentityBanned = isIdentityBanned;
 module.exports.rejectIfBannedIdentity = rejectIfBannedIdentity;
 module.exports.purgeExpiredBannedIdentities = purgeExpiredBannedIdentities;
+// The first-week-once rule (migration 076). routes/auth.js calls
+// forfeitGraceIfReturning after each of its three account-creation INSERTs.
+module.exports.forfeitGraceIfReturning = forfeitGraceIfReturning;
+module.exports.recordGraceSpentIdentity = recordGraceSpentIdentity;
+module.exports.purgeExpiredGraceIdentities = purgeExpiredGraceIdentities;
 module.exports.__testing = {
   cardProbeBudget,
   // Test hook only. The budget above is process-wide in-memory state, so a

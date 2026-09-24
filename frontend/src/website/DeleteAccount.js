@@ -164,7 +164,13 @@ export default function DeleteAccount() {
             If your account was banned when you deleted it, a one-way hashed code of its
             email, phone number, and sign-in ID is kept for 12 months to stop the ban from
             being dodged. That code can't be turned back into your info and expires on its
-            own. Nothing like it is kept for an account that was not banned.
+            own.
+          </li>
+          <li>
+            A one-way hashed code of the email your account confirmed and its Apple or Google
+            sign-in ID is kept for 12 months, so that signing up again does not bring back the
+            first week without free-tier limits. It can't be turned back into your email and
+            expires on its own.
           </li>
           <li>
             One row per finished plan describing how it went: group size, whether a budget was

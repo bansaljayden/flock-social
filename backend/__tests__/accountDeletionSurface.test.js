@@ -596,6 +596,9 @@ function stubQuery(text) {
   if (has('DELETE FROM device_tokens')) return { rows: [], rowCount: 0 };
   // Whether the account holds a Roost customer to cancel first; this one does not.
   if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) return { rows: [], rowCount: 0 };
+  // Every deletion records the identity it proved for the first-week rule
+  // (migration 076), after the COMMIT and best-effort.
+  if (has('INSERT INTO grace_spent_identities')) return { rows: [], rowCount: 1 };
   unmodelled.push(q);
   return { rows: [], rowCount: 0 };
 }

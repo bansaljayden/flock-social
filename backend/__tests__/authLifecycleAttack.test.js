@@ -399,6 +399,13 @@ pool.query = async (text, params = []) => {
     return ok({ rows: [], rowCount: 0 });
   }
 
+  // ---- the first week once per identity (migration 076) ------------------
+  // Signup asks whether the identity already had an account (an UPDATE that
+  // sets users.grace_forfeited), deletion records the identity it proved, and
+  // a signup occasionally purges expired rows. None of it decides who may sign
+  // in, so the fixture models all three and no identity has spent a week here.
+  if (sql.includes('grace_spent_identities')) return ok({ rows: [], rowCount: 0 });
+
   unknownQueries.push(sql);
   return { rows: [], rowCount: 0 };
 };
