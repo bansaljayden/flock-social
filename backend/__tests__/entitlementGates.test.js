@@ -360,6 +360,56 @@ test('a kill switch is on for the exact string "true" and nothing else', async (
   assert.strictEqual(venueBillingEnabled(), true);
 });
 
+test('the review list turns the paywall on for the listed accounts only', async () => {
+  // App Review has to find and buy the subscription in the build that first
+  // sells Pro while PAYWALL_ENABLED is still off for everyone else.
+  process.env.PAYWALL_PREVIEW_USER_IDS = ' 93, 7 ,abc,0,-4,1e3,';
+  try {
+    assert.strictEqual(paywallEnabled(), false, 'the review list turned the paywall on globally');
+    assert.strictEqual(paywallEnabled(93), true);
+    assert.strictEqual(paywallEnabled('7'), true, "'7' and 7 are one account");
+    assert.strictEqual(paywallEnabled(8), false, 'an account off the list got the paywall');
+    for (const junk of ['abc', '0', '-4', '1e3']) {
+      assert.strictEqual(paywallEnabled(junk), false, `${JSON.stringify(junk)} was read as an account id`);
+    }
+  } finally {
+    delete process.env.PAYWALL_PREVIEW_USER_IDS;
+  }
+  assert.strictEqual(paywallEnabled(93), false, 'the account kept the paywall after the list was cleared');
+});
+
+test('a review account is metered exactly like a free account will be, and nobody else is', async () => {
+  const reviewer = freshId();
+  const other = freshId();
+  process.env.PAYWALL_PREVIEW_USER_IDS = String(reviewer);
+  try {
+    premiumIs(false);
+    const r = await getEntitlements(reviewer);
+    assert.strictEqual(r.paywallEnabled, true);
+    assert.strictEqual(r.birdie.limit, FREE_DAILY_LIMIT);
+    assert.strictEqual(r.forecast.limit, FREE_MONTHLY_FORECASTS);
+
+    const o = await getEntitlements(other);
+    assert.strictEqual(o.paywallEnabled, false, 'an account off the list saw the paywall');
+    assert.strictEqual(o.birdie.limit, PREMIUM_DAILY_LIMIT);
+    assert.strictEqual(o.forecast.limit, null);
+  } finally {
+    delete process.env.PAYWALL_PREVIEW_USER_IDS;
+  }
+});
+
+test('every gate that knows the account asks about that account', () => {
+  // A gate that still called paywallEnabled() with no id would stay open for
+  // the review account and the reviewer would never meet the limit Pro lifts.
+  const crowd = fs.readFileSync(path.join(BACKEND, 'routes', 'crowd.js'), 'utf8');
+  const ai = fs.readFileSync(path.join(BACKEND, 'routes', 'ai.js'), 'utf8');
+  const svc = fs.readFileSync(path.join(BACKEND, 'services', 'entitlements.js'), 'utf8');
+  assert.strictEqual((crowd.match(/paywallEnabled\(userId\)/g) || []).length, 3);
+  assert.doesNotMatch(crowd, /paywallEnabled\(\)/, 'a crowd gate ignores the account it is gating');
+  assert.match(ai, /if \(paywallEnabled\(userId\)\) \{/);
+  assert.match(svc, /const enabled = paywallEnabled\(userId\);/);
+});
+
 test('a flag that is set to something meaningless is announced once, not swallowed', async () => {
   // The failure this catches is silent and expensive in the other direction:
   // somebody sets PAYWALL_ENABLED=1 in Railway, believes billing is live, and

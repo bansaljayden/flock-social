@@ -85,7 +85,7 @@ async function forecastAccess(userId, { count, premium, placeId } = {}) {
   // Paywall off (or unset) → today's behavior, unlimited, no meter — and no
   // tier lookup at all, so an entitlement outage cannot surface from here
   // while the paywall is dormant.
-  if (!paywallEnabled()) return UNMETERED_ACCESS;
+  if (!paywallEnabled(userId)) return UNMETERED_ACCESS;
   let pro;
   if (premium != null) {
     pro = premium;
@@ -200,7 +200,7 @@ function cardLocked(card) {
 
 // Returns a per-request copy so the shared cache stays ungated.
 async function gateForecast(result, userId, { count, placeId } = {}) {
-  if (!paywallEnabled()) return result;
+  if (!paywallEnabled(userId)) return result;
   const access = await forecastAccess(userId, { count, placeId });
   // Rebuilt field by field rather than spread: `access` is a policy object and
   // this one is a frontend contract, so a field added to the former must never
@@ -229,7 +229,7 @@ async function gateForecast(result, userId, { count, placeId } = {}) {
 const SEE_ALL = () => true;
 const SEE_NONE = () => false;
 async function crowdVisibility(userId) {
-  if (!paywallEnabled()) return SEE_ALL;
+  if (!paywallEnabled(userId)) return SEE_ALL;
   const state = await getPremiumState(userId);
   if (!state.known) return SEE_NONE;
   if (state.premium || state.inGrace === true) return SEE_ALL;
