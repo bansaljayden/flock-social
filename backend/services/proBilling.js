@@ -359,7 +359,12 @@ async function createCheckout(user, plan) {
     },
     automatic_tax: { enabled: tax },
     ...(tax ? { customer_update: { address: 'auto', name: 'auto' }, billing_address_collection: 'required' } : {}),
-    allow_promotion_codes: false,
+    // Codes are how Flock gives Pro away (a 100%-off coupon handed to friends
+    // and testers). A code that brings the total to zero should not demand a
+    // card, so collection is 'if_required'; any real charge still needs one.
+    // A trial keeps 'always' so the card is on file before the trial ends.
+    allow_promotion_codes: true,
+    payment_method_collection: trial ? 'always' : 'if_required',
     // The renewal terms sit next to an unchecked box the buyer has to tick,
     // which is what California's automatic renewal law asks of the consent.
     consent_collection: { terms_of_service: 'required' },
