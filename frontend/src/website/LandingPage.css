@@ -1071,6 +1071,9 @@ html:has(.lp) body { overflow-x: clip; }
    card's ink so it reads as a footnote, not a second button. */
 .lp-venue-signin { margin: 14px 0 0; font-size: 0.9em; opacity: 0.85; }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+/* The card is navy, and the line inherited the page's navy ink: navy on navy,
+   close to invisible. Cream like the rest of the card's small print. */
+.lp-plan-venue .lp-venue-signin { color: var(--cream-2); opacity: 1; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Ruled rows, no glyphs. A column of checkmarks is the single most
@@ -1128,6 +1131,9 @@ html:has(.lp) body { overflow-x: clip; }
      is the aside it actually is. Equal auto-fit columns said the two
      audiences mattered equally, which the headline itself contradicts. */
   .lp-plans { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+  /* With Flock Pro on sale there are three cards, and the two-column rule
+     above left "For venues" alone on a second row. Free still reads widest. */
+  .lp-plans.lp-plans-3 { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); }
 }
 .lp-plan {
   background: var(--plate);

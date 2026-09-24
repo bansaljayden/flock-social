@@ -92,7 +92,29 @@
 }
 .pro-plan:has(input:checked) {
   border-color: var(--pp-accent);
+  background: var(--pp-paper-2);
 }
+/* The page goes dark with the system but the radios were never told, so an
+   unchecked one rendered as a bright white disc and read as the chosen plan. */
+@media (prefers-color-scheme: dark) {
+  .pro-plan input { color-scheme: dark; }
+}
+
+/* Signed out: the prices, as plain lines, above the sign-in button. */
+/* Written through .pro so it outranks the legal pages' .pp ul (0,1,1),
+   which indented these lines like a bulleted list. */
+.pro .pro-prices {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+.pro .pro-prices li {
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--pp-rule);
+  color: var(--pp-ink-2);
+}
+.pro .pro-prices li:first-child { border-top: 1px solid var(--pp-rule); }
 
 /* ---------- before you pay ---------- */
 

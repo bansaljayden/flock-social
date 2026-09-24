@@ -4,6 +4,7 @@ import './ProPage.css';
 import SiteFooter from './SiteFooter';
 import { getProStatus, getToken, openProPortal, startProCheckout, trackPaywallShown } from '../services/api';
 import { planSavingsPercent } from '../lib/proPricing';
+import { rememberReturnAfterSignIn } from '../lib/returnAfterSignIn';
 
 /* /pro: Flock Pro on the web.
 
@@ -12,12 +13,13 @@ import { planSavingsPercent } from '../lib/proPricing';
    point a buyer at a web price outside the US, and storefront gating does not
    exist yet, so inside the app this page renders nothing.
 
-   EVERY PRICE ON THIS PAGE COMES FROM GET /api/pro/status, which reads it
-   from Stripe (backend/services/proBilling.js describePrice). There is no
-   price literal in this file, and __tests__/proPage.test.js fails the build
-   on one. Signed out, the page cannot ask, so it names no price at all. With
-   checkout switched off the server sends no plans, and the page says so in
-   one plain sentence instead of showing a button that cannot work.
+   EVERY PRICE ON THIS PAGE COMES FROM THE SERVER, which reads it from Stripe
+   (backend/services/proBilling.js describePrice): GET /api/pro/status when
+   signed in, and signed out the public GET /api/pro-offer, the same numbers
+   the homepage's Pro card shows. There is no price literal in this file, and
+   the tests fail the build on one. With checkout switched off neither route
+   sends plans, and the page says so in one plain sentence instead of showing
+   a button that cannot work.
 
    THE TABLE LISTS ONLY WHAT THE SERVER ENFORCES. Birdie: FREE_DAILY_LIMIT and
    PREMIUM_DAILY_LIMIT in backend/services/birdieUsage.js. Forecasts:
@@ -26,6 +28,7 @@ import { planSavingsPercent } from '../lib/proPricing';
    else goes in the table until the code enforces it (DESIGN-STANDARD C1). */
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
+const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
 const FORECASTS_FREE_MONTHLY = 30;
@@ -76,6 +79,9 @@ export default function ProPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [cancelled] = useState(cancelledReturn);
+  // Signed out: the public offer, so a visitor sees what Pro costs before
+  // being asked to sign in (the homepage already prints the same prices).
+  const [offer, setOffer] = useState(null);
 
   useEffect(() => {
     if (native) return;
@@ -109,6 +115,16 @@ export default function ProPage() {
     if (native) return undefined;
     return load();
   }, [native, load]);
+
+  useEffect(() => {
+    if (native || signedIn || typeof fetch !== 'function') return undefined;
+    let live = true;
+    fetch(`${API}/api/pro-offer`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live && d && d.available && Array.isArray(d.plans) && d.plans.length) setOffer(d); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [native, signedIn]);
 
   if (native) return null;
 
@@ -152,10 +168,26 @@ export default function ProPage() {
 
   let purchase;
   if (!signedIn) {
+    const offerPlans = Array.isArray(offer?.plans) ? offer.plans : [];
+    const offerSavings = planSavingsPercent(offerPlans.find((p) => p.id === 'monthly'), offerPlans.find((p) => p.id === 'yearly'));
+    const offerTax = offer?.taxAdded ? ' plus tax' : '';
     purchase = (
       <>
+        {offerPlans.length > 0 && (
+          <ul className="pro-prices">
+            {offerPlans.map((p) => (
+              <li key={p.id}>
+                <strong>{p.id === 'yearly' ? 'Yearly' : 'Monthly'}</strong>
+                {', '}
+                {priceText(p)}{offerTax} a {periodWord(p)}
+                {p.id === 'yearly' && offerSavings ? `. ${offerSavings}% less than 12 months of monthly.` : ''}
+              </li>
+            ))}
+          </ul>
+        )}
         <BeforeYouPay plan={null} />
-        <a className="pro-cta" href="/app">Log in to continue</a>
+        {/* Back to this page after signing in (lib/returnAfterSignIn.js). */}
+        <a className="pro-cta" href="/app" onClick={() => rememberReturnAfterSignIn('/pro')}>Log in to continue</a>
       </>
     );
   } else if (phase === 'loading') {

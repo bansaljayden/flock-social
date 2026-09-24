@@ -421,10 +421,13 @@ async function buildCheckout(user, plan) {
     payment_method_collection: trial ? 'always' : 'if_required',
     // The renewal terms sit next to an unchecked box the buyer has to tick,
     // which is what California's automatic renewal law asks of the consent.
+    // The price is named for the ordinary buyer, and the sentence stays true
+    // for somebody whose promotion code brings the page to $0.00: it used to
+    // say "renews at $3.99" over a total that a friend code had made free.
     consent_collection: { terms_of_service: 'required' },
     custom_text: {
       terms_of_service_acceptance: {
-        message: `I agree that Flock Pro renews at ${formatAmount(price)}${tax ? ' plus tax' : ''} every ${every} until I cancel, and to the [Terms](${web}/terms).`,
+        message: `I agree that Flock Pro renews every ${every} until I cancel, at ${formatAmount(price)}${tax ? ' plus tax' : ''} or the lower price shown above if a code applies, and to the [Terms](${web}/terms).`,
       },
     },
     success_url: `${web}/app?pro=success&session_id={CHECKOUT_SESSION_ID}`,

@@ -58,6 +58,7 @@ import { lsGet, lsSet } from './lib/storage';
 // paints.
 import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout, confirmVenueCheckout } from './services/api';
 import { readProReturn, settleProCheckout } from './lib/proReturn';
+import { takeReturnAfterSignIn } from './lib/returnAfterSignIn';
 import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingReturn';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
@@ -13720,11 +13721,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     loadTrustedContacts,
     memberCountLabel,
     openVenueDetail,
+    outOfChirps,
     sendAiMessage,
     setAiInputHasText,
     setAiShareVenue,
     setCurrentScreen,
     setCurrentTab,
+    setPaywallTrigger,
     setProfileScreen,
     setSelectedFlockId,
     setSelectedVenueForCreate,
@@ -18312,6 +18315,10 @@ const FlockApp = () => {
     // guards on isLoggedIn, and it is what makes the flock-settings-loaded
     // listener below reach an already-mounted screen.
     pullSettings().catch(() => {});
+    // Sent here from /pro to sign in: go back there (lib/returnAfterSignIn.js
+    // holds the one allowed path, so nothing else can steer this).
+    const back = takeReturnAfterSignIn();
+    if (back) window.location.assign(back);
   }, []);
 
   // The tab title. public/index.html ships the marketing title, "Flock | Plans

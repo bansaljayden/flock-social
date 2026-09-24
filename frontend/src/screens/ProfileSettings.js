@@ -789,14 +789,25 @@ export default function ProfileSettings({
               )}
               {/* Crowd alerts opt-out. This switch controls ONLY the pre-peak
                   crowd push (backend/services/crowdAlerts.js), so the label
-                  stays that narrow. The backend treats an absent key as ON. */}
+                  stays that narrow. The backend treats an absent key as ON.
+
+                  WITH THE PAYWALL ON, THAT PUSH GOES ONLY TO PRO (the send
+                  query requires u.is_premium = true). A free account saw the
+                  switch sitting on for alerts it would never get, so the row
+                  says it is a Pro feature and opens the sheet instead. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Crowd alerts</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>A heads up before your flock's venue gets busy</span>
                 </div>
-                <Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />
+                {entitlements?.paywallEnabled && !isPro ? (
+                  <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: '999px', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    Pro
+                  </button>
+                ) : (
+                  <Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />
+                )}
               </div>
             </div>
           </div>

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { isPurchasesAvailable, getProOffering, purchase, restore } from '../services/purchases';
-import { trackPaywallShown, trackPurchaseCompleted } from '../services/api';
-import { yearlySavingsPercent } from '../lib/proPricing';
+import { getProStatus, startProCheckout, trackPaywallShown, trackPurchaseCompleted } from '../services/api';
+import { yearlySavingsPercent, planSavingsPercent } from '../lib/proPricing';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
 // (overlay, 440px max, 20px top radius, drag handle, fadeInUp).
@@ -10,13 +10,18 @@ import { yearlySavingsPercent } from '../lib/proPricing';
 // Props: { open, onClose, showToast, onUpgraded, trigger }
 //   trigger ∈ 'birdie' | 'forecast' | 'settings' | null — picks the headline.
 //
-// Purchase availability (Apple 2.1): the CTA only renders when RevenueCat
-// offerings actually loaded. On web we show a single quiet line pointing to the
-// iOS app; on native with no offerings we say purchases are unavailable.
-// Never a dead button, never an Alert, never "coming soon".
+// TWO STORES, ONE SHEET. Inside the iOS app Pro is Apple's in-app purchase,
+// through RevenueCat, and the CTA only renders when an offering actually
+// loaded (Apple 2.1). On the web the same sheet sells through Stripe: the
+// plans and prices come from GET /api/pro/status, exactly what /pro shows,
+// and "Continue to payment" goes to Stripe's hosted checkout. The web branch
+// used to say "Flock Pro is available in the iOS app" under App Store fine
+// print, which left both web limits (a locked forecast and Birdie's daily
+// cap) ending at a sheet that could not sell anything.
 //
-// Prices come from the RevenueCat offering (pkg.product.priceString) when
-// available; the hardcoded strings are only the skeleton/fallback while loading.
+// Never a dead button, never an Alert, never "coming soon". Natively the
+// sheet never names the website: outside the US storefront that is steering
+// under guideline 3.1.1.
 
 const HEADLINES = {
   birdie: "Birdie's got more to say",
@@ -24,9 +29,9 @@ const HEADLINES = {
   settings: 'Get more out of every night out',
 };
 
-// Shown only while the offering loads. The amounts are here so the savings
-// figure below can be computed for the skeleton too; once the App Store
-// offering arrives, both the prices and the saving come from it instead.
+// Shown only while the App Store offering loads. The amounts are here so the
+// savings figure below can be computed for the skeleton too; once the offering
+// arrives, both the prices and the saving come from it instead.
 const FALLBACK_PLANS = {
   yearly: { price: '$29.99/yr', amount: 29.99 },
   monthly: { price: '$3.99/mo', amount: 3.99 },
@@ -34,6 +39,7 @@ const FALLBACK_PLANS = {
 
 const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
+const CONTACT_EMAIL = 'social@flockcorp.com';
 
 const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 
@@ -60,6 +66,14 @@ const BENEFITS = [
   { icon: 'alerts', label: 'A heads-up push before your spot gets packed' },
 ];
 
+function isNativeShell() {
+  try {
+    return typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+  } catch {
+    return false;
+  }
+}
+
 // Match RevenueCat packages to our two plans by packageType / identifier.
 const pickPackage = (packages, kind) => {
   if (!Array.isArray(packages)) return null;
@@ -72,18 +86,41 @@ const pickPackage = (packages, kind) => {
   );
 };
 
+// A free trial is only named when the store product really carries one. This
+// sheet used to promise "7-day free trial" on the yearly plan in three places
+// whatever the product said, and the App Store products are created without
+// an introductory offer (PAYWALL.md 1c), so the promise would have been false
+// on the day it could first be read.
+const UNIT_WORDS = { DAY: 'day', WEEK: 'week', MONTH: 'month', YEAR: 'year' };
+function freeTrialLabel(pkg) {
+  const intro = pkg?.product?.introPrice;
+  if (!intro || Number(intro.price) !== 0) return null;
+  const n = Number(intro.periodNumberOfUnits);
+  const unit = UNIT_WORDS[String(intro.periodUnit || '').toUpperCase()];
+  if (!Number.isFinite(n) || n <= 0 || !unit) return null;
+  return `${n}-${unit} free trial`;
+}
+
+// "$3.99", from /api/pro/status. The server's label is already "$3.99" for USD
+// and "3.99 EUR" for anything else.
+const webPrice = (plan, per) => (plan?.label ? `${plan.label}/${per}` : '');
+
 const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
+  const native = isNativeShell();
 
   // Monthly first: it is the smaller commitment, and the web checkout
   // (website/ProPage.js) opens on it too.
   const [selected, setSelected] = useState('monthly');
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  // 'loading' | 'ready' | 'web' | 'unavailable'
+  // Native: 'loading' | 'ready' | 'unavailable'
+  // Web:    'web-loading' | 'web-ready' | 'web-off' | 'web-pro' | 'web-error'
   const [loadState, setLoadState] = useState('loading');
   const [packages, setPackages] = useState(null);
+  const [webStatus, setWebStatus] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   // One paywall_shown per opening, and what opened it (services/api.js, THE
   // PAYWALL FUNNEL). Its own effect so a change of trigger while open counts
@@ -92,16 +129,39 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
     if (open) trackPaywallShown(trigger);
   }, [open, trigger]);
 
+  // The web half: the same answer /pro renders, from the same route. A sheet
+  // that is open with a failed read offers to ask again rather than a price.
+  const loadWeb = useCallback(() => {
+    let live = true;
+    setLoadState('web-loading');
+    setActionError('');
+    getProStatus()
+      .then((data) => {
+        if (!live) return;
+        setWebStatus(data);
+        const plans = Array.isArray(data?.plans) ? data.plans : [];
+        if (data?.isPremium) setLoadState('web-pro');
+        else if (data?.checkoutAvailable && plans.length) {
+          if (!plans.some((p) => p.id === 'monthly')) setSelected(plans[0].id);
+          setLoadState('web-ready');
+        } else setLoadState('web-off');
+      })
+      .catch(() => { if (live) setLoadState('web-error'); });
+    return () => { live = false; };
+  }, []);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
     let cancelled = false;
     setSelected('monthly');
     setBusy(false);
     setRestoring(false);
+    setActionError('');
+    if (!native) return loadWeb();
     if (!isPurchasesAvailable()) {
-      setLoadState('web');
+      setLoadState('unavailable');
       setPackages(null);
-      return;
+      return undefined;
     }
     setLoadState('loading');
     getProOffering().then((pkgs) => {
@@ -115,6 +175,8 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
       }
     });
     return () => { cancelled = true; };
+    // `native` is fixed for the life of the page; loadWeb is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Dialog behavior. This sheet had none of it: no role, no label, no focus
@@ -182,6 +244,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
 
   if (!open) return null;
 
+  // ---- native (App Store) ----
   const yearlyPkg = pickPackage(packages, 'yearly');
   const monthlyPkg = pickPackage(packages, 'monthly');
   const yearlyPrice = yearlyPkg?.product?.priceString ? `${yearlyPkg.product.priceString}/yr` : FALLBACK_PLANS.yearly.price;
@@ -193,10 +256,21 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   // never compared with a made-up one.
   const numericPrice = (pkg) => (typeof pkg?.product?.price === 'number' ? pkg.product.price : null);
   const bothFallback = !yearlyPkg?.product?.priceString && !monthlyPkg?.product?.priceString;
-  const savePct = bothFallback
+  const nativeSavePct = bothFallback
     ? yearlySavingsPercent(FALLBACK_PLANS.monthly.amount, FALLBACK_PLANS.yearly.amount)
     : yearlySavingsPercent(numericPrice(monthlyPkg), numericPrice(yearlyPkg));
+  const yearlyTrial = freeTrialLabel(yearlyPkg);
+  const monthlyTrial = freeTrialLabel(monthlyPkg);
+  const selectedTrial = selected === 'yearly' ? yearlyTrial : monthlyTrial;
 
+  // ---- web (Stripe) ----
+  const webPlans = Array.isArray(webStatus?.plans) ? webStatus.plans : [];
+  const webMonthly = webPlans.find((p) => p.id === 'monthly');
+  const webYearly = webPlans.find((p) => p.id === 'yearly');
+  const webTrialDays = Number(webStatus?.trialDays) > 0 ? Number(webStatus.trialDays) : 0;
+  const webTax = webStatus?.taxAdded ? ' plus tax' : '';
+
+  const savePct = native ? nativeSavePct : planSavingsPercent(webMonthly, webYearly);
   const headline = HEADLINES[trigger] || HEADLINES.settings;
 
   const handlePurchase = async () => {
@@ -236,6 +310,25 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
     }
   };
 
+  // Web: to Stripe's hosted checkout. busy stays on through the redirect, so
+  // Escape cannot close the sheet between the click and the page change.
+  const handleWebCheckout = async () => {
+    if (busy) return;
+    const plan = webPlans.find((p) => p.id === selected) || webPlans[0];
+    if (!plan) return;
+    setBusy(true);
+    setActionError('');
+    try {
+      const { url } = await startProCheckout(plan.id);
+      if (!url) throw new Error('Could not start checkout. Try again.');
+      window.location.assign(url);
+    } catch (err) {
+      setBusy(false);
+      if (err?.code === 'ALREADY_PRO' || err?.code === 'ALREADY_SUBSCRIBED' || err?.code === 'CHECKOUT_OFF') loadWeb();
+      setActionError(err?.message || 'Could not start checkout. Try again.');
+    }
+  };
+
   const planCard = (kind, title, price, note) => {
     const active = selected === kind;
     return (
@@ -243,6 +336,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
         key={kind}
         onClick={() => setSelected(kind)}
         disabled={busy || restoring}
+        aria-pressed={active}
         style={{
           flex: 1,
           padding: '14px 12px',
@@ -267,8 +361,32 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   };
 
   const ctaLabel = busy
-    ? (selected === 'yearly' ? 'Starting trial…' : 'Subscribing…')
-    : (selected === 'yearly' ? 'Start free trial' : 'Subscribe');
+    ? (selectedTrial ? 'Starting trial…' : 'Subscribing…')
+    : (selectedTrial ? 'Start free trial' : 'Subscribe');
+
+  const quiet = { fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0', lineHeight: 1.45 };
+  const smallPrint = { fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' };
+  const linkButton = { border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT };
+  const legalLinks = (
+    <>
+      <button onClick={() => window.open(TERMS_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Terms</button>
+      {' '}·{' '}
+      <button onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Privacy</button>
+    </>
+  );
+
+  // The terms a web buyer reads before paying, in the same words as /pro's
+  // "Before you pay" and Terms 10.2: renews until cancelled from inside Flock,
+  // a full refund within 14 days, and a parent buys for anyone under 18.
+  const webFinePrint = (
+    <p style={smallPrint}>
+      {webTrialDays > 0
+        ? `Free for ${webTrialDays} days, then it renews until you cancel. `
+        : 'Renews until you cancel. '}
+      Cancel any time in You, Flock Pro, Manage, and you keep Pro until the paid period ends. Full refund within 14 days of your first payment: {CONTACT_EMAIL}. Under 18? A parent or guardian needs to buy it.{' '}
+      {legalLinks}
+    </p>
+  );
 
   return (
     <div
@@ -313,14 +431,15 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
             ))}
           </div>
 
-          {(loadState === 'ready' || loadState === 'loading') && (
+          {/* ---------------- native: App Store ---------------- */}
+          {native && (loadState === 'ready' || loadState === 'loading') && (
             <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-              {planCard('yearly', 'Yearly', yearlyPrice, '7-day free trial')}
-              {planCard('monthly', 'Monthly', monthlyPrice, 'Billed monthly')}
+              {planCard('yearly', 'Yearly', yearlyPrice, yearlyTrial || 'Billed yearly')}
+              {planCard('monthly', 'Monthly', monthlyPrice, monthlyTrial || 'Billed monthly')}
             </div>
           )}
 
-          {loadState === 'ready' && (
+          {native && loadState === 'ready' && (
             <button
               className="glass-btn glass-primary"
               onClick={handlePurchase}
@@ -331,25 +450,17 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
             </button>
           )}
 
-          {loadState === 'loading' && (
-            <p style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0' }}>
-              Loading plans…
-            </p>
+          {native && loadState === 'loading' && (
+            <p style={quiet}>Loading plans…</p>
           )}
 
-          {loadState === 'web' && (
-            <p style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0' }}>
-              Flock Pro is available in the iOS app
-            </p>
+          {/* Inside the app, with no App Store product to sell. One plain
+              sentence, and no pointer anywhere else (see the header). */}
+          {native && loadState === 'unavailable' && (
+            <p style={quiet}>Flock Pro can't be bought in the app yet.</p>
           )}
 
-          {loadState === 'unavailable' && (
-            <p style={{ fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0' }}>
-              Purchases unavailable right now
-            </p>
-          )}
-
-          {loadState === 'ready' && (
+          {native && loadState === 'ready' && (
             <button
               onClick={handleRestore}
               disabled={busy || restoring}
@@ -359,12 +470,66 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
             </button>
           )}
 
-          <p style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' }}>
-            Subscriptions auto-renew until cancelled in your App Store settings. The yearly plan starts with a 7-day free trial; cancel anytime before it ends and you won't be charged.{' '}
-            <button onClick={() => window.open(TERMS_URL, '_blank', 'noopener,noreferrer')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Terms</button>
-            {' '}·{' '}
-            <button onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Privacy</button>
-          </p>
+          {native && loadState === 'ready' && (
+            <p style={smallPrint}>
+              Subscriptions renew until cancelled in your App Store settings.
+              {selectedTrial ? ` The ${selected} plan starts with a ${selectedTrial}; cancel before it ends and you won't be charged.` : ''}{' '}
+              {legalLinks}
+            </p>
+          )}
+
+          {/* ---------------- web: Stripe ---------------- */}
+          {!native && loadState === 'web-loading' && (
+            <p style={quiet} role="status">Loading plans…</p>
+          )}
+
+          {!native && loadState === 'web-ready' && (
+            <>
+              {webPlans.length > 1 && (
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+                  {webYearly && planCard('yearly', 'Yearly', `${webPrice(webYearly, 'yr')}${webTax}`, webTrialDays > 0 ? `Free for ${webTrialDays} days` : 'Billed yearly')}
+                  {webMonthly && planCard('monthly', 'Monthly', `${webPrice(webMonthly, 'mo')}${webTax}`, webTrialDays > 0 ? `Free for ${webTrialDays} days` : 'Billed monthly')}
+                </div>
+              )}
+              {webPlans.length === 1 && (
+                <p style={{ ...quiet, fontSize: '15px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 14px' }}>
+                  {webPrice(webPlans[0], webPlans[0].interval === 'year' ? 'yr' : 'mo')}{webTax}
+                </p>
+              )}
+              <button
+                className="glass-btn glass-primary"
+                onClick={handleWebCheckout}
+                disabled={busy}
+                aria-busy={busy || undefined}
+                style={{ width: '100%', padding: '15px', borderRadius: '14px', fontSize: '15px', fontWeight: '700', fontFamily: FONT }}
+              >
+                {busy ? 'Opening checkout…' : 'Continue to payment'}
+              </button>
+              {actionError && <p role="alert" style={{ ...quiet, color: 'var(--accent-red-text)', marginTop: '8px' }}>{actionError}</p>}
+              {webFinePrint}
+            </>
+          )}
+
+          {!native && loadState === 'web-off' && (
+            <p style={quiet}>Flock Pro is not on sale on the web yet.</p>
+          )}
+
+          {!native && loadState === 'web-pro' && (
+            <p style={quiet}>You already have Flock Pro on this account.</p>
+          )}
+
+          {!native && loadState === 'web-error' && (
+            <div role="alert" style={{ textAlign: 'center' }}>
+              <p style={quiet}>Could not load Flock Pro just now.</p>
+              <button
+                type="button"
+                onClick={loadWeb}
+                style={{ marginTop: '6px', padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-subtle)', background: 'var(--bg-card-solid)', fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: FONT }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

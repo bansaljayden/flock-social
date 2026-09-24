@@ -51,14 +51,36 @@ describe('ProPage never hardcodes a price', () => {
     expect(code).not.toMatch(/\b\d+\.\d{2}\b/);
   });
 
-  test('signed out: no price anywhere, no status call, and the button is a login link', () => {
+  // Signed out, the page asks the PUBLIC offer route (the homepage card's),
+  // so fetch is faked here: nothing in this suite may reach the network.
+  const offerFetch = (body) => jest.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(body) }));
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+
+  test('signed out with Pro not on sale: no price anywhere, no status call, and the button is a login link', async () => {
+    global.fetch = offerFetch({ available: false, plans: [] });
     getToken.mockReturnValue(null);
     const { container } = render(<ProPage />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     expect(getProStatus).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(/\$\s?\d/);
     const link = screen.getByRole('link', { name: 'Log in to continue' });
     expect(link.getAttribute('href')).toBe('/app');
     expect(screen.queryByRole('button', { name: 'Continue to payment' })).toBeNull();
+  });
+
+  test('signed out with Pro on sale: the public prices, and signing in comes back here', async () => {
+    global.fetch = offerFetch({ available: true, plans: [MONTHLY, YEARLY], trialDays: 0, taxAdded: false });
+    getToken.mockReturnValue(null);
+    window.sessionStorage.clear();
+    const { container } = render(<ProPage />);
+    await waitFor(() => expect(container.textContent).toContain('$3.99 USD a month'));
+    expect(container.textContent).toContain('$29.99 USD a year. 37% less than 12 months of monthly.');
+    expect(getProStatus).not.toHaveBeenCalled();
+    const link = screen.getByRole('link', { name: 'Log in to continue' });
+    link.addEventListener('click', (e) => e.preventDefault());
+    act(() => { link.click(); });
+    expect(JSON.parse(window.sessionStorage.getItem('flock_return_after_sign_in')).path).toBe('/pro');
   });
 
   test('the prices shown are the ones /api/pro/status sent', async () => {

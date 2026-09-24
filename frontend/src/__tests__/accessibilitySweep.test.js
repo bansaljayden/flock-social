@@ -512,7 +512,8 @@ describe('controls that open the paywall are reachable by keyboard', () => {
     const spans = app.match(/<span onClick=\{\(e\) => \{ e\.stopPropagation\(\); if \(!venueOwnerView\) setPaywallTrigger/g) || [];
     expect(spans.length).toBe(0);
     const buttons = app.match(/<button type="button" onClick=\{\(e\) => \{ e\.stopPropagation\(\); if \(!venueOwnerView\) setPaywallTrigger/g) || [];
-    expect(buttons.length).toBe(3);
+    // Three blurred teasers plus the locked hour-by-hour row (2026-09-24).
+    expect(buttons.length).toBe(4);
   });
 });
 
