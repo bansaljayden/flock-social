@@ -20,6 +20,7 @@ jest.mock('../services/api', () => ({
   getToken: jest.fn(),
   openProPortal: jest.fn(),
   startProCheckout: jest.fn(),
+  trackPaywallShown: jest.fn(),
 }));
 
 // eslint-disable-next-line import/first
@@ -233,5 +234,12 @@ describe('the You tab Flock Pro row', () => {
     const native = row.slice(row.indexOf('if (native) {'), row.indexOf('// Manage shows whenever'));
     expect(native).not.toMatch(/flockcorp\.com/);
     expect(native).not.toMatch(/href=/);
+  });
+
+  test('an App Store subscriber can reach the Apple subscriptions screen, a web one is not sent there', () => {
+    const native = row.slice(row.indexOf('if (native) {'), row.indexOf('// Manage shows whenever'));
+    expect(src).toMatch(/const APPLE_SUBSCRIPTIONS_URL = 'https:\/\/apps\.apple\.com\/account\/subscriptions';/);
+    expect(native).toMatch(/window\.open\(APPLE_SUBSCRIPTIONS_URL/);
+    expect(native).toMatch(/const fromApple = !!status && !status\.canManageWeb;/);
   });
 });

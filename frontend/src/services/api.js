@@ -2149,7 +2149,9 @@ export async function getCrowdPrediction(placeId) {
   const now = new Date();
   const localHour = now.getHours();
   const localDay = now.getDay();
-  return request(`/api/crowd/${encodeURIComponent(placeId)}?localHour=${localHour}&localDay=${localDay}`);
+  const data = await request(`/api/crowd/${encodeURIComponent(placeId)}?localHour=${localHour}&localDay=${localDay}`);
+  if (data && data.forecastAccess && data.forecastAccess.locked === true) trackMeterCapped('forecast');
+  return data;
 }
 
 // `clock` is optional { localHour, localDay } for scoring a moment that is
@@ -2358,6 +2360,7 @@ export async function sendAiChat(messages, location, currentContext) {
     // trying it again") has nothing to check in a chat: the reply is gone.
     // Birdie's bubble says so in voice (chat audit, 2026-09-05).
     if (err && err.isBadReply) err.message = 'lost that one. ask again';
+    if (err && err.code === 'UPGRADE_REQUIRED') trackMeterCapped('birdie');
     throw err;
   }
   track('birdie_message', { turn: Array.isArray(messages) ? messages.length : 0 });
@@ -2544,6 +2547,43 @@ export function trackNfcTap(tag) {
 
 export function trackNfcAction(tag, choice) {
   track('nfc_tap_action', { source: nfcSource(tag), action: choice });
+}
+
+/* THE PAYWALL FUNNEL (2026-09-24). PAYWALL-DECISION.md turns the wall on only
+   when enough weekly actives run into a free limit, and asks how many of them
+   then buy, and nothing here could answer either question. Three events, each
+   carrying one bucket from a fixed list:
+
+     paywall_shown       { trigger }      the Pro sheet or /pro opened, and what opened it
+     meter_capped        { meter }        a free limit refused something
+     purchase_completed  { store, plan }  Pro was bought, in the App Store or on the web
+
+   A cap is recorded once per meter per day on this device: a locked card
+   refetches every few minutes, and the question is how many PEOPLE hit the
+   wall, not how many requests did. No venue, no amount, no price. */
+const PAYWALL_TRIGGERS = ['birdie', 'forecast', 'settings', 'pro_page'];
+const METERS = ['birdie', 'forecast'];
+const STORES = ['app_store', 'web'];
+const PLANS = ['monthly', 'yearly'];
+const cappedToday = new Set();
+
+export function trackPaywallShown(trigger) {
+  track('paywall_shown', { trigger: PAYWALL_TRIGGERS.includes(trigger) ? trigger : 'unknown' });
+}
+
+export function trackMeterCapped(meter) {
+  if (!METERS.includes(meter)) return;
+  const key = `${meter}:${new Date().toISOString().slice(0, 10)}`;
+  if (cappedToday.has(key)) return;
+  cappedToday.add(key);
+  track('meter_capped', { meter });
+}
+
+export function trackPurchaseCompleted(store, plan) {
+  track('purchase_completed', {
+    store: STORES.includes(store) ? store : 'unknown',
+    plan: PLANS.includes(plan) ? plan : 'unknown',
+  });
 }
 
 /* PUSH-NOTIFICATION OPENS. A tap on a notification is the only thing in the

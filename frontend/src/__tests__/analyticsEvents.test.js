@@ -651,3 +651,36 @@ describe('push_opened is an allowlist destination, never the id the tap carried'
     expect(events('push_opened')).toEqual([{ destination: 'unknown' }]);
   });
 });
+
+describe('the paywall funnel', () => {
+  test('paywall_shown names what opened it, from a fixed list', async () => {
+    api.trackPaywallShown('forecast');
+    api.trackPaywallShown('pro_page');
+    api.trackPaywallShown('https://example.com/?venue=1');
+    await flush();
+    expect(events('paywall_shown')).toEqual([
+      { trigger: 'forecast' }, { trigger: 'pro_page' }, { trigger: 'unknown' },
+    ]);
+  });
+
+  test('meter_capped fires once per meter per day, and ignores a meter it does not know', async () => {
+    api.trackMeterCapped('forecast');
+    api.trackMeterCapped('forecast');
+    api.trackMeterCapped('birdie');
+    api.trackMeterCapped('venue_123');
+    await flush();
+    expect(events('meter_capped')).toEqual([{ meter: 'forecast' }, { meter: 'birdie' }]);
+  });
+
+  test('purchase_completed carries the store and the plan and nothing else', async () => {
+    api.trackPurchaseCompleted('app_store', 'yearly');
+    api.trackPurchaseCompleted('web');
+    api.trackPurchaseCompleted('paypal', '$3.99');
+    await flush();
+    expect(events('purchase_completed')).toEqual([
+      { store: 'app_store', plan: 'yearly' },
+      { store: 'web', plan: 'unknown' },
+      { store: 'unknown', plan: 'unknown' },
+    ]);
+  });
+});

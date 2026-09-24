@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { isPurchasesAvailable, getProOffering, purchase, restore } from '../services/purchases';
+import { trackPaywallShown, trackPurchaseCompleted } from '../services/api';
 import { yearlySavingsPercent } from '../lib/proPricing';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
@@ -83,6 +84,13 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
   // 'loading' | 'ready' | 'web' | 'unavailable'
   const [loadState, setLoadState] = useState('loading');
   const [packages, setPackages] = useState(null);
+
+  // One paywall_shown per opening, and what opened it (services/api.js, THE
+  // PAYWALL FUNNEL). Its own effect so a change of trigger while open counts
+  // as the new reason it is on screen.
+  useEffect(() => {
+    if (open) trackPaywallShown(trigger);
+  }, [open, trigger]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,6 +206,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
     try {
       const { success, isPro } = await purchase(pkg);
       if (success && isPro) {
+        trackPurchaseCompleted('app_store', selected);
         showToast?.('Welcome to Flock Pro', 'success');
         onUpgraded?.();
         onClose?.();

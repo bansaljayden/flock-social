@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import './PrivacyPolicy.css';
 import './ProPage.css';
 import SiteFooter from './SiteFooter';
-import { getProStatus, getToken, openProPortal, startProCheckout } from '../services/api';
+import { getProStatus, getToken, openProPortal, startProCheckout, trackPaywallShown } from '../services/api';
 import { planSavingsPercent } from '../lib/proPricing';
 
 /* /pro: Flock Pro on the web.
@@ -79,6 +79,7 @@ export default function ProPage() {
 
   useEffect(() => {
     if (native) return;
+    trackPaywallShown('pro_page');
     document.title = 'Flock Pro | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
