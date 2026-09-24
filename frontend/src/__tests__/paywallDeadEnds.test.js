@@ -95,3 +95,31 @@ describe('back to /pro after signing in', () => {
     expect(fn).toMatch(/const back = takeReturnAfterSignIn\(\);\n\s+if \(back\) window\.location\.assign\(back\);/);
   });
 });
+
+describe('Pro bought somewhere else', () => {
+  // Paying on flockcorp.com while the app sat in the background left the
+  // open copy on its free-tier snapshot, Birdie capped, until a restart.
+  const start = app.indexOf('const onForeground = () => {');
+  const effect = app.slice(start, app.indexOf('}, [refreshEntitlements]);', start));
+
+  test('the open app re-reads entitlements when it comes back to the foreground', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(effect).toMatch(/if \(document\.visibilityState === 'hidden'\) return;/);
+    expect(effect).toMatch(/refreshEntitlements\(\);/);
+    expect(effect).toMatch(/document\.addEventListener\('visibilitychange', onForeground\);/);
+    expect(effect).toMatch(/window\.addEventListener\('focus', onForeground\);/);
+  });
+
+  test('once per 30 seconds, because iOS fires focus and visibilitychange together', () => {
+    expect(effect).toMatch(/if \(Date\.now\(\) - lastRead < 30000\) return;/);
+  });
+
+  test('both listeners come off when the app unmounts', () => {
+    expect(effect).toMatch(/document\.removeEventListener\('visibilitychange', onForeground\);/);
+    expect(effect).toMatch(/window\.removeEventListener\('focus', onForeground\);/);
+  });
+
+  test('a Pro answer is what lifts the Birdie cap', () => {
+    expect(app).toContain('const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0');
+  });
+});

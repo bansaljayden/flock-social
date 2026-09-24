@@ -7488,6 +7488,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Pro bought somewhere else (flockcorp.com, another device) reaches this
+  // copy only through the server, and nothing above re-read it for an app
+  // that was already open: someone who hit the Birdie limit, paid on the
+  // website and switched back still found Birdie locked until a restart.
+  // Re-read on the way back to the foreground. iOS fires focus and
+  // visibilitychange together on resume, so one read per 30 seconds is plenty.
+  useEffect(() => {
+    let lastRead = Date.now();
+    const onForeground = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (Date.now() - lastRead < 30000) return;
+      lastRead = Date.now();
+      refreshEntitlements();
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
+    };
+  }, [refreshEntitlements]);
 
   // Draggable FAB positions — snap to corners, persisted in localStorage
   // corner format: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right'
