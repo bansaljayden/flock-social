@@ -467,6 +467,11 @@ test('the venue card does not publish an attendance figure nobody counted', asyn
 // SECTION 2 — routes/publicCrowd.js, the unauthenticated door
 // ===========================================================================
 
+// Every request in this file arrives from one address, and with the paywall on
+// the demo remembers three venues a day per address. A test about something
+// else starts as a fresh visitor so it is not reading the last test's three.
+const { resetDemoRevealsForTest, resetDemoLimitsForTest, demoReveals, mayShowCrowd, REVEAL_MAX_ENTRIES } = publicCrowdRouter.__testables;
+
 async function demoCard(id, { locked }) {
   if (locked) process.env.PAYWALL_ENABLED = 'true';
   else delete process.env.PAYWALL_ENABLED;
@@ -484,6 +489,7 @@ test('the public demo shows the whole forecast while the paywall is dormant', as
 });
 
 test('with the paywall on, the demo serves the free tier and not a penny more', async () => {
+  resetDemoRevealsForTest();
   const open = await demoCard('DEMO_GATE', { locked: false });
   const answers = premiumAnswers(open, { best: 'best_time', peak: 'peak_hours', hourly: 'hourly' });
 
@@ -505,6 +511,7 @@ test('with the paywall on, the demo serves the free tier and not a penny more', 
 });
 
 test('a fresh (uncached) demo card is gated too', async () => {
+  resetDemoRevealsForTest();
   process.env.PAYWALL_ENABLED = 'true';
   const res = await call('GET', '/api/public/demo/venue/DEMO_FRESH?localHour=20&localDay=5');
   assert.strictEqual(res.status, 200, res.text);
@@ -515,6 +522,7 @@ test('a fresh (uncached) demo card is gated too', async () => {
 });
 
 test('the card embedded in the area search is gated on both the fresh and the cached path', async () => {
+  resetDemoRevealsForTest();
   NEARBY = [place('AREA_ONE'), place('AREA_TWO')];
 
   delete process.env.PAYWALL_ENABLED;
@@ -535,7 +543,8 @@ test('the card embedded in the area search is gated on both the fresh and the ca
   assert.strictEqual(fresh.body.card.forecast_locked, true);
   assertNoLeak(fresh.body, answers, 'area search (fresh)');
 
-  // The pin list is the demo. Every venue keeps its live score.
+  // The pin list is the demo. Inside a visitor's first three venues of the
+  // day, and there are only two here, every venue keeps its live score.
   assert.strictEqual(fresh.body.venues.length, 2);
   for (const v of fresh.body.venues) {
     assert.strictEqual(typeof v.score, 'number');
@@ -544,6 +553,7 @@ test('the card embedded in the area search is gated on both the fresh and the ca
 });
 
 test('the shared cache is never poisoned with a gated card', async () => {
+  resetDemoRevealsForTest();
   // Locked first, unlocked second, same key. If the gate were applied before
   // setCache, the visitor who arrived while the paywall was on would have
   // written a blanked card into the 10-minute entry and everybody after them,
@@ -558,6 +568,128 @@ test('the shared cache is never poisoned with a gated card', async () => {
   assert.ok(after.body.hourly.length > 0);
   assert.ok(!('forecast_locked' in after.body));
 });
+
+// ---------------------------------------------------------------------------
+// SECTION 2b: the live level on the demo, three venues a visitor a day
+//
+// The app covers the live level once a free account has spent its thirty
+// venues. Without a rule here the demo was the way around that: sign out and
+// read the map on the homepage instead. With the paywall on, a visitor gets the
+// crowd level for three distinct venues a UTC day, pins and cards together.
+// ---------------------------------------------------------------------------
+
+const CROWD_READINGS = ['score', 'label', 'confidence', 'confidence_measurement', 'confidence_basis'];
+
+test('with the paywall on, a visitor sees the crowd level for three venues a day and the fourth is covered', async () => {
+  // A fresh visitor with a fresh hourly budget: this file has spent the
+  // address's 20 misses an hour long before it gets here.
+  resetDemoLimitsForTest();
+  process.env.PAYWALL_ENABLED = 'true';
+  for (const id of ['REVEAL_ONE', 'REVEAL_TWO', 'REVEAL_THREE']) {
+    const res = await call('GET', `/api/public/demo/venue/${id}?localHour=20&localDay=5`);
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(typeof res.body.score, 'number', `${id} is inside the three and lost its number`);
+    assert.ok(!res.body.crowd_locked);
+  }
+
+  const fourth = await call('GET', '/api/public/demo/venue/REVEAL_FOUR?localHour=20&localDay=5');
+  assert.strictEqual(fourth.status, 200, fourth.text);
+  assert.strictEqual(fourth.body.crowd_locked, true, 'the fourth venue of the day was shown');
+  for (const k of CROWD_READINGS) {
+    assert.strictEqual(fourth.body[k], null, `a covered card still carries ${k}`);
+  }
+  assert.strictEqual(fourth.body.best_time, null);
+  assert.deepStrictEqual(fourth.body.hourly, []);
+  // Venue facts stay: the card still says what the place is.
+  assert.strictEqual(fourth.body.place_id, 'REVEAL_FOUR');
+  assert.ok(fourth.body.name);
+  assert.ok(typeof fourth.body.age_ms === 'number');
+
+  // Opening one of the three again costs nothing and still shows it.
+  const again = await call('GET', '/api/public/demo/venue/REVEAL_TWO?localHour=20&localDay=5');
+  assert.strictEqual(typeof again.body.score, 'number', 'a venue already shown today was covered on a second look');
+
+  // A cache hit is counted too: the shared cache must not be the way around it.
+  const hit = await call('GET', '/api/public/demo/venue/REVEAL_FOUR?localHour=20&localDay=5');
+  assert.strictEqual(hit.body.crowd_locked, true, 'a cache hit handed out the number the miss had covered');
+});
+
+test('the pins draw on the same three, the embedded card first', async () => {
+  // A fresh visitor with a fresh hourly budget: this file has spent the
+  // address's 20 misses an hour long before it gets here.
+  resetDemoLimitsForTest();
+  process.env.PAYWALL_ENABLED = 'true';
+  NEARBY = ['PIN_A', 'PIN_B', 'PIN_C', 'PIN_D', 'PIN_E'].map((id) => place(id));
+  const res = await call('GET', '/api/public/demo/venues?lat=55.55&lng=66.66&localHour=20&localDay=5');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.ok(res.body.card, 'the area search stopped embedding a card; this test is looking at nothing');
+  assert.strictEqual(typeof res.body.card.score, 'number', 'the hero card was covered for a brand-new visitor');
+
+  const shown = res.body.venues.filter((v) => typeof v.score === 'number');
+  const covered = res.body.venues.filter((v) => v.crowd_locked === true);
+  assert.strictEqual(res.body.venues.length, 5);
+  assert.strictEqual(shown.length, 3, 'more than three pins carried a number');
+  assert.strictEqual(covered.length, 2);
+  assert.ok(shown.some((v) => v.place_id === res.body.card.place_id), 'the card venue and its pin were counted twice');
+  for (const v of covered) {
+    assert.strictEqual(v.score, null);
+    assert.strictEqual(v.label, null);
+    assert.ok(!('confidence' in v), 'a covered pin grew a confidence key a pin never carries');
+    assert.ok(Number.isFinite(v.lat) && Number.isFinite(v.lng), 'a covered pin lost its place on the map');
+  }
+
+  // The three are spent, so a card for a venue outside them is covered.
+  const other = covered[0].place_id;
+  const card = await call('GET', `/api/public/demo/venue/${other}?localHour=20&localDay=5`);
+  assert.strictEqual(card.body.crowd_locked, true, 'a covered pin opened into a card with the number on it');
+});
+
+test('a new UTC day gives the visitor three new venues', async () => {
+  // A fresh visitor with a fresh hourly budget: this file has spent the
+  // address's 20 misses an hour long before it gets here.
+  resetDemoLimitsForTest();
+  process.env.PAYWALL_ENABLED = 'true';
+  for (const id of ['DAY_ONE', 'DAY_TWO', 'DAY_THREE']) {
+    await call('GET', `/api/public/demo/venue/${id}?localHour=20&localDay=5`);
+  }
+  const spent = await call('GET', '/api/public/demo/venue/DAY_FOUR?localHour=20&localDay=5');
+  assert.strictEqual(spent.body.crowd_locked, true);
+
+  // Yesterday, as far as the memory knows.
+  for (const entry of demoReveals.values()) entry.day = '2000-01-01';
+  const next = await call('GET', '/api/public/demo/venue/DAY_FOUR?localHour=20&localDay=5');
+  assert.strictEqual(typeof next.body.score, 'number', 'a new day did not give the visitor their three again');
+});
+
+test('with the paywall off the demo counts nothing and covers nothing', async () => {
+  // A fresh visitor with a fresh hourly budget: this file has spent the
+  // address's 20 misses an hour long before it gets here.
+  resetDemoLimitsForTest();
+  delete process.env.PAYWALL_ENABLED;
+  for (const id of ['OFF_ONE', 'OFF_TWO', 'OFF_THREE', 'OFF_FOUR', 'OFF_FIVE']) {
+    const res = await call('GET', `/api/public/demo/venue/${id}?localHour=20&localDay=5`);
+    assert.strictEqual(typeof res.body.score, 'number');
+    assert.ok(!('crowd_locked' in res.body), 'the dormant paywall announced itself on the marketing page');
+  }
+  NEARBY = ['OFF_A', 'OFF_B', 'OFF_C', 'OFF_D', 'OFF_E'].map((id) => place(id));
+  const area = await call('GET', '/api/public/demo/venues?lat=77.77&lng=88.88&localHour=20&localDay=5');
+  assert.ok(area.body.venues.every((v) => typeof v.score === 'number' && !('crowd_locked' in v)));
+  assert.strictEqual(demoReveals.size, 0, 'the paywall is off and the demo remembered a visitor anyway');
+});
+
+test('the per-visitor memory is bounded, and a spent visitor is the last to be forgotten', () => {
+  resetDemoRevealsForTest();
+  process.env.PAYWALL_ENABLED = 'true';
+  const spender = { ip: '203.0.113.7' };
+  for (const id of ['S1', 'S2', 'S3']) assert.strictEqual(mayShowCrowd(spender, id), true);
+  assert.strictEqual(mayShowCrowd(spender, 'S4'), false);
+  for (let i = 0; i < REVEAL_MAX_ENTRIES + 10; i += 1) mayShowCrowd({ ip: `198.51.${i >> 8}.${i & 255}` }, 'ONE');
+  assert.ok(demoReveals.size <= REVEAL_MAX_ENTRIES, `the memory grew to ${demoReveals.size}`);
+  assert.ok(demoReveals.has(spender.ip), 'a flood of one-venue visitors evicted the address that had spent its three');
+  assert.strictEqual(mayShowCrowd(spender, 'S4'), false, 'eviction handed the spent visitor three new venues');
+  resetDemoRevealsForTest();
+});
+
 
 // ===========================================================================
 // SECTION 3 — routes/ai.js, the door with a user behind it
@@ -635,9 +767,14 @@ test('a spent allowance closes Birdie too, and leaves nothing to rebuild the cur
 
   assert.strictEqual(locked.forecast_locked, true);
   assert.ok(locked.forecast_note, 'the model was given no instruction not to invent the missing forecast');
-  // The free half survives, so Birdie can still answer "how busy is it".
-  assert.strictEqual(locked.crowd_score, 30);
-  assert.ok(locked.crowd_label);
+  assert.match(locked.forecast_note, /no crowd reading/, 'the note must tell the model there is no level to quote');
+  // Since 2026-09-24 the live level is covered too, the same as the card: no
+  // score, label, source or confidence reaches the model for a locked venue.
+  for (const field of ['crowd_score', 'crowd_label', 'crowd_source', 'crowd_attribution', 'confidence', 'confidence_measurement']) {
+    assert.strictEqual(locked[field], undefined, `a locked Birdie lookup still carries ${field}`);
+  }
+  // The venue's facts stay, so Birdie can still say what it is and whether it is open.
+  assert.ok(locked.venue_name);
   // Swept over what was actually put on the wire to Gemini, which is the thing
   // that reaches the user: anything in this payload can come back out in prose.
   assertNoLeak(locked, answers, 'Birdie crowd tool');

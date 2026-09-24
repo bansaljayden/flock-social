@@ -40,9 +40,11 @@ const router = express.Router();
 //   1. THERE IS NOTHING HERE TO GATE. The gate sells three things: the best
 //      time to go, the peak window, and the 24-hour curve. This endpoint
 //      computes none of them. It calls predictBusyness once, for right now, and
-//      renders the resulting LABEL as five words on a pill. "How busy is it
-//      right now" is the free half on every other surface too, and gating it
-//      here would gate the free tier.
+//      renders the resulting LABEL as five words on a pill. It is also not a
+//      Flock account's allowance: since 2026-09-24 the app covers the live
+//      level once a free account has spent its thirty venues, but this pill is
+//      the venue publishing its own busyness on its own site (reason 3), not a
+//      user reading ours.
 //   2. THE AUDIENCE IS THE VENUE'S OWN CUSTOMERS. A person reading this is on a
 //      bar's website deciding whether to walk over. They are not a Flock user
 //      routing around a wall; most of them have never heard of Flock, which is

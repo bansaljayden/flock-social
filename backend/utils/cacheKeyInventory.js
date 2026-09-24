@@ -353,6 +353,16 @@ const INVENTORY = [
     why: 'Least-consumed eviction means a flood evicts its own one-hit entries before any spent counter.',
   },
   {
+    file: 'routes/publicCrowd.js', name: 'demoReveals', kind: 'counter',
+    key: 'req.ip (the same address allowDemo keys on), holding the UTC day and the place ids shown that day',
+    callerControls: 'the source address, and which venues it asks for; never how many are remembered',
+    protects: 'the crowd level on the UNAUTHENTICATED demo once PAYWALL_ENABLED is on: three distinct venues a visitor a day, so an account at its monthly limit cannot sign out and read the map here',
+    denominator: 'distinct venues per address per UTC day (3)',
+    bound: '5k entries, yesterday first then least consumed first, down to 90%; at most 3 ids per entry',
+    verdict: 'SAFE',
+    why: 'An entry holds at most three ids and dies with its day, so the map is bounded by addresses, and eviction keeps a spent entry longest, the one an address cycler wants gone. Behind the Vercel relay req.ip is the relay, so the three are shared per edge per day: strict rather than lax, and fixed by the same relay header allowDemo is waiting on.',
+  },
+  {
     file: 'routes/publicCrowd.js', name: 'cache', kind: 'cache',
     key: '`area:${lat}:${lng}:${q}:${localDay}:${localHour}` and `venue:${placeId}:${localDay}:${localHour}`',
     callerControls: 'all of it — free-text q (60 chars), coords, and a placeId validated only by isLength({min:1,max:200})',

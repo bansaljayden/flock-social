@@ -21,7 +21,9 @@ test('the venue sheet is sequence-guarded, reads included', () => {
 test('a calm venue asks for no alternatives, on both paths', () => {
   const app = read('App.js');
   expect(app).toContain("if (crowd && !(typeof crowd.score === 'number' && crowd.score <= 39)) {");
-  expect(app).toContain("if (data && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid)");
+  // A card whose crowd level is covered (the month's venues are spent) asks
+  // for none either: the server would answer an empty list anyway.
+  expect(app).toContain("if (data && !data.forecastAccess?.locked && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid)");
 });
 
 test('the dot and ring leave with Location', () => {

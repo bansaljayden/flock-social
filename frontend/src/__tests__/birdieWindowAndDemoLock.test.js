@@ -161,7 +161,7 @@ const {
   toAiWireMessages,
 } = evaluate(APP_NAMES.map((n) => extractDeclaration(appSource, n)), APP_NAMES);
 
-const DEMO_CONSTS = ['pct', 'venueName', 'forecastIsLocked', 'LOCKED_FORECAST_COPY'];
+const DEMO_CONSTS = ['pct', 'venueName', 'forecastIsLocked', 'LOCKED_FORECAST_COPY', 'crowdCovered', 'COVERED_COPY', 'pinRank'];
 const DEMO_FUNCS = ['crowdWord', 'cardSentence'];
 const demo = evaluate(
   [
@@ -170,7 +170,7 @@ const demo = evaluate(
   ],
   [...DEMO_CONSTS, ...DEMO_FUNCS]
 );
-const { forecastIsLocked, LOCKED_FORECAST_COPY, cardSentence } = demo;
+const { forecastIsLocked, LOCKED_FORECAST_COPY, cardSentence, crowdCovered, COVERED_COPY, pinRank } = demo;
 
 const turns = (n) => Array.from({ length: n }, (_, i) => ({
   role: i % 2 === 0 ? 'user' : 'assistant',
@@ -710,7 +710,8 @@ describe('the demo card renders the boundary', () => {
   test('the note is drawn from the shared copy, not retyped', () => {
     expect(demoSource).toContain('{forecastLocked && (');
     expect(demoSource).toContain('{LOCKED_FORECAST_COPY}');
-    expect(demoSource).toContain('const forecastLocked = forecastIsLocked(selected);');
+    // A covered card has its own panel, so the forecast line stands down there.
+    expect(demoSource).toContain('const forecastLocked = !covered && forecastIsLocked(selected);');
   });
 
   test('it lives in the ready card, not in the error branch', () => {
@@ -800,7 +801,7 @@ describe('the venue sheet under the same paywall', () => {
     expect(appSource).not.toContain("{closedAllDay ? 'Closed Today' : peakText}");
     const tile = peakTile();
     expect(tile).toContain('cd?.forecastAccess?.locked ? (');
-    expect(tile).toContain("setPaywallTrigger('forecast')");
+    expect(tile).toContain("setPaywallTrigger('forecast'");
     expect(tile).toContain('{peakText}');
   });
 
@@ -814,5 +815,58 @@ describe('the venue sheet under the same paywall', () => {
   test('closed still wins over the paywall, since it is true either way', () => {
     const tile = peakTile();
     expect(tile.indexOf('closedAllDay ? (')).toBeLessThan(tile.indexOf('cd?.forecastAccess?.locked ? ('));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Past the three a day: the covered card and pin (backend/routes/publicCrowd.js,
+// THE LIVE LEVEL, THREE VENUES A DAY). A covered venue arrives with
+// `crowd_locked` and no score, and pct(null) is 0, so every place that prints a
+// number has to ask first or it prints a quiet 0% nobody measured.
+// ───────────────────────────────────────────────────────────────────────────
+describe('a covered demo venue shows no crowd level', () => {
+  const covered = { name: 'Good Dog Bar', score: null, label: null, is_open: true, crowd_locked: true };
+
+  test('crowdCovered reads the flag and nothing else', () => {
+    expect(crowdCovered(covered)).toBe(true);
+    expect(crowdCovered({ ...covered, crowd_locked: 'true' })).toBe(false);
+    expect(crowdCovered({ name: 'x', score: 40 })).toBe(false);
+    expect(crowdCovered(null)).toBe(false);
+  });
+
+  test('the copy is the one sentence, with no em dash', () => {
+    expect(COVERED_COPY).toBe('Make a free account to see crowd levels. Your first week has no limits.');
+    expect(COVERED_COPY).not.toMatch(/—/);
+  });
+
+  test('the spoken sentence names the venue and the way in, never a percent', () => {
+    expect(cardSentence(covered)).toBe(`Good Dog Bar. ${COVERED_COPY}`);
+    expect(cardSentence(covered)).not.toMatch(/percent/);
+    expect(cardSentence({ ...covered, is_open: false })).toBe(`Good Dog Bar is closed right now. ${COVERED_COPY}`);
+  });
+
+  test('a covered pin sorts after every venue with a number, never as a quiet 0', () => {
+    expect(pinRank(covered)).toBe(-1);
+    expect(pinRank({ score: 0 })).toBe(0);
+    const order = [{ id: 'c', ...covered }, { id: 'q', score: 3 }, { id: 'b', score: 80 }]
+      .sort((a, b) => pinRank(b) - pinRank(a)).map((v) => v.id);
+    expect(order).toEqual(['b', 'q', 'c']);
+  });
+
+  test('the card draws no dial and no crowd word when covered, and links to sign-up', () => {
+    const ready = demoSource.slice(demoSource.indexOf("{phase === 'ready' && selected && ("));
+    expect(ready).toMatch(/\{!covered && \(\s*<DemoDial/);
+    expect(ready).toMatch(/\{\(!covered \|\| shut\) && \(/);
+    const panel = ready.slice(ready.indexOf('{covered && ('), ready.indexOf('{bestTime && ('));
+    expect(panel).toContain('{COVERED_COPY}');
+    expect(panel).toContain('href="/signup"');
+    expect(panel).not.toMatch(/score|pct\(/);
+  });
+
+  test('pins, the fallback list and the off-screen list all print no number for a covered venue', () => {
+    expect(demoSource).toContain("badge.textContent = shut ? 'Closed' : (covered ? 'Sign up' : `${score}%`);");
+    expect(demoSource).toContain("{off ? 'Closed' : (hidden ? 'Sign up' : `${s}%`)}");
+    expect(demoSource).toContain('crowd level shown with a free account');
+    expect(demoSource).toContain('const ring = (shut || covered) ? CROWD_CLOSED : crowdColor(score);');
   });
 });

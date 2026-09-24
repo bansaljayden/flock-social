@@ -50,7 +50,7 @@ test('it walks venues one at a time and never overlaps another run', () => {
 });
 
 test('it runs after the response and can never make a visitor wait', () => {
-  const at = SRC.indexOf('res.json(card ? { ...result, card: presentCard(card) } : result);');
+  const at = SRC.indexOf('res.json(presentArea(result, req));');
   const warmCall = SRC.indexOf('warmDemoPhotos(result.venues, req);');
   assert.ok(at > -1 && warmCall > at, 'the warm is fired after the answer is sent');
   // Not awaited, and the route does not become async on its account.

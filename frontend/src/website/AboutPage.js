@@ -159,8 +159,8 @@ export default function AboutPage() {
         <p>
           That's the business: the planning side stays free for you and your
           friends, and venues are the side built to pay for demand they can see
-          and act on. No venue is being charged today, and there is no billing
-          code in the product yet. If you run a venue and want in early, email{' '}
+          and act on. No venue is being charged today. If you run a venue and
+          want in early, email{' '}
           <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
         </p>
       </section>

@@ -234,10 +234,26 @@ const forecastIsLocked = (card) => !!card
 // price, no trial, no feature that does not exist.
 const LOCKED_FORECAST_COPY = 'The hour by hour forecast, the best time to go and when it peaks are in the app.';
 
+// PAST THE THREE A DAY. With the paywall on, the demo shows a visitor the crowd
+// level for three venues a day and covers the rest (backend/routes/publicCrowd.js,
+// THE LIVE LEVEL, THREE VENUES A DAY). A covered card or pin arrives with
+// `crowd_locked` and no score, and must say so: pct(null) is 0, so without this
+// check a covered pin would print "0%" in green, a reading nobody made.
+const crowdCovered = (v) => !!v && v.crowd_locked === true;
+const COVERED_COPY = 'Make a free account to see crowd levels. Your first week has no limits.';
+// Sorting key for the pins: a covered venue has no number to rank on, so it
+// goes after every venue that has one instead of sorting as a quiet 0.
+const pinRank = (v) => (crowdCovered(v) ? -1 : pct(v.score));
+
 // What the live region says when a card lands. Kept next to the card shape it
 // reads so the spoken sentence and the printed one cannot drift.
 function cardSentence(card) {
   if (!card) return '';
+  if (crowdCovered(card)) {
+    return card.is_open === false
+      ? `${venueName(card)} is closed right now. ${COVERED_COPY}`
+      : `${venueName(card)}. ${COVERED_COPY}`;
+  }
   const s = pct(card.score);
   // Said out loud too. A visitor using a screen reader hears the score and
   // would otherwise never learn that the rest of the card is a boundary and
@@ -337,19 +353,24 @@ function DemoDial({ score, color, textColor, label }) {
 // circle, ring colored by crowd level, % badge underneath.
 function buildDemoPin(venue, onClick) {
   const score = pct(venue.score);
+  const covered = crowdCovered(venue);
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'lpd-pin';
   el.setAttribute('aria-label', isShut(venue)
     ? `${venueName(venue)}, closed right now`
-    : `${venueName(venue)}, ${score} percent busy`);
+    : (covered
+      ? `${venueName(venue)}, crowd level shown with a free account`
+      : `${venueName(venue)}, ${score} percent busy`));
   el.setAttribute('aria-pressed', 'false');
   el.addEventListener('click', onClick);
 
   // A shut venue has no crowd. Painting it green at 12% reads as "quiet, go
   // now" for a place with the lights off.
   const shut = isShut(venue);
-  const ring = shut ? CROWD_CLOSED : crowdColor(score);
+  // A covered venue gets the neutral ring: green would say "quiet" about a
+  // venue whose level this visitor has not been shown.
+  const ring = (shut || covered) ? CROWD_CLOSED : crowdColor(score);
   const photo = document.createElement('div');
   photo.className = 'lpd-pin-photo';
   el.appendChild(photo);
@@ -393,7 +414,7 @@ function buildDemoPin(venue, onClick) {
   const badge = document.createElement('span');
   badge.className = 'lpd-pin-badge';
   badge.style.backgroundColor = ring;
-  badge.textContent = shut ? 'Closed' : `${score}%`;
+  badge.textContent = shut ? 'Closed' : (covered ? 'Sign up' : `${score}%`);
   el.appendChild(badge);
 
   return { el, photo, ring };
@@ -528,7 +549,7 @@ export default function LiveDemo() {
         setAnnounce(cardSentence(data.card));
         setPhase('ready');
       } else if (list.length > 0) {
-        const busiest = [...list].sort((a, b) => pct(b.score) - pct(a.score))[0];
+        const busiest = [...list].sort((a, b) => pinRank(b) - pinRank(a))[0];
         setFeaturedId(busiest.place_id);
         loadCard(busiest.place_id);
       } else {
@@ -702,7 +723,7 @@ export default function LiveDemo() {
   // out as a neighbour of a busier pin, nothing highlighted, and "tap another
   // pin to compare" pointing at four strangers.
   const ranked = useMemo(() => {
-    const sorted = [...venues].sort((a, b) => pct(b.score) - pct(a.score));
+    const sorted = [...venues].sort((a, b) => pinRank(b) - pinRank(a));
     const feature = featuredId ? sorted.find(v => v.place_id === featuredId) : null;
     return feature ? [feature, ...sorted.filter(v => v !== feature)] : sorted;
   }, [venues, featuredId]);
@@ -878,7 +899,10 @@ export default function LiveDemo() {
   // Read once and used twice, so the "Best time to go" line and the locked
   // note can never both decide they are the right thing to draw.
   const bestTime = (typeof selected?.best_time === 'string' && selected.best_time) ? selected.best_time : null;
-  const forecastLocked = forecastIsLocked(selected);
+  const covered = crowdCovered(selected);
+  // A covered card has its own panel, so the forecast line would say the same
+  // boundary twice.
+  const forecastLocked = !covered && forecastIsLocked(selected);
   const score = pct(selected?.score);
   const dialLabel = selected
     ? (shut
@@ -990,6 +1014,7 @@ export default function LiveDemo() {
                   {listVenues.map(v => {
                     const s = pct(v.score);
                     const off = isShut(v);
+                    const hidden = crowdCovered(v);
                     return (
                       <li key={v.place_id} style={{ borderTop: '1px solid var(--rule)' }}>
                         <button
@@ -1003,8 +1028,8 @@ export default function LiveDemo() {
                           }}
                         >
                           <span style={{ flex: 1, minWidth: 0 }}>{venueName(v)}</span>
-                          <span style={{ fontWeight: 700, color: off ? CROWD_CLOSED_TEXT : crowdTextColor(s) }}>
-                            {off ? 'Closed' : `${s}%`}
+                          <span style={{ fontWeight: 700, color: (off || hidden) ? CROWD_CLOSED_TEXT : crowdTextColor(s) }}>
+                            {off ? 'Closed' : (hidden ? 'Sign up' : `${s}%`)}
                           </span>
                         </button>
                       </li>
@@ -1029,7 +1054,11 @@ export default function LiveDemo() {
           {shownVenues.length > 0 && mapState !== 'failed' && (
             <ul className="sr-only" aria-label="Venues on the map">
               {shownVenues.map(v => (
-                <li key={v.place_id}>{isShut(v) ? `${venueName(v)}, closed right now` : `${venueName(v)}, ${pct(v.score)} percent busy`}</li>
+                <li key={v.place_id}>{isShut(v)
+                  ? `${venueName(v)}, closed right now`
+                  : (crowdCovered(v)
+                    ? `${venueName(v)}, crowd level shown with a free account`
+                    : `${venueName(v)}, ${pct(v.score)} percent busy`)}</li>
               ))}
             </ul>
           )}
@@ -1088,17 +1117,23 @@ export default function LiveDemo() {
                     slate rather than showing the model's guess at a crowd that
                     cannot exist. A red 74% over the word "Closed" was the worst
                     card this demo could draw. */}
-                <DemoDial
-                  score={shut ? 0 : score}
-                  color={shut ? CROWD_CLOSED : crowdColor(score)}
-                  textColor={shut ? CROWD_CLOSED_TEXT : crowdTextColor(score)}
-                  label={dialLabel}
-                />
+                {/* No dial on a covered card: an empty ring, or a ring at 0,
+                    would be a reading this visitor was not given. */}
+                {!covered && (
+                  <DemoDial
+                    score={shut ? 0 : score}
+                    color={shut ? CROWD_CLOSED : crowdColor(score)}
+                    textColor={shut ? CROWD_CLOSED_TEXT : crowdTextColor(score)}
+                    label={dialLabel}
+                  />
+                )}
                 <div className="lpd-card-title">
                   <h3>{venueName(selected)}</h3>
-                  <p className="lpd-label" style={{ color: shut ? CROWD_CLOSED_TEXT : crowdTextColor(score) }}>
-                    {shut ? 'Closed right now' : (selected.label || crowdWord(score))}
-                  </p>
+                  {(!covered || shut) && (
+                    <p className="lpd-label" style={{ color: shut ? CROWD_CLOSED_TEXT : crowdTextColor(score) }}>
+                      {shut ? 'Closed right now' : (selected.label || crowdWord(score))}
+                    </p>
+                  )}
                   {/* Built by joining the parts that exist. Interpolating them
                       straight left a rating star, an empty gap and "Open now"
                       on a venue Google has no address for, and a leading
@@ -1115,6 +1150,29 @@ export default function LiveDemo() {
                   )}
                 </div>
               </div>
+
+              {covered && (
+                <div
+                  className="lpd-covered"
+                  style={{
+                    margin: '14px 0 0',
+                    padding: '14px 16px',
+                    borderRadius: 12,
+                    border: '1px solid var(--rule)',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <p style={{ margin: 0, flex: '1 1 220px', fontSize: 14, lineHeight: 1.5, color: 'var(--ink-2)' }}>
+                    {COVERED_COPY}
+                  </p>
+                  <a className="lp-btn lp-btn-navy" href="/signup" style={{ minHeight: 44 }}>
+                    Create your account
+                  </a>
+                </div>
+              )}
 
               {bestTime && (
                 selected.best_is_now

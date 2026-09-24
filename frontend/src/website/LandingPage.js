@@ -219,7 +219,7 @@ function ProOfferCard({ offer }) {
       <ul className="lp-list">
         <li>Everything in Free</li>
         <li>150 Birdie messages a day instead of 10</li>
-        <li>Crowd forecasts without the monthly limit of 30</li>
+        <li>Crowd levels and forecasts for every venue, not just 30 a month</li>
       </ul>
       <a className="lp-btn lp-btn-navy" href="/pro">Get Flock Pro</a>
     </div>
@@ -972,7 +972,9 @@ export default function LandingPage() {
               <ul className="lp-list">
                 <li>Unlimited flocks and friends</li>
                 <li>Venue voting and group chat</li>
-                <li>Live crowd levels</li>
+                {/* With Pro on sale the free tier is 30 venues a month
+                    (services/forecastUsage.js); before that it is every venue. */}
+                <li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Live crowd levels'}</li>
                 <li>Budget matching and bill splitting</li>
                 <li>SOS and trusted contacts</li>
               </ul>
