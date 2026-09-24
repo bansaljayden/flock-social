@@ -594,6 +594,8 @@ function stubQuery(text) {
   if (has('banned_identities')) return { rows: [], rowCount: 0 };
   // A revoke drops the device rows too (2026-09-04).
   if (has('DELETE FROM device_tokens')) return { rows: [], rowCount: 0 };
+  // Whether the account holds a Roost customer to cancel first; this one does not.
+  if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) return { rows: [], rowCount: 0 };
   unmodelled.push(q);
   return { rows: [], rowCount: 0 };
 }

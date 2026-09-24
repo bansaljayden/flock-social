@@ -649,6 +649,21 @@ test('nothing outside routes/admin.js inserts a moderation_actions row', () => {
     }
   };
   walk(dir);
+  // ONE exception, and it is narrow. services/venueBilling.js records a Roost
+  // tier change caused by a Stripe subscription, in the same statement that
+  // makes it, as the admin comp route records a comp. It writes exactly one
+  // action, tier_changed, with a NULL moderator, because no person on the team
+  // decided it. Anything wider than that is an offender again.
+  const billingRel = path.join('services', 'venueBilling.js');
+  const idx = offenders.indexOf(billingRel);
+  if (idx !== -1) {
+    const src = fs.readFileSync(path.join(dir, billingRel), 'utf8');
+    const inserts = src.match(/INSERT\s+INTO\s+moderation_actions/gi) || [];
+    assert.strictEqual(inserts.length, 1, 'services/venueBilling.js may write one audit row shape, no more');
+    assert.match(src, /INSERT INTO moderation_actions \(moderator_id, target_user_id, action, content_type, content_id, reason\)\s+SELECT NULL, \$1::int, 'tier_changed', 'venue_profile'/,
+      'the Stripe writer may only record tier_changed, with no moderator');
+    offenders.splice(idx, 1);
+  }
   assert.deepStrictEqual(offenders, [], `these files write the moderation audit log from outside the admin router: ${offenders.join(', ')}`);
 });
 

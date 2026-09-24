@@ -76,6 +76,9 @@ const SUITE_SLOTS = {
                                  // statement in the app against a migrated
                                  // schema, so Postgres is the judge of
                                  // whether a parameter's types agree.
+  venueBillingWriter: 19,        // new in 2026-09-24; runs the Roost Stripe
+                                 // writer's one statement against a real,
+                                 // migrated schema.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

@@ -488,6 +488,10 @@ test('every route file that takes a body was actually looked at', () => {
     // routes/stripeWebhook.js: Stripe's signed POST, on the raw-bytes parser
     // under the webhook ceiling (STRIPE_WEBHOOK_BODY_ROUTE in server.js).
     'stripeWebhook',
+    // routes/venueBilling.js enrolled 2026-09-24: Roost on the web. Same shape
+    // as routes/pro.js: `plan` is one of two fixed strings, `sessionId` is
+    // capped at 200 chars, the portal POST reads no body. The default ceiling.
+    'venueBilling',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {

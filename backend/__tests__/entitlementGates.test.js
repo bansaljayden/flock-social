@@ -843,13 +843,20 @@ test('users.is_premium has exactly one writer, and it is the webhook', () => {
     'something other than the RevenueCat webhook writes users.is_premium. Every grant and every revocation has to come from the payment processor, or a subscription can be created or destroyed by something nobody is watching.');
 });
 
-test('venue_profiles.tier has exactly one writer, and it is behind requireAdmin', () => {
+test('venue_profiles.tier has two writers: the admin route behind requireAdmin, and the Stripe subscription writer', () => {
   // scripts/e2e-local.js is allowed and is not a product surface: it is the
   // local end-to-end harness, and driving venue_profiles.tier through free ->
   // premium -> garbage is the only way it can prove the gate from outside.
   const writers = writersOf('tier', 'venue_profiles').filter((f) => f !== 'scripts/e2e-local.js');
-  assert.deepStrictEqual(writers, ['routes/admin.js'],
-    'something other than the admin tier route writes venue_profiles.tier. A venue that can set its own tier is a venue that never pays.');
+  assert.deepStrictEqual(writers, ['routes/admin.js', 'services/venueBilling.js'],
+    'something other than the admin tier route and the Stripe subscription writer writes venue_profiles.tier. A venue that can set its own tier is a venue that never pays.');
+  // The second writer is reached only from a subscription it has just
+  // re-read from Stripe (never from a request body), and it keeps the paid
+  // tier behind venue_profiles.verified exactly as the admin route does.
+  const venueBillingSrc = codeOf(fs.readFileSync(path.join(BACKEND, 'services', 'venueBilling.js'), 'utf8'));
+  assert.match(venueBillingSrc, /const sub = await stripe\(\)\.subscriptions\.retrieve\(subscriptionId\);/);
+  assert.match(venueBillingSrc, /\$12::text = 'free' OR old\.verified = true/);
+  assert.ok(!/req\.body/.test(venueBillingSrc), 'the Stripe writer must never read a request');
   const admin = codeOf(fs.readFileSync(path.join(BACKEND, 'routes', 'admin.js'), 'utf8'));
   const stmt = admin.indexOf('UPDATE venue_profiles');
   assert.ok(stmt > 0, 'routes/admin.js no longer contains the tier UPDATE this sweep is anchored on');

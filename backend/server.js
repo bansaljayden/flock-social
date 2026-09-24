@@ -1585,6 +1585,7 @@ app.use('/api/events', apiLimiter, eventRoutes);      // Handles /api/events/sea
 app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Birdie AI assistant)
 app.use('/api/entitlements', apiLimiter, entitlementsRoutes); // Handles /api/entitlements (Flock Pro paywall status)
 app.use('/api/pro', proLimiter, apiLimiter, require('./routes/pro')); // Flock Pro on the web: Stripe Checkout, portal, confirm
+app.use('/api/venue-billing', proLimiter, apiLimiter, require('./routes/venueBilling')); // Roost on the web: Stripe Checkout, portal, confirm (shares proLimiter's per-account bucket)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)

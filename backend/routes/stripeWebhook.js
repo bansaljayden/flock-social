@@ -26,6 +26,7 @@
 const express = require('express');
 const pool = require('../config/database');
 const billing = require('../services/proBilling');
+const venueBilling = require('../services/venueBilling');
 const { syncPremiumFromRevenueCat } = require('./revenuecat');
 
 const router = express.Router();
@@ -44,6 +45,15 @@ const HANDLED = new Set([
   'customer.subscription.deleted',
 ]);
 
+// Roost also needs `created`: a subscription can exist (a trial that starts
+// with no charge) before anything else about it changes.
+const VENUE_HANDLED = new Set([
+  'checkout.session.completed',
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
+]);
+
 router.post('/', async (req, res) => {
   if (!billing.stripeWebhookConfigured() || !billing.stripeConfigured()) {
     return res.status(503).json({ error: 'Webhook not configured' });
@@ -57,6 +67,22 @@ router.post('/', async (req, res) => {
     event = billing.constructWebhookEvent(req.rawBody, signature);
   } catch (err) {
     return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  // ROOST, NOT PRO. A session or subscription created by services/venueBilling.js
+  // carries kind='venue' and no app_user_id, and goes to that file's writer
+  // instead of RevenueCat. Everything below this block is the Pro path,
+  // unchanged.
+  const eventObject = event.data && event.data.object ? event.data.object : null;
+  if (venueBilling.isVenueObject(eventObject)) {
+    if (!VENUE_HANDLED.has(event.type)) return res.json({ received: true, ignored: event.type });
+    try {
+      const result = await venueBilling.handleVenueEvent(event);
+      return res.json({ received: true, ...(result && result.ignored ? { ignored: result.ignored } : {}) });
+    } catch (err) {
+      console.error(`[stripe-webhook] venue ${event.type} failed:`, err?.message || err);
+      return res.status(500).json({ error: 'Webhook failed' });
+    }
   }
 
   if (!HANDLED.has(event.type)) return res.json({ received: true, ignored: event.type });

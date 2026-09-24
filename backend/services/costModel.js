@@ -999,8 +999,8 @@ const DEPENDENCIES = [
   {
     id: 'stripe',
     label: 'Stripe',
-    what: 'Card payments for Flock Pro bought on flockcorp.com, and the page where a web subscriber cancels. Off until PRO_WEB_CHECKOUT_ENABLED and the paywall are both on.',
-    where: 'backend/services/proBilling.js, routes/pro.js',
+    what: 'Card payments for Flock Pro and for Roost (venues) bought on flockcorp.com, and the page where a subscriber cancels. Pro is off until PRO_WEB_CHECKOUT_ENABLED and the paywall are both on; Roost until VENUE_BILLING_ENABLED and its price are set.',
+    where: 'backend/services/proBilling.js, routes/pro.js, services/venueBilling.js, routes/venueBilling.js',
     group: 'free',
     pricing: { type: 'free', rateGroup: 'stripe' },
     configuredEnv: ['STRIPE_SECRET_KEY'],

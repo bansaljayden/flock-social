@@ -198,6 +198,8 @@ function handle(text, params = []) {
   // Whether the account ever bought Pro on the web, read before the deletion so a
   // Stripe subscription can be cancelled first. Nobody in this fixture has one.
   if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) return { rows: [{ stripe_customer_id: null }], rowCount: 1 };
+  // Same question for a Roost subscription; nobody here runs a venue.
+  if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) return { rows: [], rowCount: 0 };
 
   // deletion transaction
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };

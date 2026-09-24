@@ -37,6 +37,7 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
+import VenueBillingControl from '../components/venue/VenueBillingControl';
 import {
   BASE_URL,
   askAdvisor,
@@ -2433,7 +2434,10 @@ export default function VenueDashboard({
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueBillingOn && venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span> : <button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>}
+                  {/* Roost is bought on the web (components/venue/VenueBillingControl.js).
+                      Inside the iOS shell, or while it is not on sale, the
+                      control hands back the email request below unchanged. */}
+                  {venueBillingOn && venueTier === 'pro' ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>} />}
                 </div>
 
                 {/* THE OTHER AXIS, said once rather than in three lists.

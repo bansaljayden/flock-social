@@ -1166,6 +1166,44 @@ export async function confirmProCheckout(sessionId) {
   });
 }
 
+// Roost bought on the web by a verified venue (backend/routes/venueBilling.js).
+// Stripe is the checkout and venue_subscriptions is the record, written by the
+// signed webhook and by the confirm call below.
+//
+// GET /api/venue-billing/status -> { billingEnabled, checkoutAvailable, plans,
+// trialDays, taxAdded, verified, tier, source, status, expiresAt, canManage }.
+// plans is empty whenever checkout is off, and the dashboard then shows no
+// price from it.
+export async function getVenueBillingStatus() {
+  return request('/api/venue-billing/status');
+}
+
+// POST /api/venue-billing/checkout { plan } -> { url }. 409 VENUE_NOT_VERIFIED,
+// ALREADY_SUBSCRIBED, PLAN_ALREADY_GRANTED and 503 CHECKOUT_OFF arrive as
+// err.code. retry: false because a replay would open a second session.
+export async function startVenueCheckout(plan) {
+  return request('/api/venue-billing/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ plan }),
+    retry: false,
+  });
+}
+
+// POST /api/venue-billing/portal -> { url } of the Stripe customer portal.
+export async function openVenuePortal() {
+  return request('/api/venue-billing/portal', { method: 'POST', retry: false });
+}
+
+// POST /api/venue-billing/confirm { sessionId } after Stripe sends the owner
+// back to /app?venue_billing=success&session_id=cs_... -> { complete, tier }.
+export async function confirmVenueCheckout(sessionId) {
+  return request('/api/venue-billing/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+    retry: false,
+  });
+}
+
 // Venue profile
 //
 // THE B2B SURFACE HAD NO INSTRUMENTATION AT ALL, and it is the revenue story.

@@ -245,6 +245,8 @@ function handle(text, params = []) {
   if (has('FROM flocks f') && has('WHERE f.creator_id = $1')) return { rows: [], rowCount: 0 };
   // Whether the account ever bought Pro on the web; nobody here has.
   if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) return { rows: [{ stripe_customer_id: null }], rowCount: 1 };
+  // Nor a Roost customer; nobody here runs a venue.
+  if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) return { rows: [], rowCount: 0 };
 
   // deletion transaction
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };
