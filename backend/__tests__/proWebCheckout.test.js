@@ -29,7 +29,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 // ---- the fake Stripe ------------------------------------------------------
 const stripeCalls = [];
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {} };
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false };
 function FakeStripe() {
   return {
     customers: {
@@ -39,6 +39,18 @@ function FakeStripe() {
     subscriptions: {
       list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },
       cancel: async (id, params, opts) => { stripeCalls.push(['subscriptions.cancel', id, opts]); return { id, status: 'canceled' }; },
+      update: async (id, params) => {
+        stripeCalls.push(['subscriptions.update', id, params]);
+        const s = stripeState.subscriptions.find((x) => x.id === id) || { id };
+        return { ...s, cancel_at_period_end: !!params.cancel_at_period_end };
+      },
+    },
+    promotionCodes: {
+      list: async (args) => {
+        stripeCalls.push(['promotionCodes.list', args]);
+        if (stripeState.promoLookupFails) throw new Error('stripe is down');
+        return { data: stripeState.promoCodes.filter((p) => p.code === args.code && (!args.active || p.active)) };
+      },
     },
     charges: {
       retrieve: async (id) => { stripeCalls.push(['charges.retrieve', id]); return stripeState.charges[id] || { id, customer: null }; },
@@ -48,7 +60,17 @@ function FakeStripe() {
     },
     checkout: {
       sessions: {
-        create: async (args) => { stripeCalls.push(['checkout.create', args]); return { id: 'cs_test_1', url: 'https://checkout.stripe.com/c/pay/cs_test_1' }; },
+        create: async (args) => {
+          stripeCalls.push(['checkout.create', args]);
+          if (args.discounts && stripeState.refuseDiscounts) {
+            // The shape of Stripe's refusal of a code this customer cannot use.
+            const err = new Error('This promotion code cannot be redeemed because the associated customer has prior transactions.');
+            err.type = 'StripeInvalidRequestError';
+            err.rawType = 'invalid_request_error';
+            throw err;
+          }
+          return { id: 'cs_test_1', url: 'https://checkout.stripe.com/c/pay/cs_test_1' };
+        },
         retrieve: async (id) => stripeState.sessions[id] || null,
         list: async (args) => { stripeCalls.push(['checkout.list', args]); return { data: stripeState.openSessions }; },
         expire: async (id) => { stripeCalls.push(['checkout.expire', id]); return { id, status: 'expired' }; },
@@ -159,6 +181,9 @@ test.beforeEach(() => {
   rcSubscriptions = null;
   stripeState.subscriptions = [];
   stripeState.charges = {};
+  stripeState.promoCodes = [];
+  stripeState.promoLookupFails = false;
+  stripeState.refuseDiscounts = false;
   stripeState.sessions = {};
   stripeState.openSessions = [];
   billing.__test.resetStripe();
@@ -722,4 +747,258 @@ test('on the fallback path a sandbox event writes nothing unless the account is 
     assert.strictEqual(res.body.ignored, 'sandbox');
     assert.ok(!calls.some((c) => c.text.includes('SET is_premium')));
   } finally { restore(); }
+});
+
+// ---- the research-backed checkout (2026-09-24) ----
+
+const withCustomer = () => stubPool(async (sql) => {
+  if (sql.includes('SELECT id, email, name FROM users')) return { rows: [ME] };
+  if (sql.includes('SELECT is_premium')) return { rows: [{ is_premium: false }] };
+  if (sql.includes('SELECT stripe_customer_id')) return { rows: [{ stripe_customer_id: 'cus_TEST123' }] };
+  return null;
+});
+const lastSession = () => stripeCalls.filter((c) => c[0] === 'checkout.create').pop()[1];
+
+test('the text above Pay carries the five renewal terms, and the return lands on what the buyer was blocked from', async () => {
+  setEnv(ON);
+  const { restore } = withCustomer();
+  try {
+    await billing.createCheckout(ME, 'monthly', { from: 'forecast', place: 'ChIJ_abc-123' });
+    const s = lastSession();
+    const submit = s.custom_text.submit.message;
+    assert.match(submit, /renews every month at \$3\.99 until you cancel/);
+    assert.match(submit, /There is no minimum term\./);
+    assert.match(submit, /Cancel any time in Flock on the web \(You, Flock Pro, Cancel subscription\) or by emailing social@flockcorp\.com/);
+    assert.match(submit, /Full refund within 14 days of your first payment\./);
+    assert.ok(submit.length <= 1200, 'Stripe caps custom text at 1200 characters');
+    assert.match(s.success_url, /\/app\?pro=success&session_id=\{CHECKOUT_SESSION_ID\}&from=forecast&place=ChIJ_abc-123$/);
+    // The consent text beside the box is unchanged.
+    assert.match(s.custom_text.terms_of_service_acceptance.message, /or the lower price shown above if a code applies/);
+  } finally { restore(); }
+});
+
+test('only a listed return place and a place-id-shaped venue reach the return URL', async () => {
+  setEnv(ON);
+  const { restore } = withCustomer();
+  try {
+    await billing.createCheckout(ME, 'monthly', { from: 'https://evil.example', place: 'ChIJ_abc-123' });
+    assert.match(lastSession().success_url, /session_id=\{CHECKOUT_SESSION_ID\}$/);
+    billing.__test.resetStripe();
+    await billing.createCheckout(ME, 'monthly', { from: 'birdie', place: 'ChIJ_abc-123' });
+    assert.match(lastSession().success_url, /&from=birdie$/, 'a venue rides along only with the forecast return');
+    billing.__test.resetStripe();
+    await billing.createCheckout(ME, 'monthly', { from: 'forecast', place: '../../x' });
+    assert.match(lastSession().success_url, /&from=forecast$/);
+  } finally { restore(); }
+});
+
+test('the checkout route refuses a return place, venue or code outside its shapes', async () => {
+  setEnv(ON);
+  const { restore } = withCustomer();
+  try {
+    for (const bad of [{ from: 'elsewhere' }, { from: 'forecast', place: 'a b' }, { code: 'FLOCK-FRIENDS' }, { code: 'x'.repeat(40) }]) {
+      const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly', ...bad });
+      assert.strictEqual(res.status, 400, JSON.stringify(bad));
+    }
+    const ok = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly', from: 'forecast', place: 'ChIJ_abc-123' });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+  } finally { restore(); }
+});
+
+test('a code from a shared link is applied for the buyer; an unknown or unreadable one leaves the code field', async () => {
+  setEnv(ON);
+  stripeState.promoCodes = [{ id: 'promo_1', code: 'FLOCKFRIENDS', active: true }, { id: 'promo_2', code: 'OLDCODE', active: false }];
+  const { restore } = withCustomer();
+  try {
+    await billing.createCheckout(ME, 'monthly', { code: 'FLOCKFRIENDS' });
+    let s = lastSession();
+    assert.deepStrictEqual(s.discounts, [{ promotion_code: 'promo_1' }]);
+    assert.ok(!('allow_promotion_codes' in s), 'Stripe refuses discounts together with the code field');
+
+    for (const code of ['OLDCODE', 'NOPE', undefined]) {
+      billing.__test.resetStripe();
+      await billing.createCheckout(ME, 'monthly', code ? { code } : {});
+      s = lastSession();
+      assert.strictEqual(s.allow_promotion_codes, true, String(code));
+      assert.ok(!('discounts' in s));
+    }
+
+    billing.__test.resetStripe();
+    stripeState.promoLookupFails = true;
+    await billing.createCheckout(ME, 'monthly', { code: 'FLOCKFRIENDS' });
+    assert.strictEqual(lastSession().allow_promotion_codes, true, 'a failed lookup never blocks the purchase');
+  } finally { restore(); }
+});
+
+test('a live code Stripe refuses for this buyer still ends at a payable checkout, with the code field', async () => {
+  setEnv(ON);
+  stripeState.promoCodes = [{ id: 'promo_1', code: 'FIRSTONLY', active: true }];
+  stripeState.refuseDiscounts = true;
+  const { restore } = withCustomer();
+  try {
+    const url = await billing.createCheckout(ME, 'monthly', { code: 'FIRSTONLY' });
+    assert.strictEqual(url, 'https://checkout.stripe.com/c/pay/cs_test_1');
+    const creates = stripeCalls.filter((c) => c[0] === 'checkout.create').map((c) => c[1]);
+    assert.strictEqual(creates.length, 2);
+    assert.deepStrictEqual(creates[0].discounts, [{ promotion_code: 'promo_1' }]);
+    assert.strictEqual(creates[1].allow_promotion_codes, true);
+    assert.ok(!('discounts' in creates[1]));
+  } finally { restore(); }
+});
+
+test('cancel and resume act only on this account\'s own live Pro subscription, never a venue\'s or anyone else\'s', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [
+    { id: 'sub_mine', status: 'active', metadata: { app_user_id: '7' }, items: { data: [{ current_period_end: 1790000000 }] } },
+    { id: 'sub_roost', status: 'active', metadata: { kind: 'venue', flock_venue_user_id: '7' } },
+    { id: 'sub_theirs', status: 'active', metadata: { app_user_id: '8' } },
+    { id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } },
+  ];
+  const { restore } = withCustomer();
+  try {
+    let res = await call('/api/pro', proRoutes, 'POST', '/api/pro/cancel');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(res.body, { cancelAtPeriodEnd: true, periodEnd: new Date(1790000000 * 1000).toISOString() });
+    let updates = stripeCalls.filter((c) => c[0] === 'subscriptions.update');
+    assert.deepStrictEqual(updates.map((u) => [u[1], u[2]]), [['sub_mine', { cancel_at_period_end: true }]]);
+
+    stripeCalls.length = 0;
+    res = await call('/api/pro', proRoutes, 'POST', '/api/pro/resume');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.cancelAtPeriodEnd, false);
+    updates = stripeCalls.filter((c) => c[0] === 'subscriptions.update');
+    assert.deepStrictEqual(updates.map((u) => [u[1], u[2]]), [['sub_mine', { cancel_at_period_end: false }]]);
+  } finally { restore(); }
+});
+
+test('cancel with no web subscription says so, and needs Stripe configured', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } }];
+  let { restore } = withCustomer();
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/cancel');
+    assert.strictEqual(res.status, 404);
+    assert.strictEqual(res.body.code, 'NO_WEB_SUBSCRIPTION');
+  } finally { restore(); }
+  setEnv({ ...ON, STRIPE_SECRET_KEY: undefined });
+  ({ restore } = withCustomer());
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/cancel');
+    assert.strictEqual(res.status, 503);
+  } finally { restore(); }
+});
+
+test('/status says when a web subscription is set to end, so the page offers Keep Pro', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [
+    { id: 'sub_mine', status: 'active', cancel_at_period_end: true, cancel_at: 1790000000, metadata: { app_user_id: '7' } },
+  ];
+  const { restore } = withCustomer();
+  try {
+    const status = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(status.status, 200);
+    assert.strictEqual(status.body.hasWebSubscription, true);
+    assert.strictEqual(status.body.cancelAtPeriodEnd, true);
+    assert.strictEqual(status.body.periodEnd, new Date(1790000000 * 1000).toISOString());
+
+    // One that will still renew means the page offers Cancel, not Keep Pro.
+    stripeState.subscriptions.push({ id: 'sub_mine2', status: 'active', cancel_at_period_end: false, metadata: { app_user_id: '7' } });
+    billing.__test.resetStripe();
+    const mixed = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(mixed.body.cancelAtPeriodEnd, false);
+
+    // Nothing live: no web subscription, and nothing claimed about one.
+    stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } }];
+    billing.__test.resetStripe();
+    const none = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(none.body.hasWebSubscription, false);
+    assert.strictEqual(none.body.cancelAtPeriodEnd, false);
+    assert.strictEqual(none.body.periodEnd, null);
+  } finally { restore(); }
+});
+
+// The acknowledgment email (California's automatic renewal law).
+const emailService = require('../services/emailService');
+const completedSession = (over = {}) => ({
+  id: 'cs_test_ack1', mode: 'subscription', status: 'complete', subscription: 'sub_77',
+  metadata: { app_user_id: '7', plan: 'monthly' }, customer_details: { email: 'parent@example.com' },
+  amount_total: 399, currency: 'usd', ...over,
+});
+
+function stubSend(impl) {
+  const real = emailService.sendEmail;
+  const sent = [];
+  emailService.sendEmail = async (msg) => { sent.push(msg); return impl ? impl(msg) : { sent: true, id: 'em_1' }; };
+  return { sent, restore: () => { emailService.sendEmail = real; } };
+}
+
+test('a completed web checkout sends one acknowledgment to the payer, with the renewal, the cancel path and the refund', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  const mail = stubSend();
+  let acknowledged = false;
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT 1 FROM users')) return { rows: [{ '?column?': 1 }] };
+    if (sql.includes('FROM pro_purchase_acknowledgments')) return { rows: acknowledged ? [{ '?column?': 1 }] : [] };
+    if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam Rivera', email: 'sam@example.com' }] };
+    if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) { acknowledged = true; return { rows: [], rowCount: 1 }; }
+    return null;
+  });
+  try {
+    const res = await postWebhook({ type: 'checkout.session.completed', data: { object: completedSession() } }, 't=1,v1=good');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(mail.sent.length, 1);
+    const m = mail.sent[0];
+    assert.strictEqual(m.to, 'parent@example.com', 'the payer, who is a parent when a parent paid');
+    assert.strictEqual(m.category, 'transactional');
+    assert.match(m.text, /Plan: Flock Pro, monthly, \$3\.99 a month\./);
+    assert.match(m.text, /Paid today: \$3\.99\./);
+    assert.match(m.text, /renews every month at \$3\.99 until you cancel/);
+    assert.match(m.text, /To cancel, sign in to Flock at \S+\/app, then You, then Flock Pro, then Cancel subscription\./);
+    assert.ok(!/we email you/i.test(m.text), 'no promise the code does not keep');
+    assert.match(m.text, /within 14 days of your first payment for a full refund/);
+    assert.match(m.text, /Sold by Flock Social LLC/);
+    assert.ok(!/\u2014/.test(m.text), 'no em dash');
+    assert.ok(calls.some((c) => c.text.includes('INSERT INTO pro_purchase_acknowledgments')));
+
+    // Stripe delivers the same event again: nothing more is sent.
+    await postWebhook({ type: 'checkout.session.completed', data: { object: completedSession() } }, 't=1,v1=good');
+    assert.strictEqual(mail.sent.length, 1);
+  } finally { restore(); mail.restore(); }
+});
+
+test('an acknowledgment that fails to send never fails the Pro write, and records nothing so it is tried again', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  for (const impl of [() => ({ sent: false, error: 'provider down' }), () => { throw new Error('boom'); }]) {
+    const mail = stubSend(impl);
+    const { calls, restore } = stubPool(async (sql) => {
+      if (sql.includes('SELECT 1 FROM users')) return { rows: [{ '?column?': 1 }] };
+      if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+      return null;
+    });
+    try {
+      const res = await postWebhook({ type: 'checkout.session.completed', data: { object: completedSession() } }, 't=1,v1=good');
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(calls.find((c) => c.text.includes('SET is_premium')).params, [true, 7]);
+      assert.ok(!calls.some((c) => c.text.includes('INSERT INTO pro_purchase_acknowledgments')));
+    } finally { restore(); mail.restore(); }
+  }
+});
+
+test('the return to the app is a second chance for the acknowledgment', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  stripeState.sessions.cs_test_ack1 = completedSession();
+  const mail = stubSend();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+    return null;
+  });
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/confirm', { sessionId: 'cs_test_ack1' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(mail.sent.length, 1);
+  } finally { restore(); mail.restore(); }
 });

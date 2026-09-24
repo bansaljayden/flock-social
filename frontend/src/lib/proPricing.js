@@ -18,6 +18,32 @@ export function yearlySavingsPercent(monthlyAmount, yearlyAmount) {
   return pct > 0 ? pct : null;
 }
 
+// What a yearly plan comes to a month, for the small line under its billed
+// price. Rounded UP to the cent, so it never looks cheaper than it is. "$2.50"
+// for USD, "2.50 EUR" otherwise, the same shapes the server's labels use.
+export function perMonthLabel(yearlyPlan) {
+  const cents = Number(yearlyPlan?.unitAmount);
+  if (!Number.isFinite(cents) || cents <= 0 || yearlyPlan?.interval !== 'year') return null;
+  const amount = (Math.ceil(cents / 12) / 100).toFixed(2);
+  const currency = String(yearlyPlan.currency || '').toUpperCase();
+  return currency === 'USD' ? `$${amount}` : `${amount} ${currency}`;
+}
+
+// The same for an App Store product: RevenueCat's own per-month string when it
+// has one, else computed from the numeric price in the product's currency.
+export function storePerMonthLabel(product) {
+  if (!product) return null;
+  if (typeof product.pricePerMonthString === 'string' && product.pricePerMonthString) return product.pricePerMonthString;
+  const price = Number(product.price);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const perMonth = Math.ceil((price / 12) * 100) / 100;
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: product.currencyCode || 'USD' }).format(perMonth);
+  } catch {
+    return null;
+  }
+}
+
 // The saving between two /api/pro/status plans, or null. Plans in different
 // currencies are not compared at all.
 export function planSavingsPercent(monthlyPlan, yearlyPlan) {

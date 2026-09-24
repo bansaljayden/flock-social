@@ -1141,12 +1141,31 @@ export async function getProStatus() {
 // POST /api/pro/checkout { plan } -> { url } of a Stripe hosted checkout.
 // 409 ALREADY_PRO / ALREADY_SUBSCRIBED and 503 CHECKOUT_OFF arrive as
 // err.code. retry: false because a replay would open a second session.
-export async function startProCheckout(plan) {
+//
+// options.from ('forecast' | 'birdie' | 'settings' | 'pro_page') and, for a
+// forecast, options.place send the buyer back to what they were blocked from
+// after paying; options.code applies a promotion code from a shared link. The
+// server checks all three against fixed shapes.
+export async function startProCheckout(plan, options = {}) {
+  const body = { plan };
+  if (options.from) body.from = options.from;
+  if (options.from === 'forecast' && options.place) body.place = options.place;
+  if (options.code) body.code = options.code;
   return request('/api/pro/checkout', {
     method: 'POST',
-    body: JSON.stringify({ plan }),
+    body: JSON.stringify(body),
     retry: false,
   });
+}
+
+// POST /api/pro/cancel and /resume -> { cancelAtPeriodEnd, periodEnd }. Flock's
+// own buttons for a web subscription, since Stripe's portal is for adults.
+export async function cancelProSubscription() {
+  return request('/api/pro/cancel', { method: 'POST', retry: false });
+}
+
+export async function resumeProSubscription() {
+  return request('/api/pro/resume', { method: 'POST', retry: false });
 }
 
 // POST /api/pro/portal -> { url } of the Stripe customer portal, where a web

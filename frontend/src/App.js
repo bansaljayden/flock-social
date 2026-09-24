@@ -6683,7 +6683,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
           setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
         }
-        if (data && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
+        if (data && !data.forecastAccess?.locked && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       })
       .catch(() => {
         // Recorded, not swallowed. openVenueDetail sets this and the map-marker
@@ -7383,7 +7383,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // RevenueCat webhook), fetched once at boot and re-fetched after a purchase.
   // paywallTrigger doubles as the sheet's open state + contextual headline.
   const [entitlements, setEntitlements] = useState(null); // { isPremium, paywallEnabled, birdie }
-  const [paywallTrigger, setPaywallTrigger] = useState(null); // 'birdie' | 'settings' | null
+  const [paywallTrigger, setPaywallTrigger] = useState(null); // 'birdie' | 'forecast' | 'settings' | null
+  // The venue a locked forecast opened the sheet on, so the trip back from
+  // Stripe can reopen it. Children keep calling setPaywallTrigger(trigger);
+  // the venue card is handed openPaywall and adds the place as a second
+  // argument. Cleared when the sheet closes, so it never outlives its opening.
+  const [paywallPlace, setPaywallPlace] = useState(null);
+  const openPaywall = useCallback((trigger, place) => {
+    setPaywallPlace(typeof place === 'string' && place ? place : null);
+    setPaywallTrigger(trigger);
+  }, []);
   const isPro = !!entitlements?.isPremium;
   const refreshEntitlements = useCallback(() => {
     getEntitlements().then((data) => {
@@ -7449,12 +7458,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // records the store and leaves the plan 'unknown' rather than guess.
         trackPurchaseCompleted('web');
         showToast("You're Pro.");
+        // Back to what the buyer was blocked from (lib/proReturn.js checks
+        // both values against fixed shapes): the venue whose crowd level was
+        // covered, or Birdie.
+        if (ret.from === 'forecast' && ret.place) openVenueDetail(ret.place, null, { panMap: true });
+        else if (ret.from === 'birdie') setAiChatMode('panel');
       } else if (outcome === 'pending') showToast('Your payment went through. Pro can take a few minutes to switch on.', 'info');
       else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Pro will switch on shortly.', 'info');
       else showToast('We could not confirm your purchase yet. If you paid, Pro will switch on shortly.', 'info');
     });
     return () => { cancelled = true; };
-  }, [refreshEntitlements, showToast]);
+  }, [refreshEntitlements, showToast, openVenueDetail]);
   useEffect(() => {
     refreshEntitlements();
     // Safe no-op on web; on iOS links RevenueCat's app_user_id to our user id
@@ -8047,6 +8061,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (p && typeof p.score === 'number' && v.crowd !== p.score) {
           changed = true;
           return { ...v, crowd: p.score, crowdLabel: p.label || v.crowdLabel };
+        }
+        // A row the server withheld (a spent month, a venue not opened this
+        // month) takes back a number an earlier, unlocked read left behind.
+        if (p && p.crowdLocked && (v.crowd != null || v.crowdLabel != null)) {
+          changed = true;
+          return { ...v, crowd: null, crowdLabel: null };
         }
         return v;
       });
@@ -14265,7 +14285,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       crowdAlternatives, crowdData, crowdFetchFailed, crowdLoading, handleCheckIn, lastCheckinAt,
       openVenueDetail, partySize, pickingVenueForCreate, pickingVenueForDm, pickingVenueForFlockId,
       pinDmVenueNow, selectedDmId, sensorData, sensorHistory, setActiveVenue, setCrowdAlternatives,
-      setCrowdData, setCurrentScreen, setCurrentTab, setPartySize, setPaywallTrigger,
+      setCrowdData, setCurrentScreen, setCurrentTab, setPartySize, setPaywallTrigger: openPaywall,
       setPickingVenueForCreate, setPickingVenueForDm, setPickingVenueForFlockId, setSelectedDmId,
       setSelectedFlockId, setSelectedVenueForCreate, setVenueDetailHistory, setVenueDetailReturnTo,
       skipCrowdFetchRef, updateFlockVenue, venueDetailHistory, venueDetailReturnTo,
@@ -17264,7 +17284,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <PaywallSheet
                 open
                 trigger={paywallTrigger}
-                onClose={() => setPaywallTrigger(null)}
+                birdieResetsAt={aiResetsAt}
+                place={paywallPlace}
+                onClose={() => { setPaywallTrigger(null); setPaywallPlace(null); }}
                 showToast={showToast}
                 onUpgraded={confirmUpgrade}
               />

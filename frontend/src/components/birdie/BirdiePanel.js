@@ -92,18 +92,12 @@ import Icons from '../ui/Icons';
 import BirdieBird, { BirdieStill, WARM_BIRD } from '../ui/BirdieBird';
 import { BASE_URL } from '../../services/api';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
+import { birdieBackText } from '../../lib/meterResets';
 
-// When today's free messages come back, in the reader's own clock. The meter
-// is a UTC day (backend/services/birdieUsage.js), so without a reset time from
-// the server the next UTC midnight is the true answer, which is evening across
-// the US. "tomorrow" only when that is a different local date.
+// When today's free messages come back, in the reader's own clock
+// (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
 function chirpsBackText(aiResetsAt) {
-  const now = new Date();
-  const at = aiResetsAt ? new Date(aiResetsAt)
-    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-  if (!Number.isFinite(at.getTime())) return 'tomorrow';
-  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return at.toDateString() === now.toDateString() ? `at ${time}` : `tomorrow at ${time}`;
+  return birdieBackText(aiResetsAt);
 }
 
 export default function BirdiePanel({

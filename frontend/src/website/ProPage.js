@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import './PrivacyPolicy.css';
 import './ProPage.css';
 import SiteFooter from './SiteFooter';
-import { getProStatus, getToken, openProPortal, startProCheckout, trackPaywallShown } from '../services/api';
-import { planSavingsPercent } from '../lib/proPricing';
+import { cancelProSubscription, getProStatus, getToken, openProPortal, resumeProSubscription, startProCheckout, trackPaywallShown } from '../services/api';
+import { perMonthLabel, planSavingsPercent } from '../lib/proPricing';
 import { rememberReturnAfterSignIn } from '../lib/returnAfterSignIn';
 
 /* /pro: Flock Pro on the web.
@@ -33,7 +33,7 @@ const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
 const FORECASTS_FREE_MONTHLY = 30;
 
-const DESCRIPTION = 'Flock Pro raises the Birdie and crowd forecast limits. What it costs, what changes, and how to cancel.';
+const DESCRIPTION = 'Flock Pro lifts the Birdie limit and the monthly limit on crowd levels and forecasts. What it costs, what changes, and how to cancel.';
 
 const READABLE = { color: 'var(--pp-ink-2)' };
 
@@ -60,6 +60,36 @@ function planName(plan) {
   return plan?.id === 'yearly' ? 'yearly' : 'monthly';
 }
 
+// A promotion code from a shared link (/pro?code=FLOCKFRIENDS). Letters and
+// digits only; the server looks it up and applies it only if it is live.
+// Kept for half an hour in this tab, so signing in on the way does not lose it.
+const CODE_RE = /^[A-Za-z0-9]{3,32}$/;
+const CODE_KEY = 'flock_pro_code';
+const CODE_TTL_MS = 30 * 60 * 1000;
+
+function readCode() {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search || '').get('code');
+    if (fromUrl && CODE_RE.test(fromUrl)) {
+      try { window.sessionStorage.setItem(CODE_KEY, JSON.stringify({ code: fromUrl, at: Date.now() })); } catch { /* storage refused */ }
+      return fromUrl.toUpperCase();
+    }
+    const raw = window.sessionStorage.getItem(CODE_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    const fresh = v && CODE_RE.test(v.code) && Date.now() - Number(v.at) < CODE_TTL_MS;
+    return fresh ? String(v.code).toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function longDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || !Number.isFinite(d.getTime())) return null;
+  return d.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 function cancelledReturn() {
   try {
     return new URLSearchParams(window.location.search || '').get('checkout') === 'cancelled';
@@ -76,9 +106,16 @@ export default function ProPage() {
   const [status, setStatus] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [selected, setSelected] = useState('monthly');
-  const [busy, setBusy] = useState(false);
+  // Which action is in flight: 'checkout' | 'portal' | 'renewal'. One at a
+  // time, and only the button doing it says so ("Opening billing" under a
+  // cancel that is still running was a false statement).
+  const [pending, setPending] = useState(null);
+  const busy = pending !== null;
   const [actionError, setActionError] = useState('');
   const [cancelled] = useState(cancelledReturn);
+  const [code] = useState(readCode);
+  // The cancel step asks once before it acts.
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   // Signed out: the public offer, so a visitor sees what Pro costs before
   // being asked to sign in (the homepage already prints the same prices).
   const [offer, setOffer] = useState(null);
@@ -139,29 +176,46 @@ export default function ProPage() {
 
   const buy = async () => {
     if (busy || !plan) return;
-    setBusy(true);
+    setPending('checkout');
     setActionError('');
     try {
-      const { url } = await startProCheckout(plan.id);
+      const { url } = await startProCheckout(plan.id, { from: 'pro_page', code: code || undefined });
       if (!url) throw new Error('Could not start checkout. Try again.');
       window.location.assign(url);
     } catch (err) {
-      setBusy(false);
+      setPending(null);
       if (err?.code === 'ALREADY_PRO' || err?.code === 'ALREADY_SUBSCRIBED' || err?.code === 'CHECKOUT_OFF') load();
       setActionError(err?.message || 'Could not start checkout. Try again.');
     }
   };
 
+  // Flock's own cancel, and taking it back. Stripe's portal is for people 18
+  // and over, and much of the audience is younger, so these do not go there.
+  const changeRenewal = async (cancel) => {
+    if (busy) return;
+    setPending('renewal');
+    setActionError('');
+    try {
+      const result = cancel ? await cancelProSubscription() : await resumeProSubscription();
+      setStatus((s) => (s ? { ...s, hasWebSubscription: true, cancelAtPeriodEnd: !!result?.cancelAtPeriodEnd, periodEnd: result?.periodEnd || s.periodEnd } : s));
+      setConfirmingCancel(false);
+    } catch (err) {
+      setActionError(err?.message || (cancel ? 'Could not cancel just now. Try again.' : 'Could not keep Pro just now. Try again.'));
+    } finally {
+      setPending(null);
+    }
+  };
+
   const manage = async () => {
     if (busy) return;
-    setBusy(true);
+    setPending('portal');
     setActionError('');
     try {
       const { url } = await openProPortal();
       if (!url) throw new Error('Could not open billing. Try again.');
       window.location.assign(url);
     } catch (err) {
-      setBusy(false);
+      setPending(null);
       setActionError(err?.message || 'Could not open billing. Try again.');
     }
   };
@@ -178,8 +232,10 @@ export default function ProPage() {
             {offerPlans.map((p) => (
               <li key={p.id}>
                 <strong>{p.id === 'yearly' ? 'Yearly' : 'Monthly'}</strong>
+                {p.id === 'yearly' && <span className="pro-tag">Best value</span>}
                 {', '}
                 {priceText(p)}{offerTax} a {periodWord(p)}
+                {p.id === 'yearly' && perMonthLabel(p) ? `, ${perMonthLabel(p)} a month` : ''}
                 {p.id === 'yearly' && offerSavings ? `. ${offerSavings}% less than 12 months of monthly.` : ''}
               </li>
             ))}
@@ -203,9 +259,21 @@ export default function ProPage() {
     purchase = (
       <>
         <p className="pro-note">You already have Flock Pro on this account.</p>
+        {status.hasWebSubscription && (
+          <RenewalControls
+            status={status}
+            busy={busy}
+            working={pending === 'renewal'}
+            confirming={confirmingCancel}
+            onAskCancel={() => setConfirmingCancel(true)}
+            onNever={() => setConfirmingCancel(false)}
+            onCancel={() => changeRenewal(true)}
+            onResume={() => changeRenewal(false)}
+          />
+        )}
         {status.canManageWeb && (
-          <button type="button" className="pro-cta" onClick={manage} disabled={busy} aria-busy={busy || undefined}>
-            {busy ? 'Opening billing' : 'Manage web subscription'}
+          <button type="button" className="pro-cta pro-cta-quiet" onClick={manage} disabled={busy} aria-busy={busy || undefined}>
+            {pending === 'portal' ? 'Opening billing' : 'Payment method and invoices'}
           </button>
         )}
         {/* Shown either way: an account can be Pro through Apple and still
@@ -234,17 +302,24 @@ export default function ProPage() {
                 />
                 <span>
                   <strong>{p.id === 'yearly' ? 'Yearly' : 'Monthly'}</strong>
+                  {p.id === 'yearly' && <span className="pro-tag">Best value</span>}
                   {', '}
                   {priceText(p)} a {periodWord(p)}
+                  {p.id === 'yearly' && perMonthLabel(p) ? `, ${perMonthLabel(p)} a month` : ''}
                   {p.id === 'yearly' && savings ? `. ${savings}% less than 12 months of monthly.` : ''}
                 </span>
               </label>
             ))}
           </fieldset>
         )}
+        {/* "Before you pay" names the full price; a code lowers it on Stripe's
+            page, which is the price actually charged. */}
+        {code && <p className="pro-note">Code {code} is applied at checkout if it is still active. The price on the checkout page already includes it.</p>}
         <BeforeYouPay plan={plan} trialDays={trialDays} tax={tax} />
+        {/* The button says what it charges (the research notes: a CTA that
+            states the price, and the billed amount as the plainest number). */}
         <button type="button" className="pro-cta" onClick={buy} disabled={busy} aria-busy={busy || undefined}>
-          {busy ? 'Opening checkout' : 'Continue to payment'}
+          {pending === 'checkout' ? 'Opening checkout' : (trialDays > 0 ? `Start ${trialDays}-day free trial` : `Get Pro, ${plan?.label}/${periodWord(plan)}`)}
         </button>
       </>
     );
@@ -261,7 +336,7 @@ export default function ProPage() {
       <header className="pp-header" id="pp-content" tabIndex={-1}>
         <h1>Flock Pro</h1>
         <p className="pp-meta" style={READABLE}>
-          More Birdie and more crowd forecasts, for the person in the group who does the planning.
+          More Birdie, and crowd levels for every venue, for the person in the group who does the planning.
         </p>
       </header>
 
@@ -286,7 +361,7 @@ export default function ProPage() {
               <td>{BIRDIE_PRO_DAILY}</td>
             </tr>
             <tr>
-              <th scope="row">Crowd forecasts a month</th>
+              <th scope="row">Venues with crowd levels and forecasts, a month</th>
               <td>{FORECASTS_FREE_MONTHLY}</td>
               <td>No limit</td>
             </tr>
@@ -307,9 +382,21 @@ export default function ProPage() {
             "already subscribed". Without this the Terms' own cancel path had
             nowhere to go. It also serves somebody whose old subscription ended
             and who wants their invoices. */}
+        {signedIn && status && !status.isPremium && status.hasWebSubscription && (
+          <RenewalControls
+            status={status}
+            busy={busy}
+            working={pending === 'renewal'}
+            confirming={confirmingCancel}
+            onAskCancel={() => setConfirmingCancel(true)}
+            onNever={() => setConfirmingCancel(false)}
+            onCancel={() => changeRenewal(true)}
+            onResume={() => changeRenewal(false)}
+          />
+        )}
         {signedIn && status && !status.isPremium && status.canManageWeb && (
           <button type="button" className="pro-cta pro-cta-quiet" onClick={manage} disabled={busy} aria-busy={busy || undefined}>
-            {busy ? 'Opening billing' : 'Manage your web subscription'}
+            {pending === 'portal' ? 'Opening billing' : 'Payment method and invoices'}
           </button>
         )}
         {actionError && <p className="pro-error" role="alert">{actionError}</p>}
@@ -324,8 +411,10 @@ export default function ProPage() {
         </p>
         <h3>How do I cancel?</h3>
         <p>
-          Sign in to Flock on the web, open You, then Flock Pro, then Manage subscription. You keep
-          Pro until the end of the period you already paid for.
+          Sign in to Flock on the web, open You, then Flock Pro, then Cancel subscription, or use
+          the same button on this page. You keep Pro until the end of the period you already paid
+          for, and you can take the cancel back before then. You can also email{' '}
+          <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> and we will cancel it for you.
         </p>
         <h3>Can I get a refund?</h3>
         <p>
@@ -346,6 +435,36 @@ export default function ProPage() {
   );
 }
 
+// Cancel, or take a cancel back. With the subscription set to end, the page
+// says when and offers Keep Pro; otherwise Cancel subscription, which asks
+// once before it acts.
+function RenewalControls({ status, busy, working, confirming, onAskCancel, onNever, onCancel, onResume }) {
+  const until = longDate(status.periodEnd);
+  if (status.cancelAtPeriodEnd) {
+    return (
+      <div className="pro-renewal">
+        <p className="pro-note">{until ? `Flock Pro ends on ${until}. Nothing more will be charged.` : 'Flock Pro ends at the end of the paid period. Nothing more will be charged.'}</p>
+        <button type="button" className="pro-cta" onClick={onResume} disabled={busy} aria-busy={working || undefined}>Keep Pro</button>
+      </div>
+    );
+  }
+  if (confirming) {
+    return (
+      <div className="pro-renewal" role="group" aria-label="Cancel Flock Pro">
+        <p className="pro-note">{until ? `Cancel Flock Pro? You keep it until ${until}, then the free limits apply.` : 'Cancel Flock Pro? You keep it until the paid period ends, then the free limits apply.'}</p>
+        <button type="button" className="pro-cta" onClick={onCancel} disabled={busy} aria-busy={working || undefined}>Yes, cancel</button>
+        <button type="button" className="pro-cta pro-cta-quiet" onClick={onNever} disabled={busy}>Keep Pro</button>
+      </div>
+    );
+  }
+  return (
+    <div className="pro-renewal">
+      {until && <p className="pro-note">Renews on {until}.</p>}
+      <button type="button" className="pro-cta pro-cta-quiet" onClick={onAskCancel} disabled={busy}>Cancel subscription</button>
+    </div>
+  );
+}
+
 // The terms, in the sentences a person reads right before paying. With no plan
 // (signed out) the first line is left out rather than written without a price.
 function BeforeYouPay({ plan, trialDays = 0, tax = '' }) {
@@ -361,7 +480,7 @@ function BeforeYouPay({ plan, trialDays = 0, tax = '' }) {
       <h3 id="pro-before">Before you pay</h3>
       <ul>
         {first && <li>{first}</li>}
-        <li>Cancel any time in your Flock account (You, Flock Pro, Manage). You keep Pro until the paid {plan ? period : 'period'} ends.</li>
+        <li>Cancel any time in your Flock account (You, Flock Pro, Cancel subscription). You keep Pro until the paid {plan ? period : 'period'} ends.</li>
         <li>Changed your mind? Full refund within 14 days of your first payment: <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</li>
         <li>Under 18? A parent or guardian needs to buy it.</li>
       </ul>
