@@ -1584,7 +1584,7 @@ router.post('/chat',
       // the Pro message cap, no upsell line in the prompt, and unmetered
       // forecasts through `premium: !freeTier` below. It gets no Pro feature.
       let freeTier = false;
-      if (paywallEnabled()) {
+      if (paywallEnabled(userId)) {
         const premiumState = await getPremiumState(userId);
         if (!premiumState.known) throw new EntitlementUnavailableError(premiumState.reason);
         freeTier = !premiumState.premium && premiumState.inGrace !== true;

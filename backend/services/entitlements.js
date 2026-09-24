@@ -204,6 +204,20 @@ async function isPremium(userId) {
   return (await getPremiumState(userId)).premium;
 }
 
+// THE REVIEW ACCOUNT. The switch is global, and the build that first sells Pro
+// has to be reviewed while it is still off: App Review must find the
+// subscription, buy it in sandbox and see what it lifts, but turning the wall on
+// for that review would meter every live user on a build that cannot sell
+// anything. PAYWALL_PREVIEW_USER_IDS (numeric account ids, comma separated,
+// meant for the App Review demo account) turns the wall on for those accounts
+// only, with every gate and meter applied to them exactly as it will be to
+// everyone. A caller with no signed-in account (the public demo, web
+// checkout's availability check) passes no id and gets the global answer.
+function previewUserIds() {
+  const raw = typeof process.env.PAYWALL_PREVIEW_USER_IDS === 'string' ? process.env.PAYWALL_PREVIEW_USER_IDS : '';
+  return new Set(raw.split(',').map((s) => s.trim()).filter((s) => /^[1-9][0-9]{0,9}$/.test(s)));
+}
+
 // Paywall master switch. Dormant unless PAYWALL_ENABLED=true is set (Railway env).
 //
 // A WALL WITH NO DOOR IN IT. users.is_premium has exactly one writer in this
@@ -220,8 +234,8 @@ async function isPremium(userId) {
 // PAYWALL_ENABLED=true because of the value of a different variable is a worse
 // surprise than a loud log line, and it is the kind of hidden coupling nobody
 // can debug at the moment it matters.
-function paywallEnabled() {
-  const on = boolFlag('PAYWALL_ENABLED');
+function paywallEnabled(userId) {
+  const on = boolFlag('PAYWALL_ENABLED') || (userId != null && previewUserIds().has(String(userId)));
   // Ask the webhook route what it considers configured rather than reading the
   // variable raw. A blank, whitespace-only, or too-short secret is refused
   // there but looked SET to a raw truthiness test, so this preflight went
@@ -265,7 +279,7 @@ function paywallEnabled() {
 // are still enforced per process, so on more than one Railway instance this is
 // the allowance on WHICHEVER instance answered. The app runs on one.
 async function getEntitlements(userId) {
-  const enabled = paywallEnabled();
+  const enabled = paywallEnabled(userId);
   const state = await getPremiumState(userId);
   if (!state.known) throw new EntitlementUnavailableError(state.reason);
   const premium = state.premium;
