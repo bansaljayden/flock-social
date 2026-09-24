@@ -193,13 +193,13 @@ async function call(method, path_, body) {
   return { status: res.status, body: json, text };
 }
 
-const isPremiumQueries = () => log.filter((q) => /SELECT is_premium FROM users/.test(q.sql)).length;
-const notPremium = () => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: false }] })]);
-const isPremiumUser = () => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: true }] })]);
+const isPremiumQueries = () => log.filter((q) => /SELECT is_premium\b[\s\S]*?\bFROM users\b/.test(q.sql)).length;
+const notPremium = () => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: false }] })]);
+const isPremiumUser = () => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: true }] })]);
 // The outage: the tier read itself fails, the way an unreachable database
 // fails. Everything else keeps answering, which is exactly the situation in
 // which the old code confidently reported "not a subscriber".
-const premiumErrors = () => handlers.push([/SELECT is_premium FROM users/, () => new Error('connection terminated unexpectedly')]);
+const premiumErrors = () => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => new Error('connection terminated unexpectedly')]);
 
 // getPremiumState logs the underlying failure (audited elsewhere); keep this
 // file's output readable without asserting on it here.
@@ -440,4 +440,70 @@ test('neither consumer reads the bare fail-closed boolean any more', () => {
     assert.ok(/retryable:\s*true/.test(src),
       `routes/${file} lost the retryable flag on its outage answer`);
   }
+});
+
+// ===========================================================================
+// SECTION 4 — the unmetered first week (services/entitlements.js
+// NEW_ACCOUNT_GRACE_DAYS)
+//
+// A first-week account is metered like Pro and treated like nobody special
+// otherwise. The grace comes from the SAME row as is_premium, so these stub
+// that one read with a grace end in the future or the past.
+// ===========================================================================
+
+const graceRow = (daysFromNow) => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({
+  rows: [{ is_premium: false, grace_ends_at: new Date(Date.now() + daysFromNow * 864e5) }],
+})]);
+
+test('first week: Birdie past the free cap still answers, on the Pro cap, and never pitches', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  graceRow(3);
+  for (let i = 0; i < FREE_DAILY_LIMIT; i++) {
+    assert.strictEqual(checkUserRateLimit(uid, PREMIUM_DAILY_LIMIT).allowed, true);
+  }
+  const res = await call('POST', '/api/ai/chat', chatBody);
+  assert.strictEqual(res.status, 200, `a first-week account hit the free cap: ${res.text}`);
+  assert.strictEqual(getUsedToday(uid), FREE_DAILY_LIMIT + 1);
+  const prompt = String(sendCalls[0] && sendCalls[0].config && sendCalls[0].config.systemInstruction);
+  assert.ok(!/free tier/.test(prompt),
+    'Birdie was told a first-week account is on the free tier, and would pitch a limit that is not enforced');
+});
+
+test('first week: a venue past the monthly allowance opens in full and spends nothing', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  for (let i = 0; i < FREE_MONTHLY_FORECASTS; i++) recordView(uid, `KS_SPENT_${i}`);
+  graceRow(3);
+  const res = await call('GET', '/api/crowd/KS_GRACE?localHour=20&localDay=5');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.forecastAccess, { locked: false, remaining: null, limit: null },
+    'a first-week account was shown a counter, or a lock, for a limit that is not enforced');
+  assert.ok(res.body.bestTime, 'the forecast half was stripped from a first-week account');
+  assert.strictEqual(getUsedThisMonth(uid), FREE_MONTHLY_FORECASTS, 'the first week spent the allowance anyway');
+});
+
+test('day eight meters again with nothing to switch off', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  for (let i = 0; i < FREE_MONTHLY_FORECASTS; i++) recordView(uid, `KS_OVER_${i}`);
+  graceRow(-1);
+  const res = await call('GET', '/api/crowd/KS_AFTER?localHour=20&localDay=5');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.forecastAccess.locked, true, 'a grace week that ended yesterday is still unmetered');
+  assert.strictEqual(res.body.bestTime, null);
+});
+
+test('the first week is metering only: the shared policy says unmetered, and premium stays false', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  graceRow(2);
+  const { getPremiumState } = require('../services/entitlements');
+  const state = await getPremiumState(uid);
+  assert.strictEqual(state.premium, false, 'the grace week made an account premium');
+  assert.strictEqual(state.inGrace, true);
+  assert.ok(Date.parse(state.graceEndsAt) > Date.now());
+  const access = await crowdRouter.forecastAccess(uid, { count: true, placeId: 'KS_POLICY' });
+  assert.deepStrictEqual(access, { locked: false, remaining: null, limit: null });
+  assert.strictEqual(getUsedThisMonth(uid), 0, 'an unmetered view was charged');
 });

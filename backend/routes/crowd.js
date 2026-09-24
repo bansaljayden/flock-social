@@ -76,7 +76,11 @@ const UNMETERED_ACCESS = Object.freeze({ locked: false, remaining: null, limit: 
 // `count` = true means this request should consume one of the free allowance
 // (only a single-venue detail view counts, not batch/list previews).
 // `premium` lets a caller that has ALREADY resolved the tier pass it in rather
-// than pay for a second `SELECT is_premium` on the same request.
+// than pay for a second `SELECT is_premium` on the same request. It means
+// "not metered", which is also true of an account in its first week
+// (services/entitlements.js NEW_ACCOUNT_GRACE_DAYS), so a caller that folds
+// that in (routes/ai.js does) passes the same answer this function would
+// reach on its own.
 async function forecastAccess(userId, { count, premium, placeId } = {}) {
   // Paywall off (or unset) → today's behavior, unlimited, no meter — and no
   // tier lookup at all, so an entitlement outage cannot surface from here
@@ -98,7 +102,9 @@ async function forecastAccess(userId, { count, premium, placeId } = {}) {
     // view; routes answer it as a retryable 503.
     const state = await getPremiumState(userId);
     if (!state.known) throw new EntitlementUnavailableError(state.reason);
-    pro = state.premium;
+    // The first week is metered like Pro. Metering only: nothing here grants
+    // a Pro feature, and the grace comes from the same row as is_premium.
+    pro = state.premium || state.inGrace === true;
   }
   if (pro) return UNMETERED_ACCESS;
   const usedBefore = getUsedThisMonth(userId);

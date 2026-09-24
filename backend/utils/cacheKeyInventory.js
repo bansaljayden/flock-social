@@ -594,7 +594,7 @@ const INVENTORY = [
     denominator: 'conversation turns (150/day premium, 10 free, 15/min)',
     bound: '20k / 18k, evict-least-consumed before insert',
     verdict: 'SAFE',
-    why: 'Account-keyed with a server clock; no caller-varied component.',
+    why: 'Account-keyed with a server clock; no caller-varied component. The day count survives a restart since migration 075 (services/usageStore.js writes it through and loads it back at boot), so a deploy is no longer a fresh daily allowance; an evicted entry comes back from its stored row at the next boot.',
   },
   {
     file: 'services/birdieUsage.js', name: 'geminiUserSpend', kind: 'counter',
@@ -604,7 +604,7 @@ const INVENTORY = [
     denominator: 'TOKENS — 1M/user/hr, 4M/user/day, 30M/day global',
     bound: '20k / 18k, least-consumed, evict before insert',
     verdict: 'SAFE',
-    why: 'The rare counter denominated in the thing that is actually billed rather than in requests; a longer prompt only ever spends more, and it is charged before the call and settled up on usageMetadata.',
+    why: 'The rare counter denominated in the thing that is actually billed rather than in requests; a longer prompt only ever spends more, and it is charged before the call and settled up on usageMetadata. The day figure per account survives a restart since migration 075, and the global day figure is rebuilt from those rows at boot; the rolling hour is not stored, so a restart hands back at most one hour of that window.',
   },
 
   // ── services/emailService.js ──────────────────────────────────────────────
@@ -648,10 +648,22 @@ const INVENTORY = [
     key: 'accountKey(req.user.id) + calendar month',
     callerControls: 'nothing',
     protects: 'nothing upstream — it is the Flock Pro paywall meter for AI forecasts',
-    denominator: 'forecast views (30 free per calendar month)',
+    denominator: 'distinct venues charged (30 free per calendar month; reopening one already charged is free)',
     bound: 'NO size ceiling; an hourly interval drops previous-month entries',
     verdict: 'SAFE',
-    why: 'One entry per authenticated account per month, so growth costs an account each; the only map here with no maxEntries, and it is a paywall meter rather than a security control.',
+    why: 'One entry per authenticated account per month, so growth costs an account each; the only map here with no maxEntries, and it is a paywall meter rather than a security control. Survives a restart since migration 075 (services/usageStore.js), so the month is no longer an allowance per deploy.',
+  },
+
+  // ── services/usageStore.js ────────────────────────────────────────────────
+  {
+    file: 'services/usageStore.js', name: 'pending', kind: 'inflight',
+    key: '`${accountId}|${meter}|${period}`, all three server-derived (the meter is a literal at each call site, the period a UTC clock)',
+    callerControls: 'nothing',
+    protects: 'Postgres write volume: it coalesces the meters\' changes so a Birdie turn that charges the token ledger six times is one upsert',
+    denominator: 'n/a — a write-behind buffer of absolute meter values, one per row, the newest winning',
+    bound: 'at most one entry per account per meter per period with a change in the last 250 ms; emptied on every flush',
+    verdict: 'SAFE',
+    why: 'It holds rows for at most a quarter of a second and never decides anything: enforcement reads the meters, not this. A write that fails is dropped and the next change to that row carries its whole value again, so losing an entry costs durability for one change, never a charge or a refusal. It only fills after boot has loaded the table, so a process that could not read the stored counts never overwrites them with zeros.',
   },
 
   // ── services/mlPredictor.js ───────────────────────────────────────────────

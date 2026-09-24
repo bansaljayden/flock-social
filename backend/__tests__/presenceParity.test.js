@@ -443,7 +443,7 @@ const FREE_FIELDS = ['score', 'label', 'isOpen', 'hoursToday', 'capacity', 'wait
 
 function scriptMeter({ premium }) {
   handlers = [
-    [/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: premium }] })],
+    [/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: premium }] })],
     [/FROM venue_feedback/, () => ({ rows: [] })],
     [/[\s\S]*/, () => ({ rows: [] })],
   ];
