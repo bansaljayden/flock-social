@@ -224,7 +224,7 @@ test('a checkout session carries app_user_id twice, the renewal consent, and our
     assert.strictEqual(session.client_reference_id, '7');
     assert.deepStrictEqual(session.line_items, [{ price: 'price_monthly_1', quantity: 1 }]);
     assert.deepStrictEqual(session.consent_collection, { terms_of_service: 'required' });
-    assert.match(session.custom_text.terms_of_service_acceptance.message, /renews at \$3\.99 every month until I cancel/);
+    assert.match(session.custom_text.terms_of_service_acceptance.message, /renews every month until I cancel, at \$3\.99 or the lower price shown above if a code applies/);
     assert.strictEqual(session.allow_promotion_codes, true, 'friend codes are entered at checkout');
     assert.strictEqual(session.payment_method_collection, 'if_required', 'a 100%-off code needs no card');
     assert.strictEqual(session.automatic_tax.enabled, false, 'no tax until a registration is declared');

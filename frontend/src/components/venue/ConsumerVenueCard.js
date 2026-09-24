@@ -934,7 +934,7 @@ export default function ConsumerVenueCard({
                       </>
                     ) : (
                       <>
-                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: crowdInkFor(score, colors) || crowdColor, margin: 0 }}>{label} <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{'·'} {score}</span></p>
+                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: crowdInkFor(score, colors) || crowdColor, margin: 0 }}>{label}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         {(cd?.forecastAccess?.locked || bestText) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1008,7 +1008,22 @@ export default function ConsumerVenueCard({
                   })()}
                 </m.div>
 
-                {/* Hourly Forecast Graph — fades in immediately, bars animate up */}
+                {/* THE LOCKED FORECAST. The gate (routes/crowd.js
+                    LOCKED_FORECAST_FIELDS) sends `hourly: []`, which is truthy,
+                    so hourlyData above is an empty list and the chart below drew
+                    its heading over an empty 56px gap: it read as a broken card
+                    and did not say it was a Pro feature. One row now says what
+                    is behind it and opens the sheet, the same tap target as the
+                    blurred best-time line. */}
+                {cd?.forecastAccess?.locked ? (
+                  <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>The hour-by-hour chart is part of Flock Pro.</span>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, whiteSpace: 'nowrap' }}>See Pro</span>
+                    </button>
+                  </m.div>
+                ) : (
+                /* Hourly Forecast Graph — fades in immediately, bars animate up */
                 <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
                     {/* The hours are the venue's, not the phone's. Say so only
@@ -1100,6 +1115,7 @@ export default function ConsumerVenueCard({
                     </p>
                   )}
                 </m.div>
+                )}
 
                 {/* Busiest Hours & Wait */}
                 <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>

@@ -93,6 +93,19 @@ import BirdieBird, { BirdieStill, WARM_BIRD } from '../ui/BirdieBird';
 import { BASE_URL } from '../../services/api';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 
+// When today's free messages come back, in the reader's own clock. The meter
+// is a UTC day (backend/services/birdieUsage.js), so without a reset time from
+// the server the next UTC midnight is the true answer, which is evening across
+// the US. "tomorrow" only when that is a different local date.
+function chirpsBackText(aiResetsAt) {
+  const now = new Date();
+  const at = aiResetsAt ? new Date(aiResetsAt)
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  if (!Number.isFinite(at.getTime())) return 'tomorrow';
+  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return at.toDateString() === now.toDateString() ? `at ${time}` : `tomorrow at ${time}`;
+}
+
 export default function BirdiePanel({
   AI_CHAT_MAX_MESSAGES,
   AI_CHAT_MAX_MESSAGE_CHARS,
@@ -129,11 +142,13 @@ export default function BirdiePanel({
   loadTrustedContacts,
   memberCountLabel,
   openVenueDetail,
+  outOfChirps,
   sendAiMessage,
   setAiInputHasText,
   setAiShareVenue,
   setCurrentScreen,
   setCurrentTab,
+  setPaywallTrigger,
   setProfileScreen,
   setSelectedFlockId,
   setSelectedVenueForCreate,
@@ -305,6 +320,9 @@ export default function BirdiePanel({
                     it here, in the same words as the Terms so the two cannot
                     drift. */}
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', maxWidth: '280px', lineHeight: 1.45 }}>Birdie is an assistant built on Google's Gemini. Its answers are generated and can be wrong.</p>
+                {/* No chips while the day's messages are spent: each one sends,
+                    and a send that cannot go through is a dead button. */}
+                {!outOfChirps && (
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
                   {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
                     <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -313,6 +331,7 @@ export default function BirdiePanel({
                     </button>
                   ))}
                 </div>
+                )}
               </div>
             )}
 
@@ -509,7 +528,7 @@ export default function BirdiePanel({
 
           {/* Suggested Questions — mid-conversation only; the empty state
               carries its own chips under the bird */}
-          {!aiTyping && aiMessages.length > 0 && (
+          {!aiTyping && aiMessages.length > 0 && !outOfChirps && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
               {isAiFullscreen && <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -554,14 +573,29 @@ export default function BirdiePanel({
                   </svg>
                 </button>
               </div>
-              {/* Action buttons row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '2px 4px 0', borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '6px' }}>
+              {/* OUT OF CHIRPS: say so, say when they come back, and offer the
+                  one thing that lifts it. The three shortcuts below each fill
+                  and send, so they give way while nothing can be sent. */}
+              {outOfChirps ? (
+                <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px 2px 10px', borderTop: '1px solid var(--border-subtle)', marginTop: '4px' }}>
+                  <p style={{ flex: 1, minWidth: 0, margin: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    {Number.isFinite(entitlements?.birdie?.limit) ? `You've used today's ${entitlements.birdie.limit} messages.` : "You've used today's messages."} They come back {chirpsBackText(aiResetsAt)}.
+                  </p>
+                  <button type="button" className="hit44 glass-btn glass-primary" onClick={() => setPaywallTrigger('birdie')} style={{ padding: '8px 12px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '700', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    Get Flock Pro
+                  </button>
+                </div>
+              ) : (
+              /* Action buttons row. Labels never wrap ("My Flocks" broke onto
+                 two lines at 390px), and the line on the right drops to its
+                 own row under the buttons instead of squeezing beside them. */
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '2px', padding: '2px 4px 0', borderTop: '1px solid var(--border-subtle)', marginTop: '4px', paddingTop: '6px' }}>
                 {[
                   { icon: Icons.search, label: 'Search', prefix: 'Find me ', color: 'var(--accent-steel, #2d5a87)' },
                   { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
                   { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
                 ].map((action, i) => (
-                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   >
@@ -576,13 +610,14 @@ export default function BirdiePanel({
                     under EVERY turn, so it carries the generated-output caveat
                     for anyone who scrolled past the empty state. */}
                 {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
-                  <span style={{ fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
+                  <span style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
                     {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
                 ) : (
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI &middot; answers are generated and can be wrong</span>
+                  <span style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI &middot; answers are generated and can be wrong</span>
                 )}
               </div>
+              )}
             </div>
           </div>
 
