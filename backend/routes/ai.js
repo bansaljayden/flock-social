@@ -1549,11 +1549,16 @@ router.post('/chat',
       // lands BEFORE checkUserRateLimit and before any Gemini spend, so the
       // failed request costs the user nothing and the sentence can honestly
       // say so; it says "could not check", never "upgrade".
+      //
+      // An account in its first week (services/entitlements.js
+      // NEW_ACCOUNT_GRACE_DAYS) is not on the free tier for METERING: it gets
+      // the Pro message cap, no upsell line in the prompt, and unmetered
+      // forecasts through `premium: !freeTier` below. It gets no Pro feature.
       let freeTier = false;
       if (paywallEnabled()) {
         const premiumState = await getPremiumState(userId);
         if (!premiumState.known) throw new EntitlementUnavailableError(premiumState.reason);
-        freeTier = !premiumState.premium;
+        freeTier = !premiumState.premium && premiumState.inGrace !== true;
       }
       const dailyLimit = freeTier ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
 
@@ -1753,7 +1758,8 @@ router.post('/chat',
       // `premium: !freeTier` is exact rather than an approximation: whenever
       // the paywall is on, freeTier came from a KNOWN getPremiumState answer
       // above (an unknown one 503'd this request before the meters), so
-      // !freeTier IS the premium answer, already paid for. With the paywall off
+      // !freeTier IS the unmetered answer (Pro, or the first week), already
+      // paid for. With the paywall off
       // forecastAccess returns unmetered before reading it at all. Either way
       // this saves a duplicate `SELECT is_premium` — and it is also what keeps
       // forecastAccess's own unknown-state throw unreachable from this route:

@@ -223,8 +223,8 @@ async function call(method, path_, body) {
   return { status: res.status, body: json, text };
 }
 
-const notPremium = () => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: false }] })]);
-const isPremiumUser = () => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: true }] })]);
+const notPremium = () => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: false }] })]);
+const isPremiumUser = () => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: true }] })]);
 const spendAllowance = (uid) => { for (let i = 0; i < FREE_MONTHLY_FORECASTS; i++) recordView(uid); };
 
 // ---------------------------------------------------------------------------

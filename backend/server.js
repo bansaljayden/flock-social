@@ -1867,6 +1867,10 @@ io.on('connection', (socket) => {
 // halts the boot instead of leaving a silently half-migrated deployment.
 // ---------------------------------------------------------------------------
 const { migrate } = require('./db/migrate');
+// The free-tier meters' memory across restarts (migration 075): boot loads it,
+// shutdown writes what is still waiting. Required here, at module scope, so
+// both of those read one binding.
+const usageStore = require('./services/usageStore');
 
 // Post-boot data tasks — not schema, so not migrations.
 async function postBootTasks() {
@@ -2215,6 +2219,13 @@ async function boot() {
     if (e && e.stack) console.error(String(e.stack).split('\n').slice(0, 3).join('\n'));
     process.exit(1);
   }
+  // The free-tier meters (forecast venues a month, Birdie messages and tokens
+  // a day) enforce from memory; this loads what they had counted before the
+  // restart, so a deploy is no longer a fresh allowance for every account.
+  // After migrate() because the table is migration 075, before listen() so no
+  // request is metered against an empty count. It never throws: a failed load
+  // leaves the meters in memory only, logs it, and retries on its own.
+  await usageStore.hydrate();
   await postBootTasks();
 
   server.listen(PORT, () => {
@@ -2426,8 +2437,12 @@ function shutdown(signal) {
 
   // Stop accepting connections and let in-flight HTTP requests finish...
   server.close(() => {
-    // ...and only then take the pool away from them.
-    pool.end()
+    // ...write the meter changes still waiting in services/usageStore.js
+    // (they are coalesced for a quarter of a second, so a deploy can land
+    // inside that window), and only then take the pool away.
+    usageStore.flushNow()
+      .catch((err) => console.error('[shutdown] meter flush failed:', err?.message || err))
+      .then(() => pool.end())
       .catch((err) => console.error('[shutdown] pool.end failed:', err?.message || err))
       .finally(() => {
         console.log('[shutdown] drained cleanly');

@@ -59,9 +59,17 @@
 // IN-MEMORY STATE — the same caveat utils/placesBudget.js and
 // utils/probeBudget.js carry, restated because it changes what the numbers
 // mean:
-//   * Every counter below lives in this process's heap. It resets to zero on
-//     every Railway deploy, crash and restart. A day with ten deploys has ten
-//     fresh global allowances, so GLOBAL_DAILY_TOKENS is a brake, not a cap.
+//   * Every counter below lives in this process's heap, and that is still
+//     what enforces. What survives a Railway deploy, crash or restart since
+//     migration 075: each account's messages today and tokens today, written
+//     through services/usageStore.js to usage_meters and loaded back at boot,
+//     with the global day figure rebuilt as the sum of those per-account rows.
+//     What does not: the rolling hour (a restart hands back at most one hour of
+//     that window) and the per-minute stamps. Before 075 a day with ten deploys
+//     had ten fresh allowances for every account and ten fresh global ceilings,
+//     so GLOBAL_DAILY_TOKENS was a brake, not a cap. It is now a cap that holds
+//     across restarts on one instance, as long as boot could read the table
+//     (usageStore.js says in the log when it could not).
 //   * The counters divide by the instance count. Two instances = double every
 //     limit here, silently.
 //   * Nothing races: every function below is fully synchronous and Node runs
@@ -74,6 +82,8 @@
 //     bigint)`) updated with INSERT ... ON CONFLICT DO UPDATE ... RETURNING is
 //     one round trip and survives restarts and instances.
 // ---------------------------------------------------------------------------
+
+const usageStore = require('./usageStore');
 
 const userRateLimits = new Map();
 
@@ -167,6 +177,7 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
   // Allow and record
   limit.dailyCount++;
   limit.recentTimestamps.push(now);
+  persistDay(id);
   // chargeDay binds a refund to the counter it was charged on: a call that
   // straddles UTC midnight must not hand back the next day's chirp (hardening review
   // round 3, 2026-09-05).
@@ -189,7 +200,10 @@ function refundTurn(userId, chargeDay) {
   const limit = userRateLimits.get(id);
   if (!limit) return;
   if (limit.day !== (chargeDay || todayKey())) return;
-  if (limit.dailyCount > 0) limit.dailyCount -= 1;
+  if (limit.dailyCount > 0) {
+    limit.dailyCount -= 1;
+    persistDay(id);
+  }
 }
 
 function getUsedToday(userId) {
@@ -378,7 +392,75 @@ function chargeGemini(id, tokens, now) {
   entry.hits.push({ t: now, tokens });
   entry.dayTokens += tokens;
   geminiDayTokens += tokens;
+  persistDay(id);
   return entry;
+}
+
+// One stored row per account per UTC day carries BOTH ledgers' day figures:
+// the messages the turn meter counted and the tokens the spend ledger charged.
+// Either changing rewrites the row with both, so neither can be written back
+// as a stale value by the other. services/usageStore.js coalesces the several
+// charges of one turn into a single write.
+function persistDay(id) {
+  // Skip building the row at all until boot has loaded the table.
+  if (!usageStore.isEnabled()) return;
+  const day = todayKey();
+  const turns = userRateLimits.get(id);
+  const spend = geminiUserSpend.get(id);
+  usageStore.persist({
+    userId: id,
+    meter: 'birdie',
+    period: day,
+    used: turns && turns.day === day ? turns.dailyCount : 0,
+    tokens: spend && spend.day === day ? spend.dayTokens : 0,
+    venues: [],
+  });
+}
+
+// Boot only (services/usageStore.js hydrate). Loads one stored row for TODAY
+// (UTC) into both ledgers; a row for any other day is ignored. Merges rather
+// than replaces, keeping the larger figure, so a retry after a failed boot
+// load can never lower a count that grew in memory meanwhile. The global day
+// total is rebuilt from these rows, which is why it only ever rises here.
+// Returns true when the row was taken.
+function __hydrate(row) {
+  const id = accountKey(row && row.user_id);
+  const day = todayKey();
+  if (id === null || !row || row.period !== day) return false;
+  const usedNum = Number(row.used);
+  const used = Number.isInteger(usedNum) && usedNum > 0 ? usedNum : 0;
+  // BIGINT arrives from node-postgres as a string.
+  const tokNum = Number(row.tokens);
+  const tokens = Number.isFinite(tokNum) && tokNum > 0 ? Math.floor(tokNum) : 0;
+
+  if (!userRateLimits.has(id)) {
+    // Room first, then the insert — see evictLeastConsumed.
+    evictLeastConsumed(userRateLimits, (v) => (v.day === day ? v.dailyCount : 0));
+    userRateLimits.set(id, { day, dailyCount: 0, recentTimestamps: [] });
+  }
+  const limit = userRateLimits.get(id);
+  if (limit.day !== day) {
+    limit.day = day;
+    limit.dailyCount = 0;
+  }
+  limit.dailyCount = Math.max(limit.dailyCount, used);
+
+  rollGeminiDay();
+  let entry = geminiUserSpend.get(id);
+  if (!entry) {
+    evictLeastConsumed(geminiUserSpend, (v) => (v.day === geminiDayKey ? v.dayTokens : 0));
+    entry = { hits: [], day: geminiDayKey, dayTokens: 0 };
+    geminiUserSpend.set(id, entry);
+  }
+  if (entry.day !== geminiDayKey) {
+    entry.day = geminiDayKey;
+    entry.dayTokens = 0;
+  }
+  if (tokens > entry.dayTokens) {
+    geminiDayTokens += tokens - entry.dayTokens;
+    entry.dayTokens = tokens;
+  }
+  return true;
 }
 
 /**
@@ -483,6 +565,9 @@ function geminiSpendStatus(userId) {
     },
     // Say it out loud everywhere the numbers are read: this is process-local.
     inMemory: true,
+    // ...and whether the day figures are also being kept across restarts
+    // (services/usageStore.js, false until boot has loaded the stored rows).
+    persisted: usageStore.isEnabled(),
   };
 }
 
@@ -507,6 +592,7 @@ module.exports = {
   settleGeminiCall,
   geminiSpendStatus,
   __resetGeminiSpend,
+  __hydrate,
   PER_USER_HOURLY_TOKENS,
   PER_USER_DAILY_TOKENS,
   GLOBAL_DAILY_TOKENS,

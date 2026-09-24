@@ -396,6 +396,8 @@ function loadShutdown() {
     closeIdleConnections: () => calls.push('server.closeIdleConnections'),
   };
   const pool = { end: () => { calls.push('pool.end'); return Promise.resolve(); } };
+  // The meters' waiting writes go out before the pool closes (services/usageStore.js).
+  const usageStore = { flushNow: () => { calls.push('usageStore.flushNow'); return Promise.resolve(); } };
   // Every background timer handle server.js declares (crowd alerts, night
   // context, the venue digest, and whatever ships next) is a free variable in
   // the shutdown body's clearInterval/clearTimeout lines. Injecting them by
@@ -406,9 +408,9 @@ function loadShutdown() {
   assert.ok(timerHandles.includes('crowdAlertsInterval'), 'the crowd-alert handle must still be declared');
   // eslint-disable-next-line no-new-func
   const out = new Function(
-    'io', 'server', 'pool', 'console', 'process', ...timerHandles,
+    'io', 'server', 'pool', 'usageStore', 'console', 'process', ...timerHandles,
     `${body}\nreturn { shutdown, SHUTDOWN_DEADLINE_MS };`
-  )(io, server, pool, con, proc, ...timerHandles.map(() => null));
+  )(io, server, pool, usageStore, con, proc, ...timerHandles.map(() => null));
   return { calls, con, proc, server, signals, ...out };
 }
 
@@ -422,10 +424,14 @@ test('SIGTERM drains: sockets kicked, server closed, pool ended, THEN exit 0 —
   await tick(); // pool.end().finally
 
   const order = s.calls;
+  // The meter flush sits between the drain and the pool: after the last
+  // request that could change a meter, before the connection that writes it
+  // is taken away.
   assert.deepStrictEqual(order, [
     'io.disconnectSockets(true)',
     'server.close',
     'server.closeIdleConnections',
+    'usageStore.flushNow',
     'pool.end',
     'exit(0)',
   ], `drain order is the contract; got: ${order.join(' -> ')}`);

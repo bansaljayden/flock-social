@@ -79,7 +79,7 @@ authMod.authenticate = (req, _res, next) => {
 const entitlements = require('../services/entitlements');
 const {
   isPremium, getPremiumState, paywallEnabled, getEntitlements,
-  EntitlementUnavailableError, boolFlag,
+  EntitlementUnavailableError, boolFlag, NEW_ACCOUNT_GRACE_DAYS,
 } = entitlements;
 const venueEntitlements = require('../services/venueEntitlements');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = venueEntitlements;
@@ -149,8 +149,8 @@ async function call(method, p, body) {
 }
 
 const ran = (re) => log.filter((q) => re.test(q.sql));
-const premiumIs = (v) => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: v }] })]);
-const premiumErrors = (err) => handlers.push([/SELECT is_premium FROM users/, () => (err || new Error('connection terminated unexpectedly'))]);
+const premiumIs = (v) => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: v }] })]);
+const premiumErrors = (err) => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => (err || new Error('connection terminated unexpectedly'))]);
 const tierIs = (tier) => handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })]);
 const tierErrors = () => handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => new Error('canceling statement due to statement timeout')]);
 
@@ -190,25 +190,25 @@ test('a premium lookup that errors denies access, and never claims the user simp
 
 test('a real answer is marked known, in both directions', async () => {
   premiumIs(true);
-  assert.deepStrictEqual(await getPremiumState(freshId()), { premium: true, known: true, reason: null });
+  assert.deepStrictEqual(await getPremiumState(freshId()), { premium: true, known: true, reason: null, inGrace: false, graceEndsAt: null });
   handlers = [];
   premiumIs(false);
-  assert.deepStrictEqual(await getPremiumState(freshId()), { premium: false, known: true, reason: null });
+  assert.deepStrictEqual(await getPremiumState(freshId()), { premium: false, known: true, reason: null, inGrace: false, graceEndsAt: null });
 });
 
 test('an account that no longer exists is a known no, not an unknown', async () => {
   // A deleted user is not a subscriber, and answering 503 for one would make
   // account deletion look like an outage.
-  handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [] })]);
+  handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [] })]);
   const state = await getPremiumState(freshId());
-  assert.deepStrictEqual(state, { premium: false, known: true, reason: 'no_such_user' });
+  assert.deepStrictEqual(state, { premium: false, known: true, reason: 'no_such_user', inGrace: false, graceEndsAt: null });
 });
 
 test('a NULL is_premium column is not premium', async () => {
   premiumIs(null);
   assert.strictEqual(await isPremium(freshId()), false);
   handlers = [];
-  handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: 'yes' }] })]);
+  handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: 'yes' }] })]);
   assert.strictEqual(await isPremium(freshId()), false,
     'a non-boolean column value was coerced into a subscription');
 });
@@ -230,7 +230,7 @@ test('an id that is not a users.id never reaches SQL, and is not premium', async
 
 test("'5' and 5 are one account", async () => {
   const id = freshId();
-  handlers.push([/SELECT is_premium FROM users/, (params) => ({ rows: [{ is_premium: params[0] === id }] })]);
+  handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, (params) => ({ rows: [{ is_premium: params[0] === id }] })]);
   assert.strictEqual(await isPremium(String(id)), true,
     'a string id was passed through unnormalised, so the same person can be two accounts to the meter');
   assert.strictEqual(log[0].params[0], id);
@@ -243,7 +243,9 @@ test('the premium read is parameterised and asks for one row by id', async () =>
   await isPremium(id);
   assert.strictEqual(log.length, 1);
   assert.match(log[0].sql, /WHERE id = \$1$/);
-  assert.deepStrictEqual(log[0].params, [id]);
+  // The second parameter is the length of the unmetered first week, read in
+  // the same statement so metering never costs a second lookup.
+  assert.deepStrictEqual(log[0].params, [id, NEW_ACCOUNT_GRACE_DAYS]);
 });
 
 // ===========================================================================
@@ -330,7 +332,9 @@ test('remaining is never negative when the paywall is switched on mid-day', asyn
 test('the snapshot keeps exactly the keys the client contract names', async () => {
   premiumIs(true);
   const e = await getEntitlements(freshId());
-  assert.deepStrictEqual(Object.keys(e).sort(), ['birdie', 'forecast', 'isPremium', 'paywallEnabled']);
+  // graceEndsAt joined the contract with the unmetered first week: the client
+  // must be able to tell a limit that is not enforced yet from one that is.
+  assert.deepStrictEqual(Object.keys(e).sort(), ['birdie', 'forecast', 'graceEndsAt', 'isPremium', 'paywallEnabled']);
   assert.deepStrictEqual(Object.keys(e.birdie).sort(), ['limit', 'remaining', 'used']);
   assert.deepStrictEqual(Object.keys(e.forecast).sort(), ['limit', 'remaining', 'used']);
 });
@@ -519,7 +523,7 @@ test('nothing is cached: two calls are two reads', async () => {
   // to state the staleness window out loud.
   CURRENT_USER = { id: freshId() };
   let value = true;
-  handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: value }] })]);
+  handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => ({ rows: [{ is_premium: value }] })]);
   const first = await call('GET', '/api/entitlements');
   assert.strictEqual(first.body.isPremium, true);
   value = false;

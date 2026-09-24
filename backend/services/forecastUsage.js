@@ -5,12 +5,17 @@
 // time to go, the hourly curve, the peak window — is free for the first
 // FREE_MONTHLY_FORECASTS venue views each calendar month, then Pro-only.
 //
-// In-memory + per calendar month, mirroring services/birdieUsage.js. Resets on
-// deploy; acceptable because the paywall is a nudge, not DRM. If this ever needs
-// to survive restarts, back it with a `forecast_views` table keyed (user_id, month).
+// Enforced from memory, per calendar month (UTC), mirroring
+// services/birdieUsage.js. It used to reset on every deploy, and Railway
+// deploys on every push, so the monthly allowance was really an allowance per
+// deploy. services/usageStore.js now writes every change to usage_meters
+// (migration 075) and loads the current month back at boot, so the count and
+// the venues already charged survive a restart. Memory is still what enforces.
+const usageStore = require('./usageStore');
+
 const FREE_MONTHLY_FORECASTS = 30;
 
-// account id (positive integer) -> { month: 'YYYY-MM', count: number }
+// account id (positive integer) -> { month: 'YYYY-MM', count: number, venues: Set }
 const usage = new Map();
 
 function monthKey() {
@@ -60,6 +65,14 @@ function getUsedThisMonth(userId) {
   return rec.count;
 }
 
+function persist(id, rec) {
+  // Skip building the row at all until boot has loaded the table.
+  if (!usageStore.isEnabled()) return;
+  usageStore.persist({
+    userId: id, meter: 'forecast', period: rec.month, used: rec.count, tokens: 0, venues: [...rec.venues],
+  });
+}
+
 // Record one forecast view. Returns the post-increment count, or 0 when the
 // caller could not be identified (nothing was recorded). Call this only when
 // a free (non-premium) user is actually consuming a gated forecast.
@@ -72,13 +85,37 @@ function recordView(userId, placeId) {
   const month = monthKey();
   const rec = usage.get(id);
   if (!rec || rec.month !== month) {
-    usage.set(id, { month, count: 1, venues: new Set(venue ? [venue] : []) });
+    const fresh = { month, count: 1, venues: new Set(venue ? [venue] : []) };
+    usage.set(id, fresh);
+    persist(id, fresh);
     return 1;
   }
   if (venue && rec.venues.has(venue)) return rec.count;
   if (venue) rec.venues.add(venue);
   rec.count += 1;
+  persist(id, rec);
   return rec.count;
+}
+
+// Boot only (services/usageStore.js hydrate). Loads one stored row for the
+// CURRENT month; a row for any other month is ignored. Merges rather than
+// replaces, keeping the larger count and the union of venues, so a retry after
+// a failed boot load can never lower a count that grew in memory meanwhile.
+// Returns true when the row was taken.
+function __hydrate(row) {
+  const id = accountKey(row && row.user_id);
+  if (id === null || !row || row.period !== monthKey()) return false;
+  const used = Number(row.used);
+  const count = Number.isInteger(used) && used > 0 ? used : 0;
+  const venues = Array.isArray(row.venues) ? row.venues.filter((v) => typeof v === 'string' && v) : [];
+  const rec = usage.get(id);
+  if (!rec || rec.month !== row.period) {
+    usage.set(id, { month: row.period, count, venues: new Set(venues) });
+  } else {
+    rec.count = Math.max(rec.count, count);
+    for (const v of venues) rec.venues.add(v);
+  }
+  return true;
 }
 
 // Hourly cleanup of stale (previous-month) entries so the map can't grow forever.
@@ -90,4 +127,4 @@ const cleanup = setInterval(() => {
 }, 3600000);
 if (cleanup.unref) cleanup.unref(); // don't hold the process / test runner open
 
-module.exports = { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView, hasViewed };
+module.exports = { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView, hasViewed, __hydrate };

@@ -36,6 +36,36 @@ const pool = require('../config/database');
 const { getUsedToday, PREMIUM_DAILY_LIMIT, FREE_DAILY_LIMIT } = require('./birdieUsage');
 const { FREE_MONTHLY_FORECASTS, getUsedThisMonth } = require('./forecastUsage');
 
+// THE FIRST WEEK IS NOT METERED. An account younger than this many days gets
+// the forecast allowance and the Birdie daily cap that Pro gets, and nothing
+// else Pro gets: crowd alerts read users.is_premium directly and stay Pro-only,
+// is_premium is never written, and the Pro page never calls it Pro.
+//
+// Why: a new account's first night out is when it decides whether Flock is
+// worth keeping, and a wall in that first week lands before the app has shown
+// what it does. It is the reverse-trial pattern: start people on the whole
+// product and meter them after. Metering starts on its own on day eight, with
+// nothing for anybody to cancel and nothing charged.
+//
+// Measured from users.created_at, in the same query that reads is_premium, so
+// a request that meters pays for no second lookup. That column is a naive
+// TIMESTAMP written by NOW() in the database's own session time zone, so the
+// end of the week is computed in SQL (cast in that same zone) rather than by
+// parsing a naive value in Node, which would move it by the server's offset.
+const NEW_ACCOUNT_GRACE_DAYS = 7;
+
+// A grace end from the database is only a grace end if it is a real date in
+// the future. Anything else (no created_at, a stubbed row, a date already
+// past) is "not in grace", which is the metered direction.
+function graceEndsAt(value) {
+  if (value === null || value === undefined) return null;
+  const t = value instanceof Date ? value.getTime() : Date.parse(value);
+  if (!Number.isFinite(t) || t <= Date.now()) return null;
+  return new Date(t).toISOString();
+}
+
+const NO_GRACE = Object.freeze({ inGrace: false, graceEndsAt: null });
+
 // Thrown by getEntitlements when the premium state could not be established.
 // Carries its own status/code so routes/entitlements.js does not have to guess
 // which failures are retryable, and so a real programming error still gets the
@@ -105,30 +135,42 @@ function boolFlag(name, defaultValue = false) {
 }
 
 /**
- * The honest three-way answer about one account's Pro state.
+ * The honest three-way answer about one account's Pro state, plus whether the
+ * account is still in its unmetered first week.
  *
- * @returns {Promise<{premium: boolean, known: boolean, reason: string|null}>}
+ * @returns {Promise<{premium: boolean, known: boolean, reason: string|null,
+ *                    inGrace: boolean, graceEndsAt: string|null}>}
  *   known === false means the lookup did not happen or did not succeed. `premium`
  *   is false in that case, because a paid boundary must not open on a shrug —
  *   but a caller that can tell the user something better than "you have not
- *   paid" should branch on `known`, not on `premium`.
+ *   paid" should branch on `known`, not on `premium`. An unknown state is never
+ *   in grace either: grace is decided by the same row, and a failed read metes
+ *   out neither the paid thing nor the free week.
+ *
+ *   `inGrace` is for METERING ONLY (see NEW_ACCOUNT_GRACE_DAYS). It is never a
+ *   reason to hand out a Pro feature, and `premium` does not include it.
  */
 async function getPremiumState(userId) {
   const id = accountId(userId);
-  if (id === null) return { premium: false, known: false, reason: 'identity' };
+  if (id === null) return { premium: false, known: false, reason: 'identity', ...NO_GRACE };
   try {
-    const r = await pool.query('SELECT is_premium FROM users WHERE id = $1', [id]);
+    const r = await pool.query(
+      `SELECT is_premium, created_at::timestamptz + make_interval(days => $2::int) AS grace_ends_at
+         FROM users WHERE id = $1`,
+      [id, NEW_ACCOUNT_GRACE_DAYS]
+    );
     const rows = r && Array.isArray(r.rows) ? r.rows : [];
     // No row is a KNOWN answer: the account was deleted, and deleted accounts
     // are not subscribers. Only a failure to ask is unknown.
-    if (rows.length === 0) return { premium: false, known: true, reason: 'no_such_user' };
-    return { premium: rows[0].is_premium === true, known: true, reason: null };
+    if (rows.length === 0) return { premium: false, known: true, reason: 'no_such_user', ...NO_GRACE };
+    const ends = graceEndsAt(rows[0].grace_ends_at);
+    return { premium: rows[0].is_premium === true, known: true, reason: null, inGrace: ends !== null, graceEndsAt: ends };
   } catch (err) {
     // Never silent. The previous version of this function was a bare `catch {}`,
     // so a paid boundary could deny every subscriber in the fleet for as long as
     // one query was broken and nothing anywhere would say so.
     console.error(`Entitlement lookup failed for user ${id}:`, err?.message || err);
-    return { premium: false, known: false, reason: 'lookup_failed' };
+    return { premium: false, known: false, reason: 'lookup_failed', ...NO_GRACE };
   }
 }
 
@@ -187,8 +229,15 @@ function paywallEnabled() {
 // Entitlements snapshot for the client (GET /api/entitlements).
 // Shape is a frontend contract:
 // { isPremium, paywallEnabled,
+//   graceEndsAt,                              // ISO, or null when not in the free week
 //   birdie:   { limit, used, remaining },     // per day
 //   forecast: { limit, used, remaining } }    // per calendar month
+//
+// IN THE FIRST WEEK the limits are reported exactly as they are enforced,
+// which is the way they are for Pro: Birdie at PREMIUM_DAILY_LIMIT and the
+// forecast with no limit. graceEndsAt says when that stops, and it is null
+// whenever it would change nothing (a subscriber, or the paywall off), so a
+// client can never show a countdown to a limit nobody is enforcing.
 //
 // THROWS EntitlementUnavailableError rather than reporting isPremium:false on a
 // failed lookup. The client caches this snapshot for the life of the session
@@ -199,23 +248,24 @@ function paywallEnabled() {
 //
 // WHAT THESE NUMBERS ARE AND ARE NOT. `used`/`remaining` come from the
 // in-process meters in services/birdieUsage.js and services/forecastUsage.js.
-// They reset on every deploy and they are per-instance, so on more than one
-// Railway instance this is the allowance on WHICHEVER instance answered. Stated
-// out loud because it is the one thing here that is shown to a user and is not
-// backed by durable data; the fix is a Postgres-backed meter, not a different
-// sentence.
+// Since migration 075 they survive a deploy (services/usageStore.js writes them
+// through to usage_meters and loads the current period back at boot), but they
+// are still enforced per process, so on more than one Railway instance this is
+// the allowance on WHICHEVER instance answered. The app runs on one.
 async function getEntitlements(userId) {
   const enabled = paywallEnabled();
   const state = await getPremiumState(userId);
   if (!state.known) throw new EntitlementUnavailableError(state.reason);
   const premium = state.premium;
-  const metered = enabled && !premium;
+  const grace = enabled && !premium && state.inGrace === true ? state.graceEndsAt : null;
+  const metered = enabled && !premium && grace === null;
   const birdieLimit = metered ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
   const birdieUsed = getUsedToday(userId);
   const forecastUsed = getUsedThisMonth(userId);
   return {
     isPremium: premium,
     paywallEnabled: enabled,
+    graceEndsAt: grace,
     birdie: {
       limit: birdieLimit,
       used: birdieUsed,
@@ -238,6 +288,7 @@ module.exports = {
   paywallEnabled,
   getEntitlements,
   EntitlementUnavailableError,
+  NEW_ACCOUNT_GRACE_DAYS,
   // Shared with services/venueEntitlements.js so both kill switches read their
   // env var the same way and warn about the same mis-spellings.
   boolFlag,
