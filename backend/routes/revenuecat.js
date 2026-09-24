@@ -494,6 +494,13 @@ router.post('/webhook', async (req, res) => {
       return res.json({ ok: true, source: 'subscriber' });
     }
 
+    // A sandbox event (TestFlight, App Review) cost nobody anything and
+    // writes nothing, except for the allowlisted accounts; the same rule
+    // fetchProActive applies on the path above.
+    if (event.environment === 'SANDBOX' && !proBilling.sandboxAllowed(appUserId)) {
+      return res.json({ ok: true, ignored: 'sandbox' });
+    }
+
     // No default. A type this table has never heard of writes nothing.
     let premium = PREMIUM_BY_EVENT.has(type) ? PREMIUM_BY_EVENT.get(type) : null;
     // A REFUND arrives as CANCELLATION with cancel_reason CUSTOMER_SUPPORT,

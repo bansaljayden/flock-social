@@ -29,7 +29,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 // ---- the fake Stripe ------------------------------------------------------
 const stripeCalls = [];
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [] };
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {} };
 function FakeStripe() {
   return {
     customers: {
@@ -38,6 +38,10 @@ function FakeStripe() {
     },
     subscriptions: {
       list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },
+      cancel: async (id, params, opts) => { stripeCalls.push(['subscriptions.cancel', id, opts]); return { id, status: 'canceled' }; },
+    },
+    charges: {
+      retrieve: async (id) => { stripeCalls.push(['charges.retrieve', id]); return stripeState.charges[id] || { id, customer: null }; },
     },
     prices: {
       retrieve: async (id) => ({ id, unit_amount: 399, currency: 'usd', recurring: { interval: 'month' } }),
@@ -67,13 +71,17 @@ require.cache[require.resolve('stripe')] = { id: require.resolve('stripe'), file
 // ---- the fake RevenueCat --------------------------------------------------
 const rcCalls = [];
 let rcEntitlement = null; // null = no pro entitlement
+let rcSubscriptions = null; // the subscriber's subscriptions map, when a test needs one
 const realFetch = global.fetch;
 global.fetch = async (url, init) => {
   const u = String(url);
   if (u.startsWith('https://api.revenuecat.com/')) {
     rcCalls.push([u, init && init.method, init && init.body]);
     if (u.includes('/subscribers/')) {
-      return new Response(JSON.stringify({ subscriber: { entitlements: rcEntitlement ? { pro: rcEntitlement } : {} } }), { status: 200 });
+      return new Response(JSON.stringify({ subscriber: {
+        entitlements: rcEntitlement ? { pro: rcEntitlement } : {},
+        ...(rcSubscriptions ? { subscriptions: rcSubscriptions } : {}),
+      } }), { status: 200 });
     }
     return new Response('{}', { status: 200 });
   }
@@ -148,7 +156,9 @@ test.beforeEach(() => {
   stripeCalls.length = 0;
   rcCalls.length = 0;
   rcEntitlement = null;
+  rcSubscriptions = null;
   stripeState.subscriptions = [];
+  stripeState.charges = {};
   stripeState.sessions = {};
   stripeState.openSessions = [];
   billing.__test.resetStripe();
@@ -593,4 +603,123 @@ test('/status still answers, without an offer, when Stripe cannot describe a pri
     Stripe.exports = prevExports;
     billing.__test.resetStripe();
   }
+});
+
+// ---- the 2026-09-24 attack pass: what it found, pinned shut ----
+
+test('a chargeback cancels the live subscriptions we made for that customer, and nothing else', async () => {
+  setEnv(ON);
+  stripeState.charges.ch_1 = { id: 'ch_1', customer: 'cus_TEST123' };
+  stripeState.subscriptions = [
+    { id: 'sub_live', status: 'active', metadata: { app_user_id: '7' } },
+    { id: 'sub_roost', status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: '7' } },
+    { id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } },
+    { id: 'sub_by_hand', status: 'active', metadata: {} },
+  ];
+  const { restore } = stubPool(async () => null);
+  try {
+    const res = await postWebhook({ type: 'charge.dispute.created', data: { object: { id: 'dp_1', charge: 'ch_1' } } }, 't=1,v1=good');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const cancelled = stripeCalls.filter((c) => c[0] === 'subscriptions.cancel').map((c) => c[1]).sort();
+    assert.deepStrictEqual(cancelled, ['sub_live', 'sub_roost']);
+    for (const [, id, opts] of stripeCalls.filter((c) => c[0] === 'subscriptions.cancel')) {
+      assert.deepStrictEqual(opts, { idempotencyKey: `flock-dispute-cancel-${id}` }, 'a retried dispute event cancels once');
+    }
+  } finally { restore(); }
+});
+
+test('a dispute with no customer behind it is acknowledged and changes nothing', async () => {
+  setEnv(ON);
+  const { restore } = stubPool(async () => null);
+  try {
+    const res = await postWebhook({ type: 'charge.dispute.created', data: { object: { id: 'dp_2', charge: 'ch_guest' } } }, 't=1,v1=good');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.ignored, 'no_customer');
+    assert.ok(!stripeCalls.some((c) => c[0] === 'subscriptions.cancel'));
+  } finally { restore(); }
+});
+
+test('a refresh RevenueCat refuses still re-reads and writes, then answers 500 so Stripe retries', async () => {
+  setEnv(ON);
+  const prev = global.fetch;
+  global.fetch = async (url, init) => (String(url).endsWith('/receipts') ? new Response('no', { status: 422 }) : prev(url, init));
+  rcEntitlement = null; // RevenueCat already says the subscription is over
+  const { calls, restore } = stubPool(async (sql) => (sql.includes('SELECT 1 FROM users') ? { rows: [{ '?column?': 1 }] } : null));
+  try {
+    const res = await postWebhook({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_77', metadata: { app_user_id: '7' } } } }, 't=1,v1=good');
+    assert.strictEqual(res.status, 500);
+    assert.ok(rcCalls.some((c) => c[0].includes('/subscribers/')), 'the re-read ran even though the refresh was refused');
+    assert.deepStrictEqual(calls.find((c) => c.text.includes('SET is_premium')).params, [false, 7]);
+  } finally { restore(); global.fetch = prev; }
+});
+
+test('a trial is for somebody who has never subscribed: a returning customer gets none, at checkout or on /status', async () => {
+  setEnv({ ...ON, PRO_WEB_TRIAL_DAYS: '7' });
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT is_premium')) return { rows: [{ is_premium: false }] };
+    if (sql.includes('SELECT stripe_customer_id')) return { rows: [{ stripe_customer_id: 'cus_TEST123' }] };
+    return null;
+  });
+  try {
+    await billing.createCheckout(ME, 'monthly');
+    let session = stripeCalls.filter((c) => c[0] === 'checkout.create').pop()[1];
+    assert.strictEqual(session.subscription_data.trial_period_days, 7, 'a first-time customer gets the trial');
+    assert.strictEqual(session.payment_method_collection, 'always', 'a trial takes a card');
+
+    billing.__test.resetStripe();
+    stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } }];
+    await billing.createCheckout(ME, 'monthly');
+    session = stripeCalls.filter((c) => c[0] === 'checkout.create').pop()[1];
+    assert.ok(!('trial_period_days' in session.subscription_data), 'cancel and come back is not a second trial');
+
+    const status = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.trialDays, 0);
+  } finally { restore(); }
+});
+
+test('two checkouts started at once are built one after the other, so only one can be paid', async () => {
+  setEnv(ON);
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT stripe_customer_id')) return { rows: [{ stripe_customer_id: 'cus_TEST123' }] };
+    return null;
+  });
+  try {
+    await Promise.all([billing.createCheckout(ME, 'monthly'), billing.createCheckout(ME, 'monthly')]);
+    const order = stripeCalls.map((c) => c[0]).filter((n) => n === 'checkout.list' || n === 'checkout.create');
+    assert.deepStrictEqual(order, ['checkout.list', 'checkout.create', 'checkout.list', 'checkout.create'],
+      'the second request looked for open sessions only after the first had made its own');
+  } finally { restore(); }
+});
+
+test('a sandbox purchase unlocks nothing unless the account is allowlisted, and a paid one still counts', async () => {
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  rcEntitlement = { expires_date: future, product_identifier: 'flock_pro_monthly' };
+  rcSubscriptions = { flock_pro_monthly: { expires_date: future, is_sandbox: true } };
+  assert.strictEqual(await billing.fetchProActive(7), false, 'a free TestFlight purchase is not production Pro');
+
+  rcSubscriptions = {
+    flock_pro_monthly: { expires_date: future, is_sandbox: true },
+    price_live: { expires_date: future, is_sandbox: false },
+  };
+  assert.strictEqual(await billing.fetchProActive(7), true, 'a live paid subscription beside it still counts');
+
+  rcSubscriptions = { flock_pro_monthly: { expires_date: future, is_sandbox: true } };
+  setEnv({ REVENUECAT_SANDBOX_USER_IDS: '41, 7' });
+  assert.strictEqual(await billing.fetchProActive(7), true, 'App Review and the operator can still test');
+  assert.strictEqual(await billing.fetchProActive(8), false);
+});
+
+test('on the fallback path a sandbox event writes nothing unless the account is allowlisted', async () => {
+  setEnv({ REVENUECAT_WEBHOOK_SECRET: ON.REVENUECAT_WEBHOOK_SECRET, REVENUECAT_SECRET_API_KEY: undefined, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
+      { event: { type: 'INITIAL_PURCHASE', environment: 'SANDBOX', app_user_id: '7', entitlement_ids: ['pro'] } },
+      { authorization: ON.REVENUECAT_WEBHOOK_SECRET });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.ignored, 'sandbox');
+    assert.ok(!calls.some((c) => c.text.includes('SET is_premium')));
+  } finally { restore(); }
 });

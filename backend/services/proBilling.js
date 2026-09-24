@@ -56,6 +56,17 @@ const stripeWebhookSecret = () => keyValue(process.env.STRIPE_WEBHOOK_SECRET);
 const rcSecret = () => keyValue(process.env.REVENUECAT_SECRET_API_KEY);
 const rcStripePublic = () => keyValue(process.env.REVENUECAT_STRIPE_PUBLIC_KEY);
 const stripeConfigured = () => !!stripeSecret();
+
+// Accounts allowed to be Pro through a SANDBOX purchase: App Review's demo
+// account and the operator's own test account, as numeric ids, comma
+// separated. Everyone else's sandbox purchase unlocks nothing (fetchProActive).
+function sandboxUserIds() {
+  const raw = plain(process.env.REVENUECAT_SANDBOX_USER_IDS) || '';
+  return new Set(raw.split(',').map((s) => s.trim()).filter((s) => /^[1-9][0-9]{0,9}$/.test(s)));
+}
+function sandboxAllowed(userId) {
+  return sandboxUserIds().has(String(userId));
+}
 const revenueCatApiConfigured = () => !!rcSecret();
 
 let stripeClient = null;
@@ -184,12 +195,29 @@ async function fetchProActive(userId) {
   if (!ent) return false;
   const now = Date.now();
   const until = (v) => (v ? Date.parse(v) : null);
-  const expires = until(ent.expires_date);
-  const grace = until(ent.grace_period_expires_date);
-  // A null expires_date is a lifetime grant. A billing-retry grace period is
-  // still Pro, which is what RevenueCat's own SDK reports for it.
-  if (ent.expires_date === null || ent.expires_date === undefined) return true;
-  return (Number.isFinite(expires) && expires > now) || (Number.isFinite(grace) && grace > now);
+  const live = (x) => {
+    if (!x) return false;
+    // A null expires_date is a lifetime grant. A billing-retry grace period is
+    // still Pro, which is what RevenueCat's own SDK reports for it.
+    if (x.expires_date === null || x.expires_date === undefined) return true;
+    const expires = until(x.expires_date);
+    const grace = until(x.grace_period_expires_date);
+    return (Number.isFinite(expires) && expires > now) || (Number.isFinite(grace) && grace > now);
+  };
+  if (!live(ent)) return false;
+  // A PURCHASE THAT COST NOTHING UNLOCKS NOTHING. TestFlight and App Review buy
+  // in Apple's sandbox, where nobody is charged, and RevenueCat grants the
+  // entitlement all the same, so reading it as-is would hand production Pro
+  // to every tester, free and renewable forever. A sandbox purchase counts only
+  // for the accounts in REVENUECAT_SANDBOX_USER_IDS. An entitlement whose
+  // source is sandbox still counts when another purchase that did cost money
+  // is live, since this project sells nothing but Pro.
+  const subs = (body.subscriber && body.subscriber.subscriptions) || {};
+  const source = subs[ent.product_identifier];
+  if (source && source.is_sandbox === true && !sandboxAllowed(userId)) {
+    return Object.values(subs).some((s) => s && s.is_sandbox !== true && !s.refunded_at && live(s));
+  }
+  return true;
 }
 
 // Tells RevenueCat about a Stripe subscription right away. Its Stripe
@@ -320,7 +348,30 @@ function constructWebhookEvent(rawBody, signature) {
   return stripe().webhooks.constructEvent(rawBody, signature, secret);
 }
 
-async function createCheckout(user, plan) {
+// ONE CHECKOUT BEING BUILT PER ACCOUNT AT A TIME. Expiring the open sessions,
+// checking for a live subscription and creating the new session are three
+// Stripe calls, and two requests that interleave them (a double click, two
+// tabs) could each create a session after the other's expire step, leaving
+// two payable at once and charging one person twice. Queued per account on
+// this one instance (the app runs on exactly one, root project documentation), the second
+// request runs after the first and expires the session the first one made,
+// which is the rule the comment inside says it keeps.
+const checkoutQueues = new Map();
+function withCheckoutLock(userId, fn) {
+  const key = String(userId);
+  const prev = checkoutQueues.get(key) || Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  checkoutQueues.set(key, tail);
+  tail.then(() => { if (checkoutQueues.get(key) === tail) checkoutQueues.delete(key); });
+  return run;
+}
+
+function createCheckout(user, plan) {
+  return withCheckoutLock(user && user.id, () => buildCheckout(user, plan));
+}
+
+async function buildCheckout(user, plan) {
   const prices = planPrices();
   const priceId = prices[plan];
   if (!priceId) {
@@ -344,7 +395,10 @@ async function createCheckout(user, plan) {
   const price = await describePrice(priceId);
   const every = price.interval === 'year' ? 'year' : 'month';
   const tax = taxEnabled();
-  const trial = trialDays();
+  // One trial per customer, ever. Without this a trial is renewable by
+  // cancelling and checking out again, which is free Pro forever. Asked only
+  // when a trial is configured at all, so it costs no Stripe call today.
+  const trial = trialDays() && !(await hasEverSubscribed(customerId)) ? trialDays() : 0;
   const web = webBase();
   const appUserId = String(user.id);
   const session = await stripe().checkout.sessions.create({
@@ -441,6 +495,29 @@ async function closeCustomer(customerId) {
   return true;
 }
 
+// A CHARGEBACK ENDS WHAT IT PAID FOR. A dispute takes the money back by force,
+// and without this the subscription it paid for ran on to the end of its
+// period, a year on the yearly plan. Every live subscription our server made
+// for the disputed charge's customer (Pro carries app_user_id, Roost carries
+// kind=venue; a customer holds one product) is cancelled now, and the deleted
+// event that follows revokes it through the usual path. A refund is left to
+// whoever issues it: Stripe's refund dialog offers to cancel in the same step,
+// and a partial refund is often a goodwill credit, not an ending.
+async function cancelDisputedSubscriptions(dispute) {
+  const chargeId = dispute && (typeof dispute.charge === 'string' ? dispute.charge : dispute.charge && dispute.charge.id);
+  if (!chargeId) return { ignored: 'no_charge' };
+  const charge = await stripe().charges.retrieve(chargeId);
+  const customerId = charge && (typeof charge.customer === 'string' ? charge.customer : charge.customer && charge.customer.id);
+  if (!customerId) return { ignored: 'no_customer' };
+  const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
+  const ours = (list.data || []).filter((s) => LIVE_STATUSES.has(s.status)
+    && s.metadata && (s.metadata.app_user_id || s.metadata.kind === 'venue'));
+  for (const s of ours) {
+    await stripe().subscriptions.cancel(s.id, {}, { idempotencyKey: `flock-dispute-cancel-${s.id}` });
+  }
+  return { cancelled: ours.length };
+}
+
 module.exports = {
   webCheckout,
   planPrices,
@@ -451,11 +528,13 @@ module.exports = {
   fetchProActive,
   postStripeReceipt,
   createCheckout,
+  cancelDisputedSubscriptions,
   createPortal,
   confirmCheckout,
   closeCustomer,
   customerIdFor,
   hasEverSubscribed,
+  sandboxAllowed,
   constructWebhookEvent,
   stripeWebhookConfigured: () => !!stripeWebhookSecret(),
   stripeConfigured,
