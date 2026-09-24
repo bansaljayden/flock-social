@@ -473,13 +473,13 @@ const INVENTORY = [
   // ── services/proBilling.js ────────────────────────────────────────────────
   {
     file: 'services/proBilling.js', name: 'priceCache', kind: 'cache',
-    key: 'a Stripe price id read from STRIPE_PRICE_PRO_MONTHLY or STRIPE_PRICE_PRO_YEARLY',
+    key: 'a Stripe price id read from STRIPE_PRICE_PRO_MONTHLY, STRIPE_PRICE_PRO_YEARLY, STRIPE_PRICE_ROOST_MONTHLY or STRIPE_PRICE_ROOST_YEARLY',
     callerControls: 'nothing: the key comes from the environment, never from a request',
-    protects: 'one Stripe prices.retrieve per plan per ten minutes on GET /api/pro/status',
+    protects: 'one Stripe prices.retrieve per plan per ten minutes on GET /api/pro/status and GET /api/venue-billing/status',
     denominator: 'n/a, not a counter',
-    bound: 'at most two keys, one per configured plan, TTL 10 minutes',
+    bound: 'at most four keys, one per configured plan (two Pro, two Roost), TTL 10 minutes',
     verdict: 'SAFE',
-    why: 'The key space is the set of configured price ids, which is two. A caller can only choose which plan to ask about by name, and an unconfigured plan never reaches the map. A stale entry for ten minutes after a price change shows the old figure on the page, while checkout itself charges the price id, so the charge is never wrong.',
+    why: 'The key space is the set of configured price ids, which is at most four. A caller can only choose which plan to ask about by name, and an unconfigured plan never reaches the map. A stale entry for ten minutes after a price change shows the old figure on the page, while checkout itself charges the price id, so the charge is never wrong.',
   },
 
   // ── services/photoStore.js ────────────────────────────────────────────────
@@ -1283,7 +1283,7 @@ const LIMITERS = [
     keyKind: 'account',
     key: 'billedAccountKey (= billedImageKey)',
     message: 'Too many requests. Wait a minute and try again.',
-    mounts: ['/api/pro'],
+    mounts: ['/api/pro', '/api/venue-billing'],
     protects: 'Stripe\'s account-wide request budget: a checkout makes two to four Stripe calls and creates a Checkout Session, a confirm retrieves one',
     verdict: 'SAFE',
     why: 'Sized for the one real burst, the return from checkout polling /status every two seconds for thirty seconds. Anything past thirty a minute from one account is a loop, and the budget it would spend is the one every other buyer\'s checkout needs.',

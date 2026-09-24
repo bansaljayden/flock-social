@@ -454,6 +454,10 @@ module.exports = {
   constructWebhookEvent,
   stripeWebhookConfigured: () => !!stripeWebhookSecret(),
   stripeConfigured,
+  // The one Stripe client, shared with services/venueBilling.js (Roost), so
+  // both products use the same key and the same retry and timeout settings.
+  stripeClient: stripe,
+  webBase,
   revenueCatApiConfigured,
   PRO_ENTITLEMENT,
   // Tests only.

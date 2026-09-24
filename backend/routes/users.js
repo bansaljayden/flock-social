@@ -83,6 +83,7 @@ const { createUserBudget } = require('../utils/probeBudget');
 // other's. See utils/phone.js.
 const { phoneDiscoveryHash } = require('../utils/phone');
 const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer } = require('../services/proBilling');
+const { closeVenueCustomer } = require('../services/venueBilling');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -2933,6 +2934,17 @@ async function deleteAccount(req, res) {
         console.error('[users] Stripe customer close failed during deletion:', err?.message || err);
         return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
       }
+    }
+
+    // ROOST TOO. A venue's Roost subscription lives on its own Stripe customer
+    // (migration 074) and must stop billing for the same reason as Pro above,
+    // under the same rule: if it cannot be cancelled, refuse rather than delete
+    // the only record of which customer to cancel.
+    try {
+      await closeVenueCustomer(req.user.id);
+    } catch (err) {
+      console.error('[users] Roost Stripe customer close failed during deletion:', err?.message || err);
+      return res.status(503).json({ error: "We couldn't cancel your Roost subscription just now. Try again in a minute." });
     }
 
     // Moderation evidence survives the account (round 5): cascade deletes let

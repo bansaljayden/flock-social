@@ -56,8 +56,9 @@ import { lsGet, lsSet } from './lib/storage';
 // effect, and the RevenueCat wrapper it lives in is a no-op everywhere except
 // the native shell, so it has no business being downloaded before the Nest
 // paints.
-import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout } from './services/api';
+import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout, confirmVenueCheckout } from './services/api';
 import { readProReturn, settleProCheckout } from './lib/proReturn';
+import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingReturn';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
@@ -15038,6 +15039,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // setup run in the same commit.
   }, [editingPromo, editingEvent]);
 
+  // Back from Stripe after buying Roost, or from its billing portal
+  // (VENUE_BILLING_RETURN, read at the bottom of this file). The confirm call
+  // writes the subscription on the server before it answers, so reloading the
+  // venue profile afterwards shows the new plan; the webhook covers a confirm
+  // that fails. Cleared before the call rather than after, and not cancelled
+  // on cleanup: StrictMode runs this twice, and the second run must find
+  // nothing to replay rather than drop the first one's answer.
+  useEffect(() => {
+    const ret = VENUE_BILLING_RETURN;
+    if (!ret) return;
+    VENUE_BILLING_RETURN = null;
+    if (ret.kind === 'cancelled') {
+      showToast('Checkout cancelled. Nothing was charged.', 'info');
+      return;
+    }
+    if (ret.kind === 'manage') {
+      setVenueDashProfileLoaded(false);
+      return;
+    }
+    settleVenueCheckout({ sessionId: ret.sessionId, confirm: confirmVenueCheckout }).then((outcome) => {
+      setVenueDashProfileLoaded(false);
+      if (outcome === 'roost') showToast('Roost is on.');
+      else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Roost will switch on shortly.', 'info');
+      else showToast('Your payment went through. Roost can take a minute to switch on.', 'info');
+    });
+  }, [showToast]);
+
   // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
@@ -18147,6 +18175,10 @@ const EMAIL_VERIFIED_OUTCOME = readEmailVerifiedOutcome();
 // lib/proReturn.js has the rest. `let` because FlockAppInner clears it once
 // handled, so a sign-out and sign-in in the same tab does not replay it.
 let PRO_RETURN = readProReturn();
+
+// Back from Stripe after a venue bought Roost: ?venue_billing=success|manage|cancelled.
+// Same read-once rule; lib/venueBillingReturn.js has the rest.
+let VENUE_BILLING_RETURN = readVenueBillingReturn();
 
 // A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
 // return is the ban; the emailVerificationRequired flag is checked anyway so a

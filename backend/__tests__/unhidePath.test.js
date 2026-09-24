@@ -237,7 +237,7 @@ test('DRIFT GUARD: every action routes/admin.js writes is legal under 017', () =
   }
 });
 
-test('DRIFT GUARD: routes/admin.js is still the only writer of moderation_actions.action', () => {
+test('DRIFT GUARD: routes/admin.js and the Roost Stripe writer are the only writers of moderation_actions.action', () => {
   // The guard above scrapes ONE file. That is only sufficient while one file
   // writes the column: a second INSERT anywhere else could carry a value the
   // constraint forbids and would 23514 in production without this failing.
@@ -253,9 +253,21 @@ test('DRIFT GUARD: routes/admin.js is still the only writer of moderation_action
     }
   };
   for (const r of roots) walk(path.join(__dirname, '..', r));
-  assert.deepStrictEqual(offenders.sort(), ['admin.js'],
+  assert.deepStrictEqual(offenders.sort(), ['admin.js', 'venueBilling.js'],
     'a new writer of moderation_actions.action must be added to the scrape above, ' +
     'or its value checked against the CHECK constraint in migration 017');
+  // services/venueBilling.js (Roost bought through Stripe) is the second
+  // writer. It writes one literal action, checked here against the
+  // migration that made it legal.
+  const billingSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'venueBilling.js'), 'utf8');
+  const billingActions = [...billingSrc.matchAll(/SELECT NULL, \$1::int, '([a-z_]+)', 'venue_profile'/g)].map((m) => m[1]);
+  assert.deepStrictEqual(billingActions, ['tier_changed'], 'the Stripe writer records exactly one action');
+  // tier_changed became legal in migration 020, after 017.
+  const m020 = fs.readFileSync(path.join(MIGRATIONS_DIR, '020_admin_audit_and_evidence.sql'), 'utf8');
+  for (const a of billingActions) {
+    assert.ok(m020.includes(`'${a}'`),
+      `services/venueBilling.js writes moderation_actions.action = '${a}', which migration 020 does not allow`);
+  }
 });
 
 test('the baseline constraint really lacked a restored value (017 is not a no-op)', () => {
