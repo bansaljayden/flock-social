@@ -61,7 +61,7 @@ export default function TermsOfService() {
           <li>Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears.</li>
           <li>What you write stays yours. We get only the permission we need to show it to the people you sent it to.</li>
           <li>Crowd predictions are estimates. So is everything Roost tells a venue owner. Neither is a promise.</li>
-          <li>Nothing costs money today. If that changes, the price and the term are on the purchase screen before you buy, and you cancel through Apple or Google.</li>
+          <li>Flock is free to use, and Flock Pro is optional. Its price and how often it renews are shown before you pay. Buy it in the iOS app and you cancel through Apple; buy it on flockcorp.com and you cancel in your account there, with a full refund within 14 days of your first payment.</li>
           <li>You can delete your account at any time, and it really deletes.</li>
         </ul>
         <p>
