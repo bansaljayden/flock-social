@@ -155,7 +155,7 @@ test.afterEach(() => resetEnv());
 test.after(() => { global.fetch = realFetch; });
 
 // The venue profile and grant rows, answered the way the real queries shape them.
-function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free' } = {}) {
+function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free', legacy = undefined, noticeUntil = null } = {}) {
   return async (sql) => {
     if (sql.includes('SELECT id, verified, business_name, stripe_customer_id FROM venue_profiles')) {
       return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: customer }] };
@@ -167,7 +167,11 @@ function venueDb({ verified = true, customer = null, grant = null, cachedTier = 
       return { rows: [{ verified, stripe_customer_id: customer }] };
     }
     if (sql.startsWith('SELECT vp.tier, vs.tier AS grant_tier')) {
-      return { rows: [{ tier: cachedTier, ...(grant || { grant_tier: null }) }] };
+      return { rows: [{
+        tier: cachedTier,
+        ...(grant || { grant_tier: null }),
+        ...(legacy === undefined ? {} : { roost_legacy: legacy, roost_notice_until: noticeUntil }),
+      }] };
     }
     if (sql.includes('SELECT id, email, name FROM users')) return { rows: [{ id: ME.id, email: ME.email, name: ME.name }] };
     if (sql.includes('UPDATE venue_profiles SET stripe_customer_id')) return { rows: [{ stripe_customer_id: 'cus_VENUE1' }] };
@@ -443,4 +447,126 @@ test('the portal returns to the venue dashboard, and a venue with no customer ge
     assert.strictEqual(res.status, 404);
     assert.strictEqual(res.body.code, 'NO_WEB_SUBSCRIPTION');
   } finally { db.restore(); }
+});
+
+// ---- the notice floor (Terms 9.6): a venue account from before Roost had a
+// price is never charged before the date its notice named ----------------
+
+const roostNotice = require('../services/roostNotice');
+const DAY = 864e5;
+
+function sessionArgs() {
+  const found = stripeCalls.find(([n]) => n === 'checkout.create');
+  return found ? found[1] : null;
+}
+
+test('inside the window with the notice sent: the first charge is the date it named, not the end of a 14-day trial', async () => {
+  setEnv(ON);
+  const named = new Date(Date.now() + 20 * DAY);
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: named.toISOString() }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const args = sessionArgs();
+    assert.ok(!('trial_period_days' in args.subscription_data), 'a date, not a length');
+    assert.strictEqual(args.subscription_data.trial_end, Math.ceil(named.getTime() / 1000));
+    assert.strictEqual(args.subscription_data.trial_settings.end_behavior.missing_payment_method, 'cancel');
+    assert.strictEqual(args.payment_method_collection, 'always');
+    const date = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' }).format(named);
+    assert.match(args.custom_text.terms_of_service_acceptance.message, new RegExp(`is free until ${date}, then renews at \\$99\\.00 every month until I cancel`));
+  } finally { restore(); }
+});
+
+test('inside the window, a 14-day trial that ends later than the named date wins', async () => {
+  setEnv(ON);
+  const named = new Date(Date.now() + 5 * DAY);
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: named.toISOString() }));
+  try {
+    const before = Date.now();
+    await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    const end = sessionArgs().subscription_data.trial_end * 1000;
+    assert.ok(end >= before + 14 * DAY && end <= Date.now() + 14 * DAY + 2000, 'the later of the two');
+  } finally { restore(); }
+});
+
+test('inside the window, a venue that already had its trial still is not charged before the named date', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { kind: 'venue' } }];
+  const named = new Date(Date.now() + 12 * DAY);
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', legacy: true, noticeUntil: named.toISOString() }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(sessionArgs().subscription_data.trial_end, Math.ceil(named.getTime() / 1000));
+  } finally { restore(); }
+});
+
+test('a named date under 48 hours away is moved just past what Stripe accepts, never earlier', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { kind: 'venue' } }];
+  const named = new Date(Date.now() + 3600e3);
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', legacy: true, noticeUntil: named.toISOString() }));
+  try {
+    const before = Date.now();
+    await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    const end = sessionArgs().subscription_data.trial_end * 1000;
+    assert.ok(end >= before + venueBilling.__test.STRIPE_MIN_TRIAL_MS - 1000);
+    assert.ok(end > named.getTime());
+  } finally { restore(); }
+});
+
+test('inside the window with no notice yet: checkout sends it first and charges no earlier than the date it names', async () => {
+  setEnv(ON);
+  const real = roostNotice.sendNoticeForCheckout;
+  const named = new Date(Date.now() + 30 * DAY);
+  const asked = [];
+  roostNotice.sendNoticeForCheckout = async (userId) => { asked.push(userId); return named; };
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: null }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(asked, [ME.id]);
+    assert.strictEqual(sessionArgs().subscription_data.trial_end, Math.ceil(named.getTime() / 1000));
+  } finally { restore(); roostNotice.sendNoticeForCheckout = real; }
+});
+
+test('inside the window when the notice cannot be sent: the first charge is at least 30 days from now', async () => {
+  setEnv(ON);
+  const real = roostNotice.sendNoticeForCheckout;
+  roostNotice.sendNoticeForCheckout = async () => null;
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: null }));
+  try {
+    const before = Date.now();
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(sessionArgs().subscription_data.trial_end * 1000 >= before + 30 * DAY - 1000);
+  } finally { restore(); roostNotice.sendNoticeForCheckout = real; }
+});
+
+test('a venue served everything by its window can still buy; a comp still cannot', async () => {
+  setEnv(ON);
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: new Date(Date.now() + 10 * DAY).toISOString() }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200);
+    assert.strictEqual(status.body.tier, 'pro', 'served everything inside the window');
+    assert.strictEqual(status.body.inNoticeWindow, true);
+    assert.ok(Date.parse(status.body.freeUntil) >= Date.now() + 14 * DAY - 2000, 'the later of the date and a trial');
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'yearly' });
+    assert.strictEqual(res.status, 200, 'the window is not a grant, so it does not block buying the plan');
+  } finally { restore(); }
+});
+
+test('a venue created after the price took effect gets the ordinary 14-day trial and no window', async () => {
+  setEnv(ON);
+  const { restore } = stubPool(venueDb({ legacy: false }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.inNoticeWindow, false);
+    assert.strictEqual(status.body.freeUntil, null);
+    await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    const args = sessionArgs();
+    assert.strictEqual(args.subscription_data.trial_period_days, 14);
+    assert.ok(!('trial_end' in args.subscription_data));
+  } finally { restore(); }
 });

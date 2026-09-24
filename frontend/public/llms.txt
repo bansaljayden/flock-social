@@ -74,8 +74,10 @@ Flock is free for users. There is no card required, and unlimited flocks, friend
 venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
 all included at no cost.
 
-Venues are the side Flock intends to charge, and nothing charges a venue today:
-there is no billing code in the product. The venue tools that do ship are a
+Venues are the side Flock charges. Roost, the venue plan, is $99 a month or $990 a
+year per location, bought on flockcorp.com, with a 14-day free trial; a venue
+account created before September 25, 2026 is emailed at least 30 days before it
+can be charged anything. The venue tools that ship are a
 dashboard an owner signs into, holding the flocks that chose their venue, their
 own hour-by-hour forecast from the same crowd model, replies to reviews, and a
 deal they can put on their own venue card for groups that open it. Flock does

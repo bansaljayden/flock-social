@@ -2,7 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate, requireVerified } = require('../middleware/auth');
-const { requireVenueTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST } = require('../services/venueEntitlements');
+const { requireVenueTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST, ROOST_PRICED_FROM } = require('../services/venueEntitlements');
 // The owner's live 0-100 reading: liveness, expiry and precedence rules all
 // live in ONE service (routes/crowd.js applies them to every published
 // number). This router only owns the write path.
@@ -1587,8 +1587,15 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
        -- author (utils/relationships.js, routes/users.js).
        JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
        LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id
+       -- A venue account from before Roost had a price keeps serving its deals
+       -- until the date its notice named (Terms 9.6), the same window
+       -- services/venueEntitlements.js noticeWindowOpen applies to the gates.
+       LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
-         AND ($2::boolean = false OR (
+         AND ($2::boolean = false
+           OR ((vp.created_at IS NULL OR vp.created_at < $5::timestamptz)
+               AND (vn.charge_not_before IS NULL OR vn.charge_not_before > NOW()))
+           OR (
            vp.tier = ANY($3::text[])
            AND (vs.tier IS NULL OR (
              vs.tier = ANY($3::text[])
@@ -1598,7 +1605,7 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
          ))
        ORDER BY p.created_at DESC
        LIMIT 100`,
-      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS, GRANT_LIVE_STATUS_LIST]
+      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS, GRANT_LIVE_STATUS_LIST, ROOST_PRICED_FROM]
     );
     // Count the view — see the two rules above claimPromotionViews. Bounded by
     // the LIMIT above, so the ANY($1) set never grows without limit either.

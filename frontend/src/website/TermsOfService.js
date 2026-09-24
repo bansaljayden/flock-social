@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 23, 2026';
+const EFFECTIVE_DATE = 'September 24, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -356,16 +356,16 @@ export default function TermsOfService() {
             can never take back. Present tense states the same fact without
             selling a future nobody has decided.
 
-            The notice period is NOT invented here. It is the one 9.6 already
-            gives for any venue charge, quoted so the two clauses cannot drift
-            into saying different things about the same event. Change one and
-            change the other. */}
+            The notice period is NOT invented here. It is the one 9.6 gives
+            before anything that is free today is charged for, quoted so the two
+            clauses cannot drift into saying different things about the same
+            event. Change one and change the other. */}
         <p>
           The dashboard lets you report how busy your venue is right now, on a scale of 0 to
           100. It costs nothing on every tier today, and nothing about how prominently a
           truthful report is labelled is for sale. If that ever changes, it changes on the
           terms in 9.6: at least 30 days' notice to the email on the venue account before we
-          charge any venue anything.
+          charge for anything that is free today.
         </p>
         <ul>
           <li>Your report is shown to users as coming from your venue, and never as Flock's own estimate. The wording around it is ours and is built from your venue's category, so a cafe reads as a cafe. It is not text you write.</li>
@@ -399,24 +399,51 @@ export default function TermsOfService() {
         </p>
 
         <h3>9.6 Venue fees</h3>
+        {/* EVERY LINE HERE IS SOMETHING THE CODE DOES (backend/services/
+            venueBilling.js, roostNotice.js, venueEntitlements.js):
+            verified-only checkout, the Stripe prices, one 14-day trial per
+            venue with a card, renewal and cancel through Stripe's portal from
+            Manage billing (never shown inside the iOS app), past_due keeping
+            the plan until Stripe's retries end and then cancelling, account
+            deletion cancelling the customer, comps that expire.
+
+            THE PARAGRAPH FOR OLDER VENUES keeps the promise this section used
+            to make: nothing charged before at least 30 days' notice at the
+            account's email. Its date is ROOST_PRICED_FROM and its 30 days are
+            ROOST_NOTICE_DAYS in venueEntitlements.js, and
+            backend/__tests__/roostNotice.test.js pins that the words here and
+            those constants agree. */}
         <p>
-          <strong>Today, nothing in the venue dashboard costs money and no payment method is
-          collected.</strong> These Terms do not set a price for anything. When there is a
-          price it will be published where you buy, and we will give at least 30 days' notice
-          to the email on the venue account before we charge any venue anything. Nothing will
-          be retroactive: you will never be billed for a period before you subscribed. If we
-          comp your venue a paid tier during a pilot, that comp can end at any time and is not
-          a promise of future pricing.
+          A venue account, a claimed listing, replies to reviews and the 0 to 100 busyness
+          report cost nothing. The paid plan is <strong>Roost</strong>: the forecast for your
+          venue, the Roost cards and answers, the week view and the Monday digest.
+        </p>
+        <ul>
+          <li><strong>Who can buy it.</strong> A verified venue, on flockcorp.com. The seller is Flock Social LLC and Stripe processes the payment. We never see or store your card.</li>
+          <li><strong>Price.</strong> $99 a month, or $990 a year, per location, plus any sales tax, shown at checkout before you pay. A price agreed with us in writing for an early venue applies instead, for the period it states.</li>
+          <li><strong>Free trial.</strong> New subscribers get 14 days free, once per venue. A card is needed to start it. If you cancel before the trial ends, you are not charged. If you do not, the first charge happens when the trial ends.</li>
+          <li><strong>It renews by itself</strong> every month, or every year on the yearly plan, until you cancel. Before a yearly plan renews, we email you.</li>
+          <li><strong>How to cancel:</strong> on flockcorp.com, open the venue dashboard, then Manage billing, and cancel there. It takes a few clicks and you do not have to email us, phone us or wait for an answer. You can also write to social@flockcorp.com and we will cancel it for you. Inside the iPhone app the billing controls are not shown; use flockcorp.com.</li>
+          <li><strong>Cancelling stops the next charge.</strong> You keep Roost until the end of the period you already paid for.</li>
+          <li><strong>Refunds.</strong> Within 14 days of your first payment (after any trial), write to social@flockcorp.com and we refund it in full. After that, payments are not refunded except where the law requires it.</li>
+          <li><strong>Price changes.</strong> We email the address on the venue account at least 30 days before a new price applies to your plan, and you can cancel before it does. The same 30 days' notice applies before we charge for anything that is free today.</li>
+          <li><strong>If a payment fails,</strong> Stripe tries again for a short time and Roost stays on meanwhile. If it still fails, Roost ends.</li>
+          <li><strong>Closing the venue account</strong> cancels the subscription at once.</li>
+          <li><strong>Comps.</strong> If we give your venue Roost for free during a pilot, that can end at any time and is not a promise of future pricing. Nothing is retroactive: you are never billed for a period before you subscribed.</li>
+        </ul>
+        <p>
+          <strong>Venue accounts created before September 25, 2026.</strong> Before that date
+          these Terms said nothing in the venue dashboard cost money. If your venue account was
+          created before September 25, 2026, we email the address on it before Roost becomes a
+          paid plan for your venue. Your venue keeps everything it has today, and nothing is
+          charged, until at least 30 days after that email, and for as long as we have not been
+          able to send it. If you subscribe before then, your first charge is no earlier than 30
+          days after that email, or 30 days after you subscribe if we could not reach you by
+          email.
         </p>
         <p>
-          If we do bill venues, a subscription will renew by itself until you cancel it, and we
-          will give you a way to cancel it yourself, from inside the venue dashboard, that is
-          at least as easy as the way you signed up. You will not have to email us, phone us,
-          or wait for us to answer to stop a renewal.
-        </p>
-        <p>
-          If paid features ever stop for non-payment, your listing, your ability to reply to
-          reviews, and the occupancy slider do not stop with them.
+          If Roost stops for any reason, your listing, your replies to reviews and the busyness
+          report do not stop with it.
         </p>
 
         <h3>9.7 Ending it</h3>
@@ -468,8 +495,10 @@ export default function TermsOfService() {
         <ul>
           <li><strong>Before you pay,</strong> the plan, its price in US dollars, any tax, how often it renews and how to cancel are shown on the page and at checkout. You agree to the renewal by ticking the box at checkout, and nothing is charged until you do.</li>
           <li><strong>It renews by itself.</strong> Your card is charged the same price every month, or every year on a yearly plan, until you cancel. Before a yearly plan renews, we email you.</li>
-          <li><strong>How to cancel:</strong> on flockcorp.com, open You, then Flock Pro, then Manage subscription, and cancel there. It takes a few taps and there is nobody to call. You can also write to social@flockcorp.com and we will cancel it for you.</li>
+          <li><strong>How to cancel:</strong> on flockcorp.com, open You, then Flock Pro, then Cancel subscription, or use the same button on flockcorp.com/pro. It takes two taps and there is nobody to call. Until the paid period ends you can take it back with Keep Pro. You can also write to social@flockcorp.com and we will cancel it for you. Payment method and invoices, in the same place, is only for your card and receipts.</li>
           <li><strong>Cancelling stops the next charge.</strong> You keep Pro until the end of the period you already paid for.</li>
+          <li><strong>A record by email:</strong> once your purchase goes through, we email the address you paid with the plan, the price, how often it renews, how to cancel and the refund window.</li>
+          <li><strong>Promotion codes:</strong> a code typed at checkout, or carried by a link to flockcorp.com/pro, lowers the price for as long as that code lasts, and checkout shows the lowered price before you pay. After it ends, the plan renews at its regular price. A code that has ended or does not apply to you is not used.</li>
           <li><strong>Refunds:</strong> if you change your mind, write to social@flockcorp.com within 14 days of your first payment and we refund it in full. After that, payments are not refunded except where the law requires it.</li>
           <li><strong>Under 18:</strong> a parent or guardian needs to make the purchase with their own payment method. If someone under 18 bought Flock Pro, a parent or guardian can write to us and we will cancel it and refund it.</li>
           <li><strong>Price changes:</strong> we email you at least 30 days before a new price applies to your plan, and you can cancel before it does.</li>
@@ -479,7 +508,7 @@ export default function TermsOfService() {
           <li><strong>Buying in both places means paying twice.</strong> If you already have Pro from the App Store, do not buy it again on the web, and the other way round.</li>
         </ul>
         <p>
-          If we ever bill venues directly rather than through a store, section 9.6 governs that and we will publish the billing terms before the first charge.
+          Roost, the venue plan, is billed under section 9.6.
         </p>
         <p>
           We never collect or store card numbers, bank details, or any other payment credential. Card payments on flockcorp.com are taken by Stripe. Bill splitting inside Flock moves no money: it opens Venmo, Cash App or Zelle on your phone, and what happens there is between you and them.

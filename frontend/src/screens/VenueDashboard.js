@@ -2286,6 +2286,8 @@ export default function VenueDashboard({
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
                       {venueTier === 'free'
                         ? 'No charge. Your listing, your hours, your replies.'
+                        : venueProfile?.tier_notice_window === true
+                          ? 'Everything you had stays on while the notice we emailed you runs. Nothing is being charged.'
                         : venueTierReason === 'paid'
                           ? 'Billed monthly.'
                           : venueTierReason === 'founding_comp'
@@ -2307,10 +2309,17 @@ export default function VenueDashboard({
                     {venueTier !== 'free' && (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>
                         {(() => {
-                          const endsAt = venueTierEndsAt ? new Date(venueTierEndsAt) : null;
+                          // Inside the notice window (Terms 9.6) the date is
+                          // the one the notice email named, and with no email
+                          // sent yet there is no end date to give.
+                          const inWindow = venueProfile?.tier_notice_window === true;
+                          const source = inWindow ? venueProfile?.tier_notice_until : venueTierEndsAt;
+                          const endsAt = source ? new Date(source) : null;
                           return endsAt && !Number.isNaN(endsAt.getTime())
                             ? `Runs until ${endsAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
-                            : 'No end date';
+                            : inWindow
+                              ? 'We will email you at least 30 days before this changes'
+                              : 'No end date';
                         })()}
                       </p>
                     )}
@@ -2347,7 +2356,7 @@ export default function VenueDashboard({
                     is the part of "email us to cancel" that people give up on.
                     The address is printed underneath for a device with no mail
                     app, exactly as the Danger Zone does it. */}
-                {venueTier !== 'free' && (
+                {venueTier !== 'free' && venueProfile?.tier_notice_window !== true && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button className="hit44" onClick={() => {
