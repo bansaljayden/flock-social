@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 23, 2026';
+const EFFECTIVE_DATE = 'September 24, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -807,7 +807,8 @@ export default function PrivacyPolicy() {
                 <li><strong>Push notification tokens:</strong> deleted when you sign out on that device or delete your account.</li>
                 <li><strong>Do-not-mail entries:</strong> kept for as long as the address should not be mailed. Removing it is what would let mail resume, so it has no expiry.</li>
                 <li><strong>Reports and moderation records:</strong> kept after an account is deleted so our moderation history stays intact, but with the deleted account unlinked from them.</li>
-                <li><strong>Banned accounts:</strong> if an account is banned and its owner then deletes it, we keep a one-way hashed code of its email, phone number, and Apple or Google sign-in ID for 12 months. This stops a banned person from signing straight back up. The code can't be turned back into the original email or number, contains no name or content, and expires on its own after 12 months. Nothing like this is kept for accounts that weren't banned.</li>
+                <li><strong>Banned accounts:</strong> if an account is banned and its owner then deletes it, we keep a one-way hashed code of its email, phone number, and Apple or Google sign-in ID for 12 months. This stops a banned person from signing straight back up. The code can't be turned back into the original email or number, contains no name or content, and expires on its own after 12 months.</li>
+                <li><strong>Deleted accounts:</strong> when any account is deleted, we keep a one-way hashed code of the email address it confirmed and of its Apple or Google sign-in ID for 12 months. It is used for one thing only: a new account on the same email or sign-in ID does not get a second first week without the free-tier limits. It holds no name, no phone number and no content, can't be turned back into the email, and expires on its own after 12 months.</li>
                 <li><strong>A phone matching code,</strong> only while you have "Let friends find me by my phone number" switched on. It is a one-way keyed code of your number, it cannot be turned back into the number, and it is deleted the moment you switch discovery off or delete your account.</li>
                 <li><strong>Plan statistics:</strong> when a flock ends we keep one row per plan describing how it went: group size, whether a budget was used, the group's ceiling, how many people submitted, whether it was confirmed, how long that took, and where it stalled. It carries no names, no messages, and no individual budget amounts, and once the plan is deleted it is not linked to anyone. We keep these to understand where planning breaks down.</li>
                 <li><strong>Venue occupancy readings by owners:</strong> kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted.</li>
@@ -841,7 +842,8 @@ export default function PrivacyPolicy() {
               <p><strong>What survives, and why</strong></p>
               <ul>
                 <li><strong>Moderation records.</strong> Reports filed about content and the actions taken on them stay, with your account unlinked from them, so somebody cannot erase an open report about themselves by deleting their account. The de-attribution and the delete happen together: either both worked or neither did.</li>
-                <li><strong>A ban tombstone,</strong> but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up. Nothing like it is kept for an account that was not banned.</li>
+                <li><strong>A ban tombstone,</strong> but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up.</li>
+                <li><strong>A first-week code,</strong> for any account. A one-way hashed code of the email the account confirmed and its Apple or Google sign-in ID, for 12 months, so that signing up again does not bring back the first week without free-tier limits.</li>
                 <li><strong>One row per finished plan,</strong> with no names, no messages and no individual amounts, as described under <a href="#how-long">How long we keep it</a>.</li>
                 {/* This lived welded onto the end of the export paragraph below,
                     which made a retention disclosure read as part of "how to get

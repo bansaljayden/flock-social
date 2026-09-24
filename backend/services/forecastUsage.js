@@ -110,10 +110,16 @@ function __hydrate(row) {
   const venues = Array.isArray(row.venues) ? row.venues.filter((v) => typeof v === 'string' && v) : [];
   const rec = usage.get(id);
   if (!rec || rec.month !== row.period) {
-    usage.set(id, { month: row.period, count, venues: new Set(venues) });
+    const set = new Set(venues);
+    usage.set(id, { month: row.period, count: Math.max(count, set.size), venues: set });
   } else {
-    rec.count = Math.max(rec.count, count);
     for (const v of venues) rec.venues.add(v);
+    // Every venue in the set was charged once, so the count can never be
+    // below the set's size. A retry after a failed boot load merges two
+    // different months' worth of venues (the stored one and the one memory
+    // collected meanwhile); keeping only the larger count left, say, 60
+    // venues open on a meter reading 30.
+    rec.count = Math.max(rec.count, count, rec.venues.size);
   }
   return true;
 }

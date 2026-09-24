@@ -228,6 +228,16 @@ describe('deletion copy matches the deletion path', () => {
     expect(deletePage).toMatch(/12 months/);
     expect(privacy).toMatch(/12 months/);
 
+    // The first-week code (migration 076), written on EVERY deletion. The pages
+    // used to say nothing like the ban tombstone was kept for anyone else, which
+    // stopped being true the day this was added.
+    expect(users).toMatch(/recordGraceSpentIdentity\(account\)/);
+    expect(privacy).toMatch(/<strong>Deleted accounts:<\/strong>/);
+    expect(privacy).toMatch(/<strong>A first-week code,<\/strong>/);
+    expect(deletePage).toMatch(/first week without free-tier limits/);
+    expect(privacy).not.toMatch(/Nothing like (this|it) is kept for an? ?accounts? that (was not|weren't) banned/);
+    expect(deletePage).not.toMatch(/Nothing like it is kept for an account that was not banned/);
+
     // The per-plan research row: written on flock close, keyed on a flock that
     // is SET NULL rather than cascaded, so it outlives the account.
     const flocks = read('backend', 'routes', 'flocks.js');

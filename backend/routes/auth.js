@@ -2210,6 +2210,9 @@ router.post('/signup', signupValidation, async (req, res) => {
 
     const user = result.rows[0];
     linkWaitlistConversion(user.email, user.id);
+    // The unmetered first week is once per identity (migration 076): an
+    // address that already had an account does not get it again.
+    await banTombstones().forfeitGraceIfReturning(user.id, { email });
 
     // The account exists and can sign in; it just cannot accumulate anything
     // until the link is clicked (see UNVERIFIED_DENY in middleware/auth.js).
@@ -3215,6 +3218,11 @@ router.post('/google', [
         );
         user = result.rows[0];
         linkWaitlistConversion(user.email, user.id);
+        // First week once per identity (migration 076), by address and by
+        // Google subject.
+        await banTombstones().forfeitGraceIfReturning(user.id, {
+          email, oauthProvider: 'google', oauthId: googleId,
+        });
       }
     }
 
@@ -3667,6 +3675,11 @@ router.post('/apple', [
       user = result.rows[0];
       createdNow = true;
       linkWaitlistConversion(user.email, user.id);
+      // First week once per identity (migration 076). The Apple subject is the
+      // durable half, as it is for the ban tombstone above.
+      await banTombstones().forfeitGraceIfReturning(user.id, {
+        email, oauthProvider: 'apple', oauthId: appleId,
+      });
     }
 
     // Existing accounts only: a just-created row already carries its token, and

@@ -47,6 +47,15 @@ const { FREE_MONTHLY_FORECASTS, getUsedThisMonth } = require('./forecastUsage');
 // product and meter them after. Metering starts on its own on day eight, with
 // nothing for anybody to cancel and nothing charged.
 //
+// WHO GETS IT (2026-09-24, after an adversarial pass). Only an account whose
+// email is verified (a password signup that clicked its link; Google and Apple
+// accounts are verified at creation), and only once per identity: a new
+// account whose address or Apple/Google identity already had a Flock account is
+// created with users.grace_forfeited set (migration 076, routes/users.js
+// forfeitGraceIfReturning). Without those two rules the week came back every
+// time somebody deleted the account and signed up again, and a throwaway
+// address that was never confirmed got it too.
+//
 // Measured from users.created_at, in the same query that reads is_premium, so
 // a request that meters pays for no second lookup. That column is a naive
 // TIMESTAMP written by NOW() in the database's own session time zone, so the
@@ -155,7 +164,10 @@ async function getPremiumState(userId) {
   if (id === null) return { premium: false, known: false, reason: 'identity', ...NO_GRACE };
   try {
     const r = await pool.query(
-      `SELECT is_premium, created_at::timestamptz + make_interval(days => $2::int) AS grace_ends_at
+      `SELECT is_premium,
+              CASE WHEN email_verified IS TRUE AND grace_forfeited IS NOT TRUE
+                   THEN created_at::timestamptz + make_interval(days => $2::int)
+              END AS grace_ends_at
          FROM users WHERE id = $1`,
       [id, NEW_ACCOUNT_GRACE_DAYS]
     );

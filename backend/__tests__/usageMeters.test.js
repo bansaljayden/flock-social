@@ -78,12 +78,15 @@ test.after(async () => {
 });
 
 let n = 0;
-async function makeUser({ daysOld = 30 } = {}) {
+// Verified by default: the first week is only for an address that was proved
+// (services/entitlements.js), so a helper account that never confirmed would
+// make every grace test below read as metered for the wrong reason.
+async function makeUser({ daysOld = 30, verified = true } = {}) {
   n += 1;
   const r = await testPool.query(
-    `INSERT INTO users (email, password, name, created_at)
-     VALUES ($1, 'x', 'Meter', NOW() - make_interval(days => $2::int)) RETURNING id`,
-    [`meter${n}@example.com`, daysOld]
+    `INSERT INTO users (email, password, name, created_at, email_verified)
+     VALUES ($1, 'x', 'Meter', NOW() - make_interval(days => $2::int), $3::boolean) RETURNING id`,
+    [`meter${n}@example.com`, daysOld, verified]
   );
   return r.rows[0].id;
 }
@@ -238,6 +241,55 @@ test('an account eight days old is metered, and the snapshot shows the limits it
   assert.strictEqual(fresh.isPremium, false);
   assert.strictEqual(fresh.forecast.limit, null, 'a first-week account was shown a forecast limit nobody enforces');
   assert.strictEqual(fresh.birdie.limit, require('../services/birdieUsage').PREMIUM_DAILY_LIMIT);
+});
+
+test('an account that never confirmed its address, or already had its week, is metered from day one', async () => {
+  const { getPremiumState } = require('../services/entitlements');
+  const unconfirmed = await makeUser({ daysOld: 0, verified: false });
+  const a = await getPremiumState(unconfirmed);
+  assert.strictEqual(a.known, true);
+  assert.strictEqual(a.inGrace, false, 'an unconfirmed address got the free week');
+  assert.strictEqual(a.graceEndsAt, null);
+
+  const returning = await makeUser({ daysOld: 0 });
+  await testPool.query('UPDATE users SET grace_forfeited = TRUE WHERE id = $1', [returning]);
+  const b = await getPremiumState(returning);
+  assert.strictEqual(b.inGrace, false, 'a returning identity got a second first week');
+  assert.strictEqual(b.premium, false);
+});
+
+test('a retry after a failed boot load never leaves more venues open than the meter counts', async () => {
+  const uid = await makeUser();
+  let p = restart();
+  assert.strictEqual(await p.store.hydrate(), true);
+  for (let i = 0; i < 30; i += 1) p.forecast.recordView(uid, `STORED_${i}`);
+  await p.store.flushNow();
+
+  // The next process cannot read the table at boot, so it starts the month
+  // from memory and charges 30 different venues before the retry succeeds.
+  p = restart();
+  const inner = appPool.query;
+  appPool.query = (text, params) => (/FROM usage_meters/.test(String(text))
+    ? Promise.reject(new Error('connection terminated unexpectedly'))
+    : inner(text, params));
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    assert.strictEqual(await p.store.hydrate(), false);
+  } finally {
+    appPool.query = inner;
+    console.error = quiet;
+  }
+  for (let i = 0; i < 30; i += 1) p.forecast.recordView(uid, `MEMORY_${i}`);
+  assert.strictEqual(await p.store.hydrate(), true);
+
+  let open = 0;
+  for (let i = 0; i < 30; i += 1) {
+    if (p.forecast.hasViewed(uid, `STORED_${i}`)) open += 1;
+    if (p.forecast.hasViewed(uid, `MEMORY_${i}`)) open += 1;
+  }
+  assert.ok(p.forecast.getUsedThisMonth(uid) >= open,
+    `${open} venues are open on a meter reading ${p.forecast.getUsedThisMonth(uid)}`);
 });
 
 test('a subscriber is never reported as in a grace week, and the paywall off reports none', async () => {

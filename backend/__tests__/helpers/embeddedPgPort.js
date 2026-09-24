@@ -83,6 +83,9 @@ const SUITE_SLOTS = {
                                  // written through to usage_meters and
                                  // loaded back as a restart would, and the
                                  // first-week grace computed by Postgres.
+  graceIdentity: 21,             // new in 2026-09-24; the first week once per
+                                 // identity, through real signup and
+                                 // deletion routes (migration 076).
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
