@@ -290,10 +290,13 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'location_error',      // why a fix failed: code, plugin id, retry, screen. No coordinate, no message
       'login',
       'login_failed',        // locked out, or uninterested
+      'meter_capped',        // a free limit refused something: which meter, once a day
       'nfc_tap',
       'nfc_tap_action',
       'notification_permission', // the retention lever's outcome at each of the two asks
+      'paywall_shown',       // the Pro sheet or /pro opened, and what opened it
       'pulse_set',           // the most-tapped control on the home screen: is Tonight used
+      'purchase_completed',  // Pro bought: which store, which plan, never a price
       'push_opened',         // did a notification tap open the app, and to what
       'roost_question_asked',      // is the B2B advisor used, and does it answer
       'screen_viewed',       // the denominator: who ARRIVED where a step happens

@@ -1175,6 +1175,11 @@ export default function ProfileSettings({
     );
 }
 
+// Apple's own page for a person's subscriptions. Capacitor hands a window.open
+// to UIApplication.open, so on the phone this opens the App Store screen rather
+// than loading inside the app.
+const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
+
 /* THE FLOCK PRO ROW, and why it is its own component.
  *
  * It needs GET /api/pro/status (whether web checkout is on, and whether this
@@ -1215,6 +1220,11 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
 
   if (native) {
     if (premium) {
+      // An App Store subscriber manages it in Apple's own subscriptions screen;
+      // Apple expects an app that sells a subscription to lead there. The
+      // button waits for /status so a web subscriber, whose subscription Apple
+      // does not know about, is never sent to a screen that cannot show it.
+      const fromApple = !!status && !status.canManageWeb;
       return (
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           {icon}
@@ -1222,6 +1232,16 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
           {/* Nothing here points at the website. Outside the US storefront
               that is steering under App Store guideline 3.1.1, and the web
               subscriber already has the manage link in every Stripe email. */}
+          {fromApple && (
+            <button
+              type="button"
+              className="hit44"
+              onClick={() => window.open(APPLE_SUBSCRIPTIONS_URL, '_blank', 'noopener,noreferrer')}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}
+            >
+              Manage
+            </button>
+          )}
         </div>
       );
     }

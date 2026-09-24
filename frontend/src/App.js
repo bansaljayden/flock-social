@@ -17,7 +17,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
-import { resendVerificationEmail } from './services/api';
+import { resendVerificationEmail, trackPurchaseCompleted } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
@@ -7443,8 +7443,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (outcome === 'cancelled') return;
       PRO_RETURN = null;
       refreshEntitlements();
-      if (outcome === 'pro') showToast("You're Pro.");
-      else if (outcome === 'pending') showToast('Your payment went through. Pro can take a few minutes to switch on.', 'info');
+      if (outcome === 'pro') {
+        // The plan is not known on this side of the redirect; the event
+        // records the store and leaves the plan 'unknown' rather than guess.
+        trackPurchaseCompleted('web');
+        showToast("You're Pro.");
+      } else if (outcome === 'pending') showToast('Your payment went through. Pro can take a few minutes to switch on.', 'info');
       else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Pro will switch on shortly.', 'info');
       else showToast('We could not confirm your purchase yet. If you paid, Pro will switch on shortly.', 'info');
     });
