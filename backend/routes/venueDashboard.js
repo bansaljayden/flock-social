@@ -2,7 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate, requireVerified } = require('../middleware/auth');
-const { requireVenueTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST, ROOST_PRICED_FROM } = require('../services/venueEntitlements');
+const { requireVenueTier } = require('../services/venueEntitlements');
 // The owner's live 0-100 reading: liveness, expiry and precedence rules all
 // live in ONE service (routes/crowd.js applies them to every published
 // number). This router only owns the write path.
@@ -33,36 +33,27 @@ router.use(authenticate);
 // plainly a 404. Same bound the other routers use (routes/messages.js et al).
 const INT4_MAX = 2147483647;
 
-// Paid-tier boundaries (VENUE-BILLING.md): promotions, events, the full
-// incoming-flocks feed, the demand curve (/intelligence) and the competitive
-// strip (/strip) are Insights ('premium') features. Server-enforced — the
-// locked dashboard tabs are cosmetic. No-op until VENUE_BILLING_ENABLED.
+// TWO PLANS (VENUE-PRICING.md section 4): a free venue account, and Roost.
 //
-// Tier assignment, from the VENUE-BILLING.md pricing table:
-//   Free      = "Claimed profile, hours, logo, reviews + reply, 30-day
-//                'groups considered you' count" — nothing model-powered.
-//   Insights  = "Full incoming-flocks feed + history, demand curve,
-//                promotions to nearby groups, events" — /intelligence IS the
-//                demand curve, so it is premium by name.
-//   Boost     = "Everything + promoted placement + slow-night push offers" —
-//                advertising surfaces, not analytics.
-// The competitive strip is named in NO row of that table (ambiguity flagged in
-// the audit report). The conservative reading is to gate it rather than leave a
-// headline paid analytic free; it is the same crowd model as the demand curve
-// applied to the neighbours, so it sits with Insights, not with Boost's ad
-// surfaces. Move it to 'pro' if the pricing table is ever made explicit.
-const requirePremium = requireVenueTier('premium');
-
-// The Pro line. As of the 2026-08-18 audit Pro sold nothing Premium lacks
-// (/intelligence and /strip are both 'premium'); the deterministic weekly
-// summary below is half of the intended fix. No-op until VENUE_BILLING_ENABLED,
-// like every other gate here.
+//   Free   the claimed profile (hours, photos, logo), reviews and replies, the
+//          0-100 live number, deals, events, and the incoming-flocks feed.
+//          None of those routes carries a tier gate, and the busy-now routes
+//          never may (see the slider section below).
+//   Roost  what Flock can tell an owner about their own room: the forecast
+//          (/intelligence), the strip against the venues around them
+//          (/strip), the weekly summary (/this-week), and the advisor's cards
+//          and questions (routes/advisor.js). All of them sit behind
+//          requirePro, because 'pro' is the stored name for Roost.
+//
+// Deals, events and the full feed were a $35 middle plan until that plan was
+// retired. They are demand tools pointed at an audience that is still small,
+// so they are free: charging for them would turn signing up, which is the
+// thing Flock needs from a venue, into a purchase decision.
+//
+// Server-enforced; the locked dashboard tab is cosmetic. No-op until
+// VENUE_BILLING_ENABLED, and a stored 'premium' passes as Roost
+// (services/venueEntitlements.js planOf).
 const requirePro = requireVenueTier('pro');
-
-// The tiers that may have a paid benefit SERVED to end users on their behalf.
-// Read at request time, never at claim/creation time: a venue that upgrades,
-// creates promotions and then downgrades must stop being promoted.
-const SERVING_TIERS = ['premium', 'pro'];
 
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
@@ -169,7 +160,8 @@ router.get('/promotions', async (req, res) => {
 // this route did run was skipped as well. It then reached VARCHAR(255) as the
 // Postgres literal `{"<b>x</b>"}`. freeText settles the shape first, strips the
 // markup, and measures the length AFTER stripping.
-router.post('/promotions', requirePremium, [
+// No tier gate: deals are free on every plan (the note at the top of this file).
+router.post('/promotions', [
   freeText(body('title'), 'title').isLength({ min: 1, max: 80 }).withMessage('Title is required (max 80 characters)'),
   freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: 300 }).withMessage('Description is too long (max 300 characters)'),
   freeText(body('timeSlot').optional({ nullable: true }), 'time slot').isLength({ max: 60 }).withMessage('Time slot is too long (max 60 characters)'),
@@ -212,7 +204,7 @@ router.post('/promotions', requirePremium, [
 // null` feeding a COALESCE), so a client that spells "no change" as an explicit
 // null was being answered 400 by the chain for a request the route knows how to
 // serve.
-router.put('/promotions/:id', requirePremium, [
+router.put('/promotions/:id', [
   param('id').isInt({ min: 1, max: INT4_MAX }),
   freeText(body('title').optional({ nullable: true }), 'title').isLength({ min: 1, max: 80 }).withMessage('Title too long (max 80 characters)'),
   freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: 300 }).withMessage('Description is too long (max 300 characters)'),
@@ -322,7 +314,7 @@ router.put('/promotions/:id', requirePremium, [
 //     resolved; venues have no purge loop, so the owner's NEXT delete sweeps
 //     any of their retired rows whose reports have since closed. Until then
 //     the row is readable only by the moderation queue.
-router.delete('/promotions/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
+router.delete('/promotions/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // param('id').isInt() was declared but its result was never read, so a
     // non-numeric id (e.g. /promotions/abc) reached Postgres as a string and came
@@ -417,7 +409,9 @@ router.get('/events', async (req, res) => {
 // ceiling, and the column is INTEGER — so `capacity: 3000000000` was a 22003
 // from Postgres, a 500 for a plainly bad request. Bound it to int4 the same way
 // the :id params are.
-router.post('/events', requirePremium, [
+//
+// No tier gate on any events route: events are free on every plan, like deals.
+router.post('/events', [
   freeText(body('title'), 'title').isLength({ min: 1, max: 120 }).withMessage('Title is required (max 120 characters)'),
   freeText(body('eventDate').optional({ nullable: true }), 'event date').isLength({ max: 40 }).withMessage('Event date is too long (max 40 characters)'),
   freeText(body('eventTime').optional({ nullable: true }), 'event time').isLength({ max: 40 }).withMessage('Event time is too long (max 40 characters)'),
@@ -455,7 +449,7 @@ router.post('/events', requirePremium, [
 // (round 22) — the promotions PUT has screened its full set since round 20, and
 // an unscreened edit route makes a screened create route decorative: post a
 // clean event, then rename the date to a slur.
-router.put('/events/:id', requirePremium, [
+router.put('/events/:id', [
   param('id').isInt({ min: 1, max: INT4_MAX }),
   freeText(body('title').optional({ nullable: true }), 'title').isLength({ min: 1, max: 120 }).withMessage('Title too long (max 120 characters)'),
   freeText(body('eventDate').optional({ nullable: true }), 'event date').isLength({ max: 40 }).withMessage('Event date is too long (max 40 characters)'),
@@ -535,7 +529,7 @@ router.put('/events/:id', requirePremium, [
 // promotions DELETE above — the full reasoning lives there. The only
 // difference is that venue_events has no `active` column and no public route,
 // so retirement touches nothing but owner_deleted_at.
-router.delete('/events/:id', requirePremium, param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
+router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // Same unenforced validator as the promotions DELETE: read it so a
     // non-numeric id is a 404 rather than a Postgres 500.
@@ -629,8 +623,9 @@ router.delete('/events/:id', requirePremium, param('id').isInt({ min: 1, max: IN
 const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
 const INCOMING_AHEAD_HOURS = 168; // = 7 days
 
-// GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue
-router.get('/incoming-flocks', requirePremium, async (req, res) => {
+// GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue.
+// Free on every plan, history and all; only verification gates it (below).
+router.get('/incoming-flocks', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
     if (!venue || !venue.google_place_id) return res.json({ flocks: [] });
@@ -1531,48 +1526,15 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
     // id alone — matching by place id let an unverified claimant's promotion
     // ride on someone else's verified claim for the same place.
     //
-    // Round 16: `verified` is a permanent property of the claim, so gating on it
-    // alone meant upgrade -> create promotions -> downgrade kept the benefit
-    // forever. "Promotions to nearby groups" is an Insights line item in the
-    // VENUE-BILLING.md pricing table, so the SERVING of one is gated on the tier
-    // the author holds right now, exactly as creating one is (requirePremium).
-    // The kill switch is a bound PARAMETER, not string-built SQL: one query
-    // shape, no request data anywhere near the text, and "flag off => every
-    // venue owner acts Pro" holds for this public route the same way
-    // requireVenueTier makes it hold for the owner-facing ones. A NULL tier
-    // fails the ANY test, so an unrecognised tier is not served either.
-    //
-    // ROUND 22: "RIGHT NOW" HAS TO MEAN WHAT THE GATE MEANS BY IT.
-    //
-    // Round 16 read venue_profiles.tier, and migration 040 then made that
-    // column a CACHE of the grant rather than the authority: services/
-    // venueEntitlements.js resolves a tier from venue_subscriptions and never
-    // trusts the column over it. Every owner-facing paid route went through the
-    // resolver. This one did not, and it was the only tier decision left that
-    // skipped it, so a comp that lapsed at midnight produced a venue whose own
-    // dashboard answered 403 UPGRADE_REQUIRED while its promotion was still
-    // being served in full to strangers, still incrementing the view counter
-    // the product is priced on. A canceled or unpaid grant had the same hole.
-    // Only an explicit admin downgrade bit, because that rewrites the cache.
-    //
-    // The three rules below are resolveGrantedTier's three rules, in the same
-    // order, with the same fail-closed direction:
-    //   1. NO GRANT ROW (vs.tier IS NULL, which also covers the LEFT JOIN
-    //      finding nothing) means the cached column is the answer. Pre-040 rows
-    //      and scripts/e2e-local.js live here; a row with no grant has no
-    //      expiry to have missed.
-    //   2. A DEAD GRANT is the free tier whatever the cache says: a status
-    //      outside the live set, or an end date that has passed.
-    //   3. A LIVE GRANT serves only if BOTH tiers are serving tiers, which is
-    //      the SQL spelling of "the lower of the two". min(premium, pro) is
-    //      still a serving tier, so the two readings cannot disagree.
-    // The live-status vocabulary is BOUND FROM THE SERVICE rather than retyped
-    // here, so Stripe's status map has one definition; past_due keeps serving
-    // on both sides, as VENUE-BILLING.md says it must.
-    //
-    // NOW() is the database clock where resolveGrantedTier uses the app clock.
-    // Both are NTP-synced and an expiry is a date rather than a microsecond
-    // fence, which is the same trade the service documents.
+    // NO PLAN IS READ HERE, ON PURPOSE. Deals are free on every plan
+    // (VENUE-PRICING.md section 4), so serving one depends on who wrote it,
+    // never on what they pay. This read used to join the grant and the Roost
+    // notice window, because deals belonged to a paid plan and a venue that
+    // stopped paying had to stop being promoted. With no paid deals there is
+    // no downgrade to follow, and a plan read here would only be a way for a
+    // lapsed card to take a venue's deal off its own card. What still stops
+    // a deal being served: an unverified or banned author, a deal the owner
+    // switched off or deleted, and a moderation takedown.
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
        JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
@@ -1586,26 +1548,10 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
        -- Same rule the story and profile reads already apply to a banned
        -- author (utils/relationships.js, routes/users.js).
        JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
-       LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id
-       -- A venue account from before Roost had a price keeps serving its deals
-       -- until the date its notice named (Terms 9.6), the same window
-       -- services/venueEntitlements.js noticeWindowOpen applies to the gates.
-       LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
-         AND ($2::boolean = false
-           OR ((vp.created_at IS NULL OR vp.created_at < $5::timestamptz)
-               AND (vn.charge_not_before IS NULL OR vn.charge_not_before > NOW()))
-           OR (
-           vp.tier = ANY($3::text[])
-           AND (vs.tier IS NULL OR (
-             vs.tier = ANY($3::text[])
-             AND vs.status = ANY($4::text[])
-             AND (vs.expires_at IS NULL OR vs.expires_at > NOW())
-           ))
-         ))
        ORDER BY p.created_at DESC
        LIMIT 100`,
-      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS, GRANT_LIVE_STATUS_LIST, ROOST_PRICED_FROM]
+      [req.params.placeId]
     );
     // Count the view — see the two rules above claimPromotionViews. Bounded by
     // the LIMIT above, so the ANY($1) set never grows without limit either.
@@ -1833,9 +1779,9 @@ async function fetchVenueBasics(placeId, userId) {
 // same place id would otherwise be handed the verified owner's cached forecast
 // without a single Google call to notice.
 //
-//   requirePremium — the demand curve is an Insights line item in the
-//   VENUE-BILLING.md pricing table (see the tier note at the top of this file).
-//   403 UPGRADE_REQUIRED, the contract the frontend already forwards.
+//   requirePro: the forecast and the strip are Roost (see the plan note at
+//   the top of this file). 403 UPGRADE_REQUIRED, the contract the frontend
+//   already forwards.
 //
 //   verified — an unverified claim is an unproven one. Serving these two costs
 //   real money (each spends the shared Places budget) and the strip hands out
@@ -1852,7 +1798,7 @@ async function fetchVenueBasics(placeId, userId) {
 const { unverifiedReason, liveNumberRefusal } = require('../utils/verificationCopy');
 
 // GET /api/venue-dashboard/intelligence — the owner's own forecast
-router.get('/intelligence', requirePremium, async (req, res) => {
+router.get('/intelligence', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
@@ -1984,7 +1930,7 @@ router.get('/intelligence', requirePremium, async (req, res) => {
 
 // GET /api/venue-dashboard/strip — you vs the venues around you, tonight.
 // Google Popular Times cannot do this: it is per-venue, read-only, no API.
-router.get('/strip', requirePremium, async (req, res) => {
+router.get('/strip', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
@@ -2411,9 +2357,9 @@ router.delete('/busy-now', async (req, res) => {
 // (DESIGN-STANDARD rule 5; the fabricated-stats box deleted from this exact
 // dashboard on 2026-08-14 is the cautionary tale).
 //
-// Gated 'pro' deliberately: this is half of the Pro-sells-nothing fix (the
-// board, 2026-08-19). No model output ships here, so the gate is a pricing
-// decision, not an accuracy hedge — and the slider above stays free either way.
+// Gated 'pro' deliberately: the weekly summary is part of Roost. No model
+// output ships here, so the gate is a pricing decision, not an accuracy
+// hedge — and the slider above stays free either way.
 // ─── THE ROLLING WINDOW IS THE HOLE THE FLOOR DID NOT CLOSE ─────────────────
 //
 // SECURITY ROUND 5, 2026-08-20. The k-anonymity floor added below stops a thin

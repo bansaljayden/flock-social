@@ -39,7 +39,7 @@ function lines({ businessName, chargeNotBefore }) {
     paragraphs: [
       `From ${date}, Roost becomes a paid plan: $${ROOST_MONTHLY_USD} a month or $${ROOST_YEARLY_USD} a year per location, with a ${ROOST_TRIAL_DAYS}-day free trial. Roost is the forecast for your venue, the Roost cards and answers, the week view and the Monday digest.`,
       `Until ${date}, your venue keeps everything it has today and nothing is charged.`,
-      'What stays free: your venue account, your listing, replying to reviews and the 0 to 100 busyness report.',
+      'What stays free: your venue account and listing, replying to reviews, the 0 to 100 busyness report, posting deals and events, and seeing which groups have your venue in their plans.',
       `Nothing is charged unless you subscribe yourself on ${web}, and you can cancel there at any time. If you subscribe before ${date}, the first charge is no earlier than ${date}. The full terms are in section 9.6 at ${web}/terms.`,
       'Questions: reply to this email.',
     ],

@@ -62,7 +62,7 @@ const SWEEP_BATCH = 200;
 
 // Accounts whose notice is being sent right now, so the sweep and a checkout
 // landing in the same second cannot mail one owner twice. The app runs on one
-// instance (root project documentation).
+// instance.
 const inflight = new Set();
 
 const DUE_WHERE = `vn.user_id IS NULL

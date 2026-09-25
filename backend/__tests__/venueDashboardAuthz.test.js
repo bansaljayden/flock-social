@@ -34,10 +34,11 @@
 //   6. Ownership is never client-supplied on the write path: venue_user_id /
 //      google_place_id smuggled into a create body are discarded in favour of
 //      req.user.id and the server-side profile row.
-//   7. Tier gates (billing on): every mutation, the flocks feed, and both
-//      model surfaces refuse a free tier with UPGRADE_REQUIRED before touching
-//      the venue's data; the Free-tier surfaces (own lists, reviews tab,
-//      review reply) still answer, per the VENUE-BILLING.md pricing table.
+//   7. Plan gates (billing on): the Roost surfaces (the forecast, the strip,
+//      the weekly summary) refuse a free venue with UPGRADE_REQUIRED before
+//      touching its data; everything else here, deals, events, the flocks
+//      feed, the owner's own lists, the reviews tab and the reply, answers a
+//      free venue (VENUE-PRICING.md section 4: a free account and Roost).
 //   8. Id-type confusion: non-numeric, fractional, and beyond-int4 ids are
 //      refused by the validators before any SQL runs.
 const test = require('node:test');
@@ -560,49 +561,58 @@ test('a plain user gets available:false from intelligence and spends nothing', a
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 6. Tier gates, billing on: the paid boundary matches the dashboard UI
+// 6. Plan gates, billing on: the paid boundary matches the dashboard UI
 // ───────────────────────────────────────────────────────────────────────────
 
-const PREMIUM_SURFACES = [
-  ['POST', '/api/venue-dashboard/promotions', { title: 'x' }],
-  ['PUT', '/api/venue-dashboard/promotions/401', { title: 'x' }],
-  ['DELETE', '/api/venue-dashboard/promotions/401', undefined],
-  ['POST', '/api/venue-dashboard/events', { title: 'x' }],
-  ['PUT', '/api/venue-dashboard/events/601', { title: 'x' }],
-  ['DELETE', '/api/venue-dashboard/events/601', undefined],
-  ['GET', '/api/venue-dashboard/incoming-flocks', undefined],
+// Roost, and only Roost. Deals, events and the flocks feed are free on every
+// plan (VENUE-PRICING.md section 4), so they are below, answering.
+const ROOST_SURFACES = [
   ['GET', '/api/venue-dashboard/intelligence', undefined],
   ['GET', '/api/venue-dashboard/strip', undefined],
+  ['GET', '/api/venue-dashboard/this-week', undefined],
 ];
 
-test('every premium surface refuses a free tier before touching venue data', async () => {
+test('every Roost surface refuses a free venue before touching venue data', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
-  for (const [method, path, body] of PREMIUM_SURFACES) {
+  for (const [method, path, body] of ROOST_SURFACES) {
     log = [];
     const res = await call(method, path, body);
-    assert.strictEqual(res.status, 403, `${method} ${path} was served to a free tier`);
+    assert.strictEqual(res.status, 403, `${method} ${path} was served to a free venue`);
     assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED', `${method} ${path} refused with the wrong contract`);
-    assert.strictEqual(res.body.requiredTier, 'premium');
+    assert.strictEqual(res.body.requiredTier, 'pro');
     const nonTier = log.filter((q) => !/FROM venue_profiles vp LEFT JOIN venue_subscriptions/.test(q.sql));
     assert.deepStrictEqual(nonTier, [], `${method} ${path} touched data behind the refused gate`);
   }
-  // And nothing changed under any of those attempts.
-  assert.strictEqual(promo(401).title, 'A happy hour');
-  assert.strictEqual(event(601).title, 'A trivia night');
 });
 
-test('the Insights tier passes the same gates (the gate is the tier, not the route)', async () => {
+test('a free venue posts, edits and deletes its own deals and events with billing on', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
-  CURRENT_USER = OWNER_B;
-  const res = await call('POST', '/api/venue-dashboard/promotions', { title: 'B new deal' });
-  assert.strictEqual(res.status, 201);
-  assert.strictEqual(ran(/^INSERT INTO venue_promotions/)[0].params[0], 2);
+  const writes = [
+    ['POST', '/api/venue-dashboard/promotions', { title: 'A new deal' }, 201],
+    ['PUT', '/api/venue-dashboard/promotions/401', { title: 'A better happy hour' }, 200],
+    ['POST', '/api/venue-dashboard/events', { title: 'A new night' }, 201],
+    ['PUT', '/api/venue-dashboard/events/601', { title: 'A bigger trivia night' }, 200],
+    ['GET', '/api/venue-dashboard/incoming-flocks', undefined, 200],
+    ['DELETE', '/api/venue-dashboard/promotions/401', undefined, 200],
+    ['DELETE', '/api/venue-dashboard/events/601', undefined, 200],
+  ];
+  for (const [method, path, body, expected] of writes) {
+    const res = await call(method, path, body);
+    assert.strictEqual(res.status, expected, `${method} ${path} -> ${res.status} ${res.text}`);
+  }
+  // Every write landed on the caller's own rows, and none of it asked the plan.
+  assert.strictEqual(ran(/^INSERT INTO venue_promotions/)[0].params[0], 1);
+  assert.strictEqual(ran(/^INSERT INTO venue_events/)[0].params[0], 1);
+  assert.strictEqual(ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/).length, 0, 'a free surface consulted the plan gate');
+  // B's rows were never touched by A's free-plan writes.
+  assert.strictEqual(promo(501).title, 'B secret deal');
+  assert.strictEqual(event(602).title, 'B secret gala');
 });
 
 test('the Free-tier surfaces still answer with billing on: own lists, reviews, reply', async () => {
-  // VENUE-BILLING.md Free row: "Claimed profile, hours, logo, reviews + reply".
-  // The list GETs return the owner's OWN rows only (creation, edits and public
-  // serving are all premium-gated), so they stay free with the reviews tab.
+  // Free: the claimed profile, reviews and replies, deals, events and the
+  // flocks feed. The list GETs return the owner's OWN rows only, so they stay
+  // free with the reviews tab.
   process.env.VENUE_BILLING_ENABLED = 'true';
   const lists = await Promise.all([
     call('GET', '/api/venue-dashboard/promotions'),

@@ -243,7 +243,7 @@ test('a checkout-time notice records once, and a racing sweep does not mail twic
   assert.strictEqual(new Date((await noticeRow(v.id)).charge_not_before).getTime(), named.getTime());
 });
 
-test('public deals keep serving for a venue inside its window, and stop after it', async () => {
+test('public deals keep serving before, inside and after the window, because deals are free', async () => {
   const placeId = 'ChIJroostNoticeTest0001';
   const v = await venue({ placeId });
   await testPool.query(
@@ -277,7 +277,9 @@ test('public deals keep serving for a venue inside its window, and stop after it
       [v.id]
     );
     res = await get();
-    assert.strictEqual(res.body.promotions.length, 0, 'after the window a free venue\'s deal is a paid feature again');
+    // Deals are free on every plan (VENUE-PRICING.md section 4), so the end of
+    // the window takes Roost away and leaves the deal where it was.
+    assert.strictEqual(res.body.promotions.length, 1, 'after the window a free venue\'s deal was taken off its card');
   } finally {
     await new Promise((r) => server.close(r));
   }

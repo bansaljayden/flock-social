@@ -10,24 +10,21 @@
 //
 // PART ONE — venue tier.
 //
-//   P. AN EXPIRED GRANT USED TO KEEP SELLING, AND NO LONGER DOES.
+//   P. AN EXPIRED GRANT LOSES ROOST, AND ONLY ROOST.
 //      services/venueEntitlements.js resolves a tier from venue_subscriptions
 //      (grant status + expires_at) and treats venue_profiles.tier as a cache
-//      that must never be trusted over the grant. Exactly one tier decision
-//      skipped that resolution: GET /api/venue-dashboard/public-promotions/
-//      :placeId joined `vp.tier = ANY($3)` with no join to
-//      venue_subscriptions and no expires_at anywhere. So the moment a comp
-//      lapsed, every owner-facing Roost surface answered 403 while the paid
-//      benefit kept being SERVED to end users, and kept incrementing the
-//      promotion view counter the product is priced on. The public join now
-//      applies resolveGrantedTier's three rules in SQL, with the live-status
-//      vocabulary BOUND from the service rather than retyped, and the tests
-//      below walk every case: lapsed, canceled, past_due, no grant at all.
+//      that must never be trusted over the grant, so a lapsed comp is refused
+//      on every owner-facing Roost route the moment it lapses. What it does
+//      NOT lose is its deal: deals are free on every plan (VENUE-PRICING.md
+//      section 4), so GET /api/venue-dashboard/public-promotions/:placeId
+//      reads no plan at all and keeps serving it, view counter and all. That
+//      read used to join the grant, when deals were a paid plan's feature;
+//      the tests below walk the same cases (lapsed, canceled, past_due, no
+//      grant at all) against the new rule.
 //
-//   Q. WHAT venueTierExpiry.test.js DOES NOT COVER. That file drove exactly
-//      two routes (/intelligence and /strip); it now covers the public read
-//      paths too. This keeps the case it could not see, and pins the two
-//      enum-normalisation gaps it leaves open.
+//   Q. WHAT venueTierExpiry.test.js DOES NOT COVER. That file drives the
+//      Roost routes and the public read; this keeps the case it could not
+//      see, and pins the two enum-normalisation gaps it leaves open.
 //
 // PART TWO — utils/cacheKeyInventory.js publishes the arithmetic for starving
 // production. Two sentences in it were flagged in the public-repo audit. Both
@@ -110,26 +107,24 @@ async function dispatch(sql, params) {
   // the JOIN does and does not consult.
   if (/^SELECT p\.id, p\.title, p\.description, p\.time_slot, p\.days FROM venue_promotions p/.test(flat)) {
     const [placeId, billingOn, servingTiers, liveStatuses] = [p[0], p[1], p[2], p[3]];
-    // Which rules the statement ACTUALLY carries, read off the statement. A
-    // clause that goes missing takes its test down with it and names itself.
+    // Which rules the statement ACTUALLY carries, read off the statement. The
+    // route reads no plan today; a plan clause that creeps back in is applied
+    // here as written, so it takes a free venue's deal down in these tests.
+    const readsCachedTier = /vp\.tier\b/.test(flat);
     const joinsGrant = /LEFT JOIN venue_subscriptions vs ON vs\.user_id = vp\.user_id/.test(flat);
-    const readsGrantTier = /vs\.tier = ANY\(\$3::text\[\]\)/.test(flat);
-    const readsStatus = /vs\.status = ANY\(\$4::text\[\]\)/.test(flat);
-    const readsExpiry = /vs\.expires_at IS NULL OR vs\.expires_at > NOW\(\)/.test(flat);
+    const readsStatus = /vs\.status\b/.test(flat);
+    const readsExpiry = /vs\.expires_at\b/.test(flat);
     const g = world.profile;
     const rows = world.promotions.filter((pr) => {
       if (pr.google_place_id !== placeId || !pr.active || pr.is_hidden) return false;
       if (g.user_id !== pr.venue_user_id) return false;
       if (g.google_place_id !== pr.google_place_id) return false;
       if (g.verified !== true) return false;
+      if (!readsCachedTier && !joinsGrant) return true;
       if (billingOn !== true) return true;
-      // Rule 3 of resolveGrantedTier, expressed as "both tiers serve": the
-      // CACHED column first, because it is still the lower bound.
-      if (!servingTiers.includes(g.tier)) return false;
-      // Rule 1: no grant row means the cached column is the whole answer.
+      if (readsCachedTier && !(servingTiers || []).includes(g.tier)) return false;
       if (!joinsGrant || g.grant_tier === null || g.grant_tier === undefined) return true;
-      // Rule 2: a dead grant is the free tier whatever the cache says.
-      if (readsGrantTier && !servingTiers.includes(g.grant_tier)) return false;
+      if (!(servingTiers || []).includes(g.grant_tier)) return false;
       if (readsStatus && !(liveStatuses || []).includes(g.grant_status)) return false;
       if (readsExpiry && g.expires_at !== null && g.expires_at !== undefined
         && new Date(g.expires_at).getTime() <= Date.now()) return false;
@@ -188,10 +183,10 @@ function expireTheComp() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PART ONE — P. AN EXPIRED GRANT STILL SELLS
+// PART ONE — P. AN EXPIRED GRANT LOSES ROOST, AND ONLY ROOST
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('FIXED P: a lapsed comp is refused on the owner surface AND on the public one', async () => {
+test('P: a lapsed comp is refused on the owner\'s Roost routes and keeps its deal on the card', async () => {
   expireTheComp();
 
   // The expiry-aware resolution says the venue is free.
@@ -200,39 +195,30 @@ test('FIXED P: a lapsed comp is refused on the owner surface AND on the public o
   assert.strictEqual(ent.expired, true);
   assert.strictEqual(ent.tier, 'free');
 
-  // Owner-facing paid surface: refused, as it always was.
+  // Owner-facing Roost surface: refused, as it always was.
   CURRENT_USER = { id: OWNER, name: 'Rick', email_verified: true, role: 'venue_owner' };
   const gated = await call('GET', '/api/venue-dashboard/intelligence');
   assert.strictEqual(gated.status, 403, gated.text);
   assert.strictEqual(gated.body.code, 'UPGRADE_REQUIRED');
 
-  // Consumer-facing paid BENEFIT: no longer served. This is the whole finding.
+  // The deal is not Roost. It is free on every plan, so it stays on the
+  // consumer's venue card and keeps counting views.
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
   assert.strictEqual(pub.status, 200, pub.text);
-  assert.deepStrictEqual(pub.body.promotions, [],
-    'the promotion of a venue that stopped paying yesterday is still on the consumer card');
+  assert.strictEqual(pub.body.promotions.length, 1,
+    'the deal of a venue whose comp ended came off the consumer card, and deals are free');
+  assert.strictEqual(world.promotions[0].views, 1, 'a served deal did not count its view');
 
-  // And the number VENUE-BILLING.md prices the product on stops moving with it.
-  assert.strictEqual(world.promotions[0].views, 0,
-    'a promotion nobody was shown still counted a view');
-
-  // The reason, stated from the SQL rather than inferred: the public join reads
-  // the grant now, by the same three rules the resolver applies.
+  // The reason, stated from the SQL rather than inferred: the public read
+  // consults no plan at all.
   const promoSql = log.find((q) => /FROM venue_promotions p/.test(q.sql)).sql;
-  assert.match(promoSql, /vp\.tier = ANY\(\$3::text\[\]\)/, 'the cached column is still the lower bound');
-  assert.match(promoSql, /LEFT JOIN venue_subscriptions vs ON vs\.user_id = vp\.user_id/,
-    'no join to the grant table');
-  assert.match(promoSql, /vs\.expires_at IS NULL OR vs\.expires_at > NOW\(\)/,
-    'no expiry comparison of any kind');
-  assert.match(promoSql, /vs\.tier IS NULL OR/,
-    'a venue with no grant row on file must still be served on its cached tier');
+  assert.doesNotMatch(promoSql, /vp\.tier/, 'the public read consults the cached plan');
+  assert.doesNotMatch(promoSql, /venue_subscriptions/, 'the public read consults the grant');
   assertQueriesUnderstood();
 });
 
-test('FIXED P2: an explicit downgrade still bites, so nothing regressed on the path that worked', async () => {
-  // The admin downgrade rewrites the cached column, which was the only thing
-  // the public join used to read. It is still read, and it is still first.
+test('P2: an explicit downgrade to free leaves the deal served too', async () => {
   world.profile.tier = 'free';
   world.profile.grant_tier = 'free';
   world.profile.expires_at = null;
@@ -240,15 +226,11 @@ test('FIXED P2: an explicit downgrade still bites, so nothing regressed on the p
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
   assert.strictEqual(pub.status, 200, pub.text);
-  assert.deepStrictEqual(pub.body.promotions, [],
-    'an explicit downgrade stops the serving immediately');
-  assert.strictEqual(world.promotions[0].views, 0);
+  assert.strictEqual(pub.body.promotions.length, 1, 'a free venue\'s deal was withheld');
   assertQueriesUnderstood();
 });
 
-test('FIXED P3: every revoking grant STATUS closes the same hole the lapsed date did', async () => {
-  // Not only expiry: any status outside the live set resolves to free, and the
-  // cached column is equally untouched by it.
+test('P3: every revoking grant STATUS ends Roost, and none of them ends the deal', async () => {
   for (const dead of ['canceled', 'unpaid', 'incomplete', 'incomplete_expired', 'paused']) {
     world = freshWorld();
     log = [];
@@ -257,55 +239,46 @@ test('FIXED P3: every revoking grant STATUS closes the same hole the lapsed date
 
     CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
     const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
-    assert.deepStrictEqual(pub.body.promotions, [],
-      `a ${dead} subscription is still being advertised to users`);
-    assert.strictEqual(world.promotions[0].views, 0);
+    assert.strictEqual(pub.body.promotions.length, 1, `a ${dead} subscription took the deal off the card`);
     assertQueriesUnderstood();
   }
 });
 
-test('FIXED P4: past_due KEEPS serving, because a card that failed on Tuesday is a card', async () => {
-  // The fix must not be over-broad. VENUE-BILLING.md's status map says past_due
-  // is keep-and-warn, and the public surface has to agree with the gate about
-  // that too, or a venue whose payment is retrying loses its promotion for a
-  // day and nobody can explain why.
+test('P4: past_due keeps Roost, because a card that failed on Tuesday is a card', async () => {
+  // VENUE-BILLING.md's status map says past_due is keep-and-warn.
   world.profile.grant_status = 'past_due';
-  assert.strictEqual(await getVenueTier(OWNER), 'premium');
+  assert.strictEqual(await getVenueTier(OWNER), 'pro');
 
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
-  assert.strictEqual(pub.body.promotions.length, 1, 'a card that failed on Tuesday cancelled the venue');
-  assert.strictEqual(world.promotions[0].views, 1);
+  assert.strictEqual(pub.body.promotions.length, 1);
   assertQueriesUnderstood();
 });
 
-test('FIXED P5: a venue with NO grant row is still served, which is rule 1 of the resolver', async () => {
+test('P5: a venue with NO grant row keeps its cached plan, which is rule 1 of the resolver', async () => {
   // Pre-migration-040 rows and scripts/e2e-local.js drive venue_profiles.tier
-  // directly. A row with no grant has no expiry to have missed, and closing the
-  // hole must not turn every one of them off.
+  // directly. A row with no grant has no expiry to have missed. The stored
+  // word here is the retired 'premium', which is Roost.
   world.profile.grant_tier = null;
   world.profile.grant_status = null;
   world.profile.expires_at = null;
-  assert.strictEqual(await getVenueTier(OWNER), 'premium');
+  assert.strictEqual(await getVenueTier(OWNER), 'pro');
 
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
-  assert.strictEqual(pub.body.promotions.length, 1,
-    'a hand-granted tier with no grant row stopped being served');
+  assert.strictEqual(pub.body.promotions.length, 1);
   assertQueriesUnderstood();
 });
 
-test('FIXED P6: the live-status vocabulary is BOUND from the service, not retyped in the route', async () => {
-  // Stripe's status map has one definition. If the route ever grows its own
-  // copy the two drift, and the drift is silent until a paying venue is cut off
-  // or a cancelled one keeps selling.
+test('P6: the public read binds the place id and nothing else; the status list lives in the service', async () => {
+  // Stripe's status map has one definition, used by the gates. The public
+  // read has no use for it, and binding it anyway would be a plan read by
+  // another name.
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
   const q = log.find((x) => /FROM venue_promotions p/.test(x.sql));
-  assert.deepStrictEqual(q.params[3], GRANT_LIVE_STATUS_LIST,
-    'the route sends a status list of its own instead of the one the gate uses');
-  assert.deepStrictEqual([...q.params[3]].sort(), ['active', 'past_due', 'trialing']);
-  assert.deepStrictEqual(q.params.slice(0, 3), [PLACE, true, ['premium', 'pro']]);
+  assert.deepStrictEqual(q.params, [PLACE]);
+  assert.deepStrictEqual([...GRANT_LIVE_STATUS_LIST].sort(), ['active', 'past_due', 'trialing']);
   assertQueriesUnderstood();
 });
 
@@ -325,18 +298,22 @@ test('GAP: no client value reaches a tier decision — attacked, held', async ()
   assertQueriesUnderstood();
 });
 
-test('GAP: an unrecognised tier string resolves to free on the gate and is refused on the public join', async () => {
+test('GAP: an unrecognised tier string resolves to free on the gate, and the public read never sees it', async () => {
   // venueTierExpiry.test.js walks junk STATUSES and junk DATES, never a junk
-  // tier. Both halves of the system have to reject one.
+  // tier. The gate has to reject one; the public read reads no tier, so a
+  // junk one changes nothing about a free deal.
   for (const junk of ['platinum', '__proto__', 'constructor', '', null, 7, true]) {
     assert.strictEqual(resolveGrantedTier({ tier: junk, grant_tier: junk, grant_status: 'active', expires_at: null }, Date.now()), 'free',
       `tier ${JSON.stringify(junk)} must not rank`);
   }
   world.profile.tier = 'platinum';
   world.profile.grant_tier = 'platinum';
+  CURRENT_USER = { id: OWNER, name: 'Rick', email_verified: true, role: 'venue_owner' };
+  const gated = await call('GET', '/api/venue-dashboard/intelligence');
+  assert.strictEqual(gated.status, 403, 'an unknown tier walked through the Roost gate');
   CURRENT_USER = { id: READER, name: 'Reader', email_verified: true, role: 'user' };
   const pub = await call('GET', `/api/venue-dashboard/public-promotions/${PLACE}`);
-  assert.deepStrictEqual(pub.body.promotions, [], 'ANY() does not match an unknown tier either');
+  assert.strictEqual(pub.body.promotions.length, 1, 'a verified author\'s deal was withheld over a plan it is not');
   assertQueriesUnderstood();
 });
 

@@ -19,8 +19,8 @@
 //      minimum gap (the 43.1%-backwards finding).
 //   4. The four MVP cards compose as specced, in order, with the exact route
 //      shape the frontend consumes: { cards: [{id, title, facts, status}] }.
-//   5. Tier gates: route floor premium; week_ahead / listing_read_back /
-//      readings_vs_estimates are pro, around_you is premium.
+//   5. Plan gates: the route and every card are Roost ('pro'); a stored
+//      'premium' is Roost too, and sees every card built.
 //   6. DESIGN-STANDARD: no em dashes anywhere in owner-visible strings, and the
 //      advisor has no write path at all.
 // ===========================================================================
@@ -583,30 +583,39 @@ test('missing profile and unverified claims answer available:false, cards empty'
   assert.strictEqual(r.body.unverified, true);
 });
 
-// ── 5. Tier gates ────────────────────────────────────────────────────────────
+// ── 5. Plan gates ────────────────────────────────────────────────────────────
 
-test('billing on: free tier is refused at the door with the standard contract', async () => {
+test('billing on: a free venue is refused at the door with the standard contract', async () => {
+  // Every card is Roost now, around_you included (VENUE-PRICING.md section 4),
+  // so a free venue gets the 403 and no card, not a stack of locked rows.
   process.env.VENUE_BILLING_ENABLED = 'true';
   scriptHappyPath({ tier: 'free' });
   const { status, body } = await getCards();
   assert.strictEqual(status, 403);
   assert.strictEqual(body.code, 'UPGRADE_REQUIRED');
-  assert.strictEqual(body.requiredTier, 'premium');
+  assert.strictEqual(body.requiredTier, 'pro');
+  assert.strictEqual(predictCalls, 0, 'a refused venue spent model calls');
 });
 
-test('billing on: premium sees around_you built and the three pro cards locked', async () => {
+test('billing on: a stored premium is Roost, and sees every card built', async () => {
+  // 'premium' is the value the retired middle plan left in the tier columns.
+  // It used to open around_you alone and lock the rest; it is Roost now.
   process.env.VENUE_BILLING_ENABLED = 'true';
   scriptHappyPath({ tier: 'premium' });
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
-  const byId = Object.fromEntries(body.cards.map((c) => [c.id, c]));
-  for (const id of ['last_night_verdict', 'week_ahead', 'listing_read_back', 'readings_vs_estimates']) {
-    assert.strictEqual(byId[id].status, 'locked', id);
-    assert.strictEqual(byId[id].requiredTier, 'pro', id);
-    assert.deepStrictEqual(byId[id].facts, [], 'a locked card leaks no facts');
+  assert.ok(body.cards.length > 0);
+  for (const card of body.cards) {
+    assert.notStrictEqual(card.status, 'locked', `${card.id} was locked for a Roost venue`);
   }
-  assert.notStrictEqual(byId.around_you.status, 'locked');
-  assert.strictEqual(predictCalls, 0, 'locked pro cards spend no model calls');
+});
+
+test('every card is priced at Roost, the same floor as the route', () => {
+  const cards = [...routeSrc.matchAll(/\{ id: '([a-z_]+)', title: '[^']*', tier: '([a-z]+)' \}/g)];
+  assert.ok(cards.length >= 5, 'the card table moved; re-point this test at it');
+  for (const [, id, tier] of cards) {
+    assert.strictEqual(tier, 'pro', `${id} is priced at ${tier}`);
+  }
 });
 
 test('billing on: pro sees all four cards built; billing off behaves like pro', async () => {
@@ -668,10 +677,11 @@ test('the advisor never touches flock budgets, in any form or aggregate', () => 
   }
 });
 
-test('the route shape is pinned: /cards under the premium floor, cards array present', () => {
-  assert.match(routeSrc, /router\.get\('\/cards', authenticate, requirePremium,/,
-    'the route floor is requireVenueTier(premium), the dashboard idiom');
-  assert.match(routeSrc, /requireVenueTier\('premium'\)/);
+test('the route shape is pinned: /cards under the Roost floor, cards array present', () => {
+  assert.match(routeSrc, /router\.get\('\/cards', authenticate, requirePro,/,
+    'the route floor is requireVenueTier(pro), which is Roost');
+  assert.match(routeSrc, /const requirePro = requireVenueTier\('pro'\);/);
+  assert.doesNotMatch(routeSrc, /requireVenueTier\('premium'\)/, 'a gate on the retired middle plan came back');
 });
 
 // ── Ordering claims, and the two plans that refuse to make one ──────────────

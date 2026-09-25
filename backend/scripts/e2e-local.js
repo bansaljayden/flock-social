@@ -377,29 +377,40 @@ const signup = (name, email, dob, headers) =>
       [idD]
     );
     const promo = { title: 'Half price wings' };
+    // Two plans (VENUE-PRICING.md section 4): /this-week is Roost, and deals
+    // are free on every plan, so one free venue shows both sides of the line.
+    const roostRoute = '/api/venue-dashboard/this-week';
 
-    let vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
-    check('free tier is unaffected while the billing kill switch is off (201)', vr.status === 201, vr);
+    let vr = await req('GET', roostRoute, { token: tD });
+    check('free tier is unaffected while the billing kill switch is off (200)', vr.status === 200, vr);
 
     process.env.VENUE_BILLING_ENABLED = 'true';
-    vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
-    check('free tier refused once billing is on (403 UPGRADE_REQUIRED)',
+    vr = await req('GET', roostRoute, { token: tD });
+    check('free tier refused a Roost route once billing is on (403 UPGRADE_REQUIRED)',
       vr.status === 403 && vr.data?.code === 'UPGRADE_REQUIRED', vr);
 
-    await pool.query("UPDATE venue_profiles SET tier = 'premium' WHERE user_id = $1", [idD]);
     vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
-    check('the Insights tier is served (201)', vr.status === 201, vr);
+    check('a deal still posts on the free tier with billing on (201)', vr.status === 201, vr);
+
+    await pool.query("UPDATE venue_profiles SET tier = 'pro' WHERE user_id = $1", [idD]);
+    vr = await req('GET', roostRoute, { token: tD });
+    check('Roost is served (200)', vr.status === 200, vr);
+
+    // The retired value is still Roost wherever it is stored.
+    await pool.query("UPDATE venue_profiles SET tier = 'premium' WHERE user_id = $1", [idD]);
+    vr = await req('GET', roostRoute, { token: tD });
+    check('a stored premium is served as Roost (200)', vr.status === 200, vr);
 
     // A tier string nobody recognises must fail closed. 'constructor' is the
     // specific one: TIER_ORDER is a null-prototype object precisely so this
     // cannot resolve to a truthy rank and walk through the gate.
     await pool.query("UPDATE venue_profiles SET tier = 'constructor' WHERE user_id = $1", [idD]);
-    vr = await req('POST', '/api/venue-dashboard/promotions', { token: tD, body: promo });
+    vr = await req('GET', roostRoute, { token: tD });
     check('an unrecognised tier is refused, never treated as paid (403)', vr.status === 403, vr);
 
     delete process.env.VENUE_BILLING_ENABLED;
     const promos = await pool.query('SELECT COUNT(*)::int n FROM venue_promotions WHERE venue_user_id = $1', [idD]);
-    check('exactly the two allowed promotions were written', promos.rows[0].n === 2, promos.rows[0]);
+    check('the free-tier deal was written', promos.rows[0].n === 1, promos.rows[0]);
   }
 
   // --- Banned user must STILL be able to delete their account (deletion right) ---

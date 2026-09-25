@@ -627,7 +627,7 @@ const intakeAsOf = (profile) =>
 // promise about more than taste: every module-scope Map in this backend owes a
 // row in utils/cacheKeyInventory.js arguing what a caller-forced miss costs,
 // and per-process state quietly multiplies the day a second instance exists
-// (the one-server note in project documentation). A Map on the context object the request
+// (the app runs on exactly one server). A Map on the context object the request
 // already carries needs neither. It is created on first use, it dies with the
 // response, and it cannot serve a stale curve: nothing in this module writes to
 // that table, and one request is not long enough for the collector to move it

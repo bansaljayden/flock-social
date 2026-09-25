@@ -21,10 +21,10 @@
 //      switch, which this send finally makes real (see the pinned-open note
 //      in __tests__/alertPreferences.test.js).
 //   4. The owner has a verified, mailable address and is not banned.
-//   5. Tier: Pro gets the full digest, Premium gets the events heads-up only
-//      (PRO-VS-PREMIUM.md), free and unclaimed venues get nothing. While
-//      VENUE_BILLING_ENABLED is unset every claimed venue acts Pro, the same
-//      pilot posture as the dashboard gates.
+//   5. Plan: the digest is Roost. A Roost venue gets all of it; a free or
+//      unclaimed venue gets nothing, not a cut-down email (VENUE-PRICING.md
+//      section 4). While VENUE_BILLING_ENABLED is unset every claimed venue
+//      acts Roost, the same pilot posture as the dashboard gates.
 //   6. A venue_digest_sends marker row is claimed (INSERT ... ON CONFLICT DO
 //      NOTHING) BEFORE the send, so overlapping containers on a Monday deploy
 //      cannot double-mail. A failed send releases its marker for the next
@@ -244,12 +244,15 @@ async function applyOptOut(token) {
 }
 
 // ---------------------------------------------------------------------------
-// Tier for the digest. Mirrors requireVenueTier's pilot posture: billing off
-// means every claimed venue acts Pro; billing on means the column decides.
+// Plan for the digest. Mirrors requireVenueTier's pilot posture: billing off
+// means every claimed venue acts Roost; billing on means the grant decides.
+// Two answers only, 'pro' (Roost) or 'free'. A stored 'premium' is Roost
+// (services/venueEntitlements.js planOf), so it is read as Roost here too
+// rather than trusted to arrive already resolved.
 // ---------------------------------------------------------------------------
 function effectiveTier(rowTier) {
   if (!venueBillingEnabled()) return 'pro';
-  return rowTier === 'pro' || rowTier === 'premium' ? rowTier : 'free';
+  return rowTier === 'pro' || rowTier === 'premium' ? 'pro' : 'free';
 }
 
 // ---------------------------------------------------------------------------
@@ -261,8 +264,11 @@ function effectiveTier(rowTier) {
 // place a fact is computed; this assembles its four builders into the same
 // {id, title, facts, status} cards GET /api/venue/advisor/cards serves
 // (routes/advisor.js, pinned by __tests__/advisorCards.test.js), except that
-// the digest builds only the cards the tier receives: no 'locked' upsell
-// rows exist in an email, so below-tier cards are simply never computed.
+// the digest builds only the cards the plan receives: no 'locked' upsell
+// rows exist in an email, so below-plan cards are simply never computed.
+// Every card is Roost, so a Roost venue gets every card and a free venue gets
+// none (the sweep skips free venues before it ever gets here, and this
+// answers an empty stack if one is passed anyway).
 //
 // Returns null when the venue has no linked listing or is unverified, which
 // the sweep reads as "skip this venue", the same soft answer the cards route
@@ -282,7 +288,7 @@ function effectiveTier(rowTier) {
 const DIGEST_CARDS = [
   { id: 'last_night_verdict', title: 'Yesterday, against your own numbers', tier: 'pro' },
   { id: 'week_ahead', title: 'Week ahead', tier: 'pro' },
-  { id: 'around_you', title: 'Around you this week', tier: 'premium' },
+  { id: 'around_you', title: 'Around you this week', tier: 'pro' },
   { id: 'listing_read_back', title: 'Your listing, read back', tier: 'pro' },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', tier: 'pro' },
 ];
@@ -312,21 +318,20 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
 
   const [verdictDef, weekDef, aroundDef, listingDef, readingsDef] = DIGEST_CARDS;
   const cards = [];
-  if (tier === 'pro') {
-    // The verdict leads the email. It reads no forecast and no corpus, so it
-    // is built first and cannot be delayed by anything the model does.
-    const buildVerdict = lastNightVerdictBuilder();
-    if (buildVerdict) cards.push(finished(verdictDef, await buildVerdict(ctx, opts)));
-    // Then card 1, before card 3, because card 3's arithmetic reads its peak
-    // facts, the same ordering the route uses.
-    const weekFacts = await advisorFacts.buildWeekAhead(ctx, opts);
-    cards.push(finished(weekDef, weekFacts));
-    cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
-    cards.push(finished(listingDef, await advisorFacts.buildListingReadBack(ctx, weekFacts, opts)));
-    cards.push(finished(readingsDef, await advisorFacts.buildReadingsVsServed(ctx, opts)));
-  } else {
-    cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
-  }
+  // Free venues get no cards at all: no card is free, and an email carries no
+  // locked rows.
+  if (tier !== 'pro') return cards;
+  // The verdict leads the email. It reads no forecast and no corpus, so it
+  // is built first and cannot be delayed by anything the model does.
+  const buildVerdict = lastNightVerdictBuilder();
+  if (buildVerdict) cards.push(finished(verdictDef, await buildVerdict(ctx, opts)));
+  // Then card 1, before card 3, because card 3's arithmetic reads its peak
+  // facts, the same ordering the route uses.
+  const weekFacts = await advisorFacts.buildWeekAhead(ctx, opts);
+  cards.push(finished(weekDef, weekFacts));
+  cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
+  cards.push(finished(listingDef, await advisorFacts.buildListingReadBack(ctx, weekFacts, opts)));
+  cards.push(finished(readingsDef, await advisorFacts.buildReadingsVsServed(ctx, opts)));
   return cards;
 }
 
