@@ -106,6 +106,75 @@ test('a verified owner is told, and told what it turned on', async () => {
   assert.match(sent[0].text, /Roost/);
 });
 
+// ---------------------------------------------------------------------------
+// WHAT THE EMAIL MAY PROMISE DEPENDS ON THE PLAN.
+//
+// Verification turns on the badge, promotions on the card, review replies and
+// the live number on every plan. Roost also needs the Roost plan once
+// VENUE_BILLING_ENABLED is on, so "you can use Roost" was false for a verified
+// free venue. Every sentence below has to be true in both billing states.
+// ---------------------------------------------------------------------------
+async function withBilling(on, fn) {
+  const saved = { b: process.env.VENUE_BILLING_ENABLED, a: process.env.ADMIN_USER_IDS };
+  if (on) { process.env.VENUE_BILLING_ENABLED = 'true'; process.env.ADMIN_USER_IDS = '9'; } else { delete process.env.VENUE_BILLING_ENABLED; }
+  try { await fn(); } finally {
+    if (saved.b === undefined) delete process.env.VENUE_BILLING_ENABLED; else process.env.VENUE_BILLING_ENABLED = saved.b;
+    if (saved.a === undefined) delete process.env.ADMIN_USER_IDS; else process.env.ADMIN_USER_IDS = saved.a;
+  }
+}
+const planIs = (tier) => [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })];
+
+test('billing off: a verified venue is told Roost is on, because every venue has it', async () => {
+  await withBilling(false, async () => {
+    handlers = [decisionReturns(verified({ owner_user_id: 5 }))];
+    await decide({ verified: true });
+    assert.strictEqual(sent.length, 1);
+    assert.match(sent[0].text, /Roost, the forecast and advisor for your venue, is on too\./);
+    assert.match(sent[0].text, /reply to reviews and set your live number/);
+  });
+});
+
+test('billing on: a verified FREE venue is not told it can use Roost', async () => {
+  await withBilling(true, async () => {
+    handlers = [decisionReturns(verified({ owner_user_id: 5 })), planIs('free')];
+    await decide({ verified: true });
+    assert.strictEqual(sent.length, 1);
+    const text = sent[0].text;
+    assert.doesNotMatch(text, /use Roost|Roost[^.]*is on/, 'a free venue was promised Roost by its verification email');
+    assert.match(text, /Roost, the forecast and advisor for your venue, is a paid plan\./);
+    // What verification does turn on is still named.
+    assert.match(text, /promotions show on your venue card/);
+    assert.match(text, /reply to reviews and set your live number/);
+  });
+});
+
+test('billing on: a verified Roost venue is told Roost is on', async () => {
+  await withBilling(true, async () => {
+    handlers = [decisionReturns(verified({ owner_user_id: 5 })), planIs('pro')];
+    await decide({ verified: true });
+    assert.match(sent[0].text, /Roost, the forecast and advisor for your venue, is on too\./);
+  });
+});
+
+test('billing on and the plan unreadable: the email says nothing about Roost either way', async () => {
+  await withBilling(true, async () => {
+    handlers = [decisionReturns(verified({ owner_user_id: 5 })), [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => new Error('db down')]];
+    await decide({ verified: true });
+    assert.strictEqual(sent.length, 1, 'a failed plan read must not cost the owner the email');
+    assert.doesNotMatch(sent[0].text, /Roost/);
+  });
+});
+
+test('billing on: a declined FREE venue is not told verification would have added Roost', async () => {
+  await withBilling(true, async () => {
+    handlers = [decisionReturns(declined({ owner_user_id: 5 })), planIs('free')];
+    await decide({ verified: false });
+    assert.strictEqual(sent.length, 1);
+    assert.doesNotMatch(sent[0].text, /Roost/);
+    assert.match(sent[0].text, /the badge, your promotions on your venue card, review replies and your live number/);
+  });
+});
+
 test('a declined owner is told, so they do not simply ask again', async () => {
   handlers = [decisionReturns(declined())];
   const res = await decide({ verified: false });

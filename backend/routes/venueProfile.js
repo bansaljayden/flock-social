@@ -41,6 +41,10 @@ const { rejectIfProfane } = require('../utils/moderation');
 // not be: venue_profiles.tier is a cache of the grant, and a lapsed grant leaves
 // it saying 'premium' (migration 040, services/venueEntitlements.js).
 const { getVenueEntitlement, venueBillingEnabled } = require('../services/venueEntitlements');
+// Whether the Monday digest sends at all (DIGEST_ENABLED). The dashboard shows
+// its Weekly reports switch only to a venue the sweep would mail, and this is
+// the one input to that the client cannot see for itself.
+const { digestEnabled } = require('../services/venueDigest');
 // The verification request has to reach a person, not just a column. Held as a
 // module object rather than destructured, the way services/moderationAlerts.js
 // holds it: tests replace the exported function, and a destructured copy would
@@ -669,6 +673,9 @@ router.get('/', async (req, res) => {
       // by us, no end date", with a cancel button). This is what lets it say
       // the true thing instead.
       billing_enabled: venueBillingEnabled(),
+      // Off, the Monday email never sends, so the switch that promises it
+      // stays off the screen.
+      digest_enabled: digestEnabled(),
       ...(entitlement ? {
         tier: entitlement.tier,
         tier_expires_at: entitlement.expiresAt,

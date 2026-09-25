@@ -23,11 +23,21 @@
 // enforces a clock on it.
 // ---------------------------------------------------------------------------
 
+// THE FORECAST PAIR IS FOR ROOST SURFACES ONLY. "Forecasts turn on once that
+// clears" is true for a venue that holds Roost (every venue while
+// VENUE_BILLING_ENABLED is off), and false for a free venue once it is on: that
+// venue verifies and still gets no forecast. So unverifiedReason is served only
+// behind requirePro (the forecast, the strip and the weekly summary in
+// routes/venueDashboard.js, and every route in routes/advisor.js), where a free
+// venue is refused by the plan before it can read this. A surface every plan
+// reaches uses the live-number pair below.
+// __tests__/venueVerificationRequest.test.js holds the routes to that.
 const REASON_NOT_REQUESTED = 'Not verified yet. Request verification and we confirm you own this venue by hand. Forecasts turn on once that clears.';
 const REASON_PENDING = 'Verification requested. We confirm ownership by hand, and forecasts turn on once that clears. Nothing more is needed from you.';
 
 /**
- * The sentence served wherever a feature is withheld for lack of verification.
+ * The sentence served wherever a Roost feature is withheld for lack of
+ * verification (see the note above for why only there).
  * @param {object|null} profile  a venue_profiles row (or ctx carrying
  *                               verification_requested_at)
  */
@@ -35,8 +45,10 @@ function unverifiedReason(profile) {
   return profile && profile.verification_requested_at ? REASON_PENDING : REASON_NOT_REQUESTED;
 }
 
-// The live-number 403 gets its own pair: the withheld thing there is a write,
-// not a forecast, so the forecast sentence would name the wrong consequence.
+// The live number gets its own pair, on its write (the 403) and on its read
+// (GET /busy-now, the card every plan sees): the withheld thing there is the
+// live number, not a forecast, and it is free on every plan, so this pair is
+// true for every venue whatever it pays.
 const LIVE_NUMBER_NOT_REQUESTED = 'Setting a live number needs a verified venue. Request verification and we confirm ownership by hand.';
 const LIVE_NUMBER_PENDING = 'Your verification request is in. We confirm ownership by hand, and setting a live number turns on once that clears.';
 

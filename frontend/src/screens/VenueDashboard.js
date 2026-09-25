@@ -93,6 +93,71 @@ const reviewWhen = (iso) => {
   return REVIEW_DATE_FMT.format(d);
 };
 
+// WHAT VERIFICATION TURNS ON, SAID FOR THIS VENUE'S PLAN. On every plan it is
+// review replies, the live number and deals on the venue card: the reply and
+// the live number refuse an unverified claim, and the card serves no deal from
+// one. The venue's own forecast also needs Roost. With VENUE_BILLING_ENABLED
+// on, requirePro refuses a free venue before verification is even read, so
+// "your own forecast is on" was false for a verified free venue. `onRoost` is
+// true for every venue while billing is off, and inside the Roost notice
+// window, because the server serves the forecast in both.
+const VERIFICATION_LINES = {
+  verified: {
+    roost: 'Replies to reviews, your live number, deals on your venue card and your own forecast are on.',
+    free: 'Replies to reviews, your live number and deals on your venue card are on. Your own forecast comes with Roost.',
+  },
+  pending: {
+    roost: 'We confirm ownership by hand. Replies to reviews, your live number, deals on your venue card and your own forecast turn on once that clears. Nothing more is needed from you.',
+    free: 'We confirm ownership by hand. Replies to reviews, your live number and deals on your venue card turn on once that clears. Your own forecast comes with Roost.',
+  },
+  unrequested: {
+    roost: 'We confirm you own this venue by hand before replies to reviews, your live number, deals on your venue card and your own forecast turn on.',
+    free: 'We confirm you own this venue by hand before replies to reviews, your live number and deals on your venue card turn on. Your own forecast comes with Roost.',
+  },
+};
+export function verificationLine({ verified, pending, onRoost }) {
+  const state = verified ? 'verified' : pending ? 'pending' : 'unrequested';
+  return VERIFICATION_LINES[state][onRoost ? 'roost' : 'free'];
+}
+
+// THE ROOST NOTICE WINDOW, SAID ONLY AS FAR AS IT HAS HAPPENED (Terms 9.6). A
+// venue account from before Roost had a price keeps everything, and its window
+// is open from the moment billing is on, before the notice email has gone out
+// as well as after. `tier_notice_until` is set only once that email has been
+// sent, so without it there is no email to point at and no date; the line
+// under this one says the email is still to come.
+export function roostNoticeLine(profile) {
+  if (!profile || profile.tier_notice_window !== true) return null;
+  return profile.tier_notice_until
+    ? 'Everything you had stays on while the notice we emailed you runs. Nothing is being charged.'
+    : 'Everything you had stays on, and nothing is being charged.';
+}
+
+// THE MONDAY EMAIL'S SWITCH SHOWS ONLY WHERE THE EMAIL GOES.
+// backend/services/venueDigest.js mails a venue only when DIGEST_ENABLED is on
+// (the profile's digest_enabled), the venue holds Roost (every venue while
+// billing is off), its claim is verified and a Google listing is linked. Off
+// any one of those, a switch promising "every Monday" was a promise of an
+// email that never comes.
+export function weeklyDigestOffered({ digestEnabled, verified, onRoost, hasListing }) {
+  return digestEnabled === true && verified === true && onRoost === true && hasListing === true;
+}
+
+// What that email carries: Roost's cards (DIGEST_CARDS in
+// backend/services/venueDigest.js, rendered by
+// backend/templates/venueDigestEmail.js). No review ratings are in it, so the
+// line does not offer them.
+export const WEEKLY_DIGEST_DESCRIPTION = "A short email every Monday morning with Roost's cards for your venue: yesterday against your own numbers, your readings beside our estimates, your listing read back, and the week ahead with what is on around you. Off until you turn it on.";
+
+// A save MERGES into the profile the GET returned. PUT /api/venue-profile
+// answers with the profile row only, and the GET adds what the server works
+// out about the account: the plan, the Roost notice window and its date, and
+// whether billing and the Monday email are on. Replacing the profile with the
+// PUT's answer dropped all of those until the next reload, so the weekly
+// switch vanished the moment it was pressed and the notice-window line fell
+// back to another plan's sentence after any save.
+export const mergeSavedProfile = (prev, saved) => (saved ? { ...(prev || {}), ...saved } : prev);
+
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
   // with screens that are not this one, so they stay there and come in here.
@@ -1977,19 +2042,20 @@ export default function VenueDashboard({
                   question the dashboard could not answer at all before: an
                   owner had nowhere to look up whether their venue is verified.
                   What it says verification turns on is what the server checks
-                  it for, and nothing else: review replies, the live number, and
-                  the venue's own forecast. */}
+                  it for, and nothing else: review replies, the live number,
+                  deals on the venue card, and the venue's own forecast where
+                  the plan includes it (verificationLine above). */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.shield(colors.navy, 14)} Verification</h3>
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: '0 0 2px' }}>
                   {venueIsVerified ? 'Verified' : venueVerificationPending ? 'Requested' : 'Not verified yet'}
                 </p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                  {venueIsVerified
-                    ? 'Replies to reviews, your live number and your own forecast are on.'
-                    : venueVerificationPending || verificationRequestNote
-                      ? 'We confirm ownership by hand. Replies to reviews, your live number and your own forecast turn on once that clears. Nothing more is needed from you.'
-                      : 'We confirm you own this venue by hand before replies to reviews, your live number and your own forecast turn on.'}
+                  {verificationLine({
+                    verified: venueIsVerified,
+                    pending: !!(venueVerificationPending || verificationRequestNote),
+                    onRoost,
+                  })}
                 </p>
                 {renderVerificationAsk()}
               </div>
@@ -2083,7 +2149,7 @@ export default function VenueDashboard({
                         setSavingVenueIntake(true);
                         try {
                           const saved = await updateVenueProfile(venueIntakeDraft);
-                          setVenueProfile(saved);
+                          setVenueProfile((prev) => mergeSavedProfile(prev, saved));
                           setVenueIntakeDraft(null);
                           showToast('Saved.', 'success');
                         } catch (e) {
@@ -2171,7 +2237,17 @@ export default function VenueDashboard({
                   screen, while the unsubscribe page, the email footer and the
                   privacy policy all told the owner to use "the Weekly reports
                   switch in your venue dashboard" (venue-owner audit,
-                  2026-09-05). This is that switch, and only that switch. */}
+                  2026-09-05). This is that switch, and only that switch.
+                  Shown only to a venue the sweep will actually mail
+                  (weeklyDigestOffered above): with the digest off, on a free
+                  plan while billing is on, or before verification, its "every
+                  Monday" and its "first one comes Monday" were both false. */}
+              {weeklyDigestOffered({
+                digestEnabled: venueProfile?.digest_enabled,
+                verified: venueIsVerified,
+                onRoost,
+                hasListing: !!venueProfile?.google_place_id,
+              }) && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mail ? Icons.mail(colors.navy, 14) : null} Weekly reports</h3>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
@@ -2183,7 +2259,7 @@ export default function VenueDashboard({
                       const weekly = e.target.checked;
                       try {
                         const saved = await updateVenueProfile({ notificationPrefs: { weekly } });
-                        setVenueProfile(saved);
+                        setVenueProfile((prev) => mergeSavedProfile(prev, saved));
                         showToast(weekly ? 'Weekly reports on. The first one comes Monday morning.' : 'Weekly reports off.');
                       } catch (err) {
                         showToast(err?.message || 'Could not save that. Try again.', 'error');
@@ -2191,9 +2267,10 @@ export default function VenueDashboard({
                     }}
                     style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
                   />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>A short email every Monday morning with last week's readings, new ratings, and what the data suggests for the week ahead. Off until you turn it on.</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{WEEKLY_DIGEST_DESCRIPTION}</span>
                 </label>
               </div>
+              )}
 
               {/* The Notifications panel used to sit here: three switches, one
                   offering to tell the owner when a flock books their venue, one
@@ -2286,7 +2363,7 @@ export default function VenueDashboard({
                       {venueTier === 'free'
                         ? 'No charge. Your listing, your hours, your replies.'
                         : venueProfile?.tier_notice_window === true
-                          ? 'Everything you had stays on while the notice we emailed you runs. Nothing is being charged.'
+                          ? roostNoticeLine(venueProfile)
                         : venueTierReason === 'paid'
                           ? (venueTierSource === 'stripe'
                             ? <VenueBillingStatus>{({ status }) => (status?.status === 'trialing' ? 'On the free trial. Nothing is charged until it ends.' : 'Billed through Stripe.')}</VenueBillingStatus>

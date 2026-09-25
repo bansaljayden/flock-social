@@ -3305,6 +3305,19 @@ async function deleteAccount(req, res) {
       // user's flock messages so no authored content is retained after deletion.
       await client.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]);
 
+      // Same rule for a venue owner's replies to reviews. The review belongs to
+      // the person who wrote it and stays, so the key from the reply to its
+      // author is SET NULL (migration 083); the reply is this account's words,
+      // and the privacy policy says everything on the venue listing goes, so
+      // the words are erased here rather than left unpublished in somebody
+      // else's row.
+      await client.query(
+        `UPDATE venue_reviews
+            SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL
+          WHERE venue_reply_user_id = $1`,
+        [req.user.id]
+      );
+
       // Round 16: a BAN has to outlive the account it was imposed on, or
       // deleting the account is a one-tap ban reset. Same transaction as the
       // evidence de-attribution above and for the same reason — the account

@@ -117,6 +117,10 @@ const SUITE_SLOTS = {
                                  // may retire, the join/vote lock order, the
                                  // plan closing mid-join, fan-outs under the
                                  // row lock and the un-vote's reads.
+  venueCurrentOwner: 30,         // new in 2026-09-25; only the current
+                                 // verified, unbanned owner of a place speaks
+                                 // as it or reads its owner data (replies,
+                                 // readings, cohort, tap name, sensor status).
   sensorIngestStatement: 31,     // new in 2026-09-25; the one-statement sensor
                                  // ingest run against a real, migrated schema.
                                  // 31 is the last slot below 49152; the gap is

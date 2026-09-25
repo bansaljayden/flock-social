@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const admin = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
-const checkin = fs.readFileSync(path.join(__dirname, '..', 'routes', 'checkin.js'), 'utf8');
+const checkin = fs.readFileSync(path.join(__dirname, '..', 'routes', 'checkin.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('an admin route mints the tag URL from the same signature the verifier checks', () => {
   assert.match(admin, /router\.get\('\/venues\/tag-url', async \(req, res\) => \{/);
@@ -26,8 +26,14 @@ test('the signature the minter writes is the one the verifier expects', () => {
 });
 
 test('a tap answers with the venue name, best effort, on both the fresh and the deduped path', () => {
-  const tap = checkin.slice(checkin.indexOf('async function handleNfcTap('), checkin.indexOf('async function handleNfcTap(') + 3000);
-  assert.match(tap, /SELECT business_name FROM venue_profiles WHERE google_place_id = \$1 LIMIT 1/);
+  // The whole function, to its closing brace, rather than a fixed window that
+  // a longer comment would push the second answer out of.
+  const start = checkin.indexOf('async function handleNfcTap(');
+  const tap = checkin.slice(start, checkin.indexOf('\n}\n', start));
+  // The name is the verified, unbanned owner's. Any claim used to do, so an
+  // unverified or banned claimant's business name could headline the tap.
+  assert.match(tap, /SELECT vp\.business_name FROM venue_profiles vp\s+JOIN users ou ON ou\.id = vp\.user_id AND ou\.is_banned IS NOT TRUE\s+WHERE vp\.google_place_id = \$1 AND vp\.verified = true LIMIT 1/);
+  assert.doesNotMatch(tap, /SELECT business_name FROM venue_profiles WHERE google_place_id = \$1 LIMIT 1/);
   assert.match(tap, /SELECT name FROM ml_venues WHERE google_place_id = \$1 LIMIT 1/);
   assert.strictEqual((tap.match(/venue_name: venueName,/g) || []).length, 2);
   // A miss is a null, never a failed tap.

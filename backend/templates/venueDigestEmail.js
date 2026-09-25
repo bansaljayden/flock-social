@@ -64,16 +64,21 @@ function cardsForTier(cards, tier) {
 // The one anomaly slot. Two gates exist in the T0 fact set, both computed by
 // the fact engine and shipped as structured values (never recomputed here):
 // the projected peak landing at or after last orders (kitchen_vs_peak), and
-// the owner's busy nights not lining up with the venue's own Google curve
-// (busy_nights_agreement with no shared nights). The FIRST card carrying a
+// the owner's busy days not lining up with the venue's own Google curve
+// (busy_days_agreement with no shared days). The FIRST card carrying a
 // firing gate moves into its own "Worth a look" block; every later one stays
 // a plain line, because a digest with three alarms is a digest with none.
 // The wording stays the fact engine's hedged label; only placement changes.
+//
+// The id and field are the fact engine's own (services/advisorFacts.js,
+// buildListingReadBack). This matched busy_nights_agreement and sharedNights,
+// names the engine does not emit, so a week where the owner's busy days and
+// the curve disagreed never got its block.
 function factGateFires(fact) {
   if (!fact || fact.status === 'refused' || !fact.value || typeof fact.value !== 'object') return false;
   if (fact.id === 'kitchen_vs_peak') return fact.value.peakAtOrAfterLastOrder === true;
-  if (fact.id === 'busy_nights_agreement') {
-    return Array.isArray(fact.value.sharedNights) && fact.value.sharedNights.length === 0
+  if (fact.id === 'busy_days_agreement') {
+    return Array.isArray(fact.value.sharedDays) && fact.value.sharedDays.length === 0
       && Array.isArray(fact.value.curveSays) && fact.value.curveSays.length > 0;
   }
   return false;

@@ -887,6 +887,109 @@ test('082 recovers on the next boot when a copy stored mid-deploy failed its bui
   await pool.query(`DELETE FROM venue_sensor_data WHERE venue_place_id = 'ChIJbootsafety082'`);
 });
 
+// ---------------------------------------------------------------------------
+// 9. 083 AND WHOSE REPLY IT IS.
+// ---------------------------------------------------------------------------
+//
+// 083 records who wrote a venue's reply to a review, and gives each reply
+// written before the column existed to the place's verified owner at the
+// moment 083 first runs, unless the reply provably predates that owner's claim
+// (older than their profile, or than the latest admin verification of it). It
+// has to run ONCE: a replay must not hand a reply nobody could be given to
+// whoever holds the place on the day of the replay, which is the exact
+// misattribution the column exists to end.
+
+const replyRows = async () => (await pool.query(
+  `SELECT id, google_place_id, venue_reply, venue_replied_at, venue_reply_user_id
+     FROM venue_reviews WHERE google_place_id LIKE 'ChIJbootsafety083%' ORDER BY id`
+)).rows;
+
+test('083 gives an old reply only to an owner who could have written it, and a replay moves nothing', async () => {
+  // The database 083 meets: the reply text, and no column saying whose it is.
+  await pool.query('ALTER TABLE venue_reviews DROP COLUMN IF EXISTS venue_reply_user_id');
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '083_venue_reply_author.sql'`);
+
+  const reviewer = await insertUser('reviewer083@example.com', 'Reviewer 083');
+  const owners = {};
+  const profile = async (key, place, { verified = true, createdAgo = '30 days' } = {}) => {
+    owners[key] = await insertUser(`${key}083@example.com`, `Owner ${key}`);
+    return (await pool.query(
+      `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - $5::interval) RETURNING id`,
+      [owners[key], `Room ${key}`, place, verified, createdAgo]
+    )).rows[0].id;
+  };
+  const review = async (place, reply, repliedAgo, by = reviewer) => (await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at)
+     VALUES ($1, $2, 4, 'Good night', $3, CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() - ($4::text)::interval END)
+     RETURNING id`,
+    [place, by, reply, repliedAgo]
+  )).rows[0].id;
+
+  // Written by the verified owner, after their claim: theirs.
+  await profile('kept', 'ChIJbootsafety083a');
+  const kept = await review('ChIJbootsafety083a', 'Thanks from the owner', '2 days');
+  // The verified owner's profile is younger than the reply: somebody else wrote it.
+  await profile('newcomer', 'ChIJbootsafety083b', { createdAgo: '1 day' });
+  const beforeProfile = await review('ChIJbootsafety083b', 'Words from a previous owner', '5 days');
+  // An older claim that an admin verified after the reply was written.
+  const reverified = await profile('reverified', 'ChIJbootsafety083c');
+  await pool.query(
+    `INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, created_at)
+     VALUES (NULL, $1, 'venue_verified', 'venue_profile', $2, NOW() - INTERVAL '1 day')`,
+    [owners.reverified, reverified]
+  );
+  const beforeVerification = await review('ChIJbootsafety083c', 'Words from before the verification', '5 days');
+  // A retired reply (the review was edited after it): no timestamp to judge by.
+  await profile('retired', 'ChIJbootsafety083d');
+  const retired = await review('ChIJbootsafety083d', 'Retired words', null);
+  // Nobody verified on the place: nobody can be given it.
+  await profile('claimant', 'ChIJbootsafety083e', { verified: false });
+  const unowned = await review('ChIJbootsafety083e', 'Words with no verified owner', '2 days');
+  // No reply at all, from a second reviewer (one review per reviewer per place).
+  const silent = await review('ChIJbootsafety083a', null, null, await insertUser('quiet083@example.com', 'Quiet 083'));
+
+  await migrate(pool); // the deploy: must not throw
+
+  const byId = Object.fromEntries((await replyRows()).map((r) => [r.id, r]));
+  assert.equal(byId[kept].venue_reply_user_id, owners.kept, 'a reply the owner wrote after claiming was not given to them');
+  assert.equal(byId[beforeProfile].venue_reply_user_id, null,
+    'a reply older than the owner\'s profile was credited to an owner who cannot have written it');
+  assert.equal(byId[beforeVerification].venue_reply_user_id, null,
+    'a reply older than the owner\'s verification was credited to them');
+  assert.equal(byId[retired].venue_reply_user_id, owners.retired, 'a retired reply stays with the verified owner to reuse');
+  assert.equal(byId[unowned].venue_reply_user_id, null, 'a reply was credited on a place nobody holds');
+  assert.equal(byId[silent].venue_reply_user_id, null);
+  for (const r of Object.values(byId)) {
+    if (r.id !== silent) assert.ok(r.venue_reply, 'no reply text was touched');
+  }
+  const { rows: [fk] } = await pool.query(
+    `SELECT c.confdeltype FROM pg_constraint c
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+     WHERE c.contype = 'f' AND c.conrelid = 'venue_reviews'::regclass
+       AND c.confrelid = 'users'::regclass AND a.attname = 'venue_reply_user_id'`
+  );
+  assert.equal(fk?.confdeltype, 'n', 'the author must be a foreign key to users that empties on deletion');
+
+  // The replay, after the unowned place has found a verified owner. The
+  // backfill must not run again and hand that owner words they never wrote.
+  await pool.query(`UPDATE venue_profiles SET verified = true WHERE user_id = $1`, [owners.claimant]);
+  const before = await replyRows();
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '083_venue_reply_author.sql'`);
+  await migrate(pool);
+  assert.deepEqual(await replyRows(), before, 'a second pass of 083 moved a row');
+  assert.equal(await migrationRowCount('083_venue_reply_author.sql'), 1);
+
+  // And @requires: a database that loses the column heals on the next boot.
+  await pool.query('ALTER TABLE venue_reviews DROP COLUMN venue_reply_user_id');
+  await migrate(pool);
+  assert.ok(await columnExists('venue_reviews', 'venue_reply_user_id'), 'the column was not restored');
+  assert.equal(await migrationRowCount('083_venue_reply_author.sql'), 1);
+
+  await pool.query(`DELETE FROM venue_reviews WHERE google_place_id LIKE 'ChIJbootsafety083%'`);
+  await pool.query(`DELETE FROM users WHERE email LIKE '%083@example.com'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

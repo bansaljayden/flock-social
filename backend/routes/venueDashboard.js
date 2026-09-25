@@ -872,6 +872,33 @@ const NOT_OWNER_OF_THE_PLACE = `AND NOT EXISTS (
              AND vpo.google_place_id = vr.google_place_id
          )`;
 
+// WHOSE REPLY IT IS (migration 083). A reply is the business speaking, so the
+// card publishes it only while the account that wrote it is the place's
+// CURRENT verified owner and is not banned. It used to ride any verified claim
+// on the place, so when verification moved from one account to another the
+// first account's words stayed on the card under the second one's badge.
+// Correlates on vr, like the constant above.
+const REPLY_BY_CURRENT_OWNER = `EXISTS (
+                SELECT 1 FROM venue_profiles vp
+                JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+                WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
+                  AND vp.user_id = vr.venue_reply_user_id
+              )`;
+
+// The owner's half of the same rule, applied to each row of GET /reviews. A
+// reply comes back to the caller only when the caller wrote it and is the
+// verified owner now. An unverified claim on a place somebody else holds reads
+// the reviews, which are public anyway, and none of the business's replies,
+// including a retired one the public card withholds. A verified owner does not
+// read a previous owner's words as their own. Any other row answers as a
+// review with no reply, which is what it is to this caller, so the Reply
+// button comes back. The author column is read here and never sent.
+function ownReplyOnly(row, venue, userId) {
+  const { venue_reply_user_id: author, ...rest } = row;
+  if (venue && venue.verified === true && author != null && Number(author) === Number(userId)) return rest;
+  return { ...rest, venue_reply: null, venue_replied_at: null, reply_needs_review: false };
+}
+
 // GET /api/venue-dashboard/reviews — get Flock reviews for this venue
 router.get('/reviews', async (req, res) => {
   try {
@@ -957,8 +984,11 @@ router.get('/reviews', async (req, res) => {
       // heavy, and it is the column the self-dealing check reads to prove an
       // owner is not reviewing their own venue. Dropping it alongside the
       // avatar turned a payload saving into a behaviour change.
+      //
+      // vr.venue_reply_user_id is read for ownReplyOnly below and removed
+      // before the response: it decides whether this caller sees the reply.
       `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at,
-              vr.created_at, vr.user_id, u.name,
+              vr.created_at, vr.user_id, vr.venue_reply_user_id, u.name,
               (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
@@ -974,7 +1004,7 @@ router.get('/reviews', async (req, res) => {
     const { rows, hasMore, nextBefore } = reviewPage(page, limit);
 
     res.json({
-      reviews: rows,
+      reviews: rows.map((row) => ownReplyOnly(row, venue, req.user.id)),
       stats: {
         // Rounded the same way the old .toFixed(1) rounded, so the displayed
         // number does not move for venues that already had fewer than 50.
@@ -1031,15 +1061,19 @@ router.post('/reviews/:id/reply', [
     // confirm the existence and the moderation state of a row we just decided
     // they may not see, and it would tell a harassing owner that their complaint
     // landed on a specific review.
+    //
+    // venue_reply_user_id is written with the text (migration 083): the card
+    // publishes a reply only while its author is the current verified owner
+    // (REPLY_BY_CURRENT_OWNER above).
     const { rows } = await pool.query(
-      `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW()
+      `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW(), venue_reply_user_id = $4
        WHERE vr.id = $2 AND vr.google_place_id = $3
          AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
          ${NOT_OWNER_OF_THE_PLACE}
          ${hideDemoReviews(req.user.id)}
        RETURNING *`,
-      [req.body.reply, req.params.id, venue.google_place_id]
+      [req.body.reply, req.params.id, venue.google_place_id, req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Review not found' });
     res.json(rows[0]);
@@ -1382,6 +1416,9 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     // keeping the text (see submit-review). Without this line a retired reply
     // would go straight back onto the card attached to words its author never
     // read, which is the harm the retirement exists to prevent.
+    //
+    // And the claim has to be the AUTHOR's (migration 083). "A verified claim
+    // exists" let a previous owner's reply ride the next owner's badge.
     const cursor = reviewCursor(req.query.before);
     const listParams = cursor
       ? [req.params.placeId, req.user.id, cursor.at, cursor.id, limit + 1]
@@ -1389,17 +1426,12 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     const { rows: page } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text,
               -- The reply is the business speaking in public; a banned owner
-              -- no longer speaks (see the promotions read). Both CASEs.
-              CASE WHEN vr.venue_replied_at IS NOT NULL AND EXISTS (
-                SELECT 1 FROM venue_profiles vp
-                JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
-                WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
-              ) THEN vr.venue_reply ELSE NULL END AS venue_reply,
-              CASE WHEN EXISTS (
-                SELECT 1 FROM venue_profiles vp
-                JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
-                WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
-              ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
+              -- no longer speaks (see the promotions read), and neither does
+              -- one who no longer holds the place. Both CASEs.
+              CASE WHEN vr.venue_replied_at IS NOT NULL AND ${REPLY_BY_CURRENT_OWNER}
+                THEN vr.venue_reply ELSE NULL END AS venue_reply,
+              CASE WHEN ${REPLY_BY_CURRENT_OWNER}
+                THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
               -- No avatar column: the card draws (name || '?').charAt(0) in a
               -- circle, never an image, and this one is an uncapped base64 data
               -- URL up to MAX_AVATAR_DATA_URL_BYTES on a page of up to
@@ -2207,7 +2239,11 @@ router.get('/busy-now', async (req, res) => {
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so a live number cannot be set. Write to hello@flockcorp.com to link one.' });
     }
-    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
+    // The live-number pair, not the forecast one. This route is free on every
+    // plan, and the forecast sentence ("forecasts turn on once that clears")
+    // is only true behind the Roost gate: with billing on, a free venue that
+    // verifies gets its live number and still no forecast.
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: liveNumberRefusal(ctx) });
     const state = await ownerBusyState(ctx.google_place_id);
     res.json({
       available: true,
@@ -2449,7 +2485,12 @@ router.get('/this-week', requirePro, async (req, res) => {
     // this panel sees the previous hour's count. That is the accepted cost and
     // it is why the live reading has its own uncached endpoint (GET
     // /busy-now); this panel is the week, not the moment.
-    const cached = cacheGet(`week:${placeId}`);
+    //
+    // Keyed on the owner as well as the place, because yourReadings is the
+    // owner's own: when verification moves to another account inside the
+    // hour, the new owner must not be served the previous owner's count.
+    const weekKey = `week:${placeId}:${req.user.id}`;
+    const cached = cacheGet(weekKey);
     if (cached) return res.json(cached);
 
     // Four aggregates, one venue, fourteen days. Week-over-week comes from one
@@ -2522,12 +2563,21 @@ router.get('/this-week', requirePro, async (req, res) => {
         [placeId]
       ),
       pool.query(
+        // "Your own live numbers": the readings THIS account posted, and only
+        // while it is the place's verified, unbanned owner. Keyed on the place
+        // alone, a new owner was shown the previous account's slider posts as
+        // their own.
         `SELECT COUNT(*)::int AS this_week,
-                ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY busy_percent))::int AS median_percent
-           FROM venue_owner_reports
-          WHERE google_place_id = $1 AND retracted = false
-            AND created_at >= NOW() - INTERVAL '7 days'`,
-        [placeId]
+                ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY r.busy_percent))::int AS median_percent
+           FROM venue_owner_reports r
+           JOIN venue_profiles vp
+             ON vp.user_id = r.venue_user_id
+            AND vp.google_place_id = r.google_place_id
+            AND vp.verified = true
+           JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+          WHERE r.google_place_id = $1 AND r.venue_user_id = $2 AND r.retracted = false
+            AND r.created_at >= NOW() - INTERVAL '7 days'`,
+        [placeId, req.user.id]
       ),
     ]);
 
@@ -2602,7 +2652,7 @@ router.get('/this-week', requirePro, async (req, res) => {
       generatedAt: new Date().toISOString(),
     };
 
-    cacheSet(`week:${placeId}`, result);
+    cacheSet(weekKey, result);
     res.json(result);
   } catch (err) {
     console.error('Venue this-week error:', err);

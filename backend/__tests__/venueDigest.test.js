@@ -296,6 +296,49 @@ test('a stored premium gets the whole Roost digest, not a cut-down one', () => {
   assert.ok(text.includes(input.optOutUrl));
 });
 
+test('the busy-days gate the fact engine emits earns the anomaly slot', () => {
+  // factGateFires looked for busy_nights_agreement and sharedNights, and the
+  // fact engine emits busy_days_agreement with { youSaid, curveSays,
+  // sharedDays } (services/advisorFacts.js, buildListingReadBack). So a week
+  // where the owner's busy days and the Google curve disagreed never got its
+  // "Worth a look" block.
+  resetWorld();
+  const engine = fs.readFileSync(require.resolve('../services/advisorFacts'), 'utf8');
+  assert.match(engine, /id: 'busy_days_agreement',\s*value: \{ youSaid: ownerBusyDays, curveSays: curveDays, sharedDays: shared \}/,
+    'the fact engine renamed the fact this gate reads; rename it here too');
+
+  const disagree = {
+    id: 'busy_days_agreement',
+    value: { youSaid: ['monday'], curveSays: ['friday', 'saturday'], sharedDays: [] },
+    source: 'arithmetic',
+    asOf: '2026-08-24T12:00:00Z',
+    label: "Your busy days and your Google curve's strongest days do not line up. We state both and stop there.",
+  };
+  assert.strictEqual(tpl.factGateFires(disagree), true);
+  assert.strictEqual(tpl.factGateFires({ ...disagree, value: { ...disagree.value, sharedDays: ['friday'] } }), false,
+    'days the owner and the curve agree on are not an anomaly');
+  assert.strictEqual(tpl.factGateFires({ ...disagree, value: { ...disagree.value, curveSays: [] } }), false,
+    'a curve with no strongest day has nothing to disagree with');
+  assert.strictEqual(tpl.factGateFires({ ...disagree, id: 'busy_nights_agreement', value: { ...disagree.value, sharedNights: [] } }), false,
+    'the name nothing emits is not what the gate reads');
+
+  const cards = [
+    FIXTURE_CARDS.find((c) => c.id === 'readings_vs_estimates'),
+    {
+      id: 'listing_read_back',
+      title: 'Your listing, read back',
+      status: 'ok',
+      facts: [
+        { id: 'intake_owner_busy_nights', value: ['monday'], source: 'intake', asOf: 'owner-set 2026-08-18', label: 'You told us your busy days are monday.' },
+        disagree,
+      ],
+    },
+  ];
+  const text = tpl.renderDigestText({ ...RENDER_INPUT_PRO, cards });
+  assert.strictEqual((text.match(/Worth a look/gi) || []).length, 1);
+  assert.match(text, /Worth a look: Your listing, read back/i);
+});
+
 test('free tier renders no cards at all', () => {
   resetWorld();
   const text = tpl.renderDigestText({ ...RENDER_INPUT_PRO, tier: 'free' });

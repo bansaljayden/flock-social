@@ -1752,6 +1752,25 @@ const VERIFY_DECIDED_SUBJECT = (verified, name) => (verified
   ? `${name} is verified on Flock`
   : `About your verification request for ${name}`);
 
+// WHAT THE EMAIL MAY PROMISE DEPENDS ON THE PLAN. Verification turns on the
+// badge, promotions on the venue card, review replies and the live number on
+// every plan. Roost (the forecast and the advisor) also needs the Roost plan
+// once VENUE_BILLING_ENABLED is on, so "you can use Roost" was false for a
+// verified free venue. True means Roost is on for this venue (always, while
+// billing is off), false means it is not, and null means the plan could not be
+// read, in which case the email says nothing about Roost either way.
+const { venueBillingEnabled, getVenueTier } = require('../services/venueEntitlements');
+async function roostIsOnFor(ownerUserId) {
+  if (!venueBillingEnabled()) return true;
+  if (ownerUserId == null) return null;
+  try {
+    return (await getVenueTier(ownerUserId)) === 'pro';
+  } catch (err) {
+    console.error('[venue-verification] plan lookup failed, the email leaves Roost out:', err.message);
+    return null;
+  }
+}
+
 async function notifyVerificationDecided(row) {
   const to = row.owner_email;
   if (!to || !emailService.isMailableAddress(to)) {
@@ -1766,18 +1785,21 @@ async function notifyVerificationDecided(row) {
   const name = String(row.business_name || 'Your venue').slice(0, 200);
   const owner = String(row.owner_name || '').slice(0, 120);
   const hello = owner ? `Hi ${owner},` : 'Hi,';
-
-
+  const roost = await roostIsOnFor(row.owner_user_id);
 
   const body = row.verified
     ? [
       `${name} is now verified.`,
-      'The verified badge shows on your listing, and you can post promotions, reply to reviews, and use Roost.',
+      'The verified badge shows on your listing. Your promotions show on your venue card now, and you can reply to reviews and set your live number.',
+      roost === true ? 'Roost, the forecast and advisor for your venue, is on too.' : null,
+      roost === false ? 'Roost, the forecast and advisor for your venue, is a paid plan. Your dashboard lists what it includes.' : null,
       'If anything about the listing is wrong, reply to this email and tell us what to change.',
-    ]
+    ].filter(Boolean)
     : [
       `We looked at your verification request for ${name} and we have not verified it.`,
-      'Your venue page and your account are unchanged and still yours. What verification adds is the badge, promotions, review replies and Roost, so those stay off for now.',
+      roost === true
+        ? 'Your venue page and your account are unchanged and still yours. What verification adds is the badge, your promotions on your venue card, review replies, your live number and Roost, so those stay off for now.'
+        : 'Your venue page and your account are unchanged and still yours. What verification adds is the badge, your promotions on your venue card, review replies and your live number, so those stay off for now.',
       'If you run this venue and think we got this wrong, reply to this email and tell us who you are and how you are connected to it. A person reads these.',
     ];
 
@@ -1902,6 +1924,8 @@ router.put('/venues/:profileId/verify', async (req, res) => {
               -- the notice.
               ou.email AS owner_email,
               ou.name AS owner_name,
+              -- And whose plan the notice describes (roostIsOnFor above).
+              t.user_id AS owner_user_id,
               (SELECT user_id FROM blocked) AS conflict_user_id
        FROM target t
        LEFT JOIN upd u ON true

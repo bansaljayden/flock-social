@@ -209,6 +209,8 @@ async function dispatch(sql, params) {
     if (!r) return { rows: [], rowCount: 0 };
     r.venue_reply = p[0];
     r.venue_replied_at = world.clock;
+    // Who wrote it (migration 083), when the statement records it.
+    if (/venue_reply_user_id = \$4/.test(flat)) r.venue_reply_user_id = Number(p[3]);
     return { rows: [{ ...r }], rowCount: 1 };
   }
 
@@ -233,13 +235,19 @@ async function dispatch(sql, params) {
     // A reply is published only while it is live. The route retires one whose
     // review was rewritten under it by clearing venue_replied_at.
     const liveReplyOnly = /CASE WHEN vr\.venue_replied_at IS NOT NULL AND EXISTS/.test(flat);
+    // And only while its AUTHOR is the verified owner (migration 083), when
+    // the statement asks that rather than "some verified claim exists".
+    const authored = /vp\.user_id = vr\.venue_reply_user_id/.test(flat);
+    const claimOk = (r) => !gated || (authored
+      ? world.profiles.some((x) => x.google_place_id === r.google_place_id && x.verified === true && x.user_id === r.venue_reply_user_id)
+      : hasVerifiedProfile(r.google_place_id));
     const rows = visibleReviews(p[0], flat).slice(0, limit).map((r) => {
-      const shown = (!gated || hasVerifiedProfile(r.google_place_id))
+      const shown = claimOk(r)
         && (!liveReplyOnly || r.venue_replied_at !== null);
       return {
         id: r.id, rating: r.rating, text: r.text,
         venue_reply: shown ? r.venue_reply : null,
-        venue_replied_at: (!gated || hasVerifiedProfile(r.google_place_id)) ? r.venue_replied_at : null,
+        venue_replied_at: claimOk(r) ? r.venue_replied_at : null,
         created_at: new Date(r.created_at).toISOString(),
         // No profile_image_url: the statement stopped selecting it, the card
         // draws a letter in a circle, and a fake that keeps returning a column
@@ -282,6 +290,7 @@ async function dispatch(sql, params) {
       venue_replied_at: r.venue_replied_at,
       created_at: new Date(r.created_at).toISOString(),
       user_id: r.user_id,
+      ...(/vr\.venue_reply_user_id/.test(flat) ? { venue_reply_user_id: r.venue_reply_user_id ?? null } : {}),
       name: world.users.get(r.user_id)?.name || null,
       ...(flags ? { reply_needs_review: r.venue_reply !== null && r.venue_replied_at === null } : {}),
     }));
@@ -637,6 +646,50 @@ test('FIXED L2: a reviewer editing their review RETIRES the owner\'s reply inste
   as(999, 'Reader');
   pub = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE}`);
   assert.match(pub.body.reviews[0].venue_reply, /still like to talk/);
+  assertQueriesUnderstood();
+});
+
+test('FIXED L3: when verification moves to another account, the old owner\'s reply leaves the card', async () => {
+  // The reply was published whenever ANY verified claim stood on the place, so
+  // an admin moving verification from one account to another left the first
+  // account's words on the card under the second one's badge (migration 083).
+  const OLD = 580;
+  const NEW = 581;
+  const REVIEWER = 582;
+  const FRIEND = 583;
+  as(OLD, 'Old owner'); as(NEW, 'New owner'); as(REVIEWER, 'Reviewer'); as(FRIEND, 'Friend');
+  world.profiles.push({ id: 1, user_id: OLD, google_place_id: PLACE, verified: true, category: 'bar', verification_requested_at: null });
+  fabricatedFlock(3, PLACE, [REVIEWER, FRIEND]);
+
+  as(REVIEWER, 'Reviewer');
+  const r = await review(PLACE, 3, 'Fine night.');
+  as(OLD, 'Old owner');
+  const replied = await call('POST', `/api/venue-dashboard/reviews/${r.body.id}/reply`, { reply: 'The old management thanks you.' });
+  assert.strictEqual(replied.status, 200, replied.text);
+
+  // The admin un-verifies the old claim and verifies a different account.
+  world.profiles[0].verified = false;
+  world.profiles.push({ id: 2, user_id: NEW, google_place_id: PLACE, verified: true, category: 'bar', verification_requested_at: null });
+
+  as(999, 'Reader');
+  let pub = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE}`);
+  assert.strictEqual(pub.body.reviews[0].venue_reply, null,
+    'the previous owner\'s reply is still speaking as the business under the new owner\'s badge');
+  assert.strictEqual(pub.body.reviews[0].venue_replied_at, null);
+
+  // The new owner's tab shows a review with no reply, so the Reply button is
+  // back, and nothing of the old owner's words.
+  as(NEW, 'New owner');
+  const dash = await call('GET', '/api/venue-dashboard/reviews');
+  assert.strictEqual(dash.body.reviews[0].venue_reply, null);
+  assert.strictEqual(dash.body.reviews[0].reply_needs_review, false);
+  assert.ok(!dash.text.includes('old management'));
+
+  const mine = await call('POST', `/api/venue-dashboard/reviews/${r.body.id}/reply`, { reply: 'New management here. Come back soon.' });
+  assert.strictEqual(mine.status, 200, mine.text);
+  as(999, 'Reader');
+  pub = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE}`);
+  assert.match(pub.body.reviews[0].venue_reply, /New management/);
   assertQueriesUnderstood();
 });
 

@@ -211,18 +211,27 @@ function callTheDay(reading, baselineDays) {
  * realistic count is one or two, so an hourly baseline would be a single
  * reading wearing a distribution. MAX is the day's HIGHEST reading, and every
  * sentence below says so.
+ *
+ * "The venue's own" is the asking ACCOUNT's readings, while it is the place's
+ * verified, unbanned owner. Keyed on the place alone, a new owner's verdict
+ * was the previous account's history.
  */
-async function readingHistory(placeId, tz) {
+async function readingHistory(placeId, ownerId, tz) {
   const { rows } = await pool.query(
-    `SELECT (created_at AT TIME ZONE $2)::date AS day,
-            MAX(busy_percent)::int AS peak_reading,
+    `SELECT (r.created_at AT TIME ZONE $2)::date AS day,
+            MAX(r.busy_percent)::int AS peak_reading,
             COUNT(*)::int AS readings,
-            bool_or(diverged) AS diverged
-       FROM venue_owner_reports
-      WHERE google_place_id = $1 AND retracted = false
-        AND created_at >= NOW() - INTERVAL '${HISTORY_WEEKS} weeks'
+            bool_or(r.diverged) AS diverged
+       FROM venue_owner_reports r
+       JOIN venue_profiles vp
+         ON vp.user_id = r.venue_user_id
+        AND vp.google_place_id = r.google_place_id
+        AND vp.verified = true
+       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+      WHERE r.google_place_id = $1 AND r.venue_user_id = $3 AND r.retracted = false
+        AND r.created_at >= NOW() - INTERVAL '${HISTORY_WEEKS} weeks'
       GROUP BY 1 ORDER BY 1 DESC`,
-    [placeId, tz]
+    [placeId, tz, ownerId == null ? null : Number(ownerId)]
   );
   return rows
     .map((r) => ({
@@ -389,7 +398,7 @@ async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
 
   let history = [];
   try {
-    history = await readingHistory(p.google_place_id, tz);
+    history = await readingHistory(p.google_place_id, p.user_id, tz);
   } catch (err) {
     console.error('[LastDayVerdict] reading history unavailable:', err.message);
     return [makeRefusal({

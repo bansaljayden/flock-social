@@ -570,14 +570,17 @@ async function handleNfcTap(req, res) {
   const userId = await tryAuth(req);
 
   // The success screen printed the raw place id (ChIJ...) in place of a
-  // name, because nothing here sent one. Best effort: a claimed profile's
-  // business name, else the corpus name; a miss is a null, never a failed
-  // tap.
+  // name, because nothing here sent one. Best effort: the verified, unbanned
+  // owner's business name (one at most, by the partial unique index), else the
+  // corpus name; a miss is a null, never a failed tap. Any claim used to do,
+  // so an unverified or banned claimant's name could headline the tap.
   let venueName = null;
   try {
     const named = await pool.query(
       `SELECT COALESCE(
-         (SELECT business_name FROM venue_profiles WHERE google_place_id = $1 LIMIT 1),
+         (SELECT vp.business_name FROM venue_profiles vp
+            JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+           WHERE vp.google_place_id = $1 AND vp.verified = true LIMIT 1),
          (SELECT name FROM ml_venues WHERE google_place_id = $1 LIMIT 1)
        ) AS name`,
       [placeId]
