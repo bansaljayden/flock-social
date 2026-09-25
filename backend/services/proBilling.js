@@ -101,13 +101,18 @@ function planPrices() {
   return plans;
 }
 
-function webCheckout() {
+// userId is the signed-in account asking, when there is one: an account on
+// the review list (services/entitlements.js previewUserIds) can buy while the
+// paywall is still off for everyone else, which is how the whole path from
+// flockcorp.com/pro to the app is proven live before launch. The signed-out
+// offer (routes/proOffer.js) passes nothing and gets the global answer.
+function webCheckout(userId) {
   // Required lazily: entitlements.js requires routes/revenuecat.js, which
   // requires this file.
   const { paywallEnabled, boolFlag } = require('./entitlements');
   const missing = [];
   if (!boolFlag('PRO_WEB_CHECKOUT_ENABLED')) missing.push('PRO_WEB_CHECKOUT_ENABLED');
-  if (!paywallEnabled()) missing.push('PAYWALL_ENABLED');
+  if (!paywallEnabled(userId)) missing.push('PAYWALL_ENABLED');
   if (!stripeConfigured()) missing.push('STRIPE_SECRET_KEY');
   if (!planPrices().monthly) missing.push('STRIPE_PRICE_PRO_MONTHLY');
   if (!revenueCatApiConfigured()) missing.push('REVENUECAT_SECRET_API_KEY');

@@ -72,7 +72,7 @@ router.get('/status', async (req, res) => {
       res.set('Retry-After', '5');
       return res.status(503).json({ error: 'Could not check your plan just now. Try again.', retryable: true });
     }
-    const checkout = billing.webCheckout();
+    const checkout = billing.webCheckout(req.user.id);
     const customerId = await billing.customerIdFor(req.user.id);
     let canManageWeb = false;
     if (customerId && billing.stripeConfigured()) {
@@ -133,7 +133,7 @@ router.post('/checkout', [
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-    const checkout = billing.webCheckout();
+    const checkout = billing.webCheckout(req.user.id);
     if (!checkout.ready) {
       return res.status(503).json({ error: 'Flock Pro is not on sale on the web yet.', code: 'CHECKOUT_OFF' });
     }
