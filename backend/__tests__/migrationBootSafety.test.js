@@ -1384,6 +1384,88 @@ test('089 quarantines exactly the bills from before the cut-off in a flock that 
   await pool.query(`DELETE FROM users WHERE email LIKE '%089@example.com'`);
 });
 
+// ---------------------------------------------------------------------------
+// 13. 089 AGAIN ON EVERY BOOT, AND 090, THE INDEX THAT MAKES THAT FREE.
+// ---------------------------------------------------------------------------
+//
+// A restore builds the schema on an empty database, where 089 is recorded and
+// matches nothing, and then loads a dump whose bills name no quarantined
+// column. So db/migrate.js runs 089's UPDATE after the files on every boot
+// (db/billQuarantine.js), and 090 indexes exactly the bills it would change.
+// Pinned here: a boot with every file recorded flags a bill that arrived
+// without the flag, and nothing else, and a second boot moves nothing; the
+// statement it runs is 089's own; and it can reach those bills through 090's
+// index instead of reading every bill on every deploy.
+
+const BOOT_INDEX_090 = '090_bill_quarantine_boot_index.sql';
+
+test('every boot puts a bill that arrived without its flag back in quarantine, through an index that holds nothing else', async () => {
+  // 090 the way a deploy meets it: its row gone, then the runner. The 089 test
+  // above dropped the column the index is on, which took the index with it.
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [BOOT_INDEX_090]);
+  await migrate(pool);
+  const { rows: [index] } = await pool.query(
+    `SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE c.relname = 'idx_bill_splits_legacy_unquarantined'`
+  );
+  assert.equal(index?.indisvalid, true, '090 left no usable index');
+  assert.equal(await migrationRowCount(BOOT_INDEX_090), 1);
+
+  // The statement the boot runs is 089's own, so the two cannot disagree about
+  // which bills are quarantined.
+  const { splitStatements } = require('../db/migrate');
+  const { REQUARANTINE_SQL } = require('../db/billQuarantine');
+  const flat = (s) => s.replace(/\s+/g, ' ').trim();
+  const update089 = splitStatements(fs.readFileSync(path.join(MIGRATIONS_DIR, QUARANTINE_089), 'utf8'))
+    .find((s) => s.startsWith('UPDATE bill_splits'));
+  assert.ok(update089, '089 has no UPDATE');
+  assert.equal(flat(REQUARANTINE_SQL), flat(update089));
+
+  // What a restore leaves: 089 recorded, and bills that arrived naming no flag.
+  const owner = await insertUser('owner090@example.com', 'Owner 090');
+  const flock = async (name, budgetEnabled) => (await pool.query(
+    'INSERT INTO flocks (name, creator_id, budget_enabled) VALUES ($1, $2, $3) RETURNING id',
+    [name, owner, budgetEnabled]
+  )).rows[0].id;
+  const bill = async (flockId, createdAt) => (await pool.query(
+    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, created_at) VALUES ($1, 90, 'equal', $2, 0, $3) RETURNING id",
+    [flockId, owner, createdAt]
+  )).rows[0].id;
+  const LEGACY = '2026-08-20T20:00:00Z';
+  const ids = {
+    legacy: await bill(await flock('Legacy 090', true), LEGACY),
+    noBudget: await bill(await flock('Plain 090', false), LEGACY),
+    later: await bill(await flock('Later 090', true), new Date().toISOString()),
+  };
+  const flags = async () => Object.fromEntries(await Promise.all(Object.entries(ids).map(
+    async ([k, id]) => [k, (await pool.query('SELECT quarantined FROM bill_splits WHERE id = $1', [id])).rows[0].quarantined]
+  )));
+  assert.deepEqual(await flags(), { legacy: false, noBudget: false, later: false });
+
+  // The planner can reach them through 090. With sequential scans priced out,
+  // a predicate the UPDATE does not imply would leave it reading every bill
+  // some other way, and the index name would not be in the plan.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SET LOCAL enable_seqscan = off');
+    const plan = (await client.query(`EXPLAIN ${REQUARANTINE_SQL}`)).rows.map((r) => r['QUERY PLAN']).join('\n');
+    assert.match(plan, /idx_bill_splits_legacy_unquarantined/, plan);
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+
+  await migrate(pool); // a boot with every file already recorded
+  assert.deepEqual(await flags(), { legacy: true, noBudget: false, later: false });
+  const everyBill = async () => (await pool.query('SELECT id, quarantined FROM bill_splits ORDER BY id')).rows;
+  const before = await everyBill();
+  await migrate(pool);
+  assert.deepEqual(await everyBill(), before, 'a second boot moved a bill');
+
+  await pool.query(`DELETE FROM users WHERE email LIKE '%090@example.com'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

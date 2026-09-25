@@ -61,6 +61,11 @@
 -- ever sets true, on rows still false, so a second pass changes nothing, and a
 -- bill made after this file is never matched. NOT NULL DEFAULT false, so every
 -- new bill starts outside the quarantine.
+--
+-- The UPDATE also runs after the files on every boot (db/migrate.js, with the
+-- same WHERE in db/billQuarantine.js), because a restore from a dump taken
+-- before this file loads these bills with the flag false and nothing would run
+-- this file again. 090 indexes exactly the bills that boot would change.
 
 ALTER TABLE bill_splits ADD COLUMN IF NOT EXISTS quarantined BOOLEAN NOT NULL DEFAULT false;
 

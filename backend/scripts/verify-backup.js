@@ -25,7 +25,12 @@
  *                   via the same db/migrate.js that production boots run.
  *   3. RESTORE    — every statement in the dump executes, first error aborts
  *                   loudly with the table and statement it died in. This is the
- *                   psql ON_ERROR_STOP=1 semantic, without needing psql.
+ *                   psql ON_ERROR_STOP=1 semantic, without needing psql. Then
+ *                   the restored database is booted the way the app's first
+ *                   boot on it would: the same runner again, whose every-boot
+ *                   steps put back what a dump from before a migration loads
+ *                   without (db/migrate.js, "Every boot"). A restore the app
+ *                   could not boot on fails here.
  *   4. MIGRATIONS — the restored schema_migrations matches the repo's migration
  *                   file list exactly. An extra name means the dump came from a
  *                   NEWER schema than this checkout, and restoring it here
@@ -42,7 +47,11 @@
  *                   collide on a duplicate primary key.
  *   8. INVARIANTS — named semantic checks: no user without an email, no
  *                   flock_member without a flock, every ml_training_data row
- *                   resolves to an ml_venues row, busyness_pct in range.
+ *                   resolves to an ml_venues row, busyness_pct in range, and
+ *                   every bill from before August 27 in a plan with a budget
+ *                   in the quarantine migration 089 put it in (a dump taken
+ *                   before 089 loads those bills without the flag, and the
+ *                   boot above must have put it back).
  *
  * What it CANNOT prove: a value silently corrupted in place (row counts and
  * constraints intact, contents wrong) is invisible to every check here, and so
@@ -61,6 +70,8 @@ const net = require('net');
 const path = require('path');
 const zlib = require('zlib');
 const readline = require('readline');
+
+const { COUNT_OUTSIDE_QUARANTINE_SQL } = require('../db/billQuarantine');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 
@@ -386,29 +397,59 @@ async function checkSequences(client, manifest) {
   return ok;
 }
 
+// Each is a name and a count of the rows that break it; zero passes.
+const INVARIANTS = [
+  ['every user has an email address',
+    `SELECT COUNT(*)::bigint AS n FROM users WHERE email IS NULL OR btrim(email) = ''`],
+  ['every flock_member belongs to a flock that exists',
+    `SELECT COUNT(*)::bigint AS n FROM flock_members fm
+     LEFT JOIN flocks f ON f.id = fm.flock_id
+     WHERE fm.flock_id IS NULL OR f.id IS NULL`],
+  ['every flock_member is a user that exists',
+    `SELECT COUNT(*)::bigint AS n FROM flock_members fm
+     LEFT JOIN users u ON u.id = fm.user_id
+     WHERE fm.user_id IS NULL OR u.id IS NULL`],
+  ['every ML training row resolves to a known venue (the corpus is intact)',
+    `SELECT COUNT(*)::bigint AS n FROM ml_training_data t
+     LEFT JOIN ml_venues v ON v.id = t.venue_id
+     WHERE v.id IS NULL`],
+  ['every ML training busyness value is in range 0..100',
+    `SELECT COUNT(*)::bigint AS n FROM ml_training_data
+     WHERE busyness_pct IS NULL OR busyness_pct < 0 OR busyness_pct > 100`],
+  // Migration 089's quarantine, read after the boot in bootRestored(). A bill
+  // out of it here would reach the app with one person's budget answer in it,
+  // so a restore that leaves one is not one to rely on.
+  ['every bill from before August 27 in a plan with a budget is in quarantine (migration 089)',
+    COUNT_OUTSIDE_QUARANTINE_SQL],
+];
+
+// The app's first boot on the restored database: the same runner again. The
+// schema was built before the data landed, so every backfill in the chain was
+// recorded against empty tables, and a dump from before a migration loads rows
+// without what that migration wrote into them. db/migrate.js puts those back
+// after the files on every boot (its "Every boot" section), before server.js
+// calls listen(), so this is the database the app would first serve. Returns
+// whether the boot succeeded; a restore the app could not boot on fails.
+async function bootRestored(pool, client) {
+  const { migrate } = require('../db/migrate');
+  const outside = async () => Number((await client.query(COUNT_OUTSIDE_QUARANTINE_SQL)).rows[0].n);
+  try {
+    const before = await outside();
+    await migrate(pool);
+    // What the boot actually moved. One it left out is the invariant's to fail.
+    const moved = before - (await outside());
+    return record('boot', true,
+      'booted the restored database the way the app does (db/migrate.js again)' +
+      (moved > 0 ? `, which put ${moved} bill(s) from before August 27 back in quarantine` : ''));
+  } catch (e) {
+    return record('boot', false, `the app would not boot on the restored database: ${e.message}`);
+  }
+}
+
 async function checkInvariants(client) {
   console.log('\n[8/8] Semantic invariants');
   let ok = true;
-  const invariants = [
-    ['every user has an email address',
-      `SELECT COUNT(*)::bigint AS n FROM users WHERE email IS NULL OR btrim(email) = ''`],
-    ['every flock_member belongs to a flock that exists',
-      `SELECT COUNT(*)::bigint AS n FROM flock_members fm
-       LEFT JOIN flocks f ON f.id = fm.flock_id
-       WHERE fm.flock_id IS NULL OR f.id IS NULL`],
-    ['every flock_member is a user that exists',
-      `SELECT COUNT(*)::bigint AS n FROM flock_members fm
-       LEFT JOIN users u ON u.id = fm.user_id
-       WHERE fm.user_id IS NULL OR u.id IS NULL`],
-    ['every ML training row resolves to a known venue (the corpus is intact)',
-      `SELECT COUNT(*)::bigint AS n FROM ml_training_data t
-       LEFT JOIN ml_venues v ON v.id = t.venue_id
-       WHERE v.id IS NULL`],
-    ['every ML training busyness value is in range 0..100',
-      `SELECT COUNT(*)::bigint AS n FROM ml_training_data
-       WHERE busyness_pct IS NULL OR busyness_pct < 0 OR busyness_pct > 100`],
-  ];
-  for (const [name, sql] of invariants) {
+  for (const [name, sql] of INVARIANTS) {
     try {
       const r = await client.query(sql);
       const n = Number(r.rows[0].n);
@@ -545,8 +586,9 @@ async function main() {
     }
 
     // ---- checks ------------------------------------------------------------
+    // Read after the boot, which is the database the app would first serve.
     if (restored) {
-      let ok = true;
+      let ok = await bootRestored(pool, client);
       ok = (await checkMigrations(client)) && ok;
       ok = (await checkRowCounts(client, scan.manifest)) && ok;
       ok = (await checkForeignKeys(client)) && ok;
@@ -603,7 +645,7 @@ function finish(passed, started) {
   process.exit(passed && failures.length === 0 ? 0 : 1);
 }
 
-module.exports = { parseManifestLine, StatementAssembler };
+module.exports = { parseManifestLine, StatementAssembler, INVARIANTS, bootRestored, checkInvariants };
 
 if (require.main === module) {
   main().catch((e) => {

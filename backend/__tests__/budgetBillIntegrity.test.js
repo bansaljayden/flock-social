@@ -46,13 +46,18 @@
 //      payment the rows subtract back to. Such a bill (migration 089) sends
 //      no figure, flag or count to anybody, its own members included, in GET,
 //      a payment link or the data export, refuses every write, and binds
-//      nobody to the plan. An estimate shows the published number, never a
-//      number a row stored.
+//      nobody to the plan. A reset takes a quarantined shell whatever its rows
+//      hold, so the reset cannot tell anybody which of them were settled. An
+//      estimate shows the published number, never a number a row stored.
 //  10. A BILL WHOSE PAYER DELETED THEIR ACCOUNT IS HANDED ON UNDER THE SAME
 //      RULE as a live payer's: refused once a payment is on record.
 //  11. MIGRATION 089 ON BILLS ALREADY THERE takes every bill from before the
 //      cut-off in a flock that could have had a budget, and nothing else,
 //      and moves nothing on replay.
+//  12. A RESTORE FROM A DUMP TAKEN BEFORE 089 loads those bills without the
+//      flag, after 089 was recorded against an empty database. The next boot
+//      puts them back in quarantine before anybody reads one, and
+//      scripts/verify-backup.js fails a restore that still has one out.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -956,6 +961,44 @@ test('nobody is held to a quarantined bill: a member who owes on it and the paye
   assert.equal(del.status, 200, `the plan's creator: ${del.text}`);
 });
 
+test('a reset takes a quarantined shell whatever its rows hold, so whether it is gone says nothing about them', async () => {
+  // A reset keeps a payerless bill with a settled row, as the record of a real
+  // payment. On a quarantined shell that decision was the settled flag itself,
+  // told to the creator by whether the bill was still there afterwards.
+  const replies = [];
+  for (const settledRow of [false, true]) {
+    const ava = await mkUser('Ava');
+    const bea = await mkUser('Bea');
+    const cal = await mkUser('Cal');
+    const flockId = await mkFlock(ava, [bea, cal]);
+    for (const [u, amt] of [[ava, 40], [bea, 50]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+    assert.equal((await submit(flockId, cal, 60)).body.budgetLocked, true);
+    // The shell the early ghost commit left in the window: nobody ever posted
+    // it, every row is a commitment, and with `settledRow` Bea marked hers paid.
+    const shellId = (await one(
+      `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, created_at, updated_at)
+       VALUES ($1, 120, 'equal', NULL, 0, $2, $2) RETURNING id`,
+      [flockId, LEGACY_DAY]
+    )).id;
+    await pool.query(
+      'INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled) VALUES ($1, $2, 40, true, $4), ($1, $3, 40, true, false)',
+      [shellId, bea.id, cal.id, settledRow]
+    );
+    await quarantineLegacyBills();
+    const shell = await one('SELECT quarantined, had_payer FROM bill_splits WHERE id = $1', [shellId]);
+    assert.deepEqual([shell.quarantined, shell.had_payer], [true, false], 'the shell is quarantined and was never posted');
+
+    const r = await call('POST', `/api/budget/${flockId}/reset`, { token: ava.token });
+    assert.equal(r.status, 200, r.text);
+    replies.push(r.body);
+    assert.equal((await pool.query('SELECT 1 FROM bill_splits WHERE id = $1', [shellId])).rowCount, 0,
+      `a reset kept the quarantined shell ${settledRow ? 'over a settled row' : 'of commitments'}`);
+    assert.equal((await pool.query('SELECT 1 FROM bill_split_shares WHERE bill_id = $1', [shellId])).rowCount, 0);
+    assert.equal((await call('GET', `/api/billing/${flockId}`, { token: ava.token })).status, 404);
+  }
+  assert.deepEqual(replies[1], replies[0], 'the reset answered differently over a settled row');
+});
+
 test('a bill made since the cut-off, or before it in a flock that never had a budget, is an ordinary bill', async () => {
   // Made today in a budget flock.
   const pat = await mkUser('Pat');
@@ -1133,4 +1176,146 @@ test('the quarantine takes every bill from before the cut-off in a flock that co
   const before = await everyRow();
   await quarantineLegacyBills();
   assert.deepEqual(await everyRow(), before);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12. A restore from a dump taken before 089
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The restore runbook (BACKUP-AND-VERIFICATION.md, "Bringing Flock back from
+// nothing") builds the schema with db/migrate.js on an empty database, which is
+// what test.before did here: 089 is recorded as applied and matched nothing.
+// Then it loads the dump, and scripts/dump-db.js writes every table as one
+// INSERT naming the columns the SOURCE had, ON CONFLICT DO NOTHING, in one
+// transaction in replica mode. A dump taken before 089 names no quarantined
+// column, so its legacy bill lands at the default, false. Then the app boots.
+
+// The rows the way the 2026-09-03 dump holds them: bill_splits from before 086
+// and 089, bill_split_shares from before 061 and 088, ids the source's own and
+// far above anything this suite's sequences reach. Pat posted $90 over Pat, Ann
+// and Bea; Eve's row is the early ghost commit's, Ann's only answer as her
+// share. Beside it, a bill from the same day in a plan with no budget, and one
+// from after the cut-off, which no boot may touch.
+async function loadDumpFromBefore089(base) {
+  const id = (n) => base + n;
+  const at = (day) => `'${day}T20:00:00.000Z'`;
+  const members = (flock) => [1, 2, 3, 4].map((u) => `(${id(10 * flock + u)}, ${id(flock)}, ${id(u)}, 'accepted')`).join(',\n  ');
+  const client = await pool.connect();
+  try {
+    for (const sql of [
+      'BEGIN;',
+      'SET session_replication_role = replica;',
+      `INSERT INTO "users" ("id", "email", "password", "name", "email_verified") VALUES
+  (${id(1)}, 'pat${base}@restore.test', 'x', 'Pat', true),
+  (${id(2)}, 'ann${base}@restore.test', 'x', 'Ann', true),
+  (${id(3)}, 'bea${base}@restore.test', 'x', 'Bea', true),
+  (${id(4)}, 'eve${base}@restore.test', 'x', 'Eve', true)
+ON CONFLICT DO NOTHING;`,
+      `INSERT INTO "flocks" ("id", "name", "creator_id", "status", "budget_enabled", "ghost_mode_enabled") VALUES
+  (${id(100)}, 'Dinner', ${id(2)}, 'confirmed', true, true),
+  (${id(200)}, 'Lunch', ${id(2)}, 'confirmed', false, false),
+  (${id(300)}, 'Brunch', ${id(2)}, 'confirmed', true, true)
+ON CONFLICT DO NOTHING;`,
+      `INSERT INTO "flock_members" ("id", "flock_id", "user_id", "status") VALUES
+  ${[100, 200, 300].map(members).join(',\n  ')}
+ON CONFLICT DO NOTHING;`,
+      `INSERT INTO "budget_submissions" ("id", "flock_id", "user_id", "amount", "skipped") VALUES
+  (${id(5000)}, ${id(100)}, ${id(2)}, 47.13, false)
+ON CONFLICT DO NOTHING;`,
+      `INSERT INTO "bill_splits" ("id", "flock_id", "total_amount", "split_type", "paid_by", "tip_percent", "created_at", "updated_at") VALUES
+  (${id(6100)}, ${id(100)}, 90.00, 'equal', ${id(1)}, 0.0, ${at('2026-08-20')}, ${at('2026-08-20')}),
+  (${id(6200)}, ${id(200)}, 90.00, 'equal', ${id(1)}, 0.0, ${at('2026-08-20')}, ${at('2026-08-20')}),
+  (${id(6300)}, ${id(300)}, 90.00, 'equal', ${id(1)}, 0.0, ${at('2026-09-01')}, ${at('2026-09-01')})
+ON CONFLICT DO NOTHING;`,
+      `INSERT INTO "bill_split_shares" ("id", "bill_id", "user_id", "amount", "committed", "settled", "settled_at") VALUES
+  (${id(7101)}, ${id(6100)}, ${id(1)}, 30.00, false, true, ${at('2026-08-20')}),
+  (${id(7102)}, ${id(6100)}, ${id(2)}, 30.00, false, false, NULL),
+  (${id(7103)}, ${id(6100)}, ${id(3)}, 30.00, false, false, NULL),
+  (${id(7104)}, ${id(6100)}, ${id(4)}, 47.13, true, false, NULL),
+  (${id(7201)}, ${id(6200)}, ${id(1)}, 45.00, false, true, ${at('2026-08-20')}),
+  (${id(7202)}, ${id(6200)}, ${id(2)}, 45.00, false, false, NULL),
+  (${id(7301)}, ${id(6300)}, ${id(1)}, 45.00, false, true, ${at('2026-09-01')}),
+  (${id(7302)}, ${id(6300)}, ${id(2)}, 45.00, false, false, NULL)
+ON CONFLICT DO NOTHING;`,
+      'SET session_replication_role = DEFAULT;',
+      'COMMIT;',
+    ]) await client.query(sql);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  const person = async (n) => {
+    const row = await one('SELECT * FROM users WHERE id = $1', [id(n)]);
+    return { ...row, token: signUserToken(row) };
+  };
+  return {
+    pat: await person(1), ann: await person(2), bea: await person(3), eve: await person(4),
+    flockId: id(100),
+    bills: { legacy: id(6100), noBudget: id(6200), afterCutoff: id(6300) },
+  };
+}
+
+const quarantineFlags = async (bills) => Object.fromEntries(await Promise.all(Object.entries(bills).map(
+  async ([k, billId]) => [k, (await one('SELECT quarantined FROM bill_splits WHERE id = $1', [billId])).quarantined]
+)));
+
+test('a bill a dump from before 089 loads without its flag is back in quarantine when the app boots, before anybody reads it', async () => {
+  const d = await loadDumpFromBefore089(970000);
+  // The state the load leaves: 089 recorded against the empty database, and
+  // the bill outside the quarantine.
+  assert.equal((await pool.query("SELECT 1 FROM schema_migrations WHERE name LIKE '089\\_%'")).rowCount, 1);
+  assert.deepEqual(await quarantineFlags(d.bills), { legacy: false, noBudget: false, afterCutoff: false });
+
+  // The boot: runbook step 6, which is server.js awaiting this before listen().
+  const { migrate } = require('../db/migrate');
+  await migrate(pool);
+  assert.deepEqual(await quarantineFlags(d.bills), { legacy: true, noBudget: false, afterCutoff: false },
+    'the boot left the restored bill outside the quarantine, or took in a bill it has no reason to');
+
+  // And nobody reads a figure off it: not the payer, not Bea, and not Eve,
+  // whose own share is Ann's answer.
+  for (const viewer of [d.pat, d.bea, d.eve]) {
+    const res = await readBill(d.flockId, viewer);
+    const b = res.body.bill;
+    assert.equal(b.quarantined, true, `${viewer.name}: ${res.text}`);
+    assert.deepEqual([b.totalAmount, b.totalWithTip, b.settledCount, b.shareCount, b.fullySettled],
+      [null, null, null, null, null], `${viewer.name} read a total or a count`);
+    for (const s of b.shares) {
+      assert.deepEqual([s.amount, s.paidAmount, s.outstanding, s.settled, s.committed],
+        [null, null, null, null, null], `${viewer.name} read a figure or a flag on ${s.name}'s row`);
+    }
+    assert.ok(!res.text.includes('47.13'), `${viewer.name} read Ann's answer: ${res.text}`);
+  }
+  const link = await call('GET', `/api/billing/${d.flockId}/payment-links`, { token: d.eve.token });
+  assert.equal(link.status, 409, link.text);
+  assert.ok(!link.text.includes('47.13'), link.text);
+});
+
+test('verify-backup fails a restored database with a bill out of quarantine, and passes it once the boot it runs has put the bill back', async () => {
+  const verify = require('../scripts/verify-backup');
+  const quietly = async (fn) => {
+    const log = console.log;
+    console.log = () => {};
+    try { return await fn(); } finally { console.log = log; }
+  };
+  const [name, sql] = verify.INVARIANTS.find(([n]) => /quarantine/.test(n)) || [];
+  assert.ok(sql, 'verify-backup has no quarantine invariant');
+  const d = await loadDumpFromBefore089(980000);
+  const client = await pool.connect();
+  try {
+    const out = async () => Number((await client.query(sql)).rows[0].n);
+    // Read the way scripts/verify-backup.js reads a restore it has not booted.
+    assert.equal(await out(), 1, `${name}: the restored bill is not counted`);
+    assert.equal(await quietly(() => verify.checkInvariants(client)), false,
+      'a restored database with a bill out of quarantine passed the invariants');
+    // Its own step 3: the app's first boot on the restore, then the checks.
+    assert.equal(await quietly(() => verify.bootRestored(pool, client)), true);
+    assert.equal(await out(), 0);
+    assert.equal(await quietly(() => verify.checkInvariants(client)), true);
+    assert.deepEqual(await quarantineFlags(d.bills), { legacy: true, noBudget: false, afterCutoff: false });
+  } finally {
+    client.release();
+  }
 });
