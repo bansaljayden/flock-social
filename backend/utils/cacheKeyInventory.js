@@ -780,6 +780,27 @@ const INVENTORY = [
       + 'invent and no miss to force.',
   },
   {
+    file: 'sockets/handlers.js', name: 'shareEndMarks', kind: 'cache',
+    key: '`f:${flockId}` for a whole plan, `s:${flockId}:${sharerId}` for one person '
+      + '-> the counter value of the last time that share was announced ended',
+    callerControls: 'nothing directly: a mark is written only by the paths that end a '
+      + 'share (the stop, leave, plan delete, block, ban, disconnect, a tick from a '
+      + 'non-member), each after its own membership or ownership check, with a flock '
+      + 'id from asId and the sharer\'s own account id',
+    protects: 'nothing upstream: an update_location tick reads the marks before and '
+      + 'after its roster and block reads and drops itself if a stop was announced in '
+      + 'between, so a position cannot land on maps that were just cleared',
+    denominator: 'not a spend surface; one entry per recently ended share',
+    bound: 'pruned: once the map passes 5,000 entries, every mark older than ten '
+      + 'minutes (far longer than any tick\'s reads take) is deleted on the next write; '
+      + 'a pruned mark reads as 0, which can only drop a tick, never keep one',
+    verdict: 'SAFE',
+    why: 'Added with the fix for a position posted after its share ended. Entries are '
+      + 'created only by ending a share, which needs an account and an accepted '
+      + 'membership or a live socket, so there is no key to invent, and the counter '
+      + 'only rises, so a mark is never reused.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'deviationCache', kind: 'cache',
     key: '`${placeId}` alone — one row per venue, no day or hour in the key',
     callerControls: 'the whole placeId, the same 256-char field POST /api/crowd/batch '
