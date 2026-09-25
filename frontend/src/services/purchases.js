@@ -28,6 +28,16 @@
 // cannot. Identity changes and store calls run one at a time, in the order
 // they were asked for, so a sign-out's logOut cannot land between a
 // purchase's check and its buy.
+//
+// And a buy or restore runs as the account that ASKED for it, or not at all.
+// Waiting its turn in that queue, a tap could outlive its own session: a
+// Restore tapped while the sign-in's logIn was still on the network waited
+// behind it, the session was revoked, the next account signed in, and the
+// restore then read the account only when its turn came, logged RevenueCat in
+// as the newcomer and moved the Apple ID's purchases onto them. The account and
+// the session are now read the moment the tap arrives (askedBy), before
+// anything waits, and the store is asked only while both are still the ones
+// signed in.
 
 import { isNativeShell } from '../lib/nativeShell';
 
@@ -52,6 +62,13 @@ export const isPurchasesAvailable = () => isNativeShell() && !!API_KEY;
 // of our numeric user id (the webhook contract above). Set by initPurchases,
 // cleared by endPurchasesSession.
 let sessionUserId = null;
+// Every sign-out, counted, so a request can tell that the session it was made
+// in has ended even when the same account has since signed back in.
+let signOuts = 0;
+// Who is asking, read when they ask: the account and the session it is in.
+const askedBy = () => ({ account: sessionUserId, signOuts });
+const stillSignedIn = (asker) =>
+  !!asker.account && asker.account === sessionUserId && asker.signOuts === signOuts;
 // One configure per page load, shared by whoever asks first.
 let configuring = null;
 // Identity changes and store calls, one at a time, in the order asked for.
@@ -89,15 +106,18 @@ const configureOnce = (Purchases) => {
 const proFromCustomerInfo = (customerInfo) =>
   !!customerInfo?.entitlements?.active?.['pro'];
 
-// Make RevenueCat the signed-in account, or say it cannot. Answers the id it
-// confirmed, or null. logIn only when RevenueCat is not already that account:
-// logIn is a network call, and asking for the id it already holds changes
-// nothing. The id is read back afterwards rather than assumed, and a sign-out
-// that landed meanwhile fails the check, because a buy for an account that is
-// no longer signed in is exactly what this is here to stop.
-const becomeSessionAccount = async (Purchases) => {
-  const account = sessionUserId;
-  if (!account) return null;
+// Make RevenueCat the account that asked, or say it cannot. Answers the id it
+// confirmed, or null. `asker` is askedBy() as it stood when the tap arrived,
+// and a request whose session has ended since is refused before RevenueCat is
+// touched: whoever is signed in now did not ask. logIn only when RevenueCat is
+// not already that account: logIn is a network call, and asking for the id it
+// already holds changes nothing. The id is read back afterwards rather than
+// assumed, and a sign-out that landed meanwhile fails the check, because a buy
+// for an account that is no longer signed in is exactly what this is here to
+// stop.
+const becomeSessionAccount = async (Purchases, asker) => {
+  const { account } = asker;
+  if (!stillSignedIn(asker)) return null;
   try {
     await configureOnce(Purchases);
     let current = (await Purchases.getAppUserID())?.appUserID;
@@ -105,7 +125,7 @@ const becomeSessionAccount = async (Purchases) => {
       await Purchases.logIn({ appUserID: account });
       current = (await Purchases.getAppUserID())?.appUserID;
     }
-    return current === account && sessionUserId === account ? account : null;
+    return current === account && stillSignedIn(asker) ? account : null;
   } catch (err) {
     console.warn('RevenueCat could not be set to the signed-in account:', err?.message || err);
     return null;
@@ -147,6 +167,9 @@ export const initPurchases = async (userId) => {
  */
 export const endPurchasesSession = async () => {
   sessionUserId = null;
+  // Before anything waits, like the line above: a buy or restore still in the
+  // queue from this session is refused from here on (askedBy).
+  signOuts += 1;
   const Purchases = await loadPlugin();
   if (!Purchases) return false;
   return serially(async () => {
@@ -195,12 +218,15 @@ export const getProOffering = async () => {
  * (success: false) — this never throws to the caller. When RevenueCat cannot
  * be confirmed as the signed-in account the store is never asked, nothing is
  * charged, and the answer carries reason: 'account' so the sheet can say so.
+ * The same answer when the session that asked has ended before its turn came.
  */
 export const purchase = async (pkg) => {
+  // Who asked, read before anything here waits (askedBy).
+  const asker = askedBy();
   const Purchases = await loadPlugin();
   if (!Purchases || !pkg) return { success: false, isPro: false };
   return serially(async () => {
-    if (!(await becomeSessionAccount(Purchases))) return { success: false, isPro: false, reason: 'account' };
+    if (!(await becomeSessionAccount(Purchases, asker))) return { success: false, isPro: false, reason: 'account' };
     try {
       const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
       const isPro = proFromCustomerInfo(customerInfo);
@@ -221,10 +247,12 @@ export const purchase = async (pkg) => {
  * the same account check a purchase does, with the same reason: 'account'.
  */
 export const restore = async () => {
+  // Who asked, read before anything here waits (askedBy).
+  const asker = askedBy();
   const Purchases = await loadPlugin();
   if (!Purchases) return { success: false, isPro: false };
   return serially(async () => {
-    if (!(await becomeSessionAccount(Purchases))) return { success: false, isPro: false, reason: 'account' };
+    if (!(await becomeSessionAccount(Purchases, asker))) return { success: false, isPro: false, reason: 'account' };
     try {
       const { customerInfo } = await Purchases.restorePurchases();
       return { success: true, isPro: proFromCustomerInfo(customerInfo) };

@@ -13,6 +13,9 @@
  *      the session's logIn landed, or after it failed, was recorded under the
  *      previous account or an anonymous id, and Pro went to the wrong person
  *      or to nobody.
+ *   4. A buy or restore waiting its turn behind that logIn read the account
+ *      only when its turn came, so one tapped by an account whose session
+ *      ended meanwhile ran as whoever had signed in since.
  *
  * services/purchases.js and services/api.js are imported for real here, under a
  * fake RevenueCat plugin that remembers which account it holds, so every test
@@ -45,6 +48,15 @@ const mockRc = {
     this.configured = false;
     this.logInFails = false;
     this.loads = 0;
+    // A logIn held on the network until a test lets it through.
+    this.holdLogIn = false;
+    this.heldLogIns = [];
+  },
+  releaseLogIns() {
+    this.holdLogIn = false;
+    const held = this.heldLogIns;
+    this.heldLogIns = [];
+    held.forEach((finish) => finish());
   },
 };
 mockRc.reset();
@@ -64,8 +76,12 @@ jest.mock('@revenuecat/purchases-capacitor', () => ({
       logIn: ({ appUserID }) => {
         mockRc.calls.push(['logIn', appUserID]);
         if (mockRc.logInFails) return Promise.reject(new Error('The Internet connection appears to be offline.'));
-        mockRc.appUserID = appUserID;
-        return Promise.resolve({ customerInfo: { entitlements: { active: {} } }, created: false });
+        const land = () => {
+          mockRc.appUserID = appUserID;
+          return { customerInfo: { entitlements: { active: {} } }, created: false };
+        };
+        if (mockRc.holdLogIn) return new Promise((resolve) => { mockRc.heldLogIns.push(() => resolve(land())); });
+        return Promise.resolve(land());
       },
       logOut: () => {
         mockRc.calls.push(['logOut']);
@@ -185,6 +201,69 @@ describe('a purchase is made as the account that is signed in', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 1b. A buy or restore runs as the account that asked for it, or not at all
+// ═══════════════════════════════════════════════════════════════════════════
+describe('a buy or restore runs as the account that asked for it, or not at all', () => {
+  // Account 3 signs in and its logIn hangs on the network. 3 taps the button,
+  // and the tap queues behind that logIn. Before the logIn answers, 3's session
+  // is revoked (a 401 runs clearLocalSession) and account 7 signs in.
+  const askThenHandOver = async (ask, next = 7) => {
+    mockRc.holdLogIn = true;
+    const signIn = purchases.initPurchases(3);
+    await flush();
+    expect(calls('logIn')).toEqual([['logIn', '3']]);
+    const asked = ask();
+    await flush();
+    const signOut = purchases.endPurchasesSession();
+    const signInNext = purchases.initPurchases(next);
+    await flush();
+    mockRc.releaseLogIns();
+    await Promise.all([signIn, signOut, signInNext]);
+    return asked;
+  };
+
+  test('a restore tapped by one account is never run as the next one', async () => {
+    const result = await askThenHandOver(() => purchases.restore());
+    expect(result).toEqual({ success: false, isPro: false, reason: 'account' });
+    // A restore moves the Apple ID's purchases onto whoever it runs as, so
+    // this is the line that matters: it did not run as 7.
+    expect(calls('restorePurchases')).toEqual([]);
+    // 7 is RevenueCat's user now, and a restore 7 asks for runs as 7.
+    expect(mockRc.appUserID).toBe('7');
+    expect(await purchases.restore()).toEqual({ success: true, isPro: true });
+    expect(calls('restorePurchases')).toEqual([['restorePurchases', '7']]);
+  });
+
+  test('nor is a buy', async () => {
+    const result = await askThenHandOver(() => purchases.purchase(PKG));
+    expect(result).toEqual({ success: false, isPro: false, reason: 'account' });
+    expect(charged()).toEqual([]);
+    expect(mockRc.appUserID).toBe('7');
+    expect(await purchases.purchase(PKG)).toEqual({ success: true, isPro: true });
+    expect(charged()).toEqual(['7']);
+  });
+
+  test('a request from a session that has ended is refused even when the same account signs back in', async () => {
+    const result = await askThenHandOver(() => purchases.restore(), 3);
+    expect(result).toEqual({ success: false, isPro: false, reason: 'account' });
+    expect(calls('restorePurchases')).toEqual([]);
+  });
+
+  test('a tap from the session still signed in waits its turn and runs as that account', async () => {
+    mockRc.holdLogIn = true;
+    const signIn = purchases.initPurchases(3);
+    await flush();
+    const asked = purchases.restore();
+    await flush();
+    expect(calls('restorePurchases')).toEqual([]);
+    mockRc.releaseLogIns();
+    await signIn;
+    expect(await asked).toEqual({ success: true, isPro: true });
+    expect(calls('restorePurchases')).toEqual([['restorePurchases', '3']]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 2. Every sign-out path logs RevenueCat out
 // ═══════════════════════════════════════════════════════════════════════════
 describe('signing out tells RevenueCat', () => {
@@ -287,9 +366,17 @@ describe('the wiring', () => {
       expect(at).toBeGreaterThan(-1);
       const body = PURCHASES.slice(at, PURCHASES.indexOf('\n};', at));
       expect(body).toContain('serially(');
-      expect(body.indexOf('becomeSessionAccount(Purchases)')).toBeGreaterThan(-1);
-      expect(body.indexOf('becomeSessionAccount(Purchases)')).toBeLessThan(body.indexOf(storeCall));
+      expect(body.indexOf('becomeSessionAccount(Purchases, asker)')).toBeGreaterThan(-1);
+      expect(body.indexOf('becomeSessionAccount(Purchases, asker)')).toBeLessThan(body.indexOf(storeCall));
+      // Who asked is read before the first thing that waits, so no sign-out or
+      // sign-in can land between the tap and the reading.
+      expect(body.indexOf('const asker = askedBy();')).toBeGreaterThan(-1);
+      expect(body.indexOf('const asker = askedBy();')).toBeLessThan(body.indexOf('await '));
     }
+    // And a sign-out counts itself before it waits on anything either.
+    const end = PURCHASES.slice(PURCHASES.indexOf('export const endPurchasesSession = async'));
+    expect(end.indexOf('signOuts += 1;')).toBeGreaterThan(-1);
+    expect(end.indexOf('signOuts += 1;')).toBeLessThan(end.indexOf('await '));
   });
 
   test('the sign-out hook sits in clearLocalSession, after the wipe, native only and lazily imported', () => {
