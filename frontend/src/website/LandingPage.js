@@ -834,16 +834,19 @@ export default function LandingPage() {
                 by restating itself. What replaced it is the part of the rule
                 nobody would invent, and it is the one that actually proves the
                 privacy claim: budget.js publishes NO figure until the budget
-                settles, which is the last member answering with at least three
-                shared amounts, and what it publishes then is a band rather than
-                the minimum itself. The line here used to say the ceiling was
-                hidden until three people had answered, which is the rule the
-                route replaced: a ceiling IS a minimum, so one that appeared at
-                three and moved at four would name whoever has the least money.
-                settledCeiling gates on budget_locked and bandCeiling rounds
-                what survives. */}
+                settles, which is everyone going (accepted members and guests
+                who said they are in) answering with at least three members'
+                amounts shared, or the plan's creator locking it once three
+                members have shared, and what it publishes then is a band
+                rather than the minimum itself. The line here used to say the
+                ceiling was hidden until three people had answered, which is the
+                rule the route replaced: a ceiling IS a minimum, so one that
+                appeared at three and moved at four would name whoever has the
+                least money. It then said "until everyone has answered", which
+                the creator's lock makes untrue. settledCeiling gates on
+                budget_locked and bandCeiling rounds what survives. */}
             <ul className="lp-list">
-              <li>No number until everyone has answered and at least three members shared an amount, and then it is a rounded band, not anyone's figure</li>
+              <li>No number until everyone going has answered or the plan's creator locks it, with at least three members' amounts in, and then it is a rounded band, not anyone's figure</li>
               <li>Venue picks stay under the group’s ceiling</li>
               <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
             </ul>

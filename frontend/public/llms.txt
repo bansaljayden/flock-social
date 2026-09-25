@@ -27,8 +27,12 @@ Updated: September 25, 2026.
   person has to be the decider.
 - Budget matching: each person privately types what they can spend. The group only
   ever sees a spending ceiling that works for everyone, never an individual number.
-  No figure at all is published until every member has answered and at least three
-  have shared an amount; what is published then is a rounded-down band, once.
+  No figure at all is published until the budget settles: every accepted member and
+  every guest who said they are in from an invite link has answered and at least
+  three members have shared an amount, or the person who created the plan locks it
+  sooner, which also needs three members' amounts. A guest's amount counts in the
+  figure but not toward the three. What is published then is a rounded-down band,
+  once.
 - Bill splitting: after the night, the total splits across the group and Flock
   generates Venmo, Cash App, and Zelle links.
 - Crowd levels: Flock estimates how busy a venue will be tonight from the hour, the
@@ -39,9 +43,11 @@ Updated: September 25, 2026.
   poppin rn" and returns real venues near the user with the same crowd numbers used
   elsewhere in the app.
 - Safety: live location sharing inside the flock, off by default and only while a
-  plan is running, plus a two-tap SOS that emails trusted contacts the user's
-  location and alerts, in the app, anyone on a confirmed plan with the user that
-  starts within twelve hours of the alert, before or after. There is no background tracking. Report and block are available on any
+  plan is running, plus a two-tap SOS that emails trusted contacts, with the user's
+  location when the phone can find one, and alerts in the app the people who, like
+  the user, have accepted a confirmed plan that starts within twelve hours of the
+  alert, before or after, unless they are banned or either one has blocked the
+  other. There is no background tracking. Report and block are available on any
   message or profile.
 - Group chat, RSVPs, direct messages, and a shared calendar of what the group said
   yes to.
@@ -119,6 +125,7 @@ Contact: social@flockcorp.com
   calendar app, a standalone bill splitter, a social feed, or a venue review site.
   Chat and venue features exist to support planning.
 - Individual budget amounts are never shown to other members of a group. Only a
-  group ceiling is shared, and only after at least three people have submitted.
+  group ceiling is shared, once, as a rounded-down band, and only after at least
+  three members have shared an amount.
 - Invite links have the form https://www.flockcorp.com/i/<token>. They are private
   and are intentionally excluded from search indexes.

@@ -992,6 +992,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Key space is (recipient x fixed type x one flock or actor the caller already belongs to) and entries live at most 60s, so it cannot be grown.',
   },
+  {
+    file: 'services/pushHelper.js', name: 'alarmsOnTheWay', kind: 'inflight',
+    key: '`${recipientId}|${senderId}` of an SOS alarm push: the sender is the account that pressed SOS, the recipient one of the flockmates routes/safety.js read from the database for it',
+    callerControls: 'nothing in a request: the sender is the authenticated account, and the recipients come from SOS_FLOCK_AUDIENCE_SQL (or the alert\'s recorded audience), never from the body',
+    protects: 'no spend; correctness. It tells an all-clear which alarm sends to the same person could still land after it, so the all-clear can be sent again behind them (rule 3 of AN SOS ALARM MUST NOT OUTLIVE ITS ALL-CLEAR)',
+    denominator: 'SOS alarm sends still waiting on the provider',
+    bound: 'self-draining: each entry is deleted when its send answers, and a key is deleted when its set empties; hard ceiling ALARMS_ON_THE_WAY_MAX 5000 keys, past which an alarm is sent unregistered',
+    verdict: 'SAFE',
+    why: 'Only an SOS can add an entry, and /alert holds each account to one send per sixty second floor and six attempts per fifteen minutes, each fanned out to the flockmates on a confirmed plan within twelve hours. An entry lives as long as one provider send, which always settles: on firebase-admin\'s own retries and timeouts, or, past the 8 second deadline, through `settled`, which never rejects. The ceiling covers sends that stop answering altogether, and what it gives up is the second all-clear, never an alarm. One instance is enough because this app runs one (numReplicas 1 on Railway): the alarm send and its all-clear both start in this process. At two instances an all-clear could not see an alarm still running on the other one; rule 1, which reads withdrawn_at in Postgres, would still hold there, and only the second all-clear would be lost.',
+  },
 
   // ── services/weatherService.js ────────────────────────────────────────────
   {

@@ -21,10 +21,25 @@
 //     only the newest alert's people (a flockmate who left the plan, a contact
 //     removed, between two alerts);
 //   * a follow-up goes only to the addresses the first alert went to;
-//   * the flock leg of an alert stood down before it rang tells nobody.
+//   * the flock leg of an alert stood down before it rang tells nobody;
+//   * an OLDER BUILD, which never names the alert its chase follows, is held
+//     off after "I'm OK" for as long as its fix can still arrive. Its fix can
+//     come 106 seconds after the alert (the app's 30 second wait for the first
+//     answer, its 45 second chase, and a 30 second leash on the follow-up),
+//     and the sixty second floor this used to lean on was passed by a slow
+//     email fan-out followed by a full chase;
+//   * an ALARM PUSH never lands after its all-clear. They share one
+//     lock-screen slot, so an alarm reaching a phone after "I'm OK" put
+//     "needs help" back over it: one not yet at the provider when the
+//     stand-down committed, one still running there, or a retry queued by a
+//     send that failed after the stand-down had cleared the outbox.
 //
 // Mail and pushes are captured, never sent: emailService.sendEmail and
-// pushHelper.pushAlways are replaced before routes/safety.js loads.
+// pushHelper.pushAlways are replaced before routes/safety.js loads. The push
+// tests at the bottom let a captured push go on into the real pushHelper
+// (pushThrough), with the provider itself replaced by
+// firebaseService.__setSenderForTests, so what reaches each phone, and in what
+// order, is recorded without anything leaving this machine.
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
@@ -56,9 +71,15 @@ emailService.sendEmail = async (msg) => {
   return { sent: true, id: `m${mails.length}` };
 };
 const pushHelper = require('../services/pushHelper');
+const firebaseService = require('../services/firebaseService');
 const pushes = [];
+// Off, a push stops here. On, it carries on into the real pushHelper, which is
+// what the push tests at the bottom need; the provider is stubbed there.
+const realPushAlways = pushHelper.pushAlways;
+let pushThrough = false;
 pushHelper.pushAlways = async (userId, title, body, data) => {
   pushes.push({ userId: Number(userId), title, body, data });
+  if (pushThrough) return realPushAlways(userId, title, body, data);
   return { sent: 1 };
 };
 const emits = [];
@@ -247,14 +268,16 @@ test('the whole night in order: alarm, all-clear, and nothing after it', async (
     [[f1.id, 'safety_alert'], [f1.id, 'safety_alert_cancelled']]);
 });
 
-test('past the floor, a new press after the all-clear is a new alert, not an update to the withdrawn one', async () => {
+test('past the hold, a new press after the all-clear is a new alert, not an update to the withdrawn one', async () => {
   const bo = await mkUser('Bo');
   await addContact(bo, 'Mum', 'mum.bo@example.com', '5550121');
   const alarm = await call('POST', '/api/safety/alert', { token: bo.token, body: { includeLocation: false } });
   assert.strictEqual(alarm.status, 200);
   await call('POST', '/api/safety/alert/cancel', { token: bo.token, body: {} });
-  // Ninety seconds on.
-  await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '90 seconds' WHERE user_id = $1`, [bo.id]);
+  // Two minutes and five seconds on: past the hold a press that brings a
+  // location keeps after a stand-down of an alert that had none (it has the
+  // shape of an older build's chase until then; see the tests below).
+  await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '125 seconds' WHERE user_id = $1`, [bo.id]);
   const mark = here();
 
   const again = await call('POST', '/api/safety/alert', { token: bo.token, body: FIX });
@@ -357,4 +380,388 @@ test('a flock leg that finds its alert already withdrawn tells nobody and record
   assert.deepStrictEqual(since(mark).emits, []);
   const [after] = await alertRows(di);
   assert.deepStrictEqual(after.flock_recipient_ids, [], 'nobody is recorded, so no all-clear goes to people who heard nothing');
+});
+
+// ===========================================================================
+// An older build's chase, after "I'm OK"
+// ===========================================================================
+//
+// The build in App Review never names the alert its chase follows, and its
+// stand-down does not end the chase, so time since the alert is all that tells
+// its fix from a fresh press (routes/safety.js, STOOD_DOWN_CHASE_HOLD_MS).
+
+// "Tell them I'm OK", then the clock moved on: every alert row of the user is
+// made `seconds` older, which is what the refusal measures from.
+async function standDownAndAge(user, seconds) {
+  const ok = await call('POST', '/api/safety/alert/cancel', { token: user.token, body: {} });
+  assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+  await pool.query(
+    `UPDATE emergency_alerts SET created_at = created_at - ($2::int * INTERVAL '1 second') WHERE user_id = $1`,
+    [user.id, seconds]
+  );
+  await sleep(50);
+}
+
+const secondsNamed = (res) => Number(((res.body && res.body.error) || '').match(/in (\d+) seconds?/)?.[1]);
+
+test('an older build\'s fix 100 seconds after the alert, and after "I am OK", is refused, and says how long is left', async () => {
+  // The sixty second floor this used to stop at was passed by a slow email
+  // fan-out and a full chase, and the fix went out as a new alert.
+  const ed = await mkUser('Ed');
+  const k1 = await mkUser('Kay');
+  await mkPlan(ed, [k1]);
+  await addContact(ed, 'Mum', 'mum.ed@example.com', '5550161');
+  const alarm = await call('POST', '/api/safety/alert', { token: ed.token, body: { includeLocation: false } });
+  assert.strictEqual(alarm.status, 200);
+  await until(async () => (await alertRows(ed))[0].flock_recipient_ids.length === 1, 'the flock leg');
+  await standDownAndAge(ed, 100);
+  const mark = here();
+
+  // What that build posts when its chase lands: a fix, and no followUpTo.
+  const late = await call('POST', '/api/safety/alert', { token: ed.token, body: FIX });
+  assert.strictEqual(late.status, 429, JSON.stringify(late.body));
+  assert.strictEqual(late.body.withdrawn, true);
+  assert.ok(!('alreadySent' in late.body));
+  // Twenty seconds of the two minutes are left, less the request's own time.
+  const left = secondsNamed(late);
+  assert.ok(left >= 18 && left <= 20, `the wait named is the hold's, not the old floor's: ${late.body.error}`);
+  assert.match(late.body.error, /911/);
+
+  await sleep(100);
+  const leaked = since(mark);
+  assert.deepStrictEqual(leaked.mails.map((m) => m.to), [], 'no new emergency email');
+  assert.deepStrictEqual(leaked.pushes.map((p) => p.data.type), [], 'no new flock alarm');
+  assert.deepStrictEqual(leaked.emits.map((e) => e.event), []);
+  assert.strictEqual((await alertRows(ed)).length, 1, 'no alert row was written');
+});
+
+test('the longer hold is for the chase\'s shape alone: anything else waits out the sixty second floor', async () => {
+  // A chase runs only after an alert that went out without a location, and it
+  // posts only a fix. A press without a location, or after an alert that had
+  // one, cannot be that chase, and every second of this refusal is a second
+  // somebody who said "I'm OK" and needs help again is told to wait.
+  const gil = await mkUser('Gil');
+  await addContact(gil, 'Mum', 'mum.gil@example.com', '5550181');
+  assert.strictEqual((await call('POST', '/api/safety/alert', { token: gil.token, body: { includeLocation: false } })).status, 200);
+  await standDownAndAge(gil, 70);
+  const bare = await call('POST', '/api/safety/alert', { token: gil.token, body: { includeLocation: false } });
+  assert.strictEqual(bare.status, 200, JSON.stringify(bare.body));
+
+  const hal = await mkUser('Hal');
+  await addContact(hal, 'Mum', 'mum.hal@example.com', '5550182');
+  assert.strictEqual((await call('POST', '/api/safety/alert', { token: hal.token, body: FIX })).status, 200);
+  await standDownAndAge(hal, 70);
+  const located = await call('POST', '/api/safety/alert', { token: hal.token, body: FIX });
+  assert.strictEqual(located.status, 200, JSON.stringify(located.body));
+
+  // Inside the floor both kinds are still refused, and the wait is the floor's.
+  const ivy = await mkUser('Ivy');
+  await addContact(ivy, 'Mum', 'mum.ivy@example.com', '5550183');
+  assert.strictEqual((await call('POST', '/api/safety/alert', { token: ivy.token, body: FIX })).status, 200);
+  await standDownAndAge(ivy, 30);
+  const early = await call('POST', '/api/safety/alert', { token: ivy.token, body: FIX });
+  assert.strictEqual(early.status, 429, JSON.stringify(early.body));
+  const left = secondsNamed(early);
+  assert.ok(left >= 28 && left <= 30, early.body.error);
+});
+
+test('when the attempt ceiling is already reached, the refusal after "I am OK" names no time the ceiling would break', async () => {
+  const jon = await mkUser('Jon');
+  await addContact(jon, 'Mum', 'mum.jon@example.com', '5550191');
+  // Five attempts earlier in the quarter hour that reached nobody.
+  for (let i = 0; i < 5; i += 1) {
+    await pool.query(
+      `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients)
+       VALUES ($1, 0, '{}'::int[], '[]'::jsonb)`,
+      [jon.id]
+    );
+  }
+  await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '5 minutes' WHERE user_id = $1`, [jon.id]);
+  const alarm = await call('POST', '/api/safety/alert', { token: jon.token, body: { includeLocation: false } });
+  assert.strictEqual(alarm.status, 200, JSON.stringify(alarm.body));
+  await standDownAndAge(jon, 100);
+
+  const res = await call('POST', '/api/safety/alert', { token: jon.token, body: FIX });
+  assert.strictEqual(res.status, 429, JSON.stringify(res.body));
+  assert.strictEqual(res.body.withdrawn, true);
+  assert.match(res.body.error, /several alerts/);
+  assert.doesNotMatch(res.body.error, /\d+ seconds?/, 'it promised a time, and the ceiling refused the press made then');
+  assert.match(res.body.error, /911/);
+});
+
+// ===========================================================================
+// An alarm push never lands after its all-clear
+// ===========================================================================
+//
+// The alarm and the all-clear share one lock-screen slot per sender, so the
+// last of the two to reach a phone is what it shows, and a tap on "needs help"
+// opens the full-screen alarm on any build that has not seen the stand-down.
+// These run the real pushHelper on these rows, with only the provider stubbed.
+
+// A registered phone for `user`.
+async function addPhone(user) {
+  seq += 1;
+  const token = `fcm-sos-${seq}-${Date.now()}-${'x'.repeat(60)}`;
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO device_tokens (user_id, token, device_type) VALUES ($1, $2, 'ios') RETURNING id`,
+    [user.id, token]
+  );
+  return { token, id: row.id };
+}
+
+// The provider as the phones see it. `landed` is every message it accepted, in
+// the order it accepted them. `hold` picks messages that stay running at the
+// provider until the test lets each one land, or fail with a 5xx: a send still
+// out, which firebase-admin keeps retrying well past our 8 second deadline.
+function stubProvider({ hold = () => false } = {}) {
+  const landed = [];
+  const held = [];
+  firebaseService.__setSenderForTests((message) => {
+    if (!hold(message)) {
+      landed.push(message);
+      return `ok-${landed.length}`;
+    }
+    return new Promise((resolve, reject) => {
+      held.push({
+        message,
+        land: () => { landed.push(message); resolve(`ok-${landed.length}`); },
+        fail: () => {
+          const err = new Error('Internal error encountered.');
+          err.code = 'messaging/internal-error';
+          reject(err);
+        },
+      });
+    });
+  });
+  return { landed, held };
+}
+
+function stopPushThrough() {
+  pushThrough = false;
+  firebaseService.__setSenderForTests(null);
+  pushHelper._resetDebounce();
+}
+
+const ledgerFor = async (user) => (await pool.query(
+  'SELECT push_type, outcome FROM push_sends WHERE user_id = $1 ORDER BY id', [user.id]
+)).rows.map((r) => `${r.push_type}:${r.outcome}`);
+
+const outboxFor = async (user) => (await pool.query(
+  'SELECT id, data FROM push_outbox WHERE user_id = $1 ORDER BY id', [user.id]
+)).rows;
+
+test('an alarm still at the provider when "I am OK" goes out is followed by the all-clear again, so the all-clear is what the phone keeps', async () => {
+  const eve = await mkUser('Eve');
+  const kit = await mkUser('Kit');
+  await mkPlan(eve, [kit]);
+  await addContact(eve, 'Mum', 'mum.eve@example.com', '5550201');
+  const phone = await addPhone(kit);
+  pushThrough = true;
+  const provider = stubProvider({ hold: (m) => m.data.type === 'safety_alert' });
+  try {
+    const alarm = await call('POST', '/api/safety/alert', { token: eve.token, body: { includeLocation: false } });
+    assert.strictEqual(alarm.status, 200, JSON.stringify(alarm.body));
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+
+    const ok = await call('POST', '/api/safety/alert/cancel', { token: eve.token, body: {} });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    await until(async () => provider.landed.length === 1, 'the all-clear');
+
+    // The alarm lands now, behind the all-clear.
+    provider.held.shift().land();
+    await until(async () => provider.landed.length === 3, 'the all-clear, again');
+
+    const onPhone = provider.landed.filter((m) => m.token === phone.token);
+    assert.deepStrictEqual(onPhone.map((m) => m.data.type),
+      ['safety_alert_cancelled', 'safety_alert', 'safety_alert_cancelled'],
+      'the phone was left showing the alarm the person had withdrawn');
+    assert.strictEqual(new Set(onPhone.map((m) => m.apns.headers['apns-collapse-id'])).size, 1,
+      'one slot, so the last to land is what the phone shows');
+    assert.ok(pushHelper.SERVER_ONLY_KEYS.includes('alertId'));
+    assert.ok(onPhone.every((m) => pushHelper.SERVER_ONLY_KEYS.every((k) => !(k in m.data))),
+      'the alert id the server keeps reached a phone');
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('an alarm that lands before the all-clear goes out gets no second all-clear', async () => {
+  const flo = await mkUser('Flo');
+  const lev = await mkUser('Lev');
+  await mkPlan(flo, [lev]);
+  await addContact(flo, 'Mum', 'mum.flo@example.com', '5550205');
+  const phone = await addPhone(lev);
+  pushThrough = true;
+  const provider = stubProvider();
+  try {
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: flo.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the alarm');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: flo.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 2, 'the all-clear');
+    await sleep(150);
+    assert.deepStrictEqual(provider.landed.filter((m) => m.token === phone.token).map((m) => m.data.type),
+      ['safety_alert', 'safety_alert_cancelled']);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('an alarm for an alert already stood down is not sent, fresh or from the outbox, and the sweep deletes its row', async () => {
+  const fox = await mkUser('Fox');
+  const lu = await mkUser('Lu');
+  await mkPlan(fox, [lu]);
+  await addContact(fox, 'Mum', 'mum.fox@example.com', '5550211');
+  const phone = await addPhone(lu);
+  const alarm = await call('POST', '/api/safety/alert', { token: fox.token, body: { includeLocation: false } });
+  assert.strictEqual(alarm.status, 200);
+  await until(async () => (await alertRows(fox))[0].flock_recipient_ids.length === 1, 'the flock leg');
+  const captured = pushes.filter((p) => p.userId === lu.id && p.data.type === 'safety_alert').pop();
+  assert.ok(captured, 'the flock leg pushed Lu');
+  assert.strictEqual(captured.data.alertId, String(alarm.body.alertId), 'each alarm push names its alert, for the server');
+  assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: fox.token, body: {} })).status, 200);
+  await sleep(50);
+
+  pushThrough = true;
+  const provider = stubProvider();
+  try {
+    // The same push reaching pushHelper only now, after the stand-down.
+    const late = await realPushAlways(lu.id, captured.title, captured.body, captured.data);
+    assert.strictEqual(late.reason, 'withdrawn', JSON.stringify(late));
+
+    // As a retry queued after the stand-down had cleared the outbox, and as a
+    // row queued before alarms named their alert, which asks about the
+    // sender's newest alert instead.
+    const { alertId, ...unnamed } = captured.data;
+    assert.ok(alertId);
+    for (const data of [captured.data, unnamed]) {
+      await pool.query(
+        `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+         VALUES ($1, 'retry', $2, $3, $4::jsonb, NOW() - INTERVAL '1 second', NOW() + INTERVAL '10 minutes')`,
+        [lu.id, captured.title, captured.body, JSON.stringify(data)]
+      );
+    }
+    await pushHelper.sweepPushOutbox();
+
+    assert.deepStrictEqual(provider.landed.filter((m) => m.token === phone.token), [], 'an alarm reached Lu after "I am OK"');
+    assert.deepStrictEqual(await outboxFor(lu), [], 'a row that will never be sent was kept');
+    await until(async () => (await ledgerFor(lu)).filter((x) => x === 'safety_alert:withdrawn').length === 3, 'the ledger');
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('an alarm the provider refuses after "I am OK" is not queued for a retry', async () => {
+  // The control first: the same refusal while the alert still stands is
+  // retried, so the check below cannot pass by nothing being queued at all.
+  for (const standDown of [false, true]) {
+    const gus = await mkUser('Gus');
+    const mo = await mkUser('Mo');
+    await mkPlan(gus, [mo]);
+    await addContact(gus, 'Mum', `mum.gus.${standDown}@example.com`, '5550221');
+    await addPhone(mo);
+    pushThrough = true;
+    const provider = stubProvider({ hold: (m) => m.data.type === 'safety_alert' });
+    try {
+      assert.strictEqual((await call('POST', '/api/safety/alert', { token: gus.token, body: { includeLocation: false } })).status, 200);
+      await until(async () => provider.held.length === 1, 'the alarm at the provider');
+      if (standDown) {
+        assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: gus.token, body: {} })).status, 200);
+        await until(async () => provider.landed.length === 1, 'the all-clear');
+      }
+      provider.held.shift().fail();
+      await until(async () => (await ledgerFor(mo)).includes('safety_alert:failed'), 'the alarm\'s answer');
+      const retries = (await outboxFor(mo)).filter((r) => r.data.type === 'safety_alert');
+      if (standDown) {
+        assert.deepStrictEqual(retries, [], 'a retry of the withdrawn alarm was queued after the stand-down cleared the outbox');
+        await sleep(100);
+        assert.deepStrictEqual(provider.landed.map((m) => m.data.type), ['safety_alert_cancelled'],
+          'an alarm that never landed needs no second all-clear');
+      } else {
+        assert.strictEqual(retries.length, 1, 'a failed alarm that still stands is retried');
+        await pool.query('DELETE FROM push_outbox WHERE user_id = $1', [mo.id]);
+      }
+    } finally {
+      stopPushThrough();
+    }
+  }
+});
+
+test('a send still running at the 8 second deadline that fails after "I am OK" is not queued for a retry either', async () => {
+  const hu = await mkUser('Hu');
+  const ned = await mkUser('Ned');
+  await mkPlan(hu, [ned]);
+  await addContact(hu, 'Mum', 'mum.hu@example.com', '5550231');
+  const phone = await addPhone(ned);
+  pushThrough = true;
+  stubProvider();
+  const realSend = firebaseService.sendPushToUser;
+  let answer = null;
+  // What the per-account send answers at the deadline with a send still out
+  // (services/firebaseService.js), and later, what that send came to.
+  firebaseService.sendPushToUser = async (userId, title, body, data, opts) => {
+    if (data.type !== 'safety_alert') return realSend(userId, title, body, data, opts);
+    const settled = new Promise((resolve) => { answer = resolve; });
+    return { sent: 0, failed: 1, inFlight: 1, settled };
+  };
+  try {
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: hu.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => typeof answer === 'function', 'the alarm past its deadline');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: hu.token, body: {} })).status, 200);
+    await sleep(50);
+    answer({ sent: 0, failed: 1, retryIds: [phone.id] });
+    await until(async () => (await ledgerFor(ned)).includes('safety_alert:failed'), 'the late answer');
+    assert.deepStrictEqual((await outboxFor(ned)).filter((r) => r.data.type === 'safety_alert'), [],
+      'the late answer queued a retry, and a minute later the phone said "needs help" again');
+  } finally {
+    firebaseService.sendPushToUser = realSend;
+    stopPushThrough();
+  }
+});
+
+test('a late all-clear is not laid over a newer alarm from the same person; anyone that alarm missed still gets it', async () => {
+  const ida = await mkUser('Ida');
+  const ola = await mkUser('Ola');
+  const pip = await mkUser('Pip');
+  const flockId = await mkPlan(ida, [ola, pip]);
+  await addContact(ida, 'Mum', 'mum.ida@example.com', '5550241');
+  const olaPhone = await addPhone(ola);
+  const pipPhone = await addPhone(pip);
+
+  // Alert A, stood down.
+  assert.strictEqual((await call('POST', '/api/safety/alert', { token: ida.token, body: { includeLocation: false } })).status, 200);
+  await until(async () => (await alertRows(ida))[0].flock_recipient_ids.length === 2, 'the first flock leg');
+  assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: ida.token, body: {} })).status, 200);
+  await until(async () => pushes.some((p) => p.userId === ola.id && p.data.type === 'safety_alert_cancelled'), 'the all-clear');
+  const allClear = pushes.filter((p) => p.userId === ola.id && p.data.type === 'safety_alert_cancelled').pop();
+
+  // Pip leaves the plan, and past the hold Ida needs help again: alert B
+  // reaches Ola and not Pip.
+  await pool.query('UPDATE flock_members SET status = $1 WHERE flock_id = $2 AND user_id = $3', ['declined', flockId, pip.id]);
+  await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '130 seconds' WHERE user_id = $1`, [ida.id]);
+  const second = await call('POST', '/api/safety/alert', { token: ida.token, body: FIX });
+  assert.strictEqual(second.status, 200, JSON.stringify(second.body));
+  await until(async () => (await alertRows(ida))[1]?.flock_recipient_ids.length === 1, 'the second flock leg');
+
+  // A's all-clear, as a retry each of them was still owed.
+  pushThrough = true;
+  const provider = stubProvider();
+  try {
+    for (const who of [ola, pip]) {
+      await pool.query(
+        `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+         VALUES ($1, 'retry', $2, $3, $4::jsonb, NOW() - INTERVAL '1 second', NOW() + INTERVAL '10 minutes')`,
+        [who.id, allClear.title, allClear.body, JSON.stringify({ ...allClear.data, toUserId: String(who.id) })]
+      );
+    }
+    await pushHelper.sweepPushOutbox();
+    await sleep(50);
+    assert.deepStrictEqual(provider.landed.filter((m) => m.token === olaPhone.token), [],
+      '"Ida says they are OK" landed on the alarm Ida raised after it');
+    assert.deepStrictEqual(provider.landed.filter((m) => m.token === pipPhone.token).map((m) => m.data.type),
+      ['safety_alert_cancelled'], 'Pip holds only the first alarm, and that one is over');
+    assert.deepStrictEqual(await outboxFor(ola), [], 'the held-back row was kept');
+    await until(async () => (await ledgerFor(ola)).includes('safety_alert_cancelled:superseded'), 'the ledger');
+  } finally {
+    stopPushThrough();
+  }
 });

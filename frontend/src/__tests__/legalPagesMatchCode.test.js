@@ -317,22 +317,84 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(privacy).toMatch(/Your trusted contacts get SOS alerts by <strong>email only<\/strong>/);
   });
 
-  test('the policy names the second audience an SOS reaches, because the code has one', () => {
-    // The page said "SOS alerts are sent by email only" while routes/safety.js
-    // also rang everyone on a confirmed plan within twelve hours, in the app,
-    // with the location. Whenever the flock leg exists, the page has to say
-    // who it reaches, how, and that the location goes with it; the crawler
-    // copy has to say the same thing.
+  // WHO AN SOS REACHES IN THE APP, WHAT IT CARRIES, AND WHO THE ALL-CLEAR
+  // LEAVES OUT, each held to the statement that decides it. The pages said
+  // "everyone who has accepted a confirmed plan with you", "the people on a
+  // confirmed plan with you" and "your current location", while the audience
+  // query also needs the SENDER to have accepted and leaves out anyone banned
+  // and anyone in a block either way, the alarm carries coordinates only when
+  // the alert has them, and the all-clear's snapshot query drops anyone banned
+  // or blocked since the alarm.
+  describe('the SOS sentences say who the code reaches and what it sends', () => {
     const safety = read('backend', 'routes', 'safety.js');
     const crawler = read('frontend', 'api', 'marketing-page.js');
-    expect(safety).toMatch(/async function alertFlockMembers\(/);
-    expect(safety).toMatch(/pushAlways\(row\.user_id, title, body/);
-    const hours = Number((safety.match(/const SOS_FLOCK_WINDOW_HOURS = (\d+);/) || [])[1]);
-    expect(hours).toBe(12);
-    const sentence = 'We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app, as a notification and on screen, with the same location when the alert has one.';
-    expect(privacy).toContain(sentence);
-    expect(crawler).toContain(sentence);
-    expect(privacy).toMatch(/who it reached, and when you stood it down/);
+    const support = read('frontend', 'src', 'website', 'SupportPage.js');
+    const llms = read('frontend', 'public', 'llms.txt');
+    const sqlOf = (name) => {
+      const m = safety.match(new RegExp(`const ${name} = \`([\\s\\S]*?)\`;`));
+      if (!m) throw new Error(`${name} is gone from routes/safety.js`);
+      return flat(m[1]);
+    };
+    // The FAQ constant is string concatenation; joined, it reads like the page.
+    // A function because `flat` is declared further down this file.
+    const supportText = () => flat(support.replace(/'\s*\+\s*'/g, ''));
+
+    test('the in-app audience is the one SOS_FLOCK_AUDIENCE_SQL selects', () => {
+      expect(safety).toMatch(/async function alertFlockMembers\(/);
+      expect(safety).toMatch(/pushAlways\(row\.user_id, title, body/);
+      expect(safety).toMatch(/pool\.query\(SOS_FLOCK_AUDIENCE_SQL, \[user\.id, SOS_FLOCK_WINDOW_HOURS\]\)/);
+      expect(Number((safety.match(/const SOS_FLOCK_WINDOW_HOURS = (\d+);/) || [])[1])).toBe(12);
+      const audience = sqlOf('SOS_FLOCK_AUDIENCE_SQL');
+      expect(audience).toContain("me.user_id = $1 AND me.status = 'accepted'");
+      expect(audience).toContain("WHERE fm.status = 'accepted'");
+      expect(audience).toContain("f.status = 'confirmed'");
+      expect(audience).toContain("f.event_time BETWEEN (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 hour') AND (NOW() AT TIME ZONE 'UTC') + ($2::int * INTERVAL '1 hour')");
+      expect(audience).toContain('COALESCE((SELECT is_banned FROM users u WHERE u.id = fm.user_id), FALSE) = FALSE');
+      expect(audience).toContain('(b.blocker_id = $1 AND b.blocked_id = fm.user_id)');
+      expect(audience).toContain('(b.blocker_id = fm.user_id AND b.blocked_id = $1)');
+
+      const sentence = 'We also alert people in the app, as a notification and on screen: those who, like you, have accepted a confirmed plan that starts within twelve hours of that moment, before or after, other than anyone banned from Flock and anyone you have blocked or who has blocked you.';
+      expect(flat(privacy)).toContain(sentence);
+      expect(crawler).toContain(sentence);
+      expect(flat(privacy)).toContain('people who, like you, have accepted a confirmed plan starting within twelve hours of the alert get an alert in the app, unless they are banned or one of you has blocked the other');
+      expect(flat(terms)).toContain('the people who, like you, have accepted a confirmed plan that starts within twelve hours of the alert, before or after, unless they are banned or one of you has blocked the other');
+      const faq = 'People who, like you, have accepted a confirmed plan that starts within twelve hours of the alert also get an alert in the app, with the same location when there is one, unless they are banned or one of you has blocked the other.';
+      expect(supportText().split(faq).length - 1).toBe(2); // the FAQ data and the paragraph
+      expect(flat(llms)).toContain('alerts in the app the people who, like the user, have accepted a confirmed plan that starts within twelve hours of the alert, before or after, unless they are banned or either one has blocked the other');
+      for (const [name, src] of [['PrivacyPolicy.js', flat(privacy)], ['TermsOfService.js', flat(terms)], ['SupportPage.js', supportText()], ['llms.txt', flat(llms)], ['marketing-page.js', crawler]]) {
+        expect([name, (src.match(/everyone who has accepted a confirmed plan|Anyone who has accepted a confirmed plan|anyone on a confirmed plan|show it to the people on a confirmed plan|the people on a confirmed plan with you get/) || [])[0]]).toEqual([name, undefined]);
+      }
+    });
+
+    test('the location is promised only when the alert has one', () => {
+      // The alarm spreads coordinates in only when there are some, and the
+      // email says so when there are none.
+      expect(safety).toMatch(/\.\.\.\(coords \? \{ latitude: coords\.lat, longitude: coords\.lng \} : \{\}\)/);
+      expect(safety).toMatch(/: '<p style="color:#6b7280">Location was not available\.<\/p>'/);
+      for (const [name, src] of [['PrivacyPolicy.js', flat(withoutComments(privacy))], ['TermsOfService.js', flat(withoutComments(terms))], ['SupportPage.js', flat(withoutComments(support.replace(/'\s*\+\s*'/g, '')))], ['llms.txt', flat(llms)], ['marketing-page.js', flat(withoutComments(crawler))]]) {
+        // Sharing a location from the Safety screen always has one, so "send
+        // your trusted contacts your location" is not on this list.
+        const hit = src.match(/SOS[^.]*current location|with the same location\.|an SOS alert with your location|emails trusted contacts the user's location|email your trusted contacts your location/);
+        expect([name, hit && hit[0]]).toEqual([name, null]);
+      }
+      expect(flat(privacy)).toContain('we email your trusted contacts, with your location when your phone can find one');
+      expect(flat(privacy)).toContain('Their alert carries the same location when the alert has one.');
+      expect(flat(terms)).toContain('emails the trusted contacts you set up, with your location when your phone can find one');
+      expect(supportText()).toContain('get an email with the time and, when your phone can find it, your location');
+      expect(flat(llms)).toContain('emails trusted contacts, with the user\'s location when the phone can find one');
+    });
+
+    test('the all-clear leaves out whoever the snapshot query leaves out, and the policy says so', () => {
+      const snapshot = sqlOf('SOS_STAND_DOWN_SNAPSHOT_SQL');
+      expect(snapshot).toContain('COALESCE(u.is_banned, FALSE) = FALSE');
+      expect(snapshot).toContain('(b.blocker_id = $1 AND b.blocked_id = u.id)');
+      expect(snapshot).toContain('(b.blocker_id = u.id AND b.blocked_id = $1)');
+      expect(safety).toMatch(/pool\.query\(SOS_STAND_DOWN_SNAPSHOT_SQL, \[user\.id, snapshot\]\)/);
+      const p = flat(privacy);
+      expect(p).toMatch(/who it reached, and when you stood it down/);
+      expect(p).toContain('so an all-clear goes back to the people it reached. The all-clear in the app leaves out anyone who has since been banned, or who has since blocked you or been blocked by you.');
+      expect(p).not.toMatch(/an all-clear reaches the same people/);
+    });
   });
 
   test('the do-not-mail list does not swallow an SOS, and the policy says so', () => {
@@ -757,5 +819,55 @@ describe('the pages describe the apps that exist', () => {
       const hit = flat(withoutComments(src)).match(/Google Play|Play Store|on Android|Android app/i);
       expect([name, hit && hit[0]]).toEqual([name, null]);
     }
+  });
+});
+
+describe('the budget settles the way the pages say it does', () => {
+  // The policy said the budget settles "when the last member has answered",
+  // llms.txt "until every member has answered and at least three have shared"
+  // and "after at least three people have submitted", and the home page "until
+  // everyone has answered". The settle in routes/budget.js waits for every
+  // accepted member AND every guest who said they are in, counts only members
+  // toward the three, and the plan's creator can lock it sooner once three
+  // members have shared, which none of those sentences allowed for.
+  const budget = read('backend', 'routes', 'budget.js');
+  const llms = read('frontend', 'public', 'llms.txt');
+  const landing = read('frontend', 'src', 'website', 'LandingPage.js');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+
+  test('who has to answer, who makes the three, and who can lock it, in the code', () => {
+    // answeringPopulation: accepted members plus visible guests who are in.
+    expect(budget).toMatch(/"SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'"/);
+    expect(budget).toMatch(/const GUEST_ANSWERERS_SQL = `SELECT COUNT\(\*\) AS total FROM guest_rsvps\s+WHERE flock_id = \$1 AND status = 'in'/);
+    // The three are member amounts only, and the settle needs them.
+    expect(budget).toMatch(/COUNT\(\*\) FILTER \(WHERE skipped = false AND bm\.id IS NOT NULL\) AS non_skip_count/);
+    expect(budget).toMatch(/parseInt\(countRow\.non_skip_count\) >= 3/);
+    // The lock: the creator alone, and only past three members' amounts.
+    expect(budget).toMatch(/Only the flock creator can lock the budget/);
+    expect(budget).toMatch(/SELECT COUNT\(\*\)::int AS n FROM \$\{MEMBER_SUBMISSIONS\}\s+WHERE bs\.flock_id = \$1 AND skipped = false/);
+    expect(budget).toMatch(/if \(\(countResult\.rows\[0\]\?\.n \|\| 0\) < 3\) \{/);
+  });
+
+  test('the privacy page and its crawler copy say who answers, who counts, and the lock', () => {
+    const settles = 'The budget settles when every member who has accepted the plan and every guest who said they are in from an invite link has answered, and at least three members have shared an amount (a guest\'s amount goes into the figure but does not count toward the three).';
+    const lock = 'The person who created the plan can settle it sooner by locking it, which also needs three members\' amounts and closes it to anyone who has not answered yet.';
+    for (const [name, src] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, src.includes(settles)]).toEqual([name, true]);
+      expect([name, src.includes(lock)]).toEqual([name, true]);
+      expect([name, /settles when the last member has answered/.test(src)]).toEqual([name, false]);
+    }
+  });
+
+  test('llms.txt and the home page say the same', () => {
+    const l = flat(llms);
+    expect(l).toContain('No figure at all is published until the budget settles: every accepted member and every guest who said they are in from an invite link has answered and at least three members have shared an amount, or the person who created the plan locks it sooner, which also needs three members\' amounts. A guest\'s amount counts in the figure but not toward the three.');
+    expect(l).toContain('Only a group ceiling is shared, once, as a rounded-down band, and only after at least three members have shared an amount.');
+    expect(l).not.toMatch(/until every member has answered|three people have submitted/);
+
+    const home = flat(withoutComments(landing));
+    const bullet = 'No number until everyone going has answered or the plan\'s creator locks it, with at least three members\' amounts in, and then it is a rounded band, not anyone\'s figure';
+    expect(home).toContain(bullet);
+    expect(mirror).toContain(bullet);
+    expect(home).not.toMatch(/No number until everyone has answered/);
   });
 });
