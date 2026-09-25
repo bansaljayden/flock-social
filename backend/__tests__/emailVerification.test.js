@@ -295,6 +295,22 @@ pool.query = async (text, params = []) => {
   throw new Error(`unstubbed query: ${sql.slice(0, 140)}`);
 };
 
+// A resend is CLAIMED in a transaction on a checked-out client (routes/auth.js
+// claimVerificationSend): the budget read and the link it issues run there.
+// Same fake, looked up at call time; the transaction and lock statements are
+// no-ops in this file, which is not about concurrency.
+const realConnect = pool.connect;
+pool.connect = async () => ({
+  query: (text, params) => {
+    const sql = String(text);
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK)\b/i.test(sql) || sql.includes('pg_advisory_xact_lock')) {
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
+    return pool.query(text, params);
+  },
+  release() {},
+});
+
 // ---------------------------------------------------------------------------
 // App. The three gated routers are mounted exactly the way the real ones are
 // (`router.use(authenticate)` under the same mount path), because the middleware
@@ -339,7 +355,7 @@ test.before(() => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; resolve(); });
 }));
 test.after(() => new Promise((resolve) => server.close(resolve)));
-test.after(() => { pool.query = realQuery; pool.end().catch(() => {}); });
+test.after(() => { pool.query = realQuery; pool.connect = realConnect; pool.end().catch(() => {}); });
 
 const call = (method, path, body, token) => fetch(base + path, {
   method,

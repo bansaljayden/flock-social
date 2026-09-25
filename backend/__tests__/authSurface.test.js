@@ -636,3 +636,66 @@ test('a successful sign-in clears the failure counter', async () => {
   const after = await post('/api/auth/login', { email: 'realuser@example.com', password: 'WrongPass1' });
   assert.strictEqual(after.status, 401);
 });
+
+test('a parallel burst gets no more guesses than the lockout allows', async () => {
+  // THE RACE THIS PINS. /login read the lock, then awaited the user lookup and
+  // the bcrypt compare, and only then recorded the failure. Every request of a
+  // burst read the same unlocked counter, so thirty guesses fired together were
+  // thirty guesses checked against the password. The attempt is reserved in
+  // the same synchronous step as the check now.
+  reset();
+  const email = 'burst.target@example.com';
+  const key = canonicalEmail(email);
+  authRouter.__testing.clearLoginFailures(key);
+  const burst = LOGIN_FAIL_LIMIT * 3;
+  const statuses = (await Promise.all(Array.from({ length: burst }, (_, i) =>
+    post('/api/auth/login', { email, password: `Guess${i}x` })))).map((r) => r.status);
+  const checked = statuses.filter((s) => s === 401).length;
+  assert.strictEqual(checked, LOGIN_FAIL_LIMIT, `${checked} guesses were checked against the password`);
+  assert.strictEqual(statuses.filter((s) => s === 429).length, burst - LOGIN_FAIL_LIMIT);
+  authRouter.__testing.clearLoginFailures(key);
+});
+
+test('a failure whose reserved slot a concurrent success cleared is still counted', () => {
+  // The owner signing in halfway through somebody else's burst clears the
+  // counter, as a success always has. The burst's guesses that were still in
+  // flight must not vanish with it.
+  const { reserveLoginAttempt, settleLoginFailure, clearLoginFailures, loginLockedFor } = authRouter.__testing;
+  const key = canonicalEmail('settle.check@example.com');
+  clearLoginFailures(key);
+  const slots = [];
+  for (let i = 0; i < LOGIN_FAIL_LIMIT; i++) slots.push(reserveLoginAttempt(key).slot);
+  assert.ok(loginLockedFor(key) > 0);
+  assert.ok(reserveLoginAttempt(key).lockedMs > 0, 'the attempt after the limit was given a slot');
+  clearLoginFailures(key);
+  for (const slot of slots) settleLoginFailure(key, slot);
+  assert.ok(loginLockedFor(key) > 0, 'the owner signing in wiped the burst that was in flight');
+  clearLoginFailures(key);
+});
+
+test('an attempt that fails on our side hands its reserved slot back', async () => {
+  // A database error is not a wrong password. Without the hand-back an outage
+  // would lock people out of their own accounts for fifteen minutes.
+  reset();
+  const email = 'db.blip@example.com';
+  const key = canonicalEmail(email);
+  authRouter.__testing.clearLoginFailures(key);
+  const inner = pool.query;
+  pool.query = async (text, params = []) => {
+    const sql = String(text).replace(/\s+/g, ' ').trim();
+    if (sql === 'SELECT * FROM users WHERE LOWER(email) = LOWER($1)' && params[0] === email) {
+      throw new Error('connection reset');
+    }
+    return inner(text, params);
+  };
+  try {
+    for (let i = 0; i < LOGIN_FAIL_LIMIT + 2; i++) {
+      const r = await post('/api/auth/login', { email, password: 'Whatever1' });
+      assert.strictEqual(r.status, 500);
+    }
+  } finally { pool.query = inner; }
+  assert.strictEqual(authRouter.__testing.loginLockedFor(key), 0, 'an outage locked the account');
+  const after = await post('/api/auth/login', { email, password: 'Whatever1' });
+  assert.strictEqual(after.status, 401);
+  authRouter.__testing.clearLoginFailures(key);
+});

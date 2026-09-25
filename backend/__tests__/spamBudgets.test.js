@@ -4,9 +4,10 @@
 // plus the reaction fan-out regression.
 //
 // Three separate abuse channels are pinned here:
-//   1. POST /api/friends/request and POST /api/friends/add-by-code — both take
-//      an id (a friend code IS a base36 id), confirm whether a user is behind
-//      it, hand back their display name, and ring their phone.
+//   1. POST /api/friends/request and POST /api/friends/add-by-code. One takes
+//      an id and the other a friend code (a stored random code since migration
+//      079, a base36 id before it). Both confirm whether a user is behind what
+//      they were given, hand back their display name, and ring their phone.
 //   2. POST /api/flocks/:id/invite — same directory read, 25 ids at a time,
 //      plus a membership row and a push notification per id.
 //   3. flock_reaction_added / flock_reaction_removed — a shipped feature that
@@ -46,6 +47,16 @@ const AUTHED = {
 const userRow = (id) => (Number(id) >= 1 && Number(id) <= HIGHEST_REAL_USER
   ? { id: Number(id), name: `User${id}` }
   : null);
+
+// users.friend_code for the real user the code tests aim at. A code is drawn
+// at random and stored (migration 079), so the fixture holds one rather than
+// working it out from the id. DEAD_CODE is well formed and held by nobody.
+const CODE_OF_42 = 'FLOCK-7HNPQ3RW';
+const DEAD_CODE = 'FLOCK-ZZZZZZZZ';
+const FRIEND_CODES = new Map([[CODE_OF_42, 42]]);
+// A different miss for each i. 0 and 1 are digits the issuer never draws, so
+// no code it hands out can ever match one of these.
+const guessCode = (i) => `FLOCK-GUESS${100 + i}`;
 
 const FLOCK_ID = 10;
 
@@ -138,6 +149,13 @@ pool.query = async (text, params = []) => {
   if (has('SELECT id, name FROM users WHERE id = $1')) {
     const u = userRow(params[0]);
     return { rows: u ? [u] : [], rowCount: u ? 1 : 0 };
+  }
+  // POST /add-by-code reads the same columns by the stored code, so it answers
+  // from the same `userRow` once the code is mapped to its holder.
+  if (has('SELECT id, name, is_banned FROM users WHERE friend_code = $1')) {
+    const holder = FRIEND_CODES.get(params[0]);
+    const u = holder === undefined ? null : userRow(holder);
+    return { rows: u ? [{ ...u, is_banned: false }] : [], rowCount: u ? 1 : 0 };
   }
 
   // friendships
@@ -475,36 +493,56 @@ test('acting on someone you already have a friendship with never costs budget', 
 test('the friend-code path shares the budget instead of doubling it', async () => {
   for (let i = 0; i < 20; i++) await probe('alice', 900000 + i);
 
-  // FLOCK-16 is base36 for user 42, who exists.
-  const code = 'FLOCK-' + (42).toString(36).toUpperCase().padStart(4, '0');
-  const res = await call('POST', '/api/friends/add-by-code', 'alice', { code });
+  // User 42 exists and holds CODE_OF_42.
+  const res = await call('POST', '/api/friends/add-by-code', 'alice', { code: CODE_OF_42 });
   assert.strictEqual(res.status, 404);
   assert.deepStrictEqual(await res.json(), { error: 'No user found with this code' });
   assert.strictEqual(friendships.length, 0);
   assertQueriesUnderstood();
 });
 
-test('an exhausted friend code reads exactly like a code nobody holds', async () => {
-  const realCode = 'FLOCK-' + (42).toString(36).toUpperCase().padStart(4, '0');
-  const deadCode = 'FLOCK-' + (99999).toString(36).toUpperCase().padStart(4, '0');
+test('guessing codes costs a probe a guess, even a guess that names nobody', async () => {
+  // add-by-code looks the code up before anything else, so a guess that finds
+  // nobody could have been answered for free. It is charged instead: if only
+  // hits cost budget the misses would be unlimited, and in a space of random
+  // codes the misses are the whole search.
+  for (let i = 0; i < 20; i++) {
+    const res = await call('POST', '/api/friends/add-by-code', 'alice', { code: guessCode(i) });
+    assert.strictEqual(res.status, 404, `guess ${i} should be a miss`);
+  }
+  // The allowance is gone, and it was one allowance: a real person is now a
+  // miss through either door.
+  const byCode = await call('POST', '/api/friends/add-by-code', 'alice', { code: CODE_OF_42 });
+  assert.strictEqual(byCode.status, 404);
+  assert.deepStrictEqual(await byCode.json(), { error: 'No user found with this code' });
+  assert.strictEqual((await probe('alice', 42)).status, 404);
+  assert.strictEqual(friendships.length, 0);
+  assert.deepStrictEqual(emitted, [], 'no notification may be sent past the budget');
+  assertQueriesUnderstood();
+});
 
-  const honestMiss = await call('POST', '/api/friends/add-by-code', 'alice', { code: deadCode });
+test('an exhausted friend code reads exactly like a code nobody holds', async () => {
+  const honestMiss = await call('POST', '/api/friends/add-by-code', 'alice', { code: DEAD_CODE });
   const honestBody = await honestMiss.json();
 
   for (let i = 0; i < 20; i++) await probe('alice', 900000 + i);
-  const exhausted = await call('POST', '/api/friends/add-by-code', 'alice', { code: realCode });
+  const exhausted = await call('POST', '/api/friends/add-by-code', 'alice', { code: CODE_OF_42 });
 
   assert.strictEqual(exhausted.status, honestMiss.status);
   assert.deepStrictEqual(await exhausted.json(), honestBody);
   assertQueriesUnderstood();
 });
 
-test('a friend code that overflows the id column is a miss, not a 500', async () => {
+test('a friend code longer than any issued one is a miss, and never becomes a number', async () => {
+  // Until migration 079 the route parsed the code into a user id, and this
+  // code overflowed INTEGER into a 500. It is looked up as text now, and it
+  // has to stay text: nothing numeric may reach Postgres from a code.
   const res = await call('POST', '/api/friends/add-by-code', 'alice', { code: 'FLOCK-ZZZZZZZZZZ' });
   assert.strictEqual(res.status, 404);
   assert.deepStrictEqual(await res.json(), { error: 'No user found with this code' });
-  // Nothing may have reached Postgres with an out-of-range integer.
   assert.ok(!queries.some((q) => q.params.some((p) => typeof p === 'number' && p > 2147483647)));
+  const lookups = queries.filter((q) => q.sql.includes('FROM users WHERE friend_code = $1'));
+  assert.deepStrictEqual(lookups.map((q) => q.params), [['FLOCK-ZZZZZZZZZZ']]);
   assertQueriesUnderstood();
 });
 

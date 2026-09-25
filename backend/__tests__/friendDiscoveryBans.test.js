@@ -15,8 +15,9 @@
 //   * A friend request aimed at a banned account was accepted and answered
 //     "Friend request sent", so the sender watched Pending forever against an
 //     account that can never sign in to accept it.
-//   * A friend code is a base36 user id, so POST /add-by-code was the same door
-//     with a different spelling and had the same hole.
+//   * POST /add-by-code reaches the same people through a friend code (a user
+//     id in base36 until migration 079, a stored random code since), so it
+//     was the same door with a different key and had the same hole.
 //   * A request the account had sent BEFORE the ban stayed at the top of the
 //     victim's requests screen, actionable, and accepting it minted a live
 //     friendship.
@@ -66,6 +67,7 @@ const MISSING_ID = 4;
 let friendships;   // [{ id, requester_id, addressee_id, status }]
 let nextRowId;
 let statements;    // every non-auth statement text
+let blockedPairs;  // [[a, b]]: a blocked b. Honoured by the pair check only.
 
 const AUTH_SQL = /^SELECT id, email, name, role,.*FROM users WHERE id = \$1$/i;
 
@@ -74,6 +76,27 @@ function directoryRow(id) {
   if (Number(id) === OK_ID) return { id: OK_ID, name: 'Bo', is_banned: false };
   if (Number(id) === BANNED_ID) return { id: BANNED_ID, name: 'Cal', is_banned: true };
   return null;
+}
+
+// users.friend_code as the fixture holds it. A code is drawn at random and
+// stored (migration 079), so nothing here is computed from an id. The banned
+// account keeps the code it was issued, which is what makes the code door
+// worth testing: a stale QR or a shared screenshot still carries it.
+// MISSING_ID has no account, so its entry is a well-formed code that nobody
+// holds, which is what somebody guessing codes sends.
+const FRIEND_CODES = {
+  [ME.id]: 'FLOCK-AVA2345A',
+  [OK_ID]: 'FLOCK-BQ7KX9MZ',
+  [BANNED_ID]: 'FLOCK-CAZ4W8PN',
+  [MISSING_ID]: 'FLOCK-NBDY6TRH',
+};
+const codeFor = (id) => FRIEND_CODES[id];
+
+// The code lookup answers from the same directory the id lookup does, so a
+// code whose id has no row (MISSING_ID) finds nobody.
+function directoryRowByCode(code) {
+  const id = Object.keys(FRIEND_CODES).find((k) => FRIEND_CODES[k] === code);
+  return id === undefined ? null : directoryRow(id);
 }
 
 function dispatch(text, params = []) {
@@ -85,7 +108,34 @@ function dispatch(text, params = []) {
     const row = directoryRow(params[0]);
     return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
   }
+  // POST /add-by-code: the same columns, found by the stored code instead.
+  if (/^SELECT id, name, is_banned FROM users WHERE friend_code = \$1/i.test(sql)) {
+    const row = directoryRowByCode(params[0]);
+    return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
+  }
+  // utils/blocks.js isBlockedBetween, the one pair question, answered from
+  // blockedPairs in either direction. Every other statement that mentions
+  // user_blocks (the lists' inline subqueries) still gets no rows, as before.
+  if (/^SELECT 1 FROM user_blocks WHERE \(blocker_id = \$1 AND blocked_id = \$2\)/i.test(sql)) {
+    const [a, b] = [Number(params[0]), Number(params[1])];
+    const hit = blockedPairs.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
+    return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
+  }
   if (/FROM user_blocks/i.test(sql)) return Promise.resolve({ rows: [], rowCount: 0 });
+
+  // GET /status/:userId. The ban gate is a predicate in the statement itself,
+  // so the fixture applies it only when the statement carries it: a stub that
+  // answered the same rows regardless could not prove the predicate exists.
+  if (/^SELECT f\.status, f\.requester_id FROM friendships f JOIN users u ON u\.id = \$2/i.test(sql)) {
+    const [a, b] = [Number(params[0]), Number(params[1])];
+    const gated = sql.includes('COALESCE(u.is_banned, FALSE) = FALSE');
+    const other = directoryRow(b);
+    if (!other || (gated && other.is_banned)) return Promise.resolve({ rows: [], rowCount: 0 });
+    const rows = friendships
+      .filter((r) => (r.requester_id === a && r.addressee_id === b) || (r.requester_id === b && r.addressee_id === a))
+      .map((r) => ({ status: r.status, requester_id: r.requester_id }));
+    return Promise.resolve({ rows, rowCount: rows.length });
+  }
 
   if (/SELECT id, status, requester_id FROM friendships/i.test(sql)
     || /SELECT status FROM friendships/i.test(sql)) {
@@ -144,6 +194,7 @@ test.after(() => new Promise((r) => server.close(() => r())));
 test.beforeEach(() => {
   friendships = [];
   statements = [];
+  blockedPairs = [];
   nextRowId = 500;
   friendsRouter.__resetBudgets();
 });
@@ -159,8 +210,6 @@ async function call(method, pathname, payload) {
   try { body = JSON.parse(text); } catch { /* not json */ }
   return { status: res.status, text, body };
 }
-
-const codeFor = (id) => 'FLOCK-' + id.toString(36).toUpperCase().padStart(4, '0');
 
 // ---------------------------------------------------------------------------
 // 1. The probes: a banned account answers exactly like one that never existed
@@ -203,6 +252,19 @@ test('a friend code pointing at a banned account is "no user found with this cod
   assert.strictEqual(banned.status, 404, banned.text);
   assert.strictEqual(banned.text, missing.text,
     'a friend code separates a banned account from an unused one');
+  assert.strictEqual(friendships.length, 0);
+});
+
+test('a banned code costs a probe too, so the code door is not a free lane either', async () => {
+  // The code door reads the directory FIRST (a code carries no id to look a
+  // relationship up by), so returning the miss the moment the row says banned
+  // would be the easy edit, and it would make every banned code free to try.
+  const limits = friendsRouter.__budgetLimits().friendProbe;
+  for (let i = 0; i < limits.hourly; i++) {
+    await call('POST', '/api/friends/add-by-code', { code: codeFor(BANNED_ID) });
+  }
+  const spent = await call('POST', '/api/friends/add-by-code', { code: codeFor(OK_ID) });
+  assert.strictEqual(spent.status, 404, spent.text);
   assert.strictEqual(friendships.length, 0);
 });
 
@@ -313,4 +375,51 @@ test('the user search routes filter banned accounts too', () => {
     assert.ok(window.includes(predicate),
       `${what} does not filter banned accounts. A removed account was still being offered by name, with a face, to anyone searching.`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 5. GET /status/:userId: a block, and a ban, read as no relationship at all
+// ---------------------------------------------------------------------------
+// The block route deletes a pair's friendship rows but keeps a declined one,
+// and this read never asked utils/blocks.js, so a blocked pair could still
+// read "declined" (or, masked, "pending") and whose request it was. The answer
+// for a blocked or banned pair is now byte-identical to an id with no row.
+
+test('a blocked pair reads as no relationship, in either direction, with no requester_id', async () => {
+  // Bo declined Ava's request, then one of them blocked the other. The
+  // declined row survives the block route's delete, which is the live shape.
+  friendships.push({ id: 700, requester_id: ME.id, addressee_id: OK_ID, status: 'declined' });
+  const none = await call('GET', `/api/friends/status/${MISSING_ID}`);
+  assert.deepStrictEqual(none.body, { status: 'none' }, 'fixture precondition: the answer for nobody');
+
+  for (const pair of [[ME.id, OK_ID], [OK_ID, ME.id]]) {
+    blockedPairs = [pair];
+    const res = await call('GET', `/api/friends/status/${OK_ID}`);
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(res.text, none.text,
+      `a block ${pair[0]} -> ${pair[1]} still let the pair read their friendship and whose request it was`);
+  }
+
+  // The control: with no block the row is still read, masked as before.
+  blockedPairs = [];
+  const open = await call('GET', `/api/friends/status/${OK_ID}`);
+  assert.deepStrictEqual(open.body, { status: 'pending', requester_id: ME.id });
+});
+
+test('an accepted friendship across a block reads as none too', async () => {
+  // A row the block route would have deleted, left by a race or by data older
+  // than the delete: the block decides, not whatever row happens to exist.
+  friendships.push({ id: 701, requester_id: OK_ID, addressee_id: ME.id, status: 'accepted' });
+  blockedPairs = [[OK_ID, ME.id]];
+  const res = await call('GET', `/api/friends/status/${OK_ID}`);
+  assert.deepStrictEqual(res.body, { status: 'none' });
+});
+
+test('a banned counterpart reads exactly like an id nobody holds', async () => {
+  // The rule this file's header sets: a ban reaches every place a block does.
+  friendships.push({ id: 702, requester_id: ME.id, addressee_id: BANNED_ID, status: 'accepted' });
+  const banned = await call('GET', `/api/friends/status/${BANNED_ID}`);
+  const missing = await call('GET', `/api/friends/status/${MISSING_ID}`);
+  assert.strictEqual(banned.status, 200);
+  assert.strictEqual(banned.text, missing.text);
 });

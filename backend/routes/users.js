@@ -912,28 +912,39 @@ function graceDigests({ email, oauthProvider, oauthId } = {}) {
   };
 }
 
+const GRACE_SPENT_INSERT_SQL = `INSERT INTO grace_spent_identities (email_hash, oauth_hash, expires_at)
+       VALUES ($1::text, $2::text, NOW() + make_interval(days => $3::int))`;
+
+// The address a row PROVED (verified_email, or a grandfathered verified row's
+// email), never one it merely holds. Same rule, and the same order, as
+// recordBannedIdentity above.
+function provenAddressOf(user) {
+  if (!user) return null;
+  return user.verified_email || (user.email_verified === true ? user.email : null);
+}
+
 // Called after the deletion has COMMITTED, and best-effort: a failure here
 // costs one free week to somebody who comes back, which must never be able to
 // stand in the way of an account deletion (Apple 5.1.1(v)). The address used is
 // the one the account PROVED, never the one it merely holds, for the same
 // poison-pill reason recordBannedIdentity spells out: a squatter who registered
 // a stranger's mailbox must not be able to leave a mark on it.
+//
+// It is not the only writer. PUT /profile records the proved address in the
+// same transaction that moves the account off it, because the move clears
+// verified_email, and by the time the account is deleted the address it
+// proved is no longer on the row for this function to find.
 async function recordGraceSpentIdentity(user) {
   try {
     if (!user) return false;
-    const provenAddress = user.verified_email
-      || (user.email_verified === true ? user.email : null);
+    const provenAddress = provenAddressOf(user);
     const { emailHash, oauthHash } = graceDigests({
       email: provenAddress || undefined,
       oauthProvider: user.oauth_provider,
       oauthId: user.oauth_id,
     });
     if (!emailHash && !oauthHash) return false;
-    await pool.query(
-      `INSERT INTO grace_spent_identities (email_hash, oauth_hash, expires_at)
-       VALUES ($1::text, $2::text, NOW() + make_interval(days => $3::int))`,
-      [emailHash, oauthHash, GRACE_IDENTITY_RETENTION_DAYS]
-    );
+    await pool.query(GRACE_SPENT_INSERT_SQL, [emailHash, oauthHash, GRACE_IDENTITY_RETENTION_DAYS]);
     return true;
   } catch (err) {
     console.error('[grace] could not record the identity of a deleted account; a re-signup on it would get another first week:', err.message);
@@ -1549,7 +1560,9 @@ router.put('/profile',
       // their number and it is the number that moved. NULL on every other edit,
       // so COALESCE leaves the stored choice alone.
       const nextPhoneHash = changingPhone ? phoneDiscoveryHash(phone) : null;
-      const result = await pool.query(
+      // `db` is the pool for an ordinary edit and a transaction's client when
+      // the address moves off one the row proved (see vacatedGraceHash below).
+      const runProfileUpdate = (db) => db.query(
         `UPDATE users
          SET name = COALESCE($1, name),
              email = COALESCE($2, email),
@@ -1586,6 +1599,39 @@ router.put('/profile',
           changingPhone ? Boolean(user.phone_discoverable) && Boolean(nextPhoneHash) : null,
         ]
       );
+
+      // THE PROVED ADDRESS IS SPENT WHEN THE ACCOUNT MOVES OFF IT (migration
+      // 076). The move above sets email_verified FALSE and verified_email NULL,
+      // and recordGraceSpentIdentity, which runs when an account is deleted,
+      // digests only the address a row still proves. So: sign up, confirm the
+      // address, take the unmetered first week, move the account to any other
+      // address, delete it, and sign up on the first address again. Nothing
+      // recorded it, and the week came back every time. The digest of the
+      // address being given up is written in the same transaction as the move,
+      // so the account can never hold an unproved address while the one it
+      // proved goes unrecorded. Only a proved address is recorded, for the
+      // poison-pill reason recordBannedIdentity gives, so an unverified row
+      // moving off an address it only typed leaves no mark on its real owner,
+      // and every other edit takes the one-statement path exactly as before.
+      const vacated = changingEmail ? provenAddressOf(user) : null;
+      const vacatedGraceHash = vacated ? graceDigests({ email: vacated }).emailHash : null;
+      let result;
+      if (vacatedGraceHash) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          result = await runProfileUpdate(client);
+          await client.query(GRACE_SPENT_INSERT_SQL, [vacatedGraceHash, null, GRACE_IDENTITY_RETENTION_DAYS]);
+          await client.query('COMMIT');
+        } catch (txErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txErr;
+        } finally {
+          client.release();
+        }
+      } else {
+        result = await runProfileUpdate(pool);
+      }
 
       // An explicit null clears the number, its digest and the discovery
       // switch together. COALESCE above reads a blank as "leave alone", so a
@@ -2606,7 +2652,7 @@ router.get('/export', async (req, res) => {
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
-              phone_discoverable, phone_discoverable_at, grace_forfeited
+              phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -2868,6 +2914,9 @@ router.get('/export', async (req, res) => {
         // had a Flock account, which is why it had no free first week
         // (migration 076). A decision about the person, so it is theirs to see.
         grace_forfeited: account.grace_forfeited ?? false,
+        // The friend code other people add this account by, once one has been
+        // issued (migration 079). The user is shown it in the app already.
+        friend_code: account.friend_code ?? null,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },
@@ -2928,6 +2977,54 @@ router.get('/export', async (req, res) => {
     res.status(500).json({ error: 'Failed to export your data' });
   }
 });
+
+// EVERY PLAN AN ACCOUNT DELETION WILL TOUCH IS LOCKED FIRST, IN ID ORDER.
+//
+// Deleting a plan and deleting an account walk the same rows in opposite
+// orders. DELETE /api/flocks/:id, and a host's leave, which is the same delete,
+// lock the flocks row FOR UPDATE and then cascade through the plan in the order
+// Postgres fires its foreign keys: flock_members, then messages, then votes,
+// budget answers, bills and pins. deleteAccount below removes the account's
+// messages first and then the users row, whose own cascade reaches
+// flock_members, votes, reactions and the rest. So a member deleting their
+// account while the host deletes the plan could each end up holding a row the
+// other needed next. Measured on the embedded Postgres with the member's
+// messages already deleted: the plan delete took the plan's flock_members rows
+// and waited on those messages, the account delete then waited on the member's
+// flock_members row, and Postgres broke the cycle with 40P01. Which side lost
+// was down to timing, so either the member got the 503 below or the host got a
+// 500, for two actions that never conflicted over anything either could see.
+//
+// Locking the plans first turns that into a queue. Every route that deletes a
+// plan (DELETE /:id and both leaves) takes its row FOR UPDATE before it writes
+// anything, and so do the ones that settle who is in it and what they owe (the
+// join, the bill, the budget), so whichever side gets the row first finishes
+// and the other waits holding nothing the first one needs. A plan deleted
+// while this waits is simply not returned, and the deletion carries on without
+// it. Id order, so two account deletions that share plans take them in the
+// same sequence and cannot end up holding one each. FOR UPDATE and not a share
+// lock, because this transaction deletes every plan the account created, and a
+// share lock taken here and upgraded by that cascade is a deadlock of its own.
+//
+// Which plans: every plan the account created, and every plan holding a row
+// this transaction deletes or rewrites that a plan delete also cascades into.
+// Membership alone is not that set, because leaving a plan takes only the
+// flock_members row and leaves the messages, votes, reactions and budget answer
+// where they were. __tests__/flockTransactionIntegrity.test.js derives the
+// table list from the catalog and fails when a new one is not named here.
+const ACCOUNT_FLOCK_LOCKS_SQL = `SELECT id FROM flocks
+   WHERE id IN (SELECT id FROM flocks WHERE creator_id = $1
+                UNION SELECT flock_id FROM flock_members WHERE user_id = $1
+                UNION SELECT flock_id FROM messages WHERE sender_id = $1
+                UNION SELECT flock_id FROM venue_votes WHERE user_id = $1
+                UNION SELECT m.flock_id FROM emoji_reactions r JOIN messages m ON m.id = r.message_id WHERE r.user_id = $1
+                UNION SELECT flock_id FROM budget_submissions WHERE user_id = $1
+                UNION SELECT flock_id FROM bill_splits WHERE paid_by = $1
+                UNION SELECT b.flock_id FROM bill_split_shares s JOIN bill_splits b ON b.id = s.bill_id WHERE s.user_id = $1
+                UNION SELECT flock_id FROM flock_invite_links WHERE created_by = $1
+                UNION SELECT flock_id FROM pinned_messages WHERE pinned_by = $1)
+   ORDER BY id
+   FOR UPDATE`;
 
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
 // Hard-deletes the user row; ON DELETE CASCADE removes their flocks, memberships,
@@ -3029,23 +3126,40 @@ async function deleteAccount(req, res) {
     if (stripeCustomer) {
       try {
         stripeClosed = await closeStripeCustomer(stripeCustomer);
-        // Forget the customer at once. If the deletion below then fails, the
-        // account must not keep pointing at a Stripe customer that no longer
-        // exists, which would turn every later checkout or portal visit into
-        // an error.
-        if (stripeClosed) {
-          await pool.query('UPDATE users SET stripe_customer_id = NULL WHERE id = $1 AND stripe_customer_id = $2::text', [req.user.id, stripeCustomer]);
-        }
       } catch (err) {
         console.error('[users] Stripe customer close failed during deletion:', err?.message || err);
         return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
+      }
+      // NOT CLOSED IS A REFUSAL TOO, not only a throw. closeCustomer answers
+      // false without throwing when STRIPE_SECRET_KEY is missing or too short,
+      // and this route used to carry on and delete the account on that false:
+      // the customer id went with the row and Stripe kept charging a card for
+      // an account that no longer existed, with no way left to cancel from
+      // inside Flock. The rule stated above now holds for every way Stripe can
+      // fail to confirm the cancellation. The deletion is refused, not lost:
+      // it goes through on the first try after Stripe is reachable again.
+      if (!stripeClosed) {
+        console.error(`[users] account ${req.user.id} holds Stripe customer ${stripeCustomer} and Stripe did not confirm it was cancelled, so the deletion was refused.`);
+        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
+      }
+      // Forget the customer at once. If the deletion below then fails, the
+      // account must not keep pointing at a Stripe customer that no longer
+      // exists, which would turn every later checkout or portal visit into
+      // an error.
+      try {
+        await pool.query('UPDATE users SET stripe_customer_id = NULL WHERE id = $1 AND stripe_customer_id = $2::text', [req.user.id, stripeCustomer]);
+      } catch (err) {
+        console.error('[users] could not forget a cancelled Stripe customer during deletion:', err?.message || err);
+        return res.status(503).json({ error: 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.' });
       }
     }
 
     // ROOST TOO. A venue's Roost subscription lives on its own Stripe customer
     // (migration 074) and must stop billing for the same reason as Pro above,
     // under the same rule: if it cannot be cancelled, refuse rather than delete
-    // the only record of which customer to cancel.
+    // the only record of which customer to cancel. closeVenueCustomer throws
+    // whenever a customer is on file and was not closed, a missing Stripe key
+    // included; with no customer on file there is nothing to cancel.
     try {
       await closeVenueCustomer(req.user.id);
     } catch (err) {
@@ -3170,6 +3284,11 @@ async function deleteAccount(req, res) {
     let wasBanned = account.is_banned;
     try {
       await client.query('BEGIN');
+
+      // Before anything else in this transaction: every plan it will touch,
+      // locked in id order. See ACCOUNT_FLOCK_LOCKS_SQL for the deadlock this
+      // turns into a wait.
+      await client.query(ACCOUNT_FLOCK_LOCKS_SQL, [req.user.id]);
 
       await client.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]);
       await client.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]);
@@ -3382,4 +3501,8 @@ module.exports.__testing = {
   REAUTH_WINDOW_MS,
   BAN_TOMBSTONE_RETENTION_DAYS,
   BANNED_IDENTITY_MESSAGE,
+  // So __tests__/flockTransactionIntegrity.test.js can hold the statement up
+  // against the catalog: every table a plan delete cascades into that also
+  // names a user must be in it.
+  ACCOUNT_FLOCK_LOCKS_SQL,
 };
