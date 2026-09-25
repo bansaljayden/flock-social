@@ -1891,6 +1891,38 @@ function trueEventInstant(timestamp, utcOffsetMinutes) {
   return new Date(ts.getTime() - (ts.getTimezoneOffset() + off) * 60 * 1000);
 }
 
+// A venue's coordinate: the first candidate that is a finite number, else null.
+//
+// ZERO IS A COORDINATE. It is the equator and the prime meridian, and the
+// crowd batch route snaps caller coordinates to two decimals, so every venue
+// within a few hundred metres of either line arrives as an exact 0 (the O2 in
+// Greenwich sits at longitude 0.003). The read used to be
+// `a || b || c || 0` behind `!lat || !lng` guards, which filed all of those
+// venues as having no location: no event listing, no neighbour baseline, and
+// on the strip no weather. Only null, undefined and non-finite values are
+// missing now. Numbers only: a string coordinate never worked downstream (the
+// event cache key calls toFixed on it), so it is treated as absent rather than
+// coerced.
+function venueCoordinate(...candidates) {
+  for (const c of candidates) {
+    if (typeof c === 'number' && Number.isFinite(c)) return c;
+  }
+  return null;
+}
+
+// The guard every coordinate consumer below shares: two finite numbers that
+// name a place on Earth. The range half is services/weatherService.js
+// validCoords's, so the weather, event and neighbour lookups for one venue
+// agree about whether it has a location; before it, a latitude of 500 from a
+// batch body was a fresh event cache key and a Ticketmaster call for a point
+// that does not exist. The one deliberate difference from validCoords is
+// strings: validCoords accepts a numeric string from the callers that hand it
+// one (a Birdie tool argument is whatever the model wrote), while these
+// coordinates come off venue objects and are used as numbers (toFixed, the
+// query's latlong), so a string is not a coordinate here.
+const hasCoordinates = (lat, lng) => Number.isFinite(lat) && Number.isFinite(lng)
+  && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+
 // TWO DIFFERENT ZEROS, AND WHY THEY CANNOT SHARE ONE OBJECT (round 24).
 //
 // This function used to answer with the SAME `noEvents` object in five
@@ -1964,7 +1996,7 @@ function eventCacheKeyFor(lat, lng, ms) {
 // calls into 1, never into 0 answers.
 async function prefetchEventRange(lat, lng, startMs, hours, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
-  if (!apiKey || !lat || !lng) return;
+  if (!apiKey || !hasCoordinates(lat, lng)) return;
   const from = new Date(startMs);
   if (Number.isNaN(from.getTime()) || !(hours > 1)) return;
 
@@ -2012,7 +2044,7 @@ async function prefetchEventRange(lat, lng, startMs, hours, userId, opts) {
 async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   if (!apiKey) return eventsUnavailable('no_api_key');
-  if (!lat || !lng) return eventsUnavailable('no_coordinates');
+  if (!hasCoordinates(lat, lng)) return eventsUnavailable('no_coordinates');
 
   // Round 10: the key used to be hour-only, so the 6-day owner forecast served
   // day 1's events for every future date — the upstream query window is built
@@ -2099,10 +2131,15 @@ function buildEventResult(events, lat, lng, tsHour) {
   let totalNearby = 0;
 
   for (const e of events) {
-    const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude) || 0;
-    const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude) || 0;
+    // Parsed WITHOUT a `|| 0` default: a missing or unreadable coordinate is
+    // NaN and is skipped, and a 0 is the equator or the prime meridian and is
+    // kept. The old `|| 0` then `!eLat || !eLng` pair dropped every event on
+    // either line, which since the venue side keeps a 0 (venueCoordinate) is
+    // exactly the street a venue on the meridian is asking about.
+    const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude);
+    const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude);
     // An event we cannot place is an event we cannot say is nearby.
-    if (!eLat || !eLng) continue;
+    if (!hasCoordinates(eLat, eLng)) continue;
 
     const dist = distanceKm(lat, lng, eLat, eLng);
     if (dist > NEARBY_KM) continue;
@@ -2487,7 +2524,7 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
 // right answer for background producers and the unauthenticated demo.
 async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour, userId) {
   const none = { count: 0, mean: 0 };
-  if (!pool || !lat || !lng) return none;
+  if (!pool || !hasCoordinates(lat, lng)) return none;
   // The key IS the box. Query on the bucketed coordinates so the cached entry
   // is a function of nothing else.
   const bLat = (+lat).toFixed(3);
@@ -3363,8 +3400,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
 
   try {
     // Fetch events, feedback, and baseline in parallel — all from local DB/cache
-    const lat = venue.location?.latitude || venue.latitude || venue.lat || 0;
-    const lng = venue.location?.longitude || venue.longitude || venue.lng || 0;
+    // (null when the venue has no coordinate, and 0 is one: see venueCoordinate).
+    const lat = venueCoordinate(venue.location?.latitude, venue.latitude, venue.lat);
+    const lng = venueCoordinate(venue.location?.longitude, venue.longitude, venue.lng);
     const placeId = venue.place_id || venue.google_place_id || null;
     const ts = timestamp ? new Date(timestamp) : new Date();
 
@@ -3819,9 +3857,23 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // "2 AM" was labelled over a bar scored at 3 AM — an hour that does not exist.
   // Every feature in the vector comes from ts.getHours(), so ts is the truth and
   // the label has to follow it, not a parallel count that can drift from it.
-  // (Railway runs UTC, which has no transitions, so this was a developer-machine
-  // and future-deployment bug rather than a live one — but the card publishing a
-  // score under the wrong hour is the same failure whatever the odds.)
+  // (That drift needs a transition in the SERVER's zone. Railway runs UTC, which
+  // has none, so there `ts` walks the venue's hours one at a time and the label
+  // and every feature read the same hour.)
+  //
+  // WHAT THAT DOES NOT COVER, AND IS LIVE IN PRODUCTION: the VENUE's own clock
+  // change. utcOffsetMinutes is the offset Google says is in force at the venue
+  // now, and it is the only one this process holds for a venue, so every slot's
+  // real instant below (trueEventInstant, used for the weather match and the
+  // Ticketmaster window) is computed with it. On the night a venue changes its
+  // clocks, each slot after the change is labelled and scored as one hour and
+  // matched to the weather and events of the hour beside it, and the strip
+  // still draws a spring-forward hour that does not exist and the repeated
+  // fall-back hour once. Fixing that needs the offset in force at each hour,
+  // which needs the venue's zone rules: the Places `timeZone` field (an IANA
+  // name) carried into the venue shape and used per slot. Nothing fetches it
+  // yet, so the error stands at one hour, on the hours after a venue's own
+  // change, two nights a year.
   const labelFor = (d) => {
     const h = d.getHours();
     const period = h >= 12 ? 'PM' : 'AM';
@@ -3834,11 +3886,17 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // The slot instant handed to weatherForSlot is the REAL instant — `ts` below
   // is the venue wall clock encoded in server time (see trueEventInstant), and
   // matching a fake instant against the vendor's real-UTC entries would fetch
-  // the wrong hour's weather by exactly the venue's offset.
-  const wxLat = venue.location?.latitude || venue.latitude || venue.lat || 0;
-  const wxLng = venue.location?.longitude || venue.longitude || venue.lng || 0;
+  // the wrong hour's weather by exactly the venue's offset. Real under the one
+  // offset held for the venue; see the note above labelFor for the night that
+  // offset changes.
+  //
+  // Both coordinates or no forecast, and 0 counts (venueCoordinate). The old
+  // `lat || lng` test fetched a forecast for longitude 0 when only the latitude
+  // was known.
+  const wxLat = venueCoordinate(venue.location?.latitude, venue.latitude, venue.lat);
+  const wxLng = venueCoordinate(venue.location?.longitude, venue.longitude, venue.lng);
   const utcOff = venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
-  const hourlyWx = (wxLat || wxLng)
+  const hourlyWx = hasCoordinates(wxLat, wxLng)
     ? await weatherService.getHourlyForecast(wxLat, wxLng, {
       userId: options && options.userId,
       // Same marker, same reason, on the weather ledger's own unauthenticated
@@ -4037,6 +4095,9 @@ module.exports = {
     groupWeatherCode,
     baselineFromPopularTimes,
     trueEventInstant,
+    // The coordinate read, for __tests__/crowdPublishedParity.test.js: a 0 is
+    // a coordinate and only a missing or non-finite value is not.
+    venueCoordinate,
     reconstructScore,
     // The unarmed dispersion quantile map (CROWD_QMAP_ENABLED). Exported so
     // __tests__/dispersionReconstruction.test.js can pin the table's shape,

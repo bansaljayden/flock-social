@@ -19,6 +19,9 @@ const {
   // Round 15: venue-clock scoring, same as routes/crowd.js.
   venueLocalNow,
   weekdayOffset,
+  // The card's hours construction, so Birdie reads open and closed the way
+  // the card does.
+  venueHoursForDay,
   // Round 25: the verified-reporter blend, so the owner-vs-users precedence is
   // decided by ONE function on every surface that publishes a number.
   buildCalibrationAdjustment,
@@ -824,18 +827,20 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
       scoreTime.setHours(localHour, 0, 0, 0);
 
-      let openHour = null, closeHour = null;
-      const periods = p.currentOpeningHours?.periods;
-      if (periods) {
-        const todayPeriod = periods.find(pd => pd.open?.day === localDay);
-        if (todayPeriod) {
-          openHour = todayPeriod.open?.hour ?? null;
-          closeHour = todayPeriod.close?.hour ?? null;
-          if (closeHour === 0) closeHour = 24;
-        }
-      }
+      // THE CARD'S HOURS, from the card's construction (crowdEngine
+      // venueHoursForDay, which routes/crowd.js fetchVenueFromGoogle reads).
+      // This used to keep `periods.find()` for today and nothing else: a split
+      // day lost its dinner service, a Friday window running past midnight
+      // read as closed at 12:30 AM Saturday because only Saturday's own window
+      // was consulted, and a venue open around the clock had no close hour at
+      // all. The per-day map is what isOpenAt reads, and the peak and best-time
+      // calls below now pass the venue's weekday so it is read at all.
+      const hours = venueHoursForDay(p.currentOpeningHours?.periods, localDay);
 
       const venue = {
+        hoursByDay: hours.hoursByDay,
+        hoursToday: hours.hoursToday,
+        closeMinute: hours.closeMinute,
         place_id: p.id,
         name: p.displayName?.text || '',
         rating: p.rating || null,
@@ -844,8 +849,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         types: p.types || [],
         location: p.location || null,
         isOpen: p.currentOpeningHours?.openNow ?? null,
-        openHour,
-        closeHour,
+        openHour: hours.openHour,
+        closeHour: hours.closeHour,
         // predictBusyness reads this for the Ticketmaster event window
         // (trueEventInstant); null -> the old caller-clock fallback.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
@@ -859,7 +864,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // LLM-driven, caller-steerable path onto the GLOBAL weather ledger with
       // no per-user ceiling on it at all (services/weatherService.js:
       // allowWeatherFetch only meters callers that identify themselves).
-      const weather = (lat && lon) ? await getWeather(lat, lon, { userId }) : null;
+      // Finite, not truthy: 0 is the equator and the prime meridian.
+      const weather = (Number.isFinite(lat) && Number.isFinite(lon))
+        ? await getWeather(lat, lon, { userId })
+        : null;
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
 
@@ -1041,15 +1049,45 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime);
         const next12 = fullDay.slice(0, 12);
         // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
-        // Indexes still line up with fullDay for the best-time exclusion.
-        const peakResult = findPeakTime(next12, venue);
+        // Indexes still line up with fullDay for the best-time exclusion. Both
+        // calls carry the venue's weekday, as the card's do; without it every
+        // hour was tested against one window instead of the per-day map.
+        const peakResult = findPeakTime(next12, venue, { startDay: localDay });
         result.best_time = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
           currentHour: localHour,
-          currentScore: crowdResult.score,
+          currentDay: localDay,
+          // The score this result publishes, which is the owner's reading when
+          // one is live. The words about now are chosen from it; chosen from
+          // the model's 40 they said "Now is good" beside the owner's Packed.
+          currentScore: result.crowd_score,
         });
         result.peak_hours = peakResult.text;
         // Same array the recommendation came from, so the two can't disagree.
-        result.hourly_forecast = next12.map(h => ({ hour: h.hour, label: h.label, score: h.score }));
+        // Each hour is hedged by the rule the headline uses and says which
+        // engine scored it. The hours are narrated too, and a flat "Busy" read
+        // off a category curve claimed more than the "Usually busy" headline
+        // above it for the same venue.
+        result.hourly_forecast = next12.map((h) => ({
+          hour: h.hour,
+          label: publishedLabel(h.score, describePredictionSupport(h.predictionMethod, 0)),
+          score: h.score,
+          predictionMethod: h.predictionMethod || null,
+        }));
+        // THE CURRENT HOUR IS THE HEADLINE. The first entry is the venue's
+        // current hour, and the strip scored it with the model, while
+        // crowd_score may be the owner's live reading or the verified
+        // reporters' blend. Left alone, one tool result said "Packed" and
+        // "Packed now" in its headline and 40 for the same hour two fields
+        // down, and Birdie reads both. The card does the same on the client:
+        // its Now bar copies the dial.
+        if (result.hourly_forecast.length > 0 && Number.isFinite(result.crowd_score)) {
+          result.hourly_forecast[0] = {
+            ...result.hourly_forecast[0],
+            score: result.crowd_score,
+            label: result.crowd_label,
+            predictionMethod: ownerLive ? 'owner_report' : (crowdResult.predictionMethod || null),
+          };
+        }
       } else {
         lockForecastResult(result);
       }

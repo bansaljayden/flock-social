@@ -146,7 +146,49 @@ test('a live reading replaces the number, labelled as the bar\'s own claim', () 
     'attribution must carry when it was said and when it dies');
   // The model\'s own answer stays visible beside it.
   assert.strictEqual(out.rawEngineScore, 42);
-  assert.strictEqual(out.predictionMethod, 'ml');
+  // But the method describes the number that ships, and that number is the
+  // owner's. It stayed 'ml' once, and the card reads the method to decide
+  // whether a number may call itself LIVE model output.
+  assert.strictEqual(out.predictionMethod, 'owner_report');
+});
+
+test('the best-time answer is re-chosen from the owner\'s number, not the model\'s', () => {
+  // The card hands in the function that re-derives its best-time fields for a
+  // score (the `bestTimeFor` option routes/crowd.js passes). A sentence chosen
+  // against the model's 42 said "Now is good" beside the owner's Packed.
+  const asked = [];
+  const bestTimeFor = (score) => {
+    asked.push(score);
+    return { bestTime: `chosen at ${score}`, bestHour: null, bestIndex: null, bestIsNow: true };
+  };
+  const card = cardResult({ bestTime: 'Now is good', bestHour: null, bestIndex: null, bestIsNow: true });
+  const out = ownerReports.applyOwnerReport(card, freshRow({ busy_percent: 90 }), { now: NOW, bestTimeFor });
+  assert.deepStrictEqual(asked, [90]);
+  assert.strictEqual(out.bestTime, 'chosen at 90');
+  assert.strictEqual(out.bestIsNow, true);
+  // The cached card underneath is untouched: the next request without a live
+  // reading gets the model's own sentence back.
+  assert.strictEqual(card.bestTime, 'Now is good');
+});
+
+test('when the reporters outrank the owner, the best time stays the one chosen for their number', () => {
+  let asked = 0;
+  const bestTimeFor = () => { asked += 1; return { bestTime: 'wrong' }; };
+  const blended = cardResult({
+    score: 47,
+    bestTime: 'Now is good',
+    confidenceBasis: 'user_reports',
+    calibration: { feedbackUsed: true, reportCount: crowdEngine.MIN_CALIBRATION_REPORTERS, predictionDrift: 5 },
+  });
+  const out = ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), { now: NOW, bestTimeFor });
+  assert.strictEqual(asked, 0, 'the published number did not change, so neither does its sentence');
+  assert.strictEqual(out.bestTime, 'Now is good');
+  assert.strictEqual(out.predictionMethod, 'ml', 'an outranked reading does not relabel the model\'s number');
+  // And an expired reading asks nothing either.
+  const stale = ownerReports.applyOwnerReport(cardResult({ bestTime: 'Now is good' }),
+    freshRow({ created_at: minutesAgo(91) }), { now: NOW, bestTimeFor });
+  assert.strictEqual(asked, 0);
+  assert.strictEqual(stale.bestTime, 'Now is good');
 });
 
 test('derived fields follow the override — no "95% full" above "No wait"', () => {
