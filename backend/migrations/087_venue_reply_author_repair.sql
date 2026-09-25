@@ -45,10 +45,21 @@
 --     that moment. The badge can have been off in between with no row saying
 --     so (the place change in 1), and only a verified claim on the place could
 --     write a reply. "Another claim" is one still on this place, or one whose
---     profile no longer exists, so its place cannot be known. A previous
---     owner that moved its claim to a different place cannot be seen from
---     here, and a reply it wrote inside the current owner's claim is the one
---     case this rule can still give to the wrong account.
+--     profile no longer exists, so its place cannot be known.
+--
+-- TWO CASES THIS RULE CAN STILL GIVE TO THE WRONG ACCOUNT. Both are replies a
+-- previous owner wrote inside the current owner's claim, before its latest
+-- verification, and both come from the check above seeing a previous owner
+-- only through that owner's own audit rows:
+--   * a previous owner that moved its claim to a different place;
+--   * a previous owner verified before migration 020, when a verification
+--     wrote no row. Its claim can still be on the place with only a later
+--     venue_unverified row, or its account can be gone with no row at all,
+--     and either way no row at or before its reply says it was verified then.
+--     For example: P is verified on another place 20 days ago; Q holds this
+--     place on a badge from before 020 and replies 10 days ago; an admin
+--     un-verifies Q 8 days ago (or Q deletes its account); P moves its claim
+--     here and is verified 5 days ago. Q's reply is given to P.
 --
 -- WHICH ROWS. Only the ones 083 could have written: a reply dated before 083's
 -- applied_at in schema_migrations, and a reply with no date on a review
@@ -62,6 +73,26 @@
 -- A reply stored between 083 and the code that writes authors (an old server
 -- still answering during that deploy) is dated after 083 and has no author.
 -- It is left as it is, unpublished, the same as before this file.
+--
+-- WHILE THIS FILE RUNS. The server still answering during the deploy can write
+-- to a row this file is about to change, in the seconds the UPDATE below runs.
+-- That UPDATE decides every row from the snapshot it starts with, and for a
+-- row changed while it waits it re-checks only the id and the author. Two
+-- things follow, and production is past both, because this file has run there:
+--   * a reply posted again through the route in that moment keeps its new
+--     words and is given the author decided for the old ones, which can be
+--     none, so the new reply is left unpublished;
+--   * an account deletion whose erase lands in that moment can have the
+--     deleted account's id written back. The foreign key refuses it (23503)
+--     and that boot fails; the next one runs this file again without the
+--     account and succeeds.
+--
+-- REPLYING AGAIN. A reply left with no author, for any reason above, stays in
+-- its row unpublished. Its owner can reply again: the Reviews tab shows that
+-- review as unanswered, with the Reply button back (ownReplyOnly in
+-- routes/venueDashboard.js), and the reply route writes the author with the
+-- words, so the new reply is published. The old words are not shown back to
+-- the owner, because nothing can say whose they were.
 --
 -- ONCE, AND WHY THE INDEX IS WHAT SAYS SO. The correction runs in the block
 -- that builds the index below, and only when the index is not there yet, the
