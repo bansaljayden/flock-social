@@ -286,6 +286,86 @@ test("040 does not fail the boot on a venue profile with no owner", async () => 
 });
 
 // ---------------------------------------------------------------------------
+// 064 AND WHO AN SOS REACHED. The one backfill in the chain keyed on a ledger
+// timestamp, which is the one thing a replay rewrites.
+// ---------------------------------------------------------------------------
+//
+// 064 marks alerts written before 063 as legacy, NULL recipients, so their
+// stand-down falls back to the live audience, and makes an empty array mean
+// "nobody". Its cutoff is 063's applied_at, and the replay in section 3
+// records 063 again at the moment it runs. Before 064 learned to run its
+// backfill once, that pass turned every recorded audience into NULL: the rows
+// seeded here are held up against the replay below.
+
+const alertRecipients = async () => (await pool.query(
+  'SELECT id, flock_recipient_ids, contact_recipients FROM emergency_alerts ORDER BY id'
+)).rows;
+
+test('064 on its first application marks only the alerts from before 063, and only when they name no one', async () => {
+  // 063's post-state, which is the state 064 met everywhere it first ran: both
+  // columns NOT NULL with the empty defaults. Nothing earlier in this file
+  // writes an alert, so no NULL stands in the way of the constraint.
+  await pool.query(
+    `ALTER TABLE emergency_alerts
+       ALTER COLUMN flock_recipient_ids SET DEFAULT '{}',
+       ALTER COLUMN flock_recipient_ids SET NOT NULL,
+       ALTER COLUMN contact_recipients SET DEFAULT '[]'::jsonb,
+       ALTER COLUMN contact_recipients SET NOT NULL`
+  );
+  await pool.query(
+    `UPDATE schema_migrations SET applied_at = NOW() - INTERVAL '1 day'
+      WHERE name = '063_emergency_alert_recipients.sql'`
+  );
+  // From before 063: the defaults are all it has.
+  const legacy = (await pool.query(
+    `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted, created_at)
+     VALUES ($1, 0, 0, 1, (NOW() - INTERVAL '2 days')::timestamp) RETURNING id`,
+    [bobId]
+  )).rows[0].id;
+  // From after it, the two shapes routes/safety.js writes: an alarm that
+  // reached a flockmate and a contact, and one that reached nobody at all.
+  const contact = [{ name: 'Sam', email: 'sam.bootsafety@example.com' }];
+  const reached = (await pool.query(
+    `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted, flock_recipient_ids, contact_recipients)
+     VALUES ($1, 0, 0, 1, ARRAY[$2]::int[], $3::jsonb) RETURNING id`,
+    [bobId, ownerId, JSON.stringify(contact)]
+  )).rows[0].id;
+  const nobody = (await pool.query(
+    `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted, flock_recipient_ids, contact_recipients)
+     VALUES ($1, 0, 0, 0, '{}'::int[], '[]'::jsonb) RETURNING id`,
+    [bobId]
+  )).rows[0].id;
+
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '064_emergency_alert_snapshot_sentinel.sql'`);
+  await migrate(pool);
+
+  const byId = Object.fromEntries((await alertRecipients()).map((r) => [r.id, r]));
+  assert.deepEqual(
+    [byId[legacy].flock_recipient_ids, byId[legacy].contact_recipients], [null, null],
+    'an alert from before 063 has no snapshot, so it must read as legacy'
+  );
+  assert.deepEqual(
+    [byId[reached].flock_recipient_ids, byId[reached].contact_recipients], [[ownerId], contact],
+    'an alert that recorded who it reached keeps that record'
+  );
+  assert.deepEqual(
+    [byId[nobody].flock_recipient_ids, byId[nobody].contact_recipients], [[], []],
+    'an alert from after 063 that reached nobody is authoritative, not legacy'
+  );
+  const { rows: cols } = await pool.query(
+    `SELECT attname, attnotnull, atthasdef FROM pg_attribute
+      WHERE attrelid = 'emergency_alerts'::regclass
+        AND attname IN ('flock_recipient_ids', 'contact_recipients')
+      ORDER BY attname`
+  );
+  assert.deepEqual(
+    cols.map((c) => [c.attname, c.attnotnull, c.atthasdef]),
+    [['contact_recipients', false, false], ['flock_recipient_ids', false, false]],
+    'NULL has to be storable and nothing may default it away'
+  );
+});
+
+// ---------------------------------------------------------------------------
 // 3. REPLAY — every file, a second time, over live data
 // ---------------------------------------------------------------------------
 
@@ -297,6 +377,8 @@ test('the whole chain replays over a populated database without throwing', async
     subs: await count('SELECT COUNT(*) AS n FROM venue_subscriptions'),
     profiles: await count('SELECT COUNT(*) AS n FROM venue_profiles'),
   };
+  const alertsBefore = await alertRecipients();
+  assert.equal(alertsBefore.length, 3, 'the SOS rows seeded for 064 must be here to be checked');
 
   await pool.query('DELETE FROM schema_migrations');
   await migrate(pool); // THE assertion: a second pass must not fail the boot
@@ -308,6 +390,13 @@ test('the whole chain replays over a populated database without throwing', async
     subs: await count('SELECT COUNT(*) AS n FROM venue_subscriptions'),
     profiles: await count('SELECT COUNT(*) AS n FROM venue_profiles'),
   }, before, 'a replay must not add, duplicate or destroy a single row');
+  // Nor rewrite one. 063 is recorded again at this moment, so a backfill keyed
+  // on its timestamp sees every alert ever written as "from before 063".
+  assert.deepEqual(
+    await alertRecipients(), alertsBefore,
+    'a replay must not change who an SOS reached: a recorded audience that became NULL would send the ' +
+    'all-clear to the live flock and contact list, people who never received the alarm'
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -600,6 +689,116 @@ test("048 reaches a database that applied 003 before the is_hidden ALTERs existe
     ['ChIJbootsafety048']
   );
   assert.equal(rows[0].total, 0, 'the reviews stats statement must run, not 42703');
+});
+
+// ---------------------------------------------------------------------------
+// 7. THE SWALLOW AGAIN, ON A CHECK CONSTRAINT. 067 and the repair in 081.
+// ---------------------------------------------------------------------------
+//
+// 067 widened messages.message_type to admit 'system' inside the same
+// `EXCEPTION WHEN others` section 4 is about, so under the runner's
+// lock_timeout the widening can give up in silence. When the conflicting lock
+// then clears before 067's next ALTER times out too, the file commits and is
+// recorded, and nothing ever runs it again. Measured with the runner itself
+// and a second connection holding ACCESS SHARE on messages for 13 seconds:
+// 067 recorded, the old CHECK in place, the system row refused with 23514.
+// That takes two lock timeouts of real time, so the test below proves the
+// swallow with 067's own DO block under a short lock_timeout, and the repair
+// with the runner.
+
+// utils/systemMessages.js writeSystemMessage, verbatim: the one statement that
+// writes a system row.
+const SYSTEM_ROW_INSERT = `INSERT INTO messages (flock_id, sender_id, message_text, message_type, system_kind)
+       VALUES ($1, $2, $3, 'system', $4)
+       RETURNING *`;
+
+async function messageTypeCheck() {
+  const { rows } = await pool.query(
+    `SELECT oid, convalidated, pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conrelid = 'messages'::regclass AND conname = 'messages_message_type_check'`
+  );
+  return rows[0] || null;
+}
+
+test("067 can give up on its CHECK in silence, and 081 repairs a database where it did", async () => {
+  // The CHECK every database had before 067: three values, no 'system'.
+  await pool.query('ALTER TABLE messages DROP CONSTRAINT messages_message_type_check');
+  await pool.query(
+    `ALTER TABLE messages ADD CONSTRAINT messages_message_type_check
+       CHECK (message_type IN ('text', 'venue_card', 'image'))`
+  );
+
+  // 067's own DO block while another connection holds a lock on messages.
+  // 300ms of lock_timeout is the runner's 10 seconds without the wait.
+  const sql067 = fs.readFileSync(path.join(MIGRATIONS_DIR, '067_flock_system_messages.sql'), 'utf8');
+  const widen = /DO \$\$ BEGIN[\s\S]*?END \$\$;/.exec(sql067);
+  assert.ok(widen && /EXCEPTION WHEN others/.test(widen[0]), "067's widening is the DO block under test");
+  const blocker = await pool.connect();
+  const runner = await pool.connect();
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('LOCK TABLE messages IN ACCESS SHARE MODE');
+    await runner.query("SET lock_timeout = '300ms'");
+    await runner.query(widen[0]); // returns cleanly, which is the defect
+  } finally {
+    await blocker.query('ROLLBACK').catch(() => {});
+    blocker.release();
+    await runner.query('RESET lock_timeout').catch(() => {});
+    runner.release();
+  }
+  assert.doesNotMatch(
+    (await messageTypeCheck()).def, /'system'/,
+    'the lock timeout was caught as if it were success, and the CHECK was never widened'
+  );
+
+  const flockId = (await pool.query(
+    `INSERT INTO flocks (name, creator_id) VALUES ('Boot safety 081', $1) RETURNING id`, [bobId]
+  )).rows[0].id;
+  try {
+    // That database cannot store the row a venue confirmation writes...
+    await assert.rejects(
+      pool.query(SYSTEM_ROW_INSERT, [flockId, bobId, 'Kome', 'venue_set']),
+      (err) => err.code === '23514',
+      'a system row must be refused by the three-value CHECK, which is the production symptom'
+    );
+
+    // ...until the deploy that carries 081, with 067 still recorded as done.
+    assert.equal(await migrationRowCount('067_flock_system_messages.sql'), 1);
+    await pool.query(`DELETE FROM schema_migrations WHERE name = '081_system_message_type_check.sql'`);
+    await migrate(pool);
+    assert.equal(await migrationRowCount('081_system_message_type_check.sql'), 1);
+    const repaired = await messageTypeCheck();
+    assert.match(repaired.def, /'system'/);
+    assert.equal(repaired.convalidated, true, 'VALIDATE ran, so every existing row is known to satisfy it');
+    const { rows } = await pool.query(SYSTEM_ROW_INSERT, [flockId, bobId, 'Kome', 'venue_set']);
+    assert.equal(rows[0].message_type, 'system');
+
+    // A second pass changes nothing: the same constraint, not one dropped and
+    // re-added under ACCESS EXCLUSIVE on every replay.
+    await pool.query(`DELETE FROM schema_migrations WHERE name = '081_system_message_type_check.sql'`);
+    await migrate(pool);
+    assert.equal(await migrationRowCount('081_system_message_type_check.sql'), 1);
+    assert.equal((await messageTypeCheck()).oid, repaired.oid, 'a healthy database had its CHECK rebuilt');
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+  }
+});
+
+test('081 widens NOT VALID, validates in a statement of its own, and catches nothing', () => {
+  // The shape is the fix. A validating ADD holds ACCESS EXCLUSIVE on messages
+  // for a whole-table scan, VALIDATE in the same transaction would hold it
+  // just as long, and a handler that catches a lock timeout is how 067 went
+  // wrong in the first place.
+  const { splitStatements } = require('../db/migrate');
+  const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, '081_system_message_type_check.sql'), 'utf8');
+  assert.ok(sql.startsWith('-- @noTransaction'), 'each statement must commit on its own');
+  const code = sql.replace(/^[ \t]*--[^\n]*$/gm, '');
+  assert.equal(/EXCEPTION\s+WHEN/i.test(code), false, '081 must not catch anything');
+  const stmts = splitStatements(sql).map((s) => s.replace(/^[ \t]*--[^\n]*$/gm, '').trim());
+  const add = stmts.findIndex((s) => /ADD CONSTRAINT messages_message_type_check[\s\S]*\bNOT VALID\b/.test(s));
+  const validate = stmts.findIndex((s) => /^ALTER TABLE messages VALIDATE CONSTRAINT messages_message_type_check$/.test(s));
+  assert.ok(add >= 0, 'the widening is added NOT VALID');
+  assert.ok(validate > add, 'and validated afterwards, in its own statement');
 });
 
 test('every migration file declares post-conditions the runner can actually parse', async () => {
