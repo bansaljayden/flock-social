@@ -83,7 +83,7 @@ describe('the sheet is a real alertdialog', () => {
     const title = document.getElementById(dialog.getAttribute('aria-labelledby'));
     const desc = document.getElementById(dialog.getAttribute('aria-describedby'));
     expect(title).toHaveTextContent('Emergency');
-    expect(desc).toHaveTextContent('1 trusted contact will be notified');
+    expect(desc).toHaveTextContent('1 trusted contact will be emailed.');
   });
 
   it('the described-by count line is accurate: singular, plural, and none', () => {
@@ -94,8 +94,14 @@ describe('the sheet is a real alertdialog', () => {
       unmount();
       return text;
     };
-    expect(line(1)).toBe('1 trusted contact will be notified');
-    expect(line(3)).toBe('3 trusted contacts will be notified');
+    // The second audience is said before the press, not only in the policy:
+    // an alert also rings everyone on a confirmed plan within twelve hours, in
+    // the app, with the location (routes/safety.js, alertFlockMembers).
+    const FLOCK = 'People on a confirmed plan with you around now also get an alert in the app, with your location if your phone has a fix.';
+    expect(line(1)).toBe(`1 trusted contact will be emailed. ${FLOCK}`);
+    expect(line(3)).toBe(`3 trusted contacts will be emailed. ${FLOCK}`);
+    // With nobody to email the server refuses before either leg runs, so the
+    // sheet promises nothing about the plan either.
     expect(line(0)).toBe('No trusted contacts set up');
   });
 
@@ -396,6 +402,19 @@ describe('SOS stand-down', () => {
     expect(onStandDown).toHaveBeenCalledTimes(1);
   });
 
+  it('never says the contacts were alerted when no contact email was accepted', () => {
+    // A 502 from the alert: no contact was emailed, but the flock may have
+    // heard, so the band is offered. It used to read "Your contacts were
+    // alerted" to somebody whose contacts had been told nothing.
+    const onStandDown = jest.fn();
+    render(<EmergencySheet {...baseProps} alertLive contactsAlerted={false} onStandDown={onStandDown} />);
+    expect(screen.queryByText(/Your contacts were alerted/i)).toBeNull();
+    expect(screen.getByText(/None of your contacts could be emailed/i)).toBeTruthy();
+    expect(screen.getByText(/Anyone on a plan with you may still have been alerted in the app/i)).toBeTruthy();
+    fireEvent.click(screen.getByText(/Tell them I'm OK/i));
+    expect(onStandDown).toHaveBeenCalledTimes(1);
+  });
+
   it('the stand-down is not painted in the alarm colour', () => {
     // Every red control on this sheet raises an alarm. This one ends one, and
     // giving it the same colour is how a frightened person taps the thing that
@@ -429,7 +448,40 @@ describe('SOS stand-down', () => {
     // exactly the moment somebody reopens the app to undo what they did.
     expect(APP).toContain("localStorage.getItem('flock.sosAlertAt')");
     expect(APP).toContain("localStorage.setItem('flock.sosAlertAt'");
-    expect(APP).toContain('rememberSosAlert(Date.now())');
+    expect(APP).toContain('rememberSosAlert(Date.now(), true)');
+    // And whether a contact was actually reached, beside it, so the band's
+    // sentence survives the relaunch too.
+    expect(APP).toContain("localStorage.getItem('flock.sosContactsReached')");
+    expect(APP).toContain("localStorage.setItem('flock.sosContactsReached'");
+  });
+
+  it('App.js arms the band from what the server said about the contacts', () => {
+    const h = APP.slice(APP.indexOf('const handleEmergencyAlert = useCallback'));
+    const body = h.slice(0, h.indexOf('const handleStandDown'));
+    // A 200 reached a contact; a 429 with alreadySent names an alert that did;
+    // a 502 reached none, and the band must say so.
+    expect(body).toContain('rememberSosAlert(Date.now(), true);');
+    expect(body).toMatch(/if \(err\?\.status === 429 && err\?\.data\?\.alreadySent === true\) rememberSosAlert\(Date\.now\(\), true\);/);
+    expect(body).toMatch(/if \(err\?\.status === 502\) rememberSosAlert\(Date\.now\(\), false\);/);
+  });
+
+  it('the stand-down ends the location chase before it asks the server anything', () => {
+    // An SOS sent indoors chases a fix for up to 45 seconds, and a fix that
+    // landed after "Tell them I'm OK" went out as a new alarm with a map.
+    // services/sosFollowUp.js is the chase and sosFollowUpChase.test.js drives
+    // it; this pins that the stand-down uses it, in this order: end the chase,
+    // let a follow-up already on the wire land, then stand down.
+    const h = APP.slice(APP.indexOf('const handleStandDown = useCallback'));
+    const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
+    const cancel = body.indexOf('cancelSosLocationFollowUp();');
+    const settle = body.indexOf('await sosFollowUp.settled();');
+    const standDown = body.indexOf('await cancelEmergencyAlert();');
+    expect(cancel).toBeGreaterThan(-1);
+    expect(settle).toBeGreaterThan(cancel);
+    expect(standDown).toBeGreaterThan(settle);
+    // The chase names the alert it follows, so the server can refuse its fix.
+    expect(APP).toContain('startSosLocationFollowUp(data.alertId)');
+    expect(APP).toMatch(/sosFollowUp\.start\(alertId, \{/);
   });
 
   it('App.js clears the band on nothingToCancel and KEEPS it on a failure', () => {
@@ -459,6 +511,7 @@ describe('SOS stand-down', () => {
   it('the sheet is handed the stand-down from App.js', () => {
     const region = APP.slice(APP.indexOf('<EmergencySheet'), APP.indexOf('/>', APP.indexOf('<EmergencySheet')));
     expect(region).toContain('alertLive={sosAlertLive}');
+    expect(region).toContain('contactsAlerted={sosContactsReached}');
     expect(region).toContain('onStandDown={handleStandDown}');
     expect(region).toContain('standingDown={sosStandingDown}');
   });

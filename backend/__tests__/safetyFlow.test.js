@@ -727,10 +727,15 @@ test('stand-down: it writes no row, because a row would block the next real SOS'
   // row. A stand-down inserted there reads as a delivered alert and refuses the
   // next genuine press for five minutes. That is the one thing this route is
   // absolutely not allowed to do.
+  //
+  // Since migration 084 it does write ONE thing: withdrawn_at on the alerts it
+  // stands down, so a location follow-up still chasing a fix cannot re-raise
+  // them. Never created_at and never contacts_alerted, the two the cooldown
+  // reads, and never a new row.
   S.resetCancels();
   const mail = stubMail();
   const { calls, restore } = stubPool(async (sql) => {
-    if (sql.includes('FROM emergency_alerts')) return { rows: [{ created_at: new Date(), contacts_alerted: 1 }], rowCount: 1 };
+    if (sql.includes('FROM emergency_alerts')) return { rows: [{ id: 41, created_at: new Date(), contacts_alerted: 1, withdrawn_at: null }], rowCount: 1 };
     if (sql.includes('FROM trusted_contacts')) return { rows: [{ contact_name: 'Mum', contact_email: 'mum@example.com' }] };
     if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
     return null;
@@ -738,7 +743,11 @@ test('stand-down: it writes no row, because a row would block the next real SOS'
   try {
     await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
     assert.ok(!wrote(calls, 'INSERT INTO emergency_alerts'));
-    assert.ok(!wrote(calls, 'UPDATE emergency_alerts'));
+    const updates = calls.filter((c) => /UPDATE emergency_alerts/.test(c.text));
+    assert.strictEqual(updates.length, 1, 'the one write is the withdrawal');
+    assert.match(updates[0].text, /SET withdrawn_at = NOW\(\)\s+WHERE user_id = \$1 AND id = ANY\(\$2::int\[\]\) AND withdrawn_at IS NULL/);
+    assert.doesNotMatch(updates[0].text, /created_at\s*=|contacts_alerted\s*=/, 'the cooldown columns are never touched');
+    assert.deepStrictEqual(updates[0].params, [ME.id, [41]]);
   } finally { mail.restore(); restore(); }
 });
 

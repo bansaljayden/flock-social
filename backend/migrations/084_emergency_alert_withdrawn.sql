@@ -1,0 +1,31 @@
+-- 084: when the person who raised an SOS said they are OK.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT WENT WRONG
+--
+-- POST /api/safety/alert/cancel sends the all-clear and wrote nothing down.
+-- The alert row looked exactly as it did before the stand-down, so the route
+-- that admits an SOS could not tell a withdrawn alert from a live one.
+--
+-- That mattered for the location follow-up. An SOS pressed indoors goes out
+-- with no position, and the app keeps asking the phone for a fix for up to 45
+-- seconds and then posts it as a second alert. The server lets that second
+-- alert through the sixty second floor because "the last alert had no location
+-- and this one does" (isLocationFollowUp). When the person stood the alert
+-- down inside those 45 seconds, the fix still landed, the rule still held, and
+-- a new emergency email and a new flock alarm with a map went out after
+-- everybody had just been told the person was OK.
+--
+-- withdrawn_at is set on every alert in the stand-down window, under the same
+-- per-user advisory lock the alert's claim takes, so each follow-up is either
+-- admitted before the stand-down or refused after it. It records the person's
+-- word, not the mail provider's: it is set even when every all-clear email
+-- fails, because a location sent after "I am OK" is wrong whether or not the
+-- all-clear arrived.
+--
+-- TIMESTAMP, not TIMESTAMPTZ, for the same reason as created_at beside it
+-- (000_bootstrap.sql): the only comparison it takes part in is against
+-- created_at, and both are written by NOW() into a naive column. NULL means
+-- the alert has not been withdrawn, which is every row written before this
+-- migration, so nothing needs backfilling.
+ALTER TABLE emergency_alerts ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMP;

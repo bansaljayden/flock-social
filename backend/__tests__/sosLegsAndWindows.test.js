@@ -13,7 +13,9 @@ test('the flock is told before the email verdict can end the request, on the ala
   // contacts were actually reached, so the flockmate's screen stops claiming
   // they were emailed when none were. The ordering this test guards is
   // unchanged: the leg still runs before the 502 can end the request.
-  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent, alertId)");
+  // `, flockLeg` since migration 084: a follow-up rings the people the alert
+  // it follows rang, and the fix's radius rides along for the alarm screen.
+  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent, alertId, flockLeg)");
   const alarm502 = safety.indexOf('if (emailsSent === 0) {');
   assert.ok(alarmLeg > 0 && alarm502 > alarmLeg, 'the alarm flock leg runs before the 502');
   const sdLeg = safety.indexOf("notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds)");
@@ -61,8 +63,11 @@ test('a banned sender still rings the flock for an SOS and its stand-down', () =
 test('an alarm the flock heard can be withdrawn even when every email failed', () => {
   // The cancel select used to require contacts_alerted > 0, so an alarm whose
   // emails failed (the flock leg runs regardless) left a full-screen alarm on
-  // every flockmate's phone with no way to call it off.
-  assert.match(safety, /\(COALESCE\(contacts_alerted, 0\) > 0 OR COALESCE\(cardinality\(flock_recipient_ids\), 0\) > 0\)/);
+  // every flockmate's phone with no way to call it off. The test moved from the
+  // SELECT into reachedAnybody when the stand-down began reading every alert
+  // in its window (migration 084), and it asks the same two questions.
+  assert.match(safety, /function reachedAnybody\(row\) \{\s*return \(Number\(row\.contacts_alerted\) \|\| 0\) > 0\s*\|\| \(Array\.isArray\(row\.flock_recipient_ids\) && row\.flock_recipient_ids\.length > 0\);/);
+  assert.match(safety, /if \(!found\.rows\.some\(reachedAnybody\)\) \{/);
   // Who the alarm reached is written on the row, both legs.
   assert.match(safety, /UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\] WHERE id = \$2/);
   assert.match(safety, /UPDATE emergency_alerts SET contacts_alerted = \$1, contact_recipients = \$3::jsonb WHERE id = \$2/);

@@ -31,9 +31,12 @@ test('a live share follows the person instead of re-sending one frozen fix', () 
 });
 
 test('the flock alarm says whether the trusted contacts were actually reached', () => {
-  expect(safety).toMatch(/async function alertFlockMembers\(io, user, coords, contactsAlerted, alertId = null\) \{/);
+  // `leg` since migration 084: a location follow-up rings the people the alert
+  // it follows rang, and the fix's radius travels to the alarm screen. The
+  // count this test is about is still the fourth argument, from emailsSent.
+  expect(safety).toMatch(/async function alertFlockMembers\(io, user, coords, contactsAlerted, alertId = null, leg = \{\}\) \{/);
   expect(safety).toMatch(/\.\.\.\(typeof contactsAlerted === 'number' \? \{ contactsAlerted \} : \{\}\),/);
-  expect(safety).toMatch(/alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId\)/);
+  expect(safety).toMatch(/alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId, flockLeg\)/);
   expect(app).toMatch(/\{safetyAlert\.contactsAlerted === 0/);
   // And the number reaches state from both transports (safety audit
   // 2026-09-05: the branch was pinned, the plumbing was not, and the sentence
@@ -57,6 +60,10 @@ test('sharing an exact location is armed, like the alert above it', () => {
 test('the safety card promises the channel and the location the code has', () => {
   expect(profile).toMatch(/Trusted contacts get an email when you press SOS\. It includes your location if your phone has a fix at the time, and Flock keeps trying for one just after\./);
   expect(profile).not.toMatch(/They'll get a message with your location\./);
+  // And the second audience, which the card left out while the route rang it:
+  // everyone on a confirmed plan within SOS_FLOCK_WINDOW_HOURS, in the app.
+  expect(safety).toMatch(/const SOS_FLOCK_WINDOW_HOURS = 12;/);
+  expect(profile).toMatch(/People on a confirmed plan with you around now also get an alert in the app, with the same location\./);
 });
 
 test('a number the server could not read is not a number nobody has', () => {
@@ -100,6 +107,11 @@ test('the location follow-up is sent the moment a fix lands, and a 502 alarm can
   // follow-up window, labelled as a move. And a 502 (no email landed) is an
   // alarm the flock still heard, so the stand-down band is offered.
   expect(app).not.toMatch(/SOS_FOLLOW_UP_GAP_MS/);
-  expect(app).toMatch(/getSosPosition\(SOS_FOLLOW_UP_FIX_MS, 0\)\.then\(async \(\{ coords \}\) => \{/);
-  expect(app).toMatch(/if \(err\?\.status === 502\) rememberSosAlert\(Date\.now\(\)\);/);
+  // The chase lives in services/sosFollowUp.js now, where
+  // sosFollowUpChase.test.js drives it: the fix is posted the moment it
+  // lands. App.js hands it the same 45 second, maximumAge 0 position read.
+  expect(app).toMatch(/createSosFollowUp\(\s*\(\) => getSosPosition\(SOS_FOLLOW_UP_FIX_MS, 0\),\s*sendEmergencyAlert,\s*\)/);
+  // A 502 is remembered as an alert that reached NO contact, so the band is
+  // offered without claiming the contacts were alerted.
+  expect(app).toMatch(/if \(err\?\.status === 502\) rememberSosAlert\(Date\.now\(\), false\);/);
 });

@@ -532,10 +532,27 @@ async function processFlockAlert(flock) {
     // visibility gate suppressed and `{ sent: 0 }` for one with no registered
     // device; counting those as delivery left the flock permanently marked as
     // alerted on the strength of nothing having been sent.
-    const delivered = outcomes.reduce((n, o) => {
-      const r = o.status === 'fulfilled' ? o.value : null;
-      return n + (r && !r.skipped && r.sent > 0 ? 1 : 0);
-    }, 0);
+    const results = outcomes.map((o) => (o.status === 'fulfilled' ? o.value : null));
+    const countDelivered = (rs) => rs.reduce((n, r) => n + (r && !r.skipped && r.sent > 0 ? 1 : 0), 0);
+    const delivered = countDelivered(results);
+
+    // A send still out at the push deadline is not "nothing sent". It answers
+    // late (services/firebaseService.js, `settled`), and a slow success used
+    // to read as sent: 0 here, so the claim was released and the next sweep
+    // sent the same alert again to everyone who already had it. When nothing
+    // had landed by the deadline but something is still out, the claim is
+    // kept until those sends answer, and released only if none of them
+    // landed. The sweep does not wait for it: the next flock is not held up
+    // by a slow provider.
+    const late = results.filter((r) => r && r.settled && typeof r.settled.then === 'function');
+    if (delivered === 0 && late.length > 0) {
+      Promise.all(results.map((r) => (r && late.includes(r) ? r.settled.catch(() => r) : r)))
+        .then(async (finals) => {
+          if (countDelivered(finals) === 0) await releaseAlert(flock.id);
+        })
+        .catch((err) => console.error(`[CrowdAlerts] late settle failed for flock ${flock.id}:`, err.message));
+      return;
+    }
 
     if (delivered === 0) {
       // Drop the claim so a later sweep can retry rather than the flock being

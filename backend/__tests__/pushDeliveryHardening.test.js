@@ -185,7 +185,9 @@ test('a provider that throws never rejects into the route that triggered it', as
   on(/FROM device_tokens/i, () => ({ rows: [{ id: 1, token: 't1' }] }));
   firebaseService.__setSenderForTests(() => { throw new Error('boom'); });
   const res = await firebaseService.sendPushToUser(9, 'T', 'B', {});
-  assert.deepStrictEqual(res, { sent: 0, failed: 1 });
+  // An unknown error is a reason to try that device again, and the answer
+  // names it so the retry goes to it alone.
+  assert.deepStrictEqual(res, { sent: 0, failed: 1, retryIds: [1] });
   assert.ok(!log.some((q) => /DELETE FROM device_tokens/i.test(q.sql)), 'an unknown error is not a dead token');
 });
 
@@ -301,7 +303,7 @@ test('a transient provider failure never deletes a token', async () => {
     const e = new Error('backend'); e.code = 'messaging/server-unavailable'; throw e;
   });
   const res = await firebaseService.sendPushToUser(9, 'T', 'B', {});
-  assert.deepStrictEqual(res, { sent: 0, failed: 1 });
+  assert.deepStrictEqual(res, { sent: 0, failed: 1, retryIds: [11] });
   assert.ok(!log.some((q) => /DELETE FROM device_tokens/i.test(q.sql)));
 });
 

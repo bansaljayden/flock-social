@@ -40,11 +40,11 @@ test('newest still visible: nothing to repair, one read', async () => {
 test('flock: newest gone, an older held message survives past the cursor: re-pointed with a body that quotes nothing', async () => {
   script = [
     { rows: [{ gone: true }], rowCount: 1 },
-    { rows: [{ id: 86, sender_id: 2 }], rowCount: 1 },
+    { rows: [{ id: 86, sender_id: 2, sender_name: 'Ben', flock_name: 'Friday' }], rowCount: 1 },
   ];
   const data = { type: 'flock_message', flockId: '3', senderId: '2', messageId: '90', firstMessageId: '80', merged: true };
   const out = await repairMergedHold(7, data);
-  assert.deepStrictEqual(out, { body: 'New messages', data: { ...data, messageId: '86' } });
+  assert.deepStrictEqual(out, { title: 'Ben in Friday', body: 'New messages', data: { ...data, messageId: '86' } });
   const survivor = calls[1];
   assert.match(survivor.sql, /FROM messages m/);
   assert.match(survivor.sql, /m\.id >= \$3/);
@@ -53,6 +53,39 @@ test('flock: newest gone, an older held message survives past the cursor: re-poi
   assert.match(survivor.sql, /m\.is_hidden IS NOT TRUE/);
   assert.match(survivor.sql, /m\.sender_deleted_at IS NULL/);
   assert.deepStrictEqual(survivor.params, [3, 7, 80]);
+});
+
+// The held row's title is the NEWEST sender's "{name} in {plan}". When that
+// sender's message is the one that was unsent or hidden, the survivor belongs
+// to somebody else, and the title has to say who: sent unchanged it put the
+// removed sender's name on the lock screen, very often a person the recipient
+// had just blocked.
+test('flock: the repaired row is titled by the survivor, never by the sender whose message went', async () => {
+  script = [
+    { rows: [{ gone: true }], rowCount: 1 },
+    { rows: [{ id: 86, sender_id: 2, sender_name: 'Ben', flock_name: 'Friday' }], rowCount: 1 },
+  ];
+  // Mallory (9) sent the newest message and unsent it before morning.
+  const data = { type: 'flock_message', flockId: '3', senderId: '9', messageId: '90', firstMessageId: '80', merged: true };
+  const out = await repairMergedHold(7, data);
+  assert.strictEqual(out.title, 'Ben in Friday');
+  assert.strictEqual(out.data.senderId, '2', 'the visibility gate then judges the survivor');
+  assert.ok(!/Mallory/.test(JSON.stringify(out)));
+  // The name comes from the same row the survivor does, and so does the plan.
+  assert.match(calls[1].sql, /su\.name AS sender_name, f\.name AS flock_name/);
+  assert.match(calls[1].sql, /JOIN flocks f ON f\.id = m\.flock_id/);
+
+  // A plan with no name reads the way both producers write it.
+  script = [
+    { rows: [{ gone: true }], rowCount: 1 },
+    { rows: [{ id: 86, sender_id: 2, sender_name: 'Ben', flock_name: null }], rowCount: 1 },
+  ];
+  assert.strictEqual((await repairMergedHold(7, data)).title, 'Ben in Flock');
+});
+
+test('the sweep sends the repaired title, not the one the hold was stored with', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'pushHelper.js'), 'utf8');
+  assert.match(src, /repaired && repaired\.title \? repaired\.title : row\.title,/);
 });
 
 test('flock: nothing survives: null, and the sweep drops the row as before', async () => {

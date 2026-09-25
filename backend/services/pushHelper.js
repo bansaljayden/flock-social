@@ -164,10 +164,10 @@ const LEDGER_RETENTION_DAYS = 30;
 //
 // WHAT BREAKS THROUGH. Two kinds, and the list is short on purpose:
 //   * safety. An SOS is the one message whose entire value is that it wakes
-//     somebody up. No producer sends these types today (routes/safety.js
-//     alerts trusted contacts by email and socket), so the entries below are
-//     the reservation: the day an SOS push is written it is already exempt,
-//     rather than someone having to remember to exempt it.
+//     somebody up. routes/safety.js sends safety_alert to the flockmates of a
+//     plan that is on tonight, and safety_alert_cancelled when the SOS is
+//     withdrawn; 'sos' and 'emergency_alert' are held in reserve so a future
+//     producer is exempt from the day it is written.
 //   * moderation_report, which is admin-only and includes child-safety
 //     reports. There is one admin, and a child-safety report at 03:00 is
 //     exactly the thing that should wake him.
@@ -212,6 +212,17 @@ const DROPPED_IN_QUIET_HOURS = new Set(['crowd_alert']);
 // to have one. The claim is also strictly better than a retry here: it re-scores
 // the venue against a fresh forecast instead of replaying an old sentence.
 const OWN_RETRY = new Set(['crowd_alert']);
+
+// Types queued for retry when their visibility check could not be answered,
+// rather than dropped. canNotify fails closed on purpose and the reasoning
+// there stands: a message, a plan or a bill waits in the app and is seen the
+// moment it is opened. An SOS and its stand-down do not wait anywhere. The
+// socket emit is never replayed, nothing on launch loads a pending alarm, and
+// routes/safety.js sends these once, so a Postgres blip during the check was
+// an offline flockmate never being told. The same set that rings through the
+// night, for the same reason: these are the pushes whose whole value is
+// reaching somebody now.
+const UNCHECKABLE_RETRIED = RINGS_THROUGH_THE_NIGHT;
 
 // ---------------------------------------------------------------------------
 // THE OUTBOX (migration 050, table push_outbox)
@@ -421,13 +432,21 @@ async function repairMergedHold(userId, data = {}) {
       // repair that kept it let a push caused by a since-blocked sender out
       // under another name. Blocked either way and banned senders are not
       // survivors at all.
+      //
+      // So does the survivor's TITLE. The held row's title is the newest
+      // sender's "{name} in {plan}", and the sweep sent it unchanged over the
+      // survivor's data, so the lock screen named the person whose message
+      // was just unsent or hidden, very often someone the recipient had
+      // blocked. The title is rebuilt here from the survivor, in the words
+      // both producers use (routes/messages.js, sockets/handlers.js).
       const r = await pool.query(
-        `SELECT m.id, m.sender_id
+        `SELECT m.id, m.sender_id, su.name AS sender_name, f.name AS flock_name
            FROM messages m
            JOIN flock_members fm ON fm.flock_id = m.flock_id
                                 AND fm.user_id = $2
                                 AND fm.status = 'accepted'
            JOIN users su ON su.id = m.sender_id AND su.is_banned IS NOT TRUE
+           JOIN flocks f ON f.id = m.flock_id
           WHERE m.flock_id = $1
             AND m.id >= $3
             AND m.id > COALESCE(fm.last_read_message_id, 0)
@@ -445,9 +464,12 @@ async function repairMergedHold(userId, data = {}) {
         [flockId, userId, firstMessageId]
       );
       if (r.rows.length === 0) return null;
+      const survivor = r.rows[0];
+      const flockName = survivor.flock_name || 'Flock';
       return {
+        title: survivor.sender_name ? `${survivor.sender_name} in ${flockName}` : flockName,
         body: 'New messages',
-        data: { ...data, messageId: String(r.rows[0].id), senderId: String(r.rows[0].sender_id) },
+        data: { ...data, messageId: String(survivor.id), senderId: String(survivor.sender_id) },
       };
     }
     if (Number.isInteger(senderId) && senderId > 0 && Number.isInteger(firstDmId) && firstDmId > 0) {
@@ -586,7 +608,12 @@ async function checkVisibility(userId, data = {}) {
     //
     // The cost of being wrong in this direction is a notification that arrives
     // late or not at all, which the app recovers from the moment the user opens
-    // it; the cost in the other direction cannot be taken back.
+    // it; the cost in the other direction cannot be taken back. That recovery
+    // is true of a message, a plan or a bill, which all wait in the app. It is
+    // NOT true of an SOS or its stand-down: the socket emit is never replayed
+    // and nothing on launch loads a pending alarm, so an offline flockmate was
+    // simply never told. deliver() queues those for retry instead of dropping
+    // them (see UNCHECKABLE_RETRIED there).
     console.error('[Push] visibility check failed, suppressing push:', err.message);
     // Still not allowed - the paragraph above is the reason and it stands. But
     // the answer says the check FAILED rather than that it answered no, so the
@@ -768,15 +795,26 @@ function quietWindowEnd(timeZone, at = new Date()) {
   return new Date(at.getTime() + (minutesLeft + 1) * 60 * 1000);
 }
 
-// The device's own IANA zone, newest device first. Newest by updated_at, which
-// is now a liveness timestamp rather than a registration one, so a phone that
-// received a push this evening outranks a laptop registered last spring.
+// The zone of the device that most recently TOLD US its clock (migration 085,
+// timezone_reported_at, written by every registration that sends a zone, and
+// a registration runs on every sign-in and cold start). One clock per person,
+// on purpose: quiet hours protect somebody's sleep, and the device they last
+// opened is where they are.
+//
+// This used to order by updated_at, and updated_at is a LIVENESS stamp that
+// touchDeviceTokens writes on every row of the account in one statement after
+// a clean send. So after any delivered push every row tied, `id DESC` broke
+// the tie, and the highest row id won whatever it said: a phone that had just
+// registered Europe/London on arrival lost to a laptop row left on
+// America/New_York, and was held while its owner was awake or rung at 03:00.
+// updated_at stays as the tiebreak for rows from before 085 that have not
+// registered since.
 async function recipientZone(userId) {
   try {
     const r = await pool.query(
       `SELECT timezone FROM device_tokens
         WHERE user_id = $1 AND timezone IS NOT NULL AND timezone <> ''
-        ORDER BY updated_at DESC NULLS LAST, id DESC
+        ORDER BY timezone_reported_at DESC NULLS LAST, updated_at DESC NULLS LAST, id DESC
         LIMIT 1`,
       [userId]
     );
@@ -813,7 +851,10 @@ function stopOutboxSweep() {
   outboxTimer = null;
 }
 
-async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt) {
+// `tokenIds` names the devices the row is still owed to (migration 085,
+// push_outbox.token_ids). Null, the default, is every device the account has
+// when the row is released, which is what every row meant before.
+async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt, tokenIds = null) {
   try {
     if (reason === 'quiet') {
       // ONE held row per conversation. Every debounce window through the
@@ -821,12 +862,17 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
       // overnight group chat released twenty to forty separate sends at
       // 08:00, each with a sound. apns-collapse-id merges the visible line,
       // not the alerts, which is the failure this file's header claims to
-      // prevent. The key is the one buildFcmMessage collapses on: the type
-      // and the conversation (flockId, else senderId). The newest words win
-      // and the hold's expiry is extended, so the morning gets one line that
-      // is current, not the first of forty.
+      // prevent. The key is the one buildFcmMessage collapses on: the type and
+      // the conversation, asked of firebaseService.scopeKeys so the two cannot
+      // drift (the plan, else the person: senderId, else fromUserId; one hold
+      // per payer for bill_settled). Keyed on flockId and senderId alone, every
+      // friend request and free-tonight pulse overnight shared one row and
+      // only the last name reached the morning. The newest words win and the
+      // hold's expiry is extended, so the morning gets one line that is
+      // current, not the first of forty. A hold is for every device, so a
+      // merge clears any device list the row carried.
       const d = data && typeof data === 'object' ? data : {};
-      const scopeKey = d.flockId != null ? 'flockId' : (d.senderId != null ? 'senderId' : null);
+      const [scopeA = null, scopeB = null] = firebaseService.scopeKeys(d);
       // Its own guard: a merge that cannot run must fall through to the
       // insert below, never cost the hold.
       let merged = null;
@@ -839,10 +885,12 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
                     'firstMessageId', COALESCE(push_outbox.data->'firstMessageId', push_outbox.data->'messageId'),
                     'firstDmId', COALESCE(push_outbox.data->'firstDmId', push_outbox.data->'dmId')
                   ),
-                  expires_at = GREATEST(expires_at, $6)
+                  expires_at = GREATEST(expires_at, $6),
+                  token_ids = NULL
             WHERE user_id = $1 AND reason = 'quiet'
               AND COALESCE(data->>'type', '') = COALESCE($2, '')
               AND ($7::text IS NULL OR data->>$7::text = $8::text)
+              AND ($9::text IS NULL OR data->>$9::text = $10::text)
             RETURNING id`,
           [
             userId,
@@ -851,8 +899,10 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
             String(body == null ? '' : body).slice(0, 1000),
             JSON.stringify(d),
             expiresAt,
-            scopeKey,
-            scopeKey ? String(d[scopeKey]) : null,
+            scopeA,
+            scopeA ? String(d[scopeA]) : null,
+            scopeB,
+            scopeB ? String(d[scopeB]) : null,
           ]
         );
       } catch (mergeErr) {
@@ -861,8 +911,8 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
       if (merged && merged.rowCount > 0) return true;
     }
     await pool.query(
-      `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+      `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at, token_ids)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::int[])`,
       [
         userId,
         reason,
@@ -871,6 +921,7 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
         JSON.stringify(data && typeof data === 'object' ? data : {}),
         nextAttemptAt,
         expiresAt,
+        Array.isArray(tokenIds) && tokenIds.length > 0 ? tokenIds : null,
       ]
     );
     startOutboxSweep();
@@ -916,8 +967,13 @@ function touchDeviceTokens(userId) {
 // count forever. Unsent rows (sender_deleted_at, migration 055) are excluded
 // for the same reason with a sharper edge: every read filters them, so the
 // recipient can never mark one read, and counting it would inflate the badge
-// permanently. Returns null rather than 0 on any failure, because aps.badge
-// of 0 CLEARS the icon and "we could not count" is not "you have nothing".
+// permanently. A BANNED sender is excluded for exactly that reason too: the
+// inbox and the flock history treat a ban as a block (utils/blocks.js
+// getInvisibleUserIds), and GET /api/dm/:userId answers a banned counterpart
+// before its mark-read runs, so their unread DMs could never be cleared and
+// every later push wrote the number back onto the icon. Returns null rather
+// than 0 on any failure, because aps.badge of 0 CLEARS the icon and "we could
+// not count" is not "you have nothing".
 // ---------------------------------------------------------------------------
 async function unreadBadge(userId) {
   try {
@@ -933,6 +989,9 @@ async function unreadBadge(userId) {
                 SELECT 1 FROM user_blocks b
                  WHERE (b.blocker_id = $1 AND b.blocked_id = dm.sender_id)
                     OR (b.blocker_id = dm.sender_id AND b.blocked_id = $1)
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM users su WHERE su.id = dm.sender_id AND su.is_banned IS TRUE
               ))
         + (SELECT COUNT(*)
              FROM messages m
@@ -959,6 +1018,9 @@ async function unreadBadge(userId) {
                 SELECT 1 FROM user_blocks b
                  WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
                     OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM users su WHERE su.id = m.sender_id AND su.is_banned IS TRUE
               ))
        )::int AS n`,
       [userId]
@@ -984,7 +1046,21 @@ async function deliver(userId, title, body, data, opts = {}) {
   // the sender, or was banned while the row waited gets nothing.
   const visibility = await checkVisibility(userId, data);
   if (!visibility.allowed) {
-    return skip(userId, data, visibility.uncheckable ? OUTCOME.UNCHECKABLE : OUTCOME.NOT_VISIBLE);
+    if (!visibility.uncheckable) return skip(userId, data, OUTCOME.NOT_VISIBLE);
+    // Still not sent: an unanswerable check fails closed. But an SOS or its
+    // stand-down cannot wait for the app to be opened the way a message can,
+    // so it is queued and the sweep asks again (it keeps an uncheckable row
+    // for its backoff) rather than the alarm being dropped for good.
+    let queued = false;
+    if (!opts.fromOutbox && UNCHECKABLE_RETRIED.has(type)) {
+      queued = await enqueue(
+        userId, title, body, data, 'retry',
+        new Date(Date.now() + 60 * 1000), new Date(Date.now() + RETRY_TTL_MS),
+        Array.isArray(opts.onlyIds) ? opts.onlyIds : null
+      );
+    }
+    const out = skip(userId, data, OUTCOME.UNCHECKABLE);
+    return queued ? { ...out, queued: true } : out;
   }
 
   if (!RINGS_THROUGH_THE_NIGHT.has(type)) {
@@ -1031,34 +1107,118 @@ async function deliver(userId, title, body, data, opts = {}) {
   // window. The outbox sweep has no socket server and sends to every device,
   // as it did.
   const skipTokens = opts.io ? attentiveTokens(opts.io, userId) : null;
-  const result = await firebaseService.sendPushToUser(userId, title, body, payload, { skipTokens });
-  const sent = Number(result && result.sent) || 0;
-  const failed = Number(result && result.failed) || 0;
-  const attendedOnly = sent === 0 && failed === 0 && (Number(result && result.attended) || 0) > 0;
+  // A queued row names the devices it is still owed to; everything else goes
+  // to every device, as it always did.
+  const sendOpts = Array.isArray(opts.onlyIds) ? { skipTokens, onlyIds: opts.onlyIds } : { skipTokens };
+  const result = await firebaseService.sendPushToUser(userId, title, body, payload, sendOpts);
+
+  // A send still out at the deadline (services/firebaseService.js) may yet
+  // land. Deciding now, on the deadline's "failed", is what queued a second
+  // copy of a push that had arrived after all. The caller is released on time
+  // either way; the retry, the liveness stamp and the ledger row wait for the
+  // real answer.
+  if (result && result.settled && typeof result.settled.then === 'function') {
+    result.settled
+      .then((final) => afterSend(userId, title, body, data, type, opts, final))
+      .catch((err) => console.error('[Push] late delivery bookkeeping failed:', err.message));
+    return result;
+  }
+  await afterSend(userId, title, body, data, type, opts, result);
+  return result;
+}
+
+// Which devices a retry goes to: undefined for none, null for every device on
+// the account, or the ids of the devices whose send failed for a reason a
+// second try can fix. firebaseService names those (retryIds); a tally that
+// names no device keeps the rule this file always had, which is to retry
+// only when nothing at all was delivered.
+function retryTargets(tally, sent) {
+  if (tally && Array.isArray(tally.retryIds)) return tally.retryIds.length ? tally.retryIds : undefined;
+  return sent === 0 ? null : undefined;
+}
+
+// What follows a send, once its answer is final: the liveness stamp, the
+// retry, and the one ledger row.
+async function afterSend(userId, title, body, data, type, opts, tally) {
+  const sent = Number(tally && tally.sent) || 0;
+  const failed = Number(tally && tally.failed) || 0;
+  const attendedOnly = sent === 0 && failed === 0 && (Number(tally && tally.attended) || 0) > 0;
 
   if (sent > 0 && failed === 0) touchDeviceTokens(userId);
 
-  if (sent === 0 && failed > 0 && !opts.fromOutbox && !OWN_RETRY.has(type)) {
-    // Nothing reached a device and something answered with an error. Usually
-    // that is an FCM 5xx, a network blip, or our own 8 second deadline, all of
-    // which a second attempt fixes. It can also be a batch of tokens that were
-    // all dead, in which case the send path has just deleted them and the first
-    // sweep finds no device and drops the row, which costs one query and
-    // cleans itself up. Retrying the transient case is worth that.
+  if (failed > 0 && !opts.fromOutbox && !OWN_RETRY.has(type)) {
+    // Something answered with an error. Usually that is an FCM 5xx or a
+    // network blip, which a second attempt fixes. A token the provider called
+    // dead has already been deleted and is not retried.
+    //
+    // ONLY THE DEVICES THAT FAILED. The retry used to be all or nothing: a
+    // batch where the laptop accepted and the phone got a 5xx was never
+    // retried at all, because a second send to every device would have told
+    // the laptop twice, so the phone simply never got the notification. The
+    // row now names the phone and nothing else (push_outbox.token_ids).
     //
     // First retry a minute out: longer than any blip, shorter than a person
     // noticing.
-    await enqueue(
-      userId, title, body, data, 'retry',
-      new Date(Date.now() + 60 * 1000), new Date(Date.now() + RETRY_TTL_MS)
-    );
+    const targets = retryTargets(tally, sent);
+    if (targets !== undefined) {
+      await enqueue(
+        userId, title, body, data, 'retry',
+        new Date(Date.now() + 60 * 1000), new Date(Date.now() + RETRY_TTL_MS),
+        targets
+      );
+    }
   }
 
   record(userId, data, sent > 0 ? OUTCOME.DELIVERED : failed > 0 ? OUTCOME.FAILED : attendedOnly ? OUTCOME.ONLINE : OUTCOME.NO_DEVICE, {
     sent,
     failed,
   });
-  return result;
+}
+
+function forgetOutboxRow(id) {
+  fireAndForget('DELETE FROM push_outbox WHERE id = $1', [id], 'outbox cleanup');
+}
+
+// Narrow a row to the devices still owed it. A row that cannot be narrowed is
+// dropped rather than left pointing at devices that already have it: the
+// fallback is the old rule, which never sent anything twice.
+async function narrowOwed(id, deviceIds) {
+  try {
+    await pool.query('UPDATE push_outbox SET token_ids = $2::int[] WHERE id = $1', [id, deviceIds]);
+    return true;
+  } catch (err) {
+    console.error('[Push] outbox narrow failed, dropping the row:', err.message);
+    forgetOutboxRow(id);
+    return false;
+  }
+}
+
+// A row whose send was still out at the deadline. It is moved past the
+// provider's own retries first (firebase-admin gives one send up to five
+// attempts of 15 seconds), so no sweep takes it again before the answer is
+// in, and is then settled the way the loop in sweepPushOutbox settles a row
+// whose answer it has: forgotten once it landed everywhere it was owed,
+// narrowed when some device is still owed it, left for its backoff when
+// nothing landed and tries remain.
+function parkUntilSettled(row, settled) {
+  fireAndForget(
+    `UPDATE push_outbox SET next_attempt_at = GREATEST(next_attempt_at, NOW() + INTERVAL '5 minutes') WHERE id = $1`,
+    [row.id],
+    'outbox park'
+  );
+  settled
+    .then(async (final) => {
+      const sent = Number(final && final.sent) || 0;
+      const failed = Number(final && final.failed) || 0;
+      const owed = final && Array.isArray(final.retryIds) ? final.retryIds : [];
+      const lastTry = row.attempts >= RETRY_MAX_ATTEMPTS;
+      if (sent > 0 && owed.length > 0 && !lastTry) {
+        await narrowOwed(row.id, owed);
+        return;
+      }
+      if (sent > 0 || failed === 0 || lastTry) forgetOutboxRow(row.id);
+    })
+    .catch((err) => console.error('[Push] outbox settle failed:', err.message));
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,7 +1248,7 @@ async function sweepPushOutbox() {
               END
          FROM due
         WHERE o.id = due.id
-    RETURNING o.id, o.user_id, o.reason, o.title, o.body, o.data, o.attempts, o.expires_at`
+    RETURNING o.id, o.user_id, o.reason, o.title, o.body, o.data, o.attempts, o.expires_at, o.token_ids`
     );
     rows = claimed.rows || [];
   } catch (err) {
@@ -1121,16 +1281,18 @@ async function sweepPushOutbox() {
       // unsent or hidden before morning, the release used to drop the whole
       // conversation's notification (notifications audit, 2026-09-05). The row
       // is re-pointed at the newest message the person can still see, with a
-      // body that quotes nothing, and the visibility check inside deliver()
-      // then judges that message.
+      // body that quotes nothing and a title that names that message's sender,
+      // and the visibility check inside deliver() then judges that message.
       const repaired = row.reason === 'quiet' && data.merged === true
         ? await repairMergedHold(row.user_id, data)
         : null;
       result = await deliver(
-        row.user_id, row.title,
+        row.user_id,
+        repaired && repaired.title ? repaired.title : row.title,
         repaired ? repaired.body : row.body,
         repaired ? repaired.data : data,
-        { fromOutbox: true }
+        // A row that names its devices goes to those and no others.
+        Array.isArray(row.token_ids) ? { fromOutbox: true, onlyIds: row.token_ids } : { fromOutbox: true }
       );
     } catch (err) {
       console.error('[Push] outbox delivery threw:', err.message);
@@ -1163,7 +1325,26 @@ async function sweepPushOutbox() {
       }
       continue;
     }
-    if (sent > 0) { drop.push(row.id); continue; }
+    // A send still out at the deadline decides this row when it answers, not
+    // now: a retry scheduled on the deadline's "failed" went out a second time
+    // after the first had landed.
+    if (result && result.settled && typeof result.settled.then === 'function') {
+      parkUntilSettled(row, result.settled);
+      continue;
+    }
+    if (sent > 0) {
+      // Some devices took it. Any whose send failed for a reason a retry can
+      // fix is still owed it, and only those: the row is narrowed to them and
+      // keeps the backoff the claim gave it. It used to be dropped whole, so
+      // the phone that got the 5xx never heard.
+      const owed = Array.isArray(result.retryIds) ? result.retryIds : [];
+      if (owed.length > 0 && row.attempts < RETRY_MAX_ATTEMPTS) {
+        await narrowOwed(row.id, owed);
+        continue;
+      }
+      drop.push(row.id);
+      continue;
+    }
     // A row the recipient will never be allowed to see is finished. A row we
     // could not ASK about is not - it goes back for its own backoff, and the
     // attempts ceiling below still stops it eventually.
@@ -1368,7 +1549,9 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
   // were DEBOUNCED and never reached the merge, and the held body was the
   // FIRST message of the window rather than the newest. The merge is
   // idempotent per conversation, so every held message may go through it.
-  const nothingSent = !result || result.skipped || (result.sent === 0);
+  // A send still in flight at the deadline keeps the window: it is far more
+  // often slow than lost, and if it is lost deliver() retries it.
+  const nothingSent = !result || result.skipped || (result.sent === 0 && !result.settled);
   if (nothingSent) {
     lastPushSent.delete(key);
     releaseDebounce(key);
@@ -1438,6 +1621,8 @@ module.exports = {
   // The presence fix: which devices a live socket actually speaks for.
   attentiveTokens,
   repairMergedHold,
+  // Whose clock quiet hours read (migration 085).
+  recipientZone,
   everyDeviceAttended,
   OUTCOME,
   // ---------------------------------------------------------------------------

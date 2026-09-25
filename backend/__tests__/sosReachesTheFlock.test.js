@@ -263,3 +263,63 @@ test('an escalation after an alert with no coordinates is "location", never "mov
   assert.strictEqual(escalationKind({ latitude: 40.7, longitude: -74 }), 'moved');
   assert.strictEqual(escalationKind({ latitude: '40.7', longitude: '-74.0' }), 'moved');
 });
+
+// ---------------------------------------------------------------------------
+// A COARSE FIX IS AN AREA ON THE FLOCK'S SCREEN TOO (2026-09-25). The email
+// has labelled a fix wider than COARSE_FIX_METRES as an area to search since
+// round 23. The flock leg was never handed the radius, so the person fifteen
+// feet away got six decimal places and "shared their location".
+// ---------------------------------------------------------------------------
+
+test('a coarse fix reaches the flock as an area, with its radius', async () => {
+  reset();
+  memberRows = [{ user_id: 2 }];
+  await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 }, 1, null, { fixMetres: 2400 });
+  assert.strictEqual(pushes[0].data.accuracy, 2400);
+  assert.strictEqual(emitted[0].payload.accuracy, 2400, 'the live screen gets it as well as the tray');
+  assert.match(pushes[0].body, /shared an approximate location, within about 2\.4 km/);
+  assert.doesNotMatch(pushes[0].body, /shared their location/);
+});
+
+test('a good fix carries its radius and keeps the ordinary wording', async () => {
+  reset();
+  memberRows = [{ user_id: 2 }];
+  await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 }, 1, null, { fixMetres: 18.4 });
+  assert.strictEqual(pushes[0].data.accuracy, 18);
+  assert.match(pushes[0].body, /shared their location/);
+});
+
+test('no position means no radius, and a radius the phone did not really give is dropped', async () => {
+  for (const [coords, fixMetres] of [[null, 2400], [{ lat: 40.6, lng: -75.4 }, 'wide'], [{ lat: 40.6, lng: -75.4 }, 0], [{ lat: 40.6, lng: -75.4 }, undefined]]) {
+    reset();
+    memberRows = [{ user_id: 2 }];
+    await alertFlockMembers(io, USER, coords, 1, null, { fixMetres });
+    assert.ok(!('accuracy' in pushes[0].data), `radius leaked for ${JSON.stringify([coords, fixMetres])}`);
+  }
+});
+
+test('the route hands the flock leg the radius it read', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'safety.js'), 'utf8');
+  assert.match(src, /const flockLeg = \{\s*fixMetres,/);
+  assert.match(src, /alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId, flockLeg\)/);
+});
+
+test('a follow-up rings the recorded audience of the alert it follows, not the live plan', async () => {
+  reset();
+  memberRows = [{ user_id: 2 }, { user_id: 3 }];
+  await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 }, 1, null, { audienceIds: [2, 3, 'x'] });
+  const q = queries.find((x) => /FROM users u WHERE u\.id = ANY/.test(x.sql));
+  assert.ok(q, 'the recorded audience was asked');
+  assert.deepStrictEqual(q.params, [1, [2, 3]]);
+  assert.ok(!queries.some((x) => /FROM flock_members fm/.test(x.sql)), 'the live plan was not consulted');
+  assert.deepStrictEqual(pushes.map((p) => p.userId).sort(), [2, 3]);
+
+  // An empty or absent list asks the live plan, which is also the answer when
+  // the first alert's own leg has not written its list yet.
+  reset();
+  memberRows = [{ user_id: 2 }];
+  await alertFlockMembers(io, USER, null, 1, null, { audienceIds: [] });
+  assert.ok(queries.some((x) => /FROM flock_members fm/.test(x.sql)));
+});

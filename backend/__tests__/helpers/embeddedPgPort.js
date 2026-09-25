@@ -93,9 +93,17 @@ const SUITE_SLOTS = {
   checkThenActRaces: 24,         // new in 2026-09-25; bursts against the mail
                                  // budget claims and overlapping Pro syncs, on
                                  // real advisory locks.
+  sosStandDownEndsTheChase: 25,  // new in 2026-09-25; an SOS, its stand-down
+                                 // and the location follow-up that must not
+                                 // outlive it, through the real routes
+                                 // (migration 084).
   flockTransactionIntegrity: 26, // new in 2026-09-25; an account deletion
                                  // racing a plan delete, and a plan edit
                                  // whose night-of reset fails, on real locks.
+  deviceTokenClaims: 27,         // new in 2026-09-25; which session keeps a
+                                 // phone's push token when two registrations
+                                 // race, what sign-out deletes, and whose
+                                 // clock quiet hours read (migration 085).
   planFlowRaces: 28,             // new in 2026-09-25; overlapping completion
                                  // sweeps, the guest-to-member vote carry and
                                  // the two venue tallies, on real row locks.

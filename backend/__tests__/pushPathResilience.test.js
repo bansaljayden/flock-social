@@ -183,7 +183,9 @@ test('one dead token, one flaky backend, one live device: the live device is rea
   });
 
   const res = await firebaseService.sendPushToUser(9, 'T', 'B', {});
-  assert.deepStrictEqual(res, { sent: 1, failed: 2 });
+  // The 5xx device is named for a retry that goes to it and not to the live
+  // device, which already has the notification. The dead one is not.
+  assert.deepStrictEqual(res, { sent: 1, failed: 2, retryIds: [2] });
   assert.strictEqual(deletes.length, 1, 'exactly one prune, for exactly the dead token');
   assert.deepStrictEqual(deletes[0].params, [[1], 9], 'the 5xx token and the live token survive');
   assert.match(deletes[0].sql, /user_id\s*=\s*\$2/i, 'scoped to the account that was pushed');

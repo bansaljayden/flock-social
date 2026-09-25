@@ -127,6 +127,9 @@ export function intentFromData(data) {
       cancelled: true,
       userId,
       name: data.fromUserName ? String(data.fromUserName) : '',
+      // When it was called off, so an older alarm tapped later can be told
+      // apart from a new one. See noteSafetyStandDown below.
+      ...(data.at ? { at: String(data.at) } : {}),
       // Who this copy was sent to. See safetyIntentIsFor below.
       ...(toUserId ? { toUserId } : {}),
       type,
@@ -151,6 +154,10 @@ export function intentFromData(data) {
     // coordinates and dropped unless finite, so the alarm screen's
     // "contacts have been emailed" sentence rests on a number it was sent.
     const contactsAlerted = data.contactsAlerted != null ? Number(data.contactsAlerted) : NaN;
+    // The phone's radius for the fix, in metres, so the alarm can call a
+    // coarse one an area the way the email does. Same coercion, and only
+    // alongside a position it describes.
+    const accuracy = data.accuracy != null ? Number(data.accuracy) : NaN;
     const toUserId = asId(data.toUserId);
     return {
       screen: 'safety',
@@ -158,6 +165,7 @@ export function intentFromData(data) {
       name: data.fromUserName ? String(data.fromUserName) : '',
       lat: Number.isFinite(lat) ? lat : null,
       lng: Number.isFinite(lng) ? lng : null,
+      ...(Number.isFinite(lat) && Number.isFinite(accuracy) && accuracy > 0 ? { accuracy } : {}),
       ...(Number.isFinite(contactsAlerted) ? { contactsAlerted } : {}),
       at: data.at ? String(data.at) : null,
       // Who this copy was sent to. See safetyIntentIsFor below.
@@ -211,6 +219,65 @@ export function safetyIntentIsFor(intent, userId) {
   const to = asId(intent.toUserId);
   const me = asId(userId);
   return to !== null && me !== null && to === me;
+}
+
+// ---------------------------------------------------------------------------
+// AN ALARM THAT WAS ALREADY CALLED OFF DOES NOT OPEN AGAIN.
+//
+// The alarm and its stand-down now share one notification slot per sender
+// (backend services/firebaseService.js), so an all-clear that reaches the
+// device replaces the "needs help" notification in the tray. That cannot
+// cover an all-clear that reached this app another way, the live socket
+// event or a tap on the all-clear, while the alarm's own notification was
+// still in the tray: tapping it drew the full-screen alarm and the map again
+// for somebody who had already said they were OK.
+//
+// So every stand-down this device sees is remembered by sender, with the time
+// the server stamped on it, and an alarm tap stamped no later than the newest
+// one for that sender opens nothing. A NEW alarm from the same person is
+// stamped after the stand-down and opens as it always did. Kept in
+// localStorage so a tap that cold-starts the app is judged the same way,
+// under a flock* key so a sign-out sweeps it with the rest of the account,
+// and each entry lapses after a day.
+// ---------------------------------------------------------------------------
+const STAND_DOWNS_KEY = 'flock_sos_stand_downs';
+const STAND_DOWN_TTL_MS = 24 * 60 * 60 * 1000;
+
+function readStandDowns() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STAND_DOWNS_KEY) || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+export function noteSafetyStandDown(fromUserId, at) {
+  const id = asId(fromUserId);
+  if (!id) return;
+  const stamped = Date.parse(at);
+  const when = Number.isFinite(stamped) ? stamped : Date.now();
+  const now = Date.now();
+  const seen = readStandDowns();
+  for (const key of Object.keys(seen)) {
+    if (!(Number.isFinite(seen[key]) && now - seen[key] < STAND_DOWN_TTL_MS)) delete seen[key];
+  }
+  if (!(Number.isFinite(seen[id]) && seen[id] >= when)) seen[id] = when;
+  try { localStorage.setItem(STAND_DOWNS_KEY, JSON.stringify(seen)); } catch (err) { /* private mode */ }
+}
+
+// True for an alarm tap (never a stand-down) that a stand-down already seen
+// for the same sender has overtaken. An alarm that does not say when it was
+// raised cannot be shown to be the newer one, so once its sender has stood
+// down it is treated as the alarm that was called off.
+export function safetyAlarmWasStoodDown(intent) {
+  if (!intent || intent.screen !== 'safety' || intent.cancelled) return false;
+  const id = asId(intent.userId);
+  if (!id) return false;
+  const stoodDown = readStandDowns()[id];
+  if (!Number.isFinite(stoodDown) || Date.now() - stoodDown >= STAND_DOWN_TTL_MS) return false;
+  const raised = Date.parse(intent.at);
+  return !Number.isFinite(raised) || raised <= stoodDown;
 }
 
 // A URL -> what the app should open. Handles both the query form the backend

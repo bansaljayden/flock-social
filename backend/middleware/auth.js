@@ -349,6 +349,14 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       }
 
       req.user = result.rows[0];
+      // When this session signed in, in seconds, from the token's own `iat`
+      // (jsonwebtoken stamps it on every token signUserToken mints). One
+      // reader: routes/notifications.js, which lets a device token move to
+      // another account only for a session that signed in no earlier than the
+      // one holding it, so a request still in flight from a session that has
+      // since signed out cannot take the phone back from whoever signed in
+      // after it. Null when a token carries none.
+      req.tokenIssuedAt = Number.isInteger(decoded.iat) && decoded.iat > 0 ? decoded.iat : null;
       next();
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
