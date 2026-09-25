@@ -44,8 +44,9 @@
 //     provider refused, a send that landed but answered as a failure, a
 //     second stand-down in the same slot, a token replaced mid-way, a retry
 //     that the correction made a second ring of, an older all-clear standing
-//     in for a newer one, and failing corrections chained past the budget of
-//     the retry they began with;
+//     in for a newer one, a device corrected to one push without end, one
+//     device's spent history holding another's back, and a replaced token
+//     starting the count again;
 //   * and the times that let the app tell an alarm from the stand-down that
 //     called it off: the stand-down's socket event skips anybody a newer
 //     alarm reached, and every all-clear carries the stand-down's own time.
@@ -550,7 +551,8 @@ async function addPhone(user) {
 // `lost` is the third way such a send ends: an attempt reached the phone, its
 // reply was lost, and the send answers with the 5xx of a later attempt.
 // `gone` picks messages whose token the provider no longer knows, and
-// `refuse` ones it answers at once with a 5xx, every time it is asked.
+// `refuse` ones it answers at once with a 5xx, every time it is asked, unless
+// the test is holding that one message.
 function stubProvider({ hold = () => false, gone = () => false, refuse = () => false } = {}) {
   const landed = [];
   const held = [];
@@ -566,11 +568,12 @@ function stubProvider({ hold = () => false, gone = () => false, refuse = () => f
       err.code = 'messaging/registration-token-not-registered';
       throw err;
     }
-    if (refuse(message)) {
+    const holding = hold(message);
+    if (!holding && refuse(message)) {
       refused.push(message);
       throw internal();
     }
-    if (!hold(message)) {
+    if (!holding) {
       landed.push(message);
       return `ok-${landed.length}`;
     }
@@ -1858,14 +1861,26 @@ test('an older all-clear landing last does not stand in for a newer one, nor tak
 });
 
 // ===========================================================================
-// A chain of corrections stays inside the budget of the retry it began with
+// A device is corrected to one push a few times at most, and the chain ends
 // ===========================================================================
 
-test('a queued SOS retry whose corrections keep failing ends within that retry\'s own attempts and expiry', async () => {
-  // Each release that failed was corrected, each failed correction queued a
-  // fresh retry with a fresh count and a fresh thirty minutes in place of the
-  // one it came from, and every sweep did it again in a new slot: a device the
-  // provider kept refusing was retried for as long as it kept refusing.
+// Sweeps whatever is queued for `user` until nothing is, or `sweeps` run out,
+// letting each release and any correction it sets off settle first.
+async function sweepUntilEmpty(user, sweeps = 8) {
+  for (let sweep = 1; sweep <= sweeps; sweep += 1) {
+    if ((await outboxFor(user)).length === 0) return sweep - 1;
+    await pool.query(`UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE user_id = $1`, [user.id]);
+    await pushHelper.sweepPushOutbox();
+    await sleep(60);
+    await until(async () => pushHelper._openSosSlots() === 0, `the release and what it set off, sweep ${sweep}`);
+  }
+  return sweeps;
+}
+
+test('a phone the provider keeps refusing is corrected to one alarm a few times at most, and its retries end', async () => {
+  // Each release that failed was corrected, each failed correction was queued
+  // for a retry of its own, and every sweep did it again in a new slot: a
+  // device the provider kept refusing was retried for as long as it refused.
   const sen = await mkUser('Sen');
   const rec = await mkUser('Rec');
   await mkPlan(sen, [rec]);
@@ -1873,29 +1888,17 @@ test('a queued SOS retry whose corrections keep failing ends within that retry\'
   const phone = await addPhone(rec);
   pushThrough = true;
   const provider = stubProvider({ refuse: (m) => m.token === phone.token && m.data.type === 'safety_alert' });
-  const alarmRows = async () => (await pool.query(
-    `SELECT attempts, expires_at FROM push_outbox WHERE user_id = $1 AND data->>'type' = 'safety_alert'`, [rec.id])).rows;
   try {
     assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
-    await until(async () => (await alarmRows()).length === 1 && pushHelper._openSosSlots() === 0, 'the alarm queued for a retry');
-    const [first] = await alarmRows();
-    const expiry = new Date(first.expires_at).getTime();
+    await until(async () => (await outboxFor(rec)).length === 1 && pushHelper._openSosSlots() === 0, 'the alarm queued for a retry');
 
-    for (let sweep = 1; sweep <= 6; sweep += 1) {
-      await pool.query(
-        `UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE user_id = $1`, [rec.id]);
-      await pushHelper.sweepPushOutbox();
-      await sleep(60);
-      await until(async () => pushHelper._openSosSlots() === 0, `the release and its correction, sweep ${sweep}`);
-      for (const row of await alarmRows()) {
-        assert.ok(row.attempts >= Math.min(sweep, 3), `sweep ${sweep} queued a retry that starts its count again (${row.attempts})`);
-        assert.ok(Math.abs(new Date(row.expires_at).getTime() - expiry) < 1000, `sweep ${sweep} moved the expiry`);
-      }
-    }
-    assert.deepStrictEqual(await alarmRows(), [], 'the retries outlived the budget of the one they began with');
-    // Three releases, each with one correction, on top of the first send and
-    // its correction: the chain ended where the retry's attempts did.
-    assert.ok(provider.refused.length <= 8, `${provider.refused.length} sends to a phone the provider keeps refusing`);
+    await sweepUntilEmpty(rec, 8);
+    assert.deepStrictEqual(await outboxFor(rec), [], 'the retries went on');
+    // The first send, three corrections, the two releases that set off the
+    // last two of them, and the last retry's three attempts: nine at most.
+    const cap = 3; // SOS_CORRECTIONS_PER_KEY, held to 3 below
+    assert.ok(provider.refused.length <= 2 * cap + 3, `${provider.refused.length} sends to a phone the provider keeps refusing`);
+    assert.strictEqual(pushHelper.SOS_CORRECTIONS_PER_KEY, cap);
   } finally {
     stopPushThrough();
   }
@@ -1942,4 +1945,214 @@ test('an older build\'s fix is not attached to a newer alert standing from anoth
   const tagged = await call('POST', '/api/safety/alert', { token: ivo.token, body: { ...FIX, followUpTo: again.body.alertId } });
   assert.strictEqual(tagged.status, 200, JSON.stringify(tagged.body));
   assert.strictEqual((await alertRows(ivo)).length, 3);
+});
+
+// ===========================================================================
+// No device's history decides another's, and a replaced token does not start
+// the count again
+// ===========================================================================
+
+// A queued copy of `push` owed to `devices`, with `attempts` already spent,
+// not due until the test makes it so.
+async function queueCopy(user, push, devices, attempts) {
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at, token_ids, attempts)
+     VALUES ($1, 'retry', $2, $3, $4::jsonb, NOW() + INTERVAL '1 hour', NOW() + INTERVAL '30 minutes', $5::int[], $6)
+     RETURNING id`,
+    [user.id, push.title, push.body, JSON.stringify({ ...push.data, toUserId: String(user.id) }), devices.map((d) => d.id), attempts]
+  );
+  return row.id;
+}
+const makeDue = (rowId) => pool.query(`UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE id = $1`, [rowId]);
+const queuedFor = async (user, type, device) => (await pool.query(
+  `SELECT token_ids FROM push_outbox WHERE user_id = $1 AND data->>'type' = $2`, [user.id, type]
+)).rows.filter((r) => Array.isArray(r.token_ids) && r.token_ids.includes(device.id));
+
+test('two devices whose old all-clears land over a newer alarm are corrected apart: one\'s spent retries leave the other\'s alone', async () => {
+  // X was on the last attempt of a queued old all-clear and Y on its first,
+  // and both had passed their checks when a new alarm went out. Both landed
+  // over it and one correction went to both, carrying X's spent budget, so
+  // when Y's copy failed nothing was queued: Y said "OK" over an emergency
+  // that stood, with retries it never used.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.q@example.com', '5550320');
+  const x = await addPhone(rec);
+  const y = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  try {
+    // Alert A lands on both, is stood down, and the all-clear lands on both.
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.landed.length === 2 && pushHelper._openSosSlots() === 0, 'A on both');
+    await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '130 seconds' WHERE user_id = $1`, [sen.id]);
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 4 && pushHelper._openSosSlots() === 0, 'the all-clear on both');
+    const allClear = pushes.filter((p) => p.userId === rec.id && p.data.type === 'safety_alert_cancelled').pop();
+
+    // Queued copies of that all-clear, X's third attempt and Y's first, each
+    // released, past its checks, and stuck at the provider.
+    const rowX = await queueCopy(rec, allClear, [x], 2);
+    const rowY = await queueCopy(rec, allClear, [y], 0);
+    rules.push(clearTo(x), clearTo(y));
+    await makeDue(rowX);
+    const sweepX = pushHelper.sweepPushOutbox();
+    await until(async () => provider.held.length === 1, 'X\'s copy at the provider');
+    await makeDue(rowY);
+    const sweepY = pushHelper.sweepPushOutbox();
+    await until(async () => provider.held.length === 2, 'Y\'s copy at the provider');
+
+    // Sen needs help again, and the new alarm lands on both...
+    const second = await call('POST', '/api/safety/alert', { token: sen.token, body: FIX });
+    assert.strictEqual(second.status, 200, JSON.stringify(second.body));
+    await until(async () => provider.landed.length === 6, 'the new alarm on both');
+    // ...then both old all-clears land over it. The correction lands on X and
+    // sticks for Y, and fails there.
+    rules.push(alarmTo(y));
+    await letLand(take(provider, clearTo(x)));
+    await letLand(take(provider, clearTo(y)));
+    await Promise.all([sweepX, sweepY]);
+    await until(async () => provider.held.length === 1, 'the new alarm again, for Y');
+    await until(async () => typesOn(provider, x).slice(-1)[0] === 'safety_alert', 'the new alarm again, on X');
+    take(provider, alarmTo(y)).fail();
+
+    // Y's failed correction is queued like any failed push, and its release
+    // puts the alarm that stands on Y.
+    await until(async () => (await queuedFor(rec, 'safety_alert', y)).length === 1, 'Y\'s correction queued for a retry');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+    await sweepUntilEmpty(rec, 4);
+    const onY = provider.landed.filter((m) => m.token === y.token);
+    assert.strictEqual(onY[onY.length - 1].data.type, 'safety_alert', 'Y was left saying "OK" over an emergency that stands');
+    assert.strictEqual(onY[onY.length - 1].data.latitude, String(FIX.latitude));
+    assert.strictEqual(typesOn(provider, x).slice(-1)[0], 'safety_alert');
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('two devices whose old alarms land after "I am OK" are corrected apart, and one that keeps refusing does not stop the other', async () => {
+  // The same the other way round: X's last attempt and Y's first of an alarm
+  // that still stood were at the provider when the person said they are OK,
+  // and both landed after the all-clear. X keeps refusing the all-clear, so
+  // its own corrections run out; Y's must not, and must not share X's.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.r@example.com', '5550321');
+  const x = await addPhone(rec);
+  const y = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold, refuse: (m) => m.token === x.token && m.data.type === 'safety_alert_cancelled' });
+  try {
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.landed.length === 2 && pushHelper._openSosSlots() === 0, 'A on both');
+    const alarm = pushes.filter((p) => p.userId === rec.id && p.data.type === 'safety_alert').pop();
+
+    // Queued copies of the alarm, X's third attempt and Y's first, released
+    // while it still stands, and stuck at the provider.
+    const rowX = await queueCopy(rec, alarm, [x], 2);
+    const rowY = await queueCopy(rec, alarm, [y], 0);
+    rules.push(alarmTo(x), alarmTo(y));
+    await makeDue(rowX);
+    const sweepX = pushHelper.sweepPushOutbox();
+    await until(async () => provider.held.length === 1, 'X\'s copy at the provider');
+    await makeDue(rowY);
+    const sweepY = pushHelper.sweepPushOutbox();
+    await until(async () => provider.held.length === 2, 'Y\'s copy at the provider');
+
+    // "I'm OK": the all-clear lands on Y and X refuses it. Then both old
+    // alarms land after it; the correction to Y sticks, and fails.
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => typesOn(provider, y).includes('safety_alert_cancelled'), 'the all-clear on Y');
+    rules.push(clearTo(y));
+    await letLand(take(provider, alarmTo(x)));
+    await letLand(take(provider, alarmTo(y)));
+    await Promise.all([sweepX, sweepY]);
+    await until(async () => provider.held.length === 1, 'the all-clear again, for Y');
+    take(provider, clearTo(y)).fail();
+
+    // Y's failed correction is queued like any failed push, whatever X has
+    // spent, and its release ends Y on the all-clear. X, refusing throughout,
+    // is corrected a few times and then left to its last retry, which ends.
+    await until(async () => (await queuedFor(rec, 'safety_alert_cancelled', y)).length === 1, 'Y\'s correction queued for a retry');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+    await sweepUntilEmpty(rec, 8);
+    assert.strictEqual(typesOn(provider, y).slice(-1)[0], 'safety_alert_cancelled',
+      'Y was left on an alarm the person had withdrawn');
+    assert.deepStrictEqual(await outboxFor(rec), [], 'X\'s retries went on');
+    const cap = 3; // SOS_CORRECTIONS_PER_KEY, held to 3 below
+    const refusedX = provider.refused.filter((m) => m.token === x.token).length;
+    assert.ok(refusedX <= 2 * cap + 4, `${refusedX} sends to a phone that keeps refusing the all-clear`);
+    assert.strictEqual(pushHelper.SOS_CORRECTIONS_PER_KEY, cap);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('a phone whose token keeps being replaced while its retry is out is corrected in its place a few times at most', async () => {
+  // A queued alarm on its last attempt is at the provider when the phone's
+  // token is replaced, and the send then fails without saying whether it
+  // arrived. The correction goes to the token registered now, which the slot
+  // has never heard from; it carried no budget, so its failure was queued
+  // with a fresh one, and each replacement after that did the same again.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.s@example.com', '5550322');
+  let phone = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  let refusing = false;
+  const provider = stubProvider({ hold, refuse: (m) => refusing && m.data.type === 'safety_alert' });
+  try {
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.landed.length === 1 && pushHelper._openSosSlots() === 0, 'A on the phone');
+    const alarm = pushes.filter((p) => p.userId === rec.id && p.data.type === 'safety_alert').pop();
+    await queueCopy(rec, alarm, [phone], 2);
+    refusing = true;
+
+    let replaced = 0;
+    for (let round = 1; round <= 6; round += 1) {
+      if ((await outboxFor(rec)).length === 0) break;
+      // The queued copy is released and sticks at the provider...
+      rules.push(alarmTo(phone));
+      await pool.query(`UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE user_id = $1`, [rec.id]);
+      const sweeping = pushHelper.sweepPushOutbox();
+      let swept = false;
+      sweeping.then(() => { swept = true; });
+      for (let i = 0; i < 100 && provider.held.length === 0 && !swept; i += 1) await sleep(20);
+      if (provider.held.length === 0) {
+        // Owed to a token that has gone: nothing to send, and the row ends.
+        rules.length = 0;
+        await sweeping;
+        continue;
+      }
+      // ...the phone's token is replaced while it is out...
+      await pool.query('DELETE FROM device_tokens WHERE id = $1', [phone.id]);
+      phone = await addPhone(rec);
+      replaced += 1;
+      // ...and the send fails without saying whether it arrived.
+      provider.held.shift().fail();
+      await sweeping;
+      await sleep(60);
+      await until(async () => pushHelper._openSosSlots() === 0, `round ${round} settled`);
+    }
+    await sweepUntilEmpty(rec, 4);
+    assert.deepStrictEqual(await outboxFor(rec), [], 'the retries went on');
+    // Every refused send was a correction to a token registered in place of
+    // one that went. Those count together, so however many replacements,
+    // they stop at the cap (SOS_CORRECTIONS_PER_KEY, held to 3 below).
+    const cap = 3;
+    assert.ok(replaced > cap, `the chain needs more replacements than the cap to show anything (${replaced})`);
+    assert.ok(provider.refused.length <= cap, `${provider.refused.length} corrections to tokens registered in place of one that went`);
+    assert.strictEqual(pushHelper.SOS_CORRECTIONS_PER_KEY, cap);
+  } finally {
+    stopPushThrough();
+  }
 });
