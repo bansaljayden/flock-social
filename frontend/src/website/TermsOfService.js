@@ -286,7 +286,8 @@ export default function TermsOfService() {
           own safety and for your own judgement when meeting people or going out.
         </p>
         <p>
-          The SOS feature emails the trusted contacts you set up, with your current location.
+          The SOS feature emails the trusted contacts you set up, with your current location,
+          and alerts everyone who has accepted a confirmed plan with you whose start time is within twelve hours of the alert, in the app, with the same location when the alert has one.
           It is a convenience, not an emergency service. It depends on your phone having
           signal, on our servers being up, on your email provider delivering the message, and
           on somebody reading it. <strong>It does not contact the police, an ambulance, or any
@@ -488,15 +489,15 @@ export default function TermsOfService() {
         </p>
         <h3>10.1 Bought in the iOS app</h3>
         <p>
-          A subscription bought in the app is an auto-renewable subscription sold through the App Store (or Google Play), not by us. The following is true of it:
+          A subscription bought in the app is an auto-renewable subscription sold through the App Store, not by us. The following is true of it:
         </p>
         <ul>
           <li><strong>What it is:</strong> the title of the subscription, what it unlocks, the length of one term, and the price of one term, including any introductory or free trial period, are shown on the purchase screen and in the store listing before you buy. Nothing is charged until you confirm the purchase with your store account.</li>
           <li><strong>It renews by itself.</strong> The subscription renews automatically at the end of each term at the then-current price, and your store account is charged, unless you turn auto-renewal off at least 24 hours before the end of the current term.</li>
-          <li><strong>How to cancel:</strong> you manage and cancel the subscription in your Apple ID or Google Play account settings, not in Flock. We cannot cancel it for you.</li>
+          <li><strong>How to cancel:</strong> you manage and cancel the subscription in your Apple ID settings, not in Flock. We cannot cancel it for you.</li>
           <li><strong>Cancelling does not end the term you already paid for.</strong> Turning off auto-renewal stops the next charge. It does not shorten, refund or pro-rate the period you are in, and you keep the paid features until that period ends.</li>
           <li><strong>Free trials:</strong> if a free trial is offered and you buy the subscription during it, the unused part of the trial is forfeited. A trial converts to a paid term unless you cancel before it ends.</li>
-          <li><strong>Refunds</strong> for purchases made in the app are handled by Apple or Google under their own policies. We cannot issue a refund on their behalf.</li>
+          <li><strong>Refunds</strong> for purchases made in the app are handled by Apple under its own policies. We cannot issue a refund on Apple's behalf.</li>
           <li><strong>Price changes</strong> take effect only on a renewal, after the store notifies you and, where the store requires it, obtains your agreement.</li>
           <li><strong>Deleting your Flock account does not cancel a store subscription.</strong> Cancel it in your store account as well, or it keeps renewing.</li>
         </ul>
@@ -669,10 +670,11 @@ export default function TermsOfService() {
           <li><strong>Third-party terms.</strong> You must comply with any applicable third-party terms of agreement when using Flock.</li>
           <li><strong>Apple as third-party beneficiary.</strong> Apple and Apple's subsidiaries are third-party beneficiaries of these Terms, and upon your acceptance of them Apple will have the right, and is deemed to have accepted the right, to enforce these Terms against you as a third-party beneficiary of them.</li>
         </ul>
-        <p>
-          If you got Flock from Google Play, Google's terms for the Play Store apply to the
-          download and to any purchase, alongside these Terms.
-        </p>
+        {/* There is no Android app, so there is no Google Play paragraph. A
+            sentence here about Play Store terms and a line in 10.1 about Play
+            billing described an app that does not exist: the repo has
+            @capacitor/ios and no Android project, Play Billing client or Play
+            product. Put both back the day an Android build ships. */}
       </section>
 
       {/* GOVERNING LAW IS NOT SETTLED, AND THIS SENTENCE IS NOT COUNSEL'S WORK.

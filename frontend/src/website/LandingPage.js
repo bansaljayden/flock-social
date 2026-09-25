@@ -843,7 +843,7 @@ export default function LandingPage() {
                 settledCeiling gates on budget_locked and bandCeiling rounds
                 what survives. */}
             <ul className="lp-list">
-              <li>No number until everyone has answered and at least three shared an amount, and then it is a rounded band, not anyone's figure</li>
+              <li>No number until everyone has answered and at least three members shared an amount, and then it is a rounded band, not anyone's figure</li>
               <li>Venue picks stay under the group’s ceiling</li>
               <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
             </ul>

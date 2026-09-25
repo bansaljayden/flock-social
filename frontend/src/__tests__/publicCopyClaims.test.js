@@ -115,3 +115,48 @@ test('no public surface promises that users never pay', () => {
     expect(body).not.toMatch(/you never do/i);
   }
 });
+
+// SOS IS TWO TAPS. The alert control arms on the first tap and sends only on a
+// second one inside four seconds, so a phone in a pocket cannot fire it. The
+// home page and the JSON-LD said two taps while /about, its crawler copy and
+// llms.txt said one, so an answer engine could quote either.
+test('every public surface counts SOS as two taps, which is what the alert control takes', () => {
+  const sheet = read('components/safety/EmergencySheet.js');
+  expect(sheet).toMatch(/if \(!armed\) \{\s*onArmedChange\(true\);\s*\} else \{/);
+  expect(sheet).toMatch(/setTimeout\(\(\) => onArmedChange\(false\), 4000\)/);
+
+  const surfaces = [
+    'website/AboutPage.js',
+    'website/LandingPage.js',
+    '../api/marketing-page.js',
+    '../public/llms.txt',
+    '../public/index.html',
+  ];
+  for (const rel of surfaces) {
+    const body = read(rel).replace(/\s+/g, ' ');
+    expect([rel, (body.match(/\b(one|single)[- ]tap SOS\b/i) || [])[0]]).toEqual([rel, undefined]);
+  }
+  for (const rel of ['website/AboutPage.js', '../api/marketing-page.js', '../public/llms.txt']) {
+    expect(read(rel).replace(/\s+/g, ' ')).toMatch(/two-tap SOS/);
+  }
+});
+
+// FLOCK PRO IS A PAID PLAN, AND IT IS NOT ON SALE TO THE PUBLIC. /about said
+// "the one paid plan is Roost" while Terms section 10 and /pro describe Flock
+// Pro. Web checkout opens only for accounts the paywall is on for, which while
+// PAYWALL_ENABLED is unset is the review list alone (backend
+// services/proBilling.js), so these surfaces name Pro and say it is not on
+// public sale. The day it goes on sale, these sentences change with it.
+test('/about, its crawler copy and llms.txt name Flock Pro as a paid plan that is not on public sale', () => {
+  const billing = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'backend', 'services', 'proBilling.js'), 'utf8'
+  );
+  expect(billing).toMatch(/if \(!paywallEnabled\(userId\)\) missing\.push\('PAYWALL_ENABLED'\);/);
+
+  for (const rel of ['website/AboutPage.js', '../api/marketing-page.js', '../public/llms.txt']) {
+    const body = read(rel).replace(/\s+/g, ' ');
+    expect(body).not.toMatch(/the one paid plan/i);
+    expect(body).toMatch(/Flock Pro, with more Birdie and more crowd forecasts/);
+    expect(body).toMatch(/not on sale to the public today/);
+  }
+});

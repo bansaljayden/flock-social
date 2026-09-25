@@ -17,7 +17,7 @@ the home page, /about, /support, /privacy and /terms. /guidelines and
 /delete-account are not among them and need JavaScript to read. This file is
 the summary and the index.
 
-Updated: September 22, 2026.
+Updated: September 25, 2026.
 
 ## What Flock does
 
@@ -39,8 +39,9 @@ Updated: September 22, 2026.
   poppin rn" and returns real venues near the user with the same crowd numbers used
   elsewhere in the app.
 - Safety: live location sharing inside the flock, off by default and only while a
-  plan is running, plus a one-tap SOS that emails trusted contacts the user's
-  location. There is no background tracking. Report and block are available on any
+  plan is running, plus a two-tap SOS that emails trusted contacts the user's
+  location and alerts, in the app, anyone on a confirmed plan with the user that
+  starts within twelve hours of the alert, before or after. There is no background tracking. Report and block are available on any
   message or profile.
 - Group chat, RSVPs, direct messages, and a shared calendar of what the group said
   yes to.
@@ -73,6 +74,9 @@ enforced minimum age is 13, checked from a stored year of birth.
 Flock is free for users. There is no card required, and unlimited flocks, friends,
 venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
 all included at no cost.
+
+There is also a paid plan for people, Flock Pro, with more Birdie and more crowd
+forecasts. It is not on sale to the public today.
 
 Venues are the side Flock charges. Roost, the venue plan, is $99 a month or $990 a
 year per location, bought on flockcorp.com, with a 14-day free trial; a venue

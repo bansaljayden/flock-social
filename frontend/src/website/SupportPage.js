@@ -67,7 +67,9 @@ const FAQ = [
   {
     q: 'What happens when I tap SOS?',
     a: 'Your trusted contacts (You → Safety → Trusted Contacts) get an email with your '
-      + 'current location and a timestamp. Add at least one contact before you need it.',
+      + 'current location and a timestamp. Anyone who has accepted a confirmed plan with you '
+      + 'whose start time is within twelve hours of the alert also gets an alert in the app, '
+      + 'with the same location. Add at least one contact before you need it.',
   },
   {
     q: 'How do I report a bug or suggest a feature?',
@@ -180,7 +182,9 @@ export default function SupportPage() {
         <h3>What happens when I tap SOS?</h3>
         <p>
           Your trusted contacts (You → Safety → Trusted Contacts) get an email with your
-          current location and a timestamp. Add at least one contact before you need it.
+          current location and a timestamp. Anyone who has accepted a confirmed plan with you
+          whose start time is within twelve hours of the alert also gets an alert in the app,
+          with the same location. Add at least one contact before you need it.
         </p>
 
         <h3>How do I report a bug or suggest a feature?</h3>
