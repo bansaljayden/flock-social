@@ -1216,6 +1216,96 @@ test('087 gives each reply 083 gave out to the owner who could have written it, 
   await pool.query(`DELETE FROM users WHERE email LIKE '%087@example.com'`);
 });
 
+// ---------------------------------------------------------------------------
+// 11. 088, AND THE SHARES A GHOST COMMIT COULD HAVE WRITTEN.
+// ---------------------------------------------------------------------------
+//
+// 088 adds bill_split_shares.posted and backfills it true only where the row's
+// member never committed on that bill, the one proof the rows hold that no
+// figure on them came from a ghost commit (the first versions of which copied
+// the raw budget minimum into any bill). This is the deploy on a populated
+// table: the column gone, the shares as they stood, then the chain. The replay
+// records 088 again and must move nothing, including rows written after 088
+// by the rules that set the column directly, and a database that has lost the
+// column heals on the next boot.
+
+const SHARE_POSTED_088 = '088_bill_share_posted.sql';
+
+test('088 posts only the shares nobody committed on, once, and a lost column heals', async () => {
+  await pool.query('ALTER TABLE bill_split_shares DROP COLUMN IF EXISTS posted');
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [SHARE_POSTED_088]);
+
+  const payer = await insertUser('payer088@example.com', 'Payer 088');
+  const plain = await insertUser('plain088@example.com', 'Plain 088');
+  const committer = await insertUser('committer088@example.com', 'Committer 088');
+  const flock = async (name) => (await pool.query(
+    'INSERT INTO flocks (name, creator_id) VALUES ($1, $2) RETURNING id', [name, payer]
+  )).rows[0].id;
+  const bill = async (flockId, paidBy) => (await pool.query(
+    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent) VALUES ($1, 90, 'equal', $2, 0) RETURNING id",
+    [flockId, paidBy]
+  )).rows[0].id;
+  // A posted bill: the payer's row and a plain member's, nobody committed;
+  // a member who committed first; and the first ghost commit's row, which is
+  // committed too and carries the raw minimum.
+  const posted = await bill(await flock('Posted 088'), payer);
+  // A shell: every row a commitment.
+  const shell = await bill(await flock('Shell 088'), null);
+  await pool.query(
+    `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, paid_amount) VALUES
+       ($1, $3, 30, false, true, 0), ($1, $4, 30, false, false, 0), ($1, $5, 47.13, true, false, 0),
+       ($2, $4, 40, true, false, 0), ($2, $5, 40, true, true, 0)`,
+    [posted, shell, payer, plain, committer]
+  );
+  const rows = async () => (await pool.query(
+    'SELECT bill_id, user_id, committed, posted FROM bill_split_shares WHERE bill_id = ANY($1::int[]) ORDER BY bill_id, user_id',
+    [[posted, shell]]
+  )).rows;
+
+  await migrate(pool); // the deploy: must not throw
+
+  const after = await rows();
+  assert.equal(after.length, 5);
+  for (const r of after) {
+    assert.equal(r.posted, r.committed !== true, `bill ${r.bill_id} user ${r.user_id}: posted is exactly "never committed"`);
+  }
+  const { rows: [col] } = await pool.query(
+    `SELECT attnotnull, pg_get_expr(d.adbin, d.adrelid) AS def
+       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = 'bill_split_shares'::regclass AND a.attname = 'posted'`
+  );
+  assert.deepEqual([col.attnotnull, col.def], [true, 'false'], 'a row nothing marks must read as not posted');
+
+  // After 088 the routes set the column themselves: POST /create writes a
+  // committed member's fresh row as posted, and a ghost commit writes one that
+  // is not. The replay, which records 088 at the moment it runs, must leave
+  // both, and everything above, exactly as they are.
+  const later = await bill(await flock('Later 088'), payer);
+  await pool.query(
+    `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, paid_amount, posted) VALUES
+       ($1, $2, 30, true, false, 0, true), ($1, $3, 30, true, false, 0, false)`,
+    [later, committer, plain]
+  );
+  const everyRow = async () => (await pool.query(
+    'SELECT id, posted FROM bill_split_shares WHERE bill_id = ANY($1::int[]) ORDER BY id', [[posted, shell, later]]
+  )).rows;
+  const before = await everyRow();
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [SHARE_POSTED_088]);
+  await migrate(pool);
+  assert.deepEqual(await everyRow(), before, 'a second pass of 088 moved a row');
+  assert.equal(await migrationRowCount(SHARE_POSTED_088), 1);
+
+  // And @requires: a database that loses the column heals on the next boot,
+  // back on the side that shows nothing unproven.
+  await pool.query('ALTER TABLE bill_split_shares DROP COLUMN posted');
+  await migrate(pool);
+  assert.ok(await columnExists('bill_split_shares', 'posted'), 'the column was not restored');
+  assert.equal(await migrationRowCount(SHARE_POSTED_088), 1);
+  for (const r of await rows()) assert.equal(r.posted, r.committed !== true);
+
+  await pool.query(`DELETE FROM users WHERE email LIKE '%088@example.com'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

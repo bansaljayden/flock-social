@@ -369,12 +369,29 @@ async function settledCrowdHolds(run, flockId) {
   return Number((r && r.rows && r.rows[0] && r.rows[0].n) || 0) >= 3;
 }
 // Settled AND over a crowd of three, in one statement, for a reader that has
-// not read the flock row itself (the shell read in routes/billing.js).
-const SETTLED_NUMBER_SHOWN_SQL = `SELECT (f.budget_locked IS TRUE AND ${settledSharersOf('f.id')} >= 3) AS shown
+// not read the flock row itself (the shell read in routes/billing.js). The
+// cached column rides along so shownCeiling, below, can hand back the number
+// itself from the same read.
+const SETTLED_NUMBER_SHOWN_SQL = `SELECT f.budget_locked, f.budget_ceiling,
+          (f.budget_locked IS TRUE AND ${settledSharersOf('f.id')} >= 3) AS shown
    FROM flocks f WHERE f.id = $1`;
 async function settledNumberShown(run, flockId) {
   const r = await run(SETTLED_NUMBER_SHOWN_SQL, [flockId]);
   return !!(r && r.rows && r.rows[0] && r.rows[0].shown === true);
+}
+// THE PUBLISHED NUMBER ITSELF, or null wherever settledNumberShown says no.
+// An estimate bill (routes/billing.js GET) serves this and never the figure a
+// ghost commit stored. A stored figure is only as good as the day it was
+// written: the first versions of the ghost commit copied the cached column
+// while it was still the live, unbanded minimum, with no threshold in front of
+// it, so an old row can hold one person's exact answer. This is the number
+// every reader is allowed to show, banded again on the way out like every
+// other read of the column (settledCeiling).
+async function shownCeiling(run, flockId) {
+  const r = await run(SETTLED_NUMBER_SHOWN_SQL, [flockId]);
+  const row = r && r.rows && r.rows[0];
+  if (!row || row.shown !== true) return null;
+  return settledCeiling(row.budget_locked, row.budget_ceiling);
 }
 
 function bandCeiling(raw) {
@@ -1375,6 +1392,7 @@ module.exports.SETTLED_SHARERS_SQL = SETTLED_SHARERS_SQL;
 module.exports.settledCrowdHolds = settledCrowdHolds;
 module.exports.SETTLED_NUMBER_SHOWN_SQL = SETTLED_NUMBER_SHOWN_SQL;
 module.exports.settledNumberShown = settledNumberShown;
+module.exports.shownCeiling = shownCeiling;
 module.exports.RESET_SHELL_SQL = RESET_SHELL_SQL;
 module.exports.CEILING_BANDS = CEILING_BANDS;
 module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;

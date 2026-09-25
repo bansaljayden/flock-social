@@ -548,6 +548,25 @@ test('a bill total withheld from a viewer with a hidden share says so without th
   expect(screen.getByLabelText('Open bill split details').textContent).toBe('1/3');
 });
 
+test('a row of a real bill whose figures are withheld reads "not shown", not the budget\'s words', () => {
+  // billing.js withholds a row it cannot vouch for was written from a typed
+  // total (migration 088: an old ghost commit could put the raw budget
+  // minimum into a posted bill) from everyone but its own member, and the
+  // total with it. Fails without the fix: the row read "no group number to
+  // show", which claims to know the row is the budget's.
+  const { container } = mount(bill([
+    share(1, 'Ava', 30, { settled: true, outstanding: 0 }),
+    share(9, 'Jay', 30),
+    share(3, 'Cy', null, { paidAmount: null, outstanding: null, committed: true }),
+  ], { totalAmount: null, totalWithTip: null }));
+  expect(screen.getAllByText('not shown')).toHaveLength(1);
+  expect(screen.getByText('Total · not shown')).toBeTruthy();
+  expect(container.textContent).not.toMatch(/no group number/);
+  expect(container.textContent).not.toMatch(/\$(?!\d)|undefined|NaN|null/);
+  // Jay's own row and Settle Up are untouched.
+  expect(screen.getByRole('button', { name: /Settle Up/ }).textContent).toBe('Settle Up · $30.00');
+});
+
 // ---------------------------------------------------------------------------
 // 4d. A flock too small to settle is judged on members, not on guests
 // ---------------------------------------------------------------------------

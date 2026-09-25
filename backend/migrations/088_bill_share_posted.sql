@@ -1,0 +1,82 @@
+-- @requires column bill_split_shares.posted
+--
+-- 088: which bill shares hold only what somebody typed into a bill, so that a
+-- figure a ghost commit copied out of the budget never reaches anyone but the
+-- member it was written for.
+--
+-- ASCII only, like 065 and 082: the embedded server the boot-safety suite runs
+-- is WIN1252.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT THE OLD GHOST COMMIT WROTE
+--
+-- POST /api/billing/:flockId/ghost-commit writes a share whose amount is the
+-- group's budget number, with committed = true and settled = false. What that
+-- number was, and which bills it could land on, changed over its history:
+--
+--   2026-03-02 to 2026-08-12  The number was flocks.budget_ceiling read raw,
+--                             and a budget answer rewrote that column with
+--                             MIN(amount) every time, with no threshold, so
+--                             one answer in, it was that person's exact
+--                             amount. Nothing checked that the bill was a
+--                             shell: the share went into whatever bill the
+--                             flock had, a posted one included, so a member
+--                             with no row on a real bill got the raw minimum
+--                             as their share of it.
+--   2026-08-12 to 2026-08-13  Three answers first, still the raw minimum,
+--                             still into any bill.
+--   2026-08-13 to 2026-08-18  A bill with a payer refused; the raw minimum
+--                             could still go into a payerless one, and a real
+--                             bill whose payer deleted their account is
+--                             payerless too.
+--   from 2026-08-18           Banded; from 2026-08-26 only once the budget had
+--                             settled; since 086 only onto a bill that never
+--                             had a payer.
+--
+-- A row it wrote could also outlive the bill it landed on. Somebody could mark
+-- it paid while the bill had a payer, and a later edit of the bill then kept
+-- it as the record of that payment (a member dropped from the new split keeps
+-- a paid row), or carried what it said they paid onto their new row as a
+-- credit (paid_amount, 061).
+--
+-- So an old row can hold one person's exact budget answer, as an amount or as
+-- a credit, on a posted bill as well as on a shell. GET /api/billing/:flockId
+-- showed every row of a bill with a payer to every member, and since 086 every
+-- row of a bill whose payer deleted their account as well.
+--
+-- ---------------------------------------------------------------------------
+-- THE COLUMN
+--
+-- posted is true on a row that POST /create wrote from a total somebody typed
+-- and that carries no credit from a row that is not posted. The route sets it
+-- and a ghost commit never does (NOT NULL DEFAULT false). routes/billing.js
+-- shows a row's figures to its own member always and to anyone else only when
+-- the row is posted, and withholds the bill's total from any viewer who cannot
+-- see every row, because the total less the rows they can see is the one they
+-- cannot.
+--
+-- ---------------------------------------------------------------------------
+-- THE BACKFILL
+--
+-- A ghost commit writes committed = true and nothing else, and POST /create
+-- copies committed onto a member's new row whenever their old row had it. So a
+-- row whose committed is not true belongs to a member who never committed on
+-- that bill: nothing on it, and no credit it carries, came from a ghost commit.
+-- That is the one proof the rows hold, and it is the only one taken here.
+-- Every committed row stays unposted, including the real share of somebody who
+-- pre-committed and then had the bill posted over them. Its figures go to its
+-- own member only until the bill is posted again. That is the price of never
+-- showing an amount nobody can vouch for.
+--
+-- ---------------------------------------------------------------------------
+-- REPLAY
+--
+-- The backfill only ever sets true, and only on a row still false whose
+-- committed is not true. Every row that can be unposted after this file has
+-- committed = true (a ghost commit's own, or one carrying such a row's credit,
+-- whose member committed), so a second pass finds nothing to change.
+
+ALTER TABLE bill_split_shares ADD COLUMN IF NOT EXISTS posted BOOLEAN NOT NULL DEFAULT false;
+
+UPDATE bill_split_shares SET posted = true
+ WHERE posted = false AND committed IS NOT TRUE;

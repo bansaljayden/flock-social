@@ -129,7 +129,7 @@ test('a settled share does not survive being asked for more money', () => {
   expect(billing).toMatch(/share\.outstanding = share\.settled \? 0 : \(newCents - carriedCents\) \/ 100;/);
   // And the sheet reads the two figures rather than the whole share.
   const chat = read('screens/ChatDetail.js');
-  expect(chat).toMatch(/const shareFigure = \(s\) => \{/);
+  expect(chat).toMatch(/const shareFigure = \(s, withheldWords = HIDDEN_FIGURE\) => \{/);
   expect(chat).toMatch(/Settle Up\{settleUpFigure\(billSplit, authUser\?\.id\)\}/);
 });
 
