@@ -1209,6 +1209,29 @@ function buildHoursByDay(periods) {
   return byDay;
 }
 
+// Google's `periods` and the venue's own weekday, turned into every hours field
+// a venue shape carries: the per-day map the engine reads, today's window list,
+// and the single-window scalars kept for readers of one window. ONE
+// construction, because the second copy was the bug: Birdie's crowd tool kept
+// only `periods.find()` for today and never built the map, so a split day lost
+// its dinner service and a Friday window that runs past midnight read as
+// closed at 12:30 AM Saturday, while the card one tap away got both right.
+// `day` is the venue's weekday; a caller without one gets the map and no
+// today.
+function venueHoursForDay(periods, day) {
+  const hoursByDay = buildHoursByDay(periods);
+  const key = (typeof day === 'number' && Number.isFinite(day)) ? ((Math.trunc(day) % 7) + 7) % 7 : null;
+  const hoursToday = hoursByDay && key != null ? (hoursByDay[key] || []) : [];
+  const first = hoursToday[0] || null;
+  return {
+    hoursByDay,
+    hoursToday,
+    openHour: first ? first.open : null,
+    closeHour: first ? first.close : null,
+    closeMinute: first ? first.closeMinute : 0,
+  };
+}
+
 function isOpenHour(h, types, openHour, closeHour, closeMinute) {
   // Use real hours from Google if available
   if (openHour != null && closeHour != null) return hourInWindow(h, openHour, closeHour, closeMinute);
@@ -2013,5 +2036,6 @@ module.exports = {
   // 11 AM - 2 PM plus 5 - 10 PM is two windows, not one 11 AM - 2 PM day.
   isOpenAt,
   buildHoursByDay,
+  venueHoursForDay,
   weekdayOffset,
 };

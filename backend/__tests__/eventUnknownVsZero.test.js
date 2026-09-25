@@ -258,8 +258,11 @@ test('a strip hour whose prediction threw still states that nothing was checked'
   // so reaching this exit needs a throw from the handful of lines ABOVE that
   // try, of which the options read is the one a caller can drive. A venue with
   // no coordinates keeps the same read out of the weather branch above the
-  // loop, so the throw lands where the test is aiming.
-  const noCoords = { ...VENUE, place_id: 'throwing-strip-venue', location: null, latitude: 0, longitude: 0 };
+  // loop, so the throw lands where the test is aiming. No coordinates means
+  // null: 0 is the equator and the prime meridian, and the strip now fetches
+  // weather for a venue sitting on them (services/mlPredictor.js
+  // venueCoordinate).
+  const noCoords = { ...VENUE, place_id: 'throwing-strip-venue', location: null, latitude: null, longitude: null };
   const hostileOptions = { get userId() { throw new Error('options read failed'); } };
   const strip = await mlPredictor.predictHourlyForecast(noCoords, WEATHER, 18, 2, TS, hostileOptions);
   assert.strictEqual(strip.length, 2, 'a throw must not cost the strip an hour');

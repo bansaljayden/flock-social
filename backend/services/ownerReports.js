@@ -392,10 +392,11 @@ function markDiverged(reportId) {
 //                                 so a client can still show "{the venue} says
 //                                 N" as information beside the number.
 //   live, < 3 reporters        -> the reading replaces the published number,
-//                                 labelled: basis 'owner_report', supported
-//                                 true (an operator looking at their own room
-//                                 is not a guess to hedge), and the ownerReport
-//                                 block says who asserted it and until when.
+//                                 labelled: basis and predictionMethod
+//                                 'owner_report', supported true (an operator
+//                                 looking at their own room is not a guess to
+//                                 hedge), and the ownerReport block says who
+//                                 asserted it and until when.
 //
 // Applied at SEND TIME, after the crowd cache, never before it — the cache
 // stores the model's answer, so expiry falls back on its own the moment the
@@ -405,7 +406,9 @@ function markDiverged(reportId) {
 // `waitEstimate` and `capacity.current` are re-derived from the owner's
 // number when the payload carries them: "95% full" above "No wait" is the
 // two-surfaces-disagree bug in one card. venueTypes/priceLevel ride on the
-// card payload for exactly this recompute (see routes/crowd.js).
+// card payload for exactly this recompute (see routes/crowd.js). The best-time
+// fields are re-derived the same way when the caller passes
+// `options.bestTimeFor`.
 // ---------------------------------------------------------------------------
 function applyOwnerReport(result, ownerRow, options = {}) {
   if (!result || typeof result !== 'object') return result;
@@ -484,6 +487,14 @@ function applyOwnerReport(result, ownerRow, options = {}) {
     // An operator's statement about their own room is stated as fact, not
     // hedged into "Usually busy" — the hedge is for category priors.
     label: crowdEngine.publishedLabel(live.percent, { supported: true }),
+    // WHAT PRODUCED THE PUBLISHED NUMBER, which is no longer the model. The
+    // payload's method used to stay 'ml' under the owner's figure, and the
+    // card reads it to decide whether the number may call itself LIVE model
+    // output, so a pulsing LIVE sat beside "From the bar itself, not a Flock
+    // estimate". Same value served_predictions already records for this case
+    // (routes/crowd.js). The model's own answer stays visible beside it as
+    // rawEngineScore and modelVersion.
+    predictionMethod: OWNER_BASIS,
     confidenceBasis: OWNER_BASIS,
     confidenceMeans: 'owner_asserted',
     supported: true,
@@ -495,6 +506,15 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   if (result.capacity && Number.isFinite(Number(result.capacity.max))) {
     const max = Number(result.capacity.max);
     out.capacity = { current: Math.round((max * live.percent) / 100), max };
+  }
+  // The best-time answer follows the number too. Its words about now ("Now is
+  // good", "Packed now, and it stays that way") are chosen from the score they
+  // sit beside, and a sentence chosen against the model's 40 said "Now is
+  // good" next to the owner's "Packed 90". The card hands in the function
+  // that re-derives its best-time fields for any score (routes/crowd.js
+  // bestTimeForCard); a payload that carries no best time passes none.
+  if (typeof options.bestTimeFor === 'function') {
+    Object.assign(out, options.bestTimeFor(live.percent));
   }
   return out;
 }

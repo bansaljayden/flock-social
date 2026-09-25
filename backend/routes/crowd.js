@@ -9,7 +9,6 @@ const crowdEngine = require('../services/crowdEngine');
 // expired reading falls back on its own whatever the cache's clock says.
 const ownerReports = require('../services/ownerReports');
 const gameNights = require('../services/gameNights');
-const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 // Outage detection. This route has its OWN Text Search for alternatives,
@@ -430,6 +429,32 @@ function setCache(key, data) {
   }
 }
 
+// The four card fields that carry the best-time answer, from one
+// crowdEngine.recommendBestTime result. `drawnHours` is how many hourly bars
+// the card draws: bestIndex points at one of them or is null.
+function bestTimeFields(best, drawnHours) {
+  return {
+    bestTime: best.text,
+    // Which hourly entry the sentence names (null when it says "now", or when
+    // the named hour sits past the drawn bars), so a chart can mark the same
+    // hour the sentence names instead of guessing.
+    bestHour: best.dayOffset === 0 ? best.hourLabel : null,
+    bestIndex: (best.dayOffset === 0 && best.index >= 0 && best.index < drawnHours && best.hourLabel)
+      ? best.index
+      : null,
+    bestIsNow: best.hourLabel == null,
+  };
+}
+
+// Cached card -> the function that re-derives its best-time fields for another
+// published score. The owner override replaces the score at SEND TIME, cache
+// hit or not, and the words about now ("Now is good", "Packed now") have to be
+// chosen from the number that ships (services/ownerReports.js applyOwnerReport,
+// `bestTimeFor`). The forecast and the venue hours that decision needs are gone
+// by the cache hit, so the card keeps the closure beside it. Weak, so an
+// evicted card takes its closure with it; nothing here outlives crowdCache.
+const bestTimeForCard = new WeakMap();
+
 // Paid-call budget shared with venueSearch (round 8: these fetches bypassed it)
 const { allowPlacesSearch, refundPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
@@ -657,7 +682,6 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   // per-day map is what the engine reads now; the scalars below stay for
   // clients still reading a single window.
   const periods = p.currentOpeningHours?.periods;
-  const hoursByDay = buildHoursByDay(periods);
   // The venue's OWN weekday decides "today's hours", not the viewer's. A bar in
   // Los Angeles is still on Friday's window while a viewer in London has rolled
   // over to Saturday, and the card is scored on the venue's clock — so the
@@ -666,11 +690,10 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   // the server's, when Google gives us no offset.
   const venueDay = crowdEngine.venueLocalNow(p.utcOffsetMinutes)?.day;
   const today = venueDay != null ? venueDay : (clientDay != null ? clientDay : new Date().getDay()); // 0=Sun
-  const hoursToday = hoursByDay ? (hoursByDay[today] || []) : [];
-  const todayWindow = hoursToday[0] || null;
-  const openHour = todayWindow ? todayWindow.open : null;
-  const closeHour = todayWindow ? todayWindow.close : null;
-  const closeMinute = todayWindow ? todayWindow.closeMinute : 0;
+  // The map, today's windows and the scalars, from the one construction
+  // routes/ai.js also reads, so Birdie and this card agree about when a venue
+  // is open.
+  const { hoursByDay, hoursToday, openHour, closeHour, closeMinute } = crowdEngine.venueHoursForDay(periods, today);
 
   return {
     hoursByDay,
@@ -779,7 +802,10 @@ router.get('/:placeId',
         // it: the cache keeps the model's answer, so a reading set a minute ago
         // shows inside one request and an expired one falls back mid-TTL.
         const published = ownerReports.applyOwnerReport(
-          cached, (await ownerReports.getLiveOwnerReports([placeId]))[placeId]
+          cached, (await ownerReports.getLiveOwnerReports([placeId]))[placeId],
+          // The best-time words follow the number the override publishes,
+          // on a cache hit exactly as on a fresh card (bestTimeForCard).
+          { bestTimeFor: bestTimeForCard.get(cached) }
         );
         // Recorded AFTER the gate resolves, so an entitlement 503 (which
         // serves no score) records nothing — and recorded on the cache path
@@ -836,7 +862,12 @@ router.get('/:placeId',
       // exactly the enumeration shape that file's header says must pass an id.
       // predictHourlyForecast below already charges this same request; the two
       // halves now agree.
-      const weather = (lat && lon) ? await getWeather(lat, lon, { userId: req.user.id }) : null;
+      //
+      // Finite, not truthy: 0 is the equator and the prime meridian, and a
+      // truthiness test dropped the weather for every venue sitting on either.
+      const weather = (Number.isFinite(lat) && Number.isFinite(lon))
+        ? await getWeather(lat, lon, { userId: req.user.id })
+        : null;
 
       // WHOSE CLOCK: the venue's, not the phone's.
       //
@@ -973,14 +1004,24 @@ router.get('/:placeId',
       const finalScore = calibration.adjustedScore;
       // Best time is decided against the score the client actually renders, so
       // a venue reported busy by real users can't also be told "now is good".
-      const best = crowdEngine.recommendBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
-        currentHour: localHour,
-        // Round 14: without the day, a venue closed on Mondays was told to come
-        // at 7 PM tonight, and split-service hours read as closed all evening.
-        currentDay: localDay,
-        currentScore: finalScore,
-      });
-      const bestTime = best.text;
+      //
+      // A FUNCTION OF THAT SCORE, not a value computed once, because the score
+      // the client renders is not always this one: a live owner reading
+      // replaces it at send time (services/ownerReports.js), and a sentence
+      // chosen against the model's 40 printed "Now is good" beside the owner's
+      // "Packed 90". The override calls it again with the number it publishes,
+      // and bestTimeForCard keeps it beside the cached card for a cache hit.
+      const bestTimeAt = (score) => bestTimeFields(
+        crowdEngine.recommendBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
+          currentHour: localHour,
+          // Round 14: without the day, a venue closed on Mondays was told to come
+          // at 7 PM tonight, and split-service hours read as closed all evening.
+          currentDay: localDay,
+          currentScore: score,
+        }),
+        hourly.length
+      );
+      const best = bestTimeAt(finalScore);
       const capacity = estimateCapacity(venue, finalScore);
       const waitEstimateTyped = estimateWait(finalScore, venue.types, venue.price_level);
 
@@ -1059,7 +1100,7 @@ router.get('/:placeId',
         confidenceMeasurement: confidenceMeasurementFor(crowdResult, cardConfidence, feedbackConfidenceBoost),
         supported: support.supported,
         capacity,
-        bestTime,
+        bestTime: best.bestTime,
         peak: peakResult.text,
         waitEstimate: waitEstimateTyped,
         // Public Google facts, shipped so the owner override can re-derive the
@@ -1095,14 +1136,10 @@ router.get('/:placeId',
               : crowdEngine.isOpenAt(venue, abs % 24, localDay + Math.floor(abs / 24)),
           };
         }),
-        // Which hourly entry the best-time sentence names (null when it says
-        // "now", or when the named hour sits past the 12 drawn bars), so a
-        // chart can mark the same hour the sentence names instead of guessing.
-        bestHour: best.dayOffset === 0 ? best.hourLabel : null,
-        bestIndex: (best.dayOffset === 0 && best.index >= 0 && best.index < hourly.length && best.hourLabel)
-          ? best.index
-          : null,
-        bestIsNow: best.hourLabel == null,
+        // Which hourly entry the best-time sentence names (see bestTimeFields).
+        bestHour: best.bestHour,
+        bestIndex: best.bestIndex,
+        bestIsNow: best.bestIsNow,
         factors: crowdResult.factors,
         calibration: {
           feedbackUsed: calibration.feedbackUsed,
@@ -1169,6 +1206,7 @@ router.get('/:placeId',
       };
 
       setCache(cacheKey, result);
+      bestTimeForCard.set(result, bestTimeAt);
       // Owner override AFTER setCache, same rule as the cache-hit path above:
       // what is cached is the model's answer; what ships is the answer with
       // the venue's live reading applied, when one exists and outranks it.
@@ -1178,7 +1216,7 @@ router.get('/:placeId',
         // while the reading was live rather than by the 28-day average of this
         // venue-hour. Precedence still uses the blend; only the penalty needs
         // people in the room (services/ownerReports.js, round 25).
-        { feedbackRows }
+        { feedbackRows, bestTimeFor: bestTimeAt }
       );
       const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true, placeId }));
       // Recorded only when a number was shown. A locked card carries none
@@ -1447,8 +1485,15 @@ router.post('/batch',
       // calls per vote-list scroll, and weather is a small term in the feature
       // vector next to the hour. A list spanning zones is the rare case; a list
       // of twenty is the common one.
+      //
+      // Finite, not truthy. The whitelist above snaps coordinates to two
+      // decimals, so a first venue within a few hundred metres of the equator
+      // or the prime meridian arrives as an exact 0 (the O2 in Greenwich is at
+      // longitude 0.003), and a truthiness test scored the whole list without
+      // weather. The whitelist already guarantees a location is two finite
+      // numbers or null.
       const firstLoc = venues[0]?.location;
-      const weather = (firstLoc?.latitude && firstLoc?.longitude)
+      const weather = (Number.isFinite(firstLoc?.latitude) && Number.isFinite(firstLoc?.longitude))
         ? await getWeather(firstLoc.latitude, firstLoc.longitude, { userId: req.user.id })
         : null;
 
@@ -1811,7 +1856,9 @@ router.get('/:placeId/alternatives',
 
       const lat = target.location?.latitude;
       const lon = target.location?.longitude;
-      if (!lat || !lon) {
+      // Finite, not truthy: a venue on the equator or the prime meridian has a
+      // location, and 0 is it.
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
         return res.status(400).json({ error: 'Venue has no location data' });
       }
 

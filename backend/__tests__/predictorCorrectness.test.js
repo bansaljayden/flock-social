@@ -477,7 +477,10 @@ test('concurrent callers during model load all get the loaded model', async () =
 // Railway runs UTC, which has no transitions, so this is a developer-machine
 // and future-deployment bug rather than a live one — but it is provable, so it
 // is proved. Run in a child process because the offending arithmetic depends on
-// the process TZ, which Node reads once.
+// the process TZ, which Node reads once. (The VENUE's own clock change is a
+// different defect, and that one is live: every slot's real instant uses the
+// one offset held for the venue. See the note above labelFor in
+// services/mlPredictor.js.)
 // ---------------------------------------------------------------------------
 
 const { execFileSync } = require('child_process');

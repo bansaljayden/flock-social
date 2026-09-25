@@ -178,7 +178,12 @@ test('an anonymous flood cannot spend the whole Ticketmaster event day', async (
       'and the reserve is what the signed-in product keeps, whatever the demo did');
 
     const before = mlPredictor.eventBudgetStatus().globalUsed;
-    await mlPredictor.predictBusyness(eventVenue(50_000), null, at, { userId: 99 });
+    // A real place outside every bucket the flood touched (its latitudes start
+    // at 40), so this is a genuine miss. It was eventVenue(50_000), which sits
+    // at latitude 540: not a place, and refused before any lookup since
+    // services/mlPredictor.js hasCoordinates range-checks the pair.
+    const probe = { ...eventVenue(0), place_id: 'reserve-probe-signed-in', location: { latitude: 39.5, longitude: -74.5 } };
+    await mlPredictor.predictBusyness(probe, null, at, { userId: 99 });
     const after = mlPredictor.eventBudgetStatus().globalUsed;
     assert.strictEqual(after, before + 1,
       'an authenticated caller must still be able to spend the reserve after the flood');
