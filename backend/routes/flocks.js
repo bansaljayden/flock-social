@@ -18,11 +18,21 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // it once for a whole id set now, with the same bidirectional predicate written
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds } = require('../utils/blocks');
-const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils/guestRsvp');
+const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts, carryGuestVote } = require('../utils/guestRsvp');
+// The member-facing venue tally's own fan-out, for the vote an accepted invite
+// carries across from a retired guest row (POST /:id/join).
+const { broadcastGuestVote } = require('./venues');
 const { reconfirmState, RECONFIRM_MEMBER_WRITE_SQL } = require('../utils/reconfirm');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
-const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
+const {
+  emitToFlockExcludingBlocked,
+  emitToFlockMembers,
+  // The end of a live location share, for a member leaving and for a plan
+  // being deleted. See the leave route and the two delete paths below.
+  announceFlockShareEnded,
+  announceFlockSharesEnded,
+} = require('../sockets/handlers');
 // PRIVACY: the ceiling this file serves is a CACHED column, and it is only as
 // banded as whatever last wrote it. bandCeiling is imported from the route that
 // owns the banding rule (see the long comment above it in budget.js) rather
@@ -1221,16 +1231,25 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
       // paths.
       pool.query(GUEST_RSVP_SELECT, [flockId]),
       // The two venue-vote tallies. Both are scored at `uniqueVoters` below,
-      // where the note on the guest-inclusive denominator lives.
+      // where the note on the guest-inclusive denominator lives. Counted by
+      // the rule the venue tally itself counts by (routes/venues.js
+      // collectVoteRows): an accepted member who is not banned, and a guest
+      // who is a visible 'in'. Every venue_votes row used to count here, a
+      // departed or banned member's included, and a guest who had said out,
+      // so momentum credited votes the tally beside it did not show.
       pool.query(
-        'SELECT COUNT(DISTINCT user_id) AS voters FROM venue_votes WHERE flock_id = $1',
+        `SELECT COUNT(DISTINCT vv.user_id) AS voters
+         FROM venue_votes vv
+         JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id AND fm.status = 'accepted'
+         JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
+         WHERE vv.flock_id = $1`,
         [flockId]
       ),
       pool.query(
         `SELECT COUNT(DISTINCT gv.guest_rsvp_id) AS voters
          FROM guest_votes gv
          JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-         WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false`,
+         WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false AND gr.status = 'in'`,
         [flockId]
       ),
       // The caller's block set, applied at `visibleMembers` at the bottom of
@@ -1483,7 +1502,32 @@ router.put('/:id',
         }
       }
 
-      const result = await pool.query(
+      // A moved plan is a new question. "Still in for 9?" answered yes is not
+      // an answer to "still in for 11?", so a time change closes any night-of
+      // window that had opened and clears every answer in it; the sweep opens
+      // a fresh one at the new lead (services/reconfirmSweep.js). Only when a
+      // window existed, so a plan that never had one costs nothing here.
+      //
+      // And a plan that stops being confirmed (moved back to planning, or
+      // cancelled) is not a plan anyone can be still in for: the same reset,
+      // or a later re-confirm would find the old window open with the old
+      // answers in it and no push to say so. A completed plan keeps its
+      // answers; they are the record of the night.
+      //
+      // THE EDIT AND THE RESET COMMIT TOGETHER. The reset used to run in a
+      // transaction of its own after the edit had already committed, and a
+      // failure in it was logged while this route answered 200: the plan had
+      // moved, the old window stayed open with every "still in for 9" answer
+      // counting toward the new time, and the sweep, which only opens a
+      // window where there is none, never asked the new question. A reset
+      // that fails now takes the edit back with it, and the 500 is true:
+      // nothing changed. Only an edit that could close a window pays for the
+      // transaction; a rename or a venue pick is one statement and stays one.
+      const leftConfirmed = status !== undefined && status !== null && status !== 'confirmed' && status !== 'completed';
+      const mayCloseWindow = (event_time !== undefined && event_time !== null) || leftConfirmed;
+      // `db` is the pool for an edit that cannot close a window, and the
+      // transaction's client for one that can.
+      const runFlockUpdate = (db) => db.query(
         `UPDATE flocks
          SET name = COALESCE($1, name),
              venue_name = COALESCE($2, venue_name),
@@ -1501,6 +1545,33 @@ router.put('/:id',
          RETURNING *`,
         [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, safePhotoUrl, event_time, status, flockId]
       );
+      let result;
+      let reconfirmReset = false;
+      if (mayCloseWindow) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          result = await runFlockUpdate(client);
+          if (result.rowCount > 0 && result.rows[0].reconfirm_opened_at) {
+            // All three or none: a failure between them would leave one
+            // roster's answers standing after the other's were cleared, and
+            // the next window would count them.
+            await client.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [flockId]);
+            await client.query('UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+            await client.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
+            reconfirmReset = true;
+          }
+          await client.query('COMMIT');
+        } catch (txErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txErr;
+        } finally {
+          client.release();
+        }
+        if (reconfirmReset) result.rows[0].reconfirm_opened_at = null;
+      } else {
+        result = await runFlockUpdate(pool);
+      }
 
       // The ownership check above and this UPDATE are two statements, and the
       // row can go between them — a co-creator's DELETE, the creator's own
@@ -1529,40 +1600,6 @@ router.put('/:id',
       const io = req.app.get('io');
       const updated = result.rows[0];
 
-      // A moved plan is a new question. "Still in for 9?" answered yes is not
-      // an answer to "still in for 11?", so a time change closes any night-of
-      // window that had opened and clears every answer in it; the sweep opens
-      // a fresh one at the new lead (services/reconfirmSweep.js). Only when a
-      // window existed, so a plan that never had one costs nothing here.
-      //
-      // And a plan that stops being confirmed (moved back to planning, or
-      // cancelled) is not a plan anyone can be still in for: the same reset,
-      // or a later re-confirm would find the old window open with the old
-      // answers in it and no push to say so. A completed plan keeps its
-      // answers; they are the record of the night.
-      let reconfirmReset = false;
-      const leftConfirmed = status !== undefined && status !== null && status !== 'confirmed' && status !== 'completed';
-      if (((event_time !== undefined && event_time !== null) || leftConfirmed) && updated.reconfirm_opened_at) {
-        //
-        // One transaction: a failure between the three statements would
-        // leave one roster's answers standing after the other's were
-        // cleared, and the next window would count them.
-        const resetClient = await pool.connect();
-        try {
-          await resetClient.query('BEGIN');
-          await resetClient.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [flockId]);
-          await resetClient.query('UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
-          await resetClient.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
-          await resetClient.query('COMMIT');
-          updated.reconfirm_opened_at = null;
-          reconfirmReset = true;
-        } catch (resetErr) {
-          await resetClient.query('ROLLBACK').catch(() => {});
-          console.error('Reconfirm reset failed:', resetErr.message);
-        } finally {
-          resetClient.release();
-        }
-      }
       if (io) {
         // Block-aware per-member fan-out: this payload carries `updatedBy`, the
         // editor's NAME, so a room broadcast handed a blocked user's name
@@ -1859,6 +1896,15 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     } finally {
       client.release();
     }
+    // A DELETED PLAN TAKES EVERY LIVE PIN SHOWN IN IT OFF EVERY MAP. The app
+    // drops a pin only on member_stopped_sharing and flock_deleted does not
+    // touch the map, while every later position and stop from a member of the
+    // plan is refused at the membership check, because there is no membership
+    // left. So a plan deleted mid-walk left each sharer's last position on
+    // everybody's map. After the COMMIT, so a delete that rolled back leaves
+    // the shares running, and from the server's own record of who it handed
+    // each pin to, since the roster went with the plan.
+    announceFlockSharesEnded(io, flockId);
     res.json({ message: 'Flock deleted' });
 
     // A deleted plan was a socket event and nothing else, so the people who
@@ -2086,6 +2132,28 @@ router.post('/:id/reconfirm', param('id').isInt({ min: 1, max: INT4_MAX }).withM
   }
 });
 
+// The guest identities an accept may carry (POST /:id/join below): UUID-shaped
+// strings only, from `guestTokens` (an array) or a single `guestToken`, deduped
+// case-insensitively (Postgres compares the uuid type that way, so two
+// spellings are one row) and capped, because a device holds one identity per
+// link it answered and nothing honest sends more than a handful. Anything else
+// is dropped, never refused: the accept is the point.
+const GUEST_TOKEN_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_CARRIED_GUEST_TOKENS = 20;
+function carriedGuestTokens(body) {
+  if (!body || typeof body !== 'object') return [];
+  const raw = Array.isArray(body.guestTokens) ? body.guestTokens
+    : (body.guestToken !== undefined ? [body.guestToken] : []);
+  const out = [];
+  for (const t of raw) {
+    if (out.length >= MAX_CARRIED_GUEST_TOKENS) break;
+    if (typeof t !== 'string' || !GUEST_TOKEN_SHAPE.test(t)) continue;
+    const token = t.toLowerCase();
+    if (!out.includes(token)) out.push(token);
+  }
+  return out;
+}
+
 // POST /api/flocks/:id/join - Accept a flock invite
 router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
@@ -2155,6 +2223,24 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     // created against the roster it read. The statement is unchanged; only
     // the connection is. The ROLLBACK is guarded the way reliability.test.js
     // requires, so a dead connection cannot replace the error that broke.
+    // THE GUEST IDENTITIES THIS DEVICE ANSWERED THE LINK UNDER, if the app
+    // holds any (services/inviteHandoff.js storedGuestTokens). Somebody who
+    // answered a plan's share link by name and then accepted the in-app invite
+    // to the same plan was on it twice for good: the membership landed and
+    // their guest_rsvps row stayed, so "going", momentum, the link's roster
+    // and both venue tallies counted one person as two. POST /api/guest/
+    // :token/join already retires the row it is handed; this is the same
+    // retirement for the other door. The client does not know which of its
+    // guest identities belongs to this plan (the link page is never told a
+    // flock id), so it sends the few it holds and the UPDATE below matches
+    // only this plan's rows: a UUID proves a row is theirs and one from any
+    // other plan matches nothing. Shape-checked rather than validated, like
+    // the link door's: an unusable value means "retire nothing", never a
+    // failed accept.
+    const guestTokens = carriedGuestTokens(req.body);
+    let retiredGuestIds = [];
+    let carriedVote = null;
+
     const joinClient = await pool.connect();
     let result;
     try {
@@ -2179,6 +2265,25 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
          RETURNING *`,
         [flockId, req.user.id]
       );
+      // In the same transaction as the membership, and only for somebody who
+      // IS an accepted member once it lands (the EXISTS reads this
+      // transaction's own UPDATE): a refused accept retires nothing. HIDE, not
+      // delete, by the ledger's own rule (hidden rows keep their cap slot and
+      // every read filters them). The vote on the row comes across as one
+      // vote, under the flockvote: lock (utils/guestRsvp.js carryGuestVote).
+      if (guestTokens.length > 0) {
+        const hid = await joinClient.query(
+          `UPDATE guest_rsvps SET is_hidden = TRUE
+            WHERE flock_id = $1 AND guest_token = ANY($2::uuid[]) AND COALESCE(is_hidden, false) = false
+              AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
+            RETURNING id`,
+          [flockId, guestTokens, req.user.id]
+        );
+        retiredGuestIds = (hid.rows || []).map((r) => r.id);
+        if (retiredGuestIds.length > 0) {
+          carriedVote = await carryGuestVote((q, p) => joinClient.query(q, p), flockId, req.user.id, retiredGuestIds);
+        }
+      }
       await joinClient.query('COMMIT');
     } catch (txErr) {
       await joinClient.query('ROLLBACK').catch(() => {});
@@ -2209,6 +2314,23 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
       }
     }
 
+    // The retired guest row leaves every open client the way a takedown does
+    // (App.js applyTakedownToFlocks drops the entry and its count), and before
+    // the join below is announced, so no count passes through the doubled
+    // state. Unfiltered, like a takedown: a row disappearing names nobody.
+    if (retiredGuestIds.length > 0) {
+      const io = req.app.get('io');
+      if (io) {
+        for (const contentId of retiredGuestIds) {
+          await emitToFlockMembers(io, flockId, 'content_removed', {
+            contentType: 'guest_rsvp',
+            contentId,
+            flockId: parseInt(flockId),
+          }).catch((e) => console.error('Guest row retire fan-out failed:', e.message));
+        }
+      }
+    }
+
     if (transitioned) {
       // Notify flock members that someone joined
       const io = req.app.get('io');
@@ -2232,6 +2354,14 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     }
 
     res.json({ member });
+
+    // The retired row's vote left the guest ledger in the transaction above,
+    // into the member ledger or, when this member's own newer vote stood,
+    // nowhere, so open clients re-tally either way. After the response: the
+    // accept is committed and the joiner is not waiting on it. Never throws.
+    if (carriedVote) {
+      await broadcastGuestVote(req.app.get('io'), flockId, carriedVote.venueName);
+    }
 
     // Push notification to flock creator, AFTER the response. The membership row
     // is committed; the host learning about it is not something the joiner is
@@ -3242,6 +3372,9 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         client.release();
       }
       if (io) io.socketsLeave(`flock:${flockId}`); // no ghost listeners on a dead room
+      // Every live pin in the plan comes off every map it is on, the host's
+      // own included: see DELETE /:id, which this branch is.
+      announceFlockSharesEnded(io, flockId);
       res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
       // The host walking away deletes the plan, so everybody else needs the
       // same notice DELETE /:id sends. Id-less for the same reason.
@@ -3313,6 +3446,19 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
           flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
         }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
+        // A LEAVER WHO WAS SHARING THEIR LOCATION TAKES THE PIN WITH THEM.
+        // Every other member's app drops a pin only on member_stopped_sharing,
+        // and after the DELETE below the leaver's own stop and every later
+        // position are refused at the membership check, so a departure mid-
+        // share left their last position on every map in the plan. Announced
+        // here, before the row goes, while the roster still reaches the people
+        // the pin reached, and to everyone recorded as holding it, a member
+        // who has blocked them since included (sockets/handlers.js,
+        // announceFlockShareEnded). A leaver who was not sharing costs the
+        // roster and block reads and a stop that no app holds a pin for,
+        // told to the people who are hearing flock_member_left anyway. Never
+        // throws.
+        await announceFlockShareEnded(io, req.user.id, flockId);
       }
       left = await leaveClient.query(
         `WITH gone AS (
@@ -3339,6 +3485,16 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // receiving messages, locations, and votes until they disconnected.
     if (io) io.in(`user:${req.user.id}`).socketsLeave(`flock:${flockId}`);
 
+    // THE STOP ONCE MORE, NOW THAT THE ROW IS GONE. The one above went out
+    // while the membership still stood, and a position the leaver's app sent
+    // after it (the share kept ticking while this request was in flight)
+    // passed the membership check, reached the plan and recorded its audience
+    // as holding the pin. Every later position is refused now, so nothing
+    // would have taken that one back. Whoever is recorded is told, from
+    // memory, and a tick still reading its roster is dropped by the mark this
+    // sets (sockets/handlers.js markShareEnded). No reads, never throws.
+    if (io && wasAccepted) await announceFlockShareEnded(io, req.user.id, flockId, { roster: false });
+
     // The RETURNING row, not rowCount, is the signal: a data-modifying CTE's
     // rowCount reports the outer DELETE, which is right in Postgres, but a
     // statement that returns the deleted id is also readable by every SQL
@@ -3358,6 +3514,9 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       io.to(`user:${flock.rows[0].creator_id}`).emit('flock_deleted', {
         flockId: parseInt(flockId), flockName, reason: 'emptied',
       });
+      // And any pin still shown in the plan comes off, as on the other two
+      // delete paths.
+      announceFlockSharesEnded(io, flockId);
     }
 
     res.json({ message: 'Left flock', flock_name: flockName, deleted });

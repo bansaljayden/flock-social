@@ -83,7 +83,8 @@ function dispatch(text, params = []) {
     if (/FROM flock_invite_links/i.test(sql)) {
       return Promise.resolve({ rows: [{ flock_id: 10, name: 'Dinner', event_time: null, venue_name: null, status: 'planning', host_name: 'Ava B' }] });
     }
-    if (/SELECT id FROM guest_rsvps WHERE guest_token/i.test(sql)) return Promise.resolve({ rows: [{ id: 7 }] });
+    // The vote reads the answer with the identity: only an 'in' guest votes.
+    if (/SELECT id, status FROM guest_rsvps WHERE guest_token/i.test(sql)) return Promise.resolve({ rows: [{ id: 7, status: 'in' }] });
     if (/UNION SELECT 1 FROM guest_votes/i.test(sql)) return Promise.resolve({ rows: [{ '?column?': 1 }] });
     // The vote write reads the plan's status in its own statement and reports
     // one row written; a plan this suite votes on is open.

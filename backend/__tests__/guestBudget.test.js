@@ -343,7 +343,9 @@ async function dispatch(sql, params) {
     return { rows, rowCount: rows.length };
   }
   if (/SUM\(CASE WHEN src = 'member'/.test(flat)) return { rows: [], rowCount: 0 };
-  if (/^SELECT COUNT\(\*\)::int AS n FROM venue_votes WHERE flock_id = \$1$/.test(flat)) return { rows: [{ n: 0 }], rowCount: 1 };
+  // The guest tally's cap counts only the member votes the tally counts
+  // (accepted, not banned), so the statement joins the roster.
+  if (/^SELECT COUNT\(\*\)::int AS n FROM venue_votes vv JOIN flock_members fm ON fm\.flock_id = vv\.flock_id AND fm\.user_id = vv\.user_id AND fm\.status = 'accepted' JOIN users u ON u\.id = vv\.user_id AND u\.is_banned IS NOT TRUE WHERE vv\.flock_id = \$1$/.test(flat)) return { rows: [{ n: 0 }], rowCount: 1 };
   if (/AS open, f\.event_time AS deadline/.test(flat)) {
     const row = reconfirmRow(Number(p[0]));
     return row ? { rows: [row], rowCount: 1 } : { rows: [], rowCount: 0 };

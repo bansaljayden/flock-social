@@ -124,10 +124,21 @@ async function dispatch(sql, params) {
     world.votes = world.votes.filter((v) => !(v.user_id === Number(p[1]) && v.venue_name !== p[2]));
     return { rows: [], rowCount: before - world.votes.length };
   }
-  if (/^DELETE FROM venue_votes WHERE flock_id = \$1 AND user_id = \$2 RETURNING venue_name$/.test(flat)) {
+  // The un-vote. It carries the same closing time the INSERT below does, in
+  // the statement, so a plan that closed after the route's own check keeps
+  // every vote it had; the fixture does what the EXISTS does.
+  if (/^DELETE FROM venue_votes WHERE flock_id = \$1::int AND user_id = \$2::int AND EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\) RETURNING venue_name$/.test(flat)) {
+    const open = world.flock && typeof world.flock.status === 'string'
+      && world.flock.status !== 'completed' && world.flock.status !== 'cancelled';
+    if (!open) return { rows: [], rowCount: 0 };
     const gone = world.votes.filter((v) => v.user_id === Number(p[1]));
     world.votes = world.votes.filter((v) => v.user_id !== Number(p[1]));
     return { rows: gone.map((v) => ({ venue_name: v.venue_name })), rowCount: gone.length };
+  }
+  // What an empty un-vote reads back: does the caller still hold a vote.
+  if (/^SELECT 1 FROM venue_votes WHERE flock_id = \$1 AND user_id = \$2 LIMIT 1$/.test(flat)) {
+    const held = world.votes.some((v) => v.user_id === Number(p[1]));
+    return held ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (/^INSERT INTO venue_votes/.test(flat)) {
     // The route's INSERT ... SELECT writes nothing for a closed plan (WHERE
@@ -161,11 +172,14 @@ async function dispatch(sql, params) {
     const rows = [...byName.values()].sort((a, b) => b.member_count - a.member_count);
     return { rows, rowCount: rows.length };
   }
-  // guest tally
+  // guest tally. A guest who said out (`out: true`) is left out only when the
+  // arriving SQL carries the 'in' predicate, so dropping it goes red below.
   if (/FROM guest_votes gv JOIN guest_rsvps gr/.test(flat)) {
+    const onlyIn = /AND gr\.status = 'in'/.test(flat);
     const byName = new Map();
     for (const g of world.guestVotes) {
       if (g.hidden) continue;
+      if (onlyIn && g.out) continue;
       byName.set(g.venue_name, (byName.get(g.venue_name) || 0) + 1);
     }
     const rows = [...byName.entries()].map(([venue_name, guest_count]) => ({ venue_name, guest_count }));
@@ -336,6 +350,76 @@ test('FIXED U4: reading the tally of a finished plan is still allowed', async ()
   assertQueriesUnderstood();
 });
 
+// The un-vote had the closing time as a separate read on the pool and then a
+// bare DELETE with no lock, so a plan completing in the gap between the two
+// still lost the vote, and the delete could interleave with the same person's
+// vote from another device. It is the POST's twin now.
+
+test('FIXED U5: an un-vote on a plan closed between the check and the delete removes nothing', async () => {
+  as(1, 'Ava'); as(2, 'Bo');
+  world.members.push({ user_id: 1, status: 'accepted' }, { user_id: 2, status: 'accepted' });
+  world.votes.push(
+    { user_id: 1, venue_name: 'Taqueria', venue_id: null },
+    { user_id: 2, venue_name: 'Ramen', venue_id: null },
+  );
+  as(1, 'Ava');
+  closeAfterStatusRead = 'completed';
+
+  const r = await call('DELETE', `/api/flocks/${FLOCK}/vote`);
+  assert.strictEqual(r.status, 409, r.text);
+  assert.match(r.body.error, /finished/);
+  assert.deepStrictEqual(world.votes.map((v) => [v.user_id, v.venue_name]), [[1, 'Taqueria'], [2, 'Ramen']],
+    'the record of the finished night keeps the vote');
+  const del = log.find((q) => /^DELETE FROM venue_votes WHERE flock_id = \$1::int/.test(q.sql));
+  assert.ok(del, 'the delete is what decides, so it must run');
+  assert.match(del.sql, /AND EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/);
+  assertQueriesUnderstood();
+});
+
+test('FIXED U6: the un-vote takes the same per-person lock as the vote, inside one transaction', async () => {
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
+
+  const r = await call('DELETE', `/api/flocks/${FLOCK}/vote`);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.body.removed, 1);
+  assert.deepStrictEqual(world.votes, []);
+  const begin = log.findIndex((q) => /^BEGIN/i.test(q.sql));
+  const lock = log.findIndex((q) => /pg_advisory_xact_lock\(hashtext\('flockvote:' \|\| \$1::text \|\| ':' \|\| \$2::text\)\)/.test(q.sql));
+  const del = log.findIndex((q) => /^DELETE FROM venue_votes/.test(q.sql));
+  const commit = log.findIndex((q) => /^COMMIT/i.test(q.sql));
+  assert.ok(begin > -1 && begin < lock && lock < del && del < commit,
+    'BEGIN, the flockvote: lock the POST holds, the delete, then COMMIT');
+  assert.deepStrictEqual(log[lock].params, [String(FLOCK), '1'],
+    'keyed on the same (flock, person) pair as the vote, so the two serialise');
+  assertQueriesUnderstood();
+});
+
+test('FIXED U7: a plan whose status cannot be read as open keeps the vote and says so', async () => {
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
+  closeAfterStatusRead = null;
+
+  const r = await call('DELETE', `/api/flocks/${FLOCK}/vote`);
+  assert.strictEqual(r.status, 409, r.text);
+  assert.match(r.body.error, /changed .* try again/i);
+  assert.deepStrictEqual(world.votes.map((v) => v.venue_name), ['Taqueria'],
+    'never a 200 that says nothing was removed while the vote is still counted');
+  assertQueriesUnderstood();
+});
+
+test('HELD: taking back a vote you do not have is still a quiet 200 on an open plan', async () => {
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+
+  const r = await call('DELETE', `/api/flocks/${FLOCK}/vote`);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.body.removed, 0);
+  assertQueriesUnderstood();
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // V. GUESTS OUTVOTE MEMBERS
 // ═════════════════════════════════════════════════════════════════════════════
@@ -392,6 +476,30 @@ test('FIXED V2: a real guest on a real flock still counts, one for one', async (
   assert.deepStrictEqual(tally.body.votes.map((v) => [v.venue_name, v.vote_count, v.guest_count]),
     [['Taqueria', 3, 2], ['Ramen', 1, 0]],
     'under the roster size the cap does nothing: guests you actually invited still weigh in');
+  assertQueriesUnderstood();
+});
+
+test('FIXED V3: a guest who said out does not count, the way a member who declined does not', async () => {
+  // A guest vote counted whatever the guest's answer was, so two friends who
+  // said they could not come still decided between the two places the people
+  // coming were split on.
+  as(1, 'Ava'); as(2, 'Bo');
+  for (const id of [1, 2]) world.members.push({ user_id: id, status: 'accepted' });
+  as(1, 'Ava'); await vote('Taqueria');
+  as(2, 'Bo'); await vote('Ramen');
+  world.guestVotes.push(
+    { guest_rsvp_id: 1, venue_name: 'Ramen', hidden: false, out: true },
+    { guest_rsvp_id: 2, venue_name: 'Ramen', hidden: false, out: true },
+    { guest_rsvp_id: 3, venue_name: 'Taqueria', hidden: false },
+  );
+
+  as(1, 'Ava');
+  const tally = await votes();
+  assert.deepStrictEqual(tally.body.votes.map((v) => [v.venue_name, v.vote_count, v.guest_count]),
+    [['Taqueria', 2, 1], ['Ramen', 1, 0]],
+    'only the guest who is going weighs in');
+  const guestSql = log.find((q) => /FROM guest_votes gv JOIN guest_rsvps gr/.test(q.sql)).sql;
+  assert.match(guestSql, /WHERE gv\.flock_id = \$1 AND COALESCE\(gr\.is_hidden, false\) = false AND gr\.status = 'in'/);
   assertQueriesUnderstood();
 });
 

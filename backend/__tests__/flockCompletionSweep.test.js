@@ -153,6 +153,24 @@ test('a planning flock past its night is cancelled, never completed', async () =
   assert.match(sql, /RETURNING id, status/);
 });
 
+test('overlapping passes cannot rewrite a finished plan or close one whose time just moved', async () => {
+  reset();
+  await runFlockCompletionSweep();
+  const sql = lastSql();
+  // `id IN (subquery)` alone re-checks nothing: the batch is picked from the
+  // subquery's own snapshot, and a row the UPDATE waits on is judged against
+  // the outer predicate only. Two passes that picked the same confirmed plan
+  // completed it and then, from the second pass, CASE-d the now 'completed'
+  // row into 'cancelled'; a host moving the time out in the same window was
+  // closed anyway. The inner select skips rows another writer holds, and the
+  // outer UPDATE asks the status and time questions again.
+  assert.match(sql, /LIMIT \$2::int FOR UPDATE SKIP LOCKED \)/,
+    'the batch is claimed, and a row another pass or a host edit holds is skipped rather than waited on');
+  const outer = sql.slice(sql.indexOf('FOR UPDATE SKIP LOCKED )'));
+  assert.match(outer, /^FOR UPDATE SKIP LOCKED \) AND status IN \('planning', 'confirmed'\) AND event_time IS NOT NULL AND event_time < \(NOW\(\) AT TIME ZONE 'UTC'\) - make_interval\(hours => \$1::int\) RETURNING id, status$/,
+    'the outer UPDATE re-checks the status and the time on the row it actually writes');
+});
+
 test('the grace window is measured from event_time, not from created_at', async () => {
   reset();
   await runFlockCompletionSweep();

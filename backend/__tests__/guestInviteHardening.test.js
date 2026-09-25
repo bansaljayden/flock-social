@@ -695,6 +695,132 @@ test('a hidden guest is absent from the roster even when the row is returned', a
   assert.deepStrictEqual(res.body.people, [{ name: 'Visible', rsvp: 'in', kind: 'guest', reconfirmed: false }]);
 });
 
+// ── The roster and blocks: what the in-app roster hides, the link hides ─────
+//
+// GET /api/flocks/:id filters its members by the caller's invisible set, which
+// is everyone blocked either way plus every banned account. This page named
+// every member to everyone. The fixture below HONOURS the two predicates the
+// member read now carries, so deleting either one from routes/guest.js turns
+// these red: a stub that returned the same rows regardless of the WHERE
+// clause could not prove a WHERE clause exists.
+const { signUserToken } = require('../middleware/auth');
+const HOST_ID = 11;
+const VIEWER = { id: 12, name: 'Noor Haddad', is_banned: false, token_version: 0 };
+const ROSTER_MEMBERS = [
+  { user_id: HOST_ID, name: 'Ava Brooks', status: 'accepted', is_banned: false },
+  { user_id: 12, name: 'Noor Haddad', status: 'accepted', is_banned: false },
+  { user_id: 13, name: 'Theo Lang', status: 'invited', is_banned: false },
+  { user_id: 14, name: 'Cal Moore', status: 'accepted', is_banned: true },
+];
+
+// blocks: [[a, b]] pairs, a blocked b. users: the rows viewerFrom may read.
+function scriptRosterWorld({ blocks = [], users = [VIEWER] } = {}) {
+  on(/FROM flock_invite_links/, () => ({ rows: [link({ creator_id: HOST_ID })] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
+  on(/AS members/, () => ({ rows: [{ members: 3, guests: 0, guest_rows: 0 }] }));
+  on(/FROM flock_members fm JOIN users u/, (params, sql) => {
+    const bansOut = /u\.is_banned IS NOT TRUE/.test(sql);
+    const hidden = /NOT \(fm\.user_id = ANY\(\$3::int\[\]\)\)/.test(sql) ? (params[2] || []).map(Number) : [];
+    return {
+      rows: ROSTER_MEMBERS
+        .filter((m) => !(bansOut && m.is_banned) && !hidden.includes(m.user_id))
+        .map(({ name, status }) => ({ name, status, reconfirmed_at: null })),
+    };
+  });
+  on(/SELECT name, status, reconfirmed_at FROM guest_rsvps/, () => ({ rows: [] }));
+  on(/^SELECT id, is_banned, token_version FROM users WHERE id = \$1$/, (params) => {
+    const u = users.find((x) => x.id === Number(params[0]));
+    return { rows: u ? [u] : [] };
+  });
+  // utils/blocks.js, answered from `blocks` the way Postgres would.
+  on(/SELECT blocked_id AS id FROM user_blocks/, (params) => {
+    const me = Number(params[0]);
+    const ids = blocks.filter(([a, b]) => a === me || b === me).map(([a, b]) => (a === me ? b : a));
+    for (const m of ROSTER_MEMBERS) if (m.is_banned && m.user_id !== me) ids.push(m.user_id);
+    return { rows: ids.map((id) => ({ id })) };
+  });
+  on(/SELECT 1 FROM user_blocks/, (params) => {
+    const [x, y] = [Number(params[0]), Number(params[1])];
+    const hit = blocks.some(([a, b]) => (a === x && b === y) || (a === y && b === x));
+    return { rows: hit ? [{ '?column?': 1 }] : [] };
+  });
+}
+
+async function previewAs(token) {
+  const res = await fetch(`${base}/api/guest/${LEGACY_TOKEN}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return { status: res.status, body: await res.json() };
+}
+const names = (body) => body.people.map((p) => p.name);
+
+test('a banned member is named to nobody on the link, signed in or not', async () => {
+  scriptRosterWorld();
+  const res = await previewAs(null);
+  assert.strictEqual(res.status, 200);
+  assert.ok(!names(res.body).includes('Cal'),
+    'a ban took the name off every member\'s screen and left it on the one page with no sign-in');
+  assert.deepStrictEqual(names(res.body).sort(), ['Ava', 'Noor', 'Theo']);
+  assert.strictEqual(res.body.going, 3, 'a head count is not identity, and it does not move');
+  assert.strictEqual(res.body.host, 'Ava');
+});
+
+test('a signed-in viewer does not see anyone they have a block with, and the counts do not move', async () => {
+  // Noor blocked Theo. Either direction hides, as it does in the app.
+  scriptRosterWorld({ blocks: [[12, 13]] });
+  const signedIn = await previewAs(signUserToken(VIEWER));
+  assert.strictEqual(signedIn.status, 200);
+  assert.deepStrictEqual(names(signedIn.body).sort(), ['Ava', 'Noor'],
+    'the page named somebody the viewer has blocked, which the in-app roster never does');
+  assert.strictEqual(signedIn.body.going, 3, 'two people looking at one plan must read one size for it');
+  assert.strictEqual(signedIn.body.host, 'Ava', 'no block with the host, so the host line stands');
+
+  // The other direction: Theo blocked Noor.
+  handlers = [];
+  scriptRosterWorld({ blocks: [[13, 12]] });
+  const blockedBy = await previewAs(signUserToken(VIEWER));
+  assert.deepStrictEqual(names(blockedBy.body).sort(), ['Ava', 'Noor']);
+});
+
+test('a signed-in viewer with a block against the host gets no host name, and no host row', async () => {
+  // The in-app rule for creator_name: NULL for a blocked pair.
+  scriptRosterWorld({ blocks: [[HOST_ID, 12]] });
+  const res = await previewAs(signUserToken(VIEWER));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.host, '', 'the page draws an empty host as "You\'re invited"');
+  assert.deepStrictEqual(names(res.body).sort(), ['Noor', 'Theo']);
+});
+
+test('a stranger holding the link still sees first names and answers: nothing to apply a block to', async () => {
+  // The link is the credential, and the roster is what it was shared to
+  // show. A person with a block who opens it signed out is indistinguishable
+  // from anybody else it was forwarded to.
+  scriptRosterWorld({ blocks: [[12, 13]] });
+  const res = await previewAs(null);
+  assert.deepStrictEqual(names(res.body).sort(), ['Ava', 'Noor', 'Theo']);
+  assert.strictEqual(ran(/FROM user_blocks/).length, 0, 'an anonymous preview asks nothing about blocks');
+  assert.strictEqual(ran(/FROM users WHERE id = \$1/).length, 0, 'and reads no account');
+});
+
+test('a token that does not check out is a stranger\'s page, never an error', async () => {
+  scriptRosterWorld({
+    blocks: [[12, 13]],
+    users: [VIEWER, { id: 15, name: 'Banned Viewer', is_banned: true, token_version: 0 }, { id: 16, name: 'Rotated', is_banned: false, token_version: 3 }],
+  });
+  for (const token of [
+    'not-a-jwt',
+    signUserToken({ id: 999, token_version: 0 }), // no such account
+    signUserToken({ id: 15, token_version: 0 }), // banned
+    signUserToken({ id: 16, token_version: 0 }), // revoked by a version bump
+  ]) {
+    const res = await previewAs(token);
+    assert.strictEqual(res.status, 200, `a bad token broke the public page: ${token.slice(0, 12)}`);
+    assert.deepStrictEqual(names(res.body).sort(), ['Ava', 'Noor', 'Theo']);
+  }
+  assert.strictEqual(ran(/FROM user_blocks/).length, 0, 'no bad token got as far as a block question');
+});
+
 test('a hidden guest cannot edit their RSVP back onto the surface', async () => {
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
   on(/AS is_hidden FROM guest_rsvps WHERE guest_token/,
@@ -711,14 +837,16 @@ test('a hidden guest cannot edit their RSVP back onto the surface', async () => 
 
 test('a hidden guest cannot vote, and the lookup itself enforces it', async () => {
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SELECT id FROM guest_rsvps WHERE guest_token/, () => ({ rows: [] })); // hidden = filtered out
+  // The vote reads the answer with the identity (only an 'in' guest may
+  // vote), so the lookup selects status as well as id.
+  on(/SELECT id, status FROM guest_rsvps WHERE guest_token/, () => ({ rows: [] })); // hidden = filtered out
 
   const res = await call('POST', `/api/guest/${LEGACY_TOKEN}/vote`, {
     guestToken: GUEST_TOKEN, venueName: 'The Bar',
   });
   assert.strictEqual(res.status, 403);
 
-  const lookup = ran(/SELECT id FROM guest_rsvps WHERE guest_token/)[0];
+  const lookup = ran(/SELECT id, status FROM guest_rsvps WHERE guest_token/)[0];
   assert.ok(lookup, 'the vote path looked the guest up');
   assert.match(lookup.sql, /COALESCE\(is_hidden, false\) = false/,
     'hidden rows are excluded in the lookup SQL, not by a forgettable if');

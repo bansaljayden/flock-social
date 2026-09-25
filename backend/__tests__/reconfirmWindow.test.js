@@ -784,6 +784,36 @@ test('a status that leaves confirmed closes an open window and clears its answer
   assert.strictEqual(ran(RESET_GUESTS).length, 0);
 });
 
+test('a reset that fails takes the move back with it, and the answer says nothing changed', async () => {
+  // The move used to commit on its own and the reset ran after it in a second
+  // transaction whose failure was only logged, so this answered 200 with the
+  // plan at its new time and the old window still open, every "still in for
+  // 9" counting toward 11. One transaction now: the write, the three resets,
+  // then COMMIT, and a failure anywhere in it is a ROLLBACK and a 500.
+  scriptPut({ opened: '2026-09-16T20:00:00.000Z' });
+  on(RESET_GUESTS, () => { throw new Error('canceling statement due to lock timeout'); });
+  const res = await call('PUT', `/api/flocks/${FLOCK}`, { event_time: NEW_TIME });
+  assert.strictEqual(res.status, 500, res.text);
+
+  const sqls = log.map((q) => q.sql);
+  const begin = sqls.indexOf('BEGIN');
+  const write = sqls.findIndex((s) => /^UPDATE flocks SET name = COALESCE/.test(s));
+  const rollback = sqls.indexOf('ROLLBACK');
+  assert.ok(begin >= 0 && write > begin, `the move is written inside the transaction: ${JSON.stringify(sqls)}`);
+  assert.ok(rollback > write, `and rolled back when the reset fails: ${JSON.stringify(sqls)}`);
+  assert.strictEqual(sqls.indexOf('COMMIT'), -1, 'nothing was committed, the move included');
+  assert.strictEqual(emits.filter((e) => e.event === 'flock_updated').length, 0, 'nobody is told the plan moved');
+  assert.strictEqual(pushes.length, 0);
+
+  // And an edit that cannot close a window is still the one statement it was.
+  handlers = [];
+  log = [];
+  scriptPut({ opened: '2026-09-16T20:00:00.000Z' });
+  const renamed = await call('PUT', `/api/flocks/${FLOCK}`, { name: 'Dinner, moved tables' });
+  assert.strictEqual(renamed.status, 200, renamed.text);
+  assert.strictEqual(log.filter((q) => /^(BEGIN|COMMIT|ROLLBACK)/.test(q.sql)).length, 0, 'a rename opened a transaction');
+});
+
 // ===========================================================================
 // 7. The RSVP edit: POST /api/guest/:token/rsvp from a guest who has a row
 // ===========================================================================

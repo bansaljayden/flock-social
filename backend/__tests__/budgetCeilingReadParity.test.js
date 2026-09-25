@@ -254,7 +254,9 @@ async function dispatch(text, params = []) {
 
   // ── guests / votes ──
   if (has('FROM guest_rsvps')) return { rows: [], rowCount: 0 };
-  if (has('FROM venue_votes WHERE flock_id = $1')) return { rows: [{ voters: 0 }], rowCount: 1 };
+  // The momentum voter count joins the roster now (only accepted, unbanned
+  // members' votes count, as on the venue tally), so it reads venue_votes vv.
+  if (has('FROM venue_votes WHERE flock_id = $1') || has('AS voters FROM venue_votes vv')) return { rows: [{ voters: 0 }], rowCount: 1 };
   if (has('FROM guest_votes gv')) return { rows: [{ voters: 0 }], rowCount: 1 };
 
   // ── bill_splits / bill_split_shares (ghost commit) ──
