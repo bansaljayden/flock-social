@@ -11,8 +11,8 @@
 //   * rendering is a pure function of the fact fixtures: no digit appears in
 //     the output that is absent from the input (the fabricated Pro Tips box
 //     rule, made mechanical), and no em dash appears anywhere (design rule 1);
-//   * tiers: Pro renders the full stack, Premium renders the events heads-up
-//     only, free renders nothing;
+//   * tiers: Roost (stored 'pro', and a stored 'premium' resolves to it)
+//     renders the full stack, free renders nothing;
 //   * DIGEST_ENABLED unset means the sweep touches nothing and sends nothing;
 //   * notification_prefs.weekly gates every send, and the opt-out token
 //     flips it off with no login.

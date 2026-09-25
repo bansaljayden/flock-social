@@ -624,7 +624,8 @@ const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
 const INCOMING_AHEAD_HOURS = 168; // = 7 days
 
 // GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue.
-// Free on every plan, history and all; only verification gates it (below).
+// Free on every plan, inside the 12-hour / 7-day window above; only
+// verification gates it (below).
 router.get('/incoming-flocks', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
