@@ -332,11 +332,14 @@ test('the reveal billing asks is the one budget.js asks, from budget.js', async 
   // rule is one function now, owned by budget.js, and billing asks it rather
   // than spelling out a count of its own that can drift from it.
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'billing.js'), 'utf8');
-  assert.match(src, /const \{[^}]*settledCrowdHolds[^}]*settledNumberShown[^}]*\} = require\('\.\/budget'\)/);
+  assert.match(src, /const \{[^}]*settledCrowdHolds[^}]*shownCeiling[^}]*\} = require\('\.\/budget'\)/);
   assert.match(src, /await settledCrowdHolds\(\(q, p\) => client\.query\(q, p\), flockId\)/,
     'the ghost commit asks the settled crowd on its own transaction');
-  assert.match(src, /await settledNumberShown\(\(q, p\) => pool\.query\(q, p\), flockId\)/,
-    'the shell read asks whether the settled number is shown');
+  // And the shell read takes the published number itself from there, the
+  // only figure an estimate shows (migration 088: a stored one can be the raw
+  // minimum an old ghost commit copied).
+  assert.match(src, /await shownCeiling\(\(q, p\) => pool\.query\(q, p\), flockId\)/,
+    'the shell read asks budget.js for the number it may show');
   assert.ok(!/FROM budget_submissions/.test(src), 'billing counts budget answers itself');
   assert.ok(!/MEMBER_SUBMISSIONS/.test(src), 'billing gates a settled number on present members');
 });
@@ -388,7 +391,7 @@ test('a settled flag on a payerless shell is not carried onto the real bill', as
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     // The shell: a bill row exists and nobody has claimed it.
-    [/SELECT id, paid_by FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: null }] })],
+    [/SELECT id, paid_by(, had_payer)? FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: null }] })],
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({
       rows: [
         { user_id: 2, committed: true, settled: true, settled_at: 'earlier' }, // Ben settled the estimate
@@ -418,7 +421,9 @@ test('a settled flag on a payerless shell is not carried onto the real bill', as
 // 3. Settling twice
 // ═══════════════════════════════════════════════════════════════════════════
 
-function scriptSettle({ updated }) {
+// `posted` is the settled row's migration 088 flag, as RETURNING * hands it
+// back: true for a row POST /create wrote, which is every row here but one.
+function scriptSettle({ updated, posted = true }) {
   handlers = [
     // The settle now serialises against POST /:flockId/create on the flock row,
     // because one statement was not enough: /create reads the shares, then
@@ -427,7 +432,7 @@ function scriptSettle({ updated }) {
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
-    [/UPDATE bill_split_shares SET settled = true/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
+    [/UPDATE bill_split_shares SET settled = true/, () => ({ rows: updated ? [{ id: 1, amount: '12.50', posted }] : [] })],
     [/SELECT bss\.settled, bs\.paid_by/, () => ({ rows: [{ settled: true, paid_by: 2 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
     // The tally over every row, after the write; both rows settled here, so
@@ -642,10 +647,12 @@ function scriptCreate(members, { existingBill = null, existingShares = [] } = {}
     [/SELECT u\.id, u\.name FROM flock_members fm/, () => ({ rows: members })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
-    [/SELECT id, paid_by FROM bill_splits WHERE flock_id/, () => ({ rows: existingBill ? [existingBill] : [] })],
+    [/SELECT id, paid_by(, had_payer)? FROM bill_splits WHERE flock_id/, () => ({ rows: existingBill ? [existingBill] : [] })],
     // Only read when a bill is already on the table. Loose on the column list
-    // on purpose: money.test.js is where the SELECT itself is pinned.
-    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares })],
+    // on purpose: money.test.js is where the SELECT itself is pinned. Every
+    // fixture row is one POST /create wrote, so it reads back posted
+    // (migration 088) unless the fixture says otherwise.
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares.map((r) => ({ posted: true, ...r })) })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     // A payer change clears the former payer's artifact flag before the
     // DELETEs read the row; see the credit loop in routes/billing.js.
@@ -753,6 +760,30 @@ test('what a member who left already paid comes off the total, so the sheet stil
   assert.strictEqual(cents, 12000, `the bill's rows come to ${cents} cents against a $120 total`);
 });
 
+test('a payment on a row that is not posted is never banked against the split', async () => {
+  // Migration 088. Banking a payment takes it off the total the rest divide,
+  // so any one share hands it back to whoever knows the total, and the person
+  // posting typed it. On a row POST /create did not write from a typed total
+  // it may be the raw budget minimum the first ghost commit copied in, so the
+  // edit is refused, the refusal names no figure, and nothing is written.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate([{ id: 1, name: 'Ava' }, { id: 3, name: 'Carol' }], {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '25.00' },
+      { user_id: 2, committed: true, settled: true, settled_at: new Date(), amount: '47.13', posted: false },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '25.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 120, tipPercent: 0 });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'PAYMENT_OUTSIDE_SPLIT');
+  assert.ok(!res.text.includes('47.13'), res.text);
+  assert.ok(!log.some((q) => /INSERT INTO bill_split_shares|DELETE FROM bill_split_shares|INSERT INTO bill_splits/.test(q.sql)),
+    'a refused edit wrote something');
+  assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)));
+});
+
 test('the push after an upward edit names what is still owed, not the new share', async () => {
   // "You owe Ava $100.00" to somebody who had paid $30 is the sentence that
   // had Ben paying $130 for a $100 share.
@@ -791,9 +822,9 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
     })],
     [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
       rows: [
-        { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now' },
-        { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null },
-        { user_id: 3, name: 'Cy', amount: '20.00', paid_amount: '50.00', committed: false, settled: true, settled_at: 'then' },
+        { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now', posted: true },
+        { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null, posted: true },
+        { user_id: 3, name: 'Cy', amount: '20.00', paid_amount: '50.00', committed: false, settled: true, settled_at: 'then', posted: true },
       ],
     })],
     noBlocks,
@@ -808,6 +839,48 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
   assert.strictEqual(by[3].outstanding, 0);
   assert.strictEqual(by[1].outstanding, 0);
   assert.strictEqual(res.body.bill.fullySettled, false);
+});
+
+test('GET /:flockId keeps a row that is not posted to its own member, and the total with it', async () => {
+  // Migration 088. A row POST /create did not write from a typed total may be
+  // one the first ghost commit wrote: the raw budget minimum, one person's
+  // exact answer. Its figures go to its own member; to everybody else the row
+  // is there with no figures, and so is the bill with no total, because the
+  // total less the rows they can see is the row they cannot. A row that does
+  // not say posted: true is read as not posted.
+  const shares = [
+    { user_id: 1, name: 'Ava', amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now', posted: true },
+    { user_id: 2, name: 'Ben', amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null, posted: true },
+    { user_id: 3, name: 'Cy', amount: '47.13', paid_amount: '0.00', committed: true, settled: false, settled_at: null },
+  ];
+  const script = () => [
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
+    [/SELECT bs\.\*, u\.name AS payer_name/, () => ({
+      rows: [{
+        id: 7, flock_id: 42, total_amount: '60.00', tip_percent: '0.0',
+        split_type: 'equal', paid_by: 1, had_payer: true, payer_name: 'Ava', created_at: 'now',
+      }],
+    })],
+    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({ rows: shares })],
+    noBlocks,
+  ];
+  for (const viewer of [1, 2]) {
+    CURRENT_USER = { id: viewer, name: viewer === 1 ? 'Ava' : 'Ben', role: 'user' };
+    handlers = script();
+    const res = await call('GET', '/api/billing/42');
+    assert.strictEqual(res.status, 200, res.text);
+    const cy = res.body.bill.shares.find((s) => s.userId === 3);
+    assert.deepStrictEqual([cy.amount, cy.paidAmount, cy.outstanding], [null, null, null]);
+    assert.strictEqual(cy.committed, true, 'the row is still described');
+    assert.deepStrictEqual([res.body.bill.totalAmount, res.body.bill.totalWithTip], [null, null]);
+    assert.ok(!res.text.includes('47.13'), res.text);
+    assert.strictEqual(res.body.bill.shares.find((s) => s.userId === 2).amount, 30);
+  }
+  CURRENT_USER = { id: 3, name: 'Cy', role: 'user' };
+  handlers = script();
+  const own = await call('GET', '/api/billing/42');
+  assert.strictEqual(own.body.bill.shares.find((s) => s.userId === 3).amount, 47.13, 'its own member reads it');
+  assert.strictEqual(own.body.bill.totalWithTip, 60, 'nothing is hidden from its own member');
 });
 
 test('the 201 body and the bill_created payload carry the three tallies GET carries', async () => {
@@ -918,6 +991,20 @@ test('the paid-back notification reports a claim and names who made it', async (
   assert.match(paid.body, /says they paid you/i, 'the server knows a claim was made, not that money moved');
   assert.match(paid.body, /check your payment app/i, 'the payer is the only one who can confirm it');
   assert.ok(/\$12\.50/.test(paid.body), 'and the figure they have to check against is in it');
+});
+
+test('the paid-back notification carries no figure from a row that is not posted', async () => {
+  // Migration 088. The payer is not that row's member, and a row POST /create
+  // did not write from a typed total may hold the raw budget minimum the first
+  // ghost commit copied into it. The claim still reaches them, without it.
+  scriptSettle({ updated: true, posted: false });
+  await call('POST', '/api/billing/42/settle');
+  await drain();
+
+  const paid = pushCalls.find((p) => p.data.type === 'bill_settled');
+  assert.ok(paid, 'the payer still hears that somebody says they paid');
+  assert.match(paid.body, /says they paid you for /i);
+  assert.ok(!/\$/.test(paid.body), `a figure went to the payer: ${paid.body}`);
 });
 
 test('the settle-up refusals point at the way out instead of stopping dead', async () => {

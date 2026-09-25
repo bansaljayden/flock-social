@@ -792,7 +792,7 @@ function scriptBill({
     [/FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: creatorId }] })],
     [/SELECT id FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42 }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: existingBill })],
+    [/SELECT id, paid_by(, had_payer)? FROM bill_splits/, () => ({ rows: existingBill })],
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled_at = NULL, settled = false/, () => ({ rows: [], rowCount: 1 })],

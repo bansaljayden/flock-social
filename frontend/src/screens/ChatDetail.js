@@ -570,11 +570,18 @@ const tallyOf = (r) => (r && Number.isFinite(Number(r.shareCount))
  * viewer who has somebody's share hidden by a block, because the total less
  * the shares they can see is that share. The budget's words would be wrong
  * there, so it has its own, and they name nobody and no direction.
+ *
+ * And a real bill's ROW can arrive with its figures withheld: one the server
+ * cannot vouch for was written from a typed total (migration 088; an old
+ * ghost commit could put the raw budget minimum into a posted bill) goes to
+ * its own member only. On a real bill that row gets the same plain words as
+ * the total, `withheldWords`, because the budget's would claim to know what
+ * it is.
  */
 const HIDDEN_FIGURE = 'no group number to show';
 const HIDDEN_TOTAL = 'not shown';
-const shareFigure = (s) => {
-  if (typeof s?.amount !== 'number') return HIDDEN_FIGURE;
+const shareFigure = (s, withheldWords = HIDDEN_FIGURE) => {
+  if (typeof s?.amount !== 'number') return withheldWords;
   const paid = Number(s.paidAmount);
   if (!s.settled && paid > 0) {
     const left = typeof s.outstanding === 'number'
@@ -3921,7 +3928,7 @@ export default function ChatDetail({
                               {s.committed && !s.settled && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.amberText, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{shareFigure(s)}</span>
+                              <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{shareFigure(s, billSplitIsEstimate ? HIDDEN_FIGURE : HIDDEN_TOTAL)}</span>
                               {s.settled ? (
                                 <span style={{ color: '#22C55E', fontSize: 'var(--t-body)' }}>{Icons.check('#22C55E', 16)}<span className="sr-only">Paid</span></span>
                               ) : (

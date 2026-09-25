@@ -527,7 +527,9 @@ function scriptSettle(paidBy) {
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] }));
-  on(/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1, amount: '12.50' }] }));
+  // A row POST /create wrote (posted, migration 088): its figure may go in
+  // the push. routes/billing.js leaves it out for a row that is not posted.
+  on(/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1, amount: '12.50', posted: true }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] }));
   on(/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '0' }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));

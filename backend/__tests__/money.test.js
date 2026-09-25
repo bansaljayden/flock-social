@@ -357,12 +357,17 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
     [/FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: creatorId }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],
+    [/SELECT id, paid_by(, had_payer)? FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],
     // `amount` joined this SELECT so that owesMore can fire at all; before it
     // did, Number(row.amount) was NaN and every settled row survived every
     // increase. The pattern is loose on the column list on purpose - it exists
     // to answer the share lookup, not to pin its SELECT list.
-    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
+    //
+    // Every fixture row here is one POST /create wrote, so it reads back
+    // posted (migration 088) unless the fixture says otherwise: the route reads
+    // the column strictly, and a row that does not say true is one whose
+    // figures only its own member may see.
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: (existingShares || []).map((r) => ({ posted: true, ...r })) })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     // A payer change clears the former payer's artifact flag before the
     // DELETEs read the row; see the credit loop in routes/billing.js.
@@ -641,6 +646,10 @@ test('a bill revised upward un-settles whoever now owes more than they paid', as
   assert.match(shareSelect.sql, /SELECT user_id, amount,/,
     'amount is missing from the share SELECT, so Number(row.amount) is NaN and ' +
     'owesMore can never be true - a settled share survives any increase');
+  // The same trap for `posted` (migration 088), which the fake above defaults
+  // to true: left out of the SELECT, every credit would read as unvouched in
+  // production, hidden from the table and refused as a kept payment.
+  assert.match(shareSelect.sql, /\bposted\b/, 'posted is missing from the share SELECT');
 
   // The payer keeps their flag: it records having fronted the money, not a debt.
   assert.strictEqual(res.body.bill.shares.find((sh) => sh.userId === 1).settled, true);
