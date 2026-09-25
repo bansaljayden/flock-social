@@ -272,7 +272,14 @@ function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
    frame and no more than one every PIN_OVERLAP_MIN_INTERVAL_MS; it is O(n^2)
    over a few dozen venues, which is microseconds, and it never touches a
    coordinate. */
-const PIN_OVERLAP_PX = 46; // pin body is 44px; closer than this and they stack
+/* PIN SIZE at full scale; PIN_SCALE_MIN below shrinks it at city zoom. The
+   map opens at zoom 12, which is the minimum, so that size is the one people
+   see first. At 44px and 0.62 it was 27px across, small beside a 44pt tap
+   target and hard to read as a photo; 48 and 0.74 make it 36. The active pin
+   stays 10px larger than the rest. */
+const PIN_PX = 48;
+const PIN_ACTIVE_PX = 58;
+const PIN_OVERLAP_PX = PIN_PX + 2; // closer than this and they stack
 const PIN_OVERLAP_MIN_INTERVAL_MS = 90;
 
 /* HOW PINS SCALE WITH ZOOM. One continuous factor from PIN_SCALE_MIN at
@@ -282,7 +289,7 @@ const PIN_OVERLAP_MIN_INTERVAL_MS = 90;
    through a 180ms CSS transition, so a zoom gesture crossing a tier showed
    every pin resizing on its own clock, out of step with the map underneath.
    A transform is composited, so this costs one style write per frame. */
-const PIN_SCALE_MIN = 0.62;
+const PIN_SCALE_MIN = 0.74;
 const PIN_SCALE_FROM = 12;
 const PIN_SCALE_TO = 14.5;
 const pinScaleForZoom = (z) => Math.max(PIN_SCALE_MIN, Math.min(1,
@@ -566,12 +573,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // Circular photo pin via canvas (same trick as the old impl, returns dataURL)
   const buildPhotoPin = useCallback((photoUrl, isActive) => {
-    const size = isActive ? 54 : 44;
+    const size = isActive ? PIN_ACTIVE_PX : PIN_PX;
     const border = isActive ? 3.5 : 2.5;
     const borderColor = isActive ? (mapIsDark ? '#6d9ac3' : '#2d5a87') : '#f1ede0';
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas');
-      const dpr = 2;
+      // The device's own density, up to 3, so a 3x phone does not draw the
+      // photo from two thirds of the pixels it shows.
+      const dpr = Math.min(3, Math.max(2, Math.ceil(window.devicePixelRatio || 2)));
       canvas.width = size * dpr;
       canvas.height = size * dpr;
       const ctx = canvas.getContext('2d');
@@ -645,7 +654,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     inner.className = 'mlb-marker-inner';
     inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease';
     inner.style.willChange = 'auto';
-    const size = isActive ? 54 : 44;
+    const size = isActive ? PIN_ACTIVE_PX : PIN_PX;
     inner.style.width = size + 'px';
     inner.style.height = size + 'px';
     inner.style.display = 'block';
@@ -1265,7 +1274,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     markersRef.current.forEach(({ el, venue }) => {
       if (venue.id !== prevId && venue.id !== newId) return;
       const isActive = venue.id === newId;
-      const size = isActive ? 54 : 44;
+      const size = isActive ? PIN_ACTIVE_PX : PIN_PX;
       const inner = el.querySelector('.mlb-marker-inner') || el;
       inner.style.width = size + 'px';
       inner.style.height = size + 'px';
@@ -1513,7 +1522,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           top: 100%;
           left: 50%;
           transform: translateX(-50%);
-          /* Sized to its content, not to the 44px pin it hangs from: an
+          /* Sized to its content, not to the pin it hangs from: an
              absolute box shrinks to fit its containing block, and with the
              pin as that block every name wrapped to two letters. */
           width: max-content;
