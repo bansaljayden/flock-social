@@ -2748,15 +2748,18 @@ router.get('/costs', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/admin/money. Every dollar in and out on one payload: Stripe and
 // RevenueCat for revenue, the cost model plus the expense list for costs, the
-// live prices beside every price the code states, and the collector's
-// freshness. services/moneyHub.js owns all of it; this route passes the one
-// price only this file can read (VENUE_PRICE_USD) and the refresh request.
+// live prices beside every price the code states, BestTime's report on its
+// own key beside the plan the code records, the serving model's version and
+// its served forecasts against the goal, and the collector's freshness.
+// services/moneyHub.js owns all of it; this route passes the one price only
+// this file can read (VENUE_PRICE_USD) and the refresh request.
 //
 // Admin only, like everything on this router (requireAdmin at the top). The
-// two external reads are cached server side for a few minutes and a refresh
-// is honoured only once the held answer is a minute old, so reloading the tab
-// cannot turn into a stream of Stripe requests. Nothing personal is in the
-// payload: counts and sums, never a customer's email, name or account id.
+// three external reads are cached server side for a few minutes, the
+// served-forecast check for an hour, and a refresh is honoured only once the
+// held answer is a minute old, so reloading the tab cannot turn into a stream
+// of vendor requests. Nothing personal is in the payload: counts and sums,
+// never a customer's email, name or account id, and never the BestTime key.
 router.get('/money', async (req, res) => {
   try {
     const hub = await moneyHub.buildMoneyHub({

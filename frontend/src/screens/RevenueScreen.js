@@ -127,10 +127,11 @@ function ReconciledLineForm({ line, onSaved, colors }) {
 // ===========================================================================
 //
 // Every figure comes from GET /api/admin/money (backend/services/moneyHub.js),
-// which reads Stripe, RevenueCat, the cost model, the expense list and the
-// collector's own rows. Nothing here does arithmetic beyond formatting, for
-// the reason the Costs tab gives: the sums belong next to the sources they
-// read, where they cannot drift from them.
+// which reads Stripe, RevenueCat, BestTime's key endpoint, the cost model, the
+// expense list, the served forecasts and the collector's own rows. Nothing
+// here does arithmetic beyond formatting, for the reason the Costs tab gives:
+// the sums belong next to the sources they read, where they cannot drift from
+// them.
 //
 // A source that did not answer shows the server's words for why, and no
 // number. A zero appears only when a source answered with zero.
@@ -1093,6 +1094,214 @@ function HubHealth({ h, colors }) {
   );
 }
 
+// CROWD DATA: what BestTime's key endpoint says, beside the plan the code
+// records. The endpoint reports the key's health and two undocumented counters,
+// and no plan, admission count or cycle date (backend/services/besttimeAccount.js).
+// So the plan rows are the code's and tagged as stated or worked out, the
+// admissions used and left say Not reported instead of showing a number, and
+// the counters appear under BestTime's own names with what they are not. The
+// collector's rows are the Health card's read, shown here as well because they
+// are what the plan pays for.
+const HUB_STATED_TAG = { tone: 'muted', text: 'Stated' };
+const HUB_WORKED_OUT_TAG = { tone: 'muted', text: 'Worked out' };
+
+function HubCrowdData({ h, colors }) {
+  const cd = h.crowdData;
+  // A server from before this block sends none of it: no card, not an empty one.
+  if (!cd) return null;
+  const b = cd.besttime || {};
+  const plan = cd.plan || null;
+  const c = (h.health && h.health.collector) || {};
+  const navy = colors.navy;
+  const ready = b.status === 'ok';
+  const key = b.key || {};
+  const counters = b.counters || {};
+  const reported = Array.isArray(b.reported) ? b.reported : [];
+  const cachedAge = ready && b.cached && Number.isFinite(b.cachedAgeSeconds) ? b.cachedAgeSeconds : null;
+  const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
+  const counterValue = (n) => (Number.isFinite(n) ? hubCount(n) : 'Not reported');
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Crowd data</h3>
+      <p style={hubStyle.sub}>BestTime, the paid feed behind the crowd model. Only its key endpoint is asked, which admits no venue and spends nothing.</p>
+      {!ready && <HubNotice status={b.status} reason={b.reason} />}
+      {ready && (
+        <HubRow
+          navy={navy}
+          label="BestTime key"
+          value={key.healthy ? 'Working' : 'Not working'}
+          tone={key.healthy ? 'good' : 'bad'}
+          note={key.healthy
+            ? 'BestTime says the key is valid and active.'
+            : `BestTime says status ${key.status === null || key.status === undefined ? 'none' : key.status}, valid ${String(key.valid)}, active ${String(key.active)}.`}
+        />
+      )}
+      {plan && (
+        <>
+          <HubRow
+            navy={navy}
+            label="Plan"
+            tag={HUB_STATED_TAG}
+            value={plan.name || 'Not recorded'}
+            note={`BestTime's key endpoint does not report the plan. This is the plan the cost model records${Number.isFinite(plan.usdPerMonth) ? `, at ${hubMoney(Math.round(plan.usdPerMonth * 100))} a month` : ''}${plan.checked ? `, checked ${hubDay(plan.checked)}` : ''}.`}
+          />
+          <HubRow
+            navy={navy}
+            label="New venues admitted this month"
+            value="Not reported"
+            tone="muted"
+            note="BestTime's key endpoint does not count admissions. The besttime.app dashboard does."
+          />
+          <HubRow
+            navy={navy}
+            label="Admission cap"
+            tag={HUB_STATED_TAG}
+            value={`${hubCount(plan.newVenuesPerMonth)} a month`}
+            note="New venues the plan admits each calendar month, as the code records it. Live and by-id calls on venues already admitted do not count against it."
+          />
+          <HubRow
+            navy={navy}
+            label="Admissions left"
+            value="Not reported"
+            tone="muted"
+            note="Needs the count used, which BestTime does not report. Nothing is subtracted from a count nobody read."
+          />
+          <HubRow
+            navy={navy}
+            label="Cycle ends"
+            tag={HUB_WORKED_OUT_TAG}
+            value={hubDay(plan.cycleEndsOn) || 'Not worked out'}
+            note={`BestTime does not report the cycle. Package allowances run by calendar month, so the count starts again on ${hubDay(plan.resetsOn) || 'the 1st'}.`}
+          />
+        </>
+      )}
+      {ready && (
+        <>
+          <HubRow
+            navy={navy}
+            label="Forecast credits"
+            value={counterValue(counters.creditsForecast)}
+            note="credits_forecast, as BestTime reports it. BestTime does not document it, and it has read 1 on two accounts with very different use, so it is not shown as forecasts used."
+          />
+          <HubRow
+            navy={navy}
+            label="Query credits"
+            value={counterValue(counters.creditsQuery)}
+            note="credits_query, as BestTime reports it. Undocumented in the same way, so it is not shown as venue searches used."
+          />
+          {reported.length > 0 && (
+            <p style={hubStyle.foot}>
+              Also reported by BestTime, under its own names: {reported.map((f) => `${f.name} ${f.withheld ? '(withheld, it carried key material)' : String(f.value)}`).join('; ')}.
+            </p>
+          )}
+        </>
+      )}
+      <HubRow
+        navy={navy}
+        label="Crowd readings, last 24 hours"
+        value={c.status === 'ok' ? hubCount(c.rows24h) : 'Not read'}
+        tone={c.status === 'ok' ? undefined : 'muted'}
+        note={c.status === 'ok'
+          ? `Rows the hourly collector wrote, across ${hubPlural(c.hours24h, 'hour', 'hours')}. From ml_training_data, the same read as the Health card below.`
+          : (c.reason || 'The collector\'s rows could not be read.')}
+      />
+      <p style={hubStyle.foot}>
+        {ready
+          ? `Read from BestTime's key endpoint at ${hubTime(b.asOf)} and held for ${holdMinutes} minutes${cachedAge !== null ? `; this answer is ${cachedAge} seconds old` : ''}. The key itself never reaches this page.`
+          : 'Nothing was read from BestTime, so no counter is shown. The plan rows come from the code either way.'}
+      </p>
+    </div>
+  );
+}
+
+// THE MODEL: the version serving now, and its served forecasts against the
+// goal. The share is the server's (backend/services/moneyHub.js, THE MODEL):
+// model forecasts served in the window, each paired with the collector's live
+// reading of the same venue in the same hour of the same day, one pair per
+// venue and hour, counted when its crowd band is the reading's or the next one
+// over. Under the minimum the server sends no share at all, and this card says
+// there are not enough observations yet rather than printing a noisy one.
+const hubPct = (n) => `${n.toFixed(1)}%`;
+
+function HubModel({ h, colors }) {
+  const m = h.model;
+  if (!m) return null;
+  const v = m.version || {};
+  const a = m.accuracy || {};
+  const goal = m.goal || {};
+  const navy = colors.navy;
+  const ready = a.status === 'ok';
+  const measured = ready && a.enough === true && Number.isFinite(a.percent);
+  const gap = m.gapPoints;
+  const bands = Array.isArray(m.bands) ? m.bands : [];
+  const ladder = bands.map((b) => (Number.isFinite(b.upTo) ? `${b.label} up to ${b.upTo}` : `${b.label} above`)).join(', ');
+  const versions = ready && Array.isArray(a.versions) ? a.versions : [];
+  const holdMinutes = Math.round(((m.cache && m.cache.ttlSeconds) || 3600) / 60);
+  const cachedAge = ready && a.cached && Number.isFinite(a.cachedAgeSeconds) ? a.cachedAgeSeconds : null;
+  const age = cachedAge === null ? '' : `; this answer is ${cachedAge < 120 ? `${cachedAge} seconds` : `${Math.round(cachedAge / 60)} minutes`} old`;
+  let versionNote;
+  if (v.status !== 'ok') versionNote = v.reason || 'The version could not be read.';
+  else if (v.loaded) versionNote = 'The version this server loaded, from its model_metadata.json.';
+  else versionNote = 'No model is loaded in this server process yet, so this is the version of the artifact on disk, scripts/ml/models/model_metadata.json.';
+  let gapValue = 'Not measured yet';
+  let gapTone = 'muted';
+  let gapNote = ready ? 'Waits for enough observations to measure the share.' : 'Waits for the check above to answer.';
+  // Only beside a share this card draws: a gap from a sample under the
+  // minimum would be the noisy percentage by another name.
+  if (measured && Number.isFinite(gap)) {
+    gapValue = gap > 0 ? `${gap.toFixed(1)} points` : 'Met';
+    gapTone = gap > 0 ? 'warn' : 'good';
+    gapNote = gap > 0 ? 'The goal less the measured share, in percentage points.' : 'The measured share is at or above the goal.';
+  }
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Model</h3>
+      <p style={hubStyle.sub}>The crowd model serving now, and how its forecasts held up against what the collector measured in the same hour.</p>
+      <HubRow
+        navy={navy}
+        label="Live model"
+        tag={v.status === 'ok' && v.loaded === false ? { tone: 'warn', text: 'Not loaded' } : null}
+        value={v.status === 'ok' ? v.value : 'Not read'}
+        tone={v.status === 'ok' ? undefined : 'muted'}
+        note={versionNote}
+      />
+      <p style={hubStyle.kicker}>Within one crowd band, last {Number.isFinite(a.windowDays) ? a.windowDays : 30} days</p>
+      {!ready && <HubNotice status={a.status} reason={a.reason} />}
+      {measured && (
+        <>
+          <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
+          <p style={hubStyle.note}>
+            of served model forecasts landed in the live reading&apos;s crowd band or the one next to it. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.withinOneBand)} of them within one band` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window.
+          </p>
+        </>
+      )}
+      {ready && !measured && (
+        <>
+          <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not enough observations yet</p>
+          <p style={hubStyle.note}>
+            {hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')} so far, from {hubPlural(a.served, 'forecast', 'forecasts')} served. The share shows from {hubCount(a.minSample)} venue-hours across at least {hubPlural(a.minDays, 'day', 'days')}; below that it mostly measures chance.
+          </p>
+        </>
+      )}
+      <div style={{ marginTop: '8px' }}>
+        <HubRow
+          navy={navy}
+          label="Goal"
+          value={Number.isFinite(goal.percent) ? `${goal.percent}%` : 'Not set'}
+          note="Of served forecasts within one crowd band. Not the blended training figure, which mostly scores rows whose answer was known in advance."
+        />
+        <HubRow navy={navy} label="Gap to goal" value={gapValue} tone={gapTone} note={gapNote} />
+      </div>
+      {versions.length > 1 && (
+        <p style={hubStyle.foot}>This window mixes forecasts from {versions.length} model versions: {versions.join(', ')}.</p>
+      )}
+      <p style={hubStyle.foot}>
+        Counts forecasts the model made (served_predictions, prediction_method ml) on the venue card and the vote list. Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the bands the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
+      </p>
+    </div>
+  );
+}
+
 function MoneyHub({ colors }) {
   const [data, setData] = React.useState(hubMemo.data);
   const [loading, setLoading] = React.useState(false);
@@ -1120,10 +1329,10 @@ function MoneyHub({ colors }) {
     return (
       <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }} role="status">
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>
-          {loading ? 'Reading Stripe, RevenueCat and the database' : error ? 'The money hub did not load' : 'Nothing read yet'}
+          {loading ? 'Reading Stripe, RevenueCat, BestTime and the database' : error ? 'The money hub did not load' : 'Nothing read yet'}
         </h3>
         <p style={hubStyle.sub}>
-          {loading ? 'The first read asks both vendors and can take a few seconds.' : error ? `${error} Nothing is shown rather than a guess.` : 'The hub has not been read yet.'}
+          {loading ? 'The first read asks each vendor and can take a few seconds.' : error ? `${error} Nothing is shown rather than a guess.` : 'The hub has not been read yet.'}
         </p>
         {!loading && (
           <button className="hit44" type="button" onClick={() => load(false)}
@@ -1142,6 +1351,8 @@ function MoneyHub({ colors }) {
       <HubCosts h={data} colors={colors} />
       <HubExpenses h={data} colors={colors} onChanged={() => load(false)} />
       <HubPrices h={data} colors={colors} />
+      <HubCrowdData h={data} colors={colors} />
+      <HubModel h={data} colors={colors} />
       <HubHealth h={data} colors={colors} />
     </div>
   );

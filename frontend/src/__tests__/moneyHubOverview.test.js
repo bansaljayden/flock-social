@@ -13,7 +13,14 @@
 //     promotion code redemptions, each price disagreement in words;
 //   * the hub failing to load: no numbers at all;
 //   * the expense list: add, stop and import go through the API client and
-//     then re-read the hub, so what the screen shows is what the server saved.
+//     then re-read the hub, so what the screen shows is what the server saved;
+//   * crowd data: BestTime's key report when it answered, "Not connected" or
+//     "Could not load" with the server's reason when it did not, the plan and
+//     its cap as stated by the code, the admissions used and left as not
+//     reported, and the collector's rows beside them;
+//   * the model: the version serving, the share within one crowd band with its
+//     window and n, the goal and the gap, and under the minimum sample the
+//     words "not enough observations yet" and no percentage at all.
 //
 // It also pins every price backend/services/statedPrices.js lists against the
 // file that states it. The backend suite does the same, but a push that only
@@ -123,12 +130,70 @@ const HEALTH = {
   backups: { recorded: false },
 };
 
+// BestTime's key endpoint answered: the key's health and its two counters,
+// under BestTime's names. The plan beside it is the code's, never BestTime's.
+const CROWD_DATA = {
+  besttime: {
+    status: 'ok',
+    asOf: '2026-09-25T13:26:00.000Z',
+    cached: true,
+    cachedAgeSeconds: 42,
+    key: { healthy: true, status: 'OK', valid: true, active: true },
+    counters: { creditsForecast: 1, creditsQuery: 1 },
+    reported: [],
+  },
+  plan: {
+    label: 'BestTime.app Pro, Package 100',
+    name: 'Pro, Package 100',
+    usdPerMonth: 119,
+    checked: '2026-09-01',
+    newVenuesPerMonth: 100,
+    cycle: 'calendar_month',
+    cycleEndsOn: '2026-09-30',
+    resetsOn: '2026-10-01',
+    source: 'backend/services/costModel.js',
+  },
+};
+
+// 261 of 412 venue-hours within one band, over 26 days, out of 1,280 serves.
+const MODEL = {
+  version: { status: 'ok', value: '2.6.0-starling', source: 'loaded', loaded: true },
+  accuracy: {
+    status: 'ok',
+    asOf: '2026-09-25T13:10:00.000Z',
+    cached: true,
+    cachedAgeSeconds: 1020,
+    windowDays: 30,
+    served: 1280,
+    matched: 412,
+    days: 26,
+    enough: true,
+    minSample: 100,
+    minDays: 5,
+    withinOneBand: 261,
+    percent: 63.3,
+    versions: ['2.6.0-starling'],
+  },
+  goal: { percent: 85, metric: 'within_one_band' },
+  gapPoints: 21.7,
+  bands: [
+    { label: 'Quiet', upTo: 20 },
+    { label: 'Not Busy', upTo: 39 },
+    { label: 'Steady', upTo: 69 },
+    { label: 'Busy', upTo: 84 },
+    { label: 'Packed', upTo: null },
+  ],
+  cache: { ttlSeconds: 3600 },
+};
+
 const BASE = {
   generatedAt: '2026-09-25T13:27:00.000Z',
   month: { label: 'September 2026', startYmd: '2026-09-01', todayYmd: '2026-09-25', daysInMonth: 30, dayOfMonth: 25, tz: 'America/New_York' },
   cache: { ttlSeconds: 300, minRefreshSeconds: 60 },
   costs: COSTS,
   expenses: EXPENSES,
+  crowdData: CROWD_DATA,
+  model: MODEL,
   health: HEALTH,
 };
 
@@ -579,6 +644,195 @@ describe('a partial read empties the figures it would shrink', () => {
       costs: { ...COSTS, nonUsd: [{ id: 7, label: 'Example Tool, Team', amountCents: 2000, currency: 'EUR', replacesLine: 'railway' }] },
     });
     expect(screen.getByText(/Not added, because nothing here converts currencies: Example Tool, Team \(20\.00 EUR, and the code line it names still counts\)\./)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CROWD DATA. BestTime's key endpoint reports the key's health and two
+// undocumented counters, and no plan, admission count or cycle date. So the
+// card must never draw an admission count, must label the plan rows as the
+// code's, and must say why it has nothing when BestTime was not read.
+// ---------------------------------------------------------------------------
+describe('crowd data: what BestTime says, beside the plan the code records', () => {
+  const crowdCard = () => screen.getByRole('heading', { name: 'Crowd data' }).parentElement;
+  const withBestTime = (besttime) => ({ ...CONNECTED, crowdData: { ...CROWD_DATA, besttime } });
+
+  test('a working key; the plan and its cap as stated; used and left not reported; the collector beside it', async () => {
+    await renderHub(CONNECTED);
+    const card = crowdCard();
+    expect(within(hubRow('BestTime key')).getByText('Working')).toBeInTheDocument();
+    expect(hubRow('BestTime key').textContent).toMatch(/BestTime says the key is valid and active\./);
+    const plan = hubRow('Plan');
+    expect(within(plan).getByText('Pro, Package 100')).toBeInTheDocument();
+    expect(within(plan).getByText('Stated')).toBeInTheDocument();
+    expect(plan.textContent).toMatch(/does not report the plan\. This is the plan the cost model records, at \$119\.00 a month, checked Sep 1(, 2026)?\./);
+    expect(within(hubRow('New venues admitted this month')).getByText('Not reported')).toBeInTheDocument();
+    expect(hubRow('New venues admitted this month').textContent).toMatch(/The besttime\.app dashboard does\./);
+    const cap = hubRow('Admission cap');
+    expect(within(cap).getByText('100 a month')).toBeInTheDocument();
+    expect(within(cap).getByText('Stated')).toBeInTheDocument();
+    expect(within(hubRow('Admissions left')).getByText('Not reported')).toBeInTheDocument();
+    expect(hubRow('Admissions left').textContent).toMatch(/Nothing is subtracted from a count nobody read\./);
+    const cycle = hubRow('Cycle ends');
+    expect(within(cycle).getByText(/Sep 30/)).toBeInTheDocument();
+    expect(within(cycle).getByText('Worked out')).toBeInTheDocument();
+    expect(cycle.textContent).toMatch(/starts again on Oct 1/);
+    // The two counters under BestTime's names, and what they are not.
+    expect(within(hubRow('Forecast credits')).getByText('1')).toBeInTheDocument();
+    expect(hubRow('Forecast credits').textContent).toMatch(/credits_forecast, as BestTime reports it\..*not shown as forecasts used\./);
+    expect(within(hubRow('Query credits')).getByText('1')).toBeInTheDocument();
+    expect(hubRow('Query credits').textContent).toMatch(/not shown as venue searches used\./);
+    // The collector's rows, the Health card's own read, beside the quota.
+    const rows = hubRow('Crowd readings, last 24 hours');
+    expect(within(rows).getByText('3,412')).toBeInTheDocument();
+    expect(rows.textContent).toMatch(/across 24 hours\. From ml_training_data, the same read as the Health card below\./);
+    expect(card.textContent).toMatch(/held for 5 minutes; this answer is 42 seconds old\. The key itself never reaches this page\./);
+  });
+
+  test('with no key it says not connected, draws no counter, and still states the plan', async () => {
+    await renderHub(withBestTime({ status: 'not_connected', reason: 'BESTTIME_API_KEY is not set on the server, so nothing here can read BestTime.', cached: false, cachedAgeSeconds: 0 }));
+    const card = crowdCard();
+    expect(within(card).getByText('Not connected')).toBeInTheDocument();
+    expect(within(card).getByText(/BESTTIME_API_KEY is not set on the server, so nothing here can read BestTime\./)).toBeInTheDocument();
+    for (const label of ['BestTime key', 'Forecast credits', 'Query credits']) {
+      expect(within(card).queryByText(label)).toBeNull();
+    }
+    expect(within(card).getByText('Pro, Package 100')).toBeInTheDocument();
+    expect(within(card).getByText('100 a month')).toBeInTheDocument();
+    expect(within(card).getAllByText('Not reported')).toHaveLength(2);
+    expect(within(card).getByText('3,412')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Nothing was read from BestTime, so no counter is shown\. The plan rows come from the code either way\./);
+  });
+
+  test('a failed read says could not load with the server\'s reason, and draws no counter', async () => {
+    await renderHub(withBestTime({ status: 'error', reason: 'BestTime refused the key (403): a rejected key or account, or its guard after a burst of calls.', cached: false, cachedAgeSeconds: 0 }));
+    const card = crowdCard();
+    expect(within(card).getByText('Could not load')).toBeInTheDocument();
+    expect(within(card).getByText(/BestTime refused the key \(403\): a rejected key or account/)).toBeInTheDocument();
+    for (const text of ['BestTime key', 'Working', 'Not working', 'Forecast credits', 'Query credits']) {
+      expect(within(card).queryByText(text)).toBeNull();
+    }
+    expect(card.textContent).toMatch(/Nothing was read from BestTime, so no counter is shown\./);
+  });
+
+  test('a key BestTime calls invalid reads as not working, and extra fields come under BestTime\'s own names', async () => {
+    await renderHub(withBestTime({
+      ...CROWD_DATA.besttime,
+      key: { healthy: false, status: 'Error', valid: false, active: true },
+      reported: [{ name: 'venues_new_remaining', value: 58 }, { name: 'subscription_ref', withheld: true }],
+    }));
+    const key = hubRow('BestTime key');
+    expect(within(key).getByText('Not working')).toBeInTheDocument();
+    expect(key.textContent).toMatch(/BestTime says status Error, valid false, active true\./);
+    expect(screen.getByText('Also reported by BestTime, under its own names: venues_new_remaining 58; subscription_ref (withheld, it carried key material).')).toBeInTheDocument();
+    // A count BestTime sends is shown as it sent it, and never promoted into
+    // the rows above, which stay what the code can vouch for.
+    expect(within(hubRow('Admissions left')).getByText('Not reported')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MODEL. The share is the server's, over served model forecasts that got a
+// live reading in the same venue-hour. Under the minimum sample the server
+// sends no share, and the card must say so in words and print no percentage,
+// even if a share arrives anyway.
+// ---------------------------------------------------------------------------
+describe('the model: which one is serving, and its served forecasts against the goal', () => {
+  const modelCard = () => screen.getByRole('heading', { name: 'Model' }).parentElement;
+  const percentsIn = (el) => el.textContent.match(/\d+(\.\d+)?%/g);
+  const withModel = (over) => ({ ...CONNECTED, model: { ...MODEL, ...over } });
+
+  test('the loaded version, the share within one band with its window and n, the goal and the gap', async () => {
+    await renderHub(CONNECTED);
+    const card = modelCard();
+    expect(within(hubRow('Live model')).getByText('2.6.0-starling')).toBeInTheDocument();
+    expect(hubRow('Live model').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\./);
+    expect(within(hubRow('Live model')).queryByText('Not loaded')).toBeNull();
+    expect(within(card).getByText('Within one crowd band, last 30 days')).toBeInTheDocument();
+    expect(within(card).getByText('63.3%')).toBeInTheDocument();
+    // n and its count are held together by non-breaking spaces, so a narrow
+    // screen never strands "n" at the end of a line.
+    expect(card.textContent).toMatch(/of served model forecasts landed in the live reading's crowd band or the one next to it\. n = 412 venue-hours over 26 days, 261 of them within one band, from 1,280 forecasts served in the window\./);
+    expect(within(hubRow('Goal')).getByText('85%')).toBeInTheDocument();
+    expect(hubRow('Goal').textContent).toMatch(/Of served forecasts within one crowd band\. Not the blended training figure/);
+    const gap = hubRow('Gap to goal');
+    expect(within(gap).getByText('21.7 points')).toBeInTheDocument();
+    expect(gap.textContent).toMatch(/The goal less the measured share, in percentage points\./);
+    expect(card.textContent).toMatch(/scored on the bands the app prints: Quiet up to 20, Not Busy up to 39, Steady up to 69, Busy up to 84, Packed above\./);
+    expect(card.textContent).toMatch(/held for an hour; this answer is 17 minutes old\./);
+    expect(percentsIn(card)).toEqual(['63.3%', '85%']);
+    expect(card.textContent).not.toMatch(/85\.1|87\.3/);
+    expect(card.textContent).not.toMatch(/mixes forecasts/);
+  });
+
+  test('under the minimum it says not enough observations yet, and prints no share and no gap', async () => {
+    await renderHub(withModel({
+      gapPoints: null,
+      accuracy: { ...MODEL.accuracy, served: 310, matched: 37, days: 3, enough: false, withinOneBand: null, percent: null },
+    }));
+    const card = modelCard();
+    expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/37 venue-hours over 3 days so far, from 310 forecasts served\. The share shows from 100 venue-hours across at least 5 days; below that it mostly measures chance\./);
+    expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
+    expect(hubRow('Gap to goal').textContent).toMatch(/Waits for enough observations to measure the share\./);
+    // The only percentage in the card is the goal.
+    expect(percentsIn(card)).toEqual(['85%']);
+  });
+
+  test('a share that arrives under the minimum is still not drawn', async () => {
+    // The server withholds it; this pins the screen's own half of the rule, so
+    // an older or broken server still cannot put a noisy figure on it.
+    await renderHub(withModel({
+      gapPoints: 72.5,
+      accuracy: { ...MODEL.accuracy, served: 40, matched: 8, days: 1, enough: false, withinOneBand: 1, percent: 12.5 },
+    }));
+    const card = modelCard();
+    expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
+    expect(within(card).queryByText('12.5%')).toBeNull();
+    expect(percentsIn(card)).toEqual(['85%']);
+    // Nor the gap worked from it.
+    expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
+    expect(card.textContent).not.toMatch(/72\.5/);
+  });
+
+  test('a check that failed says could not load with the reason, and prints no share and no gap', async () => {
+    await renderHub(withModel({
+      gapPoints: null,
+      accuracy: { status: 'error', reason: "The database did not finish the check of served forecasts against the collector's readings, so there is no figure to show.", cached: false, cachedAgeSeconds: 0 },
+    }));
+    const card = modelCard();
+    expect(within(card).getByText('Could not load')).toBeInTheDocument();
+    expect(within(card).getByText(/did not finish the check of served forecasts against the collector's readings/)).toBeInTheDocument();
+    expect(within(card).queryByText('Not enough observations yet')).toBeNull();
+    expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
+    expect(hubRow('Gap to goal').textContent).toMatch(/Waits for the check above to answer\./);
+    expect(percentsIn(card)).toEqual(['85%']);
+    // The version is its own read and still stands.
+    expect(within(hubRow('Live model')).getByText('2.6.0-starling')).toBeInTheDocument();
+  });
+
+  test('an artifact that is not loaded is labelled so, and a window that mixes versions says which', async () => {
+    await renderHub(withModel({
+      version: { status: 'ok', value: '2.6.0-starling', source: 'artifact', loaded: false },
+      accuracy: { ...MODEL.accuracy, versions: ['2.6.0-starling', '2.7.0-swift'] },
+    }));
+    const row = hubRow('Live model');
+    expect(within(row).getByText('Not loaded')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No model is loaded in this server process yet, so this is the version of the artifact on disk/);
+    expect(screen.getByText('This window mixes forecasts from 2 model versions: 2.6.0-starling, 2.7.0-swift.')).toBeInTheDocument();
+  });
+
+  test('a version that could not be read says why, and a goal already met is not a negative gap', async () => {
+    await renderHub(withModel({
+      version: { status: 'error', value: null, source: 'artifact', loaded: false, reason: 'No model is loaded, and this server has no model_metadata.json to read a version from.' },
+      gapPoints: -1.2,
+      accuracy: { ...MODEL.accuracy, withinOneBand: 355, percent: 86.2 },
+    }));
+    const row = hubRow('Live model');
+    expect(within(row).getByText('Not read')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/this server has no model_metadata\.json to read a version from\./);
+    expect(within(hubRow('Gap to goal')).getByText('Met')).toBeInTheDocument();
+    expect(hubRow('Gap to goal').textContent).not.toMatch(/−|-1\.2/);
   });
 });
 

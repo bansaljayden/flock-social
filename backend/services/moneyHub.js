@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // THE OWNER'S MONEY HUB: every dollar in and out, read where it actually is.
 //
-// GET /api/admin/money (routes/admin.js) is the only caller. It answers five
+// GET /api/admin/money (routes/admin.js) is the only caller. It answers seven
 // questions on one screen, each from the system that holds the answer:
 //
 //   revenue  Stripe for everything sold on flockcorp.com (Flock Pro on the web
@@ -17,6 +17,12 @@
 //   pricing  every price Stripe will charge next to every price the code
 //            writes down (services/statedPrices.js), with each disagreement
 //            said in words.
+//   crowd    the BestTime key's own report (services/besttimeAccount.js) and
+//            the plan the code records beside it: what the paid crowd feed
+//            allows, and what BestTime will and will not say about it.
+//   model    which crowd model is serving, and how many of its served
+//            forecasts landed within one crowd band of what the collector
+//            then measured, against the goal.
 //   health   whether the crowd-data collector is still landing rows.
 //
 // HONEST WHEN A SOURCE IS MISSING. Every block carries a status: 'ok',
@@ -25,15 +31,19 @@
 // because a zero printed for an unread source is a claim that nothing was sold.
 // A zero from a source that answered is a real zero and says so.
 //
-// CACHED, BECAUSE STRIPE AND REVENUECAT ARE NOT OURS TO HAMMER. The two
-// external reads are held for EXTERNAL_TTL_MS after a good answer and
+// CACHED, BECAUSE STRIPE, REVENUECAT AND BESTTIME ARE NOT OURS TO HAMMER. The
+// three external reads are held for EXTERNAL_TTL_MS after a good answer and
 // EXTERNAL_FAIL_TTL_MS after a failed one, a second request while one is in
 // flight waits for it, and a manual refresh is honoured only once the held
 // answer is MIN_FORCE_REFRESH_MS old. Each answer is held under the inputs it
 // was read with (the month, and for RevenueCat the Pro accounts it was asked
 // about), so a new month or a new subscriber is a new read rather than a stale
 // one. The database reads (expenses, costs, health) are never cached: an edit
-// shows on the next load.
+// shows on the next load. The one exception is the model's served-forecast
+// check, a month of serves joined to the collector's readings, which is held
+// for MODEL_TTL_MS (an hour): the readings it scores against land once an
+// hour, so the hold costs at most one collector run of freshness. THE MODEL
+// section below says why it is held here rather than precomputed.
 //
 // NOTHING PERSONAL LEAVES THIS FILE. Counts and sums only: no customer email,
 // no customer name, no account id, no key. Price and promotion code ids are
@@ -41,9 +51,12 @@
 // ---------------------------------------------------------------------------
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const pool = require('../config/database');
 const costModel = require('./costModel');
 const billing = require('./proBilling');
+const besttime = require('./besttimeAccount');
 const { legacyRoostPrices } = require('./venueBilling');
 const {
   STATED_PRICES, PRICE_ENV, APP_STORE_PRODUCTS, PRODUCT_LABEL, PLAN_INTERVAL,
@@ -279,7 +292,24 @@ function revenueCatCacheKey(month, premiumIds) {
   return `revenuecat:${month.startYmd}:${premiumIds.length}:${digest}`;
 }
 
-async function cachedRead(key, read, { force = false } = {}) {
+// BestTime's key endpoint takes no input but the key itself, which is the
+// server's own configuration and never part of a cache key.
+function besttimeCacheKey() {
+  return 'besttime:key';
+}
+
+// The served-forecast check depends on its window and on the band ladder it
+// scores with, so both are in the key: a re-cut ladder is a new question.
+function modelAccuracyCacheKey(windowDays, cuts) {
+  return `model:${windowDays}d:${cuts.join('-')}`;
+}
+
+// ttlMs and failTtlMs default to the vendor holds; the model check passes its
+// own hour. logMessage false logs only the error's name, for a read whose
+// failure text is not ours to repeat.
+async function cachedRead(key, read, {
+  force = false, ttlMs = EXTERNAL_TTL_MS, failTtlMs = EXTERNAL_FAIL_TTL_MS, logMessage = true,
+} = {}) {
   const hit = externalCache.get(key);
   if (hit && hit.pending) {
     const v = await hit.pending;
@@ -288,7 +318,7 @@ async function cachedRead(key, read, { force = false } = {}) {
   const now = Date.now();
   if (hit && hit.value) {
     const age = now - hit.at;
-    const ttl = hit.value.status === 'ok' ? EXTERNAL_TTL_MS : EXTERNAL_FAIL_TTL_MS;
+    const ttl = hit.value.status === 'ok' ? ttlMs : failTtlMs;
     const forced = force && age >= MIN_FORCE_REFRESH_MS;
     if (age < ttl && !forced) {
       return { ...hit.value, cached: true, cachedAgeSeconds: Math.round(age / 1000) };
@@ -298,7 +328,8 @@ async function cachedRead(key, read, { force = false } = {}) {
     try {
       return await read();
     } catch (err) {
-      console.error(`[money] ${key} read failed:`, err && err.message ? err.message : err);
+      const what = logMessage ? (err && err.message ? err.message : err) : ((err && err.name) || 'unknown error');
+      console.error(`[money] ${key} read failed:`, what);
       return { status: 'error', reason: 'The read failed before it could answer.' };
     }
   })();
@@ -1840,6 +1871,325 @@ async function readHealth(db = pool, now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
+// CROWD DATA: what BestTime's key endpoint says, and the plan the code records
+// ---------------------------------------------------------------------------
+//
+// services/besttimeAccount.js makes the one read-only request, the same one
+// scripts/ml/besttimeAccountStatus.js makes, and screens BestTime's answer for
+// the two keys it echoes. What this adds is the block: not_connected when
+// BESTTIME_API_KEY is unset (nothing is asked), error with a reason in our own
+// words when BestTime did not answer usefully, and ok with the key's health,
+// the two undocumented counters under BestTime's own names, and any other plan
+// or quota field it reported. Never the key, and never BestTime's text about a
+// failure: the reason is built from the HTTP status or the error code alone.
+//
+// The endpoint reports no plan, no admission count and no cycle date, so the
+// plan terms beside it come from the code (statedBestTimePlan) and are labelled
+// as stated. The admissions used, and so the admissions left, are not shown as
+// numbers at all: nothing here can read them, and the besttime.app dashboard
+// can. The collector's own rows are the Health block's read, which the screen
+// shows beside this one rather than this block reading them a second time.
+
+const BESTTIME_TIMEOUT_MS = 10000;
+const BESTTIME_REPORTED_MAX = 20;
+const BESTTIME_NAME_MAX = 60;
+const BESTTIME_VALUE_MAX = 80;
+
+// A failure in our words. BestTime's body is never read on a failure, so none
+// of its text can reach the screen, and a network error is named by its code.
+function besttimeProblem(answer) {
+  if (answer.kind === 'network') {
+    return answer.code === 'TimeoutError' || answer.code === 'AbortError'
+      ? 'BestTime did not answer in time.'
+      : `The request to BestTime failed (${answer.code}).`;
+  }
+  if (answer.kind === 'http') {
+    const s = answer.httpStatus;
+    if (s === 401) return 'BestTime refused the key (401). BESTTIME_API_KEY needs checking.';
+    if (s === 403) return 'BestTime refused the key (403): a rejected key or account, or its guard after a burst of calls.';
+    if (s === 429) return 'BestTime is rate limiting this key (429).';
+    if (Number.isInteger(s) && s >= 500) return `BestTime answered ${s}, a fault on its side.`;
+    return Number.isInteger(s) ? `BestTime answered ${s}.` : 'BestTime answered with an error.';
+  }
+  if (answer.kind === 'not_json') return 'BestTime answered, but not with the JSON its key endpoint sends.';
+  return 'The BestTime read failed.';
+}
+
+async function readBestTime() {
+  const key = besttime.configuredKey();
+  if (!key) {
+    return { status: 'not_connected', reason: 'BESTTIME_API_KEY is not set on the server, so nothing here can read BestTime.' };
+  }
+  const answer = await besttime.fetchKeyStatus(key, { timeoutMs: BESTTIME_TIMEOUT_MS });
+  if (!answer.ok) return { status: 'error', reason: besttimeProblem(answer) };
+  const s = besttime.readKeyStatus(answer.body, { secrets: [key] });
+  return {
+    status: 'ok',
+    asOf: new Date().toISOString(),
+    key: { healthy: s.healthy, status: s.status, valid: s.valid, active: s.active },
+    counters: { creditsForecast: s.creditsForecast, creditsQuery: s.creditsQuery },
+    // Already screened for key material in full; cut to size only afterwards,
+    // so a cut can never split a key past the screen.
+    reported: s.reported.slice(0, BESTTIME_REPORTED_MAX).map((f) => (f.withheld
+      ? { name: f.name.slice(0, BESTTIME_NAME_MAX), withheld: true }
+      : {
+        name: f.name.slice(0, BESTTIME_NAME_MAX),
+        value: typeof f.value === 'string' ? f.value.slice(0, BESTTIME_VALUE_MAX) : f.value,
+      })),
+  };
+}
+
+// The plan as the code records it, for the rows the endpoint cannot fill. The
+// name and price are costModel.js's own line, the allowance and cycle are
+// services/besttimeAccount.js STATED_PLAN, and the dates are worked out from
+// the calendar month the allowance runs on, the rule the command-line check
+// prints too. None of it is read from BestTime, and the payload says where
+// each part came from.
+function statedBestTimePlan(now = new Date()) {
+  const terms = besttime.STATED_PLAN;
+  const line = costModel.FIXED_MONTHLY.find((e) => e.id === terms.costLineId) || null;
+  const label = line && typeof line.label === 'string' ? line.label : null;
+  return {
+    label,
+    name: label ? label.replace(/^BestTime(\.app)?\s+/i, '') : null,
+    usdPerMonth: line && Number.isFinite(line.usd) ? line.usd : null,
+    checked: line && line.checked ? line.checked : null,
+    newVenuesPerMonth: terms.newVenuesPerMonth,
+    cycle: terms.cycle,
+    cycleEndsOn: besttime.calendarMonthEnd(now),
+    resetsOn: besttime.nextCalendarMonthStart(now),
+    source: 'backend/services/costModel.js',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE MODEL: which one is serving, and how its served forecasts are doing
+// ---------------------------------------------------------------------------
+//
+// THE METRIC. The share of served forecasts within one crowd band of what was
+// then observed, scored the way scripts/ml/MODEL-METRICS.md scores its band
+// table: a score lands in the band crowdEngine.getLabel prints for it (Quiet,
+// Not Busy, Steady, Busy, Packed), and a forecast counts when its band is the
+// observed band or the one next to it (band_off_by_one in
+// train/eval_two_head.py). The goal is 85% of them. That is NOT the blended
+// 85% training figure MODEL-METRICS.md section 2 retires, which mostly scores
+// weekly rows whose label equals the baseline by construction; nothing here
+// reads that figure.
+//
+// WHAT COUNTS. A served_predictions row the model produced (prediction_method
+// 'ml'), from the venue card or the vote list, paired with the collector's
+// live reading (ml_training_data, realtime, label_source 'live') of the same
+// venue at the same venue-local weekday and hour, taken within
+// MODEL_PAIR_WINDOW_HOURS of the serve. The same weekday and hour recur only a
+// week apart, so inside that window the reading can only be that hour on that
+// day. That keeps a vote-list serve honest too: its clock came from the caller
+// (migration 038). A clock off by more than the window names an hour whose
+// reading is not inside it, so the serve pairs with nothing; one off by less
+// names the hour the forecast was actually scored for, and meets that hour's
+// reading, which is still a forecast checked against its own hour. Its venue
+// facts came from the caller as well; a caller who skews their own serves can
+// only move this figure, which is an operator's read and feeds no
+// calibration. ONE PAIR PER VENUE AND HOUR: the vote list records a serve on
+// every scroll, and forty serves of one venue-hour are one forecast checked
+// once, not forty. The newest serve in the hour stands for it.
+//
+// THE MINIMUM. Below MODEL_MIN_SAMPLE venue-hours, or across fewer than
+// MODEL_MIN_DAYS days, the share is withheld, count and all, and the screen
+// says there are not enough observations yet. They are the floors the offline
+// evaluation keeps (train/quick_eval.py): fewer than 100 rows is too few to be
+// meaningful, and fewer than five days is too few date blocks for an interval
+// anyone should trust, because one night's weather or event moves every
+// reading taken that night.
+//
+// WHY HELD FOR AN HOUR RATHER THAN PRECOMPUTED. The join reads a month of
+// serves against the live readings, more than a dashboard should run on every
+// load, and the readings it needs land once an hour, from the collector on the
+// Railway BESTTIME service at :07. That collector is the existing hourly job,
+// and it is a separate service with its own deploys; the in-process heartbeat
+// (services/collectionHeartbeat.js) watches the rows, not the model. Either
+// would have to write the figure somewhere this process reads, so an hour's
+// hold in the hub's own cache gives the same freshness with no new table and
+// costs a query only when somebody opens the Overview.
+
+const MODEL_TTL_MS = 60 * 60 * 1000;
+const MODEL_WINDOW_DAYS = 30;
+const MODEL_PAIR_WINDOW_HOURS = 3;
+const MODEL_MIN_SAMPLE = 100;
+const MODEL_MIN_DAYS = 5;
+const MODEL_GOAL_PCT = 85;
+const MODEL_META_PATH = path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json');
+
+// The band ladder, read off crowdEngine.getLabel rather than restated, so a
+// re-cut of the ladder (the last was 2026-08-28) moves this metric with it. A
+// cut is the last score of a band, and a score's band is how many cuts it
+// exceeds, exactly as band_of in train/eval_two_head.py counts it. Scores are
+// whole numbers from 0 to 100 in both tables this is applied to.
+function crowdBandLadder() {
+  const { getLabel } = require('./crowdEngine');
+  const cuts = [];
+  const bands = [];
+  for (let s = 0; s < 100; s += 1) {
+    if (getLabel(s) !== getLabel(s + 1)) {
+      cuts.push(s);
+      bands.push({ label: getLabel(s), upTo: s });
+    }
+  }
+  bands.push({ label: getLabel(100), upTo: null });
+  return { cuts, bands };
+}
+
+// The ladder, or the reason there is none. A ladder with fewer than two cuts
+// would score almost any forecast as near enough, so it is refused rather
+// than trusted.
+function safeLadder() {
+  try {
+    const ladder = crowdBandLadder();
+    if (ladder.cuts.length < 2) {
+      return { ok: false, cuts: [], bands: [], reason: 'The crowd band ladder has fewer than three bands, so a forecast cannot be scored against it.' };
+    }
+    return { ok: true, ...ladder };
+  } catch (err) {
+    console.error('[money] crowd band ladder unavailable:', err && err.message ? err.message : err);
+    return { ok: false, cuts: [], bands: [], reason: 'The crowd band ladder could not be read, so no forecast was scored.' };
+  }
+}
+
+// $1 the window in days, $2 the ladder's cuts, $3 the pairing window in hours.
+// Postgres pairs and counts; four counts and the model versions seen are all
+// that leave the database.
+const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
+       SELECT sp.id, sp.venue_place_id, sp.score, sp.model_version,
+              sp.local_day, sp.local_hour, sp.served_at
+         FROM served_predictions sp
+        WHERE sp.served_at >= NOW() - make_interval(days => $1::int)
+          AND sp.prediction_method = 'ml'
+          AND sp.local_day IS NOT NULL
+          AND sp.local_hour IS NOT NULL
+     ),
+     paired AS (
+       SELECT DISTINCT ON (t.venue_id, t.observed_date, t.hour)
+              s.score AS served_score,
+              t.busyness_pct AS observed,
+              t.observed_date,
+              s.model_version
+         FROM served s
+         JOIN ml_venues v ON v.google_place_id = s.venue_place_id
+         JOIN ml_training_data t
+           ON t.venue_id = v.id
+          AND t.collection_mode = 'realtime'
+          AND t.label_source = 'live'
+          AND t.observed_date IS NOT NULL
+          AND t.day_of_week = s.local_day
+          AND t.hour = s.local_hour
+          AND t.observed_date BETWEEN (s.served_at AT TIME ZONE 'UTC')::date - 1
+                                  AND (s.served_at AT TIME ZONE 'UTC')::date + 1
+          AND t.collected_at BETWEEN s.served_at - make_interval(hours => $3::int)
+                                 AND s.served_at + make_interval(hours => $3::int)
+        ORDER BY t.venue_id, t.observed_date, t.hour, s.served_at DESC, s.id DESC
+     )
+     SELECT (SELECT COUNT(*) FROM served)::int AS served,
+            COUNT(*)::int AS matched,
+            COUNT(DISTINCT p.observed_date)::int AS days,
+            COUNT(*) FILTER (WHERE abs(b.served_band - b.observed_band) <= 1)::int AS within_one_band,
+            COALESCE(array_remove(array_agg(DISTINCT p.model_version), NULL), '{}'::text[]) AS versions
+       FROM paired p
+      CROSS JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE p.served_score > c.cut)::int AS served_band,
+               COUNT(*) FILTER (WHERE p.observed > c.cut)::int AS observed_band
+          FROM unnest($2::int[]) AS c(cut)
+      ) b`;
+
+async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAYS, cuts } = {}) {
+  let row;
+  try {
+    const r = await db.query(SERVED_BAND_ACCURACY_SQL, [windowDays, cuts, MODEL_PAIR_WINDOW_HOURS]);
+    row = (r && r.rows && r.rows[0]) || {};
+  } catch (err) {
+    console.error('[money] served forecast check failed:', err && err.message ? err.message : err);
+    return { status: 'error', reason: 'The database did not finish the check of served forecasts against the collector\'s readings, so there is no figure to show.' };
+  }
+  const count = (v) => {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+  };
+  const matched = count(row.matched);
+  const days = count(row.days);
+  const within = Math.min(count(row.within_one_band), matched);
+  const enough = matched >= MODEL_MIN_SAMPLE && days >= MODEL_MIN_DAYS;
+  return {
+    status: 'ok',
+    asOf: new Date().toISOString(),
+    windowDays,
+    served: count(row.served),
+    matched,
+    days,
+    enough,
+    minSample: MODEL_MIN_SAMPLE,
+    minDays: MODEL_MIN_DAYS,
+    // Withheld below the minimum, the count as well as the share, so nothing
+    // downstream can print the noisy percentage the floor exists to stop.
+    withinOneBand: enough ? within : null,
+    percent: enough ? Math.round((within / matched) * 1000) / 10 : null,
+    versions: Array.isArray(row.versions)
+      ? row.versions.filter((v) => typeof v === 'string' && v).slice(0, 5).map((v) => v.slice(0, 60))
+      : [],
+  };
+}
+
+// The version serving now. The predictor's own loaded metadata when it has
+// loaded a model (mlPredictor.predictionCoverage, the read the Costs tab uses);
+// otherwise the artifact the server would load, model_metadata.json on disk,
+// labelled as not loaded. Read on every build, not held: it is one in-memory
+// read, and a hold would keep saying "not loaded" for an hour after the model
+// warmed up.
+async function readModelVersion({ predictor = null, metaPath = MODEL_META_PATH } = {}) {
+  let coverage = null;
+  try {
+    const p = predictor || require('./mlPredictor');
+    coverage = p && typeof p.predictionCoverage === 'function' ? p.predictionCoverage() : null;
+  } catch (err) {
+    console.error('[money] model coverage read failed:', err && err.message ? err.message : err);
+  }
+  if (coverage && coverage.modelLoaded === true && typeof coverage.modelVersion === 'string' && coverage.modelVersion.trim()) {
+    return { status: 'ok', value: coverage.modelVersion.trim().slice(0, 60), source: 'loaded', loaded: true };
+  }
+  try {
+    const meta = JSON.parse(await fs.promises.readFile(metaPath, 'utf8'));
+    const v = meta && typeof meta.model_version === 'string' && meta.model_version.trim()
+      ? meta.model_version.trim().slice(0, 60) : null;
+    if (!v) {
+      return { status: 'error', value: null, source: 'artifact', loaded: false, reason: 'No model is loaded, and model_metadata.json names no version.' };
+    }
+    return { status: 'ok', value: v, source: 'artifact', loaded: false };
+  } catch (err) {
+    const missing = err && err.code === 'ENOENT';
+    return {
+      status: 'error',
+      value: null,
+      source: 'artifact',
+      loaded: false,
+      reason: missing
+        ? 'No model is loaded, and this server has no model_metadata.json to read a version from.'
+        : 'No model is loaded, and model_metadata.json could not be read.',
+    };
+  }
+}
+
+function buildModelBlock({ version, accuracy, ladder }) {
+  const measured = !!accuracy && accuracy.status === 'ok' && accuracy.enough === true && Number.isFinite(accuracy.percent);
+  return {
+    version,
+    accuracy,
+    goal: { percent: MODEL_GOAL_PCT, metric: 'within_one_band' },
+    // Points short of the goal; zero or less means the goal is met. Only ever
+    // from a measured share, never from a withheld one.
+    gapPoints: measured ? Math.round((MODEL_GOAL_PCT - accuracy.percent) * 10) / 10 : null,
+    bands: ladder.bands,
+    cache: { ttlSeconds: MODEL_TTL_MS / 1000 },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // NET AND BREAK-EVEN
 // ---------------------------------------------------------------------------
 
@@ -1968,7 +2318,11 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
 // THE HUB
 // ---------------------------------------------------------------------------
 
-async function buildMoneyHub({ db = pool, venuePriceUsd = null, force = false, now = new Date() } = {}) {
+// predictor and modelMetaPath are seams for the suite: the route passes
+// neither, so the live mlPredictor and the artifact on disk are what answer.
+async function buildMoneyHub({
+  db = pool, venuePriceUsd = null, force = false, now = new Date(), predictor = null, modelMetaPath = MODEL_META_PATH,
+} = {}) {
   const today = ymdIn(HUB_TZ, now);
   const month = monthOf(today);
 
@@ -1981,7 +2335,9 @@ async function buildMoneyHub({ db = pool, venuePriceUsd = null, force = false, n
     }
   };
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health] = await Promise.all([
+  const ladder = safeLadder();
+
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -2002,6 +2358,18 @@ async function buildMoneyHub({ db = pool, venuePriceUsd = null, force = false, n
     }, 'paying venues'),
     safe(() => require('./photoStore').photoSpendStatus(), 'photo ledger'),
     readHealth(db, now),
+    // BestTime's answer names no customer, but its failure text could quote
+    // the request, and the request carries the key: only the error's name is
+    // ever logged for it.
+    cachedRead(besttimeCacheKey(), () => readBestTime(), { force, logMessage: false }),
+    ladder.ok
+      ? cachedRead(
+        modelAccuracyCacheKey(MODEL_WINDOW_DAYS, ladder.cuts),
+        () => readServedBandAccuracy(db, { windowDays: MODEL_WINDOW_DAYS, cuts: ladder.cuts }),
+        { force, ttlMs: MODEL_TTL_MS }
+      )
+      : Promise.resolve({ status: 'error', reason: ladder.reason }),
+    readModelVersion({ predictor, metaPath: modelMetaPath }),
   ]);
 
   const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
@@ -2093,6 +2461,13 @@ async function buildMoneyHub({ db = pool, venuePriceUsd = null, force = false, n
     },
     net,
     pricing,
+    // The collector's own rows are health.collector, which the screen shows
+    // beside this block; they are not read a second time here.
+    crowdData: {
+      besttime: besttimeRead,
+      plan: statedBestTimePlan(now),
+    },
+    model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder }),
     health,
   };
 }
@@ -2105,6 +2480,12 @@ module.exports = {
   costsLedger,
   readExpenses,
   readHealth,
+  readBestTime,
+  statedBestTimePlan,
+  readServedBandAccuracy,
+  readModelVersion,
+  crowdBandLadder,
+  SERVED_BAND_ACCURACY_SQL,
   importExpenses,
   expenseFromRow,
   expenseRowFromInput,
@@ -2136,12 +2517,27 @@ module.exports = {
     readRevenueCat,
     stripeCacheKey,
     revenueCatCacheKey,
+    besttimeCacheKey,
+    modelAccuracyCacheKey,
     cacheKeys: () => [...externalCache.keys()],
+    // Ages every held answer by ms, as if that much time had passed, so the
+    // suite can cross a hold without waiting it out.
+    ageCache: (ms) => {
+      for (const v of externalCache.values()) if (!v.pending) v.at -= ms;
+    },
     EXTERNAL_TTL_MS,
+    EXTERNAL_FAIL_TTL_MS,
     MIN_FORCE_REFRESH_MS,
     RC_SUBSCRIBER_CAP,
     BALANCE_MAX_PAGES,
     INVOICE_LOOKBACK_DAYS,
     DISPUTE_MAX_PAGES,
+    MODEL_TTL_MS,
+    MODEL_WINDOW_DAYS,
+    MODEL_PAIR_WINDOW_HOURS,
+    MODEL_MIN_SAMPLE,
+    MODEL_MIN_DAYS,
+    MODEL_GOAL_PCT,
+    MODEL_META_PATH,
   },
 };

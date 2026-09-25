@@ -1642,12 +1642,13 @@ export async function saveAdminReconciled({ id, usdPerMonth, asOf, note }) {
 // requireAdmin on the whole admin router, so there is no client-side check
 // worth writing here.
 //
-// GET /api/admin/money reads Stripe, RevenueCat, the cost model, the expense
-// list and the collector in one payload (backend/services/moneyHub.js). A cold
-// read asks both vendors, so it gets a longer deadline than the default. The
-// server holds each vendor answer for a few minutes and honours `refresh` only
-// once the held answer is a minute old, so the Refresh button cannot turn into
-// a stream of Stripe requests.
+// GET /api/admin/money reads Stripe, RevenueCat, BestTime's key endpoint, the
+// cost model, the expense list, the served forecasts and the collector in one
+// payload (backend/services/moneyHub.js). A cold read asks every vendor at
+// once, so it gets a longer deadline than the default. The server holds each
+// vendor answer for a few minutes (the served-forecast check for an hour) and
+// honours `refresh` only once the held answer is a minute old, so the Refresh
+// button cannot turn into a stream of vendor requests.
 export async function getAdminMoneyHub({ refresh = false } = {}) {
   return request(`/api/admin/money${refresh ? '?refresh=1' : ''}`, { timeout: 45000 });
 }
