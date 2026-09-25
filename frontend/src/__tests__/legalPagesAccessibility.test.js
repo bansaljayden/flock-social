@@ -735,6 +735,15 @@ describe('PrivacyPolicy: the contents rail and skipping past it', () => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('the flat documents: Terms, Guidelines, Delete account', () => {
+  test('the flat pages centre their one column instead of hugging the left edge', () => {
+    // /pro, About, Support and these three have no .pp-shell. Held to the
+    // measure but never centred, they sat against the left edge of a wide
+    // window. Symmetric padding centres the column and keeps the inline-block
+    // back link on the same left edge as the text.
+    expect(PP_CSS).toMatch(/\.pp:not\(:has\(\.pp-shell\)\) \{[^}]*padding-left:\s*max\(clamp\(20px, 5vw, 40px\), calc\(\(100% - var\(--pp-measure\)\) \/ 2\)\)/);
+    expect(PP_CSS).toMatch(/\.pp:not\(:has\(\.pp-shell\)\) \{[^}]*padding-right:\s*max\(clamp\(20px, 5vw, 40px\), calc\(\(100% - var\(--pp-measure\)\) \/ 2\)\)/);
+  });
+
   const FLAT = ['TermsOfService', 'CommunityGuidelines', 'DeleteAccount'];
 
   test('their sections are direct children of .pp, which is what gives them a measure', () => {
