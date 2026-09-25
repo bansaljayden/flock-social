@@ -246,7 +246,7 @@ function paywallEnabled(userId) {
   if (on && !secretConfigured) {
     warnOnce(
       'preflight:paywall-no-grant-path',
-      '[entitlements] PAYWALL_ENABLED=true but REVENUECAT_WEBHOOK_SECRET is unset. routes/revenuecat.js refuses every event without it, and it is the only writer of users.is_premium, so every account is metered on the free tier and NO purchase can lift it. Set the webhook secret before metering anyone.'
+      '[entitlements] The paywall is on (PAYWALL_ENABLED=true, or an account on PAYWALL_PREVIEW_USER_IDS) but REVENUECAT_WEBHOOK_SECRET is unset. routes/revenuecat.js refuses every event without it, and it is the only writer of users.is_premium, so every metered account stays on the free tier and NO purchase can lift it. Set the webhook secret before metering anyone.'
     );
   }
   return on;

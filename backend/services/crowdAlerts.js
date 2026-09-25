@@ -470,7 +470,27 @@ async function processFlockAlert(flock) {
     // notification that goes nowhere: the row is the permanent "already alerted"
     // marker, and writing it here would silently disable the alert for anyone
     // who joins the flock afterwards.
-    const members = candidates.filter((m) => wantsCrowdAlerts(m.user_settings));
+    // An account on the review list (services/entitlements.js previewUserIds)
+    // meets the paywall while it is off for everyone else, and its Settings
+    // shows crowd alerts as a Pro perk with no switch. It gets them only as a
+    // subscriber, exactly as everyone will once the flag is on. With the flag
+    // on, the query above already did this; with it off, the lookup runs only
+    // for listed accounts, which is one or two, and a failed lookup sends
+    // nothing to that account rather than a perk it may not have.
+    let eligible = candidates;
+    if (!proOnly) {
+      const { paywallEnabled, getPremiumState } = require('./entitlements');
+      const listed = candidates.filter((m) => paywallEnabled(m.user_id));
+      if (listed.length) {
+        const subscribers = new Set();
+        for (const m of listed) {
+          const state = await getPremiumState(m.user_id);
+          if (state.known && state.premium) subscribers.add(m.user_id);
+        }
+        eligible = candidates.filter((m) => !paywallEnabled(m.user_id) || subscribers.has(m.user_id));
+      }
+    }
+    const members = eligible.filter((m) => wantsCrowdAlerts(m.user_settings));
 
     if (!members.length) return;
 

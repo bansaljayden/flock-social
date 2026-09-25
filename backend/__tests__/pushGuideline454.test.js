@@ -295,6 +295,34 @@ test('with the paywall dormant, everyone gets the alert and nobody is upsold', a
   assert.strictEqual(sends[0].userId, 9);
 });
 
+test('with the paywall dormant, a review-list account gets the alert only as a subscriber', async () => {
+  // A listed account sees crowd alerts as a Pro perk with no switch, so a free
+  // one must not be sent them while everyone else still is.
+  delete process.env.PAYWALL_ENABLED;
+  process.env.PAYWALL_PREVIEW_USER_IDS = '9, 10';
+  const premium = { 9: false, 10: true };
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-08-15T00:00:00Z') });
+  reset();
+  on(/SELECT is_premium/i, (params) => ({ rows: [{ is_premium: premium[params[0]] === true, grace_ends_at: null }] }));
+  scriptBusyFlock([
+    { user_id: 9, user_settings: null },
+    { user_id: 10, user_settings: null },
+    { user_id: 11, user_settings: null },
+  ]);
+  try {
+    await crowdAlerts.checkCrowdAlerts();
+  } finally {
+    mock.timers.reset();
+    delete process.env.PAYWALL_PREVIEW_USER_IDS;
+  }
+  const memberQuery = log.find((q) => /FROM flock_members fm/i.test(q.sql));
+  assert.doesNotMatch(memberQuery.sql, /is_premium/i, 'the dormant paywall must not gate anyone out in SQL');
+  assert.deepStrictEqual(sends.map((s) => s.userId).sort((a, b) => a - b), [10, 11],
+    'a free review-list account was sent the Pro perk, or someone else lost it');
+  assert.strictEqual(log.filter((q) => /SELECT is_premium/i.test(q.sql)).length, 2,
+    'the premium lookup ran for accounts that are not on the list');
+});
+
 test('the sweep only ever addresses members who accepted the flock', async () => {
   const { memberQuery } = await runSweep([{ user_id: 1, user_settings: null }]);
   assert.match(memberQuery.sql, /status\s*=\s*'accepted'/i,
