@@ -1484,6 +1484,9 @@ function emptyStoreTally() {
     live: 0,
     trialing: 0,
     unpriced: 0,
+    // The unpriced ones whose latest purchase or renewal is dated this month:
+    // each is a charge this month of an amount nobody here can read.
+    unpricedThisMonth: 0,
     mrrCents: 0,
     monthChargedCents: 0,
     byPlan: { monthly: plan(), yearly: plan(), other: plan() },
@@ -1524,11 +1527,17 @@ function tallySubscribers(bodies, { month, nowMs }) {
       const amount = rawAmount !== null && rawAmount !== undefined && rawAmount !== '' && Number.isFinite(Number(rawAmount))
         ? Number(rawAmount) : null;
       const currency = s.price && s.price.currency ? String(s.price.currency).toUpperCase() : null;
-      if (amount === null || currency !== 'USD') { t.unpriced += 1; continue; }
-      const cents = Math.round(amount * 100);
-      t.mrrCents += plan === 'yearly' ? cents / 12 : cents;
       const boughtMs = s.purchase_date ? Date.parse(s.purchase_date) : NaN;
       const bought = Number.isFinite(boughtMs) ? ymdIn(HUB_TZ, new Date(boughtMs)) : null;
+      // Counted, and kept out of the sums: buildNet reads these counts and
+      // withholds every total they would have made smaller.
+      if (amount === null || currency !== 'USD') {
+        t.unpriced += 1;
+        if (inMonth(bought, month)) t.unpricedThisMonth += 1;
+        continue;
+      }
+      const cents = Math.round(amount * 100);
+      t.mrrCents += plan === 'yearly' ? cents / 12 : cents;
       if (inMonth(bought, month)) t.monthChargedCents += cents;
       // THE PRICE AN APP STORE PRODUCT CHARGES, from full-price periods only:
       // an introductory offer is a different price on purpose. The newest
@@ -1842,10 +1851,31 @@ async function readHealth(db = pool, now = new Date()) {
 //   app_store_partial  RevenueCat answered for some Pro accounts and not for
 //                      others, or there were more Pro accounts than it is asked
 //                      about
+//   stripe_unpriced    a live Stripe subscription has a price or a discount the
+//                      read could not work out, or bills in another currency,
+//                      so recurring revenue would be short by what it pays
+//   app_store_unpriced a live App Store subscription carries no dollar price
+//                      in RevenueCat: recurring revenue waits for it, and so
+//                      does this month's App Store part when it was charged
+//                      this month
 //   expenses           the expense list could not be read
 // A figure with a source missing is null, never a smaller number that looks
 // whole. The one exception is revenueThisMonthCents, which carries Stripe alone
 // when only the App Store is missing, because the screen says so beside it.
+// A subscription nobody could price was the same kind of hole: it was tallied
+// as a count and left out of every sum, and nothing said a total was short.
+//
+// WHERE THE APP STORE FIGURES COME FROM (appStoreFrom). They are read from each
+// account that is Pro in this database now (readRcSubscribers), the only read
+// that splits RevenueCat's record by store. An account that paid through Apple
+// this month and has since been deleted, or whose Pro has since ended, is not
+// in them, and with no Pro account left the read asks nothing and the App
+// Store part is zero. RevenueCat's project revenue (overview.monthRevenueUsd)
+// does count them, but it is every store at once, web sales included, and
+// those are already in the Stripe half, so it cannot stand in for the App
+// Store part without counting the web twice. The screen shows it apart as a
+// cross-check, and labels the App Store part as what it is wherever it adds it
+// in: current Pro accounts only, never the month's complete App Store revenue.
 function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreComplete = null, pricing }) {
   const stripeOk = stripe && stripe.status === 'ok';
   const balance = stripeOk && stripe.balance && stripe.balance.status === 'ok' ? stripe.balance : null;
@@ -1863,15 +1893,22 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   const costGap = costsComplete ? null : 'expenses';
   const gaps = (...list) => [...new Set(list.filter(Boolean))];
 
+  // Unpriced subscriptions are missing data, not subscriptions paying zero.
+  // The App Store's own gap, where it has one, already covers them.
+  const stripeUnpriced = subs ? (subs.pro.notPriced || 0) + (subs.roost.notPriced || 0) + (subs.other.notPriced || 0) : 0;
+  const subsPriceGap = stripeUnpriced > 0 ? 'stripe_unpriced' : null;
+  const appRevenueGap = appGap || (appStore && appStore.unpricedThisMonth > 0 ? 'app_store_unpriced' : null);
+  const appRecurringGap = appGap || (appStore && appStore.unpriced > 0 ? 'app_store_unpriced' : null);
+
   const stripeNetCents = balanceGap ? null : balance.netCents;
-  const appStoreNetCents = appGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);
+  const appStoreNetCents = appRevenueGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);
   const revenueCents = stripeNetCents === null ? null : stripeNetCents + (appStoreNetCents || 0);
-  const missing = gaps(balanceGap, appGap);
+  const missing = gaps(balanceGap, appRevenueGap);
 
   const costsThisMonthCents = costGap ? null : costs.totals.thisMonthCents;
   const burnCents = costGap ? null : costs.totals.perMonthCents;
 
-  const recurringMissing = gaps(subsGap, appGap);
+  const recurringMissing = gaps(subsGap, subsPriceGap, appRecurringGap);
   const recurringCents = recurringMissing.length > 0
     ? null
     : subs.pro.mrrNetCents + subs.roost.mrrNetCents + subs.other.mrrNetCents
@@ -1902,6 +1939,8 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
     revenueThisMonthCents: revenueCents,
     revenueParts: { stripeNetCents, appStoreNetCents },
     revenueMissing: missing,
+    // See WHERE THE APP STORE FIGURES COME FROM above.
+    appStoreFrom: 'current_pro_accounts',
     costsThisMonthCents,
     costsMissing: gaps(costGap),
     netThisMonthCents: revenueCents === null || costsThisMonthCents === null ? null : revenueCents - costsThisMonthCents,

@@ -801,6 +801,92 @@ test('081 widens NOT VALID, validates in a statement of its own, and catches not
   assert.ok(validate > add, 'and validated afterwards, in its own statement');
 });
 
+// ---------------------------------------------------------------------------
+// 8. 082 AND THE READINGS ALREADY STORED TWICE.
+// ---------------------------------------------------------------------------
+//
+// 082 makes (sensor_device_id, recorded_at) unique on venue_sensor_data, and a
+// database from before it may hold the copies two racing deliveries of one
+// reading left behind. The deploy must not fail on them, must keep the first
+// copy of each reading and nothing else, and a second pass must move nothing.
+
+const READING_KEY = 'venue_sensor_data_reading_key';
+const sensorRows = async () => (await pool.query(
+  `SELECT id, sensor_device_id, recorded_at, ir_beam_count FROM venue_sensor_data
+    WHERE venue_place_id = 'ChIJbootsafety082' ORDER BY id`
+)).rows;
+const readingKey = async () => (await pool.query(
+  `SELECT i.indexrelid::int AS oid, i.indisunique, i.indisvalid, pg_get_indexdef(i.indexrelid) AS def
+     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = $1`, [READING_KEY]
+)).rows[0] || null;
+const storeReading = async (device, stamp, ir) => (await pool.query(
+  `INSERT INTO venue_sensor_data (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at)
+   VALUES ('ChIJbootsafety082', $3, 5, 61.5, $1, $2::timestamptz) RETURNING id`,
+  [device, stamp, ir]
+)).rows[0].id;
+
+test('082 meets readings stored twice: it keeps the first copy of each, builds its key, and a replay moves nothing', async () => {
+  // The database 082 meets: no key yet, and the copies are there.
+  await pool.query(`DROP INDEX IF EXISTS ${READING_KEY}`);
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '082_sensor_reading_key.sql'`);
+  const at = '2026-09-25T02:00:00.000Z';
+  const first = await storeReading('sensor_a', at, 4);
+  await storeReading('sensor_a', at, 4); // the racing delivery's copy
+  await storeReading('sensor_a', at, 9); // a later delivery of the same stamp
+  const next = await storeReading('sensor_a', '2026-09-25T02:00:30.500Z', 4);
+  const otherDevice = await storeReading('sensor_b', at, 4);
+  // A row with no stamp is nobody's copy, and two of them are two rows.
+  const nulls = [await storeReading('sensor_a', null, 1), await storeReading('sensor_a', null, 1)];
+
+  await migrate(pool); // the deploy: must not throw
+
+  assert.deepEqual((await sensorRows()).map((r) => r.id), [first, next, otherDevice, ...nulls],
+    'only the later copies of one device and one instant are removed, and the first is the one kept');
+  assert.equal((await sensorRows())[0].ir_beam_count, 4, 'the copy kept is the one stored first');
+  const key = await readingKey();
+  assert.ok(key, `${READING_KEY} was not built`);
+  assert.equal(key.indisunique, true);
+  assert.equal(key.indisvalid, true, 'the key exists but is INVALID, so nothing is enforced');
+  assert.match(key.def, /UNIQUE INDEX venue_sensor_data_reading_key ON (public\.)?venue_sensor_data USING btree \(sensor_device_id, recorded_at\)$/);
+  await assert.rejects(storeReading('sensor_a', at, 4), (err) => err.code === '23505',
+    'a second row for one device and instant must now be refused');
+
+  // The replay: nothing to remove, nothing rebuilt.
+  const before = await sensorRows();
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '082_sensor_reading_key.sql'`);
+  await migrate(pool);
+  assert.deepEqual(await sensorRows(), before, 'a second pass of 082 moved a row');
+  assert.equal((await readingKey()).oid, key.oid, 'a healthy key was rebuilt');
+  assert.equal(await migrationRowCount('082_sensor_reading_key.sql'), 1);
+});
+
+test('082 recovers on the next boot when a copy stored mid-deploy failed its build', async () => {
+  // The old server stores a copy after 082's DELETE and before the build
+  // enforces the key: the concurrent build fails on it and leaves an INVALID
+  // index, and the boot fails without recording the file. That state is made
+  // here with the same statement, and the next boot must repair it.
+  await pool.query(`DROP INDEX IF EXISTS ${READING_KEY}`);
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '082_sensor_reading_key.sql'`);
+  const at = '2026-09-25T03:00:00.000Z';
+  const first = await storeReading('sensor_c', at, 7);
+  await storeReading('sensor_c', at, 7);
+  await assert.rejects(
+    pool.query(`CREATE UNIQUE INDEX CONCURRENTLY ${READING_KEY} ON venue_sensor_data (sensor_device_id, recorded_at)`),
+    (err) => err.code === '23505'
+  );
+  assert.equal((await readingKey()).indisvalid, false, 'the failed build must have left an INVALID index behind');
+
+  await migrate(pool); // the restart: must not throw
+
+  const key = await readingKey();
+  assert.equal(key.indisvalid, true, 'the INVALID index from the failed build was kept instead of rebuilt');
+  assert.equal(key.indisunique, true);
+  assert.deepEqual((await sensorRows()).filter((r) => r.sensor_device_id === 'sensor_c').map((r) => r.id), [first]);
+  assert.equal(await migrationRowCount('082_sensor_reading_key.sql'), 1);
+  await pool.query(`DELETE FROM venue_sensor_data WHERE venue_place_id = 'ChIJbootsafety082'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

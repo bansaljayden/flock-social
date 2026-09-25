@@ -96,15 +96,32 @@ const ME = { id: 42, email: 'owner@example.com', name: 'Owner', role: 'venue_own
 
 function stubPool(handler) {
   const realQuery = pool.query;
+  const realConnect = pool.connect;
   const calls = [];
-  pool.query = async (text, params) => {
+  const run = async (text, params) => {
     const sql = String(text);
     calls.push({ text: sql, params });
     if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) return { rows: [ME] };
     const r = await handler(sql, params);
     return r || { rows: [], rowCount: 0 };
   };
-  return { calls, restore: () => { pool.query = realQuery; } };
+  pool.query = run;
+  // The Roost writer takes a client of its own for the per-venue lock it reads
+  // Stripe under (services/venueBilling.js syncVenueSubscription), and writes
+  // on it. The transaction verbs and the lock answer nothing here; the write
+  // goes to the same handler as everything else.
+  pool.connect = async () => ({
+    query: async (text, params) => {
+      const sql = String(text);
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\b/.test(sql) || sql.includes('pg_advisory_xact_lock')) {
+        calls.push({ text: sql, params });
+        return { rows: [], rowCount: 0 };
+      }
+      return run(text, params);
+    },
+    release: () => {},
+  });
+  return { calls, restore: () => { pool.query = realQuery; pool.connect = realConnect; } };
 }
 
 async function call(router, method, urlPath, body) {
@@ -409,6 +426,14 @@ test('a venue webhook event re-reads Stripe, writes the grant, and never reaches
     assert.strictEqual(write.params[5], 'sub_V1');
     assert.strictEqual(write.params[10], true);
     assert.strictEqual(rcCalls.length, 0, 'RevenueCat is the Pro record, not the Roost one');
+    // The write is on the transaction that holds this venue's lock, taken
+    // before the read it writes (venueBillingWriter.test.js runs the race).
+    const txn = calls.filter((c) => /^\s*(BEGIN|COMMIT|ROLLBACK)\b|pg_advisory_xact_lock|^WITH old AS/.test(c.text));
+    assert.deepStrictEqual(txn.map((c) => (c.text.startsWith('WITH') ? 'write' : c.text.includes('advisory') ? 'lock' : c.text.trim())),
+      ['BEGIN', 'lock', 'write', 'COMMIT']);
+    assert.deepStrictEqual(txn[1].params, [venueBilling.__test.SYNC_LOCK_NAMESPACE, ME.id]);
+    assert.strictEqual(stripeCalls.filter(([n, id]) => n === 'subscriptions.retrieve' && id === 'sub_V1').length, 2,
+      'one read to find the venue, one under its lock');
   } finally { restore(); }
 });
 

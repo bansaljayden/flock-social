@@ -265,17 +265,24 @@ function hubPlanRows(summary, prefix, navy) {
 const HUB_GAP_SOURCE = {
   stripe: 'Stripe',
   stripe_partial: 'a full Stripe read',
+  stripe_unpriced: 'a price for every Stripe subscription',
   app_store: 'RevenueCat',
   app_store_partial: 'every Pro account in RevenueCat',
+  app_store_unpriced: 'a price for every App Store subscription',
   expenses: 'the expense list',
 };
 const HUB_GAP_WORDS = {
   stripe: 'Stripe was not read',
   stripe_partial: 'Stripe had more entries this month than the hub reads, and a missing page could move a total either way',
+  stripe_unpriced: 'some live Stripe subscriptions carry a price or a discount this read could not work out in dollars',
   app_store: 'the App Store is not in it, because RevenueCat was not read',
   app_store_partial: 'the App Store is not in it, because RevenueCat answered for only some Pro accounts',
+  app_store_unpriced: 'the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat',
   expenses: 'the expense list could not be read',
 };
+// The gaps that are the App Store's alone. This month's revenue and the net
+// carry Stripe without it and say so; they never wait on one of these.
+const HUB_APP_STORE_GAPS = ['app_store', 'app_store_partial', 'app_store_unpriced'];
 const hubGaps = (list) => (Array.isArray(list) ? list : []);
 const hubNeeds = (gaps) => `Needs ${[...new Set(gaps.map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ')}`;
 function hubGapSentence(gaps) {
@@ -296,7 +303,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   const netBurnMissing = hubGaps(n.netBurnMissing);
   const burnMissing = hubGaps(be.burnMissing);
   const revenueWithheld = revenueMissing.includes('stripe_partial');
-  const appGap = revenueMissing.find((g) => g === 'app_store' || g === 'app_store_partial');
+  const appGap = revenueMissing.find((g) => HUB_APP_STORE_GAPS.includes(g));
   let revenueNote;
   if (n.revenueThisMonthCents === null || n.revenueThisMonthCents === undefined) {
     revenueNote = revenueWithheld
@@ -305,13 +312,16 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   } else if (appGap) {
     revenueNote = `Stripe, after refunds, disputes and fees. ${hubGapSentence([appGap])}`;
   } else {
-    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%.`;
+    // The App Store part is read from the accounts that are Pro now, which is
+    // not every App Store sale this month (backend/services/moneyHub.js,
+    // WHERE THE APP STORE FIGURES COME FROM), so it is never shown as that.
+    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%.${n.appStoreFrom === 'current_pro_accounts' ? ' The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it.' : ''}`;
   }
   const net = n.netThisMonthCents;
   const netBurn = n.netBurnCents;
   // A figure that is null is waiting for a source; the App Store alone never
   // empties the net, which carries Stripe and says so.
-  const netNeeds = hubNeeds(netMissing.filter((g) => g !== 'app_store' && g !== 'app_store_partial'));
+  const netNeeds = hubNeeds(netMissing.filter((g) => !HUB_APP_STORE_GAPS.includes(g)));
   const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
   const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe' ? 'the price Stripe charges' : 'the price the code states, because Stripe was not read'}` : 'no price');
   const payingWords = (count, missing) => (Number.isFinite(count)
@@ -453,12 +463,33 @@ function HubRevenue({ h, colors }) {
       {rc.status === 'ok' && rcSubs && rcSubs.status !== 'ok' && <HubNotice status="error" reason={rcSubs.reason} />}
       {rc.status === 'ok' && rcSubs && rcSubs.status === 'ok' && (() => {
         const stores = rcSubs.stores || {};
-        const app = stores.app_store || { live: 0, trialing: 0, mrrCents: 0, monthChargedCents: 0, unpriced: 0, byPlan: { monthly: { live: 0, trialing: 0 }, yearly: { live: 0, trialing: 0 } } };
+        const app = stores.app_store || { live: 0, trialing: 0, mrrCents: 0, monthChargedCents: 0, unpriced: 0, unpricedThisMonth: 0, byPlan: { monthly: { live: 0, trialing: 0 }, yearly: { live: 0, trialing: 0 } } };
+        const sentences = (...parts) => parts.filter(Boolean).join(' ');
+        const currentOnly = (h.net || {}).appStoreFrom === 'current_pro_accounts'
+          && 'Counted from current Pro accounts only: a subscriber who deleted their account is not in it.';
         return (
           <>
             {hubPlanRows(app, 'App Store', navy)}
-            <HubRow navy={navy} label="App Store recurring revenue" value={`${hubMoney(app.mrrCents)} a month`} note={`Before Apple's cut. ${app.unpriced > 0 ? `${hubPlural(app.unpriced, 'subscription carries', 'subscriptions carry')} no price in RevenueCat and ${app.unpriced === 1 ? 'is' : 'are'} left out.` : ''}`} />
-            <HubRow navy={navy} label="App Store charged this month" value={hubMoney(app.monthChargedCents)} note="Latest purchase or renewal dated this month, before Apple's cut." />
+            <HubRow
+              navy={navy}
+              label="App Store recurring revenue"
+              value={`${hubMoney(app.mrrCents)} a month`}
+              note={sentences(
+                "Before Apple's cut.",
+                app.unpriced > 0 && `${hubPlural(app.unpriced, 'subscription carries', 'subscriptions carry')} no dollar price in RevenueCat and ${app.unpriced === 1 ? 'is' : 'are'} left out, so the recurring total at the top waits for ${app.unpriced === 1 ? 'it' : 'them'}.`,
+                currentOnly
+              )}
+            />
+            <HubRow
+              navy={navy}
+              label="App Store charged this month"
+              value={hubMoney(app.monthChargedCents)}
+              note={sentences(
+                "Latest purchase or renewal dated this month, before Apple's cut.",
+                app.unpricedThisMonth > 0 && `${hubPlural(app.unpricedThisMonth, 'of these charges has', 'of these charges have')} no dollar price in RevenueCat, so the revenue at the top leaves the App Store out.`,
+                currentOnly
+              )}
+            />
             {Object.keys(stores).filter((k) => k !== 'app_store' && k !== 'stripe').map((k) => (
               <HubRow key={`store-${k}`} navy={navy} label={HUB_STORE_LABEL[k] || k} value={hubCount(stores[k].live)} note={k === 'promotional' ? 'Granted by hand in RevenueCat. Nobody pays for these.' : null} />
             ))}
@@ -503,6 +534,7 @@ function HubRevenue({ h, colors }) {
           {hubPlanRows(subs.roost, 'Roost', navy)}
           {subs.roost.freeViaCode > 0 && <HubRow navy={navy} label="On a free code" value={hubCount(subs.roost.freeViaCode)} />}
           {subs.roost.pastDue > 0 && <HubRow navy={navy} tone="warn" label="Past due" value={hubCount(subs.roost.pastDue)} />}
+          {subs.roost.notPriced > 0 && <HubRow navy={navy} tone="warn" label="Not priced" value={hubCount(subs.roost.notPriced)} note="A discount or price this read could not work out, so these are left out of the recurring revenue." />}
           {recurringRows(subs.roost, 'Roost')}
         </>
       )}

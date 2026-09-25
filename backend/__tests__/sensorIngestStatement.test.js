@@ -214,6 +214,73 @@ test('a duplicate is never charged against the flood guard, so an honest retry i
   assert.equal(retry.body.duplicate, true);
 });
 
+// Waits until `n` ingest statements are blocked on a lock, so a test knows both
+// have taken their snapshot before it lets either one go.
+async function blockedIngests(n) {
+  for (let i = 0; i < 200; i += 1) {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND query LIKE '%INSERT INTO venue_sensor_data%'`
+    );
+    if (r.n >= n) return r.n;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return 0;
+}
+
+test('two deliveries of one old reading racing each other store it once, and the second is answered as a duplicate', async () => {
+  // THE RACE. A reading stamped an hour ago is backfill, so no flood guard
+  // stands between two deliveries of it, and each statement's duplicate check
+  // reads the snapshot it started with. Two that start before either commits
+  // both see nothing, and both used to insert: the hourly sum counted the
+  // doorway twice. The device row is held here so both statements start, take
+  // their snapshot, and wait on the liveness touch before either may finish.
+  const stamp = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const blocker = await pool.connect();
+  let deliveries;
+  let waiting = 0;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query("SELECT 1 FROM sensor_devices WHERE device_id = 'sensor_live' FOR UPDATE");
+    deliveries = [push(reading({ recorded_at: stamp })), push(reading({ recorded_at: stamp }))];
+    waiting = await blockedIngests(2);
+  } finally {
+    await blocker.query('ROLLBACK').catch(() => {});
+    blocker.release();
+  }
+  const answers = await Promise.all(deliveries);
+  assert.equal(waiting, 2, 'both deliveries must be in flight at once for this to test the race');
+
+  const stored = await rows();
+  assert.equal(stored.length, 1, 'one reading, delivered twice at once, was stored twice');
+  assert.deepEqual(answers.map((a) => a.status), [201, 201], 'both deliveries are successes to the device');
+  const dup = answers.filter((a) => a.body.duplicate === true);
+  assert.equal(dup.length, 1, `exactly one answer is the duplicate: ${JSON.stringify(answers.map((a) => a.body))}`);
+  // Exactly the answer the ordinary re-delivery path gives.
+  assert.deepEqual(Object.keys(dup[0].body).sort(), ['duplicate', 'recorded_at', 'success']);
+  assert.equal(dup[0].body.success, true);
+  assert.equal(new Date(dup[0].body.recorded_at).toISOString(), stamp);
+  const kept = answers.find((a) => a.body.duplicate !== true);
+  assert.deepEqual(Object.keys(kept.body).sort(), ['recorded_at', 'success']);
+  assert.equal(new Date(kept.body.recorded_at).toISOString(), stamp);
+  assert.ok(await lastSeen('sensor_live'), 'a re-delivery still counts as a sign of life');
+  assert.ok(!events.includes('broadcast'), 'backfill is not news, and neither is a duplicate');
+});
+
+test('the database holds the rule: a second row for one device and instant is refused however it is written', async () => {
+  const stamp = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  assert.equal((await push(reading({ recorded_at: stamp }))).status, 201);
+  await assert.rejects(
+    pool.query(
+      `INSERT INTO venue_sensor_data (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at)
+       VALUES ($1, 1, 1, 1, 'sensor_live', $2::timestamptz)`,
+      [VENUE, stamp]
+    ),
+    (err) => err.code === '23505',
+  );
+  assert.equal((await rows()).length, 1);
+});
+
 test('genuinely old backfill drains unthrottled, is stored, touches the device and is not broadcast', async () => {
   const fortyMinutesAgo = Date.now() - 40 * 60 * 1000;
   for (let i = 0; i < 3; i++) {

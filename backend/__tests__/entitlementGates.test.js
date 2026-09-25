@@ -909,10 +909,11 @@ test('venue_profiles.tier has two writers: the admin route behind requireAdmin, 
   assert.deepStrictEqual(writers, ['routes/admin.js', 'services/venueBilling.js'],
     'something other than the admin tier route and the Stripe subscription writer writes venue_profiles.tier. A venue that can set its own tier is a venue that never pays.');
   // The second writer is reached only from a subscription it has just
-  // re-read from Stripe (never from a request body), and it keeps the paid
-  // tier behind venue_profiles.verified exactly as the admin route does.
+  // re-read from Stripe (never from a request body), under the venue's lock,
+  // and it keeps the paid tier behind venue_profiles.verified exactly as the
+  // admin route does.
   const venueBillingSrc = codeOf(fs.readFileSync(path.join(BACKEND, 'services', 'venueBilling.js'), 'utf8'));
-  assert.match(venueBillingSrc, /const sub = await stripe\(\)\.subscriptions\.retrieve\(subscriptionId\);/);
+  assert.match(venueBillingSrc, /const sub = await stripe\(\)\.subscriptions\.retrieve\(subscriptionId, \{\}, LOCKED_READ\);/);
   assert.match(venueBillingSrc, /\$12::text = 'free' OR old\.verified = true/);
   assert.ok(!/req\.body/.test(venueBillingSrc), 'the Stripe writer must never read a request');
   const admin = codeOf(fs.readFileSync(path.join(BACKEND, 'routes', 'admin.js'), 'utf8'));
