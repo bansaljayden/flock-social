@@ -102,7 +102,7 @@
 --    something a collector may write. Note the direction of the risk this
 --    guards — a typo'd or truncated label does not raise anywhere in the
 --    pipeline, it just becomes 'unknown' in labelProvenance() and silently
---    rejoins the untrained-weight pool. project documentation records three separate
+--    rejoins the untrained-weight pool. The migration history records three separate
 --    incidents of a value set being widened in code while the CHECK behind it
 --    was not; this is the same lesson applied before the fact.
 --

@@ -726,7 +726,7 @@ router.post('/:placeId', authenticate, async (req, res) => {
     // cheapest way to write unbounded rows for FABRICATED place ids into the
     // table the ML pipeline exports — and to drive the live occupancy figure in
     // every viewer's browser. The client already self-limits to one check-in per
-    // venue per 2h in localStorage; per project documentation that gate is cosmetic until
+    // venue per 2h in localStorage, but a client-side gate is cosmetic until
     // the server enforces it too.
     const result = await recordTap({
       userId: req.user.id,

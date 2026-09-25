@@ -1140,7 +1140,7 @@ module.exports = {
   // services/moderationAlerts.js import these instead of keeping their own; see
   // the note on isMailableAddress for what the three private copies cost.
   // routes/auth.js still has its own isMailableAddress and should move to this
-  // one — it is owned by another agent this round.
+  // one.
   isMailableAddress,
   MAILABLE_RE,
   safeSubjectLine,
