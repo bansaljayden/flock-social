@@ -270,9 +270,12 @@ async function readFlockPinRows(flockId, invisibleArr) {
 /**
  * One pin row as the bar draws it.
  *
- * sender_id stays on the ROW and off the payload: it is what the visibility
- * filter tests, and no client reads it. Shared by the per-reader read below and
- * by the fan-out, so one pin can never end up shaped two ways.
+ * The pinned message's sender rides as senderId. The visibility filter tests it
+ * here, and the client needs it for the case this filter cannot reach: a list
+ * read before a block and answered after it, or a pin of a message the app
+ * never loaded, both of which have to come off the bar when that person is
+ * blocked. Shared by the per-reader read below and by the fan-out, so one pin
+ * can never end up shaped two ways.
  */
 function pinPayload(r) {
   return {
@@ -280,6 +283,7 @@ function pinPayload(r) {
     messageId: r.message_id,
     text: r.message_text,
     messageType: r.message_type,
+    senderId: r.sender_id,
     senderName: r.sender_name,
     pinnedBy: r.pinned_by,
   };
@@ -660,6 +664,15 @@ router.get('/flocks/:id/messages',
       // so instead of quoting an empty string. The DM twin does not fetch it
       // and shows a blank quote in that case, which is a real gap on that side
       // and not one to fix silently from here.
+      //
+      // sender_id rides along too, the quoted author's, and both send paths
+      // ship the same five fields. The filter above only covers what this
+      // read returns: a block made while the app already holds a quote has
+      // to take it down on the client, and the quoted message is often one
+      // the app never loaded (further back than the page, or answered by a
+      // read that left before the block). Without the id there is no telling
+      // whose words the quote carries. Every row on this page already names
+      // its own sender the same way.
       const replyIds = messages.filter((m) => m.reply_to_id).map((m) => m.reply_to_id);
       if (replyIds.length > 0) {
         try {
@@ -678,6 +691,7 @@ router.get('/flocks/:id/messages',
               id: r.id,
               message_text: r.message_text,
               message_type: r.message_type,
+              sender_id: r.sender_id,
               sender_name: r.sender_name,
             };
           }
@@ -935,9 +949,11 @@ router.post('/flocks/:id/messages',
       //
       // sender_id and sender_banned are read for the fan-out below, which has
       // to know whose words the quote carries and whether that account is
-      // banned, and are kept off the quote itself: the socket twin and the
-      // history read both ship these four fields, and a fifth here would make
-      // a live reply and a reloaded one different objects.
+      // banned. sender_banned stays off the quote. sender_id is on it, as it
+      // is on the socket twin's and the history read's: all three ship the
+      // same five fields, so a live reply and a reloaded one are the same
+      // object, and a client that learns of a block needs the id to take that
+      // person's words out of a quote of a message it never loaded.
       let quotedRow = null;
       if (safeReplyId) {
         try {
@@ -955,6 +971,7 @@ router.post('/flocks/:id/messages',
               id: q.id,
               message_text: q.message_text,
               message_type: q.message_type,
+              sender_id: q.sender_id,
               sender_name: q.sender_name,
             };
             quotedRow = { sender_id: q.sender_id, sender_banned: q.sender_banned };

@@ -46,6 +46,14 @@ test('a photo the server re-encoded is one bubble, not two', () => {
   expect(app).toMatch(/thumb: row\.thumb \|\| row\.thumb_url \|\| null,/);
   expect(app).toMatch(/const landed = landedSends\(waiting, hist, /);
   expect(app).toMatch(/const landed = landedSends\(stored, msgs, onScreen\);/);
+  // THE HISTORY PATH NO LONGER SETTLES A PHOTO AT ALL. Presence cannot tell
+  // two captionless photos apart, and settling the wrong one took a photo
+  // that never arrived off the screen and out of the reload store. A stored
+  // row settles a photo's bubble only when it carries that send's client id,
+  // which stored rows do not; the photo's own echo takes the bubble down,
+  // including once its row is already on screen (chatEchoOrderAndRetraction
+  // runs both). Presence still keeps a line of text from matching a photo.
+  expect(app).toMatch(/if \(bubble\.image_url \|\| bubble\.image \|\| bubble\.message_type === 'image'\) \{\s*return bubble\.clientId != null && row\.clientId === bubble\.clientId;\s*\}/);
 });
 
 test('the typing indicator is reset when the open thread changes', () => {

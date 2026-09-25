@@ -214,7 +214,7 @@ test('a reply target that is not an id at all says so instead of vanishing', asy
 // 3. The quote's shape
 // ---------------------------------------------------------------------------
 
-test('the quote carries four display fields and never the sender id', async () => {
+test("the quote carries its display fields and its author's id, and never the ban flag", async () => {
   const { io, socket } = connect();
   scriptFlockSend({ replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
 
@@ -224,9 +224,12 @@ test('the quote carries four display fields and never the sender id', async () =
   // alone, so it is read off the io emits with the members' copies.
   const echo = emitTo(io, 1);
   assert.ok(echo, 'the sender gets their own echo');
+  // The author's id is what lets a client that blocks them take this quote
+  // down when the quoted message was never loaded there. sender_banned was
+  // read for the fan-out and stays off.
   assert.deepStrictEqual(echo.payload.reply_to, {
-    id: 400, message_text: 'pizza?', message_type: 'text', sender_name: 'Bo',
-  }, 'sender_id was selected for the block check and is not part of the quote');
+    id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo',
+  }, 'the five fields the history read and the REST twin ship');
 
   // And the same object reaches a member with no block relationship.
   assert.deepStrictEqual(emitTo(io, 2).payload.reply_to, echo.payload.reply_to);
@@ -444,6 +447,10 @@ test('the REST history hydrate filters quotes by the viewer\'s own invisible set
     'without this a blocked member\'s words arrive quoted inside somebody else\'s reply');
   assert.match(routeSrc, /WHERE m\.id = ANY\(\$1\) AND m\.flock_id = \$2/,
     'the hydrate must be scoped to this flock');
+  // And the reloaded quote is the live one's shape, author id included, so a
+  // block can take it down on a client that never loaded the quoted message.
+  assert.match(routeSrc, /replyMap\[r\.id\] = \{\s*id: r\.id,\s*message_text: r\.message_text,\s*message_type: r\.message_type,\s*sender_id: r\.sender_id,\s*sender_name: r\.sender_name,\s*\};/,
+    'the history quote ships the same five fields as both send paths');
 });
 
 test('the migration adds the column with the DM twin\'s delete behaviour', () => {

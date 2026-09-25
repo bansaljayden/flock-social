@@ -877,8 +877,16 @@ async function announceToRoomExcludingBlocked(socket, room, event, payload) {
 // Block-aware alternative to a flock-room broadcast: emits to each accepted
 // member individually, skipping anyone blocked either way with the actor.
 // Room broadcasts leaked typing/vote identity across blocks (round 4).
+//
+// opts.db is the client of a caller that is inside a transaction holding a
+// lock (the leave and the two plan deletes in routes/flocks.js hold the
+// plan's row FOR UPDATE while they announce). Its reads then run on that
+// connection: checking a second one out of the 20-slot pool while the first
+// is held is the shape utils/blocks.js warns turns a slow moment into pool
+// exhaustion. Everyone else reads on the pool, as before.
 async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload, opts = {}) {
-  const members = await pool.query(
+  const db = opts.db || pool;
+  const members = await db.query(
     "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
     [flockId, actorId]
   );
@@ -889,13 +897,13 @@ async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload,
     // rows only, so the card kept the old time and Accept on a deleted plan
     // answered "Flock not found" with the card still there (lifecycle audit,
     // 2026-09-05).
-    const invited = await pool.query(
+    const invited = await db.query(
       "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id != $2",
       [flockId, actorId]
     );
     rows.push(...invited.rows);
   }
-  const invisible = new Set(await getInvisibleUserIds(actorId));
+  const invisible = new Set(await getInvisibleUserIds(actorId, db));
   for (const m of rows) {
     if (invisible.has(m.user_id)) continue;
     io.to(`user:${m.user_id}`).emit(event, payload);
@@ -971,7 +979,11 @@ function quoteWithheld(message) {
 // holds it (the disconnect asks once for every flock). null means the lookup
 // failed, and then only the holders are told: the roster half cannot be
 // filtered, and the holders are the people with a pin to clear. opts.roster
-// false skips the roster half for a caller who is no longer a member.
+// false skips the roster half for a caller who is no longer a member. opts.db
+// is the client of a caller inside a transaction (the leave route announces
+// the stop while it holds the plan's row FOR UPDATE, before the membership
+// row goes), so the roster half is read on that connection instead of a
+// second one from the pool; see emitToFlockExcludingBlocked for why.
 //
 // Addressed to each `user:{id}`, never to `flock:{id}`: that room holds only
 // the sockets on that chat screen, so a member on the Map tab received every
@@ -992,12 +1004,13 @@ async function announceFlockShareEnded(io, sharerId, rawFlockId, opts = {}) {
       // round trip (latency audit, 2026-09-12): until this lands a map is
       // claiming somebody is somewhere they left. Uncached for the reasons
       // written out above update_location's pair of reads.
+      const db = opts.db || pool;
       const [members, invisibleIds] = await Promise.all([
-        pool.query(
+        db.query(
           "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
           [flockId, sharerId]
         ),
-        Array.isArray(opts.invisible) ? opts.invisible : getInvisibleUserIds(sharerId),
+        Array.isArray(opts.invisible) ? opts.invisible : getInvisibleUserIds(sharerId, db),
       ]);
       const invisible = new Set(invisibleIds);
       for (const m of members.rows) {
@@ -1912,15 +1925,17 @@ function registerHandlers(io, socket) {
           : null;
       message.reactions = [];
       if (replyRow) {
-        // sender_id and sender_banned were selected for replyCopies below and
-        // are not part of the quote's shape. routes/messages.js builds the
-        // same four fields on the history read, and a payload that carried a
-        // fifth here would make a live reply and a reloaded one different
-        // objects.
+        // sender_id and sender_banned were selected for replyCopies below.
+        // sender_banned is not part of the quote's shape; sender_id is, on
+        // this path, the REST twin and the history read alike, so a live
+        // reply and a reloaded one are the same five fields. The client reads
+        // it to take a blocked person's words out of a quote of a message it
+        // never loaded (routes/messages.js, the history hydrate, says more).
         message.reply_to = {
           id: replyRow.id,
           message_text: replyRow.message_text,
           message_type: replyRow.message_type,
+          sender_id: replyRow.sender_id,
           sender_name: replyRow.sender_name,
         };
       }

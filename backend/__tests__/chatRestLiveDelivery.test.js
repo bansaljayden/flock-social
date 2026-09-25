@@ -281,8 +281,8 @@ test('a member who blocked the quoted author gets the REST reply WITHOUT the quo
   const toThree = flockCopy(3);
   assert.ok(toTwo && toThree, 'both members still receive the reply itself');
   assert.deepStrictEqual(toTwo.payload.reply_to, {
-    id: 400, message_text: 'pizza?', message_type: 'text', sender_name: 'Bo',
-  }, 'a member with no block sees the quote, in the four fields the socket twin ships');
+    id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED, sender_name: 'Bo',
+  }, 'a member with no block sees the quote, in the five fields the socket twin ships');
   assert.strictEqual(Object.prototype.hasOwnProperty.call(toThree.payload, 'reply_to'), false,
     "the blocker must not receive the blocked author's sentence, even quoted");
   assert.strictEqual(toThree.payload.message_text, 'yes', 'only the quote is withheld, never the reply');
@@ -291,8 +291,12 @@ test('a member who blocked the quoted author gets the REST reply WITHOUT the quo
 
   // The sender chose the quote and keeps it, exactly as the socket echo does.
   assert.deepStrictEqual(res.body.message.reply_to, toTwo.payload.reply_to);
-  assert.strictEqual(res.body.message.reply_to.sender_id, undefined,
-    'the quoted sender id is read for the block question and never shipped');
+  // The author's id rides, so a client that blocks them later can take this
+  // quote down even when the quoted message was never loaded there. The ban
+  // flag read beside it for the fan-out does not.
+  assert.strictEqual(res.body.message.reply_to.sender_id, QUOTED);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(res.body.message.reply_to, 'sender_banned'), false,
+    'the ban flag is read for the fan-out and never shipped');
 });
 
 test('the quote question is asked once, about the quoted author, not per member', async () => {
@@ -374,7 +378,7 @@ test("a sender on the other side of a block from the quoted author gets their re
     'the sender read the words of somebody they are blocked with, through their own reply');
   assert.strictEqual(Object.prototype.hasOwnProperty.call(flockCopy(1).payload, 'reply_to'), false);
   assert.deepStrictEqual(flockCopy(2).payload.reply_to, {
-    id: 400, message_text: 'pizza?', message_type: 'text', sender_name: 'Bo',
+    id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED, sender_name: 'Bo',
   }, 'the member with no block still sees the quote');
 });
 
