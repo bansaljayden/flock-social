@@ -6,7 +6,7 @@ const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane, rejectIfProfaneChat, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
-const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+const { isBlockedBetween, isBlockedOrBannedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { hasDmRelationship, invalidateDmRelationshipCache, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
 // Read receipts (migration 065). The ladder itself — which stored fact becomes
 // which word — lives in ONE module that both transports import, never spelled
@@ -1813,10 +1813,15 @@ router.get('/dm/:userId',
       // Fetch reply-to message text for any replies.
       // SECURITY: scoped to this conversation's pair — a stored reply_to_id
       // pointing at another conversation must never hydrate its text here.
+      //
+      // sender_id rides on the quote, the quoted author's, as it does on the
+      // flock twin's and on both DM send paths: a client that learns of a
+      // block takes that person's words out of a quote by it, including a
+      // quote on a row that reached it live after the block.
       const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
       if (replyIds.length > 0) {
         const replyResult = await pool.query(
-          `SELECT dm.id, dm.message_text, u.name AS sender_name
+          `SELECT dm.id, dm.message_text, dm.sender_id, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = ANY($1)
              AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
@@ -2005,6 +2010,15 @@ router.post('/dm/:userId',
         } catch { /* no thumbnail, full image serves as before */ }
       }
 
+      // THE PAIR IS ASKED AGAIN AFTER THE SCREEN, as send_dm asks it. The
+      // block check above ran before moderateImage, which can take seconds; a
+      // recipient who blocked the sender in that time, or a ban on either
+      // account, used to change nothing, and the row was stored and delivered.
+      // Only a send that waited on the screen asks.
+      if ((image_url || thumb) && await isBlockedOrBannedBetween(req.user.id, receiverId)) {
+        return res.status(403).json({ error: 'You can no longer message this user.' });
+      }
+
       const result = await pool.query(
         `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id, thumb_url)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -2023,13 +2037,14 @@ router.post('/dm/:userId',
       // twin's `msg.reply_to`. Without it a reply delivered over this transport
       // quoted a blank line under a blank name on the recipient's screen. The
       // id is already scope-checked above, so this only fetches the two display
-      // fields, and a failure here drops the quote rather than the message: the
+      // fields and the quoted author's id (the history read says why it
+      // rides), and a failure here drops the quote rather than the message: the
       // row is stored and reply_to_id is on it either way, and a decoration on
       // the payload must never be able to turn a saved DM into a 500.
       if (safeReplyId) {
         try {
           const quoted = await pool.query(
-            `SELECT dm.id, dm.message_text, u.name AS sender_name
+            `SELECT dm.id, dm.message_text, dm.sender_id, u.name AS sender_name
              FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
              WHERE dm.id = $1`,
             [safeReplyId]

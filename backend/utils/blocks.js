@@ -84,6 +84,36 @@ async function isBlockedBetween(a, b, db = pool) {
 }
 
 /**
+ * True if A and B are blocked either way, OR either account is banned: "may
+ * these two still exchange a message", in one statement.
+ *
+ * For a send that has passed its checks and then awaited something slow
+ * before it writes. An image DM is checked for a block and a relationship and
+ * then waits on moderateImage, a billed call that can take seconds, and a
+ * block made in that time, or a ban on either account, changed nothing: both
+ * transports stored the message and delivered it anyway. Disconnecting a
+ * banned account's sockets does not stop a handler that is already running.
+ * sockets/handlers.js send_dm and POST /api/dm/:userId ask this after the
+ * screen and before the INSERT. The block half is spelled as isBlockedBetween
+ * spells it, so it reads the same rows.
+ */
+async function isBlockedOrBannedBetween(a, b, db = pool) {
+  const x = participantId(a, 'a');
+  const y = participantId(b, 'b');
+  if (x === ABSENT || y === ABSENT || x === y) return false;
+  const r = await db.query(
+    `SELECT 1 FROM user_blocks
+     WHERE (blocker_id = $1 AND blocked_id = $2)
+        OR (blocker_id = $2 AND blocked_id = $1)
+     UNION ALL
+     SELECT 1 FROM users WHERE id IN ($1, $2) AND is_banned IS TRUE
+     LIMIT 1`,
+    [x, y]
+  );
+  return r.rows.length > 0;
+}
+
+/**
  * All user ids that should be invisible to `userId` (blocked in either
  * direction) — for filtering lists, feeds, and group surfaces.
  *
@@ -199,6 +229,8 @@ function invalidateBlockCache(a, b) {
   blockCache.delete(pairKey(a, b));
 }
 
-module.exports = { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache };
+module.exports = {
+  isBlockedBetween, isBlockedOrBannedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache,
+};
 // Exposed for __tests__/safetyFlow.test.js.
 module.exports.__test = { pairKey, blockCache, BLOCK_CACHE_TTL };

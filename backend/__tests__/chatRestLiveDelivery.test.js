@@ -427,7 +427,7 @@ function scriptDmSend({ replyRow = null } = {}) {
   on(/blocked_id AS id FROM user_blocks/, () => ({ rows: [], rowCount: 0 }));
   on(/FROM friendships/, () => ({ rows: [{ '?column?': 1 }], rowCount: 1 }));
   on(/SELECT id FROM direct_messages WHERE id = \$1/, () => ({ rows: [{ id: 5 }], rowCount: 1 }));
-  on(/SELECT dm\.id, dm\.message_text, u\.name AS sender_name/, () => (
+  on(/SELECT dm\.id, dm\.message_text, dm\.sender_id, u\.name AS sender_name/, () => (
     replyRow ? { rows: [replyRow], rowCount: 1 } : { rows: [], rowCount: 0 }
   ));
   on(/INSERT INTO direct_messages/, (p) => ({
@@ -474,11 +474,17 @@ test("a DM's client id comes back on the sender's copies and never reaches the r
 });
 
 test('a reply delivered over REST carries the row it quotes', async () => {
-  scriptDmSend({ replyRow: { id: 5, message_text: 'where are you', sender_name: 'Ben' } });
-  await call('POST', '/api/dm/2', { message_text: 'outside', reply_to_id: 5 });
+  scriptDmSend({ replyRow: { id: 5, message_text: 'where are you', sender_id: 2, sender_name: 'Ben' } });
+  const res = await call('POST', '/api/dm/2', { message_text: 'outside', reply_to_id: 5 });
   await settle();
   const delivered = emits.find((e) => e.event === 'new_dm');
-  assert.deepStrictEqual(delivered.payload.reply_to, { id: 5, message_text: 'where are you', sender_name: 'Ben' });
+  // The quoted author's id rides, as on the flock quote: a client that learns
+  // of a block takes that person's words out of a quote by it, including one
+  // on a row that reached it live after the block.
+  assert.deepStrictEqual(delivered.payload.reply_to, { id: 5, message_text: 'where are you', sender_id: 2, sender_name: 'Ben' });
+  // One quote on every copy: the sender's other devices and the answer too.
+  assert.deepStrictEqual(emits.find((e) => e.event === 'new_dm' && e.room === 'user:1').payload.reply_to, delivered.payload.reply_to);
+  assert.deepStrictEqual(res.body.message.reply_to, delivered.payload.reply_to);
 });
 
 test('a failed quote lookup drops the quote, never the message', async () => {
@@ -489,7 +495,7 @@ test('a failed quote lookup drops the quote, never the message', async () => {
   on(/blocked_id AS id FROM user_blocks/, () => ({ rows: [], rowCount: 0 }));
   on(/FROM friendships/, () => ({ rows: [{ '?column?': 1 }], rowCount: 1 }));
   on(/SELECT id FROM direct_messages WHERE id = \$1/, () => ({ rows: [{ id: 5 }], rowCount: 1 }));
-  on(/SELECT dm\.id, dm\.message_text, u\.name AS sender_name/, () => { throw new Error('boom'); });
+  on(/SELECT dm\.id, dm\.message_text, dm\.sender_id, u\.name AS sender_name/, () => { throw new Error('boom'); });
   on(/INSERT INTO direct_messages/, (p) => ({
     rows: [{ id: 900, sender_id: p[0], receiver_id: p[1], reply_to_id: p[6] }], rowCount: 1,
   }));

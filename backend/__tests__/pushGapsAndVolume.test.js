@@ -70,7 +70,9 @@ function dispatch(sql, params) {
 pool.query = (sql, params) => dispatch(sql, params);
 pool.connect = async () => ({
   query: (sql, params) => {
-    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) {
+    // SAVEPOINT and RELEASE too: the leave reads its audience inside one, so a
+    // failed read takes back only itself (routes/flocks.js POST /:id/leave).
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)/i.test(sql)) {
       log.push({ sql: String(sql).trim(), params: null });
       return Promise.resolve({ rows: [] });
     }
