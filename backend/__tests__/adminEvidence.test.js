@@ -419,6 +419,7 @@ const VALID_BODY = {
   'PUT /reports/:id': { action: 'dismiss' },
   'POST /venues/:userId/tier': { tier: 'free' },
   'PUT /venues/:profileId/verify': { verified: true },
+  'PUT /expenses/:id': { vendor: 'Registrar', kind: 'infrastructure', cadence: 'yearly', amount: '12.00' },
 };
 
 const concrete = (p) => p.replace(/:[A-Za-z0-9_]+/g, '1');
@@ -594,6 +595,9 @@ test('every admin list query carries a LIMIT', async () => {
     // advisor_venue_spend, so the row count is set by venue count times days
     // elapsed in the month and grows without a ceiling of its own.
     ['GET', '/api/admin/costs', [/FROM advisor_venue_spend/]],
+    // The owner's expense list (migration 080). One row per bill, typed or
+    // pasted by hand, so nothing but the ceiling bounds it.
+    ['GET', '/api/admin/expenses', [/FROM business_expenses/]],
   ];
   for (const [method, p, matchers] of cases) {
     log = [];

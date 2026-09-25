@@ -334,7 +334,7 @@ test('buildFixed spreads annual bills over twelve months and names its unverifie
 
 test('buildFixed says how much money is unverified, not only how many lines are', () => {
   // Two unverified lines worth $0 and $12 read identically to two worth $0 and
-  // $125 when the only figure available is a line count. The panel quotes both
+  // $119 when the only figure available is a line count. The panel quotes both
   // of these, so they are computed here rather than added up in a template.
   const fixed = cm.buildFixed();
   const unverifiedMonthly = cm.FIXED_MONTHLY.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
@@ -507,20 +507,35 @@ test('the infrastructure and tooling split is published and adds up', () => {
   // buildFixed() computed infraMonthly and toolingMonthly on 2026-09-01 and then
   // left both out of the object it returned, so the panel could never show the
   // one number a judge or a founder actually wants: what it costs to serve a
-  // venue, as distinct from what the company spends. This pins three things.
-  // The two fields exist. They sum to the effective monthly figure, so nothing
-  // is double counted or dropped between them. And the two developer-tooling
-  // lines are the ones tagged as tooling, so the split cannot quietly move a
-  // user-caused bill into the tooling bucket or vice versa.
+  // venue, as distinct from what the company spends. The two fields exist and
+  // sum to the effective monthly figure, so nothing is double counted or
+  // dropped between them.
   const f = cm.buildFixed();
   assert.ok(Number.isFinite(f.infrastructureMonthlyUsd), 'infrastructureMonthlyUsd must be published');
   assert.ok(Number.isFinite(f.toolingMonthlyUsd), 'toolingMonthlyUsd must be published');
   const sum = Math.round((f.infrastructureMonthlyUsd + f.toolingMonthlyUsd) * 100) / 100;
   assert.equal(sum, f.effectiveMonthlyUsd, 'infrastructure plus tooling must equal the effective monthly total');
-  const tooling = cm.FIXED_MONTHLY.filter((e) => e.kind === 'tooling').map((e) => e.id).sort();
-  assert.deepEqual(tooling, ['ai-assistant-subscription', 'code-review-tool'], 'exactly the two developer tools are tagged as tooling');
-  assert.ok(f.toolingMonthlyUsd > 0, 'tooling is a real recurring bill and must not read as zero');
-  assert.ok(f.infrastructureMonthlyUsd > f.toolingMonthlyUsd, 'serving the product costs more than the tools used to build it');
+  assert.ok(f.infrastructureMonthlyUsd > 0, 'the bills that run the product are on file');
+});
+
+test('no tooling bill is written into this public file', () => {
+  // Tooling moved to business_expenses (migration 080) on 2026-09-25: which
+  // tools the company pays for, and at what price, is not published. The
+  // money hub (services/moneyHub.js) adds those rows to the lines here, so a
+  // tooling line added back to the constants would be counted twice as well
+  // as published. Every constant line is infrastructure, the split's tooling
+  // half is zero, and no inventory row points at a tooling bill.
+  const all = [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME];
+  const tooling = all.filter((e) => e.kind === 'tooling').map((e) => e.id);
+  assert.deepEqual(tooling, [], 'a tooling bill belongs on the admin expense list, not in costModel.js');
+  for (const e of all) {
+    assert.ok(!e.kind || e.kind === 'infrastructure', `${e.id} has kind ${e.kind}; only infrastructure lives in this file`);
+  }
+  assert.equal(cm.buildFixed().toolingMonthlyUsd, 0);
+  const ids = new Set(all.map((e) => e.id));
+  for (const d of cm.DEPENDENCIES) {
+    if (d.fixedId) assert.ok(ids.has(d.fixedId), `${d.id} points at a fixed line that is not in the file`);
+  }
 });
 
 test('the watchlist carries no invented numbers', () => {

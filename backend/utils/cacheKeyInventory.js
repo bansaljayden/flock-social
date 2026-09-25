@@ -456,7 +456,7 @@ const INVENTORY = [
     denominator: 'cache entries, 60 min TTL',
     bound: '500 entries, expire-then-hard-oldest-first',
     verdict: 'SAFE',
-    why: 'Two keys per venue profile, gated behind requirePremium plus a verified claim, and a relink flood is bounded by the shared Places budget.',
+    why: 'Two keys per venue profile, gated behind requirePro (Roost) plus a verified claim, and a relink flood is bounded by the shared Places budget.',
   },
 
   // ── routes/venueSearch.js ─────────────────────────────────────────────────
@@ -500,6 +500,18 @@ const INVENTORY = [
     bound: 'one entry per account with a checkout being built right now; the entry deletes itself when its chain settles, and /api/pro is behind the 30-per-minute proLimiter',
     verdict: 'SAFE',
     why: 'It only orders one account\'s own requests, so a caller can queue behind nobody but themselves. Each entry lives for the length of three Stripe calls and removes itself when the last queued request settles, whether it succeeded or threw, so the map is empty at rest.',
+  },
+
+  // ── services/moneyHub.js ──────────────────────────────────────────────────
+  {
+    file: 'services/moneyHub.js', name: 'externalCache', kind: 'cache',
+    key: "the source and the inputs its read depends on: 'stripe:<first day of the month>' and 'revenuecat:<first day of the month>:<count>:<sha256 prefix of the Pro account ids asked about>'",
+    callerControls: 'nothing: the month comes from the server clock and the account ids from users.is_premium. GET /api/admin/money is admin only (requireAdmin on the whole router), and its one input, ?refresh=1, is honoured only once the held answer is a minute old',
+    protects: 'Stripe and RevenueCat read quotas: a cold hub read is about ten Stripe list calls and up to two hundred RevenueCat subscriber reads',
+    denominator: 'n/a, not a counter: one held answer per question, 5 minutes after a good read and 1 minute after a failed one; a read in flight is shared only by requests asking the same question',
+    bound: 'one settled answer per source: storing an answer deletes every other settled key of that source, so at rest the map holds at most two keys, plus a read in flight for a question asked mid-read',
+    verdict: 'SAFE',
+    why: 'The inputs are in the key because the reads depend on them: under a fixed key, the first read after midnight on the 1st served last month\'s balance as this month\'s, and a RevenueCat tally taken before somebody subscribed kept not counting them until it expired. Neither input comes from the request, so a caller cannot grow the map, and an answer to a question nobody can ask again is dropped the moment a newer one lands. It lives in this process: a deploy empties it, and a second instance would hold its own copy and read the vendors on its own schedule. This app runs on one instance (numReplicas 1 on Railway), and the cost of a second would be one extra read per source per five minutes, not a hole.',
   },
 
   // ── services/photoStore.js ────────────────────────────────────────────────
@@ -739,6 +751,33 @@ const INVENTORY = [
       + 'after a reconnect cleared the pin of the new session. The only way to grow it '
       + 'is to open sockets and start shares, which the handshake ceiling and '
       + 'the dm_location rate limit already meter.',
+  },
+  {
+    file: 'sockets/handlers.js', name: 'flockPinHolders', kind: 'cache',
+    key: 'flockId (asId) -> the authenticated sharer\'s user.id -> the set of member '
+      + 'ids the latest update_location tick was fanned out to',
+    callerControls: 'only the flockId, and only after asId has normalised it and '
+      + 'verifyMembership has found an accepted row for the sharer; the sharer id is '
+      + 'the socket\'s own account and the member ids come from the flock_members '
+      + 'read at emit time, so nothing in a set is a value the caller sent',
+    protects: 'nothing upstream: it records who was handed a live position, so the '
+      + 'member_stopped_sharing that takes it off a map reaches them even after a '
+      + 'block or a departure has taken them out of the fan-out',
+    denominator: 'not a spend surface; one set per live (flock, sharer) share, no '
+      + 'larger than that flock\'s accepted roster',
+    bound: 'self-bounding: every tick REPLACES its set rather than adding to it; the '
+      + 'stop, the leave route and the delete paths drop an entry when they announce '
+      + 'it; every socket records the flocks it ticked into (flocksSharedHere) and '
+      + 'drops each of their entries on disconnect, so the map never outlives the '
+      + 'sockets that are sharing',
+    verdict: 'SAFE',
+    why: 'Added with the fix that made the flock stop reach a peer who was blocked '
+      + 'mid-share: the pin went to them before the block and the app only clears a '
+      + 'pin on the stop, which the block filter then withheld. A caller can make an '
+      + 'entry only for a flock they are an accepted member of, at the '
+      + 'update_location rate limit (30/10s a socket, 60 an account), and the '
+      + 'entry is roster-sized and cleared with the share, so there is no key to '
+      + 'invent and no miss to force.',
   },
   {
     file: 'services/mlPredictor.js', name: 'deviationCache', kind: 'cache',
@@ -1204,7 +1243,7 @@ const INVENTORY = [
 // A SECOND ONE, TRUE OF ALL TEN: express-rate-limit uses its MemoryStore, so
 // every counter here lives in this process's heap. It resets on every deploy
 // and divides by the instance count — the same caveat utils/placesBudget.js and
-// utils/probeBudget.js carry, and the reason project documentation says a second Railway
+// utils/probeBudget.js carry, and the reason a second Railway
 // instance needs `rate-limit-redis` before it needs anything else.
 //
 // A THIRD: every limiter below is REPLACED BY A PASS-THROUGH when

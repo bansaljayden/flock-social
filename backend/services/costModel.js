@@ -38,11 +38,12 @@
 //     unchanged. VISION_UNIT_PRICE_USD stays the single source for that leg and
 //     is imported here rather than copied.
 //   * frontend/src/App.js's Projections tab carried the fixed-cost array by
-//     hand (Railway $20, the assistant subscription $125, the review tool $20,
-//     Apple $99/yr, BestTime
-//     $1,500 once). Those are the real bills, so they are carried over
+//     hand (Railway $20, Apple $99/yr, BestTime $1,500 once, and the tools
+//     the app is built with). The infrastructure bills are carried over
 //     verbatim into FIXED_MONTHLY / ANNUAL / ONE_TIME and the frontend now
-//     reads them from here instead of holding a second copy.
+//     reads them from here instead of holding a second copy. Tooling bills
+//     are not in this file: they are entered on the admin dashboard into
+//     business_expenses (migration 080), because this file is published.
 //
 // ONE CORRECTION THIS FILE MAKES, AND IT IS EXPENSIVE. Every venue-shaped
 // Places call in this repo — ten of them, across routes/venueSearch.js,
@@ -331,20 +332,22 @@ const RATES = {
 //                      it is the number that belongs beside a price when
 //                      anybody asks what a customer costs or how many
 //                      customers cover the running of this thing.
-//   'tooling'        — a bill the DEVELOPER causes. The two writing-tool
-//                      subscriptions are real recurring money and they are counted, and no user
-//                      has ever caused a dollar of either. They would keep
-//                      arriving at zero users and stop arriving the day the
-//                      writing stops, which is the opposite of how
-//                      infrastructure behaves.
+//   'tooling'        — a bill the DEVELOPER causes. Real recurring money that
+//                      no user has ever caused a dollar of: it would keep
+//                      arriving at zero users and stop the day the building
+//                      stops, which is the opposite of how infrastructure
+//                      behaves.
 //
-// The distinction was already in this file, in prose, in the note on the
-// assistant-subscription line: "Development tooling, not app infrastructure. It is a real
-// recurring bill so it is counted, but no user causes it." A sentence cannot
-// be added up. Quoting the combined total as the cost of service overstates it
-// by the whole tooling line, which is the largest single figure on the monthly
-// list, so the split is a field now and the panel shows both figures rather
-// than one that is wrong for both questions.
+// Quoting a combined total as the cost of service overstates it by every
+// tooling bill, so the split is a field and the panel shows both figures
+// rather than one that is wrong for both questions.
+//
+// NO TOOLING LINE LIVES HERE ANY MORE (2026-09-25). This file is published,
+// and which tools a company pays for, and at what price, is its own business.
+// Tooling bills are rows in business_expenses (migration 080) with kind
+// 'tooling', entered from the admin dashboard, and services/moneyHub.js adds
+// them to these lines. Every line below is infrastructure, and
+// __tests__/costModel.test.js fails if a 'tooling' line is added back.
 
 const FIXED_MONTHLY = [
   {
@@ -356,26 +359,6 @@ const FIXED_MONTHLY = [
     checked: '2026-08-20',
     source: 'https://railway.com/pricing',
     note: 'Matches Railway Pro at $20/month, which includes $20 of usage credits. Compute and volume draw down that credit before anything is billed on top.',
-  },
-  {
-    id: 'ai-assistant-subscription',
-    label: 'AI coding assistant (subscription)',
-    usd: 125.00,
-    verified: true,
-    kind: 'tooling',
-    checked: '2026-08-20',
-    source: null,
-    note: 'Development tooling, not app infrastructure. It is a real recurring bill so it is counted, but no user causes it.',
-  },
-  {
-    id: 'code-review-tool',
-    label: 'AI code review tool (subscription)',
-    usd: 20.00,
-    verified: true,
-    kind: 'tooling',
-    checked: '2026-08-20',
-    source: null,
-    note: 'Development tooling, same as above.',
   },
   {
     id: 'besttime-subscription',
@@ -827,28 +810,6 @@ const DEPENDENCIES = [
     configuredEnv: null,
     observedLineId: null,
     usageNote: 'Bandwidth and build minutes are not read from here.',
-  },
-  {
-    id: 'ai-assistant-subscription',
-    label: 'AI coding assistant (subscription)',
-    what: 'Development tooling. No user causes this one.',
-    where: 'not in the product',
-    group: 'fixed',
-    fixedId: 'ai-assistant-subscription',
-    configuredEnv: null,
-    observedLineId: null,
-    usageNote: null,
-  },
-  {
-    id: 'code-review-tool',
-    label: 'AI code review tool (subscription)',
-    what: 'Development tooling, same as above.',
-    where: 'not in the product',
-    group: 'fixed',
-    fixedId: 'code-review-tool',
-    configuredEnv: null,
-    observedLineId: null,
-    usageNote: null,
   },
   {
     id: 'apple-developer',
@@ -1680,7 +1641,7 @@ function buildFixed() {
   // HOW MUCH of the total is unverified, not merely how many lines are. Those
   // are different sizes of problem and the panel could only say the second
   // one: two unverified lines worth $0 and $12 read identically to two worth
-  // $0 and $125.
+  // $0 and $119.
   const unverifiedMonthly = FIXED_MONTHLY.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
   const unverifiedAnnual = FIXED_ANNUAL.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
   // The oldest and newest dates a human last looked at any of these. Staleness
@@ -1715,10 +1676,11 @@ function buildFixed() {
     oneTimeUsd: round(oneTime),
     // What leaves the account every month once the annual bills are spread.
     effectiveMonthlyUsd: round(monthly + annual / 12),
-    // THE SPLIT, published. These two were computed above and then left out of
-    // this object, so the panel could never show them. Infrastructure is the
-    // figure to quote as the cost of serving a venue; tooling is a real bill
-    // that no user causes. Together they equal effectiveMonthlyUsd.
+    // THE SPLIT, published. Infrastructure is the figure to quote as the cost
+    // of serving a venue; tooling is a real bill that no user causes. Together
+    // they equal effectiveMonthlyUsd. Tooling here is zero by design now:
+    // those bills live in business_expenses (migration 080), and
+    // services/moneyHub.js costsLedger is where the Costs tab reads them.
     infrastructureMonthlyUsd: round(infraMonthly),
     toolingMonthlyUsd: round(toolingMonthly),
     // The annual half of that on its own, so a panel showing the spread does
