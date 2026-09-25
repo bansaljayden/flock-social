@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 24, 2026';
+const EFFECTIVE_DATE = 'September 25, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -412,7 +412,19 @@ export default function TermsOfService() {
             account's email. Its date is ROOST_PRICED_FROM and its 30 days are
             ROOST_NOTICE_DAYS in venueEntitlements.js, and
             backend/__tests__/roostNotice.test.js pins that the words here and
-            those constants agree. */}
+            those constants agree.
+
+            TWO LINES ARE NOT CODE IN THIS REPO, and 10.2 carries the same two.
+            The yearly renewal reminder is Stripe's own: "Send emails about
+            upcoming renewals" in the Stripe account's billing settings, with
+            upcoming renewal events 30 days ahead. Nothing here sends it and no
+            test can see the setting, so the sentence names Stripe as the
+            sender, and if that setting is ever switched off the sentence comes
+            out with it. The price-change line is a condition on a step no code
+            takes: Stripe charges each subscription the price it was created
+            with, and the only change anything here makes to a live one is
+            cancel_at_period_end. Whoever moves a plan to a new price owes the
+            email first, and until it has gone the old price stands. */}
         <p>
           A venue account, a claimed listing, replies to reviews and the 0 to 100 busyness
           report cost nothing. The paid plan is <strong>Roost</strong>: the forecast for your
@@ -422,11 +434,11 @@ export default function TermsOfService() {
           <li><strong>Who can buy it.</strong> A verified venue, on flockcorp.com. The seller is Flock Social LLC and Stripe processes the payment. We never see or store your card.</li>
           <li><strong>Price.</strong> $99 a month, or $990 a year, per location, plus any sales tax, shown at checkout before you pay. A price agreed with us in writing for an early venue applies instead, for the period it states.</li>
           <li><strong>Free trial.</strong> New subscribers get 14 days free, once per venue. A card is needed to start it. If you cancel before the trial ends, you are not charged. If you do not, the first charge happens when the trial ends.</li>
-          <li><strong>It renews by itself</strong> every month, or every year on the yearly plan, until you cancel. Before a yearly plan renews, we email you.</li>
+          <li><strong>It renews by itself</strong> every month, or every year on the yearly plan, until you cancel. Before a yearly plan renews, Stripe emails you a reminder on our behalf.</li>
           <li><strong>How to cancel:</strong> on flockcorp.com, open the venue dashboard, then Manage billing, and cancel there. It takes a few clicks and you do not have to email us, phone us or wait for an answer. You can also write to social@flockcorp.com and we will cancel it for you. Inside the iPhone app the billing controls are not shown; use flockcorp.com.</li>
           <li><strong>Cancelling stops the next charge.</strong> You keep Roost until the end of the period you already paid for.</li>
           <li><strong>Refunds.</strong> Within 14 days of your first payment (after any trial), write to social@flockcorp.com and we refund it in full. After that, payments are not refunded except where the law requires it.</li>
-          <li><strong>Price changes.</strong> We email the address on the venue account at least 30 days before a new price applies to your plan, and you can cancel before it does. The same 30 days' notice applies before we charge for anything that is free today.</li>
+          <li><strong>Price changes.</strong> A new price applies to your plan only after we have emailed the address on the venue account about it, at least 30 days ahead, and you can cancel before it does. The same 30 days' notice applies before we charge for anything that is free today.</li>
           <li><strong>If a payment fails,</strong> Stripe tries again for a short time and Roost stays on meanwhile. If it still fails, Roost ends.</li>
           <li><strong>Closing the venue account</strong> cancels the subscription at once.</li>
           <li><strong>Comps.</strong> If we give your venue Roost for free during a pilot, that can end at any time and is not a promise of future pricing. Nothing is retroactive: you are never billed for a period before you subscribed.</li>
@@ -488,20 +500,23 @@ export default function TermsOfService() {
           <li><strong>Price changes</strong> take effect only on a renewal, after the store notifies you and, where the store requires it, obtains your agreement.</li>
           <li><strong>Deleting your Flock account does not cancel a store subscription.</strong> Cancel it in your store account as well, or it keeps renewing.</li>
         </ul>
+        {/* The renewal reminder and the price-change line below rest on what
+            the note above 9.6 says: a setting in the Stripe account, and a
+            condition on a step no code takes. Change them together. */}
         <h3>10.2 Bought on flockcorp.com</h3>
         <p>
           When you buy Flock Pro on flockcorp.com, the seller is Flock Social LLC and the payment is processed by Stripe. You enter your card details with Stripe, and we never see or store them.
         </p>
         <ul>
           <li><strong>Before you pay,</strong> the plan, its price in US dollars, any tax, how often it renews and how to cancel are shown on the page and at checkout. You agree to the renewal by ticking the box at checkout, and nothing is charged until you do.</li>
-          <li><strong>It renews by itself.</strong> Your card is charged the same price every month, or every year on a yearly plan, until you cancel. Before a yearly plan renews, we email you.</li>
+          <li><strong>It renews by itself.</strong> Your card is charged the same price every month, or every year on a yearly plan, until you cancel. Before a yearly plan renews, Stripe emails you a reminder on our behalf.</li>
           <li><strong>How to cancel:</strong> on flockcorp.com, open You, then Flock Pro, then Cancel subscription, or use the same button on flockcorp.com/pro. It takes two taps and there is nobody to call. Until the paid period ends you can take it back with Keep Pro. You can also write to social@flockcorp.com and we will cancel it for you. Payment method and invoices, in the same place, is only for your card and receipts.</li>
           <li><strong>Cancelling stops the next charge.</strong> You keep Pro until the end of the period you already paid for.</li>
           <li><strong>A record by email:</strong> once your purchase goes through, we email the address you paid with the plan, the price, how often it renews, how to cancel and the refund window.</li>
           <li><strong>Promotion codes:</strong> a code typed at checkout, or carried by a link to flockcorp.com/pro, lowers the price for as long as that code lasts, and checkout shows the lowered price before you pay. After it ends, the plan renews at its regular price. A code that has ended or does not apply to you is not used.</li>
           <li><strong>Refunds:</strong> if you change your mind, write to social@flockcorp.com within 14 days of your first payment and we refund it in full. After that, payments are not refunded except where the law requires it.</li>
           <li><strong>Under 18:</strong> a parent or guardian needs to make the purchase with their own payment method. If someone under 18 bought Flock Pro, a parent or guardian can write to us and we will cancel it and refund it.</li>
-          <li><strong>Price changes:</strong> we email you at least 30 days before a new price applies to your plan, and you can cancel before it does.</li>
+          <li><strong>Price changes:</strong> a new price applies to your plan only after we have emailed you about it, at least 30 days ahead, and you can cancel before it does.</li>
           <li><strong>Tax:</strong> where sales tax applies, it is added at checkout and shown before you pay.</li>
           <li><strong>If a payment fails,</strong> Stripe tries again for a short time. If it still fails, Pro ends.</li>
           <li><strong>Deleting your Flock account cancels a web subscription at once</strong> and ends Pro. If that is within 14 days of your first payment, write to us and we refund it.</li>

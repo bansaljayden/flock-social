@@ -5,13 +5,15 @@ import SiteFooter from './SiteFooter';
 import { cancelProSubscription, getProStatus, getToken, openProPortal, resumeProSubscription, startProCheckout, trackPaywallShown } from '../services/api';
 import { perMonthLabel, planSavingsPercent } from '../lib/proPricing';
 import { rememberReturnAfterSignIn } from '../lib/returnAfterSignIn';
+import { isNativeShell } from '../lib/nativeShell';
 
 /* /pro: Flock Pro on the web.
 
    WEB ONLY. index.js never routes here inside the native shell, and the check
    below repeats that in case it ever does: Apple does not allow an app to
    point a buyer at a web price outside the US, and storefront gating does not
-   exist yet, so inside the app this page renders nothing.
+   exist yet, so inside the app this page renders nothing. Both ask
+   lib/nativeShell.js, so they cannot disagree about which is which.
 
    EVERY PRICE ON THIS PAGE COMES FROM THE SERVER, which reads it from Stripe
    (backend/services/proBilling.js describePrice): GET /api/pro/status when
@@ -25,7 +27,18 @@ import { rememberReturnAfterSignIn } from '../lib/returnAfterSignIn';
    PREMIUM_DAILY_LIMIT in backend/services/birdieUsage.js. Forecasts:
    FREE_MONTHLY_FORECASTS in backend/services/forecastUsage.js, with no meter
    at all for Pro. If either number moves there, it moves here, and nothing
-   else goes in the table until the code enforces it (DESIGN-STANDARD C1). */
+   else goes in the table until the code enforces it (DESIGN-STANDARD C1).
+
+   AND IT IS SHOWN ONLY WHILE PRO IS ON SALE. The free column is a limit the
+   server applies only with the paywall on; with it off every account already
+   gets 150 Birdie messages a day and crowd levels for every venue, so a table
+   saying "Free: 10 and 30" would describe limits nobody meets. Web checkout
+   is ready only when the paywall is on (backend/services/proBilling.js
+   webCheckout), so the table follows the same answer the buy button does:
+   the public offer signed out, the account's own status signed in. That is
+   the rule the homepage's Pro card already follows (LandingPage.js
+   useProOffer). Hiding it rather than captioning it keeps one set of
+   sentences on the page, each true whenever it shows. */
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
@@ -36,14 +49,6 @@ const FORECASTS_FREE_MONTHLY = 30;
 const DESCRIPTION = 'Flock Pro lifts the Birdie limit and the monthly limit on crowd levels and forecasts. What it costs, what changes, and how to cancel.';
 
 const READABLE = { color: 'var(--pp-ink-2)' };
-
-function isNative() {
-  try {
-    return typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
-  } catch {
-    return false;
-  }
-}
 
 // "$3.99 USD". The server's label is already "$3.99" for USD and "3.99 EUR"
 // for anything else, so the currency is only appended where it is missing.
@@ -99,7 +104,7 @@ function cancelledReturn() {
 }
 
 export default function ProPage() {
-  const native = isNative();
+  const native = isNativeShell();
   const [signedIn] = useState(() => !!getToken());
   // 'loading' | 'ready' | 'error'. Signed out never leaves 'ready' with no status.
   const [phase, setPhase] = useState(signedIn ? 'loading' : 'ready');
@@ -167,6 +172,8 @@ export default function ProPage() {
 
   const plans = Array.isArray(status?.plans) ? status.plans : [];
   const checkoutOn = !!status?.checkoutAvailable && plans.length > 0;
+  // Whether the Free and Pro limits are real right now (see the header).
+  const onSale = signedIn ? checkoutOn : !!offer;
   const plan = plans.find((p) => p.id === selected) || plans[0] || null;
   const monthly = plans.find((p) => p.id === 'monthly');
   const yearly = plans.find((p) => p.id === 'yearly');
@@ -313,8 +320,12 @@ export default function ProPage() {
           </fieldset>
         )}
         {/* "Before you pay" names the full price; a code lowers it on Stripe's
-            page, which is the price actually charged. */}
-        {code && <p className="pro-note">Code {code} is applied at checkout if it is still active. The price on the checkout page already includes it.</p>}
+            page, which is the price actually charged. Only when the code is
+            still live and open to this buyer, though: the server applies it
+            after asking Stripe, and a code that has ended or is refused leaves
+            the full price and the ordinary code field (proBilling.js
+            activePromotionCode). So the page never says it already did. */}
+        {code && <p className="pro-note">Code {code} is applied at checkout if it is still active. When it applies, the checkout page shows the lower price.</p>}
         <BeforeYouPay plan={plan} trialDays={trialDays} tax={tax} />
         {/* The button says what it charges (the research notes: a CTA that
             states the price, and the billed amount as the plainest number). */}
@@ -344,33 +355,35 @@ export default function ProPage() {
         <p className="pro-note" role="status">Checkout was cancelled. You were not charged.</p>
       )}
 
-      <section aria-labelledby="pro-compare">
-        <h2 id="pro-compare">Free and Pro</h2>
-        <table className="pro-table">
-          <thead>
-            <tr>
-              <th scope="col"><span className="pp-sr-only">Limit</span></th>
-              <th scope="col">Free</th>
-              <th scope="col">Pro</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th scope="row">Birdie messages a day</th>
-              <td>{BIRDIE_FREE_DAILY}</td>
-              <td>{BIRDIE_PRO_DAILY}</td>
-            </tr>
-            <tr>
-              <th scope="row">Venues with crowd levels and forecasts, a month</th>
-              <td>{FORECASTS_FREE_MONTHLY}</td>
-              <td>No limit</td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="pro-small">
-          Starting a flock, voting, budgets, chat and bill splits cost nothing on either plan.
-        </p>
-      </section>
+      {onSale && (
+        <section aria-labelledby="pro-compare">
+          <h2 id="pro-compare">Free and Pro</h2>
+          <table className="pro-table">
+            <thead>
+              <tr>
+                <th scope="col"><span className="pp-sr-only">Limit</span></th>
+                <th scope="col">Free</th>
+                <th scope="col">Pro</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Birdie messages a day</th>
+                <td>{BIRDIE_FREE_DAILY}</td>
+                <td>{BIRDIE_PRO_DAILY}</td>
+              </tr>
+              <tr>
+                <th scope="row">Venues with crowd levels and forecasts, a month</th>
+                <td>{FORECASTS_FREE_MONTHLY}</td>
+                <td>No limit</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="pro-small">
+            Starting a flock, voting, budgets, chat and bill splits cost nothing on either plan.
+          </p>
+        </section>
+      )}
 
       <section aria-labelledby="pro-buy">
         <h2 id="pro-buy">Get Pro</h2>
@@ -422,7 +435,7 @@ export default function ProPage() {
           <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from the address on your account.
         </p>
         <h3>What happens to my flocks if I cancel?</h3>
-        <p>Nothing. Your flocks, chats and friends stay as they are. Only the limits in the table go back to Free.</p>
+        <p>Nothing. Your flocks, chats and friends stay as they are.{onSale ? ' Only the limits in the table go back to Free.' : ''}</p>
       </section>
 
       <SiteFooter className="pp-footer" linkStyle={READABLE}>

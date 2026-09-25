@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 24, 2026';
+const EFFECTIVE_DATE = 'September 25, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -256,7 +256,7 @@ export default function PrivacyPolicy() {
 
               <h3>You provide directly</h3>
               <ul>
-                <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional short bio. We send a link to your email at sign-up to confirm it's really yours. Your friend code is worked out from your account number when you ask for it, so there is no separate code stored anywhere.</li>
+                <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional short bio. We send a link to your email at sign-up to confirm it's really yours. Your friend code is made at random the first time you ask for it and stored with your account, so nobody can work it out from your account number.</li>
                 <li><strong>Phone number (optional):</strong> sign-up never asks for one. You can add a phone number later from your profile. It is not used to find you unless you turn on "Let friends find me by my phone number" in Settings, which is off until you turn it on. Adding a number requires confirming your password or a recent sign-in, and turning discovery off erases the code we match against.</li>
                 <li><strong>Contacts you choose to match (optional):</strong> if you use "Add friends" from your phone contacts, only phone numbers are sent, never names or anything else on a contact card. We turn each one into a one-way keyed code and compare it with the codes of people who chose to be findable by phone. We run the lookup and don't store those numbers, and a number belonging to someone who is not on Flock leaves nothing behind.</li>
                 <li><strong>Year of birth:</strong> collected at sign-up so we can confirm you're 13 or older. We ask for the year only. The check runs on our server, which works out your age from that year in the one way that can only ever count you as younger, so nobody under the minimum gets through on a rounding. Accounts created before 15 September 2026 gave a full date of birth, and an older account that never gave one is asked for the full date the next time it signs in; either is used for the same age check and for nothing else.</li>

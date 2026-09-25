@@ -15,10 +15,19 @@ test('the rename door has the same duplicate-name lock as the create door', () =
   expect((guest.match(/Someone already answered as that name\. Open the link on the device you used, or add a last initial\./g) || []).length).toBe(2);
 });
 
-test('a guest\'s vote survives becoming a member, and open clients re-tally', () => {
-  expect(guest).toMatch(/INSERT INTO venue_votes \(flock_id, user_id, venue_name\)\s*SELECT \$1, \$2, gv\.venue_name FROM guest_votes gv WHERE gv\.guest_rsvp_id = \$3/);
-  expect(guest).toMatch(/ON CONFLICT DO NOTHING/);
-  expect(guest).toMatch(/if \(res\.locals\.promotedVenue\) \{\s*await broadcastGuestVote\(io, link\.flock_id, res\.locals\.promotedVenue\);/);
+test('a guest\'s vote survives becoming a member, as ONE vote, and open clients re-tally', () => {
+  // The copy used to be INSERT ... ON CONFLICT DO NOTHING on (flock, user,
+  // venue), so a member who already held a vote for another venue came out
+  // holding two. Both join paths now carry it through carryGuestVote (the
+  // newer pick is the vote, under the flockvote: lock), and re-tally either
+  // way, because the guest vote left the guest ledger whether or not it moved.
+  const shared = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'utils', 'guestRsvp.js'), 'utf8');
+  expect(shared).toMatch(/async function carryGuestVote\(run, flockId, userId, guestRsvpIds\)/);
+  expect(shared).toMatch(/pg_advisory_xact_lock\(hashtext\('flockvote:' \|\| \$1::text \|\| ':' \|\| \$2::text\)\)/);
+  expect(shared).toMatch(/DELETE FROM venue_votes WHERE flock_id = \$1 AND user_id = \$2 AND venue_name <> \$3/);
+  expect(guest).not.toMatch(/ON CONFLICT DO NOTHING\s+RETURNING venue_name/);
+  expect((guest.match(/carryGuestVote\(\s*\(q, p\) => (client|retireClient)\.query\(q, p\), link\.flock_id, req\.user\.id,/g) || []).length).toBe(2);
+  expect(guest).toMatch(/if \(res\.locals\.carriedVote\) \{\s*await broadcastGuestVote\(io, link\.flock_id, res\.locals\.carriedVote\.venueName\);/);
 });
 
 test('the guest page ranks by the same weighting members see', () => {

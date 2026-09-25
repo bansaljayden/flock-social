@@ -973,7 +973,18 @@ export default function LandingPage() {
                 <li>Unlimited flocks and friends</li>
                 <li>Venue voting and group chat</li>
                 {/* With Pro on sale the free tier is 30 venues a month
-                    (services/forecastUsage.js); before that it is every venue. */}
+                    (services/forecastUsage.js); before that it is every venue.
+
+                    "Before that" is the global switch, PAYWALL_ENABLED, and
+                    this page speaks to the public, for whom it is the only
+                    switch. The review list (PAYWALL_PREVIEW_USER_IDS) meters a
+                    few named accounts, App Review's demo account among them,
+                    while the switch is off, so for those accounts "Live crowd
+                    levels" overstates what free gets. That is deliberate:
+                    /api/pro-offer is asked without an account and answers for
+                    the public, the preview accounts meet the real limits
+                    inside the app, and nobody else is metered until the
+                    switch flips, which is when this line changes. */}
                 <li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Live crowd levels'}</li>
                 <li>Budget matching and bill splitting</li>
                 <li>SOS and trusted contacts</li>
@@ -990,7 +1001,7 @@ export default function LandingPage() {
                   2026-08-14, because the card ends in a sales mailto and a
                   venue reading it is being asked to start a conversation on the
                   strength of it. Three claims were selling things that do not
-                  exist, and `project documentation` lists all three under "Not
+                  exist, and the project notes list all three under "Not
                   built":
 
                   "Reach groups at the exact moment they're picking a place" and
