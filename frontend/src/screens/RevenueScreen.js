@@ -1041,7 +1041,7 @@ function HubPrices({ h, colors }) {
       ) : rc.status !== 'ok' ? (
         <HubNotice status={rc.status} reason={rc.reason} />
       ) : (
-        <HubNotice status={p.offering && p.offering.status === 'error' ? 'error' : 'refused'} reason={(p.offering && p.offering.reason) || 'The offering could not be read with this key.'} />
+        <HubNotice status={p.offering && (p.offering.status === 'error' || p.offering.status === 'not_connected') ? p.offering.status : 'refused'} reason={(p.offering && p.offering.reason) || 'The offering could not be read with this key.'} />
       )}
 
       <p style={hubStyle.kicker}>Live in Stripe</p>
@@ -2525,7 +2525,10 @@ export default function RevenueScreen({
                         vp.lastOutcome
                           ? `${new Date(vp.lastOutcome.at).toLocaleString()}.${vp.lastOutcome.detail ? ` ${vp.lastOutcome.detail}` : ''} Counted in this container's memory, so it resets on every deploy.`
                           : 'No image has been screened since this container started. That is normal on a quiet day and says nothing either way.')}
-                      {visionDep && visionDep.finding && <p style={foot}>{visionDep.finding}</p>}
+                      {/* The dated note says where to look when the probe
+                          fails. Beside a provider that answers it only
+                          contradicts the live reading above it. */}
+                      {broken && visionDep && visionDep.finding && <p style={foot}>{visionDep.finding}</p>}
                     </div>
                   );
                 })()}

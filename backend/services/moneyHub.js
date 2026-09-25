@@ -1319,10 +1319,20 @@ async function readStripe(month) {
 // REVENUECAT
 // ---------------------------------------------------------------------------
 
-function rcKey() {
-  const raw = typeof process.env.REVENUECAT_SECRET_API_KEY === 'string' ? process.env.REVENUECAT_SECRET_API_KEY.trim() : '';
+function rcKeyFrom(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
   return raw.length >= RC_MIN_KEY_LENGTH ? raw : null;
 }
+
+// TWO KEYS, BECAUSE REVENUECAT HAS TWO APIS. The per-account reads below go
+// through API v1 with REVENUECAT_SECRET_API_KEY, the same key the entitlement
+// check uses (services/proBilling.js). The project-wide figures, products and
+// offering go through API v2, which RevenueCat says a v1 key does not work
+// with: that is the 403 this panel used to show. They read
+// REVENUECAT_V2_SECRET_API_KEY, a separate read-only v2 key, so turning the
+// panel on never means swapping out the key that grants Pro.
+const rcKey = () => rcKeyFrom(process.env.REVENUECAT_SECRET_API_KEY);
+const rcV2Key = () => rcKeyFrom(process.env.REVENUECAT_V2_SECRET_API_KEY);
 
 async function rcGet(url, key) {
   const r = await fetch(url, {
@@ -1356,7 +1366,8 @@ function micros(obj) {
   return null;
 }
 
-const RC_V2_KEY_WORDS = 'The project-wide figures need a RevenueCat API v2 secret key that can read the project and its charts.';
+const RC_V2_KEY_WORDS = 'REVENUECAT_V2_SECRET_API_KEY must be a RevenueCat API v2 secret key with read access to charts and metrics and to project configuration.';
+const RC_V2_UNSET_WORDS = 'REVENUECAT_V2_SECRET_API_KEY is not set, so RevenueCat\'s project-wide figures and the offering are not read. They need a RevenueCat API v2 secret key with read access to charts and metrics and to project configuration. REVENUECAT_SECRET_API_KEY stays the v1 key the entitlement check uses.';
 
 // WHICH PROJECT. REVENUECAT_PROJECT_ID names it when set. Unset, the hub uses
 // the one project the key can see, and refuses to pick when it can see more
@@ -1625,8 +1636,11 @@ async function readRevenueCat(month, premiumIds) {
   if (!key) {
     return { status: 'not_connected', reason: 'REVENUECAT_SECRET_API_KEY is not set on the server, so nothing here can read RevenueCat.' };
   }
+  const v2Key = rcV2Key();
   const [overview, subscribers] = await Promise.all([
-    readRcOverview(key, month).catch((err) => ({ status: 'error', reason: rcProblem(err) })),
+    v2Key
+      ? readRcOverview(v2Key, month).catch((err) => ({ status: 'error', reason: rcProblem(err) }))
+      : { status: 'not_connected', reason: RC_V2_UNSET_WORDS },
     readRcSubscribers(key, premiumIds, month).catch((err) => ({ status: 'error', reason: rcProblem(err) })),
   ]);
   return {
@@ -1801,7 +1815,14 @@ function buildPricing({ stripe, revenuecat, venuePriceUsd }) {
   } else if (off && off.status === 'error') {
     offering = { status: 'error', identifier: null, findings: [], reason: off.reason };
   } else if (rcOk && revenuecat.overview && revenuecat.overview.status !== 'ok') {
-    offering = { status: 'unavailable', identifier: null, findings: [], reason: revenuecat.overview.reason };
+    // With no v2 key nothing was asked, which is not the same as a key that
+    // was asked and refused, and the panel says which one it is.
+    offering = {
+      status: revenuecat.overview.status === 'not_connected' ? 'not_connected' : 'unavailable',
+      identifier: null,
+      findings: [],
+      reason: revenuecat.overview.reason,
+    };
   }
 
   const mismatches = stated.filter((s) => s.verdict === 'mismatch' || s.verdict === 'missing').length

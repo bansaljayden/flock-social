@@ -284,7 +284,7 @@ const CONNECTED = {
     revenuecat: {
       status: 'ok',
       asOf: '2026-09-25T13:26:00.000Z',
-      overview: { status: 'refused', reason: 'The key is not allowed to read this (403). The project-wide figures need a RevenueCat API v2 secret key that can read the project and its charts.' },
+      overview: { status: 'refused', reason: 'The key is not allowed to read this (403). REVENUECAT_V2_SECRET_API_KEY must be a RevenueCat API v2 secret key with read access to charts and metrics and to project configuration.' },
       subscribers: {
         status: 'ok', checked: 3, failed: 0, capped: false, complete: true, sandbox: 1, premiumWithNothingLive: 0,
         appStorePrices: { flock_pro_monthly: { amountCents: 399, currency: 'USD', purchasedAt: '2026-09-20T12:00:00.000Z', distinctAmountsCents: [399] } },
@@ -437,8 +437,20 @@ describe('everything connected: the numbers, each with its source', () => {
     await renderHub(CONNECTED);
     expect(screen.getByText('App Store, monthly')).toBeInTheDocument();
     expect(screen.getByText('Sandbox')).toBeInTheDocument();
-    expect(screen.getByText(/The project-wide figures need a RevenueCat API v2 secret key/)).toBeInTheDocument();
+    expect(screen.getByText(/REVENUECAT_V2_SECRET_API_KEY must be a RevenueCat API v2 secret key/)).toBeInTheDocument();
     expect(screen.getAllByText('Key cannot read this').length).toBeGreaterThan(0);
+  });
+
+  test('with no v2 key, the project figures and the offering say not connected, not refused', async () => {
+    const unset = "REVENUECAT_V2_SECRET_API_KEY is not set, so RevenueCat's project-wide figures and the offering are not read.";
+    await renderHub({
+      ...CONNECTED,
+      revenue: { ...CONNECTED.revenue, revenuecat: { ...CONNECTED.revenue.revenuecat, overview: { status: 'not_connected', reason: unset } } },
+      pricing: { ...CONNECTED.pricing, offering: { status: 'not_connected', identifier: null, findings: [], reason: unset } },
+    });
+    expect(screen.getAllByText(/REVENUECAT_V2_SECRET_API_KEY is not set/).length).toBe(2);
+    expect(screen.getAllByText('Not connected').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('Key cannot read this')).not.toBeInTheDocument();
   });
 
   test('the App Store part is labelled as current Pro accounts only, never as the whole month', async () => {
