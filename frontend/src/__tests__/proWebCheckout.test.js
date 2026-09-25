@@ -118,6 +118,58 @@ describe('checkout switched off', () => {
   });
 });
 
+// The Free and Pro table states limits the server applies only with the
+// paywall on, and web checkout is ready only then, so the table shows exactly
+// when the offer does: the public offer signed out, the account's own status
+// signed in. With the paywall off every account already has Pro's numbers, and
+// a table of free limits would describe limits nobody meets.
+describe('the Free and Pro table shows only while Pro is on sale', () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  const offerFetch = (body) => jest.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(body) }));
+  const table = () => screen.queryByRole('table');
+
+  test('signed out and not on sale: no table, and the cancel answer does not point at one', async () => {
+    global.fetch = offerFetch({ available: false, plans: [] });
+    getToken.mockReturnValue(null);
+    const { container } = render(<ProPage />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(table()).toBeNull();
+    expect(container.textContent).not.toContain('Birdie messages a day');
+    expect(container.textContent).not.toContain('limits in the table');
+  });
+
+  test('signed out and on sale: the table, with the limits the server enforces', async () => {
+    global.fetch = offerFetch({ available: true, plans: [MONTHLY, YEARLY], trialDays: 0, taxAdded: false });
+    getToken.mockReturnValue(null);
+    const { container } = render(<ProPage />);
+    await waitFor(() => expect(table()).not.toBeNull());
+    const cells = [...table().querySelectorAll('td')].map((td) => td.textContent);
+    expect(cells).toEqual(['10', '150', '30', 'No limit']);
+    expect(container.textContent).toContain('Only the limits in the table go back to Free.');
+  });
+
+  test('signed in with checkout off: no table', async () => {
+    getToken.mockReturnValue('t');
+    getProStatus.mockResolvedValue({
+      isPremium: false, checkoutAvailable: false, plans: [], trialDays: 0, taxAdded: false, canManageWeb: false,
+    });
+    render(<ProPage />);
+    await screen.findByText('Flock Pro is not on sale on the web yet.');
+    expect(table()).toBeNull();
+  });
+
+  test('signed in with checkout on: the table', async () => {
+    getToken.mockReturnValue('t');
+    getProStatus.mockResolvedValue({
+      isPremium: false, checkoutAvailable: true, plans: [MONTHLY, YEARLY], trialDays: 0, taxAdded: false, canManageWeb: false,
+    });
+    render(<ProPage />);
+    await screen.findByRole('button', { name: MONTHLY_CTA });
+    expect(table()).not.toBeNull();
+  });
+});
+
 describe('plan choice', () => {
   test('monthly is selected by default and the checkout asks for it', async () => {
     getToken.mockReturnValue('t');

@@ -31,7 +31,7 @@
 // now", and an account switch that happens in another tab never passes through
 // a logged-out state for a boolean to notice.
 import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken } from './api';
-import { startPushNavigation, handleNotificationData } from './pushNavigation';
+import { startPushNavigation, handleNotificationData, clearPendingNavigation } from './pushNavigation';
 // The socket needs to know which device it is speaking for, so the backend can
 // suppress a push on THIS device without silencing the account. The token is
 // pushed to it from here rather than read from localStorage over there, for the
@@ -751,7 +751,39 @@ export function getNotificationStatus() {
 
 // Re-exported so App.js has a single import for "take me to the thing the
 // notification was about".
-export { onPushNavigate, peekPendingNavigation } from './pushNavigation';
+export { onPushNavigate, peekPendingNavigation, watchPendingNavigation, safetyIntentIsFor } from './pushNavigation';
+
+/**
+ * A sign-out takes this account's notifications with it: every one this
+ * device is still showing, and any tap waiting in the push router's queue.
+ *
+ * A notification outlives the session that received it. Left in the tray, the
+ * last account's alarm, messages and invites stayed one tap away for whoever
+ * signed in next on the same phone, and the tap routed into that person's
+ * session. App.js's safety branch already refuses an alarm addressed to
+ * another account (safetyIntentIsFor); this removes the rest from the tray.
+ *
+ * Fire and forget, like everything else a sign-out does here: it never
+ * rejects and nothing waits on it. removeAllDeliveredNotifications only clears
+ * what is on screen, so it asks nothing of the OS and cannot draw a prompt.
+ */
+export function forgetDeliveredNotifications() {
+  clearPendingNavigation();
+  try {
+    if (isNativeApp()) {
+      import('@capacitor-firebase/messaging')
+        .then(({ FirebaseMessaging }) => FirebaseMessaging.removeAllDeliveredNotifications())
+        .catch(() => { /* nothing left to clear */ });
+      return;
+    }
+    // The web's copies belong to the service worker that showed them.
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.getRegistration()
+      .then((reg) => (reg && typeof reg.getNotifications === 'function' ? reg.getNotifications() : []))
+      .then((shown) => (shown || []).forEach((n) => { try { n.close(); } catch (err) { /* already gone */ } }))
+      .catch(() => { /* nothing left to clear */ });
+  } catch (err) { /* a sign-out never fails on this */ }
+}
 
 // Both are safe to run at import time and both are no-ops outside a browser.
 startPushNavigation();

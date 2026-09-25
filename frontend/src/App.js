@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -16,12 +16,12 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
-import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
+import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
-import { redeemPendingInvite, openJoinedFlock, rememberInvite } from './services/inviteHandoff';
+import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
@@ -48,6 +48,9 @@ import EmergencySheet from './components/safety/EmergencySheet';
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet } from './lib/storage';
+// When a member's live pin comes off this device, and the emit interval the
+// staleness rule is measured in. See lib/livePins.js.
+import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
 // The paywall is dormant behind PAYWALL_ENABLED, so for every session that
 // ships today the sheet is a chunk nothing can open.
@@ -58,6 +61,9 @@ import { lsGet, lsSet } from './lib/storage';
 // paints.
 import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout, confirmVenueCheckout } from './services/api';
 import { readProReturn, settleProCheckout } from './lib/proReturn';
+// One message's reactions, re-read when a second device's tap turns out to have
+// been beaten by the first (see addReactionToMessage).
+import { getFlockMessageReactions } from './services/api';
 import { takeReturnAfterSignIn } from './lib/returnAfterSignIn';
 import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingReturn';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
@@ -2049,6 +2055,162 @@ const sameSend = (local, server) => {
 const SERVER_ID_MAX = 2147483647;
 const isServerId = (id) => typeof id === 'number' && Number.isInteger(id) && id > 0 && id <= SERVER_ID_MAX;
 
+// THIS SEND'S OWN NAME, minted once per send and handed to both transports.
+// The server hands it back on the sender's copies and nowhere else
+// (sockets/handlers.js readClientId validates it and stores nothing). It is
+// the one thing that tells two sends apart when they look alike: two photos
+// with no caption, or "ok" twice. Matched on content, whichever bubble came
+// first was settled with whichever row the server finished first, so a bubble
+// showing one photo could carry the other photo's id, and an unsend or a
+// report on it acted on the wrong row. Letters and digits, well inside the
+// server's 64 character bound.
+const newClientId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+// Does this echo belong to this pending send or bubble? By the client id when
+// the echo carries one, and ONLY by it: a row whose id is not this bubble's is
+// some other send however alike the two look. Content (sameSend) is the
+// fallback for a server that predates the id and for a bubble minted before it.
+const echoMatches = (local, server) => {
+  const echoId = server && typeof server.client_id === 'string' && server.client_id ? server.client_id : null;
+  if (echoId) return !!local && local.clientId === echoId;
+  return sameSend(local, server);
+};
+
+// The newest row the server has issued among these, 0 when there is none.
+// Taken when a send starts, it is how a later history read can tell a stored
+// row that could be this send (issued after it) from one that cannot. Ids are
+// serial, so this needs no clock, and the phone's clock and the server's
+// disagree by minutes often enough that a time would not do.
+const newestServerId = (messages) => {
+  let newest = 0;
+  for (const m of messages || []) if (isServerId(m.id) && m.id > newest) newest = m.id;
+  return newest;
+};
+
+// COULD THIS STORED ROW BE THIS UNSETTLED SEND, LANDED? Only if it is the
+// caller's own, issued after the send began, and the same text, type and photo.
+// Content alone used to decide, so another member saying "ok" took away a failed
+// "ok" of yours, and an older "ok" of yours took away the one still sending,
+// and the reload store was rewritten to match.
+const sendLandedAs = (bubble, row) => {
+  const own = bubble.senderId != null && row.senderId != null
+    ? String(row.senderId) === String(bubble.senderId)
+    : row.sender === 'You';
+  if (!own) return false;
+  // A bubble from before this field existed has no mark, and keeps the old
+  // content match, narrowed to the caller's own rows.
+  if (typeof bubble.afterId === 'number' && !(row.id > bubble.afterId)) return false;
+  return sameSend(bubble, {
+    message_text: row.text,
+    message_type: row.message_type,
+    image_url: row.image_url || row.image || null,
+    thumb: row.thumb || row.thumb_url || null,
+  });
+};
+
+// The unsettled bubbles a history has accounted for, as a Set of the bubbles.
+// ONE ROW ACCOUNTS FOR ONE SEND: two identical sends with one landed leave one
+// failed, never none. A row already on screen under its own id (`heldIds`) is
+// somebody's reconciled bubble and cannot be claimed again.
+const landedSends = (bubbles, history, heldIds) => {
+  const landed = new Set();
+  const claimed = new Set(heldIds || []);
+  for (const b of bubbles || []) {
+    for (const h of history || []) {
+      if (!isServerId(h.id) || claimed.has(h.id) || !sendLandedAs(b, h)) continue;
+      claimed.add(h.id);
+      landed.add(b);
+      break;
+    }
+  }
+  return landed;
+};
+
+// THE ON-SCREEN ORDER IS THE SERVER'S ORDER, once two rows both have ids. The
+// server emits a message when it finishes with it, and two overlapping sends
+// finish in either order (a photo waits on its screening, a line of text does
+// not), so rows arrived out of id order and were appended as they came. The
+// history read sorts by id, so the thread changed order on every reload.
+// A row still without an id travels with the row it was sent after, so a
+// sending bubble stays where it was typed. Same array back when nothing moves.
+const orderByServerId = (messages) => {
+  if (!Array.isArray(messages) || messages.length < 2) return messages;
+  let last = 0;
+  let inOrder = true;
+  for (const m of messages) {
+    if (!isServerId(m.id)) continue;
+    if (m.id < last) { inOrder = false; break; }
+    last = m.id;
+  }
+  if (inOrder) return messages;
+  const lead = [];
+  const runs = [];
+  for (const m of messages) {
+    if (isServerId(m.id)) runs.push({ id: m.id, rows: [m] });
+    else if (runs.length > 0) runs[runs.length - 1].rows.push(m);
+    else lead.push(m);
+  }
+  runs.sort((a, b) => a.id - b.id);
+  return [...lead, ...runs.flatMap((r) => r.rows)];
+};
+
+// WHAT A HISTORY RESPONSE MAY NOT KNOW. A read that went out before a message
+// was unsent, taken down or its sender blocked can land after, and it put the
+// row straight back on screen. Every such retraction is logged with a sequence
+// number (FlockAppInner's retractionsRef), each read notes the number it
+// started at, and whatever was retracted after that is dropped from what it
+// returns. `kind` keeps flock ids and DM ids apart, since the two tables number
+// independently; a block is kind-less, because it covers both. Null when
+// there is nothing to drop, which is nearly always.
+const retractedSince = (log, since, kind) => {
+  let ids = null;
+  let senders = null;
+  for (const e of log || []) {
+    if (!(e.seq > since)) continue;
+    if (e.senderId != null) (senders || (senders = new Set())).add(String(e.senderId));
+    else if (e.kind === kind && e.messageId != null) (ids || (ids = new Set())).add(String(e.messageId));
+  }
+  return ids || senders ? { ids: ids || new Set(), senders: senders || new Set() } : null;
+};
+
+// The ids among these rows that a retraction covers: named outright, or sent
+// by somebody blocked since the read began.
+const retractedIdsIn = (rows, drop) => {
+  const gone = new Set(drop ? drop.ids : []);
+  if (!drop) return gone;
+  for (const r of rows || []) {
+    if (r && r.senderId != null && drop.senders.has(String(r.senderId))) gone.add(String(r.id));
+  }
+  return gone;
+};
+
+// Those rows gone, and every quote of them emptied, the way a takedown or an
+// unsend clears them live. Same array back when nothing matched.
+const dropRetracted = (rows, drop) => {
+  if (!drop || !Array.isArray(rows) || rows.length === 0) return rows;
+  const gone = retractedIdsIn(rows, drop);
+  if (gone.size === 0) return rows;
+  let touched = false;
+  const kept = [];
+  for (const r of rows) {
+    if (gone.has(String(r.id))) { touched = true; continue; }
+    if (r.reply_to && gone.has(String(r.reply_to.id))) { touched = true; kept.push({ ...r, reply_to: null }); continue; }
+    kept.push(r);
+  }
+  return touched ? kept : rows;
+};
+
+// One retraction into that log: { kind, messageId } for an unsend or a
+// takedown, { senderId } for a block. `ref` is FlockAppInner's retractionsRef.
+// Kept to the last two hundred: a read in flight across that many is not a
+// real case, and the log is read on every live message.
+const noteRetraction = (ref, entry) => {
+  const r = ref.current;
+  r.seq += 1;
+  r.log.push({ ...entry, seq: r.seq });
+  if (r.log.length > 200) r.log.splice(0, r.log.length - 200);
+};
+
 // Fold a freshly fetched history into what is already on screen.
 //
 // A history fetch replaces the whole message list, and it cannot know about
@@ -2190,16 +2352,18 @@ const oldestServerId = (messages) => {
 // conversation. Change it here if the routes' default ever moves.
 const DM_PAGE_SIZE = 50;
 
-const mergeHistory = (local, history, { keepOlder = false } = {}) => {
-  const hist = history || [];
+// `drop` is what was retracted after this read went out (retractedSince): a
+// response older than an unsend, a takedown or a block does not get to put
+// those rows, or quotes of them, back.
+const mergeHistory = (local, history, { keepOlder = false, drop = null } = {}) => {
+  const hist = dropRetracted(history || [], drop);
   const mine = local || [];
   const settled = (m) => !m.pending && !m.failed;
-  const unsettled = mine.filter((m) => (m.pending || m.failed) && !hist.some((h) => sameSend(m, {
-    message_text: h.text,
-    message_type: h.message_type,
-    image_url: h.image_url || h.image || null,
-    thumb: h.thumb || h.thumb_url || null,
-  })));
+  // Point 1 above, decided by sendLandedAs: the caller's own row, issued after
+  // the send began, one row per send, never a row already on screen.
+  const waiting = mine.filter((m) => m.pending || m.failed);
+  const landed = landedSends(waiting, hist, mine.filter((m) => settled(m) && isServerId(m.id)).map((m) => m.id));
+  const unsettled = waiting.filter((m) => !landed.has(m));
 
   let oldestId = null;
   let newestId = null;
@@ -2223,9 +2387,10 @@ const mergeHistory = (local, history, { keepOlder = false } = {}) => {
 // refreshes, iOS evicts the web view, the person closes Flock and reopens it. So
 // failed flock sends are mirrored to localStorage, per flock, and rehydrated
 // when the chat's history loads. mergeHistory already hides a persisted failure
-// that turns out to have landed (it matches a history row by content), and
-// loadFlockMessages rewrites the store to drop it for good, so a send that
-// finally arrived never comes back as a ghost failure.
+// that turns out to have landed (one of the caller's own rows, issued after the
+// send began, with the same content: see sendLandedAs), and loadFlockMessages
+// rewrites the store to drop it for good, so a send that finally arrived never
+// comes back as a ghost failure.
 const FAILED_MSG_KEY = 'flock_failed_msgs';
 const readFailedStore = () => {
   try {
@@ -2260,6 +2425,15 @@ const removeFailedFlockMessage = (flockId, id) => {
 // catch-up in App for why liveness is polled rather than subscribed to.
 const SOCKET_SAMPLE_MS = 2000;
 const CATCHUP_MIN_GAP_MS = 12000;
+
+// Typing, both chat surfaces. The typist says "typing" again every
+// TYPING_REFRESH_MS while they keep going, and a name nobody has refreshed for
+// TYPING_EXPIRE_MS comes off the screen on its own. The stop the typist's app
+// sends, or the server sends when their connection drops, is still the quick
+// way off; this is for the stop that never arrives. Twice the refresh, so one
+// lost frame does not blink the name out mid-sentence.
+const TYPING_REFRESH_MS = 3000;
+const TYPING_EXPIRE_MS = 6000;
 
 // One-line summary of a message for the places that can only show one line: the
 // conversation list, the reply bar, a quoted reply.
@@ -2608,6 +2782,11 @@ const CROWD_FRESH_MS = 5 * 60 * 1000;
 // time its venue is scored; without it a session open from five to nine kept
 // five o'clock on every pin (Explore audit, 2026-09-05).
 const CROWD_SCORE_TTL_MS = 30 * 60 * 1000;
+// A venue card the server sent covered (routes/crowd.js lockedCard, a free
+// month spent), written into the predictions the way a withheld batch row is:
+// no number, no label, and crowdLocked, which the pin sync in FlockAppInner
+// reads to take a number back off the map and the heatmap.
+const lockedCrowdPrediction = (placeId, at) => ({ placeId, score: null, label: null, crowdLocked: true, fetchedAt: at });
 // An owner's live reading carries its expiry; a list row must not print
 // the owner's number past it (Explore audit, 2026-09-05).
 const ownerReportShown = (prediction) => prediction?.confidenceBasis === 'owner_report'
@@ -3282,24 +3461,22 @@ const NavIcon = ({ id, active }) => {
 // (Capacitor) or any phone-sized viewport it must not render — otherwise the app
 // draws a fake phone border inside the actual phone. Native detection + width
 // check; evaluated once (rotation/resize edge cases don't need live re-eval).
-// VENUE PLAN PRICES. One copy, because there used to be three and they
+// VENUE PLAN PRICE. One copy, because there used to be three and they
 // disagreed with the server.
 //
-// $99 is VENUE-PRICING.md's call (2026-08-20), which supersedes the $75 Pro
-// price set on 2026-08-14, and it is already what the backend bills against:
-// `VENUE_PRICE_USD = 99` in backend/routes/admin.js, which is the only place
-// in the whole product that has ever held a venue price. There is no route a
-// venue owner can call that returns it, so this is still a hardcode; it is one
-// hardcode instead of three, it agrees with the server's, and both carry the
-// same citation.
+// Venues have two plans (VENUE-PRICING.md section 4): a free account, and
+// Roost at $99 a month per location, stored as tier 'pro'. That is the only
+// key here. The $35 middle plan was retired with its gates, so there is no
+// second price to print.
 //
-// Premium stays at $35 here on purpose. VENUE-PRICING.md §4 collapses the
-// three tiers to two and retires Premium, but that move drops server-side
-// gates (promotions, events, incoming-flocks) at the same time. Changing the
-// cards without the gates would advertise features the backend still refuses,
-// so the collapse is one commit that has to include backend/routes, and this
-// is not it.
-const VENUE_PLAN_PRICE = { premium: 35, pro: 99 };
+// While Roost is on sale on the web, the plans sheet and every lock print
+// Stripe's own price instead (roostPlanPriceLabel over
+// /api/venue-billing/status, components/venue/VenueBillingControl.js). This
+// constant is what they fall back to with billing off, inside the app, and
+// before the status answers, so it has to equal Stripe's monthly price and
+// `VENUE_PRICE_USD` in backend/routes/admin.js;
+// backend/services/statedPrices.js lists it so the money hub flags a drift.
+const VENUE_PLAN_PRICE = { pro: 99 };
 const venuePlanPriceLabel = (tier, per = 'mo') =>
   VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
 
@@ -3686,8 +3863,14 @@ const applyTakedownToFlocks = (flocks, ev) => {
   if (contentId == null) return flocks;
   if (contentType !== 'flock_message' && contentType !== 'guest_rsvp') return flocks;
   let touched = false;
-  const next = flocks.map((f) => {
-    if (flockId != null && !sameContentId(f.id, flockId)) return f;
+  const next = flocks.map((flock) => {
+    if (flockId != null && !sameContentId(flock.id, flockId)) return flock;
+    // THE PIN IS A THIRD COPY (migration 068): the bar over the chat quotes a
+    // pinned message too. Taken off first, so every return below carries it.
+    const pins = contentType === 'flock_message' && Array.isArray(flock.pins) ? flock.pins : null;
+    const keptPins = pins && pins.filter((p) => !sameContentId(p.messageId != null ? p.messageId : p.id, contentId));
+    const f = keptPins && keptPins.length !== pins.length ? { ...flock, pins: keptPins } : flock;
+    if (f !== flock) touched = true;
     if (contentType === 'flock_message') {
       const msgs = f.messages || [];
       // TWO REMOVALS, NOT ONE, since migration 066. Dropping the bubble is the
@@ -4383,6 +4566,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [venueSearchError, setVenueSearchError] = useState('');
   const venueSearchTimer = React.useRef(null);
 
+  // WHETHER THIS LAUNCH ALREADY CHOSE A SCREEN. A tapped notification, a
+  // universal link, or a tag URL the app booted on each put the person
+  // somewhere on purpose. Both venue effects below route only after a network
+  // read (getVenueProfile), and on a cold start that read lands after the tap
+  // has been routed, so an owner whose saved mode is Venue was moved off the
+  // screen they launched into and onto the dashboard. The push router's handler
+  // sets this for every intent that picks a screen; a tag URL sets it from the
+  // path the app booted on, the same path nfcInitialPlaceId reads below.
+  const launchChoseScreenRef = useRef(
+    typeof window !== 'undefined' && /^\/checkin\/[^/?#]+/.test(window.location?.pathname || '')
+  );
+
   // If user came from venue login, check if they already have a profile
   React.useEffect(() => {
     if (venueLoginFlag) {
@@ -4391,6 +4586,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       localStorage.setItem('flockUserMode', 'venue');
       // Check if venue profile already exists — skip onboarding if so
       getVenueProfile().then(p => {
+        // A screen the launch already chose stays (launchChoseScreenRef).
+        if (launchChoseScreenRef.current) return;
         if (p && p.business_name) {
           // Already onboarded — go straight to dashboard
           setShowVenueOnboarding(false);
@@ -4401,7 +4598,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
       }).catch(() => {
         // No profile found — show onboarding
-        setShowVenueOnboarding(true);
+        if (!launchChoseScreenRef.current) setShowVenueOnboarding(true);
       });
     }
   }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4429,13 +4626,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (venueLoginFlag) return;
     venueBootRoutedRef.current = true;
     getVenueProfile().then((p) => {
+      // A deep link, a notification tap or a tag URL chose where this launch
+      // opens (launchChoseScreenRef). The saved mode answers "where do I
+      // start" only when nothing else already has.
+      if (launchChoseScreenRef.current) return;
       if (p && p.business_name) {
         setShowVenueOnboarding(false);
         setCurrentScreen('venueDashboard');
       } else {
         setShowVenueOnboarding(true);
       }
-    }).catch(() => setShowVenueOnboarding(true));
+    }).catch(() => { if (!launchChoseScreenRef.current) setShowVenueOnboarding(true); });
   }, [userMode, authUser?.role, venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigation
@@ -4768,6 +4969,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return q.trim();
   }, []);
 
+  // WHEN THIS SESSION FIRST SAW A VENUE CARD COME BACK LOCKED (0 = never).
+  // A free account that spent its month after a list was scored kept every
+  // number that list had put on the map: a locked card cleared nothing, and a
+  // score younger than CROWD_SCORE_TTL_MS was never asked for again, so the
+  // pins went on quoting what the card had just covered. Now the locked card
+  // takes its own number off (lockedCrowdPrediction), and anything scored
+  // before the lock is asked for again the next time a list is scored, when
+  // the server says which of those venues it still shows this account.
+  const forecastLockedAtRef = useRef(0);
+
   // Fire one crowd-batch prediction for whatever venues do not have a score
   // yet (non-blocking, dedupes against scores already in hand). This is the
   // ONLY way scores reach the map: every venue list that feeds pins — the
@@ -4783,7 +4994,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // falls back exactly as before.
   const requestCrowdScores = useCallback((venues) => {
     const stale = (e) => !e || !e.fetchedAt || Date.now() - e.fetchedAt > CROWD_SCORE_TTL_MS;
-    const unscored = (venues || []).filter(v => v.place_id && stale(crowdPredictionsRef.current[v.place_id]));
+    // A number scored before this account was first shown a locked card may
+    // be one the server withholds now (forecastLockedAtRef above).
+    const lockedAt = forecastLockedAtRef.current;
+    const scoredBeforeLock = (e) => lockedAt > 0 && !!e && !e.crowdLocked && e.fetchedAt < lockedAt;
+    const unscored = (venues || []).filter(v => v.place_id && (stale(crowdPredictionsRef.current[v.place_id]) || scoredBeforeLock(crowdPredictionsRef.current[v.place_id])));
     if (unscored.length === 0) return;
     const batchPayload = unscored.slice(0, 20).map(v => ({
       place_id: v.place_id, name: v.name, rating: v.rating,
@@ -4998,6 +5213,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (crowd && typeof crowd.score === 'number') {
         setAllVenues(prev => prev.map(v => v.place_id === placeId ? { ...v, crowd: crowd.score, crowdLabel: crowd.label || v.crowdLabel } : v));
         setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label, confidenceBasis: crowd.confidenceBasis || null, ownerReport: crowd.ownerReport || null, fetchedAt: Date.now() } }));
+      } else if (crowd && crowd.forecastAccess?.locked === true) {
+        // Covered: the pin and the list lose the number too, not only the card.
+        const lockedAt = Date.now();
+        forecastLockedAtRef.current = lockedAt;
+        setCrowdPredictions(prev => ({ ...prev, [placeId]: lockedCrowdPrediction(placeId, lockedAt) }));
       }
 
       // Pan map to venue location once we have coordinates
@@ -5110,6 +5330,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [addFriendsSearching, setAddFriendsSearching] = useState(false);
   const [addFriendsError, setAddFriendsError] = useState('');
   const [myFriendCode, setMyFriendCode] = useState('');
+  const [myFriendCodeFailed, setMyFriendCodeFailed] = useState(false);
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendCodeLoading, setFriendCodeLoading] = useState(false);
   const [contactsUsers, setContactsUsers] = useState([]);
@@ -5193,10 +5414,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const loadAddFriendsData = useCallback(async () => {
     setContactsSupported(contactsAvailable());
-    // Generate friend code client-side (deterministic from user ID)
-    if (authUser?.id) {
-      setMyFriendCode('FLOCK-' + authUser.id.toString(36).toUpperCase().padStart(4, '0'));
-    }
+    // The server issues the friend code (routes/friends.js, migration 079). It
+    // used to be worked out here from the user id, which is exactly what made
+    // every account's code guessable. Until it arrives the QR and the share
+    // button wait on an empty code; cleared first so a different account never
+    // shows the last one's.
+    if (!authUser?.id) return;
+    setMyFriendCode('');
+    setMyFriendCodeFailed(false);
+    getMyFriendCode()
+      .then((d) => { if (d?.code) setMyFriendCode(d.code); else setMyFriendCodeFailed(true); })
+      .catch((e) => { console.error('[AddFriends] Friend code:', e.message); setMyFriendCodeFailed(true); });
     // Load each independently so one failure doesn't block the rest
     getPendingRequests()
       .then(d => { setPendingRequests(d.requests || []); setPendingRequestsError(''); })
@@ -6145,9 +6373,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // refetch lands a moment later with the real row. loadFlocks only draws its
   // skeleton while the list is EMPTY, and the optimistic row means it is not,
   // so nothing flashes.
+  //
+  // THE SAME PERSON'S LINK ANSWER GOES WITH IT. Somebody who answered this
+  // plan's share link by name and then accepts here was counted twice, as a
+  // guest and a member, until the server was handed the guest identity to
+  // retire. storedGuestTokens says which identities on this device are this
+  // person's (services/inviteHandoff.js); the server matches only this plan's.
   const handleAcceptFlockInvite = useCallback(async (flockId) => {
     try {
-      await acceptFlockInvite(flockId);
+      await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
       const invite = pendingFlockInvites.find(f => f.id === flockId);
       if (invite) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
@@ -6178,7 +6412,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the full row a moment later.
   const handleRejoinDeclinedFlock = useCallback(async (flockId) => {
     try {
-      await acceptFlockInvite(flockId);
+      // Same accept, so the same retirement of this person's link answer.
+      await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
       const invite = declinedFlockInvites.find(f => f.id === flockId);
       setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
       if (invite) {
@@ -6682,6 +6917,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // Sync fresh score into the venue list so the map heatmap matches the dial
           setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
           setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
+        } else if (data && data.forecastAccess?.locked === true) {
+          // Covered: the pin under the card loses its number too
+          // (forecastLockedAtRef has why).
+          const lockedAt = Date.now();
+          forecastLockedAtRef.current = lockedAt;
+          setCrowdPredictions(prev => ({ ...prev, [pid]: lockedCrowdPrediction(pid, lockedAt) }));
         }
         if (data && !data.forecastAccess?.locked && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       })
@@ -7006,6 +7247,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // in neither list yet. The effect below runs it once the lists are real.
   useEffect(() => onPushNavigate((intent) => {
     if (!intent || !intent.screen) return;
+    // AN ALARM OPENS ONLY FOR THE ACCOUNT IT WAS SENT TO. Both safety branches
+    // below act on the payload alone, name and map pin included, and a
+    // notification outlives the session that received it: a tap on the last
+    // account's alarm, from the tray or waiting in the queue through a
+    // sign-in, used to open it in whoever's session came next. The server
+    // names the recipient on every copy (routes/safety.js), and a copy for
+    // another account, or one that names nobody, draws nothing.
+    if (intent.screen === 'safety' && !safetyIntentIsFor(intent, authUser?.id)) return;
+    // The safety modal is an overlay, and the admin tap leaves for the console
+    // page; everything else picks where this launch opens, which the venue
+    // boot routing must then leave alone (launchChoseScreenRef).
+    if (intent.screen !== 'safety' && intent.screen !== 'admin') launchChoseScreenRef.current = true;
     if (intent.screen === 'flock' && intent.flockId) {
       setSelectedFlockId(intent.flockId);
       setCurrentTab('chat');
@@ -7038,8 +7291,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } else if (intent.screen === 'invite' && intent.token) {
       // /i/<token>, delivered by the universal link. The redeem path already
       // exists (loadFlocks redeems a remembered token first and opens the
-      // plan), so this only has to remember it and reload.
-      rememberInvite(intent.token);
+      // plan), so this only has to remember it and reload. With the guest
+      // identity this person answered that link under, when this device holds
+      // one, exactly as the invite page stashes it before signup: the join
+      // retires that by-name answer instead of counting them twice.
+      rememberInvite(intent.token, {
+        guestToken: storedGuestTokens({ name: meRef.current?.name, linkToken: intent.token })[0] || null,
+      });
       loadFlocks();
     } else if (intent.screen === 'checkin' && intent.placeId) {
       // A tag tap delivered by the universal link, with the app open or
@@ -7077,7 +7335,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         at: intent.at || new Date().toISOString(),
       });
     }
-  }), [showToast, loadFlocks]);
+  }), [showToast, loadFlocks, authUser?.id]);
 
   // ── Where a tapped invite actually lands ────────────────────────────────
   //
@@ -7832,7 +8090,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // holds. Assumed on until the profile says otherwise.
   const [venueBillingOn, setVenueBillingOn] = useState(true);
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
-  const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
+  const [adminTab, setAdminTab] = useState('overview'); // Lifted to App level to persist across re-renders. Overview is the money hub (screens/RevenueScreen.js).
 
   // Revenue simulator state, kept here for the same reason adminTab is, and the
   // reason is worth writing down because the shape recurs in this file.
@@ -7856,7 +8114,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // half-typed simulator survives a trip to another screen, and it arrives in
   // the console as a prop.
   const [numVenues, setNumVenues] = useState(20);
-  const [subscriptionPrice, setSubscriptionPrice] = useState(67); // midpoint of $35 Premium and $99 Pro (was 55 against the retired $75, so the simulator opened on a price no venue could be charged)
+  const [subscriptionPrice, setSubscriptionPrice] = useState(99); // Roost's list price, the one venue plan; a seed off any other price opens the simulator on a plan no venue can buy (it was 67, the midpoint of Roost and the retired middle plan)
   const [eventsPerVenue, setEventsPerVenue] = useState(12);
   const [avgSpend, setAvgSpend] = useState(120);
   const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
@@ -8728,6 +8986,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
   }, [showToast, openAttendanceSheet]);
 
+  // Call a live plan off: planning or confirmed -> cancelled. The same
+  // creator-only PUT as the two above, and the server refuses it (409) for a
+  // plan that is already completed or cancelled. Until this existed the host's
+  // only way out of a plan was Leave, which deletes it for everyone, chat and
+  // all; a cancel keeps the row and the chat, and only the status moves.
+  //
+  // NOT OPTIMISTIC, unlike those two. The chat's confirm dialog holds its own
+  // pending state until the server answers, because a plan painted as called
+  // off that the server then kept would show the host "everyone has been
+  // told" while nobody had been. Resolves true only once it has landed.
+  //
+  // The route's flock_updated fan-out skips the actor, so the host's own copy
+  // is the one this has to write; every other member hears it through the
+  // onFlockUpdated listener below. The night-of window closes with it
+  // (reconfirm_reset on the server), so the strip goes too.
+  const cancelFlockPlan = useCallback((flockId) => (
+    setFlockStatus(flockId, 'cancelled')
+      .then(() => {
+        setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'cancelled', reconfirm: null } : f));
+        showToast('Plan cancelled. Everyone in the flock has been told.');
+        return true;
+      })
+      .catch((err) => {
+        if (!err?.sessionExpired) showToast(err?.message || "Couldn't cancel this plan", 'error');
+        return false;
+      })
+  ), [showToast]);
+
   // Set or change a flock's time. Same generic PUT /api/flocks/:id that
   // saveFlockVenue and setFlockStatus use, and the same rules apply: creator
   // only (the server answers 403 otherwise), event_time must be ISO 8601.
@@ -9200,6 +9486,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             members,
             guests,
             memberCount: Math.max(0, (data.momentum?.accepted ?? accepted.length) - hidden),
+            // Kept on the flock the way the plan screen's loader keeps it, so
+            // a guest answering live (onGuestRsvp) subtracts the same blocked
+            // members from the server's going count this subtracted. Without
+            // it a plan opened only through the chat re-inflated by that many
+            // on the next guest answer.
+            hiddenAccepted: hidden,
             // The bill divides by the server's accepted roster, blocks
             // included, so this is the count BEFORE the strip above. Hiding a
             // blocked member from the faces must not shrink everybody's share.
@@ -9232,23 +9524,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // fire a second read on top of one that is still in flight.
   const historyReadAtRef = useRef({});
 
+  // EVERY UNSEND, TAKEDOWN AND BLOCK THIS SESSION HAS SEEN, numbered. A history
+  // read notes the number it went out at, and whatever was retracted after
+  // that is dropped from its answer (retractedSince, dropRetracted), because a
+  // read that left before an unsend and landed after it put the unsent message
+  // straight back on screen, quotes and pin included. Written through
+  // noteRetraction; a ref, so no hook has to list it as a dependency.
+  const retractionsRef = useRef({ seq: 0, log: [] });
+
   // One flock-chat history read, shared by screen entry and the reconnect
   // catch-up so the two cannot drift in how they merge.
   const loadFlockMessages = useCallback((flockId, { showSpinner = false, keepOlder = false } = {}) => {
     historyReadAtRef.current[`flock:${flockId}`] = Date.now();
+    const since = retractionsRef.current.seq;
     if (showSpinner) setMessagesLoading(true);
     setMessagesError('');
     return getMessages(flockId)
       .then((data) => {
         const msgs = (data.messages || []).map(m => mapFlockRow(m, meRef.current?.id));
+        const drop = retractedSince(retractionsRef.current.log, since, 'flock');
         // Bring back any send that failed in a previous session, minus the ones
-        // that turn out to have landed after all (they now appear in history,
-        // matched by content), and rewrite the store so a settled send never
-        // comes back as a ghost failure.
-        const failed = readFailedFlockMessages(flockId).filter(fm => !msgs.some(h => sameSend(fm, {
-          message_text: h.text, message_type: h.message_type, image_url: h.image || h.image_url || null,
-          thumb: h.thumb || h.thumb_url || null,
-        })));
+        // that turn out to have landed after all (one of this account's own
+        // rows, issued after the send began, with the same content, and not a
+        // row already on screen), and rewrite the store so a settled send never
+        // comes back as a ghost failure. Another member's identical line is
+        // not yours landing, and neither is an older one of yours.
+        const stored = readFailedFlockMessages(flockId);
+        const onScreen = ((flocksRef.current.find(f => f.id === flockId) || {}).messages || [])
+          .filter(m => !m.pending && !m.failed && isServerId(m.id)).map(m => m.id);
+        const landed = landedSends(stored, msgs, onScreen);
+        const failed = stored.filter(fm => !landed.has(fm));
         writeFailedFlockMessages(flockId, failed);
         // A read that does NOT keep older rows truncates the list back to this
         // page, so whatever was paged in before is gone and the pages exist
@@ -9286,13 +9591,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
            merged, because the route answers with the whole list and that list
            is filtered by THIS reader's block set. A client merging one row
            into a list it already had would be deciding for itself whether it
-           is allowed to see that row. */
+           is allowed to see that row. Minus a pin on anything retracted after
+           this read went out, for the reason `drop` exists: taken off the
+           answer itself, so the list stays the server's and nothing else. */
+        const gone = retractedIdsIn(msgs, drop);
+        if (gone.size > 0 && Array.isArray(data.pins)) {
+          data.pins = data.pins.filter(p => !gone.has(String(p.messageId != null ? p.messageId : p.id)));
+        }
         const pins = Array.isArray(data.pins) ? data.pins : [];
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }), readers, pins };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop }), readers, pins };
         }));
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
@@ -9325,6 +9636,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The DM twin of loadFlockMessages, for the same two callers.
   const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false } = {}) => {
     historyReadAtRef.current[`dm:${userId}`] = Date.now();
+    const since = retractionsRef.current.seq;
     if (showSkeleton) setDmMessagesLoading(true);
     setDmMessagesError('');
     return getDMs(userId)
@@ -9339,6 +9651,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             : d)));
           return;
         }
+        // A READ OLDER THAN A BLOCK WITH THIS VERY PERSON is ignored whole. It
+        // would clear the blocked flag the block just set, bring the composer
+        // back, and put the thread's messages back under it. What is on screen
+        // is already the block's answer.
+        const drop = retractedSince(retractionsRef.current.log, since, 'dm');
+        if (drop && drop.senders.has(String(userId))) return;
         setDmBlocked(prev => {
           if (!prev[String(userId)]) return prev;
           const next = { ...prev };
@@ -9375,7 +9693,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               userId,
               name: fromThem?.sender_name || 'Unknown',
               image: fromThem?.sender_image || null,
-              messages: msgs,
+              messages: dropRetracted(msgs, drop),
               lastMessage: last?.message_text || '',
               lastMessageTime: last?.created_at || null,
               lastMessageIsYou: last ? String(last.sender_id) === String(me) : false,
@@ -9383,7 +9701,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             }];
           }
           return prev.map(d => d.userId === userId
-            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
+            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop }), unread: 0 }
             : d);
         });
         // The DM half of the delivery receipt, and the flock twin's comment
@@ -9452,10 +9770,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadOlderDms = useCallback((userId, cursor) => {
     if (!isServerId(cursor)) return;
     setOlderLoading(true);
+    // See loadOlderFlockMessages: a page older than a retraction drops it.
+    const since = retractionsRef.current.seq;
     getDMs(userId, { before: cursor })
       .then((data) => {
         const rows = data.messages || [];
-        const older = rows.map(m => mapDmRow(m, meRef.current?.id));
+        const drop = retractedSince(retractionsRef.current.log, since, 'dm');
+        // Nothing at all from a thread whose other side was blocked since.
+        if (drop && drop.senders.has(String(userId))) return;
+        const older = dropRetracted(rows.map(m => mapDmRow(m, meRef.current?.id)), drop);
         if (rows.length < DM_PAGE_SIZE) setDmAtTop(t => ({ ...t, [userId]: true }));
         setDirectMessages(cur => cur.map(d => (d.userId === userId
           ? { ...d, messages: prependOlder(d.messages, older) }
@@ -9468,10 +9791,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadOlderFlockMessages = useCallback((flockId, cursor) => {
     if (!isServerId(cursor)) return;
     setOlderLoading(true);
+    // Same rule as the entry read: an older page that went out before an
+    // unsend or a block does not get to bring those rows back.
+    const since = retractionsRef.current.seq;
     getMessages(flockId, { before: cursor })
       .then((data) => {
         const rows = data.messages || [];
-        const older = rows.map(m => mapFlockRow(m, meRef.current?.id));
+        const older = dropRetracted(rows.map(m => mapFlockRow(m, meRef.current?.id)),
+          retractedSince(retractionsRef.current.log, since, 'flock'));
         if (rows.length < DM_PAGE_SIZE) setFlockAtTop(t => ({ ...t, [flockId]: true }));
         setFlocks(cur => cur.map(f => (f.id === flockId
           ? { ...f, messages: prependOlder(f.messages, older) }
@@ -9736,7 +10063,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true, reconfirmed: g.reconfirmed === true,
           }));
           const acceptedCount = (data.members || []).filter(m => m.status === 'accepted').length;
-          const hiddenAccepted = acceptedCount - members.filter(m => m.status === 'accepted').length;
+          // Measured against the SERVER'S count, as refreshFlockRoster's
+          // `hidden` is. GET /api/flocks/:id already strips blocked members
+          // from `members`, so `acceptedCount` is the post-strip list and
+          // subtracting the visible faces from it came to 0: this screen went
+          // on saying "4 going" over three faces while the chat's loader said
+          // 3, and whichever ran last wrote the list card. `member_count` is
+          // the unfiltered accepted count in the same body.
+          const hiddenAccepted = Math.max(0, (data.flock?.member_count ?? acceptedCount) - members.filter(m => m.status === 'accepted').length);
           const eventTime = data.flock?.event_time || null;
           // hiddenAccepted rides on the flock so a live going count (a guest
           // answering, below) can subtract the same blocked members this does.
@@ -9755,66 +10089,74 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // timestamp) instead of ignoring it — ignoring left temp ids forever
       // and gave no signal when a send was dropped (round 4).
       if (String(msg.sender_id) === String(authUser?.id)) {
-        // Matching on text alone was fine while every message had text. A photo
-        // carries none, so two photos in a row both matched the first pending
-        // entry: the type and the image itself are part of the identity now.
+        // WHICH SEND THIS IS. Matching on text alone was fine while every
+        // message had text; a photo carries none, so the type and the image
+        // joined the match. That still could not tell two photos with no
+        // caption apart, so when the server finished the later one first it
+        // settled the first bubble with the second photo's id. The send's own
+        // client id now comes back on the echo and decides (echoMatches);
+        // content is only for a server that does not send it.
         const entry = [...pendingEchoRef.current.entries()]
-          .find(([, p]) => p.flockId === msg.flock_id && sameSend(p, msg));
+          .find(([, p]) => p.flockId === msg.flock_id && echoMatches(p, msg));
         if (entry) {
-          const [tempId, p] = entry;
-          clearTimeout(p.timer);
-          pendingEchoRef.current.delete(tempId);
-          setFlocks(prev => prev.map(f => {
-            if (f.id !== msg.flock_id) return f;
-            return {
-              ...f,
-              // `status` off the echo and never a literal. The server puts
+          clearTimeout(entry[1].timer);
+          pendingEchoRef.current.delete(entry[0]);
+        }
+        // A bubble the failure timer gave up on, reclaimed below: its copy in
+        // the reload store goes too, or it came back failed on the next open.
+        if (!entry) {
+          const held = (flocksRef.current.find(f => f.id === msg.flock_id) || {}).messages || [];
+          const gaveUp = held.find(m => m.failed && echoMatches(m, msg));
+          if (gaveUp) removeFailedFlockMessage(msg.flock_id, gaveUp.id);
+        }
+        setFlocks(prev => {
+          const fi = prev.findIndex(f => f.id === msg.flock_id);
+          if (fi === -1) return prev;
+          const msgs = prev[fi].messages || [];
+          // Already here: the HTTP answer or a history read got there first.
+          // Return the SAME array so React bails out instead of re-rendering
+          // the whole tree on every echo.
+          if (msgs.some(m => m.id === msg.id)) return prev;
+          // The bubble this send drew: by its temp id when the pending entry
+          // matched; otherwise one the 8s timer gave up on, or one sent over
+          // HTTP whose socket came back before the answer did.
+          const at = entry
+            ? msgs.findIndex(m => m.id === entry[0])
+            : msgs.findIndex(m => (m.pending || m.failed) && echoMatches(m, msg));
+          const updated = [...msgs];
+          if (at === -1) {
+            // NO BUBBLE: this account sent it from another device. The server
+            // sends the sender's copy to their whole user room on both
+            // transports now, and this used to be dropped on the grounds that
+            // only the sending socket was ever echoed, so a laptop open on the
+            // chat never showed what its owner said from their phone.
+            updated.push(mapFlockRow(msg, authUser?.id));
+          } else {
+            // `status` off the echo and never a literal. The server puts
             // 'sent' on the SENDER's copy alone and omits it entirely on the
             // fan-out path that fires when the block filter is unavailable
             // ("Message saved, but live delivery is delayed"). An absent
             // status draws nothing, which is the honest reading of a send the
             // server could not fully account for.
-            messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, status: msg.status || null, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || m.sentAt || null } : m)),
-            };
-          }));
-          return;
-        }
-        // No pending entry: an echo that arrived after the 8s timer gave up.
-        // (The server sends an own-echo only to the socket that sent it, so
-        // there is no other-device case to consider here.) Reclaim the
-        // abandoned bubble rather than leaving a photo on screen under a line
-        // saying it never sent.
-        setFlocks(prev => {
-          const fi = prev.findIndex(f => f.id === msg.flock_id);
-          if (fi === -1) return prev;
-          const msgs = prev[fi].messages || [];
-          if (msgs.some(m => m.id === msg.id)) return prev;
-          const staleIdx = msgs.findIndex(m => (m.pending || m.failed) && sameSend(m, msg));
-          // Nothing to reconcile: return the SAME array so React bails out
-          // instead of re-rendering the whole tree on every echo.
-          if (staleIdx === -1) return prev;
-          const updated = [...msgs];
-          updated[staleIdx] = { ...updated[staleIdx], id: msg.id, pending: false, failed: false, status: msg.status || null };
+            updated[at] = { ...updated[at], id: msg.id, pending: false, failed: false, status: msg.status || null, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || updated[at].sentAt || null };
+          }
           const next = [...prev];
-          next[fi] = { ...prev[fi], messages: updated };
+          next[fi] = { ...prev[fi], messages: orderByServerId(updated) };
           return next;
         });
         return;
       }
-      const mapped = {
-        id: msg.id,
-        sender: msg.sender_name || 'Unknown',
-        senderId: msg.sender_id,
-        senderImage: msg.sender_image || null,
-        time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-        sentAt: msg.created_at || null,
-        text: msg.message_text,
-        message_type: msg.message_type || 'text',
-        venue_data: msg.venue_data || null,
-        reactions: [],
-        ...(msg.image_url ? { image: msg.image_url } : {}),
-        ...(msg.thumb_url ? { thumb: msg.thumb_url } : {}),
-      };
+      // A BLOCK OR AN UNSEND THAT BEAT THIS ROW HERE. The server filters the
+      // fan-out when it sends, so a message sent a moment before a block can
+      // still land a moment after it, and it went straight onto the screen the
+      // block had just cleared. The same for a row whose unsend or takedown
+      // this client has already applied.
+      if (blockedIdsRef.current.has(String(msg.sender_id))) return;
+      if (retractionsRef.current.log.some(e => e.kind === 'flock' && String(e.messageId) === String(msg.id))) return;
+      // The history read's own mapper, so a live row and a reloaded one are
+      // the same object: the quote a reply carries and the kind a plan event
+      // carries both arrive with it.
+      const mapped = mapFlockRow(msg, authUser?.id);
       // Unread rides the append: the badge is server truth on every list
       // load and this is the live half between loads. catchUpTargetRef is
       // written every render, so it is current here without this callback
@@ -9827,7 +10169,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (f.id !== msg.flock_id) return f;
         // Deduplicate — skip if message ID already exists
         if ((f.messages || []).some(m => m.id === msg.id)) return f;
-        return { ...f, messages: [...(f.messages || []), mapped], unread: chatOpen ? (f.unread || 0) : (f.unread || 0) + 1 };
+        // In id order, not arrival order: see orderByServerId.
+        return { ...f, messages: orderByServerId([...(f.messages || []), mapped]), unread: chatOpen ? (f.unread || 0) : (f.unread || 0) + 1 };
       }));
     });
     return unsub;
@@ -9983,27 +10326,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for typing indicators via WebSocket (scoped to current flock, multi-user)
   const typingUsersRef = useRef({}); // { [userId]: name }
   useEffect(() => {
+    // EACH NAME EXPIRES UNLESS IT IS REFRESHED (TYPING_EXPIRE_MS). A name used
+    // to leave only on a stop, and a stop can be lost: the typist's phone
+    // locked before its idle timer ran, or the stop was filtered on the way.
+    // The name then stayed up for as long as the chat was open.
+    const expiry = {};
+    const show = () => {
+      const names = Object.values(typingUsersRef.current);
+      setIsTyping(names.length > 0);
+      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
+    };
+    const forget = (userId) => {
+      clearTimeout(expiry[userId]);
+      delete expiry[userId];
+      if (!(userId in typingUsersRef.current)) return;
+      const next = { ...typingUsersRef.current };
+      delete next[userId];
+      typingUsersRef.current = next;
+      show();
+    };
     const unsubTyping = onUserTyping((data) => {
       if (data.flockId !== selectedFlockId) return; // scope to current flock
       typingUsersRef.current = { ...typingUsersRef.current, [data.userId]: data.name };
-      const names = Object.values(typingUsersRef.current);
-      setIsTyping(names.length > 0);
-      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names[0]} and ${names.length - 1} others`);
+      clearTimeout(expiry[data.userId]);
+      expiry[data.userId] = setTimeout(() => forget(data.userId), TYPING_EXPIRE_MS);
+      show();
     });
     const unsubStop = onUserStoppedTyping((data) => {
       if (data.flockId !== selectedFlockId) return;
-      const next = { ...typingUsersRef.current };
-      delete next[data.userId];
-      typingUsersRef.current = next;
-      const names = Object.values(next);
-      setIsTyping(names.length > 0);
-      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
+      forget(data.userId);
     });
     // Clear typing state when switching flocks
     typingUsersRef.current = {};
     setIsTyping(false);
     setTypingUser('');
-    return () => { unsubTyping(); unsubStop(); };
+    return () => { unsubTyping(); unsubStop(); Object.values(expiry).forEach(clearTimeout); };
+  }, [selectedFlockId]);
+
+  // THE OTHER HALF OF THE EXPIRY: while this person keeps typing, they keep
+  // saying so. handleChatInputChange emits once per burst and holds the latch
+  // until two quiet seconds end it, so a long message was one "typing" at its
+  // first letter; everybody else's screen would now expire that name halfway
+  // through. The latch is read, and only reset when the flock changes, the way
+  // the DM latch already is: a burst begun in one flock must not be refreshed
+  // into the next one. Its own idle timer still sends that flock's stop.
+  useEffect(() => {
+    typingActiveRef.current = false;
+    if (!selectedFlockId) return undefined;
+    const t = setInterval(() => {
+      if (typingActiveRef.current) startTyping(selectedFlockId);
+    }, TYPING_REFRESH_MS);
+    return () => clearInterval(t);
   }, [selectedFlockId]);
 
   // --- Live location sharing ---
@@ -10012,6 +10385,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // with an intent; a plain Share is this call without one. Either way the
   // share itself is the same thing it always was.
   const startSharingLocation = useCallback((flockId, travel = null) => {
+    // Not into a plan that is over. The chat of a cancelled or finished plan
+    // stays open, and a share started there was stopped again by the auto-stop
+    // below one render later, after a position had already gone out. Said in
+    // words rather than a button that does nothing.
+    const plan = flocksRef.current.find(f => f.id === flockId);
+    if (plan && (plan.status === 'completed' || plan.status === 'cancelled')) {
+      showToast('This plan is over, so there is nobody to share your location with.', 'error');
+      return;
+    }
     setMyTravel(travel);
     myTravelRef.current = travel;
     if (userLocation) {
@@ -10116,10 +10498,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     if (!sharingLocationForFlock || !userLocation) return;
     emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng, myTravelRef.current);
+    // Named in lib/livePins.js, because a receiver's staleness rule is a
+    // multiple of it: the two cannot be changed apart.
     const interval = setInterval(() => {
       const loc = userLocationRef.current;
       if (loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng, myTravelRef.current);
-    }, 10000);
+    }, LOCATION_EMIT_MS);
     return () => clearInterval(interval);
   }, [sharingLocationForFlock]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -10161,11 +10545,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [sharingLocationForFlock]);
 
   // Auto-stop sharing when flock status explicitly changes from confirmed
+  //
+  // AND WHEN THE PLAN IS OVER OR IS NO LONGER THIS PERSON'S. The share kept
+  // sending a position every LOCATION_EMIT_MS into plans it had no business
+  // in: a plan deleted under the sharer (onFlockDeleted takes it off the
+  // list), one the sharer left on another device or was taken out of (the
+  // next list load no longer has it), and one the host cancelled, or that
+  // finished, before this effect had recorded a first status. The server
+  // refuses every one of those positions at its membership check, so they
+  // were a GPS fix and a packet every ten seconds for nothing, and the stop
+  // is what tells anyone still holding the pin. A plan missing from a list
+  // that has held it is gone; a list that never held it (nothing loaded
+  // yet) stops nothing.
   const sharingFlockStatusRef = useRef(null);
   useEffect(() => {
     if (!sharingLocationForFlock) { sharingFlockStatusRef.current = null; return; }
     const flock = flocks.find(f => f.id === sharingLocationForFlock);
-    if (!flock) return; // flock not found during state rebuild — don't stop
+    if (!flock) {
+      if (sharingFlockStatusRef.current !== null) {
+        stopLocationSharing();
+        sharingFlockStatusRef.current = null;
+      }
+      return;
+    }
+    if (flock.status === 'completed' || flock.status === 'cancelled') {
+      stopLocationSharing();
+      sharingFlockStatusRef.current = null;
+      return;
+    }
     if (sharingFlockStatusRef.current === null) { sharingFlockStatusRef.current = flock.status; return; } // first run — just record status
     if (flock.status !== 'confirmed') {
       stopLocationSharing();
@@ -10180,10 +10587,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // with you, while a flock's chat counts only its own people (ChatDetail
     // filters on flockId). Before the flock rode along, a member of two flocks
     // saw the sharers of one counted as "here" in the other.
+    // `receivedAt` is this device's clock when the position landed, which is
+    // what the staleness rule below measures (lib/livePins.js says why not
+    // the server's `timestamp`).
     const unsubLocation = onLocationUpdate((data) => {
       setFlockMemberLocations(prev => ({
         ...prev,
-        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, intent: data.intent, mode: data.mode, seats: data.seats, timestamp: data.timestamp, flockId: data.flockId },
+        [data.userId]: { lat: data.lat, lng: data.lng, name: data.name, intent: data.intent, mode: data.mode, seats: data.seats, receivedAt: Date.now(), timestamp: data.timestamp, flockId: data.flockId },
       }));
     });
     const unsubStopped = onMemberStoppedSharing((data) => {
@@ -10200,6 +10610,40 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     return () => { unsubLocation(); unsubStopped(); };
   }, []);
+
+  // A PIN THAT HAS STOPPED MOVING COMES OFF. member_stopped_sharing is sent
+  // once and never replayed, so a stop this device missed while it was offline
+  // or backgrounded left the pin on the map, live dot and all, until a reload.
+  // A sharer sends every LOCATION_EMIT_MS, so a pin with nothing new for
+  // PIN_STALE_AFTER_MS (six sends) is dropped (lib/livePins.js). Checked on the
+  // same beat, and only while there is a pin to check; the updater hands back
+  // the same map when nothing is stale, so a quiet tick renders nothing.
+  const hasMemberPins = Object.keys(flockMemberLocations).length > 0;
+  useEffect(() => {
+    if (!hasMemberPins) return undefined;
+    const tick = setInterval(() => {
+      setFlockMemberLocations(prev => withoutStalePins(prev, Date.now()));
+    }, LOCATION_EMIT_MS);
+    return () => clearInterval(tick);
+  }, [hasMemberPins]);
+
+  // A PLAN THAT IS OVER TAKES ITS PINS WITH IT. The host calling it off (the
+  // Cancel plan confirm, or flock_updated for everyone else) and the plan
+  // finishing (the host's done slide, or the completion sweep) end every share
+  // in it (the auto-stop above), but a pin this device already holds only
+  // comes off on a stop, and a stop can be missed. Asked only while there is a
+  // pin, and only about the plans those pins name.
+  useEffect(() => {
+    const pinned = new Set(Object.values(flockMemberLocations)
+      .map(entry => entry && entry.flockId)
+      .filter(id => id != null)
+      .map(String));
+    if (pinned.size === 0) return;
+    const over = flocks
+      .filter(f => pinned.has(String(f.id)) && (f.status === 'completed' || f.status === 'cancelled'))
+      .map(f => f.id);
+    if (over.length > 0) setFlockMemberLocations(prev => withoutFlockPins(prev, over));
+  }, [flocks, flockMemberLocations]);
 
   // Clean up location sharing on unmount. Through the ref: with [] deps this
   // cleanup closes over the MOUNT-TIME value, which is null, so the guard was
@@ -10525,6 +10969,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const unsub = onFlockDeleted((data) => {
       setFlocks(prev => prev.filter(f => f.id !== data.flockId));
       setPendingFlockInvites(prev => prev.filter(f => f.id !== data.flockId));
+      // Every pin shown from the deleted plan comes off with it. The server
+      // tells the people it handed each pin to, but only those it recorded
+      // and only if they are online; the plan's own deletion notice is the
+      // one every member gets. (This device's own share into it stops at the
+      // auto-stop effect, now that the plan is off the list.)
+      setFlockMemberLocations(prev => withoutFlockPins(prev, data.flockId));
       if (selectedFlockId === data.flockId) {
         // 'home' is not a screen this app has ever had. It fell through the
         // renderScreen switch to whatever tab happened to be selected, so
@@ -10552,7 +11002,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const before = flocksRef.current.find(f => f.id === data.flockId);
       if (before) {
         const name = data.name || before.name || 'Your plan';
-        if (data.status === 'confirmed' && before.status !== 'confirmed') {
+        // A host calling the plan off. Checked first because every update
+        // carries event_time, so the time branches below must not get to
+        // describe it. Only with an actor: the completion sweep sends this
+        // event too, bare, when a night nobody locked in ends hours after
+        // its time, and nobody cancelled that one.
+        if (data.status === 'cancelled' && before.status !== 'cancelled' && data.updatedBy) {
+          showToast(`${name} was cancelled by ${data.updatedBy}.`);
+        } else if (data.status === 'confirmed' && before.status !== 'confirmed') {
           showToast(`${name} is locked in${data.venue_name ? ` at ${data.venue_name}` : ''}.`);
         } else if (data.event_time && before.eventTime && new Date(data.event_time).getTime() !== new Date(before.eventTime).getTime()) {
           showToast(`${name} moved to ${formatEventTime(data.event_time)}.`);
@@ -10637,29 +11094,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the tombstone. Removal, not a stub: the thread reads as if the message
   // was never there, and history reloads agree because the server filters
   // the same rows.
-  useEffect(() => {
-    const unsub = onFlockMessageUnsent((data) => {
-      setFlocks(prev => prev.map(f => {
-        if (f.id !== data.flockId) return f;
-        const messages = (f.messages || []).filter(m => m.id !== data.messageId);
+  //
+  // THE TAKEDOWN'S CLEAR, NOT A BARE FILTER. An unsent message's words also
+  // live in every reply that quotes it and in the pinned bar, and a filter on
+  // the bubble left both on screen until the next history read. Unsending is
+  // its author taking the words back, so they go from all three at once, the
+  // way a moderator's takedown already took them. It is logged too, so a
+  // history read already in flight cannot put it back (retractionsRef).
+  const clearUnsentFlockMessage = useCallback((flockId, messageId) => {
+    noteRetraction(retractionsRef, { kind: 'flock', messageId });
+    setFlocks(prev => {
+      const next = applyTakedownToFlocks(prev, { contentType: 'flock_message', contentId: messageId, flockId });
+      if (next === prev) return prev;
+      return next.map((f, i) => {
+        const was = prev[i];
+        if (f === was) return f;
         // The badge is a server-backed COUNT since migration 056, not something
         // derived from this array, so dropping the bubble left the row saying
         // one unread about a message that no longer exists. The server's own
         // unread_count already excludes it; this is the same subtraction on the
         // copy we are holding, and only when the row was actually removed.
-        const removed = messages.length !== (f.messages || []).length;
+        // Never for your own message, which was never counted: your own unsend
+        // runs through here too now.
+        const gone = (was.messages || []).find(m => sameContentId(m.id, messageId));
+        const removed = !!gone && gone.sender !== 'You';
         return {
           ...f,
-          messages,
           ...(removed && (f.unread || 0) > 0 ? { unread: f.unread - 1 } : {}),
         };
-      }));
+      });
     });
-    return unsub;
+    // And the reply bar, if it was quoting it: a send from there would be
+    // refused ("That message is no longer there to reply to").
+    setFlockReplyingTo((cur) => (cur && sameContentId(cur.id, messageId) ? null : cur));
   }, []);
 
   useEffect(() => {
+    const unsub = onFlockMessageUnsent((data) => {
+      clearUnsentFlockMessage(data.flockId, data.messageId);
+    });
+    return unsub;
+  }, [clearUnsentFlockMessage]);
+
+  useEffect(() => {
     const unsub = onDmMessageUnsent((data) => {
+      // Logged first, so a DM read already in flight cannot restore it.
+      noteRetraction(retractionsRef, { kind: 'dm', messageId: data.messageId });
       setDirectMessages(prev => {
         // The takedown helper, not a bare filter: it also nulls reply quotes
         // that would keep the unsent words on screen, and clears a preview
@@ -10681,24 +11161,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // The confirm half of unsend, one per chat. Await, then remove: the row
   // leaves the screen only when the tombstone is real, and a failure names
-  // itself instead of quietly resurrecting the message on reload.
+  // itself instead of quietly resurrecting the message on reload. The same
+  // clear the live event runs (quotes and the pinned bar with it), since the
+  // server's own echo of this unsend can arrive before or after this line.
   const handleUnsendFlockMessage = useCallback(async (flockId, messageId) => {
     try {
       await unsendFlockMessage(flockId, messageId);
-      setFlocks(prev => prev.map(f => (
-        f.id === flockId
-          ? { ...f, messages: (f.messages || []).filter(m => m.id !== messageId) }
-          : f
-      )));
+      clearUnsentFlockMessage(flockId, messageId);
       showToast('Message unsent.');
     } catch (err) {
       showToast(err.message || "That didn't unsend. Try again.", 'error');
     }
-  }, [showToast]);
+  }, [showToast, clearUnsentFlockMessage]);
 
   const handleUnsendDm = useCallback(async (messageId) => {
     try {
       await unsendDm(messageId);
+      noteRetraction(retractionsRef, { kind: 'dm', messageId });
       // Same helper the takedown path uses: removal plus reply-quote nulling
       // plus preview clearing, so the unsent words leave every surface at
       // once instead of only the thread.
@@ -10731,6 +11210,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           memberCount: Math.max(0, (f.memberCount || 1) - 1),
         };
       }));
+      // Their pin in that plan goes with their seat. The server announces a
+      // leaver's stop too, but this is the event every member is sent; a pin
+      // they hold in another of this reader's plans stays.
+      setFlockMemberLocations(prev => withoutPersonPin(prev, data.userId, data.flockId));
     });
     return unsub;
   }, []);
@@ -10796,6 +11279,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // work per photo, before the optimistic bubble, which renders the FULL
     // image either way.
     const thumb = image ? await makeChatThumb(image) : null;
+    // This send's own name, which the server hands back on the echo (see
+    // newClientId), and the newest row it was sent after, which is how a later
+    // history read tells a stored row that could be this send from one that
+    // cannot (see sendLandedAs). Both ride on the bubble and on a failure
+    // written to the reload store.
+    const clientId = newClientId();
+    const afterId = newestServerId((flocksRef.current.find(f => f.id === flockId) || {}).messages);
     // Optimistic local update
     const tempId = Date.now();
     addMessageToFlock(flockId, {
@@ -10809,6 +11299,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       reactions: [],
       message_type: msgType,
       reply_to: replyQuote,
+      clientId,
+      afterId,
       ...(image ? { image } : {}),
       ...(venueData ? { venue_data: venueData } : {}),
       pending: true,
@@ -10833,7 +11325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // below cannot double-post. That window used to lose the message entirely.
     const sock = getSocket();
     const sentOverSocket = !!sock?.connected
-      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, thumb_url: thumb, venue_data: venueData, reply_to_id: replyToId });
+      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, thumb_url: thumb, venue_data: venueData, client_id: clientId, reply_to_id: replyToId });
     if (sentOverSocket) {
       // The socket is the normal transport, so this is where the count of
       // flock messages actually lives. api.js's copy fires only in the `else`
@@ -10852,20 +11344,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
         // 8s suits a sentence; a 700KB photo on venue wifi can still be
         // honestly uploading at 8s, and marking it failed mid-flight is how a
         // retry tap makes duplicates. The late-echo reclaim self-heals either
         // way; the longer leash just stops the fail-then-unfail theater.
       }, image ? 30000 : 8000);
-      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
+      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, clientId, timer });
     } else {
       try {
-        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined, reply_to_id: replyToId || undefined });
-        // The REST route returns the stored row and emits no echo, so this is
-        // where the bubble stops being a temp id — without it, reacting to or
-        // reporting the photo you just sent addressed a row number the server
-        // has never seen.
+        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined, client_id: clientId, reply_to_id: replyToId || undefined });
+        // The REST route returns the stored row, so this is where the bubble
+        // stops being a temp id — without it, reacting to or reporting the
+        // photo you just sent addressed a row number the server has never
+        // seen. It also sends the row to this account's user room for its
+        // other devices; if this device's socket came back in time to hear
+        // that first, the echo settled the bubble by its client id and the
+        // map below finds no temp id left, which is the no-op it should be.
         //
         // isServerId, not a bare truthiness test: tempId is Date.now(), which is
         // above int4, and mergeHistory decides what to carry across a history
@@ -10881,7 +11376,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // transport too. Read off the body rather than assumed: this branch
           // runs when the socket is down, which is exactly when a stale or
           // proxied response is most likely.
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), status: data?.message?.status || null, pending: false } : m)) };
+          // In id order once it has one: see orderByServerId.
+          return { ...f, messages: orderByServerId((f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), status: data?.message?.status || null, pending: false } : m))) };
         }));
       } catch (err) {
         // The server words a moderation refusal ("that image can't be sent")
@@ -10892,7 +11388,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
       }
     }
   }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -11103,6 +11599,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      the reaction moves on the tap, the refusal puts it back, and the toast
      names the action that did not happen so the movement does not read as a
      bug. */
+  // One message's reactions as the server holds them, written over what this
+  // screen has. For the case where the tap and the server disagree about what
+  // was already there; a failed read leaves the screen as it is.
+  const refreshFlockReactions = useCallback((flockId, messageId) => {
+    getFlockMessageReactions(flockId, messageId)
+      .then((reactions) => {
+        if (!Array.isArray(reactions)) return;
+        setFlocks(prev => prev.map(f => (
+          f.id === flockId
+            ? { ...f, messages: (f.messages || []).map(m => (m.id === messageId ? { ...m, reactions } : m)) }
+            : f
+        )));
+      })
+      .catch(() => {});
+  }, []);
+
   const addReactionToMessage = useCallback((flockId, messageId, emoji) => {
     setShowReactionPicker(null);
     const me = meRef.current;
@@ -11140,6 +11652,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
     (hadIt ? removeReaction(messageId, emoji) : addReaction(messageId, emoji))
       .catch((err) => {
+        // THE SAME ACCOUNT ON ANOTHER DEVICE GOT THERE FIRST. An add answered
+        // "already reacted" means the reaction this tap drew IS on the server,
+        // and a remove answered 404 means it is already gone. Both used to roll
+        // back as a refusal, which took a reaction the server kept off the
+        // screen (or put back one it had removed) and toasted a failure about
+        // a tap that had done exactly what it drew. The pill stays as drawn,
+        // and the message's reactions are read again for anything else the
+        // two devices crossed on.
+        const alreadyThere = !hadIt && err?.status === 400
+          && (err?.code === 'ALREADY_REACTED' || /already reacted/i.test(err?.message || ''));
+        const alreadyGone = hadIt && err?.status === 404;
+        if (alreadyThere || alreadyGone) {
+          refreshFlockReactions(flockId, messageId);
+          return;
+        }
         if (previousReactions) {
           setFlocks(prev => prev.map(f => (
             f.id === flockId
@@ -11151,7 +11678,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const lead = hadIt ? "Removing your reaction didn't save." : "Your reaction didn't save.";
         showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
       });
-  }, [showToast]);
+  }, [showToast, refreshFlockReactions]);
 
   // Simulate typing indicator with user name
   // Typing indicators now driven by real WebSocket events
@@ -11891,11 +12418,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setCurrentScreen('main');
       }
     }
+    // Logged, so a history read already in flight when the block landed
+    // cannot bring their messages back (retractionsRef).
+    noteRetraction(retractionsRef, { senderId: id });
     // The DM was the only thing this used to clean up, so someone blocked from
     // a flock chat stayed right there on screen, messages and all, until you
     // navigated away and back. The server hides their messages from the next
     // fetch; this is the copy already rendered, and their seat in the roster.
     setFlocks(prev => prev.map(f => {
+      // THEIR WORDS INSIDE OTHER PEOPLE'S ROWS go too: a reply that quotes one
+      // of their messages, and a pin of one in the bar over the chat. The
+      // server's reads withhold both from this viewer from now on, and the
+      // takedown's clear (applyTakedownToFlocks) already takes both for a
+      // removed message; this took only the bubbles, so their sentences stayed
+      // on screen, quoted and pinned, until the next history read.
+      const theirs = new Set((f.messages || []).filter(m => String(m.senderId) === id).map(m => String(m.id)));
       // Their reactions on OTHER people's messages go too. The server pays a
       // filter to keep those off this screen (routes/messages.js drops a
       // blocked user's reaction rows for exactly this reason) and the client
@@ -11904,6 +12441,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const messages = Array.isArray(f.messages)
         ? f.messages
           .filter(m => String(m.senderId) !== id)
+          .map(m => (m.reply_to && theirs.has(String(m.reply_to.id)) ? { ...m, reply_to: null } : m))
           .map(m => {
             if (!Array.isArray(m.reactions)) return m;
             const kept = m.reactions.filter(r => String(r && r.user_id) !== id);
@@ -11911,15 +12449,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           })
         : null;
       const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
+      const pins = Array.isArray(f.pins) && theirs.size > 0
+        ? f.pins.filter(p => !theirs.has(String(p.messageId != null ? p.messageId : p.id)))
+        : null;
       // Length is no longer the whole test: stripping a blocked person's
       // REACTION off somebody else's message leaves the count identical and
       // replaces the row, so a length comparison would throw that work away.
       const msgChanged = messages && (messages.length !== f.messages.length
         || messages.some((m, i) => m !== f.messages[i]));
       const memChanged = members && members.length !== f.members.length;
-      if (!msgChanged && !memChanged) return f;
-      return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}) };
+      const pinChanged = pins && pins.length !== f.pins.length;
+      if (!msgChanged && !memChanged && !pinChanged) return f;
+      return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}), ...(pinChanged ? { pins } : {}) };
     }));
+    // The reply bar too, if it was quoting them.
+    setFlockReplyingTo(cur => (cur && String(cur.senderId) === id ? null : cur));
     // Availability pulses are the other place a name and face sit in client
     // state between refreshes: the "Available tonight" list in the invite sheet
     // reads straight off this array.
@@ -11936,9 +12480,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPhoneLookupUsers(prev => (Array.isArray(prev) ? prev.filter(u => String(u.id) !== id) : prev));
     // And the status pill, so the id cannot reappear wearing "Friends".
     setFriendStatuses(prev => { if (!prev || !(id in prev)) return prev; const next = { ...prev }; delete next[id]; return next; });
+    // Their live position, wherever it is shown: the flock pin (in every plan
+    // the two share) and the pin of a DM thread left open for the person who
+    // was blocked. The server stops sending either the moment the block lands,
+    // so the last one received would otherwise stay on the map for the rest
+    // of the session.
+    setFlockMemberLocations(prev => withoutPersonPin(prev, id));
+    if (keepDmOpen && String(selectedDmId) === id) setDmMemberLocation(null);
     // Then ask the server, so the counts under the roster are its numbers
-    // rather than our subtraction.
-    if (selectedFlockId) refreshFlockRoster(selectedFlockId);
+    // rather than our subtraction. The open chat's history too: a quote or a
+    // pin of theirs whose message is not loaded here has no id this client can
+    // attribute to them, and the server's read withholds it by sender.
+    if (selectedFlockId) {
+      refreshFlockRoster(selectedFlockId);
+      loadFlockMessages(selectedFlockId, { keepOlder: true });
+    }
     // Refresh the blocked list from the server too. Without this, a block made
     // from the person card or a chat header never reaches blockedUsers, and the
     // Blocked accounts row on the You tab keeps reading "None" straight after
@@ -11946,7 +12502,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // refetch also re-seeds blockedIdsRef from the server's whole answer, which
     // supersedes the add above.
     loadBlockedUsers();
-  }, [selectedDmId, selectedFlockId, refreshFlockRoster, loadBlockedUsers]);
+  }, [selectedDmId, selectedFlockId, refreshFlockRoster, loadBlockedUsers, loadFlockMessages]);
 
   // Open the person card. Callers hand over exactly what their own row already
   // renders; anything missing stays missing rather than being fetched.
@@ -13010,6 +13566,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // a retry (which re-calls this with the stored payload) regenerates it.
     const dmThumb = payload.image_url ? await makeChatThumb(payload.image_url) : null;
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    // The flock twin's two marks: this send's own name for the echo, and (set
+    // below, from the thread it joins) the newest row it was sent after.
+    const clientId = newClientId();
     const optimistic = {
       id: tempId,
       sender: 'You',
@@ -13022,14 +13581,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       image_url: payload.image_url || null,
       reactions: [],
       reply_to: payload.reply_to || null,
+      clientId,
       pending: true,
     };
     setDirectMessages(prev => prev.map(d => d.userId === userId
-      ? { ...d, messages: [...d.messages, optimistic], lastMessage: messagePreview(optimistic), lastMessageIsYou: true }
+      ? { ...d, messages: [...d.messages, { ...optimistic, afterId: newestServerId(d.messages) }], lastMessage: messagePreview(optimistic), lastMessageIsYou: true }
       : d));
 
+    // In id order once the bubble has one: see orderByServerId.
     const settle = (patch) => setDirectMessages(prev => prev.map(d => d.userId === userId
-      ? { ...d, messages: d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m)) }
+      ? { ...d, messages: orderByServerId(d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m))) }
       : d));
 
     // The emit's own return value decides, not just the connected check before
@@ -13046,6 +13607,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       image_url: payload.image_url,
       thumb_url: dmThumb,
       reply_to_id: payload.reply_to_id || null,
+      client_id: clientId,
     });
     if (dmSentOverSocket) {
       // Same reason as the flock branch: the socket is the transport a working
@@ -13060,7 +13622,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         settle({ pending: false, failed: true });
         // Same image leash as the flock timer above, same reason.
       }, payload.image_url ? 30000 : 8000);
-      dmEchoRef.current.set(tempId, { userId, payload, timer });
+      // The client id rides inside the stored payload, so echoMatches can read
+      // it off the same object the content fallback reads.
+      dmEchoRef.current.set(tempId, { userId, payload: { ...payload, clientId }, timer });
     } else {
       apiSendDM(userId, payload.text, {
         message_type: payload.message_type,
@@ -13068,10 +13632,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         image_url: payload.image_url,
         thumb_url: dmThumb,
         reply_to_id: payload.reply_to_id || null,
+        client_id: clientId,
       }).then((data) => {
-        // The REST route returns the stored row and emits nothing, so this is
-        // the only reconciliation the bubble gets. Without the real id its
-        // reactions and reports would address a temp id the server never had.
+        // The REST route returns the stored row, so this is the reconciliation
+        // the bubble gets. Without the real id its reactions and reports would
+        // address a temp id the server never had. (Its echo to this account's
+        // other devices can beat this answer here too; the echo then settles
+        // the bubble by client id and this finds no temp id left to change.)
         const saved = data?.message;
         settle({
           ...(saved?.id ? { id: saved.id } : {}),
@@ -13230,6 +13797,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const unsub = onNewDm((msg) => {
       const otherUserId = msg.sender_id === authUser?.id ? msg.receiver_id : msg.sender_id;
       const isYou = msg.sender_id === authUser?.id;
+      // A BLOCK OR AN UNSEND THAT BEAT THIS ROW HERE: the flock twin's rule.
+      // A DM from somebody just blocked would otherwise bring back the thread
+      // the block emptied, or make a new one with their message in it.
+      if (!isYou && blockedIdsRef.current.has(String(msg.sender_id))) return;
+      if (retractionsRef.current.log.some(e => e.kind === 'dm' && String(e.messageId) === String(msg.id))) return;
       // Is this thread the screen the user is actually looking at? Read off
       // catchUpTargetRef, which every render writes, because this effect is
       // keyed on authUser and would otherwise close over a stale selectedDmId
@@ -13303,7 +13875,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // so a re-run of the updater can never double-clear it.
       let matchedTempId = null;
       if (isYou) {
-        const entry = [...dmEchoRef.current.entries()].find(([, p]) => p.userId === otherUserId && sameSend(p.payload, msg));
+        // By the send's own client id when the echo carries it (echoMatches),
+        // so two DMs that look alike cannot settle each other's bubbles.
+        const entry = [...dmEchoRef.current.entries()].find(([, p]) => p.userId === otherUserId && echoMatches(p.payload, msg));
         if (entry) {
           clearTimeout(entry[1].timer);
           dmEchoRef.current.delete(entry[0]);
@@ -13339,14 +13913,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             if (isYou) {
               const tempIdx = matchedTempId !== null
                 ? d.messages.findIndex(m => m.id === matchedTempId)
-                : d.messages.findIndex(m => typeof m.id === 'string' && m.id.startsWith('temp-') && sameSend(m, msg));
+                : d.messages.findIndex(m => typeof m.id === 'string' && m.id.startsWith('temp-') && echoMatches(m, msg));
               if (tempIdx !== -1) {
                 const updated = [...d.messages];
                 updated[tempIdx] = mapped;
-                return { ...d, messages: updated, lastMessage: previewText, lastMessageIsYou: true, lastMessageTime: msg.created_at };
+                return { ...d, messages: orderByServerId(updated), lastMessage: previewText, lastMessageIsYou: true, lastMessageTime: msg.created_at };
               }
             }
-            return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: (isYou || threadOpen) ? d.unread : d.unread + 1 };
+            // In id order, not arrival order: see orderByServerId.
+            return { ...d, messages: orderByServerId([...d.messages, mapped]), lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: (isYou || threadOpen) ? d.unread : d.unread + 1 };
           });
           // The conversation that just spoke belongs at the top. Mapping in
           // place left the list in stale order all session: a thread three
@@ -13577,19 +14152,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // in a ref that is not, so leaving a thread mid-burst carried a true flag
     // into the next one and the first thing typed there told nobody.
     dmTypingActiveRef.current = false;
+    // Expires unless refreshed, like the flock twin: a stop that never
+    // arrives no longer leaves "Alex is typing" up for the whole visit.
+    let expiry = null;
+    const clear = () => {
+      clearTimeout(expiry);
+      expiry = null;
+      setDmIsTyping(false);
+      setDmTypingUser('');
+    };
     const unsubTyping = onDmUserTyping((data) => {
       if (data.userId === selectedDmId) {
         setDmTypingUser(data.name);
         setDmIsTyping(true);
+        clearTimeout(expiry);
+        expiry = setTimeout(clear, TYPING_EXPIRE_MS);
       }
     });
     const unsubStop = onDmUserStoppedTyping((data) => {
-      if (data.userId === selectedDmId) {
-        setDmIsTyping(false);
-        setDmTypingUser('');
-      }
+      if (data.userId === selectedDmId) clear();
     });
-    return () => { unsubTyping(); unsubStop(); };
+    return () => { unsubTyping(); unsubStop(); clearTimeout(expiry); };
+  }, [selectedDmId]);
+
+  // The typist's refresh, the DM twin of the flock one: while the latch says
+  // a burst is on, say so again, so the other side's expiry never ends a name
+  // that is still typing.
+  useEffect(() => {
+    if (!selectedDmId) return undefined;
+    const t = setInterval(() => {
+      if (dmTypingActiveRef.current) dmStartTyping(selectedDmId);
+    }, TYPING_REFRESH_MS);
+    return () => clearInterval(t);
   }, [selectedDmId]);
 
   // DM input change with typing indicator
@@ -14568,13 +15162,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // is what made that indistinguishable from the truth.
   //
   // `incomingFlocksLocked` is a SEPARATE flag from `incomingFlocks`, not a
-  // fancier spelling of it. GET /incoming-flocks sits behind requirePremium,
-  // which is a no-op today and starts refusing free venues with 403
-  // UPGRADE_REQUIRED the day VENUE_BILLING_ENABLED is switched on (and refuses
-  // the same way, fail-closed, if the tier lookup itself errors). A refusal is
-  // not a failed read: "Try again" on one is a button that can only ever refuse
-  // again, which is the control-that-cannot-succeed this dashboard has already
-  // removed twice.
+  // fancier spelling of it. GET /incoming-flocks carries no plan gate: the
+  // feed is free on every plan (VENUE-PRICING.md section 4). A 403
+  // UPGRADE_REQUIRED from it would be a plan refusal, not a failed read, and
+  // "Try again" on one is a button that can only ever refuse again, which is
+  // the control-that-cannot-succeed this dashboard has already removed twice.
+  // So the flag still keeps such an answer from reading as a zero or as "No
+  // incoming flocks yet", though the server no longer sends one.
   const [venueListErrors, setVenueListErrors] = useState({
     promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
   });
@@ -14949,18 +15543,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, []);
 
-  // Incoming flocks is the one read on this screen behind a paid gate, so it has
-  // two distinct failures and they need different words on screen. A 403
-  // UPGRADE_REQUIRED is the server saying "your plan does not include this",
-  // which is permanent until the plan changes; anything else is a read that
-  // might work on the next tap. Both are cleared on a successful read so a
-  // venue that upgrades mid-session stops being told to upgrade.
-  //
-  // Today requireVenueTier returns next() unconditionally because
-  // VENUE_BILLING_ENABLED is unset, so this branch is dormant — with one live
-  // exception: the gate fails CLOSED, so if the tier lookup throws it answers
-  // 403 UPGRADE_REQUIRED even with billing off. Without this that database blip
-  // renders as "No incoming flocks yet".
+  // Incoming flocks used to be the one read on this screen behind a paid gate.
+  // The feed is free on every plan now and its route has no gate, but the two
+  // failures stay apart here: a 403 UPGRADE_REQUIRED would be the server
+  // saying "your plan does not include this", which is permanent until the
+  // plan changes, and anything else is a read that might work on the next
+  // tap. Both are cleared on a successful read.
   const loadIncomingFlocks = React.useCallback(async () => {
     try {
       const d = await getIncomingFlocks();
@@ -15025,6 +15613,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // rebuild it from. Every read path filters is_hidden, so re-opening
           // the thread or the roster brings it back on its own.
           if (!hidden) break;
+          // Logged, so a history read already in flight cannot put it back.
+          if (ev.contentType === 'flock_message') noteRetraction(retractionsRef, { kind: 'flock', messageId: ev.contentId });
           setFlocks(prev => applyTakedownToFlocks(prev, ev));
           // The reply composer quotes the message it is answering, body and
           // all, so left alone it keeps the removed words on screen under
@@ -15042,6 +15632,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           break;
         case 'dm':
           if (!hidden) break;
+          noteRetraction(retractionsRef, { kind: 'dm', messageId: ev.contentId });
           setDirectMessages(prev => applyTakedownToDms(prev, ev));
           setDmReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev));
           break;
@@ -15105,6 +15696,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // that fails. Cleared before the call rather than after, and not cancelled
   // on cleanup: StrictMode runs this twice, and the second run must find
   // nothing to replay rather than drop the first one's answer.
+  //
+  // "Your payment went through" only for 'pending', which is Stripe saying the
+  // checkout completed. It used to be the answer to everything else as well,
+  // including a confirm that threw, and a 404 for a session that belongs to
+  // another account throws, so a stranger's link told this owner they had
+  // paid. Anything unconfirmed gets the Pro return's wording.
   useEffect(() => {
     const ret = VENUE_BILLING_RETURN;
     if (!ret) return;
@@ -15120,8 +15717,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     settleVenueCheckout({ sessionId: ret.sessionId, confirm: confirmVenueCheckout }).then((outcome) => {
       setVenueDashProfileLoaded(false);
       if (outcome === 'roost') showToast('Roost is on.');
+      else if (outcome === 'pending') showToast('Your payment went through. Roost can take a minute to switch on.', 'info');
       else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Roost will switch on shortly.', 'info');
-      else showToast('Your payment went through. Roost can take a minute to switch on.', 'info');
+      else showToast('We could not confirm your purchase yet. If you paid, Roost will switch on shortly.', 'info');
     });
   }, [showToast]);
 
@@ -15799,6 +16397,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         handleSyncContacts,
         loadAddFriendsData,
         myFriendCode,
+        myFriendCodeFailed,
         openUserProfile,
         outgoingRequests,
         pendingRequests,
@@ -16047,6 +16646,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         colors,
         confirmClick,
         confirmFlockPlan,
+        cancelFlockPlan,
         copiedInviteUrl,
         crowdPredictions,
         eventCrowd,
@@ -18176,6 +18776,14 @@ function sessionEndCopy(reason) {
   return SESSION_END_COPY[reason] || SESSION_END_COPY.session_expired;
 }
 
+// What the sign-in screen says when the app was opened by a link that needs an
+// account first. FlockApp reads it from the address bar on the web and from the
+// push router's queue in the iOS shell, so one sentence serves both.
+const SIGNED_OUT_LINK_NOTES = {
+  checkin: 'Sign in and this check-in is saved to your account.',
+  invite: 'Sign in and you will be taken straight into the plan you were invited to.',
+};
+
 // WHAT THE CONFIRMATION LINK IN THE SIGNUP EMAIL COMES BACK WITH.
 //
 // The link points at the API, not at the web app, because only the API can
@@ -18295,7 +18903,7 @@ const FlockApp = () => {
   // screen said nothing about the venue, so the tap read as lost.
   const [checkinNote, setCheckinNote] = useState(() => (
     (typeof window !== 'undefined' && /^\/checkin\//.test(window.location?.pathname || ''))
-      ? 'Sign in and this check-in is saved to your account.'
+      ? SIGNED_OUT_LINK_NOTES.checkin
       : ''
   ));
   // Same for an invite link. The invite path is claimed now, so iOS hands it
@@ -18304,9 +18912,23 @@ const FlockApp = () => {
   // mention of the plan, the host, or why they were there.
   const [inviteNote, setInviteNote] = useState(() => (
     (typeof window !== 'undefined' && /^\/i\//.test(window.location?.pathname || ''))
-      ? 'Sign in and you will be taken straight into the plan you were invited to.'
+      ? SIGNED_OUT_LINK_NOTES.invite
       : ''
   ));
+  // THE iOS SHELL NEVER HAS THOSE PATHS. Both notes above read the address
+  // bar, which is right on the web and never true in the app: the WebView
+  // stays on capacitor://localhost/, and a universal link arrives through
+  // appUrlOpen or the launch URL instead (services/pushNavigation.js), where it
+  // waits in the queue until somebody signs in. So the notes also follow that
+  // queue, which is watched here and never taken from: FlockAppInner still acts
+  // on the link after sign-in. The notes say exactly what is waiting: once the
+  // queue is handed over, dropped, or replaced by a later tap (it keeps only
+  // the newest), the promise a note made is kept or gone, and the note goes.
+  useEffect(() => watchPendingNavigation((waiting) => {
+    const screen = waiting ? waiting.screen : null;
+    setCheckinNote(screen === 'checkin' ? SIGNED_OUT_LINK_NOTES.checkin : '');
+    setInviteNote(screen === 'invite' ? SIGNED_OUT_LINK_NOTES.invite : '');
+  }), []);
   // What the confirmation link in the signup email came back with, if this boot
   // is the one that followed it. See EMAIL_VERIFIED_COPY.
   const [linkNote, setLinkNote] = useState(() => EMAIL_VERIFIED_COPY[EMAIL_VERIFIED_OUTCOME] || '');
@@ -18316,6 +18938,9 @@ const FlockApp = () => {
   // pressing Log out. A stray revoke arriving after a deliberate sign-out must
   // not put a message on a screen the user walked to on purpose.
   const sessionEndedByRevokeRef = useRef(false);
+  // Whether a session actually ran in this page load, as against a stored one
+  // the boot found already dead. See the notification clear in endSession.
+  const sessionLiveRef = useRef(false);
 
   // One teardown, three callers: the Log out button, the socket's
   // session_revoked event, and api.js's flock-session-expired window event.
@@ -18336,6 +18961,15 @@ const FlockApp = () => {
     sessionEndedRef.current = true;
     sessionEndedByRevokeRef.current = !!note;
     unregisterPushToken().catch(() => {});
+    // A session that ran takes its notifications with it: the ones still in
+    // the tray and any tap still waiting to be routed. Left behind, the last
+    // account's alarm, messages and invites stayed one tap from opening in
+    // whoever signed in next. Not at a boot that finds a stored session already
+    // dead: nothing ran, and a tap waiting there is most often the same person
+    // coming back to sign in again. The safety branch in FlockAppInner refuses
+    // an alarm meant for another account either way (safetyIntentIsFor).
+    if (sessionLiveRef.current) forgetDeliveredNotifications();
+    sessionLiveRef.current = false;
     disconnectSocket();
     // The ONE sign-out. logout() tells the server the session is over and
     // wipes every flock* key this account wrote to the device — the token,
@@ -18358,6 +18992,7 @@ const FlockApp = () => {
   const beginSession = useCallback((user) => {
     sessionEndedRef.current = false;
     sessionEndedByRevokeRef.current = false;
+    sessionLiveRef.current = true;
     setSessionNote('');
     setAuthUser(user);
     // Pull the ACCOUNT's settings on every session start. This used to happen

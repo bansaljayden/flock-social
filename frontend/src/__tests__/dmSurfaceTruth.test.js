@@ -38,8 +38,14 @@ test('a photo the server re-encoded is one bubble, not two', () => {
   expect(app).toMatch(/const serverHasImage = !!\(server\.image_url \|\| server\.thumb_url \|\| server\.thumb \|\| null\);/);
   expect(app).toMatch(/&& !!localImage === serverHasImage;/);
   expect(app).not.toMatch(/&& localImage === \(server\.image_url \|\| null\);/);
-  // And both history call sites hand the thumb through.
-  expect((app.match(/thumb: h\.thumb \|\| h\.thumb_url \|\| null,/g) || []).length).toBe(2);
+  // And both history call sites hand the thumb through. They share ONE
+  // comparison now (sendLandedAs, which also asks whose row it is and whether
+  // it came after the send), so the thumb is handed through once and both
+  // sites reach it through landedSends: mergeHistory, and the rewrite of the
+  // reload store in loadFlockMessages.
+  expect(app).toMatch(/thumb: row\.thumb \|\| row\.thumb_url \|\| null,/);
+  expect(app).toMatch(/const landed = landedSends\(waiting, hist, /);
+  expect(app).toMatch(/const landed = landedSends\(stored, msgs, onScreen\);/);
 });
 
 test('the typing indicator is reset when the open thread changes', () => {

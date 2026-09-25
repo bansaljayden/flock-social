@@ -1026,46 +1026,47 @@ const REVENUE_SCREEN_AT = appSource.search(/^export default function RevenueScre
 
 describe('the tier gate cannot be broken by rewording a feature', () => {
   test('nothing looks a feature up by its marketing name any more', () => {
-    // The bug: four call sites passed 'Post deals'; the premium list spells it
+    // The bug: four call sites passed 'Post deals'; the plan list spelt it
     // 'Post deals and specials'. .includes() missed, the helper fell through to
-    // its closing `return true`, and a venue PAYING for Premium found
-    // Post-a-Deal greyed out under a "Premium Feature" overlay. A typo in a
-    // gate could not throw, and the safe-looking default was "locked".
+    // its closing `return true`, and a venue PAYING for deals found Post-a-Deal
+    // greyed out under a locked overlay. A typo in a gate could not throw, and
+    // the safe-looking default was "locked".
     expect(appSource).not.toMatch(/isFeatureLocked/);
-    expect(appSource).not.toMatch(/features\.(free|premium|pro)\.includes/);
+    expect(appSource).not.toMatch(/features\.(free|roost|premium|pro)\.includes/);
   });
 
   test('the lists are still only upgrade-sheet copy', () => {
     // They may be reworded freely; that is the point of not branching on them.
     expect(appSource).toMatch(/'Post deals and specials'/);
-    expect(appSource).toMatch(/features\.premium\.map/);
+    expect(appSource).toMatch(/features\.free\.map/);
+    expect(appSource).toMatch(/features\.roost\.map/);
   });
 
-  test('all four Post-a-Deal controls read the tier flag', () => {
-    // Named individually rather than counted. A count is satisfied by the
-    // wrong four: `!can.postDeals` also appears on the Promotions tab, so
-    // inverting one of these and leaving that one standing kept the total up
-    // while the overlay covered the card for exactly the venues allowed to use
-    // it.
-    expect(appSource).toMatch(/aria-label="Deal description"[\s\S]{0,600}disabled=\{!can\.postDeals\}/);
-    expect(appSource).toMatch(/setDealTimeSlot\(slot\)[\s\S]{0,900}disabled=\{!can\.postDeals\}/);
-    expect(appSource).toMatch(/disabled=\{!can\.postDeals \|\| !dealDescription\.trim\(\)\}/);
+  // Deals are free on every plan since the venue plans became two, a free
+  // account and Roost (VENUE-PRICING.md section 4), so the old bug cannot come
+  // back the way it came: there is no plan flag on Post-a-Deal left to
+  // invert. What is pinned now is that none creeps back.
+  test('no Post-a-Deal control reads a plan flag', () => {
+    expect(appSource).not.toMatch(/can\.postDeals/);
+    expect(appSource).toMatch(/disabled=\{!dealDescription\.trim\(\)\}/);
   });
 
-  test('the locked overlay covers the card when the plan does NOT include it', () => {
-    // Inverted, this greys Post-a-Deal out for Premium and Pro and leaves it
-    // open on Free, which is the original bug with the sign flipped.
-    expect(appSource).toMatch(/\{!can\.postDeals && <div style=\{\{ position: 'absolute', inset: 0, backgroundColor: 'var\(--locked-overlay\)'/);
-    expect(appSource).not.toMatch(/\{can\.postDeals && <div style=\{\{ position: 'absolute', inset: 0, backgroundColor: 'var\(--locked-overlay\)'/);
+  test('no locked overlay sits over Post-a-Deal', () => {
+    expect(appSource).not.toMatch(/position: 'absolute', inset: 0, backgroundColor: 'var\(--locked-overlay\)'[^\n]*Premium Feature/);
+    expect(appSource).not.toContain('Premium Feature');
   });
 
-  test('the Promotions tab gates the same way round', () => {
-    expect(appSource).toMatch(/venueTab === 'promotions' && !can\.postDeals &&/);
-    expect(appSource).toMatch(/venueTab === 'promotions' && can\.postDeals &&/);
+  test('the Promotions and Events tabs have no lock at all', () => {
+    expect(appSource).toMatch(/venueTab === 'promotions' && \(/);
+    expect(appSource).toMatch(/venueTab === 'events' && \(/);
+    expect(appSource).not.toMatch(/venueTab === '(promotions|events)' && !can\./);
   });
 
-  test('and that flag actually includes Premium, which was the whole complaint', () => {
-    expect(appSource).toMatch(/postDeals:\s*venueTier === 'premium' \|\| venueTier === 'pro'/);
+  test('the one plan flag left, the Analytics tab, counts both stored words for Roost', () => {
+    // 'premium' is the value the retired middle plan left in the tier columns;
+    // the server resolves it to 'pro', and the dashboard reads both.
+    expect(appSource).toMatch(/const onRoost = venueTier === 'premium' \|\| venueTier === 'pro';/);
+    expect(appSource).toMatch(/analytics: onRoost/);
   });
 });
 
@@ -1433,14 +1434,17 @@ describe('unreachable and hand-drawn leftovers', () => {
   });
 
   test('the locked-feature padlock comes from the icon set', () => {
-    expect(appSource).toMatch(/Icons\.lock\(requiredTier === 'pro' \? '#2d5a87' : 'var\(--accent-amber-text\)', 32\)/);
+    // One paid plan, so the lock has one colour: Roost's.
+    expect(appSource).toMatch(/Icons\.lock\('#2d5a87', 32\)/);
     // The hand-drawn one used rounded caps and rx="2", a different drawing
     // language from every other mark in the app.
     expect(appSource).not.toMatch(/<rect x="3" y="11" width="18" height="11" rx="2"/);
   });
 
-  test('both locked states on the Analytics tab use the same mark', () => {
-    expect(appSource).toMatch(/Icons\.lock\(colors\.textTertiary, 24\)/);
+  test('the Analytics tab has one locked state, and no shield standing in for a lock', () => {
+    // The second lock on this tab was the overlay over Post-a-Deal. Deals are
+    // free on every plan now, so that overlay is gone rather than restyled.
+    expect(appSource).not.toMatch(/Icons\.lock\(colors\.textTertiary, 24\)/);
     expect(appSource).not.toMatch(/Icons\.shield\(colors\.textTertiary, 24\)/);
   });
 

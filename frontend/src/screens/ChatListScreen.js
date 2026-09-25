@@ -359,13 +359,17 @@ export default function ChatListScreen({
                 // and opening the chat zeroes it and advances the cursor.
                 // flockSeen is only the PUT watermark now, not the badge.
                 const hasUnread = (f.unread || 0) > 0;
-                const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
+                // A cancelled plan stays in this list (Home drops it, this
+                // does not), and it fell through every test below to the
+                // default: a purple chip reading "Planning" on a plan that is
+                // off. It gets its own word, in the list's neutral grey.
+                const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'cancelled' ? '#9CA3AF' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
                 // statusColor is the DOT (decorative, keeps the vivid hue). The chip
                 // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
                 // versions measured 2.02:1 ("Voting") to 2.28:1. These tokens are
                 // theme-aware and clear 4.5:1 on both the light and dark card.
-                const statusTextColor = f.status === 'completed' ? 'var(--accent-blue-text)' : f.status === 'confirmed' ? 'var(--accent-green-text)' : f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-purple-text)';
-                const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
+                const statusTextColor = f.status === 'completed' ? 'var(--accent-blue-text)' : f.status === 'cancelled' ? 'var(--text-secondary)' : f.status === 'confirmed' ? 'var(--accent-green-text)' : f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-purple-text)';
+                const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
 
                 return (
                   <div key={`flock-${f.id}`} style={{ display: 'flex', alignItems: 'stretch', gap: '0', marginBottom: '6px' }}>

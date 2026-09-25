@@ -37,7 +37,7 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
-import VenueBillingControl from '../components/venue/VenueBillingControl';
+import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
 import {
   BASE_URL,
   askAdvisor,
@@ -587,10 +587,15 @@ export default function VenueDashboard({
       ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
       : null;
 
+    // Two plans: free and Roost. 'pro' is Roost's stored name, and 'premium'
+    // is the word a retired middle plan left behind, which the server reads
+    // as Roost too. The paid plan is never labelled "Pro" here, so a venue
+    // owner cannot mistake it for Flock Pro, the consumer subscription.
+    const ROOST_BADGE = { label: 'Roost', color: 'var(--accent-purple-text)', bg: 'var(--accent-purple-bg)' };
     const tierBadge = {
       free: { label: 'Free', color: 'var(--text-secondary)', bg: 'var(--bg-hover)' },
-      premium: { label: 'Premium', color: 'var(--accent-amber-text)', bg: 'var(--accent-amber-bg)' },
-      pro: { label: 'Pro', color: 'var(--accent-purple-text)', bg: 'var(--accent-purple-bg)' },
+      premium: ROOST_BADGE,
+      pro: ROOST_BADGE,
     };
 
     // Tiers are set by us, on the server. The two buttons that used to sit at
@@ -629,42 +634,39 @@ export default function VenueDashboard({
     // WHAT A PLAN ACTUALLY BUYS, READ OFF THE SERVER'S OWN GATES.
     //
     // These lists are the only description of the plans a venue owner ever
-    // sees, and two of them were wrong in opposite directions.
-    //
-    // Premium led with "Enhanced visibility on the map". Nothing in the
-    // backend reads a venue tier when it builds the map, ranks a vote list or
-    // scores a pin — there is no promoted placement in this repo at all
-    // (VENUE-BILLING.md calls it unbuilt) — so the first line of a $35/mo plan
-    // named a thing that does not exist. Pro was wrong the other way: it sold
-    // hour-by-hour forecasts, the strip and the week ahead, and all three sit
-    // behind requirePremium in routes/venueDashboard.js, so Pro was charging
-    // $40 more for what the plan below it already includes.
+    // sees. There are two plans (VENUE-PRICING.md section 4): a free venue
+    // account, and Roost. A $35 middle plan sat between them until it was
+    // retired, and its card is gone with it.
     //
     // The real division, from the route middleware:
-    //   free     the listing, the venue card, reviews and replies (the reply
-    //            route carries no tier gate), and the live crowd number.
-    //   premium  promotions, events, incoming flocks, /intelligence, /strip,
-    //            and the advisor's /cards.
-    //   pro      /this-week, and the advisor's /questions, /ask and /question.
+    //   free   the map tab, the listing and the venue card, reviews and
+    //          replies, the live crowd number, deals, events and the
+    //          incoming-flocks feed. None of those routes carries a gate.
+    //   roost  requirePro: /intelligence, /strip, /this-week, and the
+    //          advisor's /cards, /questions, /ask and /question.
     // If a gate moves, move the sentence in the same commit.
+    //
+    // Only features that actually exist may appear here (DESIGN-STANDARD.md C1).
+    // Nothing reads a venue's plan when the map is drawn, a vote list is
+    // ranked or a push goes out, so no line may sell visibility, placement,
+    // pushes to nearby users or bookings. And no line may promise the free
+    // plan more than its routes serve: the section 4 table also puts the last
+    // seven days of readings against Flock's own numbers on the free plan,
+    // and that is served only by a Roost card today, so it is not listed.
     const features = {
       free: [
-        'Your listing on the map',
+        'See your venue on the map the way users do',
         'Your venue details on the card users open',
         'Reviews from Flock users, and your replies',
         'Set your live crowd number, on any plan',
-      ],
-      premium: [
         'Post deals and specials',
         'List your events',
         'See which groups have you in their vote',
+      ],
+      roost: [
         'Crowd forecasts for your venue, today by the hour and a week out',
         'How your projected night compares to the venues around you',
         "Roost's cards, every line naming where its number came from",
-      ],
-      // Only features that actually exist may appear here (DESIGN-STANDARD.md C1).
-      pro: [
-        'Everything in Premium',
         'Ask Roost a question and get the answer from your own numbers',
         'The weekly summary: what your venue did over the last 7 days',
       ],
@@ -674,30 +676,30 @@ export default function VenueDashboard({
     // the lists above with .includes(). It is gone, and this is what it cost.
     //
     // Every one of its four call sites passed the short form of the deals
-    // feature. The premium list spells that feature out in full. .includes() is
+    // feature. The plan list spelt that feature out in full. .includes() is
     // exact, so the lookup missed, the helper fell through to its closing
-    // return, and a venue PAYING for Premium opened the Analytics tab to find
-    // Post-a-Deal greyed out under a "Premium Feature" overlay, on the plan
-    // that includes it. Only Pro escaped, through the early return on the first
-    // line. The failure was silent in both directions: a typo could not throw,
-    // and the safe-looking default was "locked".
+    // return, and a venue PAYING for deals opened the Analytics tab to find
+    // Post-a-Deal greyed out under a locked overlay, on the plan that
+    // included it. The failure was silent in both directions: a typo could
+    // not throw, and the safe-looking default was "locked".
     //
     // The lists it read are marketing copy for the upgrade sheet, and copy gets
     // reworded. The gate now reads `can` below, which is derived from the tier
     // itself and cannot drift from a sentence. If a gate is ever needed for a
     // feature that has no `can` flag, add the flag; do not match on prose.
 
-    // Capability gates by tier — used elsewhere in the dashboard
+    // Roost, from either stored word for it (the server answers 'pro' for a
+    // stored 'premium'; both are read here so an older answer cannot show a
+    // Roost venue the free sheet).
+    const onRoost = venueTier === 'premium' || venueTier === 'pro';
+
+    // Capability gates by plan, used elsewhere in the dashboard. One flag,
+    // because one tab is paid. Deals, events and the incoming-flocks feed are
+    // free on every plan and carry no flag, and the flags that named features
+    // nothing builds (visibility, sponsored placement, pushes, bookings) are
+    // gone rather than kept as switches for nothing.
     const can = {
-      postDeals: venueTier === 'premium' || venueTier === 'pro',
-      events: venueTier === 'premium' || venueTier === 'pro',
-      analytics: venueTier === 'premium' || venueTier === 'pro',
-      enhancedVisibility: venueTier === 'premium' || venueTier === 'pro',
-      detailedInsights: venueTier === 'pro',
-      pushNotifications: venueTier === 'pro',
-      sponsoredPlacement: venueTier === 'pro',
-      aiRecommendations: venueTier === 'pro',
-      booking: venueTier === 'pro',
+      analytics: onRoost,
     };
 
     // WHETHER `can` MEANS ANYTHING YET.
@@ -706,10 +708,9 @@ export default function VenueDashboard({
     // GET /api/venue-profile answers, so for the length of that request every
     // flag above reads false for every venue, a paying one included. This tab
     // is the one the dashboard opens on, and it rendered that answer: the
-    // Premium lock, the Post-a-Deal overlay and an Upgrade button, which then
-    // snapped to the real tab when the response landed. A paywall shown to a
-    // venue that has paid, for however short a moment, is the wrong sentence
-    // at the wrong time.
+    // plan lock and an Upgrade button, which then snapped to the real tab
+    // when the response landed. A paywall shown to a venue that has paid, for
+    // however short a moment, is the wrong sentence at the wrong time.
     //
     // `venueProfile` is the signal, because it is null until that same
     // response lands and is set from it in the same place the tier is; App.js
@@ -720,22 +721,25 @@ export default function VenueDashboard({
     // and is still the honest answer: the plan is unknown, not free.
     const tierKnown = venueProfile != null;
 
-    // Locked tab placeholder — shown when feature isn't available on current tier
-    const LockedTab = ({ requiredTier, featureName, description }) => (
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: `2px dashed ${requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)'}` }}>
+    // Locked tab placeholder, shown where the venue's plan does not include
+    // the tab. Roost is the one paid plan, so every lock names it, with the
+    // price the Roost card prints: Stripe's while Roost is on sale on the web,
+    // otherwise the one constant in App.js.
+    const LockedTab = ({ featureName, description }) => (
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: '2px dashed #2d5a87' }}>
         {/* The last hand-drawn icon on this surface. It was a padlock with
             rounded caps and a rounded rect, which is a different drawing
             language from every other mark in the app; components/ui/Icons.js
             owns that geometry and already has this shape. Decorative, so no
             label argument. */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
-          {Icons.lock(requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', 32)}
+          {Icons.lock('#2d5a87', 32)}
         </div>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        <p style={{ fontSize: 'var(--t-micro)', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? `Pro · ${venuePlanPriceLabel('pro')}` : `Premium · ${venuePlanPriceLabel('premium')}`}</p>
-        <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
-          Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'}
+        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
+        <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+          Upgrade to Roost
         </button>
       </div>
     );
@@ -986,9 +990,11 @@ export default function VenueDashboard({
               traffic figure of any kind, so it sold two things it does not
               have; "real-time insights" is the marketing register DESIGN-STANDARD
               §B bans; and the plan card behind it is titled Dashboard already.
-              This says what is actually behind the gate. */}
+              This says what is actually behind the gate, which is Roost: the
+              forecast, the strip, Roost's cards and questions, and the
+              weekly summary. The live number above stays free. */}
           {venueTab === 'analytics' && !can.analytics && tierKnown && (
-            <LockedTab requiredTier="premium" featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you." />
+            <LockedTab featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you, with Roost's cards, its answers and your weekly summary." />
           )}
           {venueTab === 'analytics' && can.analytics && tierKnown && (<>
           {/* No linked listing / loading states.
@@ -1122,7 +1128,7 @@ export default function VenueDashboard({
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>The weekly summary is a Pro feature.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>The weekly summary is part of Roost.</p>
             </div>
           )}
 
@@ -1410,7 +1416,9 @@ export default function VenueDashboard({
             );
           })()}
 
-          {/* Post a Deal */}
+          {/* Post a Deal. Deals are free on every plan, so nothing here is
+              locked. A venue on the free plan does not see this tab's body,
+              and posts from the Promotions tab, which is open to everyone. */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
             <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
             <SearchInputLocal aria-label="Deal description"
@@ -1419,11 +1427,10 @@ export default function VenueDashboard({
               onCommit={setDealDescription}
               placeholder="e.g., 2-for-1 drinks until 8pm"
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
-              disabled={!can.postDeals}
             />
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
-                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }} disabled={!can.postDeals}>
+                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   {slot}
                 </button>
               ))}
@@ -1457,13 +1464,9 @@ export default function VenueDashboard({
                 setDealDescription(text);
                 showToast(e?.message || "That deal didn't post. Try again.", 'error');
               }
-            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!can.postDeals || !dealDescription.trim()}>
+            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim()}>
               Post Deal
             </button>
-            {/* Same mark as LockedTab above. A shield here and a padlock there
-                read as two different states of two different things, on one
-                tab, both meaning "your plan does not include this". */}
-            {!can.postDeals && <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--locked-overlay)', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>{Icons.lock(colors.textTertiary, 24)}<span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>Premium Feature</span></div>}
           </div>
 
           {/* Today, hour by hour — from the model */}
@@ -1509,25 +1512,14 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* Upgrade Button (if not Pro) */}
-          {venueTier !== 'pro' && (
-            <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(45,90,135,0.3)' }}>
-              {/* Icons.sparkles was here. Two things wrong with it: the glyph is
-                  two stacked gull marks, which at 18px reads as a double caret
-                  (scroll-to-top), not as a sparkle; and a sparkle on a paid
-                  upgrade button is the 2023 AI-product tic DESIGN-STANDARD exists to
-                  catch. The button is the only thing on this row and the
-                  sentence already says what it does, so it needs no mark. */}
-              Upgrade to {venueTier === 'free' ? 'Premium' : 'Pro'}
-            </button>
-          )}
+          {/* No upgrade button closes this tab any more. Its body renders
+              only for a Roost venue, and Roost is the one paid plan, so there
+              is nothing above it to sell; the free venue's way in is the
+              lock in front of this body. */}
           </>)}
 
-          {/* PROMOTIONS TAB */}
-          {venueTab === 'promotions' && !can.postDeals && (
-            <LockedTab requiredTier="premium" featureName="Deals" description="Post a deal and it shows on your venue card in the app for as long as you leave it up." />
-          )}
-          {venueTab === 'promotions' && can.postDeals && (
+          {/* PROMOTIONS TAB. Free on every plan, so it has no lock. */}
+          {venueTab === 'promotions' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Deals from an unverified venue publish to nobody: the consumer
                   surface requires vp.verified. Said once, above the list, in
@@ -1648,19 +1640,12 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* EVENTS TAB */}
-          {/* The old description sold "capacity tracking and RSVPs" and this
-              one first said events "show up on your venue card". Neither is
-              true. Nothing in Flock lets anyone RSVP to a venue event, the
-              column that would count them is never written, and venue_events
-              has no public read at all: GET /api/venue-dashboard/events is the
-              only route that returns them and it is owner-only. What is behind
-              this lock today is the incoming-flocks feed, which is real. The
-              description names that and nothing else. */}
-          {venueTab === 'events' && !can.events && (
-            <LockedTab requiredTier="premium" featureName="Event Promotion" description="See which flocks are heading your way, and keep your upcoming events in one list." />
-          )}
-          {venueTab === 'events' && can.events && (
+          {/* EVENTS TAB. Free on every plan, the incoming-flocks feed included,
+              so it has no lock. Events are an owner's own list: nothing in
+              Flock lets anyone RSVP to a venue event, and venue_events has no
+              public read at all (GET /api/venue-dashboard/events is owner-only),
+              so nothing here claims events reach anybody. */}
+          {venueTab === 'events' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
               <button className="hit44 glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -1683,13 +1668,17 @@ export default function VenueDashboard({
                     />
                   </div>
                 )}
-                {/* A plan refusal, which is not a failure. No "Try again": the
-                    server will refuse the retry identically until the plan
-                    changes, so the control offered is the one that can work. */}
+                {/* A plan refusal, which is not a failure. The feed is free on
+                    every plan and its route carries no gate, so this renders
+                    only if a server refuses it anyway; without it that answer
+                    would leave the card blank. It names no plan, because no
+                    plan is supposed to lack the feed. No "Try again": the
+                    server would refuse the retry identically, so the control
+                    offered is the one that can work. */}
                 {venueListErrors.incomingFlocksLocked && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>The incoming-flocks feed is part of the Premium plan. Your current plan doesn't include it.</p>
-                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include the incoming-flocks feed.</p>
+                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>
                   </div>
                 )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
@@ -2282,14 +2271,26 @@ export default function VenueDashboard({
                     {/* WHERE THE PLAN CAME FROM, when the server told us. Four
                         reasons exist and only one of them involves money. A
                         missing reason prints nothing: the entitlement lookup
-                        failing is not evidence of a billing arrangement. */}
+                        failing is not evidence of a billing arrangement.
+
+                        A PAID PLAN SAYS HOW IT IS BILLED, NOT HOW OFTEN. This
+                        read "Billed monthly." for every paid plan, and Roost is
+                        sold by the year too. Neither the profile nor
+                        /api/venue-billing/status says which plan a venue chose,
+                        so the line names Stripe (and a trial that has not
+                        charged yet) and leaves the plan itself to Manage
+                        billing, where Stripe shows it. A paid plan with no
+                        Stripe behind it was sold by hand, on terms agreed in
+                        writing (Terms 9.6). */}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
                       {venueTier === 'free'
                         ? 'No charge. Your listing, your hours, your replies.'
                         : venueProfile?.tier_notice_window === true
                           ? 'Everything you had stays on while the notice we emailed you runs. Nothing is being charged.'
                         : venueTierReason === 'paid'
-                          ? 'Billed monthly.'
+                          ? (venueTierSource === 'stripe'
+                            ? <VenueBillingStatus>{({ status }) => (status?.status === 'trialing' ? 'On the free trial. Nothing is charged until it ends.' : 'Billed through Stripe.')}</VenueBillingStatus>
+                            : 'Billed as agreed with us.')
                           : venueTierReason === 'founding_comp'
                             ? 'Comped as a founding venue. Nothing is being charged.'
                             : venueTierSource || venueTierReason
@@ -2324,7 +2325,7 @@ export default function VenueDashboard({
                       </p>
                     )}
                   </div>
-                  {venueTier !== 'pro' && (
+                  {!onRoost && (
                     <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
                       Upgrade
                     </button>
@@ -2355,7 +2356,17 @@ export default function VenueDashboard({
                     the owner does not have to describe their own account, which
                     is the part of "email us to cancel" that people give up on.
                     The address is printed underneath for a device with no mail
-                    app, exactly as the Danger Zone does it. */}
+                    app, exactly as the Danger Zone does it.
+
+                    ONCE ROOST IS ON SALE ON THE WEB, THE LINE UNDER THE BUTTONS
+                    FOLLOWS /api/venue-billing/status. A plan bought through
+                    Stripe is cancelled from Manage billing in the plans sheet,
+                    as Terms 9.6 says, so the line sends the owner there. A plan
+                    we set up by hand still changes by email, and with checkout
+                    on the line stops saying there is nothing to sign up with.
+                    Inside the app, and until the status answers, it says what it
+                    always said, which is true there: the app has no billing
+                    switch at all. */}
                 {venueTier !== 'free' && venueProfile?.tier_notice_window !== true && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -2372,9 +2383,17 @@ export default function VenueDashboard({
                         See plans and pricing
                       </button>
                     </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
-                      There is no switch for this in the app yet, and there is no switch to sign up with either. Write to {VENUE_SALES_EMAIL} and we will change or stop the plan and email you back to confirm.
-                    </p>
+                    <VenueBillingStatus>
+                      {({ status }) => (
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                          {venueTierSource === 'stripe' && status?.canManage
+                            ? <>Cancel it from See plans and pricing, then Manage billing. It takes a few clicks and needs no email. You can also write to {VENUE_SALES_EMAIL} and we will cancel it for you.</>
+                            : venueTierSource !== 'stripe' && status?.checkoutAvailable
+                              ? <>We set this plan up for you, so it changes by email. Write to {VENUE_SALES_EMAIL} and we will change or stop it and email you back to confirm.</>
+                              : <>There is no switch for this in the app yet, and there is no switch to sign up with either. Write to {VENUE_SALES_EMAIL} and we will change or stop the plan and email you back to confirm.</>}
+                        </p>
+                      )}
+                    </VenueBillingStatus>
                   </div>
                 )}
                 </>)}
@@ -2422,52 +2441,58 @@ export default function VenueDashboard({
                   {venueBillingOn && venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500', marginTop: '8px' }}>Current plan</span>}
                 </div>
 
-                {/* Premium Tier */}
-                <div style={{ border: `2px solid ${venueTier === 'premium' ? 'var(--accent-amber-text)' : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px', backgroundColor: venueTier === 'premium' ? 'var(--accent-amber-bg)' : 'var(--bg-card-solid)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>Premium</span>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>{venuePlanPriceLabel('premium')}</span>
-                  </div>
-                  <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                    {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
-                  </ul>
-                  {venueBillingOn && venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => requestTierUpgrade('Premium')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Premium</button>}
-                </div>
-
-                {/* Pro Tier */}
+                {/* Roost, the one paid plan. Named Roost and never "Pro", so an
+                    owner cannot confuse it with Flock Pro, the consumer
+                    subscription. With Roost on sale on the web its price is
+                    Stripe's, from the same status the buttons below read, so
+                    the card cannot name a figure checkout does not charge.
+                    Otherwise (billing off, inside the app, no status yet) it
+                    is the one constant in App.js, as before. The free card
+                    above lists everything free, so this one does not open
+                    with "everything in" another plan. */}
                 <div style={{ border: '2px solid #2d5a87', borderRadius: '12px', padding: '12px', marginBottom: '16px', backgroundColor: 'var(--accent-purple-bg)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>Pro</span>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>{venuePlanPriceLabel('pro')}</span>
+                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>Roost</span>
+                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}><VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></span>
                   </div>
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                    {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
+                    {features.roost.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
                   {/* Roost is bought on the web (components/venue/VenueBillingControl.js).
                       Inside the iOS shell, or while it is not on sale, the
                       control hands back the email request below unchanged. */}
-                  {venueBillingOn && venueTier === 'pro' ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>} />}
+                  {venueBillingOn && onRoost ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Roost')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Roost</button>} />}
                 </div>
 
                 {/* THE OTHER AXIS, said once rather than in three lists.
                     A plan decides which features a venue is entitled to;
                     verification decides whether the venue may speak or publish
                     at all, and several lines above are gated on BOTH. Replies,
-                    the live number and the forecast all check
+                    the live number, a deal reaching the venue card, the
+                    incoming-flocks feed and the forecast all check
                     venue_profiles.verified in routes/venueDashboard.js, so a
                     venue reading the free list while unverified is reading
-                    three things that are true of its plan and not yet true of
-                    its account. Shown only while that is the case. */}
+                    things that are true of its plan and not yet true of its
+                    account. Shown only while that is the case. */}
                 {!venueIsVerified && (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', textAlign: 'center', lineHeight: 1.5 }}>
-                    Replies to reviews, your live number and your forecast also need a verified venue, on every plan. Settings has the request.
+                    Replies to reviews, your live number, deals on your card, the groups feed and your forecast all need a verified venue, on every plan. Settings has the request.
                   </p>
                 )}
                 {/* Printed as text too, so a device with no mail app still has
-                    something it can act on. */}
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', textAlign: 'center', lineHeight: 1.5 }}>
-                  Plans are set up by hand right now. Write to {VENUE_SALES_EMAIL} and we will get you moved over.
-                </p>
+                    something it can act on. "Set up by hand" stops being said
+                    once the status says Roost checkout is on: the Roost card
+                    above then sells it through Stripe, and the address stays
+                    for everything else. */}
+                <VenueBillingStatus>
+                  {({ status }) => (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', textAlign: 'center', lineHeight: 1.5 }}>
+                      {status?.checkoutAvailable
+                        ? <>Questions about a plan? Write to {VENUE_SALES_EMAIL}.</>
+                        : <>Plans are set up by hand right now. Write to {VENUE_SALES_EMAIL} and we will get you moved over.</>}
+                    </p>
+                  )}
+                </VenueBillingStatus>
 
                 <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
               </div>

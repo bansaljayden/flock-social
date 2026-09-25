@@ -1,27 +1,20 @@
 // ---------------------------------------------------------------------------
-// Venue pricing: $99/mo Pro, $35/mo Premium. Re-priced 2026-08-25.
+// Venue pricing: two plans, a free venue account and Roost at $99/mo.
 //
-// $99 is VENUE-PRICING.md's call (2026-08-20), which supersedes the $75 Pro
-// price this file used to pin. The re-price was not bookkeeping: the backend
-// has held $99 since that memo (`VENUE_PRICE_USD` in backend/routes/admin.js)
-// while three screens said $75, so the app disagreed with the only place in
-// the product that has ever stored a venue price.
-//
-// Premium's $35 survives on purpose. VENUE-PRICING.md section 4 retires the
-// rung and collapses to two tiers, but that also drops the `requirePremium`
-// gates on promotions, events and incoming-flocks. Two cards over gates that
-// still refuse would advertise features the backend denies, so the collapse is
-// a commit that must include backend/routes, and this file needs rewriting
-// again when it lands.
+// VENUE-PRICING.md section 4 collapsed the venue tiers to two. The $35 middle
+// plan is retired, its server-side gates went with it (promotions, events and
+// the incoming-flocks feed are free, backend/routes/venueDashboard.js), and
+// nothing on a screen may offer it. Roost is $99 a month or $990 a year per
+// location: the number backend/routes/admin.js bills against
+// (`VENUE_PRICE_USD`), Terms 9.6 publishes and Stripe charges.
 //
 // This suite exists so that following a stale doc breaks the build instead of
-// the price. Several older docs (README.md, MONEY-MODEL.md, SUBMIT-CHECKLIST.md)
-// still say "fix the app to $49/$149"; that has been backwards since
-// 2026-08-14 and is checked against below.
+// the price. The retired figures ($35 and $75, and the $49/$149 of an older
+// proposal) are checked against everything that can reach a screen.
 //
-// If one of these fails because the tiers were re-priced on purpose, update
-// VENUE-BILLING.md's table and this file in the same commit. Nothing else
-// counts as a reason to touch it.
+// If one of these fails because the plans were re-priced on purpose, update
+// VENUE-BILLING.md's table, backend/services/statedPrices.js and this file in
+// the same commit. Nothing else counts as a reason to touch it.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
@@ -30,54 +23,87 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
 // The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
-// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
-// this file scans went with it. Nothing asserted below changed. The app source
-// is simply in two files, so both are read, in the order they used to be one.
+// loaded chunk now (screens/VenueDashboard.js). The app source is simply in two
+// files, so both are read, in the order they used to be one.
 const app = read('frontend', 'src', 'App.js') + read('frontend', 'src', 'screens', 'VenueDashboard.js');
 const billing = read('VENUE-BILLING.md');
 
-// Comments carry reasoning (including quotes of the superseded numbers) and
-// are allowed any content. Only what can reach a screen is under test. Same
+// Comments carry reasoning (including quotes of the retired numbers) and are
+// allowed any content. Only what can reach a screen is under test. Same
 // stripping rule as landingPageClaims.test.js.
 const visible = app
   .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '');
 
-describe('the app renders the decided venue prices', () => {
-  // The three screens that used to hold three separate copies of the number
-  // now read one module constant, so the assertion moved with them: pin the
-  // constant, not the string literals it renders into.
-  test('one constant holds both prices, and it is the decided pair', () => {
-    const m = app.match(/const VENUE_PLAN_PRICE = \{ premium: (\d+), pro: (\d+) \};/);
+// The plan cards' own copy, the one place a feature is sold by name.
+const features = (() => {
+  const at = visible.indexOf('const features = {');
+  return at === -1 ? '' : visible.slice(at, visible.indexOf('};', at));
+})();
+
+describe('the app renders the decided venue price', () => {
+  // One module constant, read by the Roost card and every lock whenever
+  // Stripe's own price is not available: pin the constant, not the strings it
+  // renders into.
+  test('one constant holds the Roost price, and nothing else', () => {
+    const m = app.match(/const VENUE_PLAN_PRICE = \{ pro: (\d+) \};/);
     expect(m).not.toBeNull();
-    expect(Number(m[1])).toBe(35);
-    expect(Number(m[2])).toBe(99);
+    expect(Number(m[1])).toBe(99);
   });
 
   test('no screen hardcodes a venue price beside the constant', () => {
-    // The whole point of the constant is that $75 cannot come back by hand in
-    // one of the three places that used to carry it. $99 and $35 are equally
-    // banned as literals: they belong in VENUE_PLAN_PRICE and nowhere else.
     for (const literal of ['$35/mo', '$75/mo', '$99/mo', '$35/month', '$75/month', '$99/month']) {
       expect(visible).not.toContain(literal);
     }
   });
 
-  test('the LockedTab upsell and the plan cards read the constant', () => {
-    expect(app).toContain("venuePlanPriceLabel('pro')");
-    expect(app).toContain("venuePlanPriceLabel('premium')");
-  });
-
-  test('the superseded $49/$149 prices never reach a screen', () => {
+  test('the retired prices never reach a screen', () => {
+    // $35 was the middle plan, $75 the Pro price it sat under, and $49/$149 a
+    // proposal older than both.
+    expect(visible).not.toMatch(/\$35\b/);
+    expect(visible).not.toMatch(/\$75\b/);
     expect(visible).not.toMatch(/\$49\b/);
     expect(visible).not.toMatch(/\$149\b/);
   });
 
+  test('two plan cards, and the paid one is called Roost, never Pro', () => {
+    expect(features).toMatch(/free: \[/);
+    expect(features).toMatch(/roost: \[/);
+    expect(features).not.toMatch(/\b(premium|pro): \[/);
+    expect(app).toContain('features.free.map');
+    expect(app).toContain('features.roost.map');
+    expect(app).not.toMatch(/features\.(premium|pro)\b/);
+    expect(visible).toContain('Email us about Roost');
+    expect(visible).not.toMatch(/Email us about (Premium|Pro)\b/);
+    expect(visible).not.toContain('Everything in Premium');
+  });
+
+  test('every lock names Roost and the price the Roost card prints', () => {
+    expect(app).toContain("Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus>");
+    expect(visible).not.toMatch(/Requires (Pro|Premium)\b/);
+    expect(visible).not.toMatch(/Upgrade to (Pro|Premium)\b/);
+    expect(app).not.toContain("venuePlanPriceLabel('premium')");
+  });
+
+  test('no plan card sells a feature nothing builds', () => {
+    // Nothing reads a venue's plan when the map is drawn, a vote list is ranked
+    // or a push goes out, and there are no bookings (DESIGN-STANDARD.md C1).
+    expect(features.length).toBeGreaterThan(0);
+    expect(features).not.toMatch(/visibilit|sponsor|placement|push|booking|book a /i);
+  });
+
+  test('the capability flags for features nobody built are gone', () => {
+    for (const flag of ['enhancedVisibility', 'sponsoredPlacement', 'aiRecommendations', 'pushNotifications', 'detailedInsights']) {
+      expect(app).not.toContain(`${flag}:`);
+    }
+    expect(app).not.toMatch(/\bbooking: venueTier/);
+  });
+
   // The venue settings screen printed "Pro Plan / $75/month / No end date" and
-  // offered no way to change or cancel it (TestFlight build 26). Both
-  // halves are now pinned: the price is gone from the settings screen, and a
-  // real route to a human is present.
+  // offered no way to change or cancel it (TestFlight build 26). Both halves
+  // are pinned: the price is gone from the settings screen, and a real route to
+  // a human is present.
   test('the settings screen offers a way out of the plan', () => {
     expect(app).toContain('Change or cancel this plan');
     expect(app).toContain('See plans and pricing');
@@ -94,34 +120,33 @@ describe('the app renders the decided venue prices', () => {
 });
 
 describe('VENUE-BILLING.md agrees with the app', () => {
-  test('the pricing table rows are $35 Premium and $99 Pro', () => {
-    expect(billing).toMatch(/\| Premium \(`premium`\) \| \*\*\$35\*\* \|/);
-    expect(billing).toMatch(/\| Pro \(`pro`\) \| \*\*\$99\*\* \|/);
+  const roostRow = () => billing.match(/\| Roost \(`pro`\) \| \*\*\$(\d+)\*\* \| \$(\d+) \|/);
+
+  test('the plan table is the free venue account and Roost, and nothing between', () => {
+    expect(billing).toMatch(/\| Venue account \(`free`\) \| \*\*\$0\*\* \| \$0 \|/);
+    expect(roostRow()).not.toBeNull();
+    expect(billing).not.toMatch(/\| Premium \(`premium`\) \|/);
   });
 
-  test('the doc records the re-price, with its date and its source', () => {
-    expect(billing).toMatch(/Re-priced 2026-08-25: \$99\/mo Pro, per VENUE-PRICING\.md/);
+  test('the doc records the two-plan decision and where it was made', () => {
+    // The decision itself lives in VENUE-PRICING.md section 4, a private
+    // memo; the tracked doc has to point at it, which is what this pins.
+    expect(billing).toMatch(/Two plans since 2026-09-25: a free venue account and Roost at \$99\/month or\s+\$990\/year, per VENUE-PRICING\.md section 4/);
   });
 
-  test('the doc and the app agree on the Pro price', () => {
-    const fromApp = app.match(/const VENUE_PLAN_PRICE = \{ premium: \d+, pro: (\d+) \};/);
-    const fromDoc = billing.match(/\| Pro \(`pro`\) \| \*\*\$(\d+)\*\* \|/);
+  test('the doc and the app agree on the Roost price', () => {
+    const fromApp = app.match(/const VENUE_PLAN_PRICE = \{ pro: (\d+) \};/);
     expect(fromApp).not.toBeNull();
-    expect(fromDoc).not.toBeNull();
-    expect(fromApp[1]).toBe(fromDoc[1]);
+    expect(roostRow()).not.toBeNull();
+    expect(fromApp[1]).toBe(roostRow()[1]);
   });
 
-  test('the annual column is the recomputed two-months-free arithmetic', () => {
+  test('the annual column is the two-months-free arithmetic', () => {
     // 2 mo free means annual = 10 x monthly. Recomputed, not left from a
-    // superseded table: a stale $750 sitting beside a $99 Pro row is exactly
-    // the drift this catches.
-    const rows = {
-      premium: billing.match(/\| Premium \(`premium`\) \| \*\*\$(\d+)\*\* \| \$(\d+) \|/),
-      pro: billing.match(/\| Pro \(`pro`\) \| \*\*\$(\d+)\*\* \| \$(\d+) \|/),
-    };
-    for (const tier of Object.keys(rows)) {
-      expect(rows[tier]).not.toBeNull();
-      expect(Number(rows[tier][2])).toBe(10 * Number(rows[tier][1]));
-    }
+    // superseded table: a stale annual figure beside a new monthly one is
+    // exactly the drift this catches.
+    const row = roostRow();
+    expect(row).not.toBeNull();
+    expect(Number(row[2])).toBe(10 * Number(row[1]));
   });
 });

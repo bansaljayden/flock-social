@@ -416,15 +416,18 @@ describe('Roost: envelope and failure states', () => {
   });
 
   test('a locked card names its plan quietly, without a button', async () => {
+    // Roost is the one paid venue plan, so a locked card names Roost, never
+    // "Pro" (the consumer plan) and never the retired middle plan.
     const payload = {
       available: true,
       cards: [
         PAYLOAD.cards[0],
-        { id: 'around_you', title: 'Around you this week', status: 'locked', facts: [], requiredTier: 'premium', code: 'UPGRADE_REQUIRED' },
+        { id: 'around_you', title: 'Around you this week', status: 'locked', facts: [], requiredTier: 'pro', code: 'UPGRADE_REQUIRED' },
       ],
     };
     mount({ fetchCards: () => Promise.resolve(payload) });
-    expect(await screen.findByText('Part of the Premium plan.')).toBeInTheDocument();
+    expect(await screen.findByText('Part of Roost.')).toBeInTheDocument();
+    expect(screen.queryByText(/Premium|Pro plan/)).toBeNull();
   });
 });
 

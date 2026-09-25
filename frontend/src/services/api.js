@@ -1,6 +1,9 @@
 // Consent, read live on every capture. See the gate in withPostHog below.
 import { hasAnalyticsConsent } from './analyticsConsent';
 import { lsGet } from '../lib/storage';
+// The one "is this the app" answer (lib/nativeShell.js), for the RevenueCat
+// half of sign-out. Already in the entry chunk through index.js, so free here.
+import { isNativeShell } from '../lib/nativeShell';
 
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
@@ -247,6 +250,29 @@ function endNativeGoogleSession() {
 }
 
 /**
+ * THE STORE'S COPY OF WHO IS SIGNED IN, the same layer down for purchases.
+ * RevenueCat keeps its own app user id on the device, across launches, and
+ * records every App Store purchase against it. Nothing on any sign-out path
+ * reset it, so the next account on a shared phone bought under the last one
+ * and the webhook granted Pro to the wrong person. services/purchases.js holds
+ * the logOut and the rest of that story.
+ *
+ * The same three rules as the Google session above, with one difference in the
+ * guard: it is lib/nativeShell.js, because that is the answer the purchase
+ * screens and purchases.js itself act on, and a sign-out must reach RevenueCat
+ * wherever they would have sold. On the web it answers no, so the purchases
+ * chunk is never fetched there.
+ */
+function endNativePurchasesSession() {
+  try {
+    if (!isNativeShell()) return;
+    import('./purchases')
+      .then((m) => m.endPurchasesSession())
+      .catch(() => { /* the local wipe has already happened */ });
+  } catch (_) { /* same */ }
+}
+
+/**
  * Wipe this device's copy of the signed-in account. Synchronous and total: it
  * never awaits anything, so no failure anywhere can leave a half-signed-out
  * device. Every caller that ends a session goes through here — logout(), the
@@ -270,6 +296,7 @@ export function clearLocalSession() {
   // LAST, and after the storage sweep has already run, so nothing this touches
   // can come between a user tapping Log out and their data leaving the device.
   endNativeGoogleSession();
+  endNativePurchasesSession();
 }
 
 /**
@@ -1548,8 +1575,18 @@ export async function inviteToFlock(flockId, userIds) {
 // believe. One name, one property that says which door. The guest half is
 // anonymous by construction: person_profiles is 'identified_only', so a guest
 // who has no account gets no person profile out of it.
-export async function acceptFlockInvite(flockId) {
-  const data = await request(`/api/flocks/${flockId}/join`, { method: 'POST' });
+//
+// `guestTokens` is optional: the guest identities this device answered invite
+// links under, for this person (services/inviteHandoff.js storedGuestTokens).
+// The server retires this plan's matching by-name answer so the accept does not
+// count the person twice, and ignores anything else. A body, never a query
+// string: each one is a bearer credential for a guest row.
+export async function acceptFlockInvite(flockId, guestTokens) {
+  const carried = Array.isArray(guestTokens) ? guestTokens.filter((t) => typeof t === 'string' && t) : [];
+  const data = await request(`/api/flocks/${flockId}/join`, {
+    method: 'POST',
+    ...(carried.length > 0 ? { body: JSON.stringify({ guestTokens: carried }) } : {}),
+  });
   track('flock_rsvp', { response: 'yes', surface: 'member' });
   return data;
 }
@@ -1601,6 +1638,50 @@ export async function saveAdminReconciled({ id, usdPerMonth, asOf, note }) {
   });
 }
 
+// THE OWNER'S MONEY HUB (the admin Overview tab). Admin only, enforced by
+// requireAdmin on the whole admin router, so there is no client-side check
+// worth writing here.
+//
+// GET /api/admin/money reads Stripe, RevenueCat, the cost model, the expense
+// list and the collector in one payload (backend/services/moneyHub.js). A cold
+// read asks both vendors, so it gets a longer deadline than the default. The
+// server holds each vendor answer for a few minutes and honours `refresh` only
+// once the held answer is a minute old, so the Refresh button cannot turn into
+// a stream of Stripe requests.
+export async function getAdminMoneyHub({ refresh = false } = {}) {
+  return request(`/api/admin/money${refresh ? '?refresh=1' : ''}`, { timeout: 45000 });
+}
+
+// The expense list (migration 080): the bills costModel.js does not carry.
+// Amounts travel as `amount` in dollars; the server stores integer cents and
+// answers with the saved row.
+export async function createAdminExpense(expense) {
+  return request('/api/admin/expenses', {
+    method: 'POST',
+    body: JSON.stringify(expense),
+  });
+}
+
+export async function updateAdminExpense(id, expense) {
+  return request(`/api/admin/expenses/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(expense),
+  });
+}
+
+export async function deleteAdminExpense(id) {
+  return request(`/api/admin/expenses/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// A pasted list, all or nothing: the server checks every row before it writes
+// any, and a bill already on the list is updated rather than added twice.
+export async function importAdminExpenses(expenses) {
+  return request('/api/admin/expenses/import', {
+    method: 'POST',
+    body: JSON.stringify({ expenses }),
+  });
+}
+
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {
@@ -1629,6 +1710,20 @@ export async function clearVenueVote(flockId) {
 export async function getMessages(flockId, { before } = {}) {
   const q = before ? `?before=${encodeURIComponent(before)}` : '';
   return request(`/api/flocks/${flockId}/messages${q}`);
+}
+
+// ONE MESSAGE'S REACTIONS, as the server holds them for this reader. The same
+// history route, asked for the single row at or below this id: its cursor is
+// exclusive, so `before` is the id plus one, and `limit=1` keeps the answer to
+// that row. It carries the reaction rows through the same block filter as a
+// full read and, being a cursor page, writes no delivery receipt. The caller
+// checks the id that comes back, because a message unsent or hidden in the
+// meantime answers with the row before it instead.
+export async function getFlockMessageReactions(flockId, messageId) {
+  const before = Number(messageId) + 1;
+  const data = await request(`/api/flocks/${flockId}/messages?before=${encodeURIComponent(before)}&limit=1`);
+  const row = (data?.messages || []).find((m) => Number(m.id) === Number(messageId));
+  return row ? (Array.isArray(row.reactions) ? row.reactions : []) : null;
 }
 
 // The full-size original behind a history thumbnail. History withholds
@@ -1755,6 +1850,10 @@ export async function sendMessage(flockId, text, opts = {}) {
       // body does and what the validator's optional({ values: 'null' }) chain
       // expects either way.
       reply_to_id: opts.reply_to_id || undefined,
+      // The socket twin's echo token, the same on both transports: the reply
+      // and the sender's other devices carry it back, and App.js settles the
+      // one bubble that sent it.
+      client_id: opts.client_id || undefined,
     }),
   });
   track('flock_message_sent', { kind: messageKind(opts), transport: 'http' });
@@ -1813,6 +1912,8 @@ export async function sendDM(userId, text, opts = {}) {
       image_url: opts.image_url || undefined,
       thumb_url: opts.thumb_url || undefined,
       reply_to_id: opts.reply_to_id || undefined,
+      // See sendMessage above.
+      client_id: opts.client_id || undefined,
     }),
   });
   track('dm_sent', { kind: messageKind(opts), transport: 'http' });

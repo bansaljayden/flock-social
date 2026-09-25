@@ -24,7 +24,11 @@ test('a plan check that could not run is an error with a retry, not a lock', () 
 test('the promotions tab says deals publish only once the venue is verified', () => {
   const dash = read('screens/VenueDashboard.js');
   expect(dash).toMatch(/Deals show on your venue card once your venue is verified\. Until then a deal you post stays here and nobody sees it\./);
-  const promo = dash.slice(dash.indexOf("venueTab === 'promotions' && can.postDeals"), dash.indexOf('{/* Create New Promotion Button */}'));
+  // The tab has no plan lock (deals are free on every plan), so it opens on
+  // the tab check alone.
+  const at = dash.indexOf("venueTab === 'promotions' && (");
+  expect(at).toBeGreaterThan(-1);
+  const promo = dash.slice(at, dash.indexOf('{/* Create New Promotion Button */}'));
   expect(promo).toMatch(/!venueIsVerified && \(/);
   expect(promo).toMatch(/renderVerificationAsk\(\)/);
 });

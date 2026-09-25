@@ -599,6 +599,10 @@ export function sendMessage(flockId, messageText, opts = {}) {
     // stale between the long press and the send comes back as an error rather
     // than as a quote of the wrong message.
     reply_to_id: opts.reply_to_id || null,
+    // This send's own id, handed back on the sender's echo so App.js settles
+    // exactly the bubble that sent it. Only when there is one, so a caller
+    // that has none puts nothing extra on the wire.
+    ...(opts.client_id ? { client_id: opts.client_id } : {}),
   });
   return true;
 }
@@ -670,6 +674,8 @@ export function socketSendDm(receiverId, messageText, opts = {}) {
     image_url: opts.image_url || null,
     thumb_url: opts.thumb_url || null,
     reply_to_id: opts.reply_to_id || null,
+    // See sendMessage above.
+    ...(opts.client_id ? { client_id: opts.client_id } : {}),
   });
   return true;
 }

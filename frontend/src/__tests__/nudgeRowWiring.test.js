@@ -132,12 +132,14 @@ describe('the row carries its own card', () => {
     expect(renderer).toMatch(/const who = m\.who;\s*\n\s*if \(!who\) return null;/);
     expect(renderer).toMatch(/const poll = m\.poll;\s*\n\s*if \(!poll\) return null;/);
     expect(renderer).toMatch(/const bill = m\.bill;\s*\n\s*if \(!bill\) return null;/);
-    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard']) {
+    // planClosed joined the poll row when an ended plan's card stopped taking
+    // votes: the card reads `poll.closed`, never the screen's flag.
+    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard', 'planClosed']) {
       expect(renderer).not.toContain(screenValue);
     }
     expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}/);
     expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard \}/);
-    expect(chatDetailSrc).toMatch(/\{ id: POLL_ROW_ID, message_type: 'system', poll: \{ rows: pollVoteRows, lockedName: pollLockedName \} \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: POLL_ROW_ID, message_type: 'system', poll: \{ rows: pollVoteRows, lockedName: pollLockedName, closed: planClosed \} \}/);
   });
 });
 

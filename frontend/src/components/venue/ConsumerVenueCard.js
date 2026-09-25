@@ -579,6 +579,13 @@ export default function ConsumerVenueCard({
                 const cd = cdTagged && Number.isFinite(cdTagged.score) ? cdTagged : null;
                 const noEstimate = crowdFetchFailed || (!!cdTagged && !cd);
                 const score = cd ? cd.score : (activeVenue.crowd || 0);
+                // The reading the dial is drawing, which the Now bar and the
+                // trend arrow copy. Any finite read counts, 0 included: a venue
+                // can say its room is empty, and a `score > 0` test left the
+                // Now bar on the model's figure under a dial reading 0. With no
+                // read, `score` is a placeholder 0 and only a positive pin value
+                // is copied, as before.
+                const dialScore = cd ? cd.score : (Number.isFinite(score) && score > 0 ? score : null);
                 // One vocabulary, one set of cut points, shared with the
                 // backend and the site. The old local ladder had three bands
                 // against the backend's five, so a 65 the server called "Busy"
@@ -787,8 +794,18 @@ export default function ConsumerVenueCard({
                 // typical patterns for this kind of place". The route ships
                 // predictionMethod for exactly this question, so ask it: only a
                 // number the model actually produced may call itself live.
+                //
+                // A venue's own reading is neither. It is not model output, so
+                // it is not LIVE, and it is not a Flock estimate, so it is not
+                // ESTIMATED either: the attribution line below says whose number
+                // it is and the owner line says when it was set, and the chip
+                // stays out of it. The server marks it predictionMethod
+                // 'owner_report'; ownerReport.applied, the flag the owner line
+                // is drawn on, is read too, so a server that predates the
+                // method still gets no LIVE chip over the owner's figure.
+                const ownerNumber = !!cd && (cd.predictionMethod === 'owner_report' || cd.ownerReport?.applied === true);
                 const isLiveNow = (() => {
-                  if (!cd?.lastUpdated) return false;
+                  if (!cd?.lastUpdated || ownerNumber) return false;
                   const method = String(cd.predictionMethod || '');
                   if (!method || method.startsWith('rule_engine')) return false;
                   const t = Date.parse(cd.lastUpdated);
@@ -812,8 +829,16 @@ export default function ConsumerVenueCard({
                     const parsedH = ((nowHour + i) % 24 + 24) % 24;
                     // A live score for Now means the venue is open now, whatever
                     // the posted hours claim.
-                    const hasLiveNow = isNow && Number.isFinite(score) && score > 0;
-                    const hourClosed = hasLiveNow ? false : (closedAllDay ? true : (
+                    //
+                    // It does not outrank the card's own closed state. The server
+                    // scores a closed hour like any other and says closed with
+                    // isOpen and hourly[i].open, never with a zero, so a closed
+                    // room nearly always arrives with a positive score, and the
+                    // Now bar used to draw that as a crowd under "Currently
+                    // Closed" and a "---" dial. When the card says closed, now is
+                    // closed.
+                    const hasLiveNow = isNow && dialScore != null;
+                    const hourClosed = (isNow && isClosed) ? true : hasLiveNow ? false : (closedAllDay ? true : (
                       apiHourly
                         ? h.open === false
                         : (venueOpenHour != null && venueCloseHour != null)
@@ -824,7 +849,7 @@ export default function ConsumerVenueCard({
                     ));
                     // Defend against null / NaN scores; the 'Now' bar mirrors the
                     // live header score so the chart and dial never disagree.
-                    const liveScoreForNow = (isNow && Number.isFinite(score) && score > 0) ? score : null;
+                    const liveScoreForNow = isNow ? dialScore : null;
                     const safeScore = liveScoreForNow != null
                       ? liveScoreForNow
                       : (Number.isFinite(h.score) ? h.score : 0);
@@ -861,7 +886,7 @@ export default function ConsumerVenueCard({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                     {crowdLoading ? (
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</span>
-                    ) : (
+                    ) : ownerNumber ? null : (
                       <>
                         {/* The dot is decorative so it keeps the vivid hue; the LABEL
                             has to be readable on the pale card. #22C55E measured
@@ -1061,6 +1086,12 @@ export default function ConsumerVenueCard({
                     </p>
                     {(() => {
                       if (!cd && !isClosed) return null; // no trend claims while loading
+                      // No trend out of a closed hour or into one. Closed hours
+                      // carry real model scores (the server marks them with
+                      // flags, not zeros), so the `next <= 0` test below never
+                      // caught a closed next hour, and a closed room's number
+                      // could read as Rising.
+                      if (isClosed || hourlyData[1]?.open === false) return null;
                       // Trend arrow: compare "Now" to next-hour prediction.
                       // Skip if the next hour is closed or unknown.
                       //
@@ -1074,7 +1105,8 @@ export default function ConsumerVenueCard({
                       // comparison refuses below the same number, so this arrow
                       // stopped being the one surface willing to name a
                       // direction the best-time sentence beside it refuses to.
-                      const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
+                      // "Now" is the dial's own reading, 0 included (dialScore).
+                      const cur = dialScore != null ? dialScore : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
                       const next = Number.isFinite(hourlyData[1]?.score) ? hourlyData[1].score : null;
                       if (cur == null || next == null || next <= 0) return null;
                       const diff = next - cur;

@@ -107,6 +107,62 @@ export function rememberInvite(token, extra = {}) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// THE GUEST IDENTITIES THIS DEVICE HOLDS FOR THE PERSON SIGNED IN NOW.
+//
+// website/GuestInvite.js keeps one identity per invite link it answered, under
+// `flock_guest_<link token>`, as { guestToken, name, ... }. When the same person
+// later accepts that plan's invite in the app, or opens its link with the app
+// installed, the join presents the identity so the server can retire the
+// by-name answer the membership replaces; without it one person counted twice
+// in "going", the roster and both venue tallies. The link page is never told
+// a flock id, so the app cannot pick out the one identity for the plan being
+// joined. It sends the few it holds, and the server matches only that plan's
+// rows (POST /api/flocks/:id/join), so an identity for another plan changes
+// nothing.
+//
+// ONLY THE ONES THAT ARE THIS PERSON'S. A handset gets borrowed, and an answer
+// somebody else gave on this browser would, if presented, retire THEIR row and
+// hand their vote to this account. So an identity is carried only when the
+// name it answered under begins with the signed-in person's first name, the
+// part of a name the roster shows. A nickname misses and changes nothing: the
+// row stays where it was, which is the state before this existed.
+//
+// `linkToken` narrows it to the identity kept for one link (the app opening
+// /i/<token>). Read failures return what was read so far, never a throw: this
+// runs on the tap that accepts an invite.
+// ---------------------------------------------------------------------------
+const GUEST_KEY_PREFIX = 'flock_guest_';
+const MAX_CARRIED_GUEST_TOKENS = 20;
+
+const firstNameOf = (name) => String(name || '').trim().toLowerCase().split(/\s+/)[0] || '';
+
+export function storedGuestTokens({ name, linkToken } = {}) {
+  const first = firstNameOf(name);
+  const out = [];
+  if (!first) return out;
+  try {
+    const keys = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith(GUEST_KEY_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) {
+      if (out.length >= MAX_CARRIED_GUEST_TOKENS) break;
+      if (linkToken && key !== `${GUEST_KEY_PREFIX}${linkToken}`) continue;
+      let entry = null;
+      try { entry = JSON.parse(window.localStorage.getItem(key) || 'null'); } catch { entry = null; }
+      if (!entry || typeof entry !== 'object' || !looksLikeGuestToken(entry.guestToken)) continue;
+      if (firstNameOf(entry.name) !== first) continue;
+      const token = entry.guestToken.toLowerCase();
+      if (!out.includes(token)) out.push(token);
+    }
+  } catch {
+    /* see read() */
+  }
+  return out;
+}
+
 /** The stashed invite, or null. Expired entries are cleaned up on the way out. */
 export function pendingInvite() {
   const saved = read();
@@ -226,6 +282,6 @@ export function openJoinedFlock(result) {
 }
 
 const inviteHandoff = {
-  rememberInvite, pendingInvite, forgetInvite, redeemPendingInvite, openJoinedFlock,
+  rememberInvite, pendingInvite, forgetInvite, redeemPendingInvite, openJoinedFlock, storedGuestTokens,
 };
 export default inviteHandoff;

@@ -457,7 +457,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
       if (err?.status === 403) {
         // The server said which plan serves these; repeat it rather than
         // guessing. Dormant while VENUE_BILLING_ENABLED is unset.
-        setLockedReason(err?.data?.error || `${FEATURE_NAME} is a Pro feature.`);
+        setLockedReason(err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`);
         setState('locked');
       } else {
         setState('error');
@@ -690,9 +690,11 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
 
   const renderPlainCard = (card, extraFirstRow) => {
     if (card.status === 'locked') {
+      // Roost is the one paid venue plan, so a locked card can only be
+      // waiting on Roost. It never says "Pro", which is the consumer plan.
       return renderCardShell(card, (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-          Part of the {card.requiredTier === 'premium' ? 'Premium' : 'Pro'} plan.
+          Part of Roost.
         </p>
       ));
     }

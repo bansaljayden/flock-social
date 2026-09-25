@@ -590,9 +590,14 @@ export default function FlockDetail({
               <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>
                 Going ({goingCount})
               </h4>
+              {/* Gated like the venue action and the time editor: an invite,
+                  by name or by link, is refused on an ended plan, so the
+                  sheet this opens would have nothing that works. */}
+              {!isCompleted && (
               <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 12)} Invite
               </button>
+              )}
             </div>
             {/* The night-of window (services/reconfirmSweep.js opens it a few
                 hours before a confirmed plan; App.js reads it into
@@ -813,7 +818,11 @@ export default function FlockDetail({
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', minHeight: '44px', boxSizing: 'border-box' }}>
               <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Status</span>
               <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600' }}>
-                {isCompleted ? Icons.check('var(--accent-green-text)', 12) : isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Still Planning'}
+                {/* isCompleted covers a cancelled plan too, and this row read
+                    "Done" beside a green check for one while the badge at
+                    the top said Cancelled. A plan the host called off did not
+                    happen, so it gets its own word and no check. */}
+                {flock.status === 'cancelled' ? Icons.x('var(--text-secondary)', 12) : isCompleted ? Icons.check('var(--accent-green-text)', 12) : isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {flock.status === 'cancelled' ? 'Cancelled' : isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Still Planning'}
               </span>
               {isCreator && !isConfirmed && !isCompleted && hasVenue && (
                 <button className="hit44 glass-btn glass-primary" disabled={confirmingPlan} onClick={async (e) => {

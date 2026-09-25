@@ -241,26 +241,35 @@ describe('joining from an invite card', () => {
    * Build the real handler with stand ins. `useCallback` is the identity, and
    * the returned harness reports everything the handler touched.
    */
-  function buildAccept({ acceptRejects = null, invite } = {}) {
-    const calls = { accepted: [], toasts: [], loadFlocks: 0, verifyChecked: [] };
+  function buildAccept({ acceptRejects = null, invite, heldGuestTokens = [] } = {}) {
+    const calls = { accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [] };
     let flocks = [];
     let pending = invite ? [invite] : [];
     const source = liftCallback('handleAcceptFlockInvite');
+    // The accept carries the guest identities this device holds for the
+    // signed-in person (services/inviteHandoff.js storedGuestTokens), read off
+    // meRef, so both are handed in alongside the rest.
     // eslint-disable-next-line no-new-func
     const factory = new Function(
       'useCallback', 'acceptFlockInvite', 'pendingFlockInvites', 'setPendingFlockInvites',
-      'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification',
+      'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
       `${source}\nreturn handleAcceptFlockInvite;`
     );
     const handler = factory(
       (fn) => fn,
-      (id) => { calls.accepted.push(id); return acceptRejects ? Promise.reject(acceptRejects) : Promise.resolve({}); },
+      (id, tokens) => {
+        calls.accepted.push(id);
+        calls.carried.push(tokens);
+        return acceptRejects ? Promise.reject(acceptRejects) : Promise.resolve({});
+      },
       pending,
       (fn) => { pending = typeof fn === 'function' ? fn(pending) : fn; },
       (fn) => { flocks = typeof fn === 'function' ? fn(flocks) : fn; },
       (message, type) => calls.toasts.push({ message, type }),
       () => { calls.loadFlocks += 1; },
       (err, action) => { calls.verifyChecked.push(action); return false; },
+      (opts) => { calls.identityAsked.push(opts); return heldGuestTokens; },
+      { current: { id: 5, name: 'Sam Rivera' } },
     );
     return {
       handler,
@@ -291,7 +300,19 @@ describe('joining from an invite card', () => {
   it('the lift found the handler', () => {
     const source = liftCallback('handleAcceptFlockInvite');
     expect(source.length).toBeGreaterThan(300);
-    expect(source).toContain('acceptFlockInvite(flockId)');
+    expect(source).toContain('acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }))');
+  });
+
+  it('the accept carries the link answers this device holds for this person, so they are not counted twice', () => {
+    // Somebody who answered the plan's share link by name and then accepted
+    // the invite here stayed on the plan as a guest AND a member. The server
+    // retires the guest row it is handed (POST /api/flocks/:id/join).
+    const held = ['11111111-2222-4333-8444-555555555555'];
+    const h = buildAccept({ invite: PREVIEW, heldGuestTokens: held });
+    return h.handler(41).then(() => {
+      expect(h.calls.identityAsked).toEqual([{ name: 'Sam Rivera' }]);
+      expect(h.calls.carried).toEqual([held]);
+    });
   });
 
   it('a successful join refetches the list, so the full row replaces the preview', () => {

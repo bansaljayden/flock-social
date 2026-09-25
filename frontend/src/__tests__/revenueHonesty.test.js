@@ -78,14 +78,15 @@ describe('revenue simulator: projections labelled as projections', () => {
     expect(visible).toContain('Arithmetic on the numbers you typed, not measurements.');
   });
 
-  test('the simulator seed stays the honest tier midpoint', () => {
-    // Midpoint of $35 Premium and $99 Pro. Two seeds have been wrong here: 50
-    // captioned "the average", which it was not, and then 55, which was the
-    // midpoint of the retired $75 Pro and survived the 2026-08-25 re-price by a
-    // week. A seed off a price no venue can be charged opens the simulator on
-    // fiction, so this pin moves whenever the tiers do.
-    expect(app).toContain('const [subscriptionPrice, setSubscriptionPrice] = useState(67)');
-    expect((35 + 99) / 2).toBe(67);
+  test('the simulator seed is the one venue price there is', () => {
+    // Roost at $99 is the only venue plan since the tiers collapsed to a free
+    // account and Roost. Three seeds have been wrong here: 50 captioned "the
+    // average", which it was not, then 55, the midpoint of a retired $75 Pro,
+    // then 67, the midpoint of Roost and the retired $35 middle plan. A seed
+    // off a price no venue can be charged opens the simulator on fiction, so
+    // this pin moves whenever the plans do.
+    expect(app).toContain('const [subscriptionPrice, setSubscriptionPrice] = useState(99)');
+    expect(app).toMatch(/const VENUE_PLAN_PRICE = \{ pro: 99 \};/);
   });
 
   test('demo research data is labelled demo on screen', () => {

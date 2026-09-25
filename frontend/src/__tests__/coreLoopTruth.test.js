@@ -100,7 +100,10 @@ test('the invite helper\'s live card says when, where and how many', () => {
 test('the invite link is claimed and routed', () => {
   expect(aasa).toMatch(/\{ '\/': '\/i\/\*', comment: 'invite link; routed by intentFromUrl and redeemed by inviteHandoff' \}/);
   expect(aasa).not.toMatch(/'\/i\/\*', exclude: true/);
-  expect(app).toMatch(/\} else if \(intent\.screen === 'invite' && intent\.token\) \{[\s\S]{0,400}rememberInvite\(intent\.token\);\s*loadFlocks\(\);/);
+  // Remembered with the guest identity this person answered that link under,
+  // when the device holds one, so the redeem retires the by-name answer the
+  // membership replaces (guestIdentityCarry.test.js pins the carry itself).
+  expect(app).toMatch(/\} else if \(intent\.screen === 'invite' && intent\.token\) \{[\s\S]{0,700}rememberInvite\(intent\.token, \{[\s\S]{0,200}\}\);\s*loadFlocks\(\);/);
 });
 
 test('a chat venue card shows your vote and can take it back', () => {

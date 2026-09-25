@@ -9,6 +9,7 @@ import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
 import ConsentBanner from './components/ConsentBanner';
 import { hasAnalyticsConsent } from './services/analyticsConsent';
+import { detectNativeShell } from './lib/nativeShell';
 
 // Bearer tokens ride in URLs in two places. Guest invites carry one in the
 // path (/i/<token>): anyone holding it can RSVP and vote as that guest. The
@@ -251,8 +252,8 @@ export const POSTHOG_PRIVACY_CONFIG = {
 //   * ANDROID serves it from https://localhost, which is indistinguishable
 //     from a dev server by hostname and protocol alone. window.Capacitor is
 //     injected by the native bridge before this bundle runs and is absent from
-//     the web build (see detectNativeShell below, which relies on the same
-//     fact), so the bridge is the only thing that separates them.
+//     the web build (see detectNativeShell in lib/nativeShell.js, which relies
+//     on the same fact), so the bridge is the only thing that separates them.
 //
 // REACT_APP_POSTHOG_ALLOW_LOCAL=true opts a local build back in, for anyone
 // deliberately testing that the pipeline still works end to end.
@@ -347,23 +348,9 @@ if (hasAnalyticsConsent()) afterLoad(startAnalytics);
 // Every signal the bridge can give is accepted now, and the one ambiguous
 // case (a bridge that is present but answers badly) resolves to "native",
 // because booting the marketing page inside the native app is far worse than
-// booting the app in a browser tab. window.Capacitor does not exist in the web
-// build at this point: nothing in src/ imports @capacitor/core, and the
-// plugins that do are dynamic imports inside the App chunk.
-const detectNativeShell = () => {
-  if (typeof window === 'undefined') return false;
-  try {
-    if (window.location.protocol === 'capacitor:') return true;
-    const cap = window.Capacitor;
-    if (!cap) return false;
-    if (typeof cap.isNativePlatform === 'function') return cap.isNativePlatform() === true;
-    if (typeof cap.getPlatform === 'function') return cap.getPlatform() !== 'web';
-    return true;
-  } catch {
-    return typeof window.Capacitor !== 'undefined';
-  }
-};
-
+// booting the app in a browser tab. The check lives in lib/nativeShell.js,
+// because every surface that sells Pro or Roost has to reach the same answer
+// this boot check does: a shell booted as native never shows a web price.
 const isNativeShell = detectNativeShell();
 
 const rawPath = typeof window !== 'undefined' ? window.location.pathname : '/';

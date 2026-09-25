@@ -26,15 +26,25 @@ export const crowdLabelFor = (score) => {
 export default crowdLabelFor;
 
 /**
- * The colour the crowd dial's arc takes, cut on the same ladder as the word.
+ * The colour the crowd dial's arc takes, read off the word above rather than
+ * cut again.
+ *
+ * It used to carry its own numbers and turned red at 70, so a Busy 75 drew a
+ * red arc in a chat card while every other surface (App.js crowdBandFor, the
+ * site, the colour bands in backend/services/crowdEngine.js) draws Busy in
+ * amber and keeps red for Packed at 85 and up. Deriving the colour from
+ * crowdLabelFor means the arc can only change colour where the word changes,
+ * and a re-cut of the ladder moves both at once: Quiet and Not Busy are green,
+ * Steady and Busy amber, Packed red.
  *
  * These are the bright ends of the app's crowd palette rather than the ones the
  * cards use on cream, because the dial sits on a dark scrim over a photograph
  * and the on-cream greens and ambers disappear there.
  */
 export const crowdArcFor = (score) => {
-  if (!Number.isFinite(score)) return null;
-  if (score <= 39) return '#4ADE80';
-  if (score <= 69) return '#FBBF24';
-  return '#F87171';
+  const word = crowdLabelFor(score);
+  if (!word) return null;
+  if (word === 'Packed') return '#F87171';
+  if (word === 'Steady' || word === 'Busy') return '#FBBF24';
+  return '#4ADE80';
 };
