@@ -249,6 +249,17 @@ function paywallEnabled(userId) {
       '[entitlements] The paywall is on (PAYWALL_ENABLED=true, or an account on PAYWALL_PREVIEW_USER_IDS) but REVENUECAT_WEBHOOK_SECRET is unset. routes/revenuecat.js refuses every event without it, and it is the only writer of users.is_premium, so every metered account stays on the free tier and NO purchase can lift it. Set the webhook secret before metering anyone.'
     );
   }
+  // The webhook's other half. Without RevenueCat's API key it cannot re-read a
+  // subscriber, so it writes from each event's type in ARRIVAL order (see
+  // REPLAY AND ORDERING in routes/revenuecat.js): a retried or late event can
+  // leave the wrong Pro state, and an App Store event cannot see a paid web
+  // subscription, or the reverse.
+  if (on && secretConfigured && !require('./proBilling').revenueCatApiConfigured()) {
+    warnOnce(
+      'preflight:paywall-no-subscriber-read',
+      '[entitlements] The paywall is on but REVENUECAT_SECRET_API_KEY is unset. routes/revenuecat.js then writes users.is_premium from each event in arrival order, so a late or retried event can leave the wrong Pro state, and a store purchase cannot see a web one. Set the RevenueCat secret API key before metering anyone.'
+    );
+  }
   return on;
 }
 
