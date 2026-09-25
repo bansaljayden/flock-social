@@ -615,8 +615,9 @@ let unmodelled;
 let proCustomer = null;
 let roostCustomer = null;
 let rowDeleted = false;
-// The statements that erase a venue owner's review replies, in order with the
-// user delete, so a test can see the erase lands inside the transaction first.
+// The account row's lock, the statement that erases a venue owner's review
+// replies and the user delete, in the order they ran, so a test can see the
+// erase lands inside the transaction under the lock and before the delete.
 let deletionOrder = [];
 
 function stubQuery(text) {
@@ -641,6 +642,7 @@ function stubQuery(text) {
   if (has('UPDATE users SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('UPDATE venue_profiles SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('FROM users WHERE id = $1')) {
+    if (has('FOR UPDATE')) deletionOrder.push('lock users');
     return { rows: [{
       id: DELETER, email: 'deleter@example.com', name: 'Robin', phone: null,
       password: PASSWORD_HASH, oauth_provider: null, oauth_id: null,
@@ -788,13 +790,17 @@ test('a member who blocked the deleter is not sent a payload naming them', async
   assert.ok(rooms.includes('user:21'));
 });
 
-test("a venue owner's replies to reviews are erased in the deletion's transaction, before the account row", async () => {
+test("a venue owner's replies to reviews are erased in the deletion's transaction, under the account row's lock, before the row goes", async () => {
   const res = await deleteAccountAs();
   assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
   assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
-  assert.equal(deletionOrder.length, 2, 'the reply erase ran once, then the account delete');
-  assert.match(deletionOrder[0], /SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL WHERE venue_reply_user_id = \$1/);
-  assert.equal(deletionOrder[1], 'users');
+  // Lock first: a reply that commits between an unlocked erase and the delete
+  // keeps its words with no author (venueCurrentOwner.test.js section 7 runs
+  // that interleaving on a real database).
+  assert.equal(deletionOrder.length, 3, 'the account row was locked, the replies erased once, then the account deleted');
+  assert.equal(deletionOrder[0], 'lock users', 'the reply erase ran before the account row was locked');
+  assert.match(deletionOrder[1], /SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL WHERE venue_reply_user_id = \$1/);
+  assert.equal(deletionOrder[2], 'users');
 });
 
 test('a deletion that rolls back tells nobody their plan is off', async () => {
