@@ -27,8 +27,10 @@ const {
 const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
 // The member-facing venue tally has one implementation and it lives with the
 // member vote routes — see broadcastGuestVote there for why a guest vote is
-// announced through it rather than emitted from here.
-const { broadcastGuestVote } = require('./venues');
+// announced through it rather than emitted from here. VOTE_PLAN_LOCK_SQL is the
+// lock a vote switch takes on the plan's row before any vote row; the guest
+// vote and a new guest RSVP below take the same one before they write.
+const { broadcastGuestVote, VOTE_PLAN_LOCK_SQL } = require('./venues');
 const { pushIfOffline } = require('../services/pushHelper');
 // The budget door for a guest runs the member door's settle and publication
 // (routes/budget.js exports them for exactly this), so there is one of each.
@@ -1017,6 +1019,19 @@ router.post('/:token/rsvp',
       try {
         await client.query('BEGIN');
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
+        // THEN THE PLAN'S ROW, the order the vote below takes: this route's
+        // own lock, the plan's key share, then the row it writes. The insert's
+        // foreign key takes the same key share, but only once the row has been
+        // written, so a plan deleted while the insert waited for it left the
+        // new row pointing at nothing. Postgres refused it (23503) and the
+        // guest was told "Could not save your RSVP" by a 500. Taken here
+        // instead, a plan deleted first leaves no row to lock, the insert
+        // below finds no open plan and writes nothing, and the answer is the
+        // 409 a closed plan gets. A key share conflicts only with the
+        // FOR UPDATE the deletes, joins, bills and budget settles take, and
+        // none of those takes guest_rsvp:, so whichever reaches the plan's
+        // row first finishes while the other waits holding nothing it needs.
+        await client.query(VOTE_PLAN_LOCK_SQL, [link.flock_id]);
 
         const count = await client.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
         if (count.rows[0].n >= GUEST_ROWS_CAP) {
@@ -1223,6 +1238,16 @@ router.post('/:token/vote',
         try {
           await client.query('BEGIN');
           await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_vote:' || $1::text))", [String(guestId)]);
+          // THEN THE PLAN'S ROW, BEFORE ANY VOTE ROW, the order the member
+          // votes take (routes/venues.js VOTE_PLAN_LOCK_SQL has why). A plan
+          // delete locks the plan's row and then cascades through its guest
+          // votes. This switch deleted the guest's old vote first and reached
+          // the plan's row only through the new vote's foreign key, so each
+          // held what the other needed next, and Postgres failed whichever had
+          // waited longer with a deadlock, which could be the host's delete. A
+          // plan deleted while this waits leaves no row, and the insert below
+          // then writes nothing and is answered as a closed plan.
+          await client.query(VOTE_PLAN_LOCK_SQL, [link.flock_id]);
           await client.query(
             'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3',
             [link.flock_id, guestId, venueName]

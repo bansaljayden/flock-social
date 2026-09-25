@@ -30,10 +30,17 @@
 //      from another device lands right after it.
 //   6. A PLAN DELETE QUEUES BEHIND A VOTE SWITCH OR A RE-TAP, AND THEY BEHIND
 //      IT, INSTEAD OF DEADLOCKING. A delete locks the plan's row and then
-//      cascades through its vote and guest rows; the vote switch and the re-tap
-//      used to take one of those rows first and then wait on the plan's row.
+//      cascades through its vote and guest rows; the vote switch (a member's,
+//      or a guest's on the link) and the re-tap used to take one of those rows
+//      first and then wait on the plan's row. The guest's switch has its own
+//      old-order test, like the join's in 2.
 //      The delete's side runs with a short deadlock_timeout, so a cycle, if one
 //      forms, fails the delete, the way it failed a host's.
+//      A new guest RSVP takes the plan's key share before it writes too: its
+//      insert used to reach the plan's row only through its foreign key, so a
+//      plan deleted under it was a 500 rather than the closed-plan 409. It and
+//      the doors that lock the plan's row (the delete, the link join, a guest's
+//      budget answer) queue behind each other in either order.
 //   7. A LEAVE OR A DELETE IS ANNOUNCED ONLY ONCE IT HAS COMMITTED, and a leave
 //      whose audience read fails still happens. A failed statement aborts the
 //      transaction in Postgres whatever the JavaScript catches; these cancel a
@@ -871,6 +878,199 @@ test('two members switching their votes at once do not wait on each other for th
   assert.deepEqual(await votesOf(flockId, ava), ['Ava New']);
   assert.deepEqual(await votesOf(flockId, bo), ['Bo Pick']);
 });
+
+// THE GUEST LINK'S SWITCH (POST /api/guest/:token/vote) is the member switch's
+// old shape under the guest's own lock: it deleted the guest's old vote, then
+// reached for the plan's row through the new vote's foreign key. The old order
+// runs first, on the same interleaving, so the route test after it passing
+// means the lock order and not a lucky schedule.
+const GUEST_VOTE_LOCK = "SELECT pg_advisory_xact_lock(hashtext('guest_vote:' || $1::text))";
+
+// A plan with a guest holding a vote, and a second venue already on the table:
+// a guest can only vote for a venue the plan is considering.
+async function planWithGuestVote(label) {
+  const host = await mkUser(`Host ${label}`);
+  const flockId = await mkFlock(host);
+  const link = await mkLink(flockId, host);
+  await memberVote(flockId, host, 'New Pick');
+  const g = await guestRow(flockId, 'Gia');
+  await guestVote(flockId, g, 'Old Pick', 5);
+  return { host, flockId, link, g };
+}
+
+test('in the old order, a guest switching their vote on the link and a plan delete deadlock', async () => {
+  const { flockId, g } = await planWithGuestVote('Guest Old');
+  const del = await planDeleteHolding(flockId);
+  const vote = await holder();
+  try {
+    await vote.client.query(GUEST_VOTE_LOCK, [String(g.id)]);
+    await vote.client.query(
+      'DELETE FROM guest_votes WHERE flock_id = $1 AND guest_rsvp_id = $2 AND venue_name <> $3', [flockId, g.id, 'New Pick']
+    );
+    const voteDone = vote.client.query(
+      'INSERT INTO guest_votes (flock_id, guest_rsvp_id, venue_name) VALUES ($1, $2, $3)', [flockId, g.id, 'New Pick']
+    ).then(() => null, (e) => e);
+    await waitForWaiter('the old guest switch', (w) => /INSERT INTO guest_votes/.test(w.query));
+    const failures = (await Promise.all([voteDone, del.finish()])).filter(Boolean);
+    assert.deepEqual(failures.map((e) => e.code), ['40P01'], 'exactly one of the two is the deadlock victim');
+  } finally {
+    await vote.end();
+    await del.end();
+  }
+});
+
+test('the guest link: a guest switching their vote while the plan is deleted: both finish, and the delete is no deadlock victim', async () => {
+  const { flockId, link, g } = await planWithGuestVote('Guest Switch');
+  const del = await planDeleteHolding(flockId);
+  let res;
+  try {
+    const voting = call('POST', `/api/guest/${link}/vote`, { body: { guestToken: g.guest_token, venueName: 'New Pick' } });
+    const queued = await waitForWaiter('the guest\'s switch', (w) => /FOR KEY SHARE|INSERT INTO guest_votes/.test(w.query));
+    const failed = await del.finish();
+    assert.equal(failed, null, failedDelete(failed));
+    await del.end('COMMIT');
+    res = await voting;
+    // It waits on the plan before it deletes the guest's old vote, the row the
+    // delete's cascade needs.
+    assert.match(flat(queued.query), /^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  } finally {
+    await del.end();
+  }
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.body.error, 'This plan is no longer taking votes', 'the vote finds the plan gone and says so');
+  assert.equal(await plansLeft(flockId), 0);
+});
+
+test('the guest link: a plan delete arriving after a guest\'s switch took the plan\'s row waits for the switch', async () => {
+  const { host, flockId, link, g } = await planWithGuestVote('Guest First');
+  // The switch stops at the delete of the guest's old vote, which the test
+  // holds, with the plan's key share already taken.
+  const hold = await holder();
+  let voting = null;
+  let deleting = null;
+  try {
+    await hold.client.query('SELECT id FROM guest_votes WHERE guest_rsvp_id = $1 FOR UPDATE', [g.id]);
+    voting = call('POST', `/api/guest/${link}/vote`, { body: { guestToken: g.guest_token, venueName: 'New Pick' } });
+    await waitForWaiter('the guest\'s switch', (w) => /DELETE FROM guest_votes/.test(w.query));
+    deleting = call('DELETE', `/api/flocks/${flockId}`, { token: host.token });
+    await waitForWaiter('the plan delete', (w) => /FROM flocks WHERE id = \$1 FOR UPDATE/.test(w.query));
+  } finally {
+    await hold.end();
+  }
+  const [voted, deleted] = await Promise.all([voting, deleting]);
+  assert.equal(voted.status, 201, voted.text);
+  assert.equal(deleted.status, 200, `the host's delete failed: ${deleted.text}`);
+  assert.equal(await plansLeft(flockId), 0);
+});
+
+// A NEW GUEST RSVP takes the plan's key share after its guest_rsvp: lock and
+// before it writes, the vote's order. Its insert used to reach the plan's row
+// only through the new row's foreign key, so a plan deleted while it waited
+// there left the key pointing at nothing, and the guest got a 500. The doors
+// that lock the plan's row FOR UPDATE on the guest surface are the plan
+// delete, the link join and a guest's budget answer. None of them takes
+// guest_rsvp:, so in either order one side waits holding nothing the other
+// needs, and both finish.
+async function guestSurface(label) {
+  const host = await mkUser(`Host ${label}`);
+  const joiner = await mkUser(`Jo ${label}`);
+  const flockId = await mkFlock(host);
+  await pool.query('UPDATE flocks SET budget_enabled = true WHERE id = $1', [flockId]);
+  const link = await mkLink(flockId, host);
+  const g = await guestRow(flockId, 'Gia');
+  return { host, joiner, flockId, link, g };
+}
+const newRsvp = (ctx) => call('POST', `/api/guest/${ctx.link}/rsvp`, { body: { name: 'Nia', status: 'in' } });
+
+test('the guest link: a new RSVP arriving while the plan is deleted is refused in words, and the delete is no deadlock victim', async () => {
+  const ctx = await guestSurface('Rsvp Gone');
+  const del = await planDeleteHolding(ctx.flockId);
+  let res;
+  let queued;
+  try {
+    const answering = newRsvp(ctx);
+    queued = await waitForWaiter('the new RSVP', (w) => /FOR KEY SHARE|INSERT INTO guest_rsvps/.test(w.query));
+    const failed = await del.finish();
+    assert.equal(failed, null, failedDelete(failed));
+    await del.end('COMMIT');
+    res = await answering;
+  } finally {
+    await del.end();
+  }
+  assert.equal(res.status, 409, `a plan deleted under a new RSVP answered ${res.status}: ${res.text}`);
+  assert.equal(res.body.error, 'This plan is no longer taking RSVPs');
+  // It waits on the plan's row before it writes anything, so the delete
+  // finds nothing of it to wait for and nothing is left pointing at it.
+  assert.match(flat(queued.query), /^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  assert.equal(await plansLeft(ctx.flockId), 0);
+});
+
+// Each door, stopped after it has locked the plan's row, and started from the
+// point where the RSVP holds the plan's key share.
+const PLAN_ROW_DOORS = [
+  ['the plan delete', {
+    act: (ctx) => call('DELETE', `/api/flocks/${ctx.flockId}`, { token: ctx.host.token }),
+  }],
+  ['the link join', {
+    // Stopped at the flock_join: lock it takes right after the plan's row.
+    hold: (client, ctx) => client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(ctx.flockId)]),
+    stoppedAt: /flock_join:/,
+    act: (ctx) => call('POST', `/api/guest/${ctx.link}/join`, { token: ctx.joiner.token, body: {} }),
+  }],
+  ['a guest\'s budget answer', {
+    // Stopped at its insert, which needs the table the test holds.
+    hold: (client) => client.query('LOCK TABLE budget_submissions IN SHARE MODE'),
+    stoppedAt: /INSERT INTO budget_submissions/,
+    act: (ctx) => call('POST', `/api/guest/${ctx.link}/budget`, { body: { guestToken: ctx.g.guest_token, amount: 40 } }),
+  }],
+];
+
+for (const [door, d] of PLAN_ROW_DOORS.filter(([, x]) => x.hold)) {
+  test(`the guest link: a new RSVP arriving while ${door} holds the plan's row waits for it, and both finish`, async () => {
+    const ctx = await guestSurface('Door First');
+    const hold = await holder();
+    let doorCall = null;
+    let answering = null;
+    let queued = null;
+    try {
+      await d.hold(hold.client, ctx);
+      doorCall = d.act(ctx);
+      await waitForWaiter(door, (w) => d.stoppedAt.test(w.query));
+      answering = newRsvp(ctx);
+      queued = await waitForWaiter('the new RSVP', (w) => /FOR KEY SHARE|INSERT INTO guest_rsvps/.test(w.query));
+    } finally {
+      await hold.end();
+    }
+    const [doorRes, rsvpRes] = await Promise.all([doorCall, answering]);
+    assert.equal(doorRes.status, 200, doorRes.text);
+    assert.equal(rsvpRes.status, 201, rsvpRes.text);
+    assert.match(flat(queued.query), /^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/,
+      'the RSVP waited for the plan\'s row before writing anything');
+  });
+}
+
+for (const [door, d] of PLAN_ROW_DOORS) {
+  test(`the guest link: ${door} arriving after a new RSVP took the plan's key share waits for it, and both finish`, async () => {
+    const ctx = await guestSurface('Rsvp First');
+    // The RSVP stops at its insert, which needs the table the test holds in
+    // SHARE mode; its reads go through, and it holds the plan's key share.
+    const hold = await holder();
+    let answering = null;
+    let doorCall = null;
+    try {
+      await hold.client.query('LOCK TABLE guest_rsvps IN SHARE MODE');
+      answering = newRsvp(ctx);
+      await waitForWaiter('the new RSVP', (w) => /INSERT INTO guest_rsvps/.test(w.query));
+      doorCall = d.act(ctx);
+      await waitForWaiter(door, (w) => /FROM flocks WHERE id = \$1 FOR UPDATE/.test(w.query));
+    } finally {
+      await hold.end();
+    }
+    const [rsvpRes, doorRes] = await Promise.all([answering, doorCall]);
+    assert.equal(rsvpRes.status, 201, rsvpRes.text);
+    assert.equal(doorRes.status, 200, doorRes.text);
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 7. A leave or a delete is announced only once it has committed

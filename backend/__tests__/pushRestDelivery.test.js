@@ -298,6 +298,7 @@ test('bill_created names the PAYER as fromUserId and fans out with allSettled', 
 test('guest_rsvp carries the namespaced guest id as fromUserId', async () => {
   on(/FROM flock_invite_links il/, () => ({ rows: [{ flock_id: 42, name: 'Dinner', event_time: null, venue_name: null, status: 'active', host_name: 'Bob' }] }));
   on(/pg_advisory_xact_lock/, () => ({ rows: [] }));
+  on(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/, () => ({ rows: [{ id: 42 }] })); // the plan's row, locked before the insert
   on(/SELECT COUNT\(\*\)::int AS n FROM guest_rsvps/, () => ({ rows: [{ n: 0 }] }));
   on(/SELECT 1 FROM guest_rsvps\s+WHERE flock_id = \$1\s+AND COALESCE\(is_hidden/, () => ({ rows: [] })); // takedown check
   on(/INSERT INTO guest_rsvps/, () => ({ rows: [{ id: 5, guest_token: '11111111-1111-4111-8111-111111111111', is_hidden: false }] }));
