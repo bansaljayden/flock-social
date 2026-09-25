@@ -42,8 +42,10 @@
 //     one, and an older alarm after a newer one;
 //   * on each device, and whatever the last answer was: a correction the
 //     provider refused, a send that landed but answered as a failure, a
-//     second stand-down in the same slot, a token replaced mid-way, and a
-//     retry that the correction made a second ring of;
+//     second stand-down in the same slot, a token replaced mid-way, a retry
+//     that the correction made a second ring of, an older all-clear standing
+//     in for a newer one, and failing corrections chained past the budget of
+//     the retry they began with;
 //   * and the times that let the app tell an alarm from the stand-down that
 //     called it off: the stand-down's socket event skips anybody a newer
 //     alarm reached, and every all-clear carries the stand-down's own time.
@@ -238,6 +240,10 @@ test('after "I am OK", the location follow-up is refused: no row, no mail, no pu
   assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
   const [row] = await alertRows(ava);
   assert.ok(row.withdrawn_at, 'the alert is marked withdrawn');
+  // The stand-down's flock leg runs after the answer; wait for what it sends,
+  // not for a guess at how long it takes.
+  await until(async () => pushes.filter((p) => p.data.type === 'safety_alert_cancelled'
+    && [f1.id, f2.id].includes(p.userId)).length === 2, 'the stand-down\'s flock leg');
   await sleep(50);
   const afterOk = here();
 
@@ -273,6 +279,7 @@ test('the whole night in order: alarm, all-clear, and nothing after it', async (
   await until(async () => (await alertRows(ava))[0].flock_recipient_ids.length === 1, 'the flock leg');
   await call('POST', '/api/safety/alert/cancel', { token: ava.token, body: {} });
   await call('POST', '/api/safety/alert', { token: ava.token, body: { ...FIX, followUpTo: alarm.body.alertId } });
+  await until(async () => since(start).pushes.some((p) => p.data.type === 'safety_alert_cancelled'), 'the stand-down\'s flock leg');
   await sleep(100);
 
   const got = since(start);
@@ -413,8 +420,15 @@ test('a flock leg that finds its alert already withdrawn tells nobody and record
 // "Tell them I'm OK", then the clock moved on: every alert row of the user is
 // made `seconds` older, which is what the refusal measures from.
 async function standDownAndAge(user, seconds) {
+  const allClears = () => pushes.filter((p) => p.data.type === 'safety_alert_cancelled' && p.data.fromUserId === String(user.id)).length;
+  const before = allClears();
   const ok = await call('POST', '/api/safety/alert/cancel', { token: user.token, body: {} });
   assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+  // Its flock leg runs after the answer: wait until it has reached everyone
+  // the alerts recorded, so nothing it sends lands after a test's mark.
+  const { rows: owed } = await pool.query(
+    'SELECT DISTINCT unnest(flock_recipient_ids) AS id FROM emergency_alerts WHERE user_id = $1', [user.id]);
+  await until(async () => allClears() - before >= owed.length, 'the stand-down\'s flock leg');
   await pool.query(
     `UPDATE emergency_alerts SET created_at = created_at - ($2::int * INTERVAL '1 second') WHERE user_id = $1`,
     [user.id, seconds]
@@ -535,10 +549,12 @@ async function addPhone(user) {
 // out, which firebase-admin keeps retrying well past our 8 second deadline.
 // `lost` is the third way such a send ends: an attempt reached the phone, its
 // reply was lost, and the send answers with the 5xx of a later attempt.
-// `gone` picks messages whose token the provider no longer knows.
-function stubProvider({ hold = () => false, gone = () => false } = {}) {
+// `gone` picks messages whose token the provider no longer knows, and
+// `refuse` ones it answers at once with a 5xx, every time it is asked.
+function stubProvider({ hold = () => false, gone = () => false, refuse = () => false } = {}) {
   const landed = [];
   const held = [];
+  const refused = [];
   const internal = () => {
     const err = new Error('Internal error encountered.');
     err.code = 'messaging/internal-error';
@@ -549,6 +565,10 @@ function stubProvider({ hold = () => false, gone = () => false } = {}) {
       const err = new Error('Requested entity was not found.');
       err.code = 'messaging/registration-token-not-registered';
       throw err;
+    }
+    if (refuse(message)) {
+      refused.push(message);
+      throw internal();
     }
     if (!hold(message)) {
       landed.push(message);
@@ -563,7 +583,7 @@ function stubProvider({ hold = () => false, gone = () => false } = {}) {
       });
     });
   });
-  return { landed, held };
+  return { landed, held, refused };
 }
 
 // Holds each message that the first of `rules` still waiting matches, one
@@ -1761,4 +1781,165 @@ test('a rebuilt alarm is stamped when it is rebuilt, so an app that heard the st
     restore();
     stopPushThrough();
   }
+});
+
+// ===========================================================================
+// An older all-clear is not a newer one
+// ===========================================================================
+//
+// An all-clear calls off the alarms raised before its stand-down, and the app
+// closes nothing newer (WHICH ALARM A STAND-DOWN CALLS OFF, routes/safety.js).
+// So on the server too, an all-clear for an earlier stand-down neither counts
+// as the one a later alert's withdrawal needs, nor takes that one's retry.
+
+test('an older all-clear landing last does not stand in for a newer one, nor take its queued retry', async () => {
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.o@example.com', '5550318');
+  const phone = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  const clearRows = async () => (await outboxFor(rec)).filter((r) => r.data.type === 'safety_alert_cancelled');
+  try {
+    // Alert A sticks at the provider; "I'm OK" lands; A lands after it, and
+    // the all-clear sent to correct it (the first stand-down's) sticks.
+    rules.push(alarmTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.held.length === 1, 'A at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the first all-clear');
+    rules.push(clearTo(phone));
+    await letLand(take(provider, alarmTo(phone)));
+    await until(async () => provider.held.length === 1, 'the first stand-down\'s correction at the provider');
+    const older = provider.held[0].message;
+
+    // Past the hold, alert B lands, and "I'm OK" again: its all-clear fails on
+    // the phone and is queued, and the phone missed the live event.
+    await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '130 seconds' WHERE user_id = $1`, [sen.id]);
+    const second = await call('POST', '/api/safety/alert', { token: sen.token, body: FIX });
+    assert.strictEqual(second.status, 200, JSON.stringify(second.body));
+    await until(async () => provider.landed.length === 3, 'B');
+    rules.push(clearTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.held.length === 2, 'the second all-clear at the provider');
+    take(provider, (m) => clearTo(phone)(m) && m !== older).fail();
+    await until(async () => (await clearRows()).length === 1, 'the second all-clear queued for the phone');
+    const { rows: [bRow] } = await pool.query(
+      `SELECT FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS ms
+         FROM emergency_alerts WHERE id = $1`, [second.body.alertId]);
+    const newerAt = new Date(Number(bRow.ms)).toISOString();
+    assert.ok(msOf(older.data.at) < msOf(newerAt), 'two stand-downs, the first earlier');
+    assert.strictEqual((await clearRows())[0].data.at, newerAt);
+
+    // Now the older all-clear lands, last. It is not the one B's withdrawal
+    // needs, and the phone is sent that one; and it has not taken its retry.
+    rules.push(clearTo(phone));
+    await letLand(take(provider, (m) => m === older));
+    await until(async () => provider.held.length === 1, 'the second stand-down\'s all-clear, sent again');
+    assert.strictEqual(provider.held[0].message.data.at, newerAt);
+    assert.deepStrictEqual((await clearRows()).map((r) => r.data.at), [newerAt],
+      'the older all-clear took the retry of the newer one');
+
+    // It lands, and the phone ends on the all-clear that calls off B, whose
+    // queued copy it no longer needs.
+    await letLand(provider.held.shift());
+    await sleep(150);
+    const onPhone = provider.landed.filter((m) => m.token === phone.token);
+    assert.strictEqual(onPhone[onPhone.length - 1].data.type, 'safety_alert_cancelled');
+    assert.strictEqual(onPhone[onPhone.length - 1].data.at, newerAt,
+      'the phone was left on an all-clear older than the alarm it has to call off');
+    assert.deepStrictEqual(await clearRows(), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+// ===========================================================================
+// A chain of corrections stays inside the budget of the retry it began with
+// ===========================================================================
+
+test('a queued SOS retry whose corrections keep failing ends within that retry\'s own attempts and expiry', async () => {
+  // Each release that failed was corrected, each failed correction queued a
+  // fresh retry with a fresh count and a fresh thirty minutes in place of the
+  // one it came from, and every sweep did it again in a new slot: a device the
+  // provider kept refusing was retried for as long as it kept refusing.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.p@example.com', '5550319');
+  const phone = await addPhone(rec);
+  pushThrough = true;
+  const provider = stubProvider({ refuse: (m) => m.token === phone.token && m.data.type === 'safety_alert' });
+  const alarmRows = async () => (await pool.query(
+    `SELECT attempts, expires_at FROM push_outbox WHERE user_id = $1 AND data->>'type' = 'safety_alert'`, [rec.id])).rows;
+  try {
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => (await alarmRows()).length === 1 && pushHelper._openSosSlots() === 0, 'the alarm queued for a retry');
+    const [first] = await alarmRows();
+    const expiry = new Date(first.expires_at).getTime();
+
+    for (let sweep = 1; sweep <= 6; sweep += 1) {
+      await pool.query(
+        `UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE user_id = $1`, [rec.id]);
+      await pushHelper.sweepPushOutbox();
+      await sleep(60);
+      await until(async () => pushHelper._openSosSlots() === 0, `the release and its correction, sweep ${sweep}`);
+      for (const row of await alarmRows()) {
+        assert.ok(row.attempts >= Math.min(sweep, 3), `sweep ${sweep} queued a retry that starts its count again (${row.attempts})`);
+        assert.ok(Math.abs(new Date(row.expires_at).getTime() - expiry) < 1000, `sweep ${sweep} moved the expiry`);
+      }
+    }
+    assert.deepStrictEqual(await alarmRows(), [], 'the retries outlived the budget of the one they began with');
+    // Three releases, each with one correction, on top of the first send and
+    // its correction: the chain ended where the retry's attempts did.
+    assert.ok(provider.refused.length <= 8, `${provider.refused.length} sends to a phone the provider keeps refusing`);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+// ===========================================================================
+// An older build's chase is held from its own alert, whatever stands now
+// ===========================================================================
+
+test('an older build\'s fix is not attached to a newer alert standing from another phone', async () => {
+  // A: the first phone, an older build, presses with no fix, and its chase
+  // starts; "I'm OK". Sixty-five seconds on another phone genuinely presses
+  // again, marked fresh, also with no fix, and that alert stands. The first
+  // phone's chase lands at a hundred seconds, untagged: taken as the new
+  // alert's follow-up, it sent the first phone's position to the new alert's
+  // people, as where the person was.
+  const ivo = await mkUser('Ivo');
+  await addContact(ivo, 'Mum', 'mum.ivo@example.com', '5550332');
+  await pool.query(
+    `UPDATE trusted_contacts SET created_at = created_at - INTERVAL '10 minutes',
+            email_set_at = COALESCE(email_set_at, created_at) - INTERVAL '10 minutes'
+      WHERE user_id = $1`,
+    [ivo.id]
+  );
+  assert.strictEqual((await call('POST', '/api/safety/alert', { token: ivo.token, body: { includeLocation: false } })).status, 200);
+  await standDownAndAge(ivo, 65);
+  const again = await call('POST', '/api/safety/alert', { token: ivo.token, body: { includeLocation: false, fresh: true } });
+  assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+  await pool.query(`UPDATE emergency_alerts SET created_at = created_at - INTERVAL '35 seconds' WHERE user_id = $1`, [ivo.id]);
+  const mark = here();
+
+  const late = await call('POST', '/api/safety/alert', { token: ivo.token, body: FIX });
+  assert.strictEqual(late.status, 429, JSON.stringify(late.body));
+  assert.strictEqual(late.body.withdrawn, true);
+  const left = secondsNamed(late);
+  assert.ok(left >= 18 && left <= 20, `held from the alert the chase follows: ${late.body.error}`);
+  await sleep(100);
+  const leaked = since(mark);
+  assert.deepStrictEqual(leaked.mails.map((m) => m.to), [], 'the first phone\'s position was mailed as the new alert\'s');
+  assert.deepStrictEqual(leaked.pushes.map((p) => p.data.type), []);
+  assert.strictEqual((await alertRows(ivo)).length, 2, 'an alert row was written');
+
+  // The new alert's own chase names it, and goes.
+  const tagged = await call('POST', '/api/safety/alert', { token: ivo.token, body: { ...FIX, followUpTo: again.body.alertId } });
+  assert.strictEqual(tagged.status, 200, JSON.stringify(tagged.body));
+  assert.strictEqual((await alertRows(ivo)).length, 3);
 });

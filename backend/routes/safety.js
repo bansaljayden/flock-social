@@ -739,7 +739,15 @@ function standDownHoldMs(coords, includeLocation, withdrawnAlert, freshPress = f
 // while the first phone's chase could still land. So the newest alert stood
 // down inside the hold that could have started a chase (no location, reached a
 // contact) is asked for as well, and the hold runs from it too.
-const STOOD_DOWN_CHASE_SOURCE_SQL = `SELECT id, latitude, longitude,
+//
+// And it is asked whatever the newest alert is. A genuine new press from
+// another phone, standing and with no location of its own, took the first
+// phone's untagged fix for its own follow-up, and that alert went out again
+// with the first phone's position to the second one's people. Only a request
+// that could be the chase is asked: untagged (the chase of a build that tags
+// names its alert), bringing a location, and not marked as a fresh press.
+// withdrawn_at is selected so the answer is judged on the row it describes.
+const STOOD_DOWN_CHASE_SOURCE_SQL = `SELECT id, latitude, longitude, withdrawn_at,
             COALESCE(contacts_alerted, 0) AS contacts_alerted,
             EXTRACT(EPOCH FROM ((NOW() AT TIME ZONE 'UTC') - created_at)) * 1000 AS age_ms
        FROM emergency_alerts
@@ -1363,30 +1371,27 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         // applies to it. The attempt ceiling at the bottom still does, and
         // when it is already reached the refusal says so instead of naming a
         // time that the ceiling would then break.
-        if (withdrawn) {
-          const holdMs = standDownHoldMs(coords, includeLocation, last, freshPress);
-          let leftMs = holdMs - ageMs;
-          // An older alert's chase is held off from that alert's claim, not
-          // the newest one's (STOOD_DOWN_CHASE_SOURCE_SQL). Only a request
-          // that could be a chase can be held longer than the floor.
-          if ((coords != null || includeLocation === true) && freshPress !== true) {
-            const chased = (await client.query(STOOD_DOWN_CHASE_SOURCE_SQL, [req.user.id, STOOD_DOWN_CHASE_HOLD_MS])).rows[0];
-            if (chased) {
-              leftMs = Math.max(leftMs,
-                standDownHoldMs(coords, includeLocation, chased, freshPress) - (Number(chased.age_ms) || 0));
-            }
+        let leftMs = withdrawn ? standDownHoldMs(coords, includeLocation, last, freshPress) - ageMs : 0;
+        // An older build's chase is held off from the claim of the alert it
+        // follows, whatever alert is newest now (STOOD_DOWN_CHASE_SOURCE_SQL),
+        // and only a request that could be that chase is asked about.
+        if (followUpId === null && freshPress !== true && (coords != null || includeLocation === true)) {
+          const chased = (await client.query(STOOD_DOWN_CHASE_SOURCE_SQL, [req.user.id, STOOD_DOWN_CHASE_HOLD_MS])).rows[0];
+          if (chased && chased.withdrawn_at != null) {
+            leftMs = Math.max(leftMs,
+              standDownHoldMs(coords, includeLocation, chased, freshPress) - (Number(chased.age_ms) || 0));
           }
-          if (leftMs > 0) {
-            await client.query('ROLLBACK');
-            const secsLeft = Math.max(1, Math.ceil(leftMs / 1000));
-            const capped = Number(last.attempts_in_window) >= MAX_ATTEMPTS_PER_WINDOW;
-            return res.status(429).json({
-              error: capped
-                ? `You said you are OK a moment ago, so this was not sent, and you have sent several alerts in the last few minutes. Give it a moment before the next one. ${CALL_911}`
-                : `You said you are OK a moment ago, so this was not sent. You can send a new alert in ${secsLeft} second${secsLeft === 1 ? '' : 's'}. ${CALL_911}`,
-              withdrawn: true,
-            });
-          }
+        }
+        if (leftMs > 0) {
+          await client.query('ROLLBACK');
+          const secsLeft = Math.max(1, Math.ceil(leftMs / 1000));
+          const capped = Number(last.attempts_in_window) >= MAX_ATTEMPTS_PER_WINDOW;
+          return res.status(429).json({
+            error: capped
+              ? `You said you are OK a moment ago, so this was not sent, and you have sent several alerts in the last few minutes. Give it a moment before the next one. ${CALL_911}`
+              : `You said you are OK a moment ago, so this was not sent. You can send a new alert in ${secsLeft} second${secsLeft === 1 ? '' : 's'}. ${CALL_911}`,
+            withdrawn: true,
+          });
         }
 
         // The floor's one exemption (see isLocationFollowUp). Evaluated once,
