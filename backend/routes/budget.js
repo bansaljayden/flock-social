@@ -271,8 +271,10 @@ const MEMBER_SUBMISSIONS = `budget_submissions bs
 //   crowd, a creator alone in a plan could mint two, answer ten thousand on
 //   each, answer their own number, and read the band of it back off the link:
 //   the "two people plus a throwaway" shape the MEMBERSHIP note closed, for
-//   free. So every reveal threshold in this file, in routes/flocks.js and in
-//   routes/billing.js counts THIS fragment, and a guest never makes three.
+//   free. So every threshold in this file, in routes/flocks.js and in
+//   routes/billing.js counts accounts only, and a guest never makes three:
+//   THIS fragment while the budget is open, and the crowd it settled over
+//   once it has (settledCrowdHolds, below), which is member rows too.
 //
 //   PRESENT_ANSWERS, below, is WHO HAS ANSWERED AND WHAT BINDS: members plus
 //   guests, each on the terms of their own presence. A guest's number is in
@@ -319,6 +321,60 @@ async function answeringPopulation(run, flockId) {
   const members = parseInt((memberResult.rows && memberResult.rows[0] && memberResult.rows[0].total) || 0);
   const guests = parseInt((guestResult.rows && guestResult.rows[0] && guestResult.rows[0].total) || 0);
   return { total: members + guests, members, guests };
+}
+
+// ONCE SETTLED, THE CROWD IS THE ONE IT SETTLED OVER.
+//
+// Every threshold above asks "do three present members still share an
+// amount?", and before the settle that is the right question: nothing has
+// been published, and the number will be published over whoever is present
+// when it settles. After the settle it was the wrong question, and asking it
+// on every read leaked. The number is frozen by then (settledCeiling). It was
+// computed over the answers present at the settle and shown to everybody
+// present, so a departure can neither change it nor take it back from anyone
+// who saw it. What a departure could change was the answer to "still three?",
+// and the roster names who left. Three members share, the budget settles, one
+// of the three leaves, and the number vanished from every reader at once:
+// everybody watching had just been told that the person who left had shared
+// an amount rather than skipped. That is the bit publishableSkipCount stopped
+// publishing on reads, moving through isReady and the ceiling instead, and
+// withholding the number protected nobody, because everyone it could be about
+// had already been shown it.
+//
+// So a SETTLED budget is gated on the crowd it settled over: every
+// member-authored row that shared an amount, present or not. Leaving deletes
+// no row (see MEMBERSHIP) and a settled budget accepts no answer, so this
+// count does not move when somebody walks out. Every lock this code takes
+// requires three present member sharers first, so for those the gate always
+// holds. It keeps one job: a flock locked by the first version of the lock
+// route, which had no threshold at all, and holding fewer than three shared
+// amounts stays withheld rather than being published now over one or two
+// people. A guest row is never the crowd, here as everywhere else.
+//
+// The one event that still moves it is an account deletion, which cascades
+// that account's rows away: a settled flock sitting on exactly three shared
+// amounts withholds again when one of the three deletes their account.
+//
+// An OPEN budget still counts present members through MEMBER_SUBMISSIONS:
+// it publishes no number, and its isReady is what the creator's Lock is
+// gated on. `settledSharersOf` is the same count as a correlated subquery for
+// the statements that read many flocks at once (routes/flocks.js); flockRef is
+// always a column reference written in this codebase, never request input.
+const settledSharersOf = (flockRef) => `(SELECT COUNT(*) FROM budget_submissions bs
+     WHERE bs.flock_id = ${flockRef} AND bs.skipped = false AND bs.user_id IS NOT NULL)`;
+const SETTLED_SHARERS_SQL = `SELECT COUNT(*)::int AS n FROM budget_submissions bs
+   WHERE bs.flock_id = $1 AND bs.skipped = false AND bs.user_id IS NOT NULL`;
+async function settledCrowdHolds(run, flockId) {
+  const r = await run(SETTLED_SHARERS_SQL, [flockId]);
+  return Number((r && r.rows && r.rows[0] && r.rows[0].n) || 0) >= 3;
+}
+// Settled AND over a crowd of three, in one statement, for a reader that has
+// not read the flock row itself (the shell read in routes/billing.js).
+const SETTLED_NUMBER_SHOWN_SQL = `SELECT (f.budget_locked IS TRUE AND ${settledSharersOf('f.id')} >= 3) AS shown
+   FROM flocks f WHERE f.id = $1`;
+async function settledNumberShown(run, flockId) {
+  const r = await run(SETTLED_NUMBER_SHOWN_SQL, [flockId]);
+  return !!(r && r.rows && r.rows[0] && r.rows[0].shown === true);
 }
 
 function bandCeiling(raw) {
@@ -458,9 +514,19 @@ function answerPayload({ countRow, ceiling, totalMembers, memberCount, settledNo
 // hand back the sequence fix, which is the one this payload used to leak on
 // every keystroke. Guarded so a fan-out failure cannot 500 an answer that
 // already committed.
-async function emitAnswer(io, flockId, payload) {
+//
+// memberCount rides on the room's copy only, and the room is accepted members.
+// It is the part of totalMembers that can make the three (a guest's answer
+// binds the number and never counts toward three), so the app can say "no
+// group number in a flock this size" about two members and three guests
+// instead of telling them a number appears once three people have shared,
+// which three of them already have. It is a roster count every member already
+// reads off the flock itself; no amount and no answer moves it. The guest
+// door's own reply does not carry it.
+async function emitAnswer(io, flockId, payload, memberCount) {
   if (!io) return;
-  await emitToFlockMembers(io, flockId, 'budget_updated', { flockId, ...payload })
+  const members = Number.isFinite(Number(memberCount)) ? { memberCount: Number(memberCount) } : {};
+  await emitToFlockMembers(io, flockId, 'budget_updated', { flockId, ...payload, ...members })
     .catch((e) => console.error('budget_updated fan-out failed:', e.message));
 }
 
@@ -637,8 +703,10 @@ router.post('/:flockId/submit',
       // settles the budget, where it carries the banded number once.
       const payload = answerPayload({ countRow, ceiling, totalMembers, memberCount, settledNow });
       const io = req.app.get('io');
-      await emitAnswer(io, flockId, payload);
-      res.json({ submitted: true, ...payload, userSubmitted: true });
+      await emitAnswer(io, flockId, payload, memberCount);
+      // The member's own reply carries memberCount too, for the reason
+      // emitAnswer gives: it is what "a flock this size" is judged on.
+      res.json({ submitted: true, ...payload, memberCount, userSubmitted: true });
       await pushBudgetSet(io, flockId, payload.ceiling, userId);
     } catch (err) {
       console.error('Budget submit error:', err);
@@ -705,8 +773,10 @@ router.get('/:flockId',
       const nonSkipCount = parseInt(countResult.rows[0].non_skip_count);
 
       // Who has to answer: accepted members plus visible 'in' guests, the
-      // same population the settle counts (see answeringPopulation).
-      const totalMembers = (await answeringPopulation((q, p) => pool.query(q, p), flockId)).total;
+      // same population the settle counts (see answeringPopulation). The
+      // members alone ride along as memberCount, see emitAnswer.
+      const population = await answeringPopulation((q, p) => pool.query(q, p), flockId);
+      const totalMembers = population.total;
 
       // User's own submission (privacy: only their own)
       const userResult = await pool.query(
@@ -715,14 +785,18 @@ router.get('/:flockId',
       );
       const userSubmission = userResult.rows[0] || null;
 
-      // The reveal gate is the COUNT, on this route and on the four other
-      // surfaces that publish the same number (the flock list, the flock
-      // detail, the flock update, and the ghost commit in routes/billing.js).
-      // budgetCeilingReadParity pins all five answering alike, so "locked, and
-      // therefore once revealed, therefore still revealable" is not a shortcut
-      // this route gets to take on its own. A locked flock that falls back
-      // under three sharers withholds, like every other reader of it.
-      const isReady = nonSkipCount >= 3;
+      // The reveal gate, on this route and on every other surface that
+      // publishes the same number (the flock list, the flock detail, the
+      // flock update, the guest's POST /:token/me, and the ghost commit and
+      // the shell read in routes/billing.js). budgetCeilingReadParity pins
+      // them answering alike. Open, it is three PRESENT member sharers, which
+      // is what the creator's Lock is gated on. Settled, it is the crowd the
+      // budget settled over (settledCrowdHolds), so a departure after the
+      // settle moves neither isReady nor the number: withdrawing them when a
+      // named member left told the room that member had shared an amount.
+      const isReady = flock.budget_locked
+        ? await settledCrowdHolds((q, p) => pool.query(q, p), flockId)
+        : nonSkipCount >= 3;
 
       // THE READ PATH GETS THE SAME RULE AS THE BROADCAST, or the fix moved the
       // leak instead of closing it: a client that polls this route once per
@@ -739,9 +813,10 @@ router.get('/:flockId',
       // line.
       //
       // Locked is still re-banded on the way out, so a row cached as a raw MIN
-      // before the M1 fix cannot publish an exact amount. A locked flock that
-      // falls back under three sharers still withholds, like every other reader
-      // of it (budgetCeilingReadParity pins that).
+      // before the M1 fix cannot publish an exact amount, and a flock locked
+      // without three shared amounts at all (the first lock route had no
+      // floor) still withholds, like every other reader of it
+      // (budgetCeilingReadParity pins that).
       const visibleCeiling = isReady ? settledCeiling(flock.budget_locked, flock.budget_ceiling) : null;
       // THE SKIP/SHARE SPLIT IS NOT READABLE HERE AT ALL. See
       // publishableSkipCount: a single read of it in a small flock named who
@@ -761,6 +836,7 @@ router.get('/:flockId',
         ceiling: visibleCeiling,
         submissionCount,
         totalMembers,
+        memberCount: population.members,
         isReady,
         skipCount: visibleSkipCount,
         userSubmitted: !!userSubmission,
@@ -974,7 +1050,7 @@ async function settleAfterPopulationChange(io, flockId) {
   }
   if (!settled || !settled.settledNow) return false;
   const payload = answerPayload(settled);
-  await emitAnswer(io, flockId, payload);
+  await emitAnswer(io, flockId, payload, settled.memberCount);
   await pushBudgetSet(io, flockId, payload.ceiling, null);
   return true;
 }
@@ -1006,6 +1082,29 @@ async function settleAfterPopulationChange(io, flockId) {
 // by flock_id. The room is told with the same aggregate shape every other
 // budget event carries, all zeros, so a screen showing "up to $30" draws the
 // open state again.
+//
+// THE ESTIMATES GO WITH THE NUMBER THEY WERE TAKEN FROM. A ghost commit
+// (routes/billing.js) writes the settled ceiling into a payerless bill: every
+// share is the ceiling and the total is the ceiling times the members. The
+// reset cleared the number and left that bill standing, and nothing the next
+// settle does reaches it (the commit's upsert only ever set `committed`), so
+// after a reset and a lower settle the bill card still quoted the old cap
+// while the budget said the new one. The shell now goes in the same
+// transaction as the answers it was estimated from, under the same flock lock
+// billing.js takes, and the first commit after the next settle starts a fresh
+// one at the new number.
+//
+// Only a bill holding nothing but those estimates. paid_by NULL is two states
+// (billing.js, noPayerRefusal): a shell, and a real bill whose payer deleted
+// their account. A share that is settled, carries a credit, or was never a
+// commitment is a record of real money, and its bill stays. A payerless bill
+// whose every share is an unpaid commitment is an estimate whichever way it
+// got there, with nobody left to pay.
+const RESET_SHELL_SQL = `DELETE FROM bill_splits b
+   WHERE b.flock_id = $1 AND b.paid_by IS NULL
+     AND NOT EXISTS (SELECT 1 FROM bill_split_shares s
+                      WHERE s.bill_id = b.id
+                        AND (s.committed IS NOT TRUE OR s.settled IS TRUE OR COALESCE(s.paid_amount, 0) <> 0))`;
 router.post('/:flockId/reset',
   [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {
@@ -1053,6 +1152,7 @@ router.post('/:flockId/reset',
           return res.status(409).json({ error: 'The budget is still open, so there is nothing to start over', code: 'BUDGET_OPEN' });
         }
         await client.query('DELETE FROM budget_submissions WHERE flock_id = $1', [flockId]);
+        await client.query(RESET_SHELL_SQL, [flockId]);
         await client.query(
           'UPDATE flocks SET budget_locked = false, budget_ceiling = NULL, updated_at = NOW() WHERE id = $1',
           [flockId]
@@ -1073,13 +1173,14 @@ router.post('/:flockId/reset',
           ceiling: null,
           submissionCount: 0,
           totalMembers: population.total,
+          memberCount: population.members,
           isReady: false,
           skipCount: null,
           budgetLocked: false,
           reset: true,
         }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
       }
-      res.json({ reset: true, totalMembers: population.total });
+      res.json({ reset: true, totalMembers: population.total, memberCount: population.members });
     } catch (err) {
       console.error('Budget reset error:', err);
       res.status(500).json({ error: 'Failed to start the budget over' });
@@ -1254,14 +1355,19 @@ module.exports.bandCeiling = bandCeiling;
 // one implementation for the same reason the banding does. See settledCeiling.
 module.exports.settledCeiling = settledCeiling;
 // The WHO rule, exported for the same reason the WHEN rule above is.
-// settledCeiling answers "may this number be published yet"; the reveal
-// threshold answers "are there still three present people to hide in", and
-// that question is only answered correctly by counting submissions whose
-// author is STILL an accepted member (see MEMBER_SUBMISSIONS). routes/billing.js
-// gates its ghost commit on the same threshold and was counting
-// budget_submissions with no membership join, so a submitter who left the flock
-// kept the reveal open on that route after this one had closed it.
+// settledCeiling answers "may this number be published yet"; the threshold
+// answers "is there a crowd of three to hide in". While the budget is open
+// that is present members (MEMBER_SUBMISSIONS), which the lock asks. Once it
+// has settled it is the crowd it settled over (settledCrowdHolds and its two
+// siblings), which every reader of the published number asks, so a departure
+// after the settle cannot make the number blink off and name who shared.
 module.exports.MEMBER_SUBMISSIONS = MEMBER_SUBMISSIONS;
+module.exports.settledSharersOf = settledSharersOf;
+module.exports.SETTLED_SHARERS_SQL = SETTLED_SHARERS_SQL;
+module.exports.settledCrowdHolds = settledCrowdHolds;
+module.exports.SETTLED_NUMBER_SHOWN_SQL = SETTLED_NUMBER_SHOWN_SQL;
+module.exports.settledNumberShown = settledNumberShown;
+module.exports.RESET_SHELL_SQL = RESET_SHELL_SQL;
 module.exports.CEILING_BANDS = CEILING_BANDS;
 module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
 // The guest door in routes/guest.js runs the same settle and the same

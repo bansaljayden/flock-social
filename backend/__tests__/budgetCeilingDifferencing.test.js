@@ -129,6 +129,12 @@ async function dispatch(sql, params) {
   if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs /.test(flat) && flat.includes(MEMBER_JOIN)) {
     return { rows: [{ n: present().filter((s) => !s.skipped).length }], rowCount: 1 };
   }
+  // routes/budget.js settledCrowdHolds: a SETTLED budget is gated on the
+  // crowd it settled over, every member row that shared an amount, present or
+  // not, so this one deliberately has no membership JOIN.
+  if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs WHERE bs\.flock_id = \$1 AND bs\.skipped = false AND bs\.user_id IS NOT NULL$/.test(flat)) {
+    return { rows: [{ n: world.submissions.filter((s) => s.user_id != null && !s.skipped).length }], rowCount: 1 };
+  }
   if (/^UPDATE flocks SET budget_locked = true/.test(flat)) {
     world.flock.budget_locked = true;
     world.flock.budget_ceiling = p[1];
@@ -557,6 +563,70 @@ test('a member leaving a settled flock does not publish the answer they gave', a
   // and a departure cannot make a second one appear.
   const ceilings = await ceilingEachMemberReads();
   assert.strictEqual(distinctNumbers(ceilings).length <= 1, true);
+  assertQueriesUnderstood();
+});
+
+test('a SHARER leaving a flock that settled on exactly three amounts moves neither the number nor isReady', async () => {
+  // The split was withheld on reads so a departure could not say what the
+  // person who left had answered. isReady and the ceiling were still
+  // recomputed over the members present, so with exactly three sharers the
+  // departure of one of them flipped isReady to false and the number off
+  // every screen, which said the same thing: the person who just left had
+  // shared an amount. Leave a skipper instead and nothing moved, so the two
+  // departures were told apart by the screen alone.
+  world.members = [...FIVE];
+  for (const [user, amount] of [[1, 60], [2, 'skip'], [3, 80], [4, 'skip'], [5, 90]]) {
+    as(user);
+    if (amount === 'skip') await skip(); else await submit(amount);
+  }
+  assert.strictEqual(world.flock.budget_locked, true, 'the fixture did not settle');
+  const settledReads = async () => {
+    const was = CURRENT_USER;
+    const out = [];
+    for (const id of world.members) {
+      as(id);
+      const r = (await status()).body;
+      out.push({ ceiling: r.ceiling, isReady: r.isReady, budgetLocked: r.budgetLocked });
+    }
+    CURRENT_USER = was;
+    return out;
+  };
+  const before = await settledReads();
+  assert.deepStrictEqual([...new Set(before.map((r) => r.ceiling))], [60], 'MIN $60, published once');
+
+  // Member 3 shared $80 and leaves.
+  world.members = world.members.filter((id) => id !== 3);
+  const afterSharer = await settledReads();
+  for (const r of afterSharer) {
+    assert.deepStrictEqual(r, { ceiling: 60, isReady: true, budgetLocked: true },
+      'a sharer leaving changed what the room reads, which names them as a sharer');
+  }
+
+  // A skipper leaving reads exactly the same, so the two cannot be told apart.
+  world.members = world.members.filter((id) => id !== 2);
+  for (const r of await settledReads()) {
+    assert.deepStrictEqual(r, { ceiling: 60, isReady: true, budgetLocked: true });
+  }
+  assertQueriesUnderstood();
+});
+
+test('a flock locked without three shared amounts at all publishes nothing, however it got locked', async () => {
+  // The one job the settled gate keeps: the first lock route had no floor, so
+  // a legacy row can be locked over one or two amounts with the MIN cached.
+  // Counting every member row, present or not, it still has fewer than three.
+  world.members = [1, 2, 3];
+  world.submissions = [
+    { user_id: 1, amount: '47.13', skipped: false },
+    { user_id: 2, amount: null, skipped: true },
+  ];
+  world.flock.budget_locked = true;
+  world.flock.budget_ceiling = '47.13';
+  const reads = await ceilingEachMemberReads();
+  assert.deepStrictEqual(distinctNumbers(reads), [], 'a one-sharer lock published a band of one person');
+  as(1);
+  const r = await status();
+  assert.strictEqual(r.body.isReady, false);
+  assert.ok(!r.text.includes('45'), `the band of one amount reached the wire: ${r.text}`);
   assertQueriesUnderstood();
 });
 

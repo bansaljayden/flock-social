@@ -310,9 +310,14 @@ describe('the group budget', () => {
     // which names that person as the one with the least money. Until this was
     // written down the only place either rule was ever stated was a 400 from
     // the lock route, after the tap.
+    // "Three people" became "three people in the group chat": a guest's
+    // answer from the link goes into the number but never counts toward the
+    // three, so two members and a guest who all answered were told a number
+    // appears once three people have shared, which three of them had.
     expect(APP_SRC).toMatch(
-      /One group number appears after everyone has answered, and only if at least three people shared an amount/
+      /One group number appears after everyone has answered, and only if at least three people in the group chat shared an amount/
     );
+    expect(APP_SRC).toMatch(/Guest answers from the link go into the number but do not count toward the three/);
     expect(APP_SRC).toMatch(/it does not change after that/);
   });
 

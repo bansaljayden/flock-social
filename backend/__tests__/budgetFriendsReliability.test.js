@@ -459,10 +459,15 @@ test('budget: submit response carries the aggregate keys and nothing else, ceili
   const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 90 });
 
   assert.strictEqual(res.status, 200, res.text);
-  // A new key in this list is a privacy review, not a merge.
+  // A new key in this list is a privacy review, not a merge. memberCount was
+  // one: it is the accepted-member part of totalMembers, a roster count every
+  // member already reads off the flock, and no answer moves it. It is here
+  // because a guest's answer never counts toward three, so "a flock this
+  // size" has to be judged on members and the app had no way to.
   assert.deepStrictEqual(Object.keys(res.body).sort(), [
-    'budgetLocked', 'ceiling', 'isReady', 'skipCount', 'submissionCount', 'submitted', 'totalMembers', 'userSubmitted',
+    'budgetLocked', 'ceiling', 'isReady', 'memberCount', 'skipCount', 'submissionCount', 'submitted', 'totalMembers', 'userSubmitted',
   ]);
+  assert.strictEqual(res.body.memberCount, 4);
   assert.strictEqual(res.body.isReady, false, 'two non-skips must not be ready');
   assert.strictEqual(res.body.ceiling, null, 'ceiling revealed below the 3-submission threshold');
   assert.ok(!res.text.includes('47.13'), `individual amount leaked: ${res.text}`);
@@ -477,8 +482,9 @@ test('budget: the socket fan-out payload is aggregate-only and withheld below 3'
   const updates = emitted.filter((e) => e.event === 'budget_updated');
   assert.ok(updates.length > 0, 'no budget_updated fan-out');
   for (const u of updates) {
+    // memberCount: see the submit response above.
     assert.deepStrictEqual(Object.keys(u.payload).sort(),
-      ['budgetLocked', 'ceiling', 'flockId', 'isReady', 'skipCount', 'submissionCount', 'totalMembers']);
+      ['budgetLocked', 'ceiling', 'flockId', 'isReady', 'memberCount', 'skipCount', 'submissionCount', 'totalMembers']);
     assert.strictEqual(u.payload.ceiling, null);
     assert.ok(!JSON.stringify(u.payload).includes('47.13'), 'individual amount reached the socket wire');
   }
@@ -500,8 +506,9 @@ test('budget: GET exposes exactly the documented keys plus the caller own row, a
   const res = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
 
   assert.strictEqual(res.status, 200, res.text);
+  // memberCount: see the submit response above.
   assert.deepStrictEqual(Object.keys(res.body).sort(), [
-    'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady',
+    'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady', 'memberCount',
     'skipCount', 'submissionCount', 'totalMembers', 'userAmount', 'userSkipped', 'userSubmitted',
   ]);
   // At 3 non-skips an aggregate is allowed out — the control that this suite

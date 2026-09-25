@@ -1274,8 +1274,10 @@ describe('GuestInvite: the budget and the still-in question, from the link', () 
     await screen.findByRole('heading', { level: 2, name: /what's your budget tonight\?/i });
     expect(container.textContent).toMatch(/For dinner\./);
     expect(container.textContent).toMatch(/2 of 6 answered\./);
-    expect(container.textContent).toMatch(/It takes three amounts before Flock can show one/);
+    expect(container.textContent).toMatch(/It takes three amounts from people in the group chat before Flock can show one/);
     expect(container.textContent).toMatch(/This is anonymous\. No one sees your answer\./);
+    // A guest is told their own answer does not make one of the three.
+    expect(container.textContent).toMatch(/Answers from this link go into the number but do not count toward the three\./);
     // A labelled decimal field with the server's own length bound.
     const input = container.querySelector('#gi-budget');
     expect(input).not.toBeNull();

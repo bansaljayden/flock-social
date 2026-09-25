@@ -70,10 +70,10 @@ const MEMBERS = [1, 2, 3];
 let flock;         // the one flock row, as the column actually holds it
 let nonSkipCount;  // non-skipped submissions whose author is STILL a member
 // Non-skipped submission rows left behind by authors who have LEFT the flock.
-// routes/budget.js counts submissions through MEMBER_SUBMISSIONS and never sees
-// these; a reader that queries budget_submissions with no membership join does.
-// The two counts are what this fixture used to answer from one variable, which
-// is why it could not see routes/billing.js counting the departed (2026-08-26).
+// An OPEN budget's threshold counts through MEMBER_SUBMISSIONS and never sees
+// these; a SETTLED budget's crowd is the one it settled over and does. The two
+// counts are what this fixture used to answer from one variable, which is why
+// it once could not see two routes counting different rows (2026-08-26).
 let departedNonSkip;
 let bills;         // [{ id, flock_id, paid_by, total_amount }]
 let shares;        // [{ bill_id, user_id, amount, committed }]
@@ -111,11 +111,14 @@ function reset() {
   unknown = [];
 }
 
-// What the SQL CASE in routes/flocks.js publishes: the cached column above the
-// 3-non-skip threshold, NULL below it. The threshold gate is SQL-side and is
-// modelled here so the fixture cannot accidentally test the band by testing the
-// threshold instead.
-const gatedCeiling = () => ((flock.budget_locked && nonSkipCount >= 3) ? flock.budget_ceiling : null);
+// What the SQL CASE in routes/flocks.js publishes: the cached column once the
+// budget is locked over a crowd of three, NULL otherwise. The crowd of a
+// settled budget is the one it settled over (routes/budget.js
+// settledSharersOf), every member row that shared an amount, present or not,
+// so departed rows count here. The gate is SQL-side and is modelled here so
+// the fixture cannot accidentally test the band by testing the threshold
+// instead.
+const gatedCeiling = () => ((flock.budget_locked && nonSkipCount + departedNonSkip >= 3) ? flock.budget_ceiling : null);
 
 // ── The fixture-backed database ─────────────────────────────────────────────
 const realQuery = pool.query;
@@ -205,9 +208,12 @@ async function dispatch(text, params = []) {
       rowCount: 1,
     };
   }
-  // routes/billing.js ghost-commit. Member-joined since 2026-08-26; the
-  // unjoined form is still answered so a route that regresses to it is visibly
-  // reading a DIFFERENT number rather than quietly reading the same one.
+  // The crowd a SETTLED budget is gated on (routes/budget.js
+  // settledCrowdHolds, asked by GET /api/budget, the flock update and the
+  // ghost commit): every member row that shared an amount, present or not,
+  // so it is the one count here with no membership JOIN. A present-members
+  // count is still answered, from a different number, so a reader that
+  // regresses to it is visibly reading something else.
   if (has('COUNT(*)::int AS n FROM budget_submissions')) {
     const joined = has('JOIN flock_members');
     return { rows: [{ n: joined ? nonSkipCount : nonSkipCount + departedNonSkip }], rowCount: 1 };
@@ -425,32 +431,38 @@ test('the band is applied on TOP of the reveal threshold, not instead of it', as
   for (const res of [detail, list, updated, budget, ghost]) assertNoRawMin(res, 'a below-threshold read');
 });
 
-test('a submitter who LEAVES closes the reveal on the ghost commit too', async () => {
-  // Three people submitted, the budget locked on those three, and then two of
-  // them left the flock. routes/budget.js counts submissions through
-  // MEMBER_SUBMISSIONS, so isReady is re-evaluated on every read and goes back
-  // to false: the band it would publish is now a band around the ONE person
-  // still in the room, which is the reveal the threshold exists to prevent.
+test('submitters who LEAVE after the settle move no reader, so the departure names nobody', async () => {
+  // Three people submitted, the budget settled on those three and published
+  // its band to everyone present, and then two of them left the flock.
   //
-  // routes/billing.js gated its ghost commit on the same threshold but counted
-  // budget_submissions with no membership join, and a submission row is
-  // deliberately left behind when its author leaves. So it still counted three
-  // and still handed out the band, from a route that also WRITES that number
-  // into a bill_split_shares row for GET /api/billing/:flockId to serve later.
-  //
-  // The old fixture answered both count statements from one variable, so the
-  // two routes could not disagree in it however far apart they drifted.
+  // Every reader used to re-count the members still present and withdraw the
+  // number here. That withdrew nothing (everyone the number could be about
+  // had been shown it at the settle) and it said something new: with the
+  // roster naming who left, the number vanishing told the room that the
+  // people who left had shared an amount rather than skipped, which is the
+  // fact the skip/share split is withheld to protect. So a settled number is
+  // gated on the crowd it settled over, and all five readers go on answering
+  // the one number. They also still agree with each other, which is the
+  // property this file exists for: before 2026-08-26 the ghost commit and the
+  // budget route counted different rows and disagreed in exactly this state.
   nonSkipCount = 1;
   departedNonSkip = 2;
 
+  const list = await call('GET', '/api/flocks', 1);
+  const detail = await call('GET', `/api/flocks/${FLOCK_ID}`, 1);
+  const updated = await call('PUT', `/api/flocks/${FLOCK_ID}`, 1, { venue_name: 'The Fig' });
   const budget = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
   const ghost = await call('POST', `/api/billing/${FLOCK_ID}/ghost-commit`, 1);
   assertQueriesUnderstood();
 
-  assert.strictEqual(budget.body.ceiling, null, 'the budget route withheld, as it should');
-  assert.strictEqual(ghost.status, 400, 'the ghost commit published a ceiling the budget route withheld');
-  assert.strictEqual(shares.length, 0, 'and it must not have written the band into a share row');
-  for (const res of [budget, ghost]) assertNoRawMin(res, 'a read after the submitters left');
+  assert.strictEqual(list.body.flocks.find((f) => f.id === FLOCK_ID).budget_ceiling, BAND);
+  assert.strictEqual(detail.body.flock.budget_ceiling, BAND);
+  assert.strictEqual(updated.body.flock.budget_ceiling, BAND);
+  assert.strictEqual(budget.body.ceiling, BAND, 'the budget route withdrew a settled number as people left');
+  assert.strictEqual(budget.body.isReady, true, 'and isReady moved with the departures');
+  assert.strictEqual(ghost.status, 200, ghost.text);
+  assert.strictEqual(ghost.body.estimatedShare, BAND, 'the ghost commit disagreed with the budget route');
+  for (const res of [list, detail, updated, budget, ghost]) assertNoRawMin(res, 'a read after the submitters left');
 });
 
 test('a NULL cached ceiling stays null rather than becoming a band', async () => {

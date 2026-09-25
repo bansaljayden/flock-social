@@ -132,8 +132,13 @@ const VICTIM_AMOUNT = 37.11;
 // round 22, so flocks.budget_ceiling is written only when the budget settles
 // and this route serves that column or nothing. See settledCeiling in
 // routes/budget.js.
-function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow, locked = false }) {
+// `settledSharers` is the crowd a SETTLED budget is gated on (routes/budget.js
+// settledCrowdHolds): every member row that shared an amount, present or not.
+// It defaults to the present count, which is what it is until somebody leaves.
+function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow, locked = false, settledSharers = nonSkip }) {
   handlers = [
+    [/COUNT\(\*\)::int AS n FROM budget_submissions bs\s+WHERE bs\.flock_id = \$1 AND bs\.skipped = false AND bs\.user_id IS NOT NULL/,
+      () => ({ rows: [{ n: settledSharers }] })],
     // /settle takes the same flock-row lock /create holds, so a settle cannot
     // land inside /create's read-then-rewrite and be erased by it.
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
@@ -191,10 +196,38 @@ test('budget status exposes only the four aggregate fields plus the caller own r
   assert.strictEqual(res.body.userAmount, 80);
 
   // Nothing else may appear. A new key here is a privacy review, not a merge.
+  // memberCount was one: the accepted-member part of totalMembers, a roster
+  // count every member already reads off the flock, moved by no answer. A
+  // guest's answer never counts toward three, so "a flock this size" has to
+  // be judged on it.
   assert.deepStrictEqual(Object.keys(res.body).sort(), [
-    'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady',
+    'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady', 'memberCount',
     'skipCount', 'submissionCount', 'totalMembers', 'userAmount', 'userSkipped', 'userSubmitted',
   ]);
+  assert.strictEqual(res.body.memberCount, 4);
+});
+
+test('a settled budget keeps its number and isReady when a sharer leaves afterwards', async () => {
+  // Settled on exactly three shared amounts; one of the three has since left,
+  // so only two sharers are still present. Re-counting the present members
+  // withdrew the number and flipped isReady, and with the roster naming who
+  // left that said they had shared rather than skipped. The number was shown
+  // to everyone at the settle, so it stays, gated on the crowd it settled over.
+  scriptBudgetStatus({ nonSkip: 2, skip: 1, ceiling: 55, callerRow: { amount: '80.00', skipped: false }, locked: true, settledSharers: 3 });
+  const res = await call('GET', '/api/budget/42');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.budgetLocked, true);
+  assert.strictEqual(res.body.isReady, true, 'isReady moved with the departure');
+  assert.strictEqual(res.body.ceiling, 50, 'the settled number moved with the departure');
+
+  // And a flock locked with fewer than three shared amounts behind it at all
+  // (the first lock route had no floor) still publishes nothing.
+  scriptBudgetStatus({ nonSkip: 2, skip: 1, ceiling: 55, callerRow: null, locked: true, settledSharers: 2 });
+  const legacy = await call('GET', '/api/budget/42');
+  assert.strictEqual(legacy.status, 200, legacy.text);
+  assert.strictEqual(legacy.body.isReady, false);
+  assert.strictEqual(legacy.body.ceiling, null);
+  assert.ok(!legacy.text.includes('55') && !legacy.text.includes('50'), `a band of two amounts reached the wire: ${legacy.text}`);
 });
 
 test('budget status publishes no number while the budget is still open', async () => {
@@ -385,6 +418,67 @@ test('changing the payer does not leave the former payer marked settled', async 
   // And the DB write agrees with the response.
   const avaRow = inserts('bill_split_shares').find((q) => q.params[1] === 1);
   assert.strictEqual(avaRow.params[4], false);
+});
+
+test('a payer cannot hand the bill on once somebody has paid them, in either form a payment is recorded', async () => {
+  // Ava posted $90 over three and Ben has marked his $30 as paid to her. If
+  // Ava now names Ben as payer, the new payer's own row carries no credit, so
+  // Ben's $30 vanishes, Ava is inserted owing Ben $30, and the payment links
+  // send Ava to pay Ben money she received from him. A payment carried as
+  // credit (paid_amount) is the same record in the other column.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  for (const benRow of [
+    { user_id: 2, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+    { user_id: 2, amount: '30.00', paid_amount: '10.00', committed: false, settled: false, settled_at: null },
+  ]) {
+    scriptBillCreate({
+      existingBill: { id: 7, paid_by: 1 },
+      existingShares: [
+        { user_id: 1, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+        benRow,
+        { user_id: 3, amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null },
+      ],
+      members: THREE,
+    });
+    log = [];
+    const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 2 });
+    assert.strictEqual(res.status, 409, res.text);
+    assert.strictEqual(res.body.code, 'PAYMENTS_RECORDED');
+    assert.match(res.body.error, /You can still correct the total/);
+    assert.deepStrictEqual(inserts('bill_splits'), [], 'the payer changed anyway');
+    assert.deepStrictEqual(deletes('bill_split_shares'), [], 'a paid row was rewritten');
+    assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)), 'the refusal rolls the transaction back');
+  }
+
+  // A third member's payment blocks it too: carried across as credit it would
+  // read as paid to the new payer while the old one holds the cash.
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+      { user_id: 2, amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null },
+      { user_id: 3, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+    ],
+    members: THREE,
+  });
+  const third = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 2 });
+  assert.strictEqual(third.status, 409, third.text);
+
+  // The payer's own settled row is the artifact of having paid the venue, not
+  // a payment, so on its own it blocks nothing; and the payer can still
+  // correct the total with payments on record.
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+      { user_id: 2, amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: new Date() },
+      { user_id: 3, amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null },
+    ],
+    members: THREE,
+  });
+  const corrected = await call('POST', '/api/billing/42/create', { totalAmount: 120, paidBy: 1 });
+  assert.strictEqual(corrected.status, 201, corrected.text);
+  assert.strictEqual(corrected.body.bill.paidBy.id, 1);
 });
 
 test('a payer who stays the payer keeps their settled row', async () => {

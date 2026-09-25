@@ -31,3 +31,27 @@ export const owedOn = (s) => {
   const paid = Number(s.paidAmount) > 0 ? Number(s.paidAmount) : 0;
   return Math.max(0, Math.round((s.amount - paid) * 100)) / 100;
 };
+
+/**
+ * The one figure a payerless bill (a ghost-commit shell) honestly stands for:
+ * a per-person estimate.
+ *
+ * Every share on a shell is the settled budget ceiling as it stood when that
+ * person committed, and the shell's total is that times the head count at the
+ * first commit. So the total is not a bill anybody rang up, the rows do not add
+ * up to it, and nobody owes anything yet; the per-person estimate is the only
+ * number that means something. The live settled ceiling comes first, because it
+ * is what the budget sheet shows beside it and a shell row can be older than
+ * it (a shell left over from before the budget was started over). The viewer's
+ * own committed row is the fallback, and then nothing: a withheld figure is not
+ * turned into one. The bill card and the chat header both read this, so they
+ * cannot name two different amounts for one night.
+ */
+export const shellEstimate = (bill, viewerId, estimatedShare) => {
+  if (typeof estimatedShare === 'number' && Number.isFinite(estimatedShare) && estimatedShare > 0) {
+    return estimatedShare;
+  }
+  const shares = Array.isArray(bill?.shares) ? bill.shares : [];
+  const mine = viewerId == null ? null : shares.find((s) => s && String(s.userId) === String(viewerId));
+  return typeof mine?.amount === 'number' && Number.isFinite(mine.amount) ? mine.amount : null;
+};

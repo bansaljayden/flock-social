@@ -47,13 +47,14 @@
  * "everything is square" claim is the array's only when nothing is hidden.
  *
  * WHY A WITHHELD FIGURE PRINTS NOTHING. routes/billing.js sends null for
- * every money field on a shell whose flock has fallen under three non-skipped
- * budget submissions, because a per-head figure derived from the budget
- * ceiling IS the ceiling, and budget.js re-asks that threshold on every read
- * so that a band around the last person left is not a band around one
- * person's budget. A card that renders "$null" or "$" or "$0.00" there has
- * reopened the door billing.js closed. formatMoney returns null and every
- * label that would have wrapped a figure disappears with it.
+ * every money field on a shell while the budget's number is not being shown
+ * (open, or never settled over three people who shared an amount), because a
+ * per-head figure derived from the budget ceiling IS the ceiling. It sends a
+ * null total on a real bill to a viewer who has a share hidden from them by a
+ * block, because the total less the visible shares is the hidden one. A card
+ * that renders "$null" or "$" or "$0.00" there has reopened the door
+ * billing.js closed. formatMoney returns null and every label that would have
+ * wrapped a figure disappears with it.
  *
  * WHAT THIS COMPONENT DOES NOT DO. No fetching, no sockets, no optimistic
  * writes. It draws the bill it is handed and calls back. The settle sheet,
@@ -61,6 +62,7 @@
  */
 import React from 'react';
 import { CardShell, MemberAvatar, formatMoney } from './SystemRow';
+import { shellEstimate } from '../../../lib/billShares';
 import './cards.css';
 
 // Kept out of the component so the tests can reason about it and so the
@@ -116,17 +118,15 @@ export default function BillCard({
   };
 
   // ---------------------------------------------------------------- title
-  // The shell prints the viewer's own estimated share, because that is the
-  // only number that means anything to them before a bill exists. It comes
-  // from their committed share row when they have one, and otherwise from the
-  // `estimatedShare` the parent already holds (POST /ghost-commit answers with
-  // it, and budgetStatus.ceiling is the same figure). Neither present means no
-  // figure at all, never a total divided by a member count this response does
-  // not carry.
-  const shellFigure = formatMoney(
-    typeof mine?.amount === 'number' ? mine.amount
-      : (typeof estimatedShare === 'number' ? estimatedShare : null)
-  );
+  // The shell prints the viewer's estimated share, because that is the only
+  // number that means anything before a bill exists. It is the settled budget
+  // ceiling the parent holds (`estimatedShare`, the figure POST /ghost-commit
+  // answers with) and, failing that, the viewer's own committed row, in that
+  // order: a committed row can be older than the number the budget sheet is
+  // showing, and the card quoted the old cap beside the new one. Neither
+  // present means no figure at all, never a total divided by a member count
+  // this response does not carry. lib/billShares.js, shared with the header.
+  const shellFigure = formatMoney(shellEstimate(bill, viewerId, estimatedShare));
   const billFigure = formatMoney(
     typeof bill.totalWithTip === 'number' ? bill.totalWithTip
       : (typeof bill.totalAmount === 'number' ? bill.totalAmount : null)

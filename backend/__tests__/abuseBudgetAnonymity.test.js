@@ -28,8 +28,10 @@
 //      counted ROWS, not present members: one throwaway that submitted and
 //      left carried a two-person flock over the line, and the two people in
 //      the room were shown a band around one of their own amounts. Counting
-//      present members only, the reveal now needs three people who are
-//      actually there, and it reverses if one of them leaves.
+//      present members only, the settle now needs three people who are
+//      actually there when it happens. Once it has happened the number stays:
+//      it was shown to everyone present, and taking it back when one of the
+//      three left only told the room which person had shared.
 //
 //   G. DIFFERENCING (was held at the band, CLOSED in round 22). A member who
 //      resubmitted and re-read could binary-search the others' minimum, and
@@ -182,6 +184,14 @@ async function dispatch(sql, params) {
   if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs /.test(flat)
       && overMembers(flat) && /WHERE bs\.flock_id = \$1 AND skipped = false$/.test(flat)) {
     const n = memberSubmissions(Number(p[0])).filter((s) => !s.skipped).length;
+    return { rows: [{ n }], rowCount: 1 };
+  }
+  // routes/budget.js settledCrowdHolds. A SETTLED budget is gated on the
+  // crowd it settled over: every member row that shared an amount, present or
+  // not, which is why this statement is the one aggregate here with no
+  // membership JOIN. It is asked only of a locked flock.
+  if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs WHERE bs\.flock_id = \$1 AND bs\.skipped = false AND bs\.user_id IS NOT NULL$/.test(flat)) {
+    const n = world.submissions.filter((s) => s.flock_id === Number(p[0]) && s.user_id != null && !s.skipped).length;
     return { rows: [{ n }], rowCount: 1 };
   }
   if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
@@ -433,10 +443,10 @@ test('ABUSE E3: a departed submitter cannot hold the lock threshold open either'
 // F. BORROWED ANONYMITY — the >=3 threshold counts rows, not people
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('ABUSE F: a puppet who submits and leaves cannot lend a two-person flock a third person', async () => {
-  // A and B are the flock. A wants B's number and cannot have it: two
-  // non-skips is below the threshold, so the ceiling is withheld.
-  seedFlock({ creator: 1, members: [1, 2] });
+test('ABUSE F: a puppet who submits and leaves cannot lend a flock a third person', async () => {
+  // A and B share amounts and C has not answered yet. A wants B's number and
+  // cannot have it: two non-skips is below the threshold.
+  seedFlock({ creator: 1, members: [1, 2, 3] });
   as(1); await submit(10000);
   as(2); await submit(43.20);
 
@@ -445,16 +455,29 @@ test('ABUSE F: a puppet who submits and leaves cannot lend a two-person flock a 
   assert.strictEqual(s.body.isReady, false);
   assert.strictEqual(s.body.ceiling, null, 'correctly withheld at two submissions');
 
-  // A brings in one puppet, who submits anything at all and then LEAVES.
+  // A brings in one puppet, who submits anything at all and then LEAVES
+  // before the flock has finished answering, so nothing settles while the
+  // puppet is in it. (A puppet whose answer is the one that completes the
+  // flock is a third person present at the settle: that is ABUSE F2.)
   const P = 8;
   world.members.push({ flock_id: FLOCK, user_id: P, status: 'accepted' });
-  as(P); await submit(10000);
+  as(P);
+  const puppet = await submit(10000);
+  assert.strictEqual(puppet.body.budgetLocked, false, 'C has not answered, so nothing settled');
+  assert.strictEqual(puppet.body.ceiling, null);
   world.members = world.members.filter((m) => m.user_id !== P);
+
+  // C answers last. Everyone present has answered, but the puppet's row left
+  // with the puppet, so two people shared an amount and nothing settles.
+  as(3);
+  const last = await skip();
+  assert.strictEqual(last.body.budgetLocked, false, 'a departed row lent the settle a third person');
+  assert.strictEqual(last.body.ceiling, null);
 
   as(1);
   s = await status();
-  assert.strictEqual(s.body.totalMembers, 2, 'the flock really is two people');
-  assert.strictEqual(s.body.submissionCount, 2, 'and only two submissions count');
+  assert.strictEqual(s.body.totalMembers, 3, 'the flock really is three people');
+  assert.strictEqual(s.body.submissionCount, 3, 'and only their three answers count');
   assert.strictEqual(s.body.isReady, false, 'so the privacy threshold is not satisfied');
   assert.strictEqual(s.body.ceiling, null,
     "B's amount stays withheld, which is the whole point of the threshold");
@@ -465,19 +488,24 @@ test('ABUSE F: a puppet who submits and leaves cannot lend a two-person flock a 
   assertQueriesUnderstood();
 });
 
-test('ABUSE F2: a third account that STAYS is the honest residual, and its departure reverses the reveal', async () => {
+test('ABUSE F2: a third account present at the settle is the honest residual, and leaving afterwards changes nothing', async () => {
   // The join does not pretend to stop collusion, and it should not: a third
   // person who is really in the flock is a third person, and A and the puppet
-  // comparing notes is the documented tradeoff. What changed is that the
-  // puppet has to remain in the roster everyone can see, and the moment they
-  // leave the flock stops being three people and stops being told a number.
+  // comparing notes is the documented tradeoff. The puppet has to be in the
+  // roster everyone can see when the number is published.
   seedFlock({ creator: 1, members: [1, 2] });
   as(1); await submit(10000);
   as(2); await submit(43.20);
 
   const P = 8;
   world.members.push({ flock_id: FLOCK, user_id: P, status: 'accepted' });
-  as(P); await submit(10000);
+  as(P);
+  const settling = await submit(10000);
+  // The puppet's answer completes the flock, so it settles, and the number
+  // goes out to everybody present in that response and fan-out. This is the
+  // publication; nothing after it can take it back from anyone who saw it.
+  assert.strictEqual(settling.body.budgetLocked, true);
+  assert.strictEqual(settling.body.ceiling, 40);
 
   as(1);
   let s = await status();
@@ -485,18 +513,19 @@ test('ABUSE F2: a third account that STAYS is the honest residual, and its depar
   assert.strictEqual(s.body.isReady, true);
   assert.strictEqual(s.body.ceiling, 40, 'three present people, so a band is published');
 
-  // The puppet leaves. A departed account still cannot rewrite its own row,
-  // which is unchanged and correct, but it no longer needs to, because
-  // leaving withdraws the row's effect.
+  // The puppet leaves. A departed account still cannot rewrite its own row.
   world.members = world.members.filter((m) => m.user_id !== P);
   as(P);
   const regret = await skip();
   assert.strictEqual(regret.status, 403, 'a non-member writes nothing here');
 
+  // And the read does not move. It used to go back to "not ready" and no
+  // number here, which withdrew nothing (A was handed 40 at the settle) and
+  // told everyone watching that the account that left had shared an amount.
   as(1);
   s = await status();
-  assert.strictEqual(s.body.isReady, false, 'the reveal is not permanent');
-  assert.strictEqual(s.body.ceiling, null);
+  assert.strictEqual(s.body.isReady, true, 'a departure after the settle moved isReady');
+  assert.strictEqual(s.body.ceiling, 40, 'a departure after the settle moved the number');
   assertQueriesUnderstood();
 });
 

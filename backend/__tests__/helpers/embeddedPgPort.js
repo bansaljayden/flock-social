@@ -86,6 +86,12 @@ const SUITE_SLOTS = {
   graceIdentity: 21,             // new in 2026-09-24; the first week once per
                                  // identity, through real signup and
                                  // deletion routes (migration 076).
+  budgetBillIntegrity: 22,       // new in 2026-09-25; the budget's settled
+                                 // number across departures and resets, the
+                                 // bill's payer handoff, the block rule on its
+                                 // total, and answers that cross on the wire,
+                                 // through the real routes. Takes the slot the
+                                 // roostNotice line below held open.
   roostNotice: 23,               // new in 2026-09-24; the Roost notice sweep,
                                  // its window and the deals and digest it keeps
                                  // on (migration 077). 22 is left for a suite

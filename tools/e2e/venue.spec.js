@@ -632,9 +632,12 @@ test('the group budget is one band everyone shares, and nobody else ever sees yo
   // And the budget payloads carry nothing but the aggregate plus the caller's
   // own answer. Written as an allowlist rather than as an absence, because a
   // field added later leaks by existing.
+  // memberCount is a roster count, the accepted members without guests, which
+  // is what "a group this size" and the three-person rule are judged on. It
+  // holds no amount, and every member can already count the roster.
   const allowed = new Set([
     'budgetEnabled', 'budgetContext', 'budgetLocked', 'ceiling', 'submissionCount',
-    'totalMembers', 'isReady', 'skipCount', 'userSubmitted', 'userAmount', 'userSkipped',
+    'totalMembers', 'memberCount', 'isReady', 'skipCount', 'userSubmitted', 'userAmount', 'userSkipped',
     'submitted', 'error',
   ]);
   const budgetPayloads = bravoSaw.filter((e) => e.where.includes('/api/budget/'));

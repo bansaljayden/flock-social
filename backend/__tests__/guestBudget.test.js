@@ -41,8 +41,9 @@
 //      else: no amount, no name, a ceiling only on the answer that settles,
 //      and the skip/share split only over a crowd of four or more members,
 //      whatever the guests bring the population to. POST /:token/me hands a
-//      guest their own row, and the band only to an 'in' guest, once locked,
-//      while three member sharers exist. GET /:token carries counts and never
+//      guest their own row, and the band only to an 'in' guest, once locked
+//      over three member sharers, and a departure after the settle does not
+//      take it back. GET /:token carries counts and never
 //      a ceiling key at all, and its roster says "reconfirmed" only inside an
 //      open window.
 //   5. THE SOURCE CONTRACT. Two fragments. MEMBER_SUBMISSIONS is accounts only
@@ -280,6 +281,18 @@ async function dispatch(sql, params) {
   if (/^SELECT COUNT\(\*\)::int AS n FROM /.test(flat) && overCrowd(flat)
       && /WHERE bs\.flock_id = \$1 AND (bs\.)?skipped = false$/.test(flat)) {
     return { rows: [{ n: memberSubmissions(Number(p[0])).filter((s) => !s.skipped).length }], rowCount: 1 };
+  }
+  // routes/budget.js settledCrowdHolds: the crowd a SETTLED budget settled
+  // over. Member rows only, like every crowd here, but present or not: a
+  // departure after the settle must not move the published number.
+  if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs WHERE bs\.flock_id = \$1 AND bs\.skipped = false AND bs\.user_id IS NOT NULL$/.test(flat)) {
+    const n = world.submissions.filter((s) => s.flock_id === Number(p[0]) && s.user_id != null && !s.skipped).length;
+    return { rows: [{ n }], rowCount: 1 };
+  }
+  // routes/budget.js RESET_SHELL_SQL: the reset takes a payerless bill of
+  // ghost commitments with it. No plan in this world has a bill.
+  if (/^DELETE FROM bill_splits b WHERE b\.flock_id = \$1 AND b\.paid_by IS NULL AND NOT EXISTS/.test(flat)) {
+    return { rows: [], rowCount: 0 };
   }
   if (/^UPDATE flocks SET budget_locked = true, budget_ceiling = \$2, updated_at = NOW\(\) WHERE id = \$1$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
@@ -987,7 +1000,7 @@ test('POST /me answers a guest their own row and nothing of anyone else\'s', asy
   assertQueriesUnderstood();
 });
 
-test('POST /me hands the band to an in guest only once locked, and only while three MEMBER sharers exist', async () => {
+test('POST /me hands the band to an in guest once locked over three MEMBER sharers, and a departure does not take it back', async () => {
   // Settled by a member's answer: three members and the guest, four amounts,
   // and the guest's $50 is the MIN.
   seedFlock({ members: [AVA, BOB, DEE], guests: [CASS] });
@@ -1003,24 +1016,34 @@ test('POST /me hands the band to an in guest only once locked, and only while th
   assert.strictEqual(res.body.budget.ceiling, 50, 'locked, three member sharers, in: the band reaches the guest');
   assert.strictEqual(res.body.budget.userAmount, 50);
 
-  // Two members leave. One member sharer is below the floor, so the number
-  // is withheld from this reader as it is from every other reader of it
-  // (budgetCeilingReadParity pins the member-side readers).
+  // Two members leave. The number was shown to everybody present at the
+  // settle, so the link goes on showing it, as every other reader does
+  // (budgetCeilingReadParity pins the member-side readers). Withdrawing it as
+  // two named members left would tell the guest those two had shared.
   world.members = world.members.filter((m) => m.user_id !== BOB.id && m.user_id !== DEE.id);
   res = await me(GUEST_A);
   assert.strictEqual(res.body.budget.locked, true, 'still locked');
-  assert.strictEqual(res.body.budget.isReady, false);
-  assert.strictEqual(res.body.budget.ceiling, null, 'and withheld under three member sharers');
+  assert.strictEqual(res.body.budget.isReady, true, 'isReady moved with the departures');
+  assert.strictEqual(res.body.budget.ceiling, 50, 'the settled number moved with the departures');
   assert.strictEqual(res.body.budget.userAmount, 50, 'their own figure is still theirs');
+  assertQueriesUnderstood();
+});
 
-  // A second guest with an amount on the plan does not restore it. Three
-  // present sharers (one member, two guests) is what the old rule counted;
-  // the crowd is still one.
-  world.guests.push({ flock_id: FLOCK, id: EZRA.id, guest_token: EZRA.token, name: EZRA.name, status: 'in', is_hidden: false, reconfirmed_at: null });
-  world.submissions.push({ flock_id: FLOCK, user_id: null, guest_rsvp_id: EZRA.id, amount: 55, skipped: false });
-  res = await me(GUEST_A);
+test('POST /me still withholds a band that was locked over fewer than three MEMBER rows, whatever the guests add', async () => {
+  // What the settled crowd still refuses: the first lock route had no floor,
+  // so a legacy plan can be locked with a number cached over one member's
+  // amount. Guest rows beside it are never the crowd.
+  seedFlock({ members: [AVA, BOB], guests: [CASS, EZRA], locked: true, ceiling: '50.00' });
+  world.submissions.push(
+    { flock_id: FLOCK, user_id: AVA.id, guest_rsvp_id: null, amount: '60.00', skipped: false },
+    { flock_id: FLOCK, user_id: null, guest_rsvp_id: CASS.id, amount: '50.00', skipped: false },
+    { flock_id: FLOCK, user_id: null, guest_rsvp_id: EZRA.id, amount: '55.00', skipped: false },
+  );
+  const res = await me(GUEST_A);
+  assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(res.body.budget.submissionCount, 3, 'three present rows');
-  assert.strictEqual(res.body.budget.isReady, false, 'and still one member among them');
+  assert.strictEqual(res.body.budget.locked, true);
+  assert.strictEqual(res.body.budget.isReady, false, 'and one member among them');
   assert.strictEqual(res.body.budget.ceiling, null);
   assertQueriesUnderstood();
 });
@@ -1319,13 +1342,22 @@ test('every totals statement over PRESENT_ANSWERS counts the crowd with bm.id IS
   assert.match(lockSrc, /SELECT COUNT\(\*\)::int AS n FROM \$\{MEMBER_SUBMISSIONS\} WHERE bs\.flock_id = \$1 AND skipped = false/);
   assert.match(lockSrc, /SELECT MIN\(amount\) AS ceiling FROM \$\{PRESENT_ANSWERS\} WHERE bs\.flock_id = \$1 AND skipped = false/);
 
-  // The correlated counts in routes/flocks.js and the ghost commit in
-  // routes/billing.js are reveal thresholds too, and they never see the
-  // widened fragment: it is not even imported there.
+  // routes/flocks.js and routes/billing.js only publish a SETTLED number, so
+  // their thresholds ask the crowd it settled over (settledSharersOf and its
+  // two siblings in budget.js), and they never see the widened fragment: it
+  // is not even imported there. That crowd is accounts only too, so a guest
+  // never makes three after the settle either.
   for (const f of ['flocks.js', 'billing.js']) {
     const src = read(f);
     assert.ok(!src.includes('PRESENT_ANSWERS'), `${f} never counts the widened fragment`);
-    assert.ok((src.match(/\$\{MEMBER_SUBMISSIONS\}/g) || []).length >= 2, `${f} counts the crowd through MEMBER_SUBMISSIONS`);
+    assert.ok(/settledSharersOf|settledCrowdHolds|settledNumberShown/.test(src), `${f} asks the settled crowd budget.js owns`);
+  }
+  const { settledSharersOf, SETTLED_SHARERS_SQL, SETTLED_NUMBER_SHOWN_SQL } = budgetRouter;
+  for (const sql of [settledSharersOf('f.id'), SETTLED_SHARERS_SQL, SETTLED_NUMBER_SHOWN_SQL]) {
+    const flat = sql.replace(/\s+/g, ' ');
+    assert.match(flat, /bs\.user_id IS NOT NULL/, `the settled crowd counts a guest's row: ${flat}`);
+    assert.match(flat, /bs\.skipped = false/, `the settled crowd counts a skip: ${flat}`);
+    assert.ok(!flat.includes('guest_rsvps'), 'the settled crowd reaches for guests');
   }
 });
 
@@ -1386,16 +1418,20 @@ test('the creator resets a settled budget: every row deleted and the lock lifted
   emits = [];
   const res = await reset(AVA.id);
   assert.strictEqual(res.status, 200, res.text);
-  assert.deepStrictEqual(res.body, { reset: true, totalMembers: 4 });
+  // memberCount: the accepted members inside totalMembers (see emitAnswer).
+  assert.deepStrictEqual(res.body, { reset: true, totalMembers: 4, memberCount: 3 });
 
   const tx = lastTransaction();
   assert.strictEqual(tx.closedBy, 'COMMIT');
-  assert.deepStrictEqual(tx.statements, [
+  // The second DELETE is the ghost-commit shell estimated from the old number
+  // (routes/budget.js RESET_SHELL_SQL), in the same transaction.
+  assert.deepStrictEqual(tx.statements.map((s) => s.replace(/ AND NOT EXISTS .*$/, ' AND NOT EXISTS ...')), [
     'SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
     'DELETE FROM budget_submissions WHERE flock_id = $1',
+    'DELETE FROM bill_splits b WHERE b.flock_id = $1 AND b.paid_by IS NULL AND NOT EXISTS ...',
     'UPDATE flocks SET budget_locked = false, budget_ceiling = NULL, updated_at = NOW() WHERE id = $1',
-  ], 'held under the flock lock: the delete, bounded by the plan, then the unlock');
-  for (const q of log.filter((x) => /^(DELETE FROM budget_submissions|UPDATE flocks SET budget_locked = false)/.test(x.sql))) {
+  ], 'held under the flock lock: the deletes, bounded by the plan, then the unlock');
+  for (const q of log.filter((x) => /^(DELETE FROM budget_submissions|DELETE FROM bill_splits|UPDATE flocks SET budget_locked = false)/.test(x.sql))) {
     assert.deepStrictEqual(q.params, [FLOCK]);
   }
   assert.deepStrictEqual(world.submissions, [], 'members\' rows and the guest\'s row alike');
@@ -1408,7 +1444,7 @@ test('the creator resets a settled budget: every row deleted and the lock lifted
   assert.deepStrictEqual(updates.map((e) => e.room).sort(), ['user:1', 'user:2', 'user:3']);
   for (const u of updates) {
     assert.deepStrictEqual(u.payload, {
-      flockId: FLOCK, ceiling: null, submissionCount: 0, totalMembers: 4, isReady: false, skipCount: null, budgetLocked: false, reset: true,
+      flockId: FLOCK, ceiling: null, submissionCount: 0, totalMembers: 4, memberCount: 3, isReady: false, skipCount: null, budgetLocked: false, reset: true,
     });
   }
   assert.strictEqual(pushes.length, 0, 'a reset is not "Budget set!"');

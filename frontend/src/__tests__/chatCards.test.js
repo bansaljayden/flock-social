@@ -563,6 +563,18 @@ describe('BillCard, the ghost state before a payer exists', () => {
     expect(onCommit).toHaveBeenCalledTimes(1);
   });
 
+  test('the estimate is the settled number the budget shows, even over an older committed row', () => {
+    // A shell left over from before the budget was started over can hold a
+    // row at the old cap ($40) while the budget now says $30. The card used
+    // to prefer the row and quote the old cap beside the new one.
+    const bill = shell({
+      shares: [{ userId: 3, name: 'Ava', amount: 40, paidAmount: 0, outstanding: 40, committed: true, settled: false }],
+    });
+    render(<BillCard bill={bill} viewerId={3} estimatedShare={30} onCommit={() => {}} />);
+    expect(screen.getByText('Estimated share $30')).toBeTruthy();
+    expect(screen.queryByText('Estimated share $40')).toBeNull();
+  });
+
   test('somebody who has already committed reads Pre-committed and gets no second chip', () => {
     const bill = shell({
       shares: [{ userId: 3, name: 'Ava', amount: 40, paidAmount: 0, outstanding: 40, committed: true, settled: false }],

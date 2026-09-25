@@ -34,7 +34,7 @@ const { pushIfOffline } = require('../services/pushHelper');
 // (routes/budget.js exports them for exactly this), so there is one of each.
 const {
   PRESENT_ANSWERS, settledCeiling, settleIfComplete, answerPayload, emitAnswer,
-  pushBudgetSet, answeringPopulation, settleAfterPopulationChange,
+  pushBudgetSet, answeringPopulation, settleAfterPopulationChange, settledCrowdHolds,
 } = require('./budget');
 const { reconfirmState, RECONFIRM_GUEST_WRITE_SQL, answeredWindow } = require('../utils/reconfirm');
 // Every refusal in this file is read by a stranger with no account, no app and
@@ -1412,7 +1412,9 @@ router.post('/:token/budget',
 
       const payload = answerPayload(settled);
       const io = req.app.get('io');
-      await emitAnswer(io, link.flock_id, payload);
+      // The room's copy carries the member count (see emitAnswer); this
+      // guest's own reply does not.
+      await emitAnswer(io, link.flock_id, payload, settled.memberCount);
       res.json({ submitted: true, ...payload, userSubmitted: true });
       // A guest has no account to leave out of the fan-out: every accepted
       // member hears "Budget set!" on the answer that settled it.
@@ -1432,9 +1434,10 @@ router.post('/:token/budget',
 // Referer header). It answers the two things a guest cannot get from the
 // public preview: their OWN budget row (theirs to see; nobody else's ever
 // crosses here), and, once the budget has settled, the group's banded number,
-// on the terms a member reads it: locked, still three present sharers, and
-// only for a guest who is a visible 'in' answer on the plan. A stranger with
-// the link has no token to present, so the band never reaches them.
+// on the terms a member reads it: locked, over a crowd of three member
+// sharers, and only for a guest who is a visible 'in' answer on the plan. A
+// stranger with the link has no token to present, so the band never reaches
+// them.
 // ---------------------------------------------------------------------------
 router.post('/:token/me',
   [
@@ -1467,12 +1470,11 @@ router.post('/:token/me',
         // count, and a >= 3 count must only ever be paired with a ceiling at
         // least as new as the state it counted.
         //
-        // ONE STATEMENT, ONE SNAPSHOT. The reveal decision is made from the
-        // crowd count and the number comes from the cached lock; read as two
-        // statements, a member leaving between them pairs a count of three
-        // with a number that now hides two. Reading both in one statement
-        // is what the member reader's "count first" ordering was reaching
-        // for, and it costs nothing here.
+        // ONE STATEMENT, ONE SNAPSHOT for the open budget's counts and the
+        // lock. A settled budget then asks its own crowd in a second
+        // statement, which is safe to read apart: that count does not move
+        // when somebody leaves, and a reset that lands between the two makes
+        // it read zero, which withholds.
         const counts = await pool.query(
           `SELECT COUNT(*) AS total_submissions,
                   COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count,
@@ -1482,7 +1484,13 @@ router.post('/:token/me',
           [link.flock_id]
         );
         const row = (counts.rows && counts.rows[0]) || {};
-        const isReady = parseInt(row.non_skip_count || 0) >= 3;
+        // Open: three PRESENT member sharers, as the member reader asks.
+        // Settled: the crowd it settled over (routes/budget.js,
+        // settledCrowdHolds), so a member leaving after the settle does not
+        // take the band back off the link and, with it, name who had shared.
+        const isReady = row.budget_locked
+          ? await settledCrowdHolds((q, p) => pool.query(q, p), link.flock_id)
+          : parseInt(row.non_skip_count || 0) >= 3;
         const [population, own] = await Promise.all([
           answeringPopulation((q, p) => pool.query(q, p), link.flock_id),
           pool.query(

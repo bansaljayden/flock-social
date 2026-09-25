@@ -215,9 +215,10 @@ test('GET /:flockId says outright that nobody is recorded as having paid', async
     [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
       rows: [{ user_id: 1, name: 'Ava', amount: '25.00', committed: true, settled: false, settled_at: null }],
     })],
-    // The reveal re-check the payerless branch runs. Three present sharers, so
-    // the numbers stay on the wire.
-    [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
+    // The reveal check the payerless branch runs (routes/budget.js
+    // settledNumberShown): settled, over a crowd of three, so the numbers stay
+    // on the wire.
+    [/AS shown\s+FROM flocks f WHERE f\.id = \$1/, () => ({ rows: [{ shown: true }] })],
     noBlocks,
   ];
 
@@ -251,13 +252,16 @@ test('a finished bill reports hasPayer true from both the GET and the create', a
   assert.ok(!log.some((q) => /budget_submissions/.test(q.sql)), 'a real bill was gated on the budget threshold');
 });
 
-test('a ghost estimate stops being readable once the sharers it hid in have left', async () => {
+test('a ghost estimate is readable exactly when the budget number is', async () => {
   // A payerless bill's numbers ARE the banded budget ceiling: ghost-commit
   // writes the ceiling into every share and ceiling * memberCount into the
-  // total. routes/budget.js re-asks the three-sharer reveal threshold on EVERY
-  // read, because members leave and a band around the last person left is a
-  // band around one person's budget. This route read a cached row and never
-  // re-asked, so it was the second door out of the leak budget.js closed.
+  // total. So this route asks what routes/budget.js asks before it shows the
+  // ceiling (settledNumberShown: settled, over the crowd it settled over),
+  // and answers with nothing when the answer is no: an open budget after a
+  // reset, or a budget closed without three shared amounts behind it. It once
+  // read a cached row and never asked, which was a second door out of the
+  // budget. A departure after the settle does NOT make the answer no; that
+  // is pinned against a real Postgres in budgetBillIntegrity.
   handlers = [
     // /settle serialises against /create on the flock row now: one statement
     // was not enough, because /create reads the shares then deletes and
@@ -273,7 +277,7 @@ test('a ghost estimate stops being readable once the sharers it hid in have left
     [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
       rows: [{ user_id: 1, name: 'Ava', amount: '30.00', committed: true, settled: false, settled_at: null }],
     })],
-    [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 1 }] })],
+    [/AS shown\s+FROM flocks f WHERE f\.id = \$1/, () => ({ rows: [{ shown: false }] })],
     noBlocks,
   ];
 
@@ -288,18 +292,22 @@ test('a ghost estimate stops being readable once the sharers it hid in have left
   assert.strictEqual(res.body.bill.shares[0].committed, true);
 });
 
-test('the reveal count billing asks is the member-joined one budget.js asks', async () => {
-  // A budget submission row outlives its author's membership on purpose. Any
-  // reader that counts those rows without joining flock_members counts people
-  // who are not in the room, and publishes a reveal the budget route has
-  // already closed.
+test('the reveal billing asks is the one budget.js asks, from budget.js', async () => {
+  // Billing publishes the settled number twice (the ghost commit's estimate
+  // and a shell's amounts), and the two routes once disagreed about who that
+  // number may still be shown to: billing counted rows with no membership
+  // join while budget.js counted present members, and then both counted
+  // present members, which made the number blink off as a sharer left. The
+  // rule is one function now, owned by budget.js, and billing asks it rather
+  // than spelling out a count of its own that can drift from it.
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'billing.js'), 'utf8');
-  const counts = src.match(/COUNT\(\*\)::int AS n FROM \$\{MEMBER_SUBMISSIONS\}/g) || [];
-  assert.ok(counts.length >= 2, 'both the ghost commit and the bill read must use MEMBER_SUBMISSIONS');
-  assert.ok(
-    !/FROM budget_submissions\s+WHERE/.test(src),
-    'an unjoined budget_submissions count is a reveal the budget route does not grant'
-  );
+  assert.match(src, /const \{[^}]*settledCrowdHolds[^}]*settledNumberShown[^}]*\} = require\('\.\/budget'\)/);
+  assert.match(src, /await settledCrowdHolds\(\(q, p\) => client\.query\(q, p\), flockId\)/,
+    'the ghost commit asks the settled crowd on its own transaction');
+  assert.match(src, /await settledNumberShown\(\(q, p\) => pool\.query\(q, p\), flockId\)/,
+    'the shell read asks whether the settled number is shown');
+  assert.ok(!/FROM budget_submissions/.test(src), 'billing counts budget answers itself');
+  assert.ok(!/MEMBER_SUBMISSIONS/.test(src), 'billing gates a settled number on present members');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

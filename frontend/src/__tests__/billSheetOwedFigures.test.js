@@ -417,27 +417,130 @@ describe('the bill bar does not turn green over a share the viewer cannot see', 
 // 4. A withheld figure is words
 // ---------------------------------------------------------------------------
 describe('a shell whose figures are withheld prints no bare dollar sign', () => {
-  test('the total and every row say what the budget pill says', () => {
-    // billing.js sends null for every money field on a shell whose flock has
-    // fallen under three present sharers. Fails without the fix: the sheet
+  test('the estimate and every row say what the budget pill says', () => {
+    // billing.js sends null for every money field on a shell while the
+    // budget's number is not being shown. Fails without the fix: the sheet
     // read "Total: $" over two rows that read "$" beside "Owes".
     const { container } = mount(bill([
       share(9, 'Jay', null, { paidAmount: null, outstanding: null, committed: true }),
       share(3, 'Cy', null, { paidAmount: null, outstanding: null, committed: true }),
     ], { hasPayer: false, paidBy: { id: null, name: null }, totalAmount: null, totalWithTip: null }));
 
-    expect(screen.getByText('Total · no group number to show')).toBeTruthy();
+    expect(screen.getByText('Estimated share · no group number to show')).toBeTruthy();
     expect(screen.getAllByText('no group number to show')).toHaveLength(2);
     expect(screen.queryByText('Owes')).toBeNull();
     // No "$" anywhere that is not followed by a digit.
     expect(container.textContent).not.toMatch(/\$(?!\d)/);
     expect(container.textContent).not.toMatch(/undefined|NaN|null/);
-    // And the header bar, which already guarded this, still does.
-    // "0/2", not "Bill: 0/2 settled": the pill drops the word "Bill" because
-    // it sits in the chat header where there is nothing else it could be, and
-    // it drops the figure entirely when billing.js withholds the total, which
-    // is the case under test here.
-    expect(screen.getByLabelText('Open bill split details').textContent).toContain('0/2');
+    // And the header pill, which already guarded the figure, now has nothing
+    // to count either: nobody settles a bill nobody has paid, so a shell's
+    // "0/2" was a count of nothing. With no figure it is the plain door.
+    const pill = screen.getByLabelText('Open bill split details').textContent;
+    expect(pill).toBe('Bill');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. A shell is an estimate, not a bill anybody owes on
+// ---------------------------------------------------------------------------
+describe('a payerless shell shows the per-person estimate and nothing owed', () => {
+  test('one commit on a $40 budget in a flock of four is "~$40.00 each", not "$160.00 · 0/1"', () => {
+    // Ghost-commit writes the ceiling into the share and ceiling * members
+    // into the total, so the shell served back is $160 over one $40 row.
+    // Fails without the fix: the pill read "$160.00 · 0/1" and the sheet
+    // "Total: $160.00" over a row reading "$40.00 Owes".
+    const { container } = mount(
+      bill([share(9, 'Jay', 40, { committed: true })], {
+        hasPayer: false, paidBy: { id: null, name: null }, totalAmount: 160, totalWithTip: 160,
+        fullySettled: false, settledCount: 0, shareCount: 1,
+      }),
+      { budgetStatus: { budgetEnabled: true, budgetLocked: true, ceiling: 40, submissionCount: 4, totalMembers: 4, memberCount: 4, isReady: true } }
+    );
+    const pill = screen.getByLabelText('Open bill split details').textContent;
+    expect(pill).toBe('~$40.00 each');
+    expect(pill).not.toMatch(/160|0\/1/);
+    expect(screen.getByText('Estimated share: $40.00 each')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Total/);
+    expect(container.textContent).not.toMatch(/160/);
+    expect(screen.queryByText('Owes')).toBeNull();
+    // The row still says what it is, on the sheet and on the card in the stream.
+    expect(screen.getAllByText('Pre-committed').length).toBeGreaterThan(0);
+  });
+
+  test('the estimate is the live settled number when a committed row is older than it', () => {
+    // A shell left from before the budget was started over can hold a row at
+    // the old cap. The header, the sheet and the card all quote the number
+    // the budget sheet shows beside them.
+    mount(
+      bill([share(9, 'Jay', 40, { committed: true })], {
+        hasPayer: false, paidBy: { id: null, name: null }, totalAmount: 160, totalWithTip: 160, shareCount: 1, settledCount: 0,
+      }),
+      { budgetStatus: { budgetEnabled: true, budgetLocked: true, ceiling: 30, submissionCount: 4, totalMembers: 4, memberCount: 4, isReady: true } }
+    );
+    expect(screen.getByLabelText('Open bill split details').textContent).toBe('~$30.00 each');
+    expect(screen.getByText('Estimated share: $30.00 each')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4c. A real bill whose total is withheld from this viewer
+// ---------------------------------------------------------------------------
+test('a bill total withheld from a viewer with a hidden share says so without the budget\'s words', () => {
+  // billing.js sends a null total to a viewer who has somebody's share hidden
+  // by a block, because the total less the visible rows is that share.
+  // "no group number to show" is the budget's sentence and is false here.
+  const { container } = mount(bill([
+    share(1, 'Ava', 30, { settled: true, outstanding: 0 }),
+    share(9, 'Jay', 30),
+  ], { totalAmount: null, totalWithTip: null, shareCount: 3, settledCount: 1 }));
+  expect(screen.getByText('Total · not shown')).toBeTruthy();
+  expect(container.textContent).not.toMatch(/no group number/);
+  expect(container.textContent).not.toMatch(/\$(?!\d)/);
+  expect(screen.getByLabelText('Open bill split details').textContent).toBe('1/3');
+});
+
+// ---------------------------------------------------------------------------
+// 4d. A flock too small to settle is judged on members, not on guests
+// ---------------------------------------------------------------------------
+describe('the three-amount rule, with guests on the plan', () => {
+  const guestFlock = { ...FLOCK, budgetEnabled: true, status: 'planning' };
+  const status = (over) => ({
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
+    userSubmitted: true, userAmount: 40, userSkipped: false, ...over,
+  });
+
+  test('two members and a guest who have all answered are told the flock is too small, not that a number is coming', () => {
+    // Fails without the fix: totalMembers (3) counted the guest, so the sheet
+    // said a number appears once three people have shared, which three had.
+    const { container } = mount(null, {
+      getSelectedFlock: () => guestFlock,
+      budgetStatus: status({ submissionCount: 3, totalMembers: 3, memberCount: 2 }),
+    });
+    expect(screen.getByText('No group number for a flock this size')).toBeTruthy();
+    expect(container.textContent).toMatch(/There are 2 of you in the chat\./);
+    expect(container.textContent).toMatch(/Guest answers from the link do not count toward the three\./);
+    expect(screen.queryByText('Waiting on more answers')).toBeNull();
+    expect(container.textContent).toMatch(/No group number in a flock this size/);
+  });
+
+  test('three members and a guest are waiting, and the rule names who counts', () => {
+    const { container } = mount(null, {
+      getSelectedFlock: () => guestFlock,
+      budgetStatus: status({ submissionCount: 2, totalMembers: 4, memberCount: 3 }),
+    });
+    expect(screen.getByText('Waiting on more answers')).toBeTruthy();
+    expect(container.textContent).toMatch(/only if at least three people in the group chat shared an amount\. Skips and guest answers do not count towards those three\./);
+    expect(container.textContent).toMatch(/Waiting on amounts · 2 of 4 answered/);
+  });
+
+  test('a server that does not send memberCount keeps the old reading rather than none', () => {
+    const { container } = mount(null, {
+      getSelectedFlock: () => guestFlock,
+      budgetStatus: status({ submissionCount: 2, totalMembers: 2 }),
+    });
+    expect(screen.getByText('No group number for a flock this size')).toBeTruthy();
+    expect(container.textContent).toMatch(/There are 2 of you in the chat\./);
+    expect(container.textContent).not.toMatch(/Guest answers from the link do not count/);
   });
 });
 
