@@ -5062,6 +5062,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // zones away got the viewer's 11pm instead of its own 8pm. Forwarded, never
   // invented: the server takes it only when Number.isFinite and otherwise
   // falls back exactly as before.
+  //
+  // timeZone is the venue's IANA zone from the same search result, and the
+  // server prefers it. The offset is the one in force when the list was
+  // fetched, and a list re-scored here after the venue's clock change (2 AM on
+  // 2026-11-01 in New York) would put the pins an hour away from the venue
+  // card. Forwarded the same way: the server keeps only a zone name it knows.
   const requestCrowdScores = useCallback((venues) => {
     const stale = (e) => !e || !e.fetchedAt || Date.now() - e.fetchedAt > CROWD_SCORE_TTL_MS;
     // A number scored before this account was first shown a locked card may
@@ -5075,6 +5081,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       user_ratings_total: v.user_ratings_total, types: v.types,
       price_level: v.price_level, location: v.location,
       utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
+      timeZone: v.timeZone || null,
     }));
     getCrowdBatch(batchPayload)
       .then(res => {
@@ -5093,9 +5100,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // argued with whatever the map had fetched that afternoon, which is the
   // audit's "moat not pointed at the decision" finding. Keyed
   // flockId -> placeId -> score. The payload deliberately OMITS
-  // utcOffsetMinutes: the batch route lets a venue's own offset override the
-  // top-level clock, the right call when the question is "now", and exactly
-  // wrong when the whole point is the plan's clock.
+  // utcOffsetMinutes and timeZone: the batch route lets a venue's own clock
+  // override the top-level clock, the right call when the question is "now",
+  // and exactly wrong when the whole point is the plan's clock.
   const eventCrowdFetchedRef = useRef(new Set());
   const [eventCrowdScores, setEventCrowdScores] = useState({});
   const requestEventCrowdScores = useCallback((flock, venues) => {
@@ -15467,6 +15474,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         photo_url: (v.photos && v.photos[0]) || null,
         opening_hours: v.opening_hours || null,
         utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
+        timeZone: v.timeZone || null,
       };
       let nearby = [];
       try {

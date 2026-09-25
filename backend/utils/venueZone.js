@@ -214,6 +214,106 @@ function clockInZone(ms, zone) {
   };
 }
 
+/**
+ * The real start of the wall-clock hour after the one in progress at `ms` in
+ * `zone`: the first later instant at which the zone's clock reads a LATER
+ * hour than it does at `ms`. Null for an unusable zone.
+ *
+ * It steps to the top of the hour on the clock in force, not by a fixed
+ * 3,600,000 ms, because an hour is not always one hour long. Lord Howe Island
+ * runs at UTC+10:30 and moves half an hour in summer. On 2027-04-04 its clock
+ * goes back from 2:00 to 1:30, so a fixed hour from 1:00 lands on the second
+ * 1:30, the next on 2:30, and every later hour was read at half past. Here the
+ * second 1:30 counts as the same hour, the walk goes on to the top of the
+ * clock, and the answer is 2:00. On 2026-10-04 the clock jumps from 2:00 to
+ * 2:30, so hour 2 starts at the jump and hour 3 half an hour later. The US hour
+ * shown twice (1 AM on 2026-11-01) is passed over the same way, and the hour a
+ * US clock skips (2 AM on 2027-03-14) is never reached: the top of the clock
+ * after 1:59 EST is 3:00 EDT.
+ *
+ * Every zone in current rules changes its clock at the top of an hour on the
+ * clock in force, which this reads exactly, except one: the Chatham Islands
+ * change at 2:45 and 3:45. There the quarter hour from 3:45 on the September
+ * night is not an hour of its own, and the next hour starts at 4:00.
+ * @param {number} ms
+ * @param {string} zone
+ * @returns {number|null}
+ */
+function nextHourStart(ms, zone) {
+  const from = civilTime(ms, zone);
+  if (!from) return null;
+  const fromHour = wallNumber(from.year, from.month, from.day, from.hour, 0);
+  let at = ms - (((ms % 1000) + 1000) % 1000);
+  let c = from;
+  // A step that lands on the same hour again (a clock set back) or on an
+  // earlier one is the only reason to take another. Four covers any change a
+  // zone makes.
+  for (let i = 0; i < 4; i += 1) {
+    at += ((60 - c.minute) * 60 - c.second) * 1000;
+    c = civilTime(at, zone);
+    if (!c) return null;
+    if (wallNumber(c.year, c.month, c.day, c.hour, 0) > fromHour) return at;
+  }
+  return null;
+}
+
+/**
+ * The Date the crowd features read for one venue wall-clock hour: local fields
+ * IN THIS PROCESS equal to the venue's (the contract every crowd caller encodes
+ * a venue hour in). Null when this process's own clock has no such local time,
+ * which only happens inside a daylight-saving gap in the SERVER's zone. Railway
+ * runs UTC, which has none; a developer machine in New York does, once a year.
+ */
+function serverWallDate(year, month, day, hour) {
+  const ts = new Date(year, month - 1, day, hour, 0, 0, 0);
+  return (ts.getFullYear() === year && ts.getMonth() === month - 1
+    && ts.getDate() === day && ts.getHours() === hour) ? ts : null;
+}
+
+/**
+ * The hours a forecast strip shows at a venue in `zone`, and the instant each
+ * one starts at: up to `count` slots of { ts, instantMs }, the first for the
+ * wall-clock hour `base` names. `base` and every `ts` are Dates whose local
+ * fields in this process are the venue's wall clock (serverWallDate);
+ * `instantMs` is the real moment the hour starts at the venue, which is what
+ * its weather and its event window are read at.
+ *
+ * The first hour is instantForWallClock's, so `nowMs` settles which showing of
+ * a repeated hour a strip that starts inside it means, and every later one is
+ * nextHourStart's: an hour the clock skips gets no slot, an hour it shows twice
+ * gets one, and each slot starts at its own hour's real start. An hour this
+ * process cannot represent (a gap in the server's own zone) is skipped. Empty
+ * for an unusable zone or base, so a caller falls back to its own walk.
+ *
+ * services/mlPredictor.js forecastSlots builds the model's strip on this, and
+ * services/crowdEngine.js generateHourlyForecast the rule engine's, so the two
+ * engines agree about which hours a night has.
+ * @param {Date} base
+ * @param {number} count
+ * @param {string} zone
+ * @param {number} [nowMs]
+ * @returns {{ts: Date, instantMs: number}[]}
+ */
+function zoneHourSlots(base, count, zone, nowMs = Date.now()) {
+  const slots = [];
+  if (!(base instanceof Date) || Number.isNaN(base.getTime())) return slots;
+  let t = instantForWallClock({
+    year: base.getFullYear(),
+    month: base.getMonth() + 1,
+    day: base.getDate(),
+    hour: base.getHours(),
+  }, zone, nowMs);
+  // Room for the odd hour the server cannot represent; the walk never runs away.
+  for (let step = 0; t != null && slots.length < count && step < count + 3; step += 1) {
+    const c = civilTime(t, zone);
+    if (!c) break;
+    const ts = serverWallDate(c.year, c.month, c.day, c.hour);
+    if (ts) slots.push({ ts, instantMs: t });
+    t = nextHourStart(t, zone);
+  }
+  return slots;
+}
+
 module.exports = {
   validTimeZone,
   placeTimeZone,
@@ -223,5 +323,8 @@ module.exports = {
   wallClockInstants,
   instantForWallClock,
   clockInZone,
+  nextHourStart,
+  serverWallDate,
+  zoneHourSlots,
   HOUR_MS,
 };

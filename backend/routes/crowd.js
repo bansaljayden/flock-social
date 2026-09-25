@@ -23,8 +23,9 @@ const { isPlaceIdShaped } = require('../utils/places');
 // actually be made, so a cache hit or a ride on somebody else's in-flight fetch
 // costs the ledger nothing.
 const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
-// Google's `timeZone` off a Places payload, validated. See utils/venueZone.js.
-const { placeTimeZone } = require('../utils/venueZone');
+// Google's `timeZone` off a Places payload, and the same check for a zone a
+// client forwards in a batch body. See utils/venueZone.js.
+const { placeTimeZone, validTimeZone } = require('../utils/venueZone');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -252,7 +253,7 @@ function lockedListRow(v, clock) {
       venueClock: {
         hour: clock.hour,
         day: clock.day,
-        utcOffsetMinutes: clock.local ? Number(v.utcOffsetMinutes) : null,
+        utcOffsetMinutes: clock.local ? clock.utcOffsetMinutes : null,
         local: clock.local,
       },
     } : {}),
@@ -1282,7 +1283,8 @@ router.get('/:placeId',
 // because the person most likely to need it is whoever next edits gateForecast.
 //
 // This route scores each venue on a clock the CLIENT asserts, via that item's
-// `utcOffsetMinutes` (and `localHour`/`localDay` for items without one). The
+// `timeZone` or `utcOffsetMinutes` (and `localHour`/`localDay` for items with
+// neither; a zone names no hour an offset could not, so it opens nothing). The
 // score it returns is the free "how busy right now" number, which is correct
 // and by design. But the caller chooses the "now". Verified by experiment on
 // 2026-08-14: ONE POST carrying twenty copies of the same venue at twenty
@@ -1452,6 +1454,18 @@ router.post('/batch',
           crowdEngine.MIN_UTC_OFFSET_MINUTES,
           crowdEngine.MAX_UTC_OFFSET_MINUTES
         ),
+        // The venue's IANA zone, from the same search result as the offset
+        // (routes/venueSearch.js asks Google for both). The offset is the one
+        // in force when the list was fetched, and the app re-scores a list it
+        // still holds once its scores are half an hour old, so across the
+        // venue's own clock change the offset is an hour off while the card
+        // beside the list reads the zone. With the zone the clock below is
+        // right at any instant, and so is the event window (mlPredictor
+        // venueInstant). Anything but a zone name this runtime knows
+        // (validTimeZone: a string of at most 64 characters that ICU accepts)
+        // is NOT SUPPLIED, which is exactly what an older client that never
+        // sends the field gets.
+        timeZone: validTimeZone(v?.timeZone),
       }));
       const now = new Date();
 
@@ -1473,13 +1487,16 @@ router.post('/batch',
       // calibrating it are read on the SAME clock, per venue, or this endpoint
       // publishes a number calibrated against a different hour of the week.
       //
-      // A venue whose client did not send utcOffsetMinutes falls back to the
-      // caller's clock, exactly as before, which is also the right answer for
-      // the overwhelmingly common case where the venue is local anyway.
+      // A venue whose client sent neither a zone nor utcOffsetMinutes falls
+      // back to the caller's clock, exactly as before, which is also the right
+      // answer for the overwhelmingly common case where the venue is local
+      // anyway. The zone wins over the offset when both arrive, the same rule
+      // the card applies (crowdEngine.venueLocalNow), so a list re-scored after
+      // the venue's clock change agrees with the card about the hour.
       const fallbackHour = localHour != null ? localHour : now.getHours();
       const fallbackDay = localDay != null ? localDay : now.getDay();
       const clocks = venues.map((v) => {
-        const vc = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now);
+        const vc = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now, v.timeZone);
         const hour = vc ? vc.hour : fallbackHour;
         const day = vc ? vc.day : fallbackDay;
         // Same three lines as the card: nearest matching weekday, then the hour.
@@ -1487,7 +1504,10 @@ router.post('/batch',
         const at = new Date(now);
         at.setDate(at.getDate() + crowdEngine.weekdayOffset(at.getDay(), day));
         at.setHours(hour, 0, 0, 0);
-        return { hour, day, at, local: !!vc };
+        // The offset that produced the clock, which is what the row publishes:
+        // the zone's at this instant when the client sent a zone, and the one
+        // it sent otherwise, the same number the row always carried.
+        return { hour, day, at, local: !!vc, utcOffsetMinutes: vc ? vc.utcOffsetMinutes : null };
       });
 
       // Get weather once from the first venue's location.
@@ -1685,11 +1705,12 @@ router.post('/batch',
             // The clock THIS row was scored and calibrated on, same field the
             // card publishes, so a client can label the row with the venue's
             // hour rather than the phone's. `local` is false when the caller
-            // sent no offset for this venue and it fell back to their clock.
+            // sent no zone and no offset for this venue and it fell back to
+            // their clock.
             venueClock: {
               hour: clock.hour,
               day: clock.day,
-              utcOffsetMinutes: clock.local ? Number(v.utcOffsetMinutes) : null,
+              utcOffsetMinutes: clock.local ? clock.utcOffsetMinutes : null,
               local: clock.local,
             },
           };

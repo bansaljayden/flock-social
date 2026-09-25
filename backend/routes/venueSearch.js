@@ -7,6 +7,9 @@ const { upstreamSignal } = require('../utils/upstream');
 // routes/crowd.js all gate on this; /details was the last paid Places surface
 // that did not (see the block above it).
 const { isPlaceIdShaped } = require('../utils/places');
+// Google's `timeZone` off a place, as a validated IANA name or null. The same
+// read routes/crowd.js makes for the card. See the field mask note below.
+const { placeTimeZone } = require('../utils/venueZone');
 // Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
 // crowd.js and ai.js so every paid Places fetch draws from the SAME pool
 // (round 8). allowGlobalPlacesCall is the door for surfaces with no
@@ -904,13 +907,22 @@ function photoUrl(photoName, maxWidth = 400) {
 // fetches the offset itself — routes/crowd.js fetchVenueFromGoogle) showed the
 // right one. The marketing demo has requested it since it was written.
 //
+// AND WHY timeZone IS HERE BESIDE IT (2026-09-25). The offset is the one in
+// force when Google answered, and the app keeps a result list and re-scores it
+// through the batch once its scores are half an hour old. Across the venue's
+// own clock change (2 AM on 2026-11-01 in New York) that snapshot is an hour
+// off, so the pins were scored an hour away from the venue card, which reads
+// the zone. `timeZone` is the venue's IANA name, right at any instant; the app
+// forwards it with the offset and the batch prefers it. The details shape
+// below carries it too: services/placeDetailsCache.js already asks for it.
+//
 // BILLING: NO CHANGE. Places API (New) prices per FIELD and bills a request at
-// the HIGHEST SKU any requested field belongs to. utcOffsetMinutes is a **Pro**
-// field in both Text Search and Place Details, and the mask below and the
-// details mask in services/placeDetailsCache.js both already ask for
+// the HIGHEST SKU any requested field belongs to. utcOffsetMinutes and timeZone
+// are both **Pro** fields in Text Search and Place Details, and the mask below
+// and the details mask in services/placeDetailsCache.js both already ask for
 // currentOpeningHours / rating / userRatingCount / priceLevel (plus
 // nationalPhoneNumber and websiteUri on details) — all **Enterprise**. Both
-// requests were already billed at Enterprise, so the marginal cost of this
+// requests were already billed at Enterprise, so the marginal cost of either
 // field is zero.
 //
 // THE RULE FOR THE NEXT EDIT: adding a field only ever costs nothing while the
@@ -924,6 +936,7 @@ const SEARCH_FIELD_MASK = [
   'places.id', 'places.displayName', 'places.formattedAddress', 'places.rating',
   'places.userRatingCount', 'places.priceLevel', 'places.photos', 'places.types',
   'places.currentOpeningHours', 'places.location', 'places.utcOffsetMinutes',
+  'places.timeZone',
 ].join(',');
 
 // Map price level enum to numeric
@@ -1186,6 +1199,10 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
         // makes the batch answer `venueClock.local: false` rather than pretend
         // the caller's clock was the venue's.
         utcOffsetMinutes: place.utcOffsetMinutes != null ? place.utcOffsetMinutes : null,
+        // The venue's IANA zone as a plain name ("America/New_York"), under the
+        // key the batch whitelists, or null when Google sends none. The batch
+        // prefers it to the offset. See the field mask note above.
+        timeZone: placeTimeZone(place),
       };
     });
 
@@ -1387,6 +1404,9 @@ function shapeDetails(out) {
         // Same key the batch endpoint whitelists, same nullability. See the
         // field mask note above.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+        // And the zone, the same way. Null for a payload cached before the
+        // details mask asked for it.
+        timeZone: placeTimeZone(p),
       },
     },
   };
