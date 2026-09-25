@@ -1,0 +1,531 @@
+'use strict';
+// Run: node --test __tests__/budgetBillIntegrity.test.js  (from backend/)
+//
+// ---------------------------------------------------------------------------
+// THE BUDGET AND THE BILL, ON A REAL POSTGRES
+// ---------------------------------------------------------------------------
+//
+// The budget and bill suites around this one script the database, and a
+// scripted database cannot say what a DELETE with a NOT EXISTS removes, what a
+// count over rows whose author left returns, or in what order two requests
+// that cross on the flock's row lock tell the room. So these run the real
+// routers against a migrated embedded Postgres:
+//
+//   1. A PAYER CANNOT HAND A BILL ON ONCE SOMEBODY HAS PAID THEM. The payments
+//      on record went to the current payer; rewriting the bill around a new
+//      one pointed them at the wrong person (the new payer's own payment was
+//      dropped and the old payer was billed for money they had received). With
+//      nothing paid the handoff still works.
+//   2. TWO MEMBERS AND A GUEST CANNOT SETTLE, however many of them answer: a
+//      guest's amount goes into the number and never counts toward the three.
+//      The member count is on the wire so the app can say so.
+//   3. A RESET TAKES THE GHOST-COMMIT SHELL WITH IT, so the next estimate is
+//      the next number rather than the old cap. A payerless bill that records
+//      a real payment is not an estimate and stays.
+//   4. AN ANSWER CAN REACH THE ROOM AFTER THE ANSWER THAT SETTLED THE BUDGET,
+//      carrying no number. The server cannot order two fan-outs that wait on
+//      different reads, so the client has to ignore it
+//      (frontend/src/lib/budgetStatus.js); this shows the event arrives.
+//   5. A VIEWER WITH A SHARE HIDDEN BY A BLOCK GETS NO TOTAL, because the total
+//      less the shares they can see is the hidden one. Nobody else loses it.
+//   6. A SETTLED NUMBER DOES NOT MOVE WHEN A SHARER LEAVES, on any of the
+//      readers that publish it. It used to vanish, which told the room the
+//      person who left had shared an amount. A flock locked without three
+//      shared amounts at all still publishes nothing.
+// ---------------------------------------------------------------------------
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const http = require('node:http');
+const express = require('express');
+
+const EP = require('embedded-postgres');
+const EmbeddedPostgres = EP.default || EP;
+const {
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
+} = require('./helpers/embeddedPgPort');
+
+// Synchronous and before config/database is required anywhere: that module
+// builds its Pool from DATABASE_URL at require time, and backend/.env points at
+// the live database.
+const PG_PORT = pickEmbeddedPgPort('budgetBillIntegrity');
+const DB_NAME = 'flock_budget_bill_integrity';
+process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/${DB_NAME}`;
+for (const k of ['PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT']) delete process.env[k];
+process.env.PGSSLMODE = 'disable';
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test-secret-for-budget-bill-integrity';
+delete process.env.FIREBASE_SERVICE_ACCOUNT;
+delete process.env.RESEND_API_KEY;
+
+let pg;
+let pool;
+let dataDir;
+let server;
+let base;
+let signUserToken;
+let seq = 0;
+
+// Every socket event the routes send, by room, in the order they were sent.
+const emits = [];
+const io = {
+  sockets: { sockets: new Map(), adapter: { rooms: new Map() } },
+  to(room) {
+    const op = { except() { return op; }, emit(event, payload) { emits.push({ room, event, payload }); } };
+    return op;
+  },
+  in() { return { socketsLeave() {}, disconnectSockets() {} }; },
+  socketsLeave() {},
+};
+
+test.before(async () => {
+  dataDir = path.join(os.tmpdir(), `flock-budget-bill-integrity-pg-${Date.now()}`);
+  pg = createEmbeddedPostgres(EmbeddedPostgres, {
+    suite: 'budgetBillIntegrity', port: PG_PORT, databaseDir: dataDir,
+  });
+  await startEmbeddedPostgres(pg);
+  await pg.createDatabase(DB_NAME);
+
+  pool = require('../config/database');
+  const { migrate } = require('../db/migrate');
+  await migrate(pool);
+
+  ({ signUserToken } = require('../middleware/auth'));
+
+  const app = express();
+  app.use(express.json());
+  app.set('io', io);
+  app.use('/api/budget', require('../routes/budget'));
+  app.use('/api/billing', require('../routes/billing'));
+  app.use('/api/flocks', require('../routes/flocks'));
+  app.use('/api/guest', require('../routes/guest').router);
+  server = await new Promise((resolve) => {
+    const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
+  });
+  base = `http://127.0.0.1:${server.address().port}`;
+});
+
+test.after(async () => {
+  if (server) await new Promise((r) => server.close(r));
+  await pool?.end().catch(() => {});
+  await pg?.stop().catch(() => {});
+  try {
+    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+  } catch (err) {
+    console.warn('[budgetBillIntegrity] could not remove %s: %s', dataDir, err.message);
+  }
+});
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
+
+async function call(method, url, { token, body } = {}) {
+  const res = await fetch(base + url, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* not JSON */ }
+  return { status: res.status, body: json, text };
+}
+
+async function mkUser(name) {
+  seq += 1;
+  const { rows } = await pool.query(
+    `INSERT INTO users (email, password, name, email_verified)
+     VALUES ($1, 'x', $2, true) RETURNING *`,
+    [`u${seq}-${Date.now()}@budgetbill.test`, name]
+  );
+  return { ...rows[0], token: signUserToken(rows[0]) };
+}
+
+async function mkFlock(creator, members, { budget = true, ghost = true, status = 'confirmed' } = {}) {
+  const { rows } = await pool.query(
+    `INSERT INTO flocks (name, creator_id, status, event_time, budget_enabled, ghost_mode_enabled)
+     VALUES ('Dinner', $1, $2, (NOW() AT TIME ZONE 'UTC') + INTERVAL '2 days', $3, $4) RETURNING id`,
+    [creator.id, status, budget, ghost]
+  );
+  const flockId = rows[0].id;
+  for (const m of [creator, ...members]) {
+    await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [flockId, m.id]);
+  }
+  return flockId;
+}
+
+async function mkLink(flockId, creator) {
+  seq += 1;
+  const token = `BudgBill${seq}x${flockId}zzzz`.slice(0, 20);
+  await pool.query('INSERT INTO flock_invite_links (token, flock_id, created_by) VALUES ($1, $2, $3)', [token, flockId, creator.id]);
+  return token;
+}
+
+async function mkGuest(flockId, name) {
+  const { rows } = await pool.query(
+    "INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, 'in') RETURNING id, guest_token",
+    [flockId, name]
+  );
+  return rows[0];
+}
+
+const submit = (flockId, user, amount) => call('POST', `/api/budget/${flockId}/submit`, {
+  token: user.token, body: amount === 'skip' ? { amount: 0, skipped: true } : { amount },
+});
+const leave = (flockId, user) => pool.query('DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2', [flockId, user.id]);
+const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = async (cond) => { for (let i = 0; i < 400 && !cond(); i += 1) await sleep(5); };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. The payer handoff
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a payer cannot hand the bill on once somebody has paid them, and the payment stays theirs', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const flockId = await mkFlock(alice, [bob, carol]);
+
+  let r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 60 } });
+  assert.equal(r.status, 201, r.text);
+  r = await call('POST', `/api/billing/${flockId}/settle`, { token: bob.token });
+  assert.equal(r.status, 200, r.text);
+
+  // Alice names Bob as payer after Bob has paid her his $20.
+  r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 60, paidBy: bob.id } });
+  assert.equal(r.status, 409, r.text);
+  assert.equal(r.body.code, 'PAYMENTS_RECORDED');
+
+  // Nothing moved: Alice is still the payer and Bob's payment is still his.
+  const bill = await one('SELECT id, paid_by FROM bill_splits WHERE flock_id = $1', [flockId]);
+  assert.equal(bill.paid_by, alice.id);
+  const bobRow = await one('SELECT amount, paid_amount, settled FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2', [bill.id, bob.id]);
+  assert.equal(bobRow.settled, true);
+  assert.equal(Number(bobRow.amount), 20);
+  const links = await call('GET', `/api/billing/${flockId}/payment-links`, { token: carol.token });
+  assert.equal(links.status, 200, links.text);
+  assert.equal(links.body.payTo, 'Alice', 'the links point at whoever really holds the bill');
+  assert.equal(links.body.amount, 20);
+
+  // A payment to Carol's credit blocks it the same way, and Alice can still
+  // correct the total: Bob's $20 rides across as credit on his new $30.
+  r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 90 } });
+  assert.equal(r.status, 201, r.text);
+  const bobShare = r.body.bill.shares.find((s) => s.userId === bob.id);
+  assert.deepEqual(
+    { amount: bobShare.amount, paidAmount: bobShare.paidAmount, outstanding: bobShare.outstanding, settled: bobShare.settled },
+    { amount: 30, paidAmount: 20, outstanding: 10, settled: false }
+  );
+  r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 90, paidBy: carol.id } });
+  assert.equal(r.status, 409, 'a carried credit is a payment on record too');
+});
+
+test('with nothing paid yet, the payer can still hand the bill on, and owes the new payer', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const flockId = await mkFlock(alice, [bob, carol]);
+
+  let r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 60 } });
+  assert.equal(r.status, 201, r.text);
+  r = await call('POST', `/api/billing/${flockId}/create`, { token: alice.token, body: { totalAmount: 60, paidBy: bob.id } });
+  assert.equal(r.status, 201, r.text);
+  const by = Object.fromEntries(r.body.bill.shares.map((s) => [s.userId, s]));
+  assert.equal(by[alice.id].settled, false, 'the former payer owes the new one');
+  assert.equal(by[alice.id].outstanding, 20);
+  assert.equal(by[bob.id].settled, true, 'the new payer is square with themselves');
+  const links = await call('GET', `/api/billing/${flockId}/payment-links`, { token: alice.token });
+  assert.equal(links.body.payTo, 'Bob');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. Guests bind the number and never make three
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('two members and a guest who all answer do not settle, and the member count on the wire says why', async () => {
+  const ann = await mkUser('Ann');
+  const ben = await mkUser('Ben');
+  const flockId = await mkFlock(ann, [ben]);
+  const link = await mkLink(flockId, ann);
+  const gus = await mkGuest(flockId, 'Gus');
+
+  assert.equal((await submit(flockId, ann, 40)).status, 200);
+  emits.length = 0;
+  const guestAnswer = await call('POST', `/api/guest/${link}/budget`, { body: { guestToken: gus.guest_token, amount: 35 } });
+  assert.equal(guestAnswer.status, 200, guestAnswer.text);
+  assert.equal(guestAnswer.body.budgetLocked, false);
+  assert.ok(!('memberCount' in guestAnswer.body), 'the guest door\'s own reply is unchanged');
+  // The room's copy of the guest's answer carries the member count.
+  const toAnn = emits.filter((e) => e.event === 'budget_updated' && e.room === `user:${ann.id}`);
+  assert.equal(toAnn.at(-1).payload.memberCount, 2);
+
+  const last = await submit(flockId, ben, 50);
+  assert.equal(last.status, 200, last.text);
+  assert.equal(last.body.submissionCount, 3, 'three people answered');
+  assert.equal(last.body.totalMembers, 3);
+  assert.equal(last.body.memberCount, 2, 'two of them are members');
+  assert.equal(last.body.isReady, false);
+  assert.equal(last.body.budgetLocked, false, 'a guest made three and the budget settled');
+  assert.equal(last.body.ceiling, null);
+
+  const status = await call('GET', `/api/budget/${flockId}`, { token: ann.token });
+  assert.equal(status.body.memberCount, 2);
+  assert.equal(status.body.totalMembers, 3);
+  assert.equal(status.body.isReady, false);
+  const lock = await call('POST', `/api/budget/${flockId}/lock`, { token: ann.token });
+  assert.equal(lock.status, 400, 'the creator cannot lock it either');
+  const f = await one('SELECT budget_locked, budget_ceiling FROM flocks WHERE id = $1', [flockId]);
+  assert.deepEqual({ locked: f.budget_locked, ceiling: f.budget_ceiling }, { locked: false, ceiling: null });
+
+  // A third member makes three, and the guest's $35 is the number.
+  const dee = await mkUser('Dee');
+  await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [flockId, dee.id]);
+  const settling = await submit(flockId, dee, 60);
+  assert.equal(settling.body.budgetLocked, true);
+  assert.equal(settling.body.ceiling, 35, 'a guest\'s amount binds the number');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. The reset and the ghost-commit shell
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a reset takes the ghost-commit shell with it, so the next estimate is the next number', async () => {
+  const a = await mkUser('Ava');
+  const b = await mkUser('Bea');
+  const c = await mkUser('Cal');
+  const d = await mkUser('Dot');
+  const flockId = await mkFlock(a, [b, c, d]);
+
+  for (const [u, amt] of [[a, 40], [b, 50], [c, 60]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  assert.equal((await submit(flockId, d, 70)).body.ceiling, 40);
+  let r = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: a.token });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.estimatedShare, 40);
+  const shell = await one('SELECT id, total_amount FROM bill_splits WHERE flock_id = $1 AND paid_by IS NULL', [flockId]);
+  assert.equal(Number(shell.total_amount), 160, 'the ceiling times four members');
+
+  r = await call('POST', `/api/budget/${flockId}/reset`, { token: a.token });
+  assert.equal(r.status, 200, r.text);
+  assert.equal((await pool.query('SELECT 1 FROM bill_splits WHERE flock_id = $1', [flockId])).rowCount, 0,
+    'the shell estimated from the cleared number survived the reset');
+  assert.equal((await pool.query('SELECT 1 FROM bill_split_shares WHERE bill_id = $1', [shell.id])).rowCount, 0);
+
+  for (const [u, amt] of [[a, 30], [b, 50], [c, 60]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  assert.equal((await submit(flockId, d, 70)).body.ceiling, 30);
+  r = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: b.token });
+  assert.equal(r.body.estimatedShare, 30);
+
+  const bill = await call('GET', `/api/billing/${flockId}`, { token: a.token });
+  assert.equal(bill.status, 200, bill.text);
+  assert.equal(bill.body.bill.hasPayer, false);
+  assert.deepEqual(bill.body.bill.shares.map((s) => [s.userId, s.amount]), [[b.id, 30]],
+    'an old commitment at the old cap is still on the bill');
+  assert.equal(bill.body.bill.totalAmount, 120);
+});
+
+test('a reset leaves a payerless bill that records a real payment', async () => {
+  // paid_by NULL is also a real bill whose payer deleted their account, and a
+  // settled row on it is the record that somebody paid.
+  const a = await mkUser('Ava');
+  const b = await mkUser('Bea');
+  const c = await mkUser('Cal');
+  const flockId = await mkFlock(a, [b, c]);
+  for (const [u, amt] of [[a, 40], [b, 50]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  assert.equal((await submit(flockId, c, 60)).body.budgetLocked, true);
+  const { rows: [bill] } = await pool.query(
+    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent) VALUES ($1, 90, 'equal', NULL, 0) RETURNING id",
+    [flockId]
+  );
+  await pool.query(
+    'INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled) VALUES ($1, $2, 30, false, true), ($1, $3, 30, true, false)',
+    [bill.id, b.id, c.id]
+  );
+  const r = await call('POST', `/api/budget/${flockId}/reset`, { token: a.token });
+  assert.equal(r.status, 200, r.text);
+  assert.equal((await pool.query('SELECT 1 FROM bill_split_shares WHERE bill_id = $1', [bill.id])).rowCount, 2,
+    'a reset deleted a bill that records a payment');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. Two answers that cross on the wire
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('an earlier answer can reach the room after the answer that settled the budget, with no number', async () => {
+  const a = await mkUser('Ava');
+  const b = await mkUser('Bea');
+  const c = await mkUser('Cal');
+  const flockId = await mkFlock(a, [b, c]);
+  assert.equal((await submit(flockId, a, 40)).status, 200);
+
+  // Hold the NEXT fan-out roster read. Bea's answer commits and then waits on
+  // it, exactly where a busy pool makes a real request wait.
+  const ROSTER = /^\s*SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'\s*$/;
+  const realQuery = pool.query;
+  let armed = true;
+  let held = false;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  pool.query = function held_(text, params) {
+    if (armed && typeof text === 'string' && ROSTER.test(text)) {
+      armed = false;
+      held = true;
+      return gate.then(() => realQuery.call(pool, text, params));
+    }
+    return realQuery.call(pool, text, params);
+  };
+  emits.length = 0;
+  let beaReply;
+  try {
+    const bea = submit(flockId, b, 50);
+    await until(() => held);
+    assert.ok(held, 'Bea\'s answer never reached its fan-out');
+    // Bea's row is committed, so Cal's is the last answer and settles it.
+    const cal = await submit(flockId, c, 60);
+    assert.equal(cal.status, 200, cal.text);
+    assert.equal(cal.body.budgetLocked, true);
+    assert.equal(cal.body.ceiling, 40);
+    release();
+    beaReply = await bea;
+  } finally {
+    release();
+    pool.query = realQuery;
+  }
+  assert.equal(beaReply.status, 200, beaReply.text);
+  assert.equal(beaReply.body.ceiling, null, 'Bea\'s own reply carries no number either');
+  assert.equal(beaReply.body.budgetLocked, false);
+
+  const toAva = emits.filter((e) => e.event === 'budget_updated' && e.room === `user:${a.id}`).map((e) => e.payload);
+  assert.equal(toAva.length, 2);
+  assert.deepEqual([toAva[0].budgetLocked, toAva[0].ceiling], [true, 40], 'the settle reached Ava first');
+  assert.deepEqual([toAva[1].budgetLocked, toAva[1].ceiling], [false, null],
+    'and the earlier answer after it: a client that applies it verbatim loses the number');
+  const status = await call('GET', `/api/budget/${flockId}`, { token: a.token });
+  assert.deepEqual([status.body.budgetLocked, status.body.ceiling], [true, 40], 'while the budget is settled at 40');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. The block rule on a bill's total
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a viewer with a share hidden by a block gets no total, and nobody else loses theirs', async () => {
+  const ann = await mkUser('Ann');
+  const ben = await mkUser('Ben');
+  const mal = await mkUser('Mal');
+  const flockId = await mkFlock(ann, [ben, mal]);
+  await pool.query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [ben.id, mal.id]);
+
+  emits.length = 0;
+  const r = await call('POST', `/api/billing/${flockId}/create`, {
+    token: ann.token,
+    body: {
+      totalAmount: 100,
+      splitType: 'custom',
+      customShares: [{ userId: ann.id, amount: 30 }, { userId: ben.id, amount: 30 }, { userId: mal.id, amount: 40 }],
+    },
+  });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(r.body.bill.totalWithTip, 100, 'the payer, with nothing hidden, keeps the total');
+
+  // The fan-out runs after the response, one copy per member.
+  await until(() => emits.filter((e) => e.event === 'bill_created').length === 3);
+  const copy = (u) => emits.find((e) => e.event === 'bill_created' && e.room === `user:${u.id}`).payload.bill;
+  assert.deepEqual(copy(ben).shares.map((s) => s.amount), [30, 30]);
+  assert.equal(copy(ben).totalWithTip, null, '$100 less the two rows Ben sees is Mal\'s $40');
+  assert.equal(copy(ben).totalAmount, null);
+  assert.equal(copy(mal).totalWithTip, null, 'both sides of a block, so neither copy says who blocked');
+  assert.equal(copy(ann).totalWithTip, 100);
+
+  const asBen = await call('GET', `/api/billing/${flockId}`, { token: ben.token });
+  assert.equal(asBen.body.bill.totalWithTip, null);
+  assert.equal(asBen.body.bill.totalAmount, null);
+  assert.equal(asBen.body.bill.shareCount, 3, 'the count still says a row is hidden, as it did before');
+  assert.equal(asBen.body.bill.shares.length, 2);
+  const asAnn = await call('GET', `/api/billing/${flockId}`, { token: ann.token });
+  assert.equal(asAnn.body.bill.totalWithTip, 100);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. A settled number and the people who leave after it
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a sharer leaving after the settle moves no reader of the number, exactly as a skipper leaving does not', async () => {
+  const a = await mkUser('Ava');
+  const b = await mkUser('Bea');
+  const c = await mkUser('Cal');
+  const d = await mkUser('Dot');
+  const e = await mkUser('Eli');
+  const flockId = await mkFlock(a, [b, c, d, e]);
+  const link = await mkLink(flockId, a);
+  const gus = await mkGuest(flockId, 'Gus');
+
+  for (const [u, amt] of [[a, 60], [b, 'skip'], [c, 80], [d, 'skip']]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  const g = await call('POST', `/api/guest/${link}/budget`, { body: { guestToken: gus.guest_token, amount: 100 } });
+  assert.equal(g.status, 200, g.text);
+  const settling = await submit(flockId, e, 90);
+  assert.equal(settling.body.budgetLocked, true, 'three members shared and all six answered');
+  assert.equal(settling.body.ceiling, 60);
+
+  const readers = async () => {
+    const budget = await call('GET', `/api/budget/${flockId}`, { token: a.token });
+    const list = await call('GET', '/api/flocks', { token: a.token });
+    const detail = await call('GET', `/api/flocks/${flockId}`, { token: a.token });
+    const updated = await call('PUT', `/api/flocks/${flockId}`, { token: a.token, body: { name: 'Dinner' } });
+    const me = await call('POST', `/api/guest/${link}/me`, { body: { guestToken: gus.guest_token } });
+    for (const res of [budget, list, detail, updated, me]) assert.equal(res.status, 200, res.text);
+    return {
+      budget: [budget.body.ceiling, budget.body.isReady, budget.body.budgetLocked],
+      list: Number(list.body.flocks.find((f) => f.id === flockId).budget_ceiling),
+      detail: Number(detail.body.flock.budget_ceiling),
+      updated: Number(updated.body.flock.budget_ceiling),
+      guest: [me.body.budget.ceiling, me.body.budget.isReady],
+    };
+  };
+  const settled = { budget: [60, true, true], list: 60, detail: 60, updated: 60, guest: [60, true] };
+  assert.deepEqual(await readers(), settled);
+
+  await leave(flockId, c);   // Cal shared $80
+  assert.deepEqual(await readers(), settled, 'a sharer leaving changed what the room reads, which names them');
+  await leave(flockId, b);   // Bea skipped
+  assert.deepEqual(await readers(), settled);
+
+  // The two readers in billing agree: the estimate is still the number, and
+  // the shell it writes is still readable.
+  const ghost = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: a.token });
+  assert.equal(ghost.status, 200, ghost.text);
+  assert.equal(ghost.body.estimatedShare, 60);
+  const shell = await call('GET', `/api/billing/${flockId}`, { token: d.token });
+  assert.equal(shell.body.bill.shares.find((s) => s.userId === a.id).amount, 60);
+});
+
+test('a flock locked over fewer than three shared amounts publishes nothing on any reader', async () => {
+  // The first version of the lock route had no floor, so a plan can be locked
+  // with a number cached over one person's amount. Counting every member row,
+  // present or not, it still has fewer than three.
+  const a = await mkUser('Ava');
+  const b = await mkUser('Bea');
+  const c = await mkUser('Cal');
+  const flockId = await mkFlock(a, [b, c]);
+  await pool.query(
+    "INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1, $2, 47.13, false), ($1, $3, NULL, true)",
+    [flockId, a.id, b.id]
+  );
+  await pool.query('UPDATE flocks SET budget_locked = true, budget_ceiling = 47.13 WHERE id = $1', [flockId]);
+
+  const budget = await call('GET', `/api/budget/${flockId}`, { token: c.token });
+  const list = await call('GET', '/api/flocks', { token: c.token });
+  const detail = await call('GET', `/api/flocks/${flockId}`, { token: c.token });
+  const updated = await call('PUT', `/api/flocks/${flockId}`, { token: a.token, body: { name: 'Dinner' } });
+  const ghost = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: c.token });
+  assert.equal(budget.body.ceiling, null);
+  assert.equal(budget.body.isReady, false);
+  assert.equal(list.body.flocks.find((f) => f.id === flockId).budget_ceiling, null);
+  assert.equal(detail.body.flock.budget_ceiling, null);
+  assert.equal(updated.body.flock.budget_ceiling, null);
+  assert.equal(ghost.status, 400, ghost.text);
+  for (const res of [budget, list, detail, updated, ghost]) {
+    assert.ok(!res.text.includes('47.13') && !res.text.includes('"45'), `a one-amount number reached the wire: ${res.text.slice(0, 200)}`);
+  }
+});

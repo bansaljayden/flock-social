@@ -1,12 +1,14 @@
 const express = require('express');
-// The budget-ceiling threshold counts SUBMITTERS WHO ARE STILL MEMBERS.
-// routes/budget.js and routes/billing.js count through this join; three
-// readers here counted bare budget_submissions rows, which still include a
-// sharer who has since left, so after a departure the flock list, the flock
-// detail and the update response kept publishing a ceiling that
-// GET /api/budget/:id withholds. A member who joined afterwards then read a
-// banded ceiling derived from a cohort they were never part of.
-const { MEMBER_SUBMISSIONS } = require('./budget');
+// The budget-ceiling threshold, asked the way every reader of the published
+// number asks it. The three readers here only ever publish a SETTLED ceiling,
+// so they ask the crowd the budget settled over (routes/budget.js,
+// settledSharersOf and settledCrowdHolds, with the reasoning above them):
+// member rows that shared an amount, present or not, never a guest's. The
+// three readers once disagreed with GET /api/budget/:id about a departed
+// sharer and were aligned on "withhold when they leave"; withholding then
+// turned out to be the leak, because the number blinking off as a named
+// member left told the room that member had shared. All of them now hold it.
+const { settledSharersOf, settledCrowdHolds } = require('./budget');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middleware/auth');
@@ -564,10 +566,11 @@ router.get('/', async (req, res) => {
               -- in JS below (settledCeiling), because this column has twice
               -- been leaked by a reader that remembered one gate and not the
               -- other. This aliased CASE overrides the f.* column in the result
-              -- row (node-postgres keeps the last duplicate field).
+              -- row (node-postgres keeps the last duplicate field). The count
+              -- is the crowd the budget settled over, so a departure after the
+              -- settle does not take the number back (routes/budget.js).
               CASE WHEN f.budget_locked = true
-                    AND (SELECT COUNT(*) FROM ${MEMBER_SUBMISSIONS}
-                         WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
+                    AND ${settledSharersOf('f.id')} >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Blocks: the host's name is a name like any other. Withheld in
               -- SQL (free, versus a second round trip) rather than post-filtered;
@@ -1125,8 +1128,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     const flockResult = await pool.query(
       `SELECT f.*,
               CASE WHEN f.budget_locked = true
-                    AND (SELECT COUNT(*) FROM ${MEMBER_SUBMISSIONS}
-                         WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
+                    AND ${settledSharersOf('f.id')} >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Same host rule as the list route, and applied here so the
               -- invite-preview branch below (which returns before any roster
@@ -1688,12 +1690,10 @@ router.put('/:id',
         // The lock gate first, and it costs no query: an unlocked flock has no
         // published number, so there is nothing to threshold or band.
         flockResponse.budget_ceiling = settledCeiling(flockResponse.budget_locked, flockResponse.budget_ceiling);
-        if (flockResponse.budget_ceiling != null) {
-          const thr = await pool.query(
-            `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1 AND bs.skipped = false`,
-            [flockId]
-          );
-          if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
+        // Settled, so the crowd it settled over decides, as on every reader.
+        if (flockResponse.budget_ceiling != null
+            && !(await settledCrowdHolds((q, p) => pool.query(q, p), flockId))) {
+          flockResponse.budget_ceiling = null;
         }
       }
       res.json({ flock: flockResponse });

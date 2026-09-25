@@ -1911,11 +1911,18 @@ export default function GuestInvite() {
                   />
                 </span>
               </span>
+              {/* "Three people" was not the rule a guest is under: a guest's
+                  amount goes into the number but never counts toward the three
+                  (routes/budget.js), so two people in the chat and one guest
+                  can all answer and still see nothing. The people who count
+                  are the ones in the group chat, which is what the join band
+                  above calls a member. */}
               <p className="gi-sub">
                 This is anonymous. No one sees your answer. One group number
                 appears after everyone has answered, and only if at least three
-                people shared an amount. It is rounded down to a range, and it
-                does not change after that.
+                people in the group chat shared an amount. Answers from this
+                link go into the number but do not count toward the three. It
+                is rounded down to a range, and it does not change after that.
               </p>
               {/* Outline and quiet, never filled: the join band stays the only
                   filled control on the page. */}
@@ -1955,7 +1962,7 @@ export default function GuestInvite() {
               {budget.locked
                 ? 'The budget is set.'
                 : ((Number(budget.totalMembers) || 0) < 3 || budget.isReady !== true)
-                  ? 'It takes three amounts before Flock can show one, because with fewer than that the number would give away what somebody answered.'
+                  ? 'It takes three amounts from people in the group chat before Flock can show one, because with fewer than that the number would give away what somebody answered.'
                   : 'Flock shows one group number once everyone has answered.'}
             </p>
           )}

@@ -76,7 +76,9 @@ test('the link and the chat ask the budget in the same words', () => {
   for (const line of [
     "What's your budget tonight?",
     'Group budget: up to',
-    'It takes three amounts before Flock can show one',
+    // From people in the group chat: a guest's answer never counts toward
+    // the three, on either screen (routes/budget.js).
+    'It takes three amounts from people in the group chat before Flock can show one',
     'This is anonymous. No one sees your answer.',
   ]) {
     expect({ line, inChat: chat.includes(line) }).toEqual({ line, inChat: true });

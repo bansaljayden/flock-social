@@ -189,7 +189,8 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
-import { owedOn } from '../lib/billShares';
+import { owedOn, shellEstimate } from '../lib/billShares';
+import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
    design; that file's header says why there is no routing call behind it. */
@@ -559,13 +560,19 @@ const tallyOf = (r) => (r && Number.isFinite(Number(r.shareCount))
  * whole share beside it, so one sheet named two different debts for one
  * person.
  *
- * A figure the server withholds (a shell whose flock has fallen under three
- * present sharers) arrives as null, and `null?.toFixed(2)` is undefined,
- * which a template prints as "$undefined" or a bare "$". So a figure that is
- * not a number is not printed; the row and the total say what the budget
- * pill says for the same state.
+ * A figure the server withholds (a shell while the budget's number is not
+ * being shown) arrives as null, and `null?.toFixed(2)` is undefined, which a
+ * template prints as "$undefined" or a bare "$". So a figure that is not a
+ * number is not printed; the row and the estimate say what the budget pill
+ * says for the same state.
+ *
+ * A real bill's total can be withheld too, for a different reason: from a
+ * viewer who has somebody's share hidden by a block, because the total less
+ * the shares they can see is that share. The budget's words would be wrong
+ * there, so it has its own, and they name nobody and no direction.
  */
 const HIDDEN_FIGURE = 'no group number to show';
+const HIDDEN_TOTAL = 'not shown';
 const shareFigure = (s) => {
   if (typeof s?.amount !== 'number') return HIDDEN_FIGURE;
   const paid = Number(s.paidAmount);
@@ -1308,15 +1315,6 @@ export default function ChatDetail({
     // not "no bill yet": it is a shell holding estimates from the group budget,
     // and the server marks it hasPayer: false.
     const billSplitIsShell = !!billSplit && billSplit.hasPayer === false;
-    /* THE HEADER PILL'S WORDS. Money first, then how far along, and either
-       half is dropped when there is nothing honest to put there rather than
-       printed as a bare "$" or an "0/0" a shell would produce before anyone
-       has committed. */
-    const billPillMoney = typeof billSplit?.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)}` : null;
-    const billPillCount = billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
-    const billPillLabel = billBar.all
-      ? (billPillMoney ? `${billPillMoney} · settled` : 'Settled')
-      : ([billPillMoney, billPillCount].filter(Boolean).join(' · ') || 'Bill');
     /* The viewer's own figure before a bill exists, for the card's shell
        state. It is the settled budget ceiling, which is the same number
        POST /ghost-commit answers with, so the card and the budget band cannot
@@ -1325,6 +1323,25 @@ export default function ChatDetail({
     const estimatedShare = budgetStatus?.ceiling != null && Number.isFinite(Number(budgetStatus.ceiling))
       ? Number(budgetStatus.ceiling)
       : null;
+    /* THE HEADER PILL'S WORDS. Money first, then how far along, and either
+       half is dropped when there is nothing honest to put there rather than
+       printed as a bare "$" or an "0/0" a shell would produce before anyone
+       has committed.
+
+       A SHELL IS NOT A BILL. Its total is the ceiling times the head count,
+       which nobody rang up and which its rows do not add up to (one commit on
+       a $40 budget in a flock of four read "$160.00 · 0/1"), and nobody has a
+       debt to settle yet, so "0/1" was a count of nothing. It gets the one
+       honest figure, the per-person estimate the card shows (shellEstimate),
+       and no count. */
+    const shellFigure = billSplitIsShell ? shellEstimate(billSplit, authUser?.id, estimatedShare) : null;
+    const billPillMoney = billSplitIsShell
+      ? (shellFigure != null ? `~$${shellFigure.toFixed(2)} each` : null)
+      : (typeof billSplit?.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)}` : null);
+    const billPillCount = !billSplitIsShell && billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
+    const billPillLabel = billBar.all && !billSplitIsShell
+      ? (billPillMoney ? `${billPillMoney} · settled` : 'Settled')
+      : ([billPillMoney, billPillCount].filter(Boolean).join(' · ') || 'Bill');
     /* THE GHOST STATE IS THE SAME CARD, WHICH MEANS IT HAS TO EXIST BEFORE THE
        BILL DOES. The card the "Lock in your share?" band became draws a bill,
        and the whole point of that band was the moment when there is no bill
@@ -2670,7 +2687,8 @@ export default function ChatDetail({
 
                   The figure is dropped rather than printed when the server
                   withholds it. billing.js sends null for every money field on
-                  a shell whose flock has fallen under three present sharers,
+                  a shell while the budget's number is not being shown, and a
+                  null total on a bill with a share hidden from this viewer,
                   and `null?.toFixed(2)` is undefined, which a template literal
                   prints as "$undefined". That bug shipped once on the bar this
                   pill replaces; it is not coming back through the pill. */}
@@ -3043,11 +3061,17 @@ export default function ChatDetail({
                    and a flock that cannot reach it is not waiting. */
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0 }}>
                   {budgetStatus.budgetLocked
-                    /* Closed with no number to show (fewer than three sharers
-                       still here). "Waiting on amounts" here told a member the
-                       group was waiting when answers were closed. */
+                    /* Closed with no number to show: a budget closed before
+                       three people had shared an amount (the first lock had no
+                       floor), or one whose third sharer has since deleted their
+                       account. "Waiting on amounts" here told a member the group
+                       was waiting when answers were closed. */
                     ? 'Budget closed · no group number to show'
-                    : (budgetStatus.totalMembers || 0) > 0 && (budgetStatus.totalMembers || 0) < 3
+                    /* Judged on MEMBERS (budgetCrowdSize): a guest's answer
+                       binds the number but never counts toward three, so two
+                       members and a guest can never settle and must not be
+                       told they are waiting. */
+                    : budgetCrowdSize(budgetStatus) > 0 && budgetCrowdSize(budgetStatus) < 3
                       ? 'No group number in a flock this size'
                       : `Waiting on amounts · ${budgetStatus.submissionCount || 0} of ${budgetStatus.totalMembers || '?'} answered`}
                 </p>
@@ -3517,7 +3541,7 @@ export default function ChatDetail({
                           400 from POST /api/budget/:id/lock, reachable only by
                           pressing a button that looked ready. */}
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.5 }}>
-                        This is anonymous. No one sees your answer. One group number appears after everyone has answered, and only if at least three people shared an amount. It is rounded down to a range, and it does not change after that.
+                        This is anonymous. No one sees your answer. One group number appears after everyone has answered, and only if at least three people in the group chat shared an amount. Guest answers from the link go into the number but do not count toward the three. It is rounded down to a range, and it does not change after that.
                       </p>
                     </div>
                     <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
@@ -3526,7 +3550,10 @@ export default function ChatDetail({
                       setBudgetSubmitting(true);
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: amt, skipped: false });
-                        setBudgetStatus(prev => ({ ...prev, ...data, userSubmitted: true, userAmount: amt }));
+                        // Through the same rule the socket uses: this reply
+                        // can land after the settle it did not cause, and its
+                        // null ceiling must not wipe the number (lib/budgetStatus.js).
+                        setBudgetStatus(prev => ({ ...mergeBudgetUpdate(prev, data), userSubmitted: true, userAmount: amt, userSkipped: false }));
                         if (data.ceiling) setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, budgetCeiling: data.ceiling } : f));
                         showToast('Budget submitted');
                         setShowChatPool(false);
@@ -3539,7 +3566,7 @@ export default function ChatDetail({
                       setBudgetSubmitting(true);
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: 0, skipped: true });
-                        setBudgetStatus(prev => ({ ...prev, ...data, userSubmitted: true, userSkipped: true }));
+                        setBudgetStatus(prev => ({ ...mergeBudgetUpdate(prev, data), userSubmitted: true, userSkipped: true, userAmount: null }));
                         showToast('Skipped. You will not count toward the group number.');
                         setShowChatPool(false);
                       } catch (err) { showToast(err.message, 'error'); }
@@ -3561,14 +3588,18 @@ export default function ChatDetail({
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} answered. This number is set and does not change.</p>
                       </div>
                     ) : budgetStatus?.budgetLocked ? (
-                      /* Settled, then the flock dropped below three people who
-                         shared an amount, so the number is withheld again. Say
-                         that, rather than leave a screen reading "waiting" when
-                         nothing is being waited for and answers are closed. */
+                      /* Closed with no number behind it: a budget closed before
+                         three people had shared an amount (the first version of
+                         the lock had no floor), or one whose third sharer has
+                         since deleted their account. A member leaving does NOT
+                         land here: the number stays once it is set, because it
+                         vanishing as somebody left told the room they had shared.
+                         Say what is true rather than leave a screen reading
+                         "waiting" when answers are closed. */
                       <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>The group number is not being shown</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                          It takes three people who shared an amount, and fewer than three of them are still in this flock. The budget is closed, so nobody can add an amount now.
+                          Flock only shows one when at least three people's amounts are behind it, and this budget does not have three. The budget is closed, so nobody can add an amount now.
                         </p>
                       </div>
                     ) : (
@@ -3577,20 +3608,24 @@ export default function ChatDetail({
                          answered and the screen still said it was waiting, with
                          no way to learn that three amounts are the floor. In a
                          flock too small to ever reach three, say that outright
-                         rather than leave two people waiting on each other. */
+                         rather than leave two people waiting on each other.
+                         "This size" counts MEMBERS (budgetCrowdSize): a guest's
+                         answer binds the number but never counts toward three,
+                         so two members and a guest are too small however many
+                         of them answer. */
                       <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
-                        {(budgetStatus?.totalMembers || 0) > 0 && (budgetStatus?.totalMembers || 0) < 3 ? (
+                        {budgetCrowdSize(budgetStatus) > 0 && budgetCrowdSize(budgetStatus) < 3 ? (
                           <>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No group number for a flock this size</p>
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                              It takes three amounts before Flock can show one, because with fewer than that the number would give away what somebody answered. There {budgetStatus.totalMembers === 1 ? 'is' : 'are'} {budgetStatus.totalMembers} of you here. Invite one more person, or just talk about it.
+                              It takes three amounts from people in the group chat before Flock can show one, because with fewer than that the number would give away what somebody answered. There {budgetCrowdSize(budgetStatus) === 1 ? 'is' : 'are'} {budgetCrowdSize(budgetStatus)} of you in the chat.{(Number(budgetStatus?.totalMembers) || 0) > budgetCrowdSize(budgetStatus) ? ' Guest answers from the link do not count toward the three.' : ''} Invite one more person to join, or just talk about it.
                             </p>
                           </>
                         ) : (
                           <>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more answers</p>
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people shared an amount. Skips do not count towards those three. Showing a number earlier would move it every time somebody answered, which is how you work out whose answer it was.
+                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people in the group chat shared an amount. Skips and guest answers do not count towards those three. Showing a number earlier would move it every time somebody answered, which is how you work out whose answer it was.
                             </p>
                           </>
                         )}
@@ -3830,7 +3865,15 @@ export default function ChatDetail({
                   <div>
                     <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{typeof billSplit.totalWithTip === 'number' ? `Total: $${billSplit.totalWithTip.toFixed(2)}` : `Total · ${HIDDEN_FIGURE}`}</span>
+                        {/* A shell's one honest figure is the per-person
+                            estimate, the same one the header pill and the card
+                            show; its total is the ceiling times the head count,
+                            which nobody rang up. A real bill's total can be
+                            withheld from a viewer with a share hidden from
+                            them, and says so in its own words. */}
+                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{billSplitIsShell
+                          ? (shellFigure != null ? `Estimated share: $${shellFigure.toFixed(2)} each` : `Estimated share · ${HIDDEN_FIGURE}`)
+                          : (typeof billSplit.totalWithTip === 'number' ? `Total: $${billSplit.totalWithTip.toFixed(2)}` : `Total · ${HIDDEN_TOTAL}`)}</span>
                         {billSplit.tipPercent > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
                       </div>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
@@ -3861,8 +3904,10 @@ export default function ChatDetail({
                                 <span style={{ color: '#22C55E', fontSize: 'var(--t-body)' }}>{Icons.check('#22C55E', 16)}<span className="sr-only">Paid</span></span>
                               ) : (
                                 /* "left of" already says it for a part-paid row,
-                                   and a withheld figure is not a debt to label. */
-                                typeof s.amount === 'number' && !(Number(s.paidAmount) > 0) && (
+                                   a withheld figure is not a debt to label, and
+                                   nobody owes anything on a shell: nobody has
+                                   paid, so there is nobody to owe. */
+                                billSplit.hasPayer !== false && typeof s.amount === 'number' && !(Number(s.paidAmount) > 0) && (
                                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Owes</span>
                                 )
                               )}

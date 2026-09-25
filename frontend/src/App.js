@@ -117,6 +117,9 @@ import Icons from './components/ui/Icons';
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
 import { owedOn } from './lib/billShares';
+// How a budget answer lands on the status, shared with the chat screen's own
+// answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
+import { mergeBudgetUpdate } from './lib/budgetStatus';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -10978,9 +10981,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             showToast('Budget set. Showing spots that work for everyone');
           }
           if (!prev) return prev;
-          const next = { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount, budgetLocked: data.budgetLocked || prev.budgetLocked };
-          return data.reset ? { ...next, budgetLocked: false, userSubmitted: false, userAmount: null, userSkipped: false } : next;
+          // An answer that crossed the settle on its way here carries a null
+          // ceiling and must not take the number back off the sheet; a reset
+          // clears it. The rule is in lib/budgetStatus.js.
+          return mergeBudgetUpdate(prev, data);
         });
+        // A reset also deletes a payerless bill that held nothing but
+        // estimates taken from the old number (routes/budget.js), so the bill
+        // is read again rather than left on screen quoting a cleared figure.
+        if (data.reset) loadMoneyState(selectedFlockId);
       }
     });
     const unsubLocked = onBudgetLocked((data) => {

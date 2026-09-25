@@ -88,8 +88,10 @@ const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
 // there is one implementation of the thresholds rather than two that can drift.
 // settledCeiling adds the WHEN rule to that: the column holds a published
 // number only once the budget is locked, and before that a ghost commit has no
-// group figure to estimate a share from.
-const { settledCeiling, MEMBER_SUBMISSIONS } = require('./budget');
+// group figure to estimate a share from. settledCrowdHolds and
+// settledNumberShown are the WHO rule for a settled number, the same one every
+// other reader of it asks (see the note above them in budget.js).
+const { settledCeiling, settledCrowdHolds, settledNumberShown } = require('./budget');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
 
@@ -178,10 +180,18 @@ function outstandingOn(amount, paidAmount, settled) {
 // payer's name is withheld (the id stays — the client falls back to "Unknown",
 // which is what it already renders for a member it cannot name).
 //
-// What is deliberately NOT redacted is `totalAmount` / `totalWithTip`. The bill
-// total is a fact about the table, not about a person, and a total that
-// silently shrank per viewer would have people arguing over which number is
-// real. GET /:flockId applies the identical rule — a leak that survives one
+// `totalAmount` / `totalWithTip` used to be left alone on purpose: the total
+// is a fact about the table, and a total that silently shrank per viewer would
+// have people arguing over which number is real. Both halves are true and the
+// arithmetic beat them. The viewer holds the total and every share but the
+// hidden one, so the hidden one is the difference: Alice blocks Bob on a
+// $30 / $30 / $40 custom split, her copy drops Bob's row and his name and
+// still says $100, and $100 less $70 is Bob's $30. So a viewer with any share
+// hidden from them gets no total at all, never a shrunk one (null, the way a
+// withheld figure arrives everywhere else), and a viewer with nothing hidden
+// gets the total as before. The null tells them nothing new: shareCount counts
+// every row and `shares` does not, so a hidden row was already countable.
+// GET /:flockId applies the identical rule, because a leak that survives one
 // refresh is not closed.
 // ---------------------------------------------------------------------------
 const NOBODY = new Set();
@@ -207,12 +217,17 @@ async function invisibilityMap(userIds) {
 
 function billFor(bill, invisible) {
   if (!invisible || invisible.size === 0) return bill;
+  const allShares = bill.shares || [];
+  const shares = allShares.filter((s) => !invisible.has(s.userId));
+  const hidesAShare = shares.length !== allShares.length;
   return {
     ...bill,
+    // See the note above: with a share hidden, the total is its difference.
+    ...(hidesAShare ? { totalAmount: null, totalWithTip: null } : {}),
     paidBy: invisible.has(bill.paidBy?.id)
       ? { id: bill.paidBy.id, name: null }
       : bill.paidBy,
-    shares: (bill.shares || []).filter((s) => !invisible.has(s.userId)),
+    shares,
   };
 }
 
@@ -632,8 +647,9 @@ router.post('/:flockId/create',
             //
             // The claim can still be TRANSFERRED, because a payer giving up
             // their own receivable is theirs to give - that is the case
-            // money.test.js pins. What cannot happen is somebody else moving it
-            // onto themselves.
+            // money.test.js pins - until somebody has paid against it (the
+            // refusal after the share read below). What cannot happen is
+            // somebody else moving it onto themselves.
             return refuse(403, { error: 'Only the person who paid can hand this bill to someone else' });
           }
           hadRealPayer = prevPayer !== null;
@@ -655,6 +671,27 @@ router.post('/:flockId/create',
             'SELECT user_id, amount, paid_amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
             [existingBill.rows[0].id]
           );
+          // A HANDOFF CANNOT CARRY MONEY THAT WAS PAID TO THE PERSON HANDING
+          // IT OFF. Every settled flag and every credit on this bill (other
+          // than the payer's own row, whose flag is the artifact explained
+          // below) records money somebody handed to the CURRENT payer. Rewrite
+          // the bill around a new payer and those records point at the wrong
+          // person. Alice posts $50, $25 each; Bob pays her his $25 and marks
+          // it; Alice then names Bob as payer. The new payer's own row carries
+          // no credit, so Bob's $25 vanished, Alice was inserted owing Bob $25,
+          // and the payment links sent her to pay Bob money she had received
+          // from him. A third member's payment had the mirror fault: carried
+          // across as credit, it read as paid to Bob while Alice held the cash.
+          // Neither can be put right by arithmetic here, because the money
+          // really did go to Alice, so the payer stays who they are once any
+          // payment is on record. They can still correct the total.
+          if (formerPayerId !== null && shareResult.rows.some((row) => row.user_id !== formerPayerId
+              && (row.settled === true || Number(row.paid_amount) > 0))) {
+            return refuse(409, {
+              error: 'Someone has already marked a payment to you on this bill, so it cannot be handed to someone else now. You can still correct the total.',
+              code: 'PAYMENTS_RECORDED',
+            });
+          }
           for (const row of shareResult.rows) {
             if (row.committed) existingCommitments.set(row.user_id, true);
             // The payer's share is auto-settled below as an artifact of having
@@ -1161,33 +1198,36 @@ router.get('/:flockId',
 
       // A payerless bill's numbers ARE the budget ceiling: ghost-commit writes
       // the banded ceiling into every share and ceiling * memberCount into the
-      // total. routes/budget.js re-asks the reveal threshold on EVERY read, on
-      // purpose, because members leave and a band around the last person left
-      // is a band around one person's budget. This route published the same
-      // number from a cached row and never re-asked, so it was the second door
-      // out of the leak budget.js closed on the first.
+      // total. So they are shown exactly when routes/budget.js shows the
+      // ceiling: settled, over the crowd it settled over (settledNumberShown).
+      // This route once published them from a cached row and never asked,
+      // which made it the second door out of the budget; it then asked
+      // "three present sharers?", which made the estimate blink off when a
+      // sharer left after the settle and named them as a sharer. It asks what
+      // every reader of the number asks now, and an open budget (a reset, a
+      // shell left from before one) shows no estimate at all.
       //
       // Only shells are gated: once a real bill lands the amounts are what
       // somebody actually spent, which is not a budget submission and is not
       // the ceiling's to withhold.
       let revealShellAmounts = true;
       if (!hasPayer) {
-        const reveal = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS}
-           WHERE bs.flock_id = $1 AND skipped = false`,
-          [flockId]
-        );
-        revealShellAmounts = (reveal.rows[0]?.n || 0) >= 3;
+        revealShellAmounts = await settledNumberShown((q, p) => pool.query(q, p), flockId);
       }
       const money = (v) => (revealShellAmounts ? parseFloat(v) : null);
+      // The block rule on the total (see "Blocks on the bill" above): with a
+      // share hidden from this viewer the total is that share's difference,
+      // so it is withheld rather than shrunk.
+      const hidesAShare = sharesResult.rows.some((s) => invisible.has(s.user_id));
+      const showTotals = revealShellAmounts && !hidesAShare;
 
       res.json({
         bill: {
           id: bill.id,
           flockId: bill.flock_id,
-          totalAmount: money(bill.total_amount),
+          totalAmount: showTotals ? parseFloat(bill.total_amount) : null,
           tipPercent: parseFloat(bill.tip_percent),
-          totalWithTip: revealShellAmounts ? totalWithTip : null,
+          totalWithTip: showTotals ? totalWithTip : null,
           splitType: bill.split_type,
           // Nobody is recorded as having paid. The client must not offer a way
           // to pay them or a way to mark them paid, and must not print the
@@ -1718,34 +1758,6 @@ router.post('/:flockId/ghost-commit',
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Ghost mode is not enabled for this flock' });
         }
-        // MEMBERSHIP IS THE RELATIONSHIP, on this route too (bill split audit
-        // 2026-08-26). This count used to read budget_submissions with no join,
-        // and routes/budget.js counts the same rows through MEMBER_SUBMISSIONS,
-        // only submissions whose author is still an accepted member, because a
-        // submission row is deliberately left behind when its author leaves.
-        //
-        // The two counts therefore diverged the moment anybody left, and they
-        // diverged in the direction that publishes: three people submit, the
-        // budget locks, one of them leaves, and GET /api/budget/:flockId goes
-        // back to withholding the ceiling (isReady is re-evaluated on every read)
-        // while this route still counted three and handed the banded ceiling out
-        // as `estimatedShare`. That is the exact shape budget.js closed for its
-        // own aggregates: two people plus a throwaway that submits and leaves,
-        // and the band is a band around ONE of the two remaining people.
-        //
-        // budgetCeilingReadParity could not see it, because its pg fake answers both
-        // count statements from the same number, so it was pinning the ceiling
-        // VALUE the two routes publish and never the threshold each one asks.
-        const thresholdResult = await client.query(
-          `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS}
-           WHERE bs.flock_id = $1 AND skipped = false`,
-          [flockId]
-        );
-        if ((thresholdResult.rows[0]?.n || 0) < 3) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'Ghost commit opens after at least 3 people have submitted budgets' });
-        }
-
         // Settled and banded, not raw and not live. estimatedShare below IS this
         // number on the wire and it is also WRITTEN into a bill_split_shares row
         // that GET /api/billing/:flockId serves back later, so a ghost commit
@@ -1759,6 +1771,20 @@ router.post('/:flockId/ghost-commit',
           return res.status(400).json({
             error: 'The group budget is not set yet, so we cannot estimate a share',
           });
+        }
+
+        // THE CROWD EVERY READER OF THE SETTLED NUMBER ASKS (routes/budget.js,
+        // settledCrowdHolds). This count once read budget_submissions with no
+        // join while the budget route counted present members, so the two
+        // disagreed the moment somebody left. It was then aligned on present
+        // members, which made the estimate refuse the moment a sharer left
+        // after the settle, a refusal that named them as having shared. Both
+        // routes now ask the crowd the budget settled over, and only once it
+        // has settled (the check above), so an open budget's departed rows are
+        // never counted into an answer a member can read.
+        if (!(await settledCrowdHolds((q, p) => client.query(q, p), flockId))) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Ghost commit opens after at least 3 people have submitted budgets' });
         }
 
         // Get member count for estimated share

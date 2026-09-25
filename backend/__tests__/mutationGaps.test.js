@@ -1002,48 +1002,70 @@ test('the flock creator can rewrite a bill someone else opened', async () => {
   assert.strictEqual(asBystander.status, 403);
 });
 
-test('a settled debt survives a payer change, and keeps the time it was settled', async () => {
-  // Two clauses in one line, neither pinned:
+test('a settled debt survives an edit with its time, and a bill somebody has paid on is not handed on', async () => {
+  // Two clauses, neither pinned before:
   //   `const payerArtifact = row.user_id === prevPayer && prevPayer !== payerId;`
-  //     — drops ONLY the former payer's auto-settled flag (it used to
-  //       `continue` past the whole row; the flag is the artifact, the money
-  //       on it is not, see the loop). With `||` every settled row is dropped
-  //       on any payer change, so a debt someone actually paid is re-issued.
+  //     — drops ONLY the outgoing payer's auto-settled flag on a handoff (the
+  //       flag is the artifact, the money on it is not, see the loop).
   //   `existingSettled.set(row.user_id, row.settled_at || new Date())`
   //     — with `&&` the ORIGINAL settlement time is replaced by now, so the
   //       receipt says the debt was paid at the moment the bill was edited.
+  //
+  // This case used to hand the bill to Ben with Cy's payment on it and pin
+  // that Cy stayed settled. Cy had paid AVA, so on Ben's bill his row read as
+  // paid to Ben while Ava held the $30. Once anybody has paid the current
+  // payer the bill is no longer handed on (409 PAYMENTS_RECORDED), which is
+  // also what now stands in front of the damage an `||` in the first clause
+  // used to do; the payer can still edit it, which is where the second clause
+  // lives.
   const paidAt = new Date('2026-08-01T18:30:00Z');
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
-  // The rows carry their amounts because the route now decides a settled
-  // row's fate from what it paid (bill_split_shares.amount and paid_amount,
-  // migration 061), not from the flag alone: a settled row whose amount
-  // cannot be read is a row the route will not vouch for, and it is skipped
-  // rather than carried. A real DECIMAL column never hands back undefined, so
-  // this is only the fixture catching up with the SELECT list money.test.js
-  // pins. $90 three ways is $30 each, and Cy paid his.
-  scriptBill({
-    creatorId: 1,
-    existingBill: [{ id: 5, paid_by: 1 }],
-    existingShares: [
-      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00' }, // Ava, payer
-      { user_id: 3, committed: false, settled: true, settled_at: paidAt, amount: '30.00' },     // Cy, really paid
-      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00' },
-    ],
-  });
+  // The rows carry their amounts because the route decides a settled row's
+  // fate from what it paid (bill_split_shares.amount and paid_amount,
+  // migration 061), not from the flag alone. $90 three ways is $30 each, and
+  // Cy paid his.
+  const withCyPaid = () => [
+    { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00' }, // Ava, payer
+    { user_id: 3, committed: false, settled: true, settled_at: paidAt, amount: '30.00' },     // Cy, really paid
+    { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00' },
+  ];
 
-  const res = await createBill({ totalAmount: 90, paidBy: 2 }); // hand the bill to Ben
-  assert.strictEqual(res.status, 201, res.text);
+  // Handing it to Ben with Cy's payment on record: refused, nothing written.
+  scriptBill({ creatorId: 1, existingBill: [{ id: 5, paid_by: 1 }], existingShares: withCyPaid() });
+  const handoff = await createBill({ totalAmount: 90, paidBy: 2 });
+  assert.strictEqual(handoff.status, 409, handoff.text);
+  assert.strictEqual(handoff.body.code, 'PAYMENTS_RECORDED');
+  assert.strictEqual(ran('INSERT INTO bill_split_shares').length, 0, 'a refused handoff wrote shares');
 
-  const by = Object.fromEntries(res.body.bill.shares.map((s) => [s.userId, s]));
-  assert.strictEqual(by[1].settled, false, 'the former payer now owes the new one');
-  assert.strictEqual(by[2].settled, true, 'the new payer fronted the money');
+  // Ava edits it instead. Cy's payment survives, with the time he paid.
+  scriptBill({ creatorId: 1, existingBill: [{ id: 5, paid_by: 1 }], existingShares: withCyPaid() });
+  const edit = await createBill({ totalAmount: 90, paidBy: 1 });
+  assert.strictEqual(edit.status, 201, edit.text);
+  const by = Object.fromEntries(edit.body.bill.shares.map((s) => [s.userId, s]));
+  assert.strictEqual(by[1].settled, true, 'the payer who stays the payer keeps their row');
   assert.strictEqual(by[3].settled, true, 'a debt Cy actually paid is NOT re-issued');
-
-  // The INSERT carries Cy's original settled_at, not the moment of the edit.
   const cyRow = ran('INSERT INTO bill_split_shares').find((q) => q.params[1] === 3);
   assert.ok(cyRow, 'Cy is written back');
   assert.strictEqual(new Date(cyRow.params[5]).getTime(), paidAt.getTime(),
     'editing a bill must not restamp when a debt was paid');
+
+  // With nothing paid yet the handoff goes through, and only the outgoing
+  // payer's artifact flag is dropped: Ava now owes Ben.
+  scriptBill({
+    creatorId: 1,
+    existingBill: [{ id: 5, paid_by: 1 }],
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00' },
+    ],
+  });
+  const clean = await createBill({ totalAmount: 90, paidBy: 2 });
+  assert.strictEqual(clean.status, 201, clean.text);
+  const after = Object.fromEntries(clean.body.bill.shares.map((s) => [s.userId, s]));
+  assert.strictEqual(after[1].settled, false, 'the former payer now owes the new one');
+  assert.strictEqual(after[2].settled, true, 'the new payer fronted the money');
+  assert.strictEqual(after[3].settled, false);
 });
 
 // A guard on this file itself: `crypto` is imported for token minting, and an

@@ -421,11 +421,16 @@ test('the 201 body the creator gets back is filtered like every other view', asy
   assert.strictEqual(res.status, 201);
   assert.deepStrictEqual(res.body.bill.shares.map((s) => s.name), ['Ava', 'Ben']);
   assert.ok(!res.text.includes('Mallory'));
-  // Still committed, still a whole bill: only the names moved.
-  assert.strictEqual(res.body.bill.totalAmount, 90);
+  // Still committed, still a whole bill. The total goes with the hidden row:
+  // the total less the rows on screen IS Mallory's share, so a copy that
+  // hides her row and keeps the total has hidden nothing.
+  assert.strictEqual(res.body.bill.totalAmount, null);
+  assert.strictEqual(res.body.bill.totalWithTip, null);
+  assert.strictEqual(res.body.bill.shareCount, 3, 'and the count still says a row is hidden, as it always did');
   // ...and the fan-out still built Mallory her own copy from the full set.
   const toMallory = emits.find((e) => e.event === 'bill_created' && e.room === 'user:3');
   assert.strictEqual(toMallory.payload.bill.shares.length, 3);
+  assert.strictEqual(toMallory.payload.bill.totalAmount, 90, 'nothing is hidden from her, so she keeps the total');
 });
 
 test('bill_created is rebuilt per recipient — nobody is told what a blocked user owes', async () => {
@@ -441,8 +446,43 @@ test('bill_created is rebuilt per recipient — nobody is told what a blocked us
   assert.deepStrictEqual(byRoom['user:1'].shares.map((s) => s.name).sort(), ['Ava', 'Ben', 'Mallory']);
   assert.deepStrictEqual(byRoom['user:2'].shares.map((s) => s.name).sort(), ['Ava', 'Ben']);
   assert.deepStrictEqual(byRoom['user:3'].shares.map((s) => s.name).sort(), ['Ava', 'Mallory']);
-  // The table's total is a fact about the table, not about a person.
-  assert.strictEqual(byRoom['user:2'].totalAmount, 90);
+  // The total used to stay as "a fact about the table", and the total less
+  // the rows on screen was the hidden person's debt. Ben and Mallory each get
+  // no total, both ways round, so neither copy says which of them blocked.
+  // Ava, with nothing hidden, keeps it: a block between two other people is
+  // not visible in her copy.
+  assert.strictEqual(byRoom['user:2'].totalAmount, null);
+  assert.strictEqual(byRoom['user:2'].totalWithTip, null);
+  assert.strictEqual(byRoom['user:3'].totalAmount, null);
+  assert.strictEqual(byRoom['user:1'].totalAmount, 90);
+  assert.strictEqual(byRoom['user:1'].totalWithTip, 90);
+});
+
+test('a custom split with a hidden row cannot be solved for the hidden share', async () => {
+  // The finding, as numbers: $30 / $30 / $40 over Ava, Ben and Mallory, and
+  // Ben has blocked Mallory. With the total on Ben's copy, $100 less the two
+  // rows he can see is Mallory's $40.
+  scriptBillCreate([{ blocker_id: 2, blocked_id: 3 }]);
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 100,
+    splitType: 'custom',
+    customShares: [{ userId: 1, amount: 30 }, { userId: 2, amount: 30 }, { userId: 3, amount: 40 }],
+  });
+  assert.strictEqual(res.status, 201, res.text);
+  const toBen = emits.find((e) => e.event === 'bill_created' && e.room === 'user:2').payload.bill;
+  assert.deepStrictEqual(toBen.shares.map((s) => s.amount).sort(), [30, 30]);
+  assert.strictEqual(toBen.totalAmount, null);
+  assert.strictEqual(toBen.totalWithTip, null);
+  // Nothing left on the copy is a money figure except the two visible rows
+  // (tipPercent is a rate, and a total cannot be rebuilt from it alone).
+  const figures = [];
+  const walk = (v, key) => {
+    if (typeof v === 'number' && !['id', 'flockId', 'userId', 'tipPercent', 'settledCount', 'shareCount'].includes(key)) figures.push(v);
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walk(x, k);
+  };
+  walk(toBen, null);
+  assert.ok(!figures.includes(40) && !figures.includes(100),
+    `Mallory's share is still on or derivable from Ben's copy: ${JSON.stringify(figures)}`);
 });
 
 test('a recipient who blocked the payer is not handed the payer name', async () => {
@@ -474,7 +514,10 @@ test('the same rule survives a refresh — GET filters the bill too', async () =
   assert.deepStrictEqual(res.body.bill.shares.map((s) => s.name), ['Ava']);
   assert.strictEqual(res.body.bill.paidBy.name, null);
   assert.ok(!res.text.includes('Mallory'));
-  assert.strictEqual(res.body.bill.totalAmount, 90);
+  // The same rule as the fan-out: a hidden row takes the total with it.
+  assert.strictEqual(res.body.bill.totalAmount, null);
+  assert.strictEqual(res.body.bill.totalWithTip, null);
+  assert.strictEqual(res.body.bill.shareCount, 2);
 });
 
 // ---------------------------------------------------------------------------
