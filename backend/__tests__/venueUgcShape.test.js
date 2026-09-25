@@ -403,25 +403,53 @@ test('ordinary punctuation survives the new sanitizer byte for byte', async () =
 const REAL_KEY = 'flock-sensor-key-abc123';
 const STORED_DIGEST = 'sha256:' + crypto.createHash('sha256').update(REAL_KEY, 'utf8').digest('hex');
 
-// Behaves like the real indexed lookup: the row comes back when EITHER bound
-// parameter equals the stored value, which is exactly what `api_key = $1 OR
-// api_key = $2` does.
-function deviceStoredAs(stored, row = {}) {
-  handlers.push([/FROM sensor_devices WHERE api_key/, (p) => ({
-    rows: (p[0] === stored || p[1] === stored)
-      ? [{ id: 1, device_id: 'sensor_001', venue_place_id: 'PLACE_A', is_active: true, ...row }]
-      : [],
-  })]);
-  // The live-stream flood guard: WHERE clause and write in one statement, so a
-  // rowCount of 0 IS the 429. Answer 1 by default; the tests that care about the
-  // guard script their own.
-  handlers.push([/^UPDATE sensor_devices SET last_seen_at/, () => ({ rows: [{ id: 1 }], rowCount: 1 })]);
+// The ingest is ONE statement now (routes/sensors.js INGEST_SQL: the key lookup,
+// the duplicate check, the flood guard, the touch and the insert), so it is
+// answered by the shared model of that statement rather than by one scripted
+// reply per query. The model enforces the rules; sensorIngestStatement.test.js
+// runs the real statement against a real Postgres.
+const { INGEST_STATEMENT, runIngest } = require('./helpers/sensorStoreModel');
+
+// One device, stored as `stored`, exactly like the real indexed lookup: the row
+// comes back when EITHER bound candidate equals the stored value, which is what
+// `api_key = $1 OR api_key = $2` does. `lastSeenAt` simulates a device that
+// pushed a moment ago; `held` is a reading already in the table.
+let sensorStore = null;
+let ingestParams = null;
+function deviceStoredAs(stored, { row = {}, lastSeenAt = null, held = [] } = {}) {
+  sensorStore = {
+    devices: [{
+      id: 1, device_id: 'sensor_001', venue_place_id: 'PLACE_A', is_active: true,
+      api_key: stored, last_seen_at: lastSeenAt, ...row,
+    }],
+    readings: held.map((at) => ({ sensor_device_id: 'sensor_001', recorded_at: new Date(at) })),
+  };
+  ingestParams = null;
+  handlers.push([INGEST_STATEMENT, (p) => { ingestParams = p; return runIngest(sensorStore, p); }]);
 }
 
 const READING = { ir_beam_count: 4, thermal_headcount: 11, noise_db: 82.5 };
 const withKey = (k) => ({ 'x-api-key': k });
 
-const WRITES = /^(INSERT|UPDATE|DELETE)/i;
+// What a request WROTE: every reading stored and every liveness touch. A WHERE
+// clause in the one statement is what refuses now, so "no INSERT statement ran"
+// stopped being the property; "nothing was stored and nothing was touched" is.
+function sensorWrites() {
+  if (!sensorStore) return [];
+  const held = sensorStore.heldCount ?? 0;
+  const out = sensorStore.readings.slice(held).map((r) => `stored ${r.sensor_device_id}`);
+  if (sensorStore.devices[0].last_seen_at !== sensorStore.initialLastSeen) out.push('touched sensor_001');
+  return out;
+}
+// Snapshot what was there before the request, so only its own writes count.
+function beforeRequest() {
+  sensorStore.heldCount = sensorStore.readings.length;
+  sensorStore.initialLastSeen = sensorStore.devices[0].last_seen_at;
+}
+async function ingest(body, key) {
+  if (sensorStore) beforeRequest();
+  return call('POST', '/api/sensors/data', body, withKey(key));
+}
 
 // ── The digest replay ──────────────────────────────────────────────────────
 //
@@ -435,9 +463,9 @@ const WRITES = /^(INSERT|UPDATE|DELETE)/i;
 // every venue we have hardware in", and before this it did precisely that.
 test('the stored digest cannot be replayed as an API key', async () => {
   deviceStoredAs(STORED_DIGEST);
-  const res = await call('POST', '/api/sensors/data', READING, withKey(STORED_DIGEST));
+  const res = await ingest(READING, STORED_DIGEST);
   assert.strictEqual(res.status, 401, `a database dump is still a fleet-wide forgery key: ${res.text}`);
-  assert.deepStrictEqual(ran(WRITES).map((q) => q.sql), [], 'it wrote a reading anyway');
+  assert.deepStrictEqual(sensorWrites(), [], 'it wrote a reading anyway');
 });
 
 // Round 3 of this audit: the same replay through a seam in the first fix. An
@@ -450,44 +478,41 @@ test('no cased or malformed digest can be replayed as an API key either', async 
   for (const stored of [upper, 'sha256:short', 'SHA256:' + 'ab'.repeat(32)]) {
     handlers = [];
     deviceStoredAs(stored);
-    const res = await call('POST', '/api/sensors/data', READING, withKey(stored));
+    const res = await ingest(READING, stored);
     assert.strictEqual(res.status, 401, `${stored} authenticated by literal comparison: ${res.text}`);
-    assert.deepStrictEqual(ran(WRITES).map((q) => q.sql), [], `${stored}: wrote a reading anyway`);
+    assert.deepStrictEqual(sensorWrites(), [], `${stored}: wrote a reading anyway`);
   }
 });
 
 test('the real key still authenticates against a hashed row', async () => {
   deviceStoredAs(STORED_DIGEST);
-  handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: '2026-08-14T20:00:00.000Z' }] })]);
-  const res = await call('POST', '/api/sensors/data', READING, withKey(REAL_KEY));
+  const res = await ingest(READING, REAL_KEY);
   assert.strictEqual(res.status, 201, res.text);
 });
 
 test('a legacy plaintext row still authenticates, so no fleet re-flash is forced', async () => {
   deviceStoredAs('legacy-plain-key');
-  handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: '2026-08-14T20:00:00.000Z' }] })]);
-  const res = await call('POST', '/api/sensors/data', READING, withKey('legacy-plain-key'));
+  const res = await ingest(READING, 'legacy-plain-key');
   assert.strictEqual(res.status, 201, res.text);
 });
 
 // ── The device cannot name its own venue, or forge a time ──────────────────
 test('a device cannot report for a venue it is not installed at', async () => {
   deviceStoredAs(STORED_DIGEST);
-  let insert = null;
-  handlers.push([/^INSERT INTO venue_sensor_data/, (p) => { insert = p; return { rows: [{ recorded_at: 'x' }] }; }]);
-  const res = await call('POST', '/api/sensors/data',
+  const res = await ingest(
     { ...READING, venue_place_id: 'SOMEONE_ELSES_BAR', google_place_id: 'SOMEONE_ELSES_BAR' },
-    withKey(REAL_KEY));
+    REAL_KEY);
   assert.strictEqual(res.status, 201, res.text);
-  assert.strictEqual(insert[0], 'PLACE_A', 'the venue came from the payload, not the device row');
+  assert.strictEqual(sensorStore.readings[0].venue_place_id, 'PLACE_A',
+    'the venue came from the payload, not the device row');
+  assert.ok(!ingestParams.includes('SOMEONE_ELSES_BAR'), 'the payload venue reached the statement at all');
 });
 
 test('a device echoing somebody else‘s device_id is refused', async () => {
   deviceStoredAs(STORED_DIGEST);
-  const res = await call('POST', '/api/sensors/data',
-    { ...READING, device_id: 'sensor_999' }, withKey(REAL_KEY));
+  const res = await ingest({ ...READING, device_id: 'sensor_999' }, REAL_KEY);
   assert.strictEqual(res.status, 403, res.text);
-  assert.deepStrictEqual(ran(/venue_sensor_data/).map((q) => q.sql), []);
+  assert.deepStrictEqual(sensorWrites(), []);
 });
 
 test('a forged clock is refused rather than quietly rewritten to server time', async () => {
@@ -496,10 +521,11 @@ test('a forged clock is refused rather than quietly rewritten to server time', a
     [new Date(Date.now() - 100 * 3600 * 1000).toISOString(), 'four days stale'],
     ['not-a-time', 'junk'],
   ]) {
+    handlers = [];
     deviceStoredAs(STORED_DIGEST);
-    const res = await call('POST', '/api/sensors/data', { ...READING, recorded_at: when }, withKey(REAL_KEY));
+    const res = await ingest({ ...READING, recorded_at: when }, REAL_KEY);
     assert.strictEqual(res.status, 400, `${why} -> ${res.status} ${res.text}`);
-    assert.deepStrictEqual(ran(/venue_sensor_data/).map((q) => q.sql), [], `${why}: written anyway`);
+    assert.deepStrictEqual(sensorWrites(), [], `${why}: written anyway`);
   }
 });
 
@@ -509,15 +535,20 @@ test('a forged clock is refused rather than quietly rewritten to server time', a
 // is expected. What must not happen is a WRITE — and before this guard,
 // `ir_beam_count: [10]` satisfied isInt by coercion, stayed an array, and
 // reached an INTEGER column as `{10}`: a 22P02 on the one endpoint whose job is
-// to keep answering while a Pi in a bar retries.
+// to keep answering while a Pi in a bar retries. A refused value must not even
+// reach the statement's parameters now: it is bound whether or not a row uses
+// it, and a typed parameter is parsed at bind time.
 test('a non-scalar reading is a 400 and is never written', async () => {
   for (const field of ['ir_beam_count', 'thermal_headcount', 'noise_db', 'recorded_at', 'device_id', 'dry_run']) {
     for (const v of NON_SCALARS) {
+      handlers = [];
       deviceStoredAs(STORED_DIGEST);
-      const res = await call('POST', '/api/sensors/data', { ...READING, [field]: v }, withKey(REAL_KEY));
+      const res = await ingest({ ...READING, [field]: v }, REAL_KEY);
       const label = `${field}=${JSON.stringify(v)}`;
       assert.strictEqual(res.status, 400, `${label} -> ${res.status} ${res.text}`);
-      assert.deepStrictEqual(ran(WRITES).map((q) => q.sql), [], `${label}: wrote something`);
+      assert.deepStrictEqual(sensorWrites(), [], `${label}: wrote something`);
+      assert.deepStrictEqual(ingestParams.slice(2), [false, null, false, null, false, '2 seconds', null, null, null],
+        `${label}: a refused body reached the statement's parameters`);
     }
   }
 });
@@ -528,19 +559,16 @@ test('a non-scalar reading is a 400 and is never written', async () => {
 // is the one thing dry_run exists to prevent.
 test('a coerced dry_run cannot be read as a live reading', async () => {
   deviceStoredAs(STORED_DIGEST);
-  let insert = null;
-  handlers.push([/^INSERT INTO venue_sensor_data/, (p) => { insert = p; return { rows: [{ recorded_at: 'x' }] }; }]);
-  const res = await call('POST', '/api/sensors/data',
-    { ir_beam_count: 0, thermal_headcount: 0, noise_db: 0, dry_run: ['true'] }, withKey(REAL_KEY));
+  const res = await ingest({ ir_beam_count: 0, thermal_headcount: 0, noise_db: 0, dry_run: ['true'] }, REAL_KEY);
   assert.strictEqual(res.status, 400, res.text);
-  assert.strictEqual(insert, null, 'the self test wrote a fabricated zero reading');
+  assert.deepStrictEqual(sensorWrites(), [], 'the self test wrote a fabricated zero reading');
 });
 
 test('a real dry run still answers without writing anything', async () => {
   deviceStoredAs(STORED_DIGEST);
-  const res = await call('POST', '/api/sensors/data', { ...READING, dry_run: true }, withKey(REAL_KEY));
+  const res = await ingest({ ...READING, dry_run: true }, REAL_KEY);
   assert.strictEqual(res.status, 200, res.text);
-  assert.deepStrictEqual(ran(WRITES).map((q) => q.sql), []);
+  assert.deepStrictEqual(sensorWrites(), []);
 });
 
 // ── A device with no usable clock must never be refused ────────────────────
@@ -552,18 +580,15 @@ test('a real dry run still answers without writing anything', async () => {
 // unreachable. checkFalsy closes it.
 test('a device with no clock is stamped on arrival, not refused', async () => {
   for (const raw of [undefined, null, '']) {
-    // Reset, or the previous iteration's INSERT handler matches first and this
-    // iteration's capture stays null.
     handlers = [];
     deviceStoredAs(STORED_DIGEST);
-    let insert = null;
-    handlers.push([/^INSERT INTO venue_sensor_data/, (p) => { insert = p; return { rows: [{ recorded_at: 'x' }] }; }]);
     const body = { ...READING };
     if (raw !== undefined) body.recorded_at = raw;
-    const res = await call('POST', '/api/sensors/data', body, withKey(REAL_KEY));
+    const res = await ingest(body, REAL_KEY);
     assert.strictEqual(res.status, 201, `recorded_at=${JSON.stringify(raw)} -> ${res.status} ${res.text}`);
-    // The 6th bind is COALESCE($6::timestamptz, NOW()) — null means "on arrival".
-    assert.strictEqual(insert[5], null, `recorded_at=${JSON.stringify(raw)} reached pg as ${JSON.stringify(insert[5])}`);
+    // $6 is COALESCE($6::timestamptz, NOW()) — null means "on arrival".
+    assert.strictEqual(ingestParams[5], null,
+      `recorded_at=${JSON.stringify(raw)} reached pg as ${JSON.stringify(ingestParams[5])}`);
   }
 });
 
@@ -575,19 +600,15 @@ test('only a string can be a timestamp', async () => {
   for (const raw of [0, 123456789, true, false]) {
     handlers = [];
     deviceStoredAs(STORED_DIGEST);
-    handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: 'x' }] })]);
-    const res = await call('POST', '/api/sensors/data', { ...READING, recorded_at: raw }, withKey(REAL_KEY));
+    const res = await ingest({ ...READING, recorded_at: raw }, REAL_KEY);
     assert.strictEqual(res.status, 400, `recorded_at=${JSON.stringify(raw)} -> ${res.status} ${res.text}`);
-    assert.deepStrictEqual(ran(/INSERT INTO venue_sensor_data/).map((q) => q.sql), [],
-      `recorded_at=${JSON.stringify(raw)}: written anyway`);
+    assert.deepStrictEqual(sensorWrites(), [], `recorded_at=${JSON.stringify(raw)}: written anyway`);
   }
 });
 
 test('a null device_id and a null dry_run are absent, not errors', async () => {
   deviceStoredAs(STORED_DIGEST);
-  handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: 'x' }] })]);
-  const res = await call('POST', '/api/sensors/data',
-    { ...READING, device_id: null, dry_run: null, recorded_at: null }, withKey(REAL_KEY));
+  const res = await ingest({ ...READING, device_id: null, dry_run: null, recorded_at: null }, REAL_KEY);
   assert.strictEqual(res.status, 201, res.text);
 });
 
@@ -599,9 +620,11 @@ test('out-of-range readings are still refused', async () => {
     { ...READING, noise_db: 141 },
     { ...READING, ir_beam_count: -1 },
   ]) {
+    handlers = [];
     deviceStoredAs(STORED_DIGEST);
-    const res = await call('POST', '/api/sensors/data', body, withKey(REAL_KEY));
+    const res = await ingest(body, REAL_KEY);
     assert.strictEqual(res.status, 400, `${JSON.stringify(body)} -> ${res.status} ${res.text}`);
+    assert.deepStrictEqual(sensorWrites(), [], `${JSON.stringify(body)}: written anyway`);
   }
 });
 
@@ -620,23 +643,17 @@ test('out-of-range readings are still refused', async () => {
 test('a reading inside the live window is throttled however it is stamped', async () => {
   for (const ageMs of [0, 61 * 1000, 5 * 60 * 1000, 14 * 60 * 1000]) {
     handlers = [];
-    deviceStoredAs(STORED_DIGEST);
-    // The guard is atomic: rowCount 0 IS the refusal. Simulate a device that
-    // pushed a moment ago.
-    handlers.unshift([/^UPDATE sensor_devices SET last_seen_at/, (_p, sql) => (
-      /last_seen_at <=/.test(sql) ? { rows: [], rowCount: 0 } : { rows: [{ id: 1 }], rowCount: 1 }
-    )]);
-    handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: 'x' }] })]);
+    // A device that pushed a moment ago: the guard's WHERE clause fails.
+    deviceStoredAs(STORED_DIGEST, { lastSeenAt: Date.now() });
     const body = { ...READING };
     if (ageMs > 0) body.recorded_at = new Date(Date.now() - ageMs).toISOString();
-    const res = await call('POST', '/api/sensors/data', body, withKey(REAL_KEY));
+    const res = await ingest(body, REAL_KEY);
     assert.strictEqual(res.status, 429,
       `a reading ${ageMs / 1000}s old bypassed the flood guard: ${res.status} ${res.text}`);
-    // The dedupe SELECT is expected — it runs before the guard on purpose (an
-    // honest retry must not be charged against the rate limit). What must not
-    // happen is a WRITE.
-    assert.deepStrictEqual(ran(/INSERT INTO venue_sensor_data/).map((q) => q.sql), [],
-      `a reading ${ageMs / 1000}s old was written anyway`);
+    // The dedupe check still runs before the guard on purpose (an honest retry
+    // must not be charged against the rate limit). What must not happen is a
+    // WRITE.
+    assert.deepStrictEqual(sensorWrites(), [], `a reading ${ageMs / 1000}s old was written anyway`);
   }
 });
 
@@ -647,19 +664,13 @@ test('a reading inside the live window is throttled however it is stamped', asyn
 // case the dedupe exists to serve would have become a back-off loop.
 test('a retried push inside the live window is recognised, not throttled', async () => {
   handlers = [];
-  deviceStoredAs(STORED_DIGEST);
   const takenAt = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  handlers.unshift([/^UPDATE sensor_devices SET last_seen_at/, (_p, sql) => (
-    /last_seen_at <=/.test(sql) ? { rows: [], rowCount: 0 } : { rows: [{ id: 1 }], rowCount: 1 }
-  )]);
-  handlers.unshift([/SELECT recorded_at FROM venue_sensor_data/, () => ({ rows: [{ recorded_at: takenAt }] })]);
-  let insert = null;
-  handlers.push([/^INSERT INTO venue_sensor_data/, (p) => { insert = p; return { rows: [{ recorded_at: 'x' }] }; }]);
+  deviceStoredAs(STORED_DIGEST, { lastSeenAt: Date.now(), held: [takenAt] });
 
-  const res = await call('POST', '/api/sensors/data', { ...READING, recorded_at: takenAt }, withKey(REAL_KEY));
+  const res = await ingest({ ...READING, recorded_at: takenAt }, REAL_KEY);
   assert.strictEqual(res.status, 201, res.text);
   assert.strictEqual(res.body.duplicate, true, 'the retry was not recognised as one');
-  assert.strictEqual(insert, null, 'the doorway was counted twice');
+  assert.strictEqual(sensorStore.readings.length, 1, 'the doorway was counted twice');
 });
 
 // The other half of the same rule: a genuine buffer drain must NOT be told 429,
@@ -668,14 +679,10 @@ test('a retried push inside the live window is recognised, not throttled', async
 test('a genuine buffer drain is never throttled', async () => {
   for (const ageMinutes of [16, 60, 47 * 60]) {
     handlers = [];
-    deviceStoredAs(STORED_DIGEST);
-    handlers.unshift([/^UPDATE sensor_devices SET last_seen_at/, (_p, sql) => (
-      /last_seen_at <=/.test(sql) ? { rows: [], rowCount: 0 } : { rows: [{ id: 1 }], rowCount: 1 }
-    )]);
-    handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: 'x' }] })]);
-    const res = await call('POST', '/api/sensors/data', {
+    deviceStoredAs(STORED_DIGEST, { lastSeenAt: Date.now() });
+    const res = await ingest({
       ...READING, recorded_at: new Date(Date.now() - ageMinutes * 60 * 1000).toISOString(),
-    }, withKey(REAL_KEY));
+    }, REAL_KEY);
     assert.strictEqual(res.status, 201,
       `a ${ageMinutes}-minute-old backfill row was throttled: ${res.status} ${res.text}`);
   }
@@ -692,10 +699,9 @@ test('the two timestamp questions stayed separate: old rows are still not broadc
       handlers = [];
       emitted.length = 0;
       deviceStoredAs(STORED_DIGEST);
-      handlers.push([/^INSERT INTO venue_sensor_data/, () => ({ rows: [{ recorded_at: 'x' }] })]);
       const body = { ...READING };
       if (ageMs > 0) body.recorded_at = new Date(Date.now() - ageMs).toISOString();
-      const res = await call('POST', '/api/sensors/data', body, withKey(REAL_KEY));
+      const res = await ingest(body, REAL_KEY);
       assert.strictEqual(res.status, 201, res.text);
       assert.strictEqual(emitted.length > 0, shouldEmit,
         `a reading ${ageMs / 1000}s old: emitted=${emitted.length}, expected ${shouldEmit}`);

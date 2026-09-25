@@ -481,6 +481,16 @@ router.get('/photo',
       // has one identity in both tiers.
       const cacheKey = photoCacheKey(photoRef, maxWidth);
 
+      // Tier zero is the phone. A revalidation that names a copy we served
+      // inside the 30-day window is answered 304 here, before L1, L2, the
+      // gates or Google, because the only thing it asks is "are my bytes
+      // still right" and the ETag already answers it: see photoEtag.
+      const heldTag = heldPhotoEtag(req.headers['if-none-match'], cacheKey);
+      if (heldTag) {
+        setPhotoCacheHeaders(res, heldTag);
+        return res.status(304).end();
+      }
+
       // L1, this container's memory. Free, and the only tier that costs nothing
       // at all to consult.
       const cached = photoCache.get(cacheKey);
@@ -489,7 +499,7 @@ router.get('/photo',
           // A hit is what makes this entry recently used; without the re-insert
           // the map is FIFO and the eviction comment above would be a lie.
           touchPhotoCache(cacheKey, cached);
-          return sendPhoto(res, cached);
+          return sendPhoto(res, cached, cacheKey);
         }
         // Past the window, so the entry is DELETED here rather than stepped
         // over. This read is the one moment the process is certain these bytes
@@ -534,7 +544,7 @@ router.get('/photo',
         if (out.gone) res.set('Cache-Control', 'public, max-age=3600');
         return res.status(out.status).json({ error: out.error });
       }
-      sendPhoto(res, out);
+      sendPhoto(res, out, cacheKey);
     } catch (err) {
       console.error('[Photo Proxy] Error:', err.message, '| ref:', req.query.ref?.slice(0, 60));
       res.status(500).json({ error: 'That photo could not be loaded. Try again in a moment.' });
@@ -567,9 +577,59 @@ function photoContentType(raw) {
   return ALLOWED_PHOTO_TYPES.has(base) ? base : 'image/jpeg';
 }
 
-function sendPhoto(res, { buffer, contentType }) {
-  res.set('Content-Type', photoContentType(contentType));
-  res.set('X-Content-Type-Options', 'nosniff');
+// ---------------------------------------------------------------------------
+// THE VALIDATOR, and why a revalidation never needs the bytes.
+// ---------------------------------------------------------------------------
+// Express gave every photo a weak ETag hashed from the BODY, so it could only
+// answer "your copy is current" after this route had found the body: an L1
+// read at best, and after any deploy an L2 read over the network to Postgres,
+// or a paid Google fetch if L2 had let the row go. The conditional request
+// carried everything needed to answer it without any of that.
+//
+// The ETag here is `p1-<32 hex of the cache key>-<when our copy was fetched,
+// in base-36 seconds>`, weak because a re-fetch can hand back different bytes
+// of the same photo at the same width. The key half says which photo and
+// width (the key is already a hash, never the name). The time half says which
+// purchase of it the phone holds, and it is what keeps the 30-day window in
+// services/photoStore.js meaning something on the phone as well: a copy from
+// a fetch inside the window is confirmed with a 304 and no lookup at all; a
+// copy from an older fetch goes down the normal path, which reads L2 or
+// re-buys the photo exactly as a revalidation always has. The server cannot
+// be talked into anything by a forged tag. A 304 hands out no bytes and costs
+// nothing, so the worst a made-up timestamp does is keep a phone showing a
+// photo it already has.
+const PHOTO_ETAG_RE = /^(?:W\/)?"p1-([0-9a-f]{32})-([0-9a-z]{1,11})"$/;
+
+function photoEtag(cacheKey, fetchedAtMs) {
+  return `W/"p1-${cacheKey.slice(0, 32)}-${Math.floor(fetchedAtMs / 1000).toString(36)}"`;
+}
+
+// The client's tag for THIS photo, if it names a copy fetched inside the
+// window; null otherwise, and null for anything malformed or oversized, which
+// then takes the ordinary path.
+function heldPhotoEtag(ifNoneMatch, cacheKey, now = Date.now()) {
+  if (typeof ifNoneMatch !== 'string' || !ifNoneMatch || ifNoneMatch.length > 4096) return null;
+  const keyPart = cacheKey.slice(0, 32);
+  for (const raw of ifNoneMatch.split(',')) {
+    const tag = raw.trim();
+    const m = PHOTO_ETAG_RE.exec(tag);
+    if (!m || m[1] !== keyPart) continue;
+    const fetchedAtMs = parseInt(m[2], 36) * 1000;
+    // A stamp from the future was not minted here; one from outside the window
+    // is exactly the copy that has to be looked at again.
+    if (!Number.isFinite(fetchedAtMs) || fetchedAtMs > now + 60 * 1000) continue;
+    if (now - fetchedAtMs >= PHOTO_CACHE_TTL) continue;
+    return tag.startsWith('W/') ? tag : `W/${tag}`;
+  }
+  return null;
+}
+
+// Everything a photo response says about caching, for the 200 and the 304
+// alike. A 304 updates the headers of the copy the browser already holds, so
+// it has to repeat them: in particular Cross-Origin-Resource-Policy, which
+// helmet sets to same-origin on every response, and a 304 left saying that
+// would re-label a stored cross-origin photo as one the app may not embed.
+function setPhotoCacheHeaders(res, etag) {
   // Matched to PHOTO_CACHE_TTL, from the same constant, and marked immutable.
   // This was a flat 86400 against a server cache that was then seven days, so
   // the browser came back for bytes we already had, twenty-nine times out of
@@ -580,11 +640,20 @@ function sendPhoto(res, { buffer, contentType }) {
   // it cannot ask us for one, which is the cheapest tier of all.
   res.set('Cache-Control', `public, max-age=${Math.floor(PHOTO_CACHE_TTL / 1000)}, immutable`);
   res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  if (etag) res.set('ETag', etag);
+}
+
+function sendPhoto(res, { buffer, contentType, ts }, cacheKey) {
+  res.set('Content-Type', photoContentType(contentType));
+  res.set('X-Content-Type-Options', 'nosniff');
+  // No fetch time, no tag of ours: Express then falls back to its own
+  // body-hash ETag, which is what every photo carried before.
+  setPhotoCacheHeaders(res, cacheKey && Number.isFinite(ts) ? photoEtag(cacheKey, ts) : null);
   res.send(buffer);
 }
 
 // The worker behind the photo proxy. Never rejects: resolves to
-// { status: 200, buffer, contentType } or { status, error }, so a failure
+// { status: 200, buffer, contentType, ts } or { status, error }, so a failure
 // reaches every coalesced waiter as the same clean response and is never
 // written to photoCache — only a real image is.
 async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
@@ -596,7 +665,8 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     const stored = await readStoredPhoto(cacheKey);
     if (stored) {
       storePhoto(cacheKey, stored);
-      return { status: 200, buffer: stored.buffer, contentType: stored.contentType };
+      // `ts` is when this copy was bought, carried so the ETag can say so.
+      return { status: 200, buffer: stored.buffer, contentType: stored.contentType, ts: stored.ts };
     }
 
     // Step 0-and-a-half: a name Google already refused today. Answered before
@@ -707,10 +777,11 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // the caller's answer, and a failed write costs a future re-fetch rather
     // than this request. photoStore logs its own failures and never rejects, so
     // there is no unhandled rejection to leak here.
-    storePhoto(cacheKey, { buffer, contentType, ts: Date.now() });
+    const ts = Date.now();
+    storePhoto(cacheKey, { buffer, contentType, ts });
     if (buffer.length <= MAX_SINGLE_PHOTO_BYTES) writeStoredPhoto(cacheKey, { buffer, contentType });
 
-    return { status: 200, buffer, contentType };
+    return { status: 200, buffer, contentType, ts };
   } catch (err) {
     console.error('[Photo Proxy] Error:', err.message, '| ref:', photoRef.slice(0, 60));
     return { status: 500, error: 'That photo could not be loaded. Try again in a moment.' };
@@ -1358,6 +1429,9 @@ module.exports.__test = {
   MAX_PHOTO_CACHE_BYTES,
   MAX_SINGLE_PHOTO_BYTES,
   photoContentType,
+  // The revalidation validator, pinned by __tests__/photoConditional.test.js.
+  photoEtag,
+  heldPhotoEtag,
   storePhoto,
   touchPhotoCache,
   photoCacheKeys: () => [...photoCache.keys()],

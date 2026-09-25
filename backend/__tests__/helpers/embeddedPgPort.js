@@ -90,6 +90,19 @@ const SUITE_SLOTS = {
                                  // its window and the deals and digest it keeps
                                  // on (migration 077). 22 is left for a suite
                                  // being written alongside this one.
+  checkThenActRaces: 24,         // new in 2026-09-25; bursts against the mail
+                                 // budget claims and overlapping Pro syncs, on
+                                 // real advisory locks.
+  flockTransactionIntegrity: 26, // new in 2026-09-25; an account deletion
+                                 // racing a plan delete, and a plan edit
+                                 // whose night-of reset fails, on real locks.
+  planFlowRaces: 28,             // new in 2026-09-25; overlapping completion
+                                 // sweeps, the guest-to-member vote carry and
+                                 // the two venue tallies, on real row locks.
+  sensorIngestStatement: 31,     // new in 2026-09-25; the one-statement sensor
+                                 // ingest run against a real, migrated schema.
+                                 // 31 is the last slot below 49152; the gap is
+                                 // left for suites written in the same week.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
