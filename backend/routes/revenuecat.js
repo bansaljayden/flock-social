@@ -297,26 +297,28 @@ const PREMIUM_BY_EVENT = new Map([
 // already holds. It is `IS DISTINCT FROM` and not `<>` because is_premium is
 // nullable — `<> true` skips a NULL row and would leave it unset for ever.
 //
-// REPLAY AND ORDERING is the real limit, and it is accepted rather than fixed.
-// Deliveries are applied in ARRIVAL order, and nothing here can tell a fresh
-// event from an old one: users.is_premium is a bare boolean, there is no
-// subscription table, no event log and no watermark column. So an
-// INITIAL_PURCHASE whose delivery failed and was retried for eighty minutes can
-// land AFTER the EXPIRATION that superseded it, and the account is left premium
-// until the next real event moves it. The same is true in the other direction,
-// which is the harmful one only in the reverse case: a late EXPIRATION landing
-// after a legitimate RENEWAL drops a paying subscriber, and nothing will restore
-// them until the following month's renewal.
+// REPLAY AND ORDERING. With REVENUECAT_SECRET_API_KEY set, which production
+// has, order does not matter. Every event, TRANSFER included, is only a prompt
+// to read the subscriber's whole state from RevenueCat and write THAT
+// (syncPremiumFromRevenueCat, at the foot of this file). An INITIAL_PURCHASE
+// whose delivery was retried for eighty minutes and lands after the EXPIRATION
+// that superseded it writes "not premium", because that is what RevenueCat
+// says now; a late EXPIRATION after a real RENEWAL writes "premium". A
+// watermark column would add nothing on that path. Two re-reads racing each
+// other are handled where the read happens.
 //
-// Why it is not fixed here: the fix is a per-account watermark — a
-// `users.premium_event_at TIMESTAMPTZ` written alongside is_premium, with the
-// UPDATE conditioned on `premium_event_at IS NULL OR premium_event_at < $3`
-// using the event's own `event_timestamp_ms`. That is a migration plus a column,
-// which is a schema change and not this route's to make unilaterally; RevenueCat
-// does supply `event_timestamp_ms` on every event, so the input is already
-// there. Do it in the same change that adds any durable subscription state, and
-// do it BEFORE the volume of renewals makes a reordered delivery likely rather
-// than merely possible.
+// WITHOUT the key the handler falls back to writing from the event's type, and
+// the fallback is applied in ARRIVAL order: users.is_premium is a bare boolean
+// with no watermark, so a stale INITIAL_PURCHASE replayed after an EXPIRATION
+// leaves the account premium until the next real event, and a late EXPIRATION
+// after a RENEWAL drops a paying subscriber until the following month's
+// renewal. That path is for a deployment that never configured the API key,
+// and services/entitlements.js warns at startup whenever the paywall is on
+// without it. If the fallback ever has to carry real traffic, the fix is a
+// per-account watermark: `users.premium_event_at TIMESTAMPTZ` written with
+// is_premium, the UPDATE conditioned on `premium_event_at IS NULL OR
+// premium_event_at < $3` from the event's own `event_timestamp_ms`, which
+// RevenueCat supplies on every event.
 //
 // Why a nonce cache is NOT the answer, and would be worse than nothing: dedupe
 // by event id in memory dies at every deploy and is per-instance, so it would

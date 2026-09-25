@@ -776,14 +776,17 @@ test('a failed write is a 500, so RevenueCat retries it', async () => {
 // 9. Replay and ordering — the accepted limit
 // ===========================================================================
 
-test('a stale delivery replayed after a newer one wins, and that is documented', async () => {
-  // REPRODUCTION OF AN ACCEPTED LIMIT, not of a fixed bug.
+test('without the RevenueCat API key, a stale delivery replayed after a newer one wins, and that is documented', async () => {
+  // REPRODUCTION OF AN ACCEPTED LIMIT OF THE FALLBACK PATH, not of a fixed bug.
   //
-  // Deliveries are applied in ARRIVAL order. There is nowhere to record an
-  // event id or an event timestamp: users.is_premium is a bare boolean, there is
-  // no subscription table, and this route may not add a column. So an
-  // INITIAL_PURCHASE whose delivery was retried for 80 minutes can land after
-  // the EXPIRATION that superseded it, and the account is left premium.
+  // This file runs with no REVENUECAT_SECRET_API_KEY, so the route writes from
+  // each event's type, in ARRIVAL order. There is nowhere to record an event
+  // timestamp: users.is_premium is a bare boolean. So an INITIAL_PURCHASE whose
+  // delivery was retried for 80 minutes can land after the EXPIRATION that
+  // superseded it, and the account is left premium. With the key set, as in
+  // production, every event re-reads the subscriber instead and order does not
+  // matter: __tests__/proWebCheckout.test.js pins that half.
+  delete process.env.REVENUECAT_SECRET_API_KEY;
   process.env.REVENUECAT_WEBHOOK_SECRET = SECRET;
   const purchase = {
     event: {
@@ -814,6 +817,8 @@ test('a stale delivery replayed after a newer one wins, and that is documented',
   assert.match(src, /REPLAY AND ORDERING/,
     'the accepted limit has to be recorded where the next reader of this route will find it');
   assert.match(src, /arrival order/i);
+  assert.match(src, /order does not matter/,
+    'and so does the reason it is not the production behaviour');
 });
 
 test('replaying a captured request is not a separate hole from holding the secret', () => {

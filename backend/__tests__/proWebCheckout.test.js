@@ -372,6 +372,24 @@ test('the webhook writes RevenueCat state, so an Apple EXPIRATION cannot switch 
   } finally { restore(); }
 });
 
+test('under the subscriber re-read order does not matter: a stale purchase replayed after expiry writes what RevenueCat says now', async () => {
+  // The reordering routes/revenuecat.js's REPLAY AND ORDERING describes for the
+  // fallback path. With the key set, as in production, a purchase delivery
+  // retried for eighty minutes and landing after the subscription lapsed
+  // re-reads the subscriber and writes "not Pro" instead of granting it again.
+  setEnv(ON);
+  rcEntitlement = null;
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
+      { event: { id: 'evt_A', type: 'INITIAL_PURCHASE', app_user_id: '7', entitlement_ids: ['pro'], event_timestamp_ms: 1700000000000 } },
+      { authorization: ON.REVENUECAT_WEBHOOK_SECRET });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const write = calls.find((c) => c.text.includes('SET is_premium'));
+    assert.deepStrictEqual(write.params, [false, 7], 'a stale purchase must not re-grant a lapsed subscription');
+  } finally { restore(); }
+});
+
 test('the webhook answers 500 when RevenueCat cannot be asked, so it retries instead of guessing', async () => {
   setEnv(ON);
   const prev = global.fetch;
