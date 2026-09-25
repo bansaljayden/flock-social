@@ -229,7 +229,10 @@ const MAX_DATA_BYTES = 512;
 // to resolve where a tap goes, so they are spent first.
 // latitude/longitude: an SOS's map pin, which a long display name must not
 // crowd out of the budget.
-const DATA_PRIORITY = ['type', 'flockId', 'senderId', 'fromUserId', 'latitude', 'longitude'];
+// toUserId: the account an SOS copy was sent to. The app opens a tapped alarm
+// only when it names the account signed in now (routes/safety.js), so losing it
+// to the budget would turn a real alarm into a tap that opens nothing.
+const DATA_PRIORITY = ['type', 'flockId', 'senderId', 'fromUserId', 'latitude', 'longitude', 'toUserId'];
 
 function isControl(cp) {
   return cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);

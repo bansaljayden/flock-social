@@ -403,7 +403,7 @@ test('sos: declining to share your location does not persist it either', () => {
 // Trusted contacts — the delivery channel has to actually be reachable
 // ---------------------------------------------------------------------------
 test('contacts: email is required server-side, not just in App.js', () => {
-  // project documentation rule 7: a frontend gate that is not enforced here is not a gate.
+  // A frontend gate that is not enforced here is not a gate.
   // App.js refuses to save a contact without an email; the server did not.
   const r = S.readContactFields({ name: 'Mum', phone: '5550100' });
   assert.ok(r.error, 'a contact with no email can never be alerted');

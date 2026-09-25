@@ -288,7 +288,7 @@ const EMAIL_RE = emailService.MAILABLE_RE;
 // 1. EMAIL WAS OPTIONAL SERVER-SIDE. Email is the ONLY delivery channel an
 //    alert has — nothing in this file sends SMS — so a contact without one is
 //    a contact who will never be told anything. App.js already refuses to save
-//    without an email, and per project documentation rule 7 a frontend gate that isn't
+//    without an email, and a frontend gate that isn't
 //    enforced here is not a gate. A user who saved contacts through an older
 //    build, or any non-browser client, ends up with a Safety screen listing
 //    five people and an SOS that reaches nobody.
@@ -941,8 +941,17 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // to stay silent about this one, and 'safety_alert' is in the set
   // pushHelper rings through quiet hours (RINGS_THROUGH_THE_NIGHT), which was
   // reserved for a producer that until now did not exist.
+  //
+  // Each push copy names the account it was sent to (toUserId). A notification
+  // outlives the session that received it: it stays in the tray after a
+  // sign-out, and the app draws this alarm, name and map pin included, straight
+  // from the payload. Without a recipient on it, a tap after somebody else had
+  // signed in on the same phone opened this person's alarm in that other
+  // account. The app now opens it only for the account named here
+  // (frontend/src/services/pushNavigation.js, safetyIntentIsFor). The socket
+  // copy needs no such field: it is delivered to that account's own room.
   const results = await Promise.allSettled(
-    members.rows.map((row) => pushAlways(row.user_id, title, body, payload))
+    members.rows.map((row) => pushAlways(row.user_id, title, body, { ...payload, toUserId: String(row.user_id) }))
   );
   // A member with no registered device answers { sent: 0 }, which is not
   // reached; only a delivered push counts, so the log does not over-report.
@@ -1025,12 +1034,14 @@ async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds 
   // reach may have put the phone down to go help. It also rings through quiet
   // hours (pushHelper), because anyone it reaches was already woken by the
   // alarm and is worrying or moving; the all-clear cannot wait for morning.
+  // toUserId for the reason the alarm carries one: the app acts on a safety
+  // tap only for the account it was sent to.
   const results = await Promise.allSettled(
     members.rows.map((row) => pushAlways(
       row.user_id,
       `${name} says they are OK`,
       'They withdrew their SOS on Flock. If you already set out or called someone, let them know.',
-      payload
+      { ...payload, toUserId: String(row.user_id) }
     ))
   );
   const notified = results.filter((r) => r.status === 'fulfilled' && r.value && (r.value.sent || 0) > 0).length;
