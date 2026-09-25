@@ -781,15 +781,18 @@ const INVENTORY = [
   },
   {
     file: 'sockets/handlers.js', name: 'shareEndMarks', kind: 'cache',
-    key: '`f:${flockId}` for a whole plan, `s:${flockId}:${sharerId}` for one person '
+    key: '`f:${flockId}` for a whole plan, `s:${flockId}:${sharerId}` for one person, '
+      + '`d:${sharerId}:${peerId}` for one person\'s DM share with one peer '
       + '-> the counter value of the last time that share was announced ended',
     callerControls: 'nothing directly: a mark is written only by the paths that end a '
       + 'share (the stop, leave, plan delete, block, ban, disconnect, a tick from a '
-      + 'non-member), each after its own membership or ownership check, with a flock '
-      + 'id from asId and the sharer\'s own account id',
-    protects: 'nothing upstream: an update_location tick reads the marks before and '
-      + 'after its roster and block reads and drops itself if a stop was announced in '
-      + 'between, so a position cannot land on maps that were just cleared',
+      + 'non-member, and dm_stop_sharing_location once the pair has passed its block '
+      + 'and relationship checks), with a flock or peer id from asId and the sharer\'s '
+      + 'own account id',
+    protects: 'nothing upstream: an update_location tick, and a dm_share_location '
+      + 'position, reads its mark before and after its reads and drops itself if a '
+      + 'stop was announced in between, so a position cannot land on maps that were '
+      + 'just cleared',
     denominator: 'not a spend surface; one entry per recently ended share',
     bound: 'pruned: once the map passes 5,000 entries, every mark older than ten '
       + 'minutes (far longer than any tick\'s reads take) is deleted on the next write; '

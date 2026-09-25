@@ -34,6 +34,10 @@ const {
   // being deleted. See the leave route and the two delete paths below.
   announceFlockShareEnded,
   announceFlockSharesEnded,
+  markShareEnded,
+  // Who a departure or a deletion is announced to, read under the plan's row
+  // lock before the write and announced from after the COMMIT.
+  readFlockAudience,
 } = require('../sockets/handlers');
 // PRIVACY: the ceiling this file serves is a CACHED column, and it is only as
 // banded as whatever last wrote it. bandCeiling is imported from the route that
@@ -1834,9 +1838,9 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     }
 
     // Before anything is announced, and before the DELETE: see
-    // outstandingBillFor. The fan-out below is awaited and irreversible, so a
-    // refusal after it would tell everyone the plan was cancelled and then
-    // leave it standing.
+    // outstandingBillFor. The fan-out is irreversible, so a refusal after it
+    // would tell everyone the plan was cancelled and then leave it standing;
+    // it goes out only once the DELETE has committed (below).
     // THE GUARD AND THE DELETE ARE ONE TRANSACTION, under the flock row lock
     // POST /api/billing/:flockId/create holds for the whole of its own write.
     // They were two autocommit statements with several awaited steps between
@@ -1850,6 +1854,7 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     const client = await pool.connect();
     let cancelRecipients = [];
     let flockName = null;
+    let audience = null;
     try {
       await client.query('BEGIN');
       await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
@@ -1859,30 +1864,37 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       }
       const nameResult = await client.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
       flockName = nameResult.rows[0]?.name;
-      // Read BEFORE the delete, for the same reason the socket fan-out below is
-      // awaited before it: the DELETE cascades flock_members away, and a push
-      // that goes looking for its recipients afterwards finds nobody. Only when
-      // push is actually configured, so a deployment without it pays for no
-      // extra query.
+      // WHO IS TOLD: READ BEFORE THE DELETE, TOLD AFTER THE COMMIT.
+      //
+      // Read before it, because the DELETE cascades flock_members away and a
+      // fan-out or a push that goes looking for its recipients afterwards
+      // finds nobody. On this transaction's connection, which still sees every
+      // row: on the pool the reads took a second connection while this one
+      // held the plan's row lock, the shape that runs the pool dry under load
+      // (utils/blocks.js). Told only after the COMMIT, from what was read
+      // here: the fan-out used to go out at this point, so a DELETE or COMMIT
+      // that then failed had already told everyone the plan was gone.
+      //
+      // A read that fails here fails the delete. A failed statement aborts the
+      // transaction in Postgres whatever the JavaScript catches, so the DELETE
+      // could not have run after it anyway (the .catch this fan-out carried
+      // only hid that), and nothing can be read after the COMMIT instead: the
+      // roster goes with the plan, so a delete that went ahead would reach
+      // nobody, push included, and the people in it would turn up anyway. The
+      // host is answered 500 and can try again. A member's leave is different,
+      // because the roster outlives it (POST /:id/leave).
+      //
+      // The socket fan-out needs the whole audience (invitees included, less
+      // the deleter's block list); the push needs only the accepted members,
+      // the same first statement. A deployment with neither reads nothing.
+      if (io) {
+        audience = await readFlockAudience(flockId, req.user.id, { includeInvited: true, db: client });
+      }
       if (isPushConfigured()) {
-        const members = await client.query(
+        cancelRecipients = audience ? audience.members : (await client.query(
           "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
           [flockId, req.user.id]
-        );
-        cancelRecipients = members.rows.map((m) => m.user_id);
-      }
-      if (io) {
-        // `deletedBy` is the deleter's NAME, so this needs the same block-aware
-        // fan-out as every other actor-naming event. AWAITED, and deliberately
-        // before the DELETE below: the helper reads flock_members to find its
-        // recipients, and the delete CASCADEs those rows away. Its reads run
-        // on this transaction's connection, which still sees every row: on
-        // the pool they took a second connection while this one held the
-        // plan's row lock, the shape that runs the pool dry under load
-        // (utils/blocks.js; the leave route below does the same).
-        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
-          flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-        }, { includeInvited: true, db: client }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+        )).rows.map((m) => m.user_id);
       }
       const removed = await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       // Same two-statement window as PUT: the ownership check read a row that
@@ -1899,6 +1911,14 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       throw txErr;
     } finally {
       client.release();
+    }
+    // `deletedBy` is the deleter's NAME, so this needs the same block-aware
+    // fan-out as every other actor-naming event: to the audience read above,
+    // before the cascade took it, now that the delete has committed.
+    if (io && audience) {
+      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+        flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
+      }, { audience }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
     }
     // A DELETED PLAN TAKES EVERY LIVE PIN SHOWN IN IT OFF EVERY MAP. The app
     // drops a pin only on member_stopped_sharing and flock_deleted does not
@@ -3355,6 +3375,7 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       // reason: a guard in one autocommit statement and a DELETE in another
       // leaves a gap a concurrent /create can commit a bill into.
       let cancelRecipients = [];
+      let audience = null;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -3363,24 +3384,19 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
           await client.query('ROLLBACK').catch(() => {});
           return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
         }
-        // Same read-before-delete as DELETE /:id, and the same reason: the
-        // cascade takes the recipient list with it.
+        // Same read-before-delete as DELETE /:id, for the same reasons, and
+        // the same rule for a read that fails: it fails the delete, because
+        // the cascade takes the recipient list with it and nobody could be
+        // told afterwards. On this connection, never a second one from the
+        // pool while this holds the row lock. Told after the COMMIT, below.
+        if (io) {
+          audience = await readFlockAudience(flockId, req.user.id, { includeInvited: true, db: client });
+        }
         if (isPushConfigured()) {
-          const members = await client.query(
+          cancelRecipients = audience ? audience.members : (await client.query(
             "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
             [flockId, req.user.id]
-          );
-          cancelRecipients = members.rows.map((m) => m.user_id);
-        }
-        // Notify all members before deleting. Block-aware (`deletedBy` is a
-        // name) and awaited: the fan-out reads flock_members, which the DELETE
-        // below cascades away, so the read has to finish first. On this
-        // connection, not a second one from the pool while this holds the
-        // row lock (see DELETE /:id).
-        if (io) {
-          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
-            flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-          }, { includeInvited: true, db: client }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+          )).rows.map((m) => m.user_id);
         }
         // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
         await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
@@ -3390,6 +3406,13 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         throw txErr;
       } finally {
         client.release();
+      }
+      // Block-aware (`deletedBy` is a name), to the audience read before the
+      // cascade, and only now that the delete has committed.
+      if (io && audience) {
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+          flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
+        }, { audience }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
       }
       if (io) io.socketsLeave(`flock:${flockId}`); // no ghost listeners on a dead room
       // Every live pin in the plan comes off every map it is on, the host's
@@ -3441,55 +3464,54 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // The one statement stays one statement; only the connection changed.
     const leaveClient = await pool.connect();
     let left;
+    // Who hears about the departure: read below, before the row goes, and
+    // null when that read failed, in which case it is read after the COMMIT.
+    let audience = null;
     try {
       await leaveClient.query('BEGIN');
       await leaveClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
       // A member tied to an open bill does not leave it behind. Decided under
-      // the lock (see memberBoundToBill) and BEFORE the fan-out, so the room is
-      // never told "X left" about a departure that is then refused.
+      // the lock (see memberBoundToBill) and before anything is announced, so
+      // the room is never told "X left" about a departure that is refused.
       const bound = await memberBoundToBill(flockId, req.user.id, leaveClient);
       if (bound) {
         await leaveClient.query('ROLLBACK');
         return res.status(409).json(bound);
       }
-      // Notify flock that member left (accepted members only — see above).
-      // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
-      // else in the app was never in that room and missed the count change. The
-      // DELETE is below, so the leaver still holds their accepted row and the
-      // roster read reaches the same set the room held. Guarded so a thrown
-      // fan-out error is logged rather than turned into a 500.
+      // WHO IS TOLD: READ HERE, TOLD AFTER THE COMMIT.
       //
-      // BOTH FAN-OUTS READ ON THIS CONNECTION ({ db: leaveClient }). They read
-      // the roster and the block list, and on the pool that meant a second
-      // connection checked out while this one held the plan's row lock until
-      // the COMMIT: twenty leaves at once, each waiting for a connection held
-      // by another, and the pool is dry (utils/blocks.js describes the shape).
-      // The cost is that a read failing on this connection fails the leave's
-      // transaction with it, and a connection that cannot answer a roster
-      // read could not have run the DELETE below either.
+      // A departure is announced twice, as flock_member_left and as the end
+      // of the leaver's location share (after the COMMIT, below), and both go
+      // to the same people: the accepted members other than the leaver, less
+      // the leaver's block and ban set. One read serves both.
+      //
+      // On this connection, because on the pool it took a second connection
+      // while this one held the plan's row lock until the COMMIT: twenty
+      // leaves at once, each waiting for a connection held by another, and
+      // the pool is dry (utils/blocks.js describes the shape).
+      //
+      // Inside a SAVEPOINT, because a statement that fails aborts the whole
+      // transaction in Postgres whatever the JavaScript catches: the DELETE
+      // below then failed with "current transaction is aborted", the leave
+      // answered 500 and the member stayed in. A failed statement is not a
+      // dead connection, so the savepoint takes back only the read, the leave
+      // goes through, and since the roster outlives a departure the audience
+      // is read again on the pool once the COMMIT has released the row.
+      //
+      // Nothing is announced before the COMMIT. Both announcements used to go
+      // out here, ahead of the DELETE, so a leave that then failed had already
+      // told the plan the person was gone and taken their pin off every map
+      // while they were still in it.
       if (io && wasAccepted) {
-        // Block-aware, because this payload carries the leaver's NAME. Per-member
-        // fan-out reaches a blocker wherever they are in the app, where the old
-        // room broadcast only reached one who happened to have the flock screen
-        // open, so delivering it unfiltered would widen what a block leaks.
-        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
-          flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
-        }, { db: leaveClient }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
-        // A LEAVER WHO WAS SHARING THEIR LOCATION TAKES THE PIN WITH THEM.
-        // Every other member's app drops a pin only on member_stopped_sharing,
-        // and after the DELETE below the leaver's own stop and every later
-        // position are refused at the membership check, so a departure mid-
-        // share left their last position on every map in the plan. Announced
-        // here, before the row goes, while the roster still reaches the people
-        // the pin reached, and to everyone recorded as holding it, a member
-        // who has blocked them since included (sockets/handlers.js,
-        // announceFlockShareEnded). A leaver who was not sharing costs the
-        // roster and block reads and a stop that no app holds a pin for,
-        // told to the people who are hearing flock_member_left anyway. Never
-        // throws. Its mark (markShareEnded) is set before its first await, so
-        // it is still set before the DELETE below commits and a tick that is
-        // mid-read is dropped rather than posted after the stop.
-        await announceFlockShareEnded(io, req.user.id, flockId, { db: leaveClient });
+        await leaveClient.query('SAVEPOINT leave_audience');
+        try {
+          audience = await readFlockAudience(flockId, req.user.id, { db: leaveClient });
+          await leaveClient.query('RELEASE SAVEPOINT leave_audience');
+        } catch (readErr) {
+          audience = null;
+          console.error('Leave audience read failed, reading it after the commit:', readErr.message);
+          await leaveClient.query('ROLLBACK TO SAVEPOINT leave_audience');
+        }
       }
       left = await leaveClient.query(
         `WITH gone AS (
@@ -3503,6 +3525,16 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
          RETURNING f.id`,
         [flockId, req.user.id]
       );
+      // THE SHARE IS MARKED ENDED BEFORE THE DELETE COMMITS. A position the
+      // leaver's app sent while this request was in flight reads the mark
+      // when it arrives and again after its membership and roster reads, and
+      // is dropped when the mark moved (sockets/handlers.js markShareEnded).
+      // Set here, once the DELETE has run and before it is visible to those
+      // reads, so a tick that saw the membership is dropped rather than
+      // posted after the stop below. Synchronous: nothing else runs between
+      // it and the COMMIT being sent. A COMMIT that then fails costs one
+      // dropped position, which the next tick replaces.
+      if (io && wasAccepted) markShareEnded(parseInt(flockId, 10), req.user.id);
       await leaveClient.query('COMMIT');
     } catch (txErr) {
       await leaveClient.query('ROLLBACK').catch(() => {});
@@ -3516,15 +3548,34 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // receiving messages, locations, and votes until they disconnected.
     if (io) io.in(`user:${req.user.id}`).socketsLeave(`flock:${flockId}`);
 
-    // THE STOP ONCE MORE, NOW THAT THE ROW IS GONE. The one above went out
-    // while the membership still stood, and a position the leaver's app sent
-    // after it (the share kept ticking while this request was in flight)
-    // passed the membership check, reached the plan and recorded its audience
-    // as holding the pin. Every later position is refused now, so nothing
-    // would have taken that one back. Whoever is recorded is told, from
-    // memory, and a tick still reading its roster is dropped by the mark this
-    // sets (sockets/handlers.js markShareEnded). No reads, never throws.
-    if (io && wasAccepted) await announceFlockShareEnded(io, req.user.id, flockId, { roster: false });
+    // THE DEPARTURE IS ANNOUNCED NOW THAT IT HAS COMMITTED, to the audience
+    // read under the row lock, or, when that read failed, to one read on the
+    // pool now that no lock is held.
+    if (io && wasAccepted) {
+      // Block-aware, because this payload carries the leaver's NAME.
+      // Per-member fan-out, not the `flock:{id}` room: a member sitting
+      // anywhere else in the app was never in that room and missed the count
+      // change, and delivering it unfiltered would widen what a block leaks.
+      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
+        flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
+      }, audience ? { audience } : {}).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
+      // A LEAVER WHO WAS SHARING THEIR LOCATION TAKES THE PIN WITH THEM.
+      // Every other member's app drops a pin only on member_stopped_sharing,
+      // and after the DELETE the leaver's own stop and every later position
+      // are refused at the membership check, so a departure mid-share left
+      // their last position on every map in the plan. Told to the audience
+      // above and to everyone recorded as holding the pin, a member who has
+      // blocked them since included (sockets/handlers.js
+      // announceFlockShareEnded). That record also covers a position that
+      // arrived between the mark above and the COMMIT: it passed the
+      // membership check, was posted and recorded its audience, which this
+      // takes. It marks the share again first, so a tick still reading now
+      // is dropped, and every tick after the COMMIT is refused at the
+      // membership check. A leaver who was not sharing costs a stop that no
+      // app holds a pin for, told to the people hearing flock_member_left
+      // anyway. Never throws.
+      await announceFlockShareEnded(io, req.user.id, flockId, audience ? { audience } : {});
+    }
 
     // The RETURNING row, not rowCount, is the signal: a data-modifying CTE's
     // rowCount reports the outer DELETE, which is right in Postgres, but a

@@ -40,8 +40,9 @@ test('flock_updated and both flock_deleted fan-outs reach invitees', () => {
   assert.match(handlers, /async function emitToFlockExcludingBlocked\(io, flockId, actorId, event, payload, opts = \{\}\)/);
   assert.match(handlers, /WHERE flock_id = \$1 AND status = 'invited' AND user_id != \$2/);
   assert.strictEqual((src.match(/\{ includeInvited: true(?:, db: client)? \}/g) || []).length, 3, 'three fan-outs carry the flag');
-  // The two deletes announce inside their transaction, under the plan's row
-  // lock, so their reads run on that connection rather than a second one.
+  // The two deletes read their audience inside their transaction, under the
+  // plan's row lock, so the reads run on that connection rather than a second
+  // one, and announce from it once the delete has committed.
   assert.strictEqual((src.match(/\{ includeInvited: true, db: client \}/g) || []).length, 2,
     'both flock_deleted fan-outs read on the connection that holds the lock');
 });

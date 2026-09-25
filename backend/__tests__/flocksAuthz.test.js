@@ -164,7 +164,9 @@ async function dispatch(text, params = []) {
   queries.push({ sql, params });
   const has = (frag) => sql.includes(frag);
   if (/^(INSERT|UPDATE|DELETE)/i.test(sql)) writes.push({ sql, params });
-  if (/^(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(sql)) return { rows: [], rowCount: 0 };
+  // SAVEPOINT and RELEASE are the leave's audience read (routes/flocks.js
+  // POST /:id/leave), which a failed read rolls back to on its own.
+  if (/^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SELECT pg_advisory)/i.test(sql)) return { rows: [], rowCount: 0 };
 
   // ── middleware/auth.js ──
   if (has('is_banned, token_version FROM users WHERE id = $1')) {
@@ -1544,7 +1546,7 @@ function shareLocation(io, userId, flockId) {
 
 const stopsIn = (emitted) => emitted.filter((e) => e.event === 'member_stopped_sharing');
 
-test('leave: a member sharing their location takes the pin off every map, before their row goes', async () => {
+test('leave: a member sharing their location takes the pin off every map, read before their row goes and told once it has', async () => {
   socketHandlers.__resetRateLimiters();
   const emitted = [];
   app.set('io', recordingIo(emitted));
@@ -1563,11 +1565,18 @@ test('leave: a member sharing their location takes the pin off every map, before
       'the members kept the leaver\'s last position on their maps');
     for (const s of stops) assert.deepStrictEqual(s.payload, { userId: 6, flockId: 10 });
 
-    // Before the DELETE: after it the roster no longer reaches the people the
-    // pin reached, and the leaver's own stop is refused.
+    // The audience is read under the plan's lock BEFORE the DELETE, while the
+    // roster still reaches the people the pin reached, and the stop goes out
+    // only AFTER the COMMIT: a leave that failed at its DELETE used to have
+    // told everyone already, about somebody still in the plan.
+    const lock = queries.findIndex((q) => q.sql.includes('FROM flocks WHERE id = $1 FOR UPDATE'));
+    const roster = queries.findIndex((q, i) => i > lock
+      && q.sql.includes("FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2"));
     const del = queries.findIndex((q) => q.sql.includes('DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2'));
-    assert.ok(del >= 0, 'the membership delete ran');
-    for (const s of stops) assert.ok(s.at <= del, 'the stop went out after the row was already gone');
+    const commit = queries.findIndex((q, i) => i > del && q.sql === 'COMMIT');
+    assert.ok(lock >= 0 && lock < roster && roster < del, 'the audience is read under the lock, before the row goes');
+    assert.ok(del >= 0 && commit > del, 'the membership delete ran and committed');
+    for (const s of stops) assert.ok(s.at > commit, 'the stop went out before the leave had committed');
   } finally {
     app.set('io', undefined);
   }

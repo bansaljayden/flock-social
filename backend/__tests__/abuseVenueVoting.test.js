@@ -89,6 +89,12 @@ async function dispatch(sql, params) {
   }
   if (/^COMMIT/i.test(flat)) { txnVotes = null; return { rows: [], rowCount: 0 }; }
   if (/pg_advisory_xact_lock/.test(flat)) return { rows: [], rowCount: 0 };
+  // The plan's row, which both vote writers lock after flockvote: and before
+  // any vote row (routes/venues.js VOTE_PLAN_LOCK_SQL). It answers the row
+  // while the plan exists and nothing once it is gone, and changes nothing.
+  if (/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/.test(flat)) {
+    return world.flock ? { rows: [{ id: FLOCK }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
 
   if (/^SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'$/.test(flat)) {
     const m = world.members.find((x) => x.user_id === Number(p[1]) && x.status === 'accepted');
@@ -519,6 +525,30 @@ test('HELD: one member is one vote, however many times they post and however fas
 
   assert.strictEqual(world.votes.filter((v) => v.user_id === 1).length, 1,
     'switching venues replaces the row, it never stacks');
+  assertQueriesUnderstood();
+});
+
+test('a switched vote takes flockvote:, then the plan\'s row, before it touches a vote row', async () => {
+  // A plan delete locks the plan's row and then cascades through its vote
+  // rows. A switch that deleted its old row first and reached for the plan's
+  // row only through the new row's foreign key held what the delete needed
+  // next while waiting on what the delete held (routes/venues.js
+  // VOTE_PLAN_LOCK_SQL). planFlowLocks.test.js runs that interleaving on a
+  // real Postgres; this pins the order of the statements.
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
+
+  const r = await vote('Ramen');
+  assert.strictEqual(r.status, 201, r.text);
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const lock = at(/pg_advisory_xact_lock\(hashtext\('flockvote:'/);
+  const plan = at(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  const cleared = at(/^DELETE FROM venue_votes WHERE flock_id = \$1 AND user_id = \$2 AND venue_name <> \$3$/);
+  const written = at(/^INSERT INTO venue_votes/);
+  assert.ok(lock > -1 && lock < plan && plan < cleared && cleared < written,
+    'flockvote:, the plan\'s row, then the old vote cleared, then the new one written');
+  assert.deepStrictEqual(log[plan].params, [String(FLOCK)]);
   assertQueriesUnderstood();
 });
 
