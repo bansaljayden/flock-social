@@ -71,6 +71,10 @@ const VIEW_FOR_TYPE = {
 
 const listeners = new Set();
 const queue = [];
+// Watchers see what is waiting in the queue without taking it
+// (watchPendingNavigation below). Kept apart from `listeners` on purpose: a
+// listener consumes, and the signed-out screen that watches must not.
+const pendingWatchers = new Set();
 let started = false;
 
 function asId(value) {
@@ -117,11 +121,14 @@ export function intentFromData(data) {
     // same user id.
     const userId = asId(data.fromUserId);
     if (!userId) return null;
+    const toUserId = asId(data.toUserId);
     return {
       screen: 'safety',
       cancelled: true,
       userId,
       name: data.fromUserName ? String(data.fromUserName) : '',
+      // Who this copy was sent to. See safetyIntentIsFor below.
+      ...(toUserId ? { toUserId } : {}),
       type,
     };
   }
@@ -144,6 +151,7 @@ export function intentFromData(data) {
     // coordinates and dropped unless finite, so the alarm screen's
     // "contacts have been emailed" sentence rests on a number it was sent.
     const contactsAlerted = data.contactsAlerted != null ? Number(data.contactsAlerted) : NaN;
+    const toUserId = asId(data.toUserId);
     return {
       screen: 'safety',
       userId,
@@ -152,6 +160,8 @@ export function intentFromData(data) {
       lng: Number.isFinite(lng) ? lng : null,
       ...(Number.isFinite(contactsAlerted) ? { contactsAlerted } : {}),
       at: data.at ? String(data.at) : null,
+      // Who this copy was sent to. See safetyIntentIsFor below.
+      ...(toUserId ? { toUserId } : {}),
       type,
     };
   }
@@ -179,6 +189,28 @@ export function intentFromData(data) {
   const flockId = asId(data.flockId);
   if (flockId) return { screen: 'flock', flockId, type };
   return null;
+}
+
+// WHETHER A SAFETY TAP BELONGS TO THE ACCOUNT THAT IS SIGNED IN NOW.
+//
+// A delivered notification outlives the session that received it. It stays in
+// the tray after a sign-out, and a tap on it while nobody is signed in waits in
+// the queue below for whoever signs in next. Every other destination is only
+// an id the server then checks against the account asking, but the SOS modal
+// is drawn straight from the payload, name and map pin included, with no server
+// read at all. So an alarm sent to one account, tapped after another had signed
+// in on the same phone, used to open in that second account's session.
+//
+// The server now names the account each copy was sent to (toUserId, set per
+// recipient in backend/routes/safety.js), and App.js opens a safety intent only
+// when this answers true. A copy for another account is refused, and so is one
+// that does not say who it was for: an alarm nobody can place is one this
+// device cannot show safely.
+export function safetyIntentIsFor(intent, userId) {
+  if (!intent || intent.screen !== 'safety') return false;
+  const to = asId(intent.toUserId);
+  const me = asId(userId);
+  return to !== null && me !== null && to === me;
 }
 
 // A URL -> what the app should open. Handles both the query form the backend
@@ -253,6 +285,15 @@ export function intentFromUrl(rawUrl) {
   return null;
 }
 
+// Tell every watcher what is waiting now: the intent a subscriber would be
+// handed, or null once there is nothing.
+function notifyPending() {
+  const waiting = queue.length ? queue[queue.length - 1] : null;
+  pendingWatchers.forEach((fn) => {
+    try { fn(waiting); } catch (err) { /* a bad watcher must not break the queue */ }
+  });
+}
+
 function emit(intent) {
   if (!intent) return;
   if (listeners.size === 0) {
@@ -260,6 +301,7 @@ function emit(intent) {
     // four flashes of the wrong screen.
     queue.length = 0;
     queue.push(intent);
+    notifyPending();
     return;
   }
   listeners.forEach((fn) => {
@@ -300,6 +342,7 @@ export function onPushNavigate(handler) {
 
   if (queue.length) {
     const pending = queue.splice(0, queue.length);
+    notifyPending();
     // Deliver after the current render pass so the subscriber's own state is
     // mounted before it is asked to navigate.
     Promise.resolve().then(() => pending.forEach((intent) => {
@@ -313,6 +356,35 @@ export function onPushNavigate(handler) {
 /** The intent the app was opened with, if any, without subscribing. */
 export function peekPendingNavigation() {
   return queue.length ? queue[queue.length - 1] : null;
+}
+
+/**
+ * Watch what is waiting without taking it. The handler is called at once with
+ * the intent a subscriber would be handed (or null), and again every time that
+ * changes: something queued, the queue handed to a subscriber, or cleared.
+ * Returns an unwatch function.
+ *
+ * For the signed-out screen. In the iOS shell a universal link never reaches
+ * window.location (the WebView stays on capacitor://localhost/); it arrives
+ * through appUrlOpen or the launch URL and waits here until somebody signs in.
+ * The sign-in screen reads it from here to say why the app opened, and leaves
+ * it where it is, because the signed-in app is what acts on it.
+ */
+export function watchPendingNavigation(handler) {
+  if (typeof handler !== 'function') return () => {};
+  pendingWatchers.add(handler);
+  try { handler(peekPendingNavigation()); } catch (err) { /* noop */ }
+  return () => pendingWatchers.delete(handler);
+}
+
+/**
+ * Drop whatever is waiting. For a sign-out: a tap that arrived for the account
+ * that just ended must not be handed to the next one.
+ */
+export function clearPendingNavigation() {
+  if (!queue.length) return;
+  queue.length = 0;
+  notifyPending();
 }
 
 const isNativeApp = () =>

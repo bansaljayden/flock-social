@@ -63,6 +63,7 @@ import { getNotificationStatus, requestNotificationPermission } from '../service
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import EditProfileForm from '../components/EditProfileForm';
+import { isNativeShell } from '../lib/nativeShell';
 
 export default function ProfileSettings({
   // Module-level helpers, constants and components that live in App.js and are
@@ -1208,23 +1209,40 @@ const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
  * NATIVE iOS: no web link and no web price, anywhere (Apple, outside the US;
  * storefront gating comes later). Pro shows as on; a web purchase is named as
  * plain text with no link. Not Pro, the row is the existing App Store sheet,
- * behind PAYWALL_ENABLED exactly as before.
+ * behind PAYWALL_ENABLED exactly as before. Native or web is
+ * lib/nativeShell.js's answer, the one index.js boots on.
+ *
+ * A FAILED /status READ IS SAID, WITH A RETRY. It used to be swallowed, and a
+ * web subscriber then saw "Active" with no Cancel and no Payment method and
+ * invoices, and nothing to say why. The last status that did arrive is kept
+ * through a failed read, so buttons the row already showed stay where they are.
+ *
+ * Exported for __tests__/purchaseSurfacesTruth.test.js, which renders it.
  */
-function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
-  const native = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+export function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
+  const native = isNativeShell();
   const [status, setStatus] = React.useState(null);
+  const [statusFailed, setStatusFailed] = React.useState(false);
   // 'portal' | 'renewal' while one is in flight; only that button says so.
   const [pending, setPending] = React.useState(null);
   // The cancel step asks once before it acts.
   const [confirming, setConfirming] = React.useState(false);
+  // Only the newest read may write, so neither a retry nor a re-read after Pro
+  // changes can be overwritten by the late answer to an older one.
+  const statusRead = React.useRef(0);
+  const loadStatus = React.useCallback(() => {
+    const read = ++statusRead.current;
+    setStatusFailed(false);
+    getProStatus()
+      .then((data) => { if (read === statusRead.current) setStatus(data); })
+      .catch(() => { if (read === statusRead.current) setStatusFailed(true); });
+  }, []);
   React.useEffect(() => {
     // Natively, /status only matters once somebody is Pro: it says whether
     // the purchase was a web one. Nothing on the native row sells anything.
-    if (native && !isPro) return undefined;
-    let live = true;
-    getProStatus().then((data) => { if (live) setStatus(data); }).catch(() => {});
-    return () => { live = false; };
-  }, [native, isPro]);
+    if (native && !isPro) return;
+    loadStatus();
+  }, [native, isPro, loadStatus]);
 
   const premium = isPro || !!status?.isPremium;
   const rowStyle = { width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', textDecoration: 'none', boxSizing: 'border-box' };
@@ -1232,6 +1250,13 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
   const title = (text) => <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{text}</span>;
   const on = <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>;
   const chevron = <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>›</span>;
+  // Under the row, on its own line, while the last read failed.
+  const statusError = statusFailed ? (
+    <span role="alert" style={{ flexBasis: '100%', paddingLeft: '44px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+      Could not load your subscription just now.{' '}
+      <button type="button" className="hit44" onClick={loadStatus} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, textDecoration: 'underline' }}>Try again</button>
+    </span>
+  ) : null;
 
   if (native) {
     if (premium) {
@@ -1257,6 +1282,7 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
               Manage
             </button>
           )}
+          {statusError}
         </div>
       );
     }
@@ -1339,15 +1365,20 @@ function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
           )}
           <button type="button" className="hit44" onClick={manage} disabled={busy} aria-busy={pending === 'portal' || undefined} style={action}>{pending === 'portal' ? 'Opening' : 'Payment method and invoices'}</button>
         </div>
+        {statusError}
       </div>
     );
   }
+  // Pro with no web subscription on record: bought through Apple, or a status
+  // read that failed before any answer arrived. The second is said, with a
+  // retry, because a web subscriber's Cancel is behind that read.
   if (premium) {
     return (
-      <div style={rowStyle}>
+      <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
         {icon}
         {title('Flock Pro')}
         {on}
+        {statusError}
       </div>
     );
   }

@@ -112,6 +112,7 @@ export default function AddFriends({
   handleSyncContacts,
   loadAddFriendsData,
   myFriendCode,
+  myFriendCodeFailed,
   openUserProfile,
   outgoingRequests,
   pendingRequests,
@@ -391,6 +392,13 @@ export default function AddFriends({
                     <React.Suspense fallback={<div style={{ width: '180px', height: '180px' }} />}>
                     <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navy} />
                     </React.Suspense>
+                  ) : myFriendCodeFailed ? (
+                    // The code comes from the server now, so a failed read is
+                    // said, with a retry, instead of a spinner that never ends.
+                    <div role="status" style={{ width: '180px', height: '180px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center' }}>Your code did not load.</p>
+                      <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                    </div>
                   ) : (
                     <div style={{ width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <div style={{ width: '20px', height: '20px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -428,7 +436,7 @@ export default function AddFriends({
                       no longer cost ten renders of the whole app. Add reads
                       the code from App.js on the tap, and the box publishes a
                       pending value on pointerdown for exactly that reason. */}
-                  <SearchInputLocal aria-label="Friend code" type="text" initialValue={friendCodeInput} onCommit={setFriendCodeInput} transform={upperCase} placeholder="FLOCK-XXXX" maxLength={15}
+                  <SearchInputLocal aria-label="Friend code" type="text" initialValue={friendCodeInput} onCommit={setFriendCodeInput} transform={upperCase} placeholder="FLOCK-XXXXXXXX" maxLength={15}
                     style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
                   />
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}

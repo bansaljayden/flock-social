@@ -4,6 +4,7 @@ import { isPurchasesAvailable, getProOffering, purchase, restore } from '../serv
 import { getProStatus, startProCheckout, trackPaywallShown, trackPurchaseCompleted } from '../services/api';
 import { yearlySavingsPercent, planSavingsPercent, perMonthLabel, storePerMonthLabel } from '../lib/proPricing';
 import { birdieBackText, forecastBackText } from '../lib/meterResets';
+import { isNativeShell } from '../lib/nativeShell';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
 // (overlay, 440px max, 20px top radius, drag handle, fadeInUp).
@@ -71,6 +72,12 @@ function headlineFor(trigger, birdieResetsAt, now = new Date()) {
   return { title: GENERIC_HEADLINE, sub: null };
 }
 
+// services/purchases.js refuses to send a buy or a restore to the App Store
+// until it has confirmed the store has the signed-in account (reason:
+// 'account'). Nothing was charged when it refuses, and saying so is the point.
+const ACCOUNT_UNCONFIRMED_BUY = 'Nothing was charged. Flock could not confirm your account with the App Store. Check your connection and try again.';
+const ACCOUNT_UNCONFIRMED_RESTORE = 'Flock could not confirm your account with the App Store. Check your connection and try again.';
+
 const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 const CONTACT_EMAIL = 'social@flockcorp.com';
@@ -105,14 +112,6 @@ function benefitsFor(trigger) {
   return [BENEFIT.forecast, BENEFIT.alerts, BENEFIT.birdie];
 }
 
-function isNativeShell() {
-  try {
-    return typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
-  } catch {
-    return false;
-  }
-}
-
 // Match RevenueCat packages to our two plans by packageType / identifier.
 const pickPackage = (packages, kind) => {
   if (!Array.isArray(packages)) return null;
@@ -143,6 +142,8 @@ function freeTrialLabel(pkg) {
 const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieResetsAt, place }) => {
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
+  // lib/nativeShell.js's answer, the one index.js boots on, so a shell booted
+  // as the app can never be shown the Stripe half below.
   const native = isNativeShell();
 
   // Monthly first: it is the smaller commitment, and the web checkout
@@ -309,13 +310,20 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   const handlePurchase = async () => {
     if (!selectedPkg || busy || restoring) return;
     setBusy(true);
+    setActionError('');
     try {
-      const { success, isPro } = await purchase(selectedPkg);
+      const { success, isPro, reason } = await purchase(selectedPkg);
       if (success && isPro) {
         trackPurchaseCompleted('app_store', selected);
         showToast?.('Welcome to Flock Pro', 'success');
         onUpgraded?.();
         onClose?.();
+      } else if (reason === 'account') {
+        // services/purchases.js would not send the buy to the App Store
+        // because it could not confirm the store has this account signed in,
+        // so the purchase could not land on anybody else's. The tap would
+        // otherwise look dead.
+        setActionError(ACCOUNT_UNCONFIRMED_BUY);
       }
       // Cancelled / failed purchases stay quiet: the sheet remains usable.
     } finally {
@@ -326,14 +334,17 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   const handleRestore = async () => {
     if (busy || restoring) return;
     setRestoring(true);
+    setActionError('');
     try {
-      const { success, isPro } = await restore();
+      const { success, isPro, reason } = await restore();
       if (success && isPro) {
         showToast?.('Welcome to Flock Pro', 'success');
         onUpgraded?.();
         onClose?.();
       } else if (success) {
         showToast?.('No previous purchases found', 'error');
+      } else if (reason === 'account') {
+        showToast?.(ACCOUNT_UNCONFIRMED_RESTORE, 'error');
       } else {
         showToast?.('Could not restore purchases', 'error');
       }
@@ -417,11 +428,14 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   const quiet = { fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0', lineHeight: 1.45 };
   const smallPrint = { fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' };
   const linkButton = { border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT };
+  // hit44 (index.css) lays a 44 by 44 target over these 11px words without
+  // moving a pixel of the fine print, the same for Restore below. Restore
+  // comes later in the page, so where the two targets meet, Restore's wins.
   const legalLinks = (
     <>
-      <button type="button" onClick={() => window.open(TERMS_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Terms</button>
+      <button type="button" className="hit44" onClick={() => window.open(TERMS_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Terms</button>
       {' '}·{' '}
-      <button type="button" onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Privacy</button>
+      <button type="button" className="hit44" onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Privacy</button>
     </>
   );
   const cta = { width: '100%', padding: '15px', borderRadius: '14px', fontSize: '15px', fontWeight: '700', fontFamily: FONT };
@@ -435,9 +449,18 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
     ? 'Opening checkout…'
     : (webTrialDays > 0 ? `Start ${webTrialDays}-day free trial` : `Get Pro, ${webSelected?.label || ''}/${periodOf(webSelected?.id)}`);
 
+  // The backdrop keeps the rule Escape and the close button keep: never while
+  // a purchase, a restore or the trip to Stripe's checkout is under way. A tap
+  // outside the sheet used to close it mid-checkout, and the redirect to
+  // Stripe still happened a moment later, from a sheet that was gone.
+  const closeFromBackdrop = () => {
+    if (busy || restoring) return;
+    onClose?.();
+  };
+
   return (
     <div
-      onClick={onClose}
+      onClick={closeFromBackdrop}
       style={{ position: 'absolute', inset: 0, zIndex: 200, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
       <div
@@ -492,6 +515,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
               <button className="glass-btn glass-primary" onClick={handlePurchase} disabled={busy || restoring || !selectedPkg} style={cta}>
                 {nativeCta}
               </button>
+              {actionError && <p role="alert" style={{ ...quiet, color: 'var(--accent-red-text)', marginTop: '8px' }}>{actionError}</p>}
               <p style={smallPrint}>
                 {selectedTrial
                   ? `The ${selected} plan starts with a ${selectedTrial}, then renews at ${nativePrice} every ${periodOf(selected)} until you cancel in your App Store settings. Cancel before the trial ends and you are not charged. `
@@ -500,6 +524,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
               </p>
               <button
                 type="button"
+                className="hit44"
                 onClick={handleRestore}
                 disabled={busy || restoring}
                 style={{ display: 'block', width: '100%', marginTop: '6px', padding: '8px', border: 'none', background: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}

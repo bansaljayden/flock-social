@@ -24,9 +24,10 @@ test('billing off is said as one sentence, not a plan the owner holds', () => {
   expect(app).toMatch(/setVenueBillingOn\(p\.billing_enabled !== false\);/);
   expect(dash).toMatch(/\{venueBillingOn && \(\s*<span style=\{\{ \.\.\.tierBadge\[venueData\.tier\]/);
   expect(dash).toMatch(/Every feature is on while venue plans are being set up\. Nothing is charged, and we will email you before anything is\./);
-  // The Pro card's 'Current plan' may sit in a fragment beside the Roost
-  // Manage billing control (components/venue/VenueBillingControl.js).
-  expect(dash).toMatch(/\{venueBillingOn && venueTier === 'pro' \? (<>)?<span/);
+  // The Roost card's 'Current plan' may sit in a fragment beside its Manage
+  // billing control (components/venue/VenueBillingControl.js). onRoost counts
+  // both stored words for Roost, 'pro' and the retired 'premium'.
+  expect(dash).toMatch(/\{venueBillingOn && onRoost \? (<>)?<span/);
   expect(dash).toMatch(/\{venueBillingOn && venueTier === 'free' && <span/);
 });
 

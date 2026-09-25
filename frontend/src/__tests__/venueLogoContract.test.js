@@ -15,10 +15,11 @@
 // photos, which are the only URLs the server vouches for. This suite pins that
 // contract so neither half of the old bug can come back.
 //
-// It also pins the 2026-08-14 price-doc sweep: $35/$75 is FINAL (see
-// venuePricingDecision.test.js for the app side); README.md, MONEY-MODEL.md
-// and SUBMIT-CHECKLIST.md must not resurrect the superseded prices or the
-// "fix the app, not the doc" instruction that pointed at them.
+// It also pins the price-doc sweeps: the venue plans are a free account and
+// Roost at $99 (see venuePricingDecision.test.js for the app side), and
+// README.md, MONEY-MODEL.md and SUBMIT-CHECKLIST.md must not resurrect a
+// superseded price or the "fix the app, not the doc" instruction that pointed
+// at one.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
@@ -106,35 +107,35 @@ describe('the 2026-08-14 price sweep holds in the docs', () => {
     expect(checklist).toMatch(/resolved 2026-08-14/i);
   });
 
-  test('README names the current prices next to VENUE-BILLING.md', () => {
-    // Pro moved 75 -> 99 on 2026-08-25. This pin moved with it on 2026-09-01,
-    // which is the whole point of the pin: the README is named authoritative on
-    // price, so it is the one file that must never drift behind the app.
-    expect(readme).toMatch(/\$35 Premium \/ \$99 Pro, re-priced 2026-08-25/);
+  test('README names the current venue price next to VENUE-BILLING.md', () => {
+    // Two venue plans since the collapse VENUE-PRICING.md section 4 decided: a
+    // free account and Roost. The README is named authoritative on price, so
+    // it is the one file that must never drift behind the app.
+    expect(readme).toMatch(/Roost at \$99\/month or \$990\/year per location with a 14-day trial/);
+    expect(readme).not.toMatch(/\$35 Premium/);
     expect(readme).not.toMatch(/\$75 Pro, FINAL/);
+    expect(readme).not.toMatch(/design spec with no code/);
   });
 
-  test('MONEY-MODEL recomputed the venue-count math at the current prices', () => {
-    // Recomputed at $99 Pro on 2026-09-01. ceil(1000/99) = 11, ceil(1000/35) =
-    // 29, ceil(1000/67) = 15, and 67 is the real midpoint of 35 and 99. The doc
-    // must show its work and the work must be right.
+  test('MONEY-MODEL shows the venue-count math at the one venue price', () => {
+    // ceil(1000/99) = 11. The doc must show its work and the work must be
+    // right. With one paid venue plan there is no mix to average any more.
     expect(money).toContain('$99 x 11 = $1,089');
-    expect(money).toContain('$35 x 29 = $1,015');
-    expect(money).toContain('$67 x 15 = $1,005');
     expect(99 * 11).toBe(1089);
-    expect(35 * 29).toBe(1015);
-    expect(67 * 15).toBe(1005);
-    expect((35 + 99) / 2).toBe(67);
-    // The dead price must not survive anywhere in the arithmetic.
-    expect(money).not.toContain('$75 x 14');
-    expect(money).not.toContain('$55 x 19');
+    expect(99 * 10).toBeLessThan(1000);
+    // Retired prices must not survive anywhere in the arithmetic.
+    for (const dead of ['$35 x 29', '$67 x 15', '$75 x 14', '$55 x 19']) {
+      expect(money).not.toContain(dead);
+    }
+    expect(money).not.toMatch(/\$35\b|\$24\.99|\$25\/year/);
   });
 
   test('the revenue simulator seed says what it is', () => {
-    // (35 + 99) / 2 = 67. This seeded 55 against the retired $75 until
-    // 2026-09-01, so the admin revenue simulator opened on a price no venue
-    // could be charged.
-    expect(app).toContain('useState(67); // midpoint of $35 Premium and $99 Pro');
-    expect(app).not.toContain('midpoint of $35 Premium and $75 Pro');
+    // Roost's $99 is the only venue price. This seeded 55 against a retired
+    // $75, then 67 as the midpoint of Roost and a retired $35 plan, and each
+    // time the admin revenue simulator opened on a price no venue could be
+    // charged.
+    expect(app).toContain("useState(99); // Roost's list price, the one venue plan");
+    expect(app).not.toMatch(/useState\((55|67)\); \/\/ midpoint/);
   });
 });

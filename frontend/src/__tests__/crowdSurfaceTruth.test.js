@@ -76,6 +76,44 @@ test('LIVE means the model produced the number, not that the reply is new', () =
   expect(card).toMatch(/if \(!method \|\| method\.startsWith\('rule_engine'\)\) return false;/);
 });
 
+test('a venue\'s own reading wears neither LIVE nor ESTIMATED', () => {
+  // The server marks the owner's number predictionMethod 'owner_report'
+  // (services/ownerReports.js). It used to stay 'ml', which passed the
+  // rule_engine test above, so a pulsing LIVE sat beside "From the bar itself,
+  // not a Flock estimate". ESTIMATED would be the opposite untruth, so the chip
+  // steps aside and the owner line says whose number it is and when it was set.
+  // ownerReport.applied, the flag that line is drawn on, is read too, for a
+  // server that predates the method.
+  expect(card).toMatch(/const ownerNumber = !!cd && \(cd\.predictionMethod === 'owner_report' \|\| cd\.ownerReport\?\.applied === true\);/);
+  expect(card).toMatch(/if \(!cd\?\.lastUpdated \|\| ownerNumber\) return false;/);
+  expect(card).toMatch(/<span style=\{\{ fontSize: 'var\(--t-meta\)', color: 'var\(--text-secondary\)' \}\}>Loading\.\.\.<\/span>\s*\) : ownerNumber \? null : \(/);
+});
+
+test('the Now bar and the trend arrow copy every reading the dial draws, 0 included', () => {
+  // An owner can say the room is empty. `score > 0` left the Now bar and the
+  // arrow on the model's figure under a dial reading 0. Without a read, `score`
+  // is a placeholder 0 and stays uncopied.
+  expect(card).toMatch(/const dialScore = cd \? cd\.score : \(Number\.isFinite\(score\) && score > 0 \? score : null\);/);
+  expect(card).toMatch(/const hasLiveNow = isNow && dialScore != null;/);
+  expect(card).toMatch(/const liveScoreForNow = isNow \? dialScore : null;/);
+  expect(card).toMatch(/const cur = dialScore != null \? dialScore : \(Number\.isFinite\(hourlyData\[0\]\?\.score\) \? hourlyData\[0\]\.score : null\);/);
+  // The three places that used to test the score itself for > 0.
+  expect(card).not.toMatch(/isNow && Number\.isFinite\(score\) && score > 0/);
+  expect(card).not.toMatch(/const cur = \(Number\.isFinite\(score\) && score > 0\)/);
+});
+
+test('a closed room reads closed on the Now bar and draws no trend', () => {
+  // The server never says closed with a zero: it scores a closed hour like any
+  // other and says closed with isOpen and hourly[i].open. So a closed room
+  // arrives with a positive score, and the live-reading override drew it as a
+  // crowd under "Currently Closed" and a "---" dial, with Rising or Falling
+  // beside it. The card's own closed state wins for now, ahead of the override.
+  expect(card).toMatch(/const hourClosed = \(isNow && isClosed\) \? true : hasLiveNow \? false : \(closedAllDay \? true : \(/);
+  // No arrow out of a closed now or into a closed next hour; `next <= 0` could
+  // not see one, because closed hours carry real scores.
+  expect(card).toMatch(/if \(isClosed \|\| hourlyData\[1\]\?\.open === false\) return null;/);
+});
+
 test('the venue-relative index is never printed as a percentage', () => {
   // The sheet renders "Steady · 62". The list rendered "Steady 62%" for the
   // same venue, which reads as 62% full and is not what the number means.

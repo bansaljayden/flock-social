@@ -655,7 +655,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       // A 403 that says the plan could not be CHECKED is a retryable error,
       // not a lock; the locked state has no retry.
       if (err?.status === 403 && err?.data?.reason !== 'ENTITLEMENT_UNAVAILABLE') {
-        setLockedReason(err?.data?.error || 'This is part of the Pro plan.');
+        setLockedReason(err?.data?.error || 'This is part of Roost.');
         setState('locked');
       } else {
         setState('error');

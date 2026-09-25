@@ -63,9 +63,9 @@
  * declares and hands to a screen.
  *
  * The move on 2026-09-01 carried the old block across verbatim. Later the
- * same day the RENDER half was rebuilt (TestFlight report: "needs to be a
- * lot more detailed and needs to look a lot better. Follow the design standard, and
- * I would add one or two of my bird graphics in there"), so the JSX below is
+ * same day the RENDER half was rebuilt after a TestFlight report, to be more
+ * detailed and better looking, to follow the design standard, and to carry
+ * one or two of the bird graphics, so the JSX below is
  * no longer a character-for-character copy of the deleted lines. handleCreate,
  * StarRating, priceLabel and dmTarget are untouched, every control is still
  * wired to exactly the prop it was wired to, and every string a test or the

@@ -653,6 +653,10 @@ export default function ChatDetail({
   distanceKm,
   confirmClick,
   confirmFlockPlan,
+  // Calls a live plan off. App.js owns it beside confirmFlockPlan, and it
+  // resolves true only once the server has agreed, which is what closes the
+  // confirm dialog below.
+  cancelFlockPlan,
   copiedInviteUrl,
   crowdPredictions,
   eventCrowd,
@@ -1225,6 +1229,25 @@ export default function ChatDetail({
       return () => clearTimeout(id);
     }, [budgetResetArmed]);
 
+    /* THE HOST'S TWO IRREVERSIBLE TAPS, each behind its own confirm dialog:
+       calling the plan off (from the header's overflow menu, beside Leave)
+       and replacing the guest link (from the invite sheet). A modal rather
+       than the budget reset's arm-and-tap, because both reach people who are
+       not looking at this screen: a cancel tells the whole flock, and a
+       replaced link stops working in the hands of everyone it was sent to.
+
+       Each is null, 'confirm' or 'working'. 'working' disables both buttons
+       and ignores a second tap, so one decision is one request.
+
+       replacedLinkUrl is the link a replacement handed back. While it is the
+       link on show, the sheet says it is a new one rather than "Copied.",
+       because nothing was copied: a fresh request cannot open the share sheet
+       or the clipboard after an await (the tap's activation is spent), so the
+       new link is shown and the Share button above sends it. */
+    const [cancelPlanStep, setCancelPlanStep] = React.useState(null);
+    const [newLinkStep, setNewLinkStep] = React.useState(null);
+    const [replacedLinkUrl, setReplacedLinkUrl] = React.useState('');
+
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
@@ -1272,6 +1295,13 @@ export default function ChatDetail({
     // PUT /api/flocks/:id is creator-only. The venue controls below are the
     // same route the vote panel's Confirm button already gates on this.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
+    // A plan that has ended, either way: the host called it off, the host
+    // marked it done, or the sweep closed it after the night. From here the
+    // server refuses a venue vote, an invite, a guest link and any change of
+    // status (so no lock and no second cancel), and this screen stops
+    // offering those rather than letting each one fail in a toast. The chat
+    // itself stays open: nothing refuses a message on a finished plan.
+    const planClosed = flock.status === 'completed' || flock.status === 'cancelled';
     // Read once here so the header bar and the sheet below cannot disagree.
     const billBar = billTally(billSplit);
     // A ghost commit creates a REAL bill_splits row with paid_by NULL, so it is
@@ -1388,7 +1418,9 @@ export default function ChatDetail({
         return { kind: 'venue', name: flock.venue, thumbUrl: flock.venuePhoto || undefined, caption: 'Pinned' };
       }
       const openVotes = flock.votes || [];
-      if (openVotes.length === 0) return null;
+      // "Vote open" on a plan that has ended is a ballot the server will not
+      // take, so a closed plan with no venue simply has no strip.
+      if (openVotes.length === 0 || planClosed) return null;
       /* The vote panel's own arithmetic, so the strip and the panel it opens
          cannot report two different tallies. Guests vote from the invite link
          and stay anonymous, so they add to the total without adding a name. */
@@ -1732,8 +1764,10 @@ export default function ChatDetail({
       const voted = !!existingVote && (existingVote.voters || []).includes('You');
       // The count is the real tally or nothing at all: VenueCardRow draws a
       // figure only when it is given one, and a guess would be a vote count
-      // nobody cast.
-      return { active: voted, count: existingVote ? voteTotal(existingVote) : null };
+      // nobody cast. `closed` rides here for the same memo reason as the
+      // count: a plan that ends under an open card has to take its Vote
+      // button away, and only a changed row gets the card redrawn.
+      return { active: voted, count: existingVote ? voteTotal(existingVote) : null, closed: planClosed };
     };
     const needsDressing = searchActive
       // EVERY venue card, not only one carrying a caption, because every one
@@ -1922,7 +1956,7 @@ export default function ChatDetail({
     let streamRows = listRows;
     if (!searchActive) {
       if (pollForCard) {
-        streamRows = spliceByTime(streamRows, { id: POLL_ROW_ID, message_type: 'system', poll: { rows: pollVoteRows, lockedName: pollLockedName } }, pollAnchorMs);
+        streamRows = spliceByTime(streamRows, { id: POLL_ROW_ID, message_type: 'system', poll: { rows: pollVoteRows, lockedName: pollLockedName, closed: planClosed } }, pollAnchorMs);
       }
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
@@ -2194,13 +2228,18 @@ export default function ChatDetail({
             options={options}
             votedCount={voterNames.size + guestVotes}
             memberCount={flock.memberCount ?? (flock.members || []).length}
-            isHost={!!flock.creatorId && String(flock.creatorId) === String(authUser?.id)}
+            /* A PLAN THAT HAS ENDED keeps this card as the record of how the
+               group got there and loses the ballot: no vote on the rows, no
+               Lock it in (the card draws that for a host only, so the host
+               flag carries it), and no vote panel behind a tap. The plan
+               screen's vote rows follow the same rule. */
+            isHost={!poll.closed && !!flock.creatorId && String(flock.creatorId) === String(authUser?.id)}
             lockedName={poll.lockedName}
             /* Toggle, matching the venue card row on this same screen: a tap
                on the option you already picked takes the vote back. The
                sheet's quick vote returns early instead, because that surface
                has its own separate unvote control and this one does not. */
-            onVote={(o) => {
+            onVote={poll.closed ? undefined : (o) => {
               if (o.voted) handleUnvote();
               else handleQuickVote(o.name, 'Venue', o.id === o.name ? null : o.id);
             }}
@@ -2209,7 +2248,7 @@ export default function ChatDetail({
                members get one push and the plan cannot end up confirmed at a
                venue the server refused. */
             onLock={(o) => handleConfirmVenue({ venue: o.name, place_id: o.id === o.name ? null : o.id })}
-            onOpen={() => setShowVotePanel(true)}
+            onOpen={poll.closed ? undefined : () => setShowVotePanel(true)}
           />
         );
       }
@@ -2274,7 +2313,9 @@ export default function ChatDetail({
                 openVenueDetail(vc.place_id, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: vc.place_id, rating: vc.stars || vc.rating, photo_url: vc.photo_url }, { panMap: true });
               }, 500);
             } : undefined}
-            onAction={() => {
+            /* No Vote on a plan that has ended; the count stays as the record.
+               The card draws its action only when it is handed one. */
+            onAction={m.vote && m.vote.closed ? undefined : () => {
               const current = flock.votes || [];
               const mine = current.find(v => v.venue === vc.name);
               // Already yours: the tap takes the vote back, the way the vote
@@ -2452,9 +2493,17 @@ export default function ChatDetail({
             promise. */}
         <BirdieStill bird={WARM_BIRD} size={96} style={{ margin: '0 auto 10px' }} />
         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nothing here yet</p>
-        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
-          This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
+        {/* A plan called off before anybody spoke lands here too (a plan
+            made by mistake is the likeliest one to be cancelled at once),
+            and the two openers below are an invite and a vote, both of which
+            the server refuses on an ended plan. So an ended plan says what
+            it is and what still works, and offers neither. */}
+        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: planClosed ? 0 : '0 0 16px', lineHeight: '1.5' }}>
+          {planClosed
+            ? `${flock.status === 'cancelled' ? 'This plan was called off.' : 'This plan is done.'} You can still send messages here.`
+            : <>This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.</>}
         </p>
+        {!planClosed && (
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
           <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.userPlus('white', 14)} Invite friends
@@ -2467,6 +2516,7 @@ export default function ChatDetail({
             {Icons.mapPin(colors.navy, 14)} Suggest a place
           </button>
         </div>
+        )}
       </div>
     ) : null));
 
@@ -2497,6 +2547,44 @@ export default function ChatDetail({
       }
       : { bottom: 'calc(96px + var(--safe-bottom))', left: '12px' };
 
+    /* THE HOST'S TWO CONFIRMS, RUN. Both dialogs disable their buttons while
+       the request is out; the guard at the top of each is for a second tap
+       that lands before that repaint. */
+    const confirmCancelPlan = async () => {
+      if (cancelPlanStep === 'working') return;
+      setCancelPlanStep('working');
+      let done = false;
+      try { done = (await cancelFlockPlan(flock.id)) === true; } catch { done = false; }
+      // Closed only once the server has agreed. On a refusal App.js has
+      // already said why in a toast, and the dialog stays so the host can try
+      // again or back out.
+      setCancelPlanStep(done ? null : 'confirm');
+    };
+    /* regenerate: true revokes every live guest link on this flock and mints
+       one. The route allows that to the creator alone (403 for any other
+       member) and only while the plan is open (409 after), which is exactly
+       where the control is offered. */
+    const makeNewInviteLink = async () => {
+      if (newLinkStep === 'working') return;
+      setNewLinkStep('working');
+      let url = null;
+      try {
+        url = (await createFlockInviteLink(selectedFlockId, true))?.url || null;
+      } catch (err) {
+        setNewLinkStep('confirm');
+        if (!err?.sessionExpired) showToast(err?.message || "Couldn't make a new link. Try again.", 'error');
+        return;
+      }
+      if (!url) {
+        setNewLinkStep('confirm');
+        showToast("Couldn't make a new link. Try again.", 'error');
+        return;
+      }
+      setNewLinkStep(null);
+      setReplacedLinkUrl(url);
+      setCopiedInviteUrl(url);
+      showToast('New link made. The old one no longer works.');
+    };
 
     return (
       /* The keyboard's committed height, spent once, here. Both halves are
@@ -2623,6 +2711,20 @@ export default function ChatDetail({
               <button aria-label="More options" className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
               {showFlockMenu && (
                 <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                  {/* CANCEL PLAN, the host's way out that is not Leave. For a
+                      host, Leave deletes the plan for everyone, chat and all;
+                      this keeps the flock and its chat and only moves the
+                      status, which is what the route's 'cancelled' was always
+                      for and no screen sent. Beside Leave because that is
+                      where a host looking for the exit already is. Creator
+                      only, like the route, and gone once the plan has ended,
+                      because the route refuses a second status then. Quieter
+                      than Leave on purpose: Leave is still the heavier act. */}
+                  {isCreator && !planClosed && (
+                    <button type="button" className="hit44 glass-btn" onClick={() => { setShowFlockMenu(false); setCancelPlanStep('confirm'); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', boxShadow: 'inset 0 -1px 0 var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--accent-red-text)', textAlign: 'left' }}>
+                      {Icons.ban('var(--accent-red-text)', 16)} Cancel plan
+                    </button>
+                  )}
                   <button className="hit44 glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: '#EF4444' }}>
                     {Icons.doorOpen('#EF4444', 16)} Leave Flock
                   </button>
@@ -2773,10 +2875,13 @@ export default function ChatDetail({
             changing it to another place. PinStrip draws the menu item only
             when it is handed a handler, so the control that would fail is
             simply not there. */}
+        {/* Change place is gone once the plan has ended, as the plan screen's
+            own venue action is: a new venue on a called-off night would push
+            "now at" to everybody about a plan that is off. */}
         <PinStrip
           model={pinModel}
           onOpen={openPinStrip}
-          onChangePlace={pinModel && pinModel.kind === 'venue' && isCreator ? changePinnedPlace : undefined}
+          onChangePlace={pinModel && pinModel.kind === 'venue' && isCreator && !planClosed ? changePinnedPlace : undefined}
         />
 
         {/* THE NOTIFICATION ASK, and the only one in the app besides the Enable
@@ -3323,15 +3428,19 @@ export default function ChatDetail({
 
              Check in is not here because this screen has no handler for it.
              The sheet drops a tile with no handler rather than greying one
-             out, so nothing below promises a feature that is not wired. */
-          onOpenVote={() => { setPlusOpen(false); setShowVotePanel(true); loadPopularVenues(); }}
+             out, so nothing below promises a feature that is not wired.
+
+             The vote and Invite friends go the same way once the plan has
+             ended: the server refuses both on a finished plan, so the tiles
+             are not offered to be refused. */
+          onOpenVote={planClosed ? undefined : () => { setPlusOpen(false); setShowVotePanel(true); loadPopularVenues(); }}
           onSplitBill={() => { setPlusOpen(false); setShowCreateBill(true); }}
           onAskBirdie={() => { setPlusOpen(false); openBirdie(); }}
           /* The four the header rail used to hold. Same handlers, same order
              of use, one tap further from the thumb's resting place instead of
              two taps behind a pill. */
           onCashPool={() => { setPlusOpen(false); setShowChatPool(true); }}
-          onInviteFriends={() => {
+          onInviteFriends={planClosed ? undefined : () => {
             setPlusOpen(false);
             setShowFlockInviteModal(true);
             setCopiedInviteUrl('');
@@ -4239,6 +4348,9 @@ export default function ChatDetail({
                   // user is never left with nothing.
                   try { await navigator.clipboard.writeText(url); showToast('Invite link copied'); }
                   catch { showToast('Link ready. Copy it below'); }
+                  // Shown now because it was shared, not because it was just
+                  // replaced, so the panel goes back to its ordinary sentence.
+                  setReplacedLinkUrl('');
                   setCopiedInviteUrl(url);
                 }}
                 style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
@@ -4248,11 +4360,31 @@ export default function ChatDetail({
               </button>
               {copiedInviteUrl && (
                 <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
+                  {/* Two whole sentences rather than a swapped first word, so
+                      the grant and the expiry read the same either way. The
+                      first is for a link just replaced: nothing was copied
+                      then, and the one fact the host needs is that the old
+                      link is dead. */}
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-green-text)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {Icons.check('var(--accent-green-text)', 13)} Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.
+                    {Icons.check('var(--accent-green-text)', 13)} {copiedInviteUrl === replacedLinkUrl
+                      ? 'New link made. The old one no longer works. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'
+                      : 'Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'}
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
                 </div>
+              )}
+              {/* A NEW LINK, FOR ONE THAT HAS GONE SOMEWHERE IT SHOULD NOT.
+                  The link is real membership and the route hands back the
+                  same one on every Share, so without this a link posted in
+                  the wrong group chat stayed a way in until it expired. The
+                  route lets only the creator replace it and only on an open
+                  plan, so that is who sees this. Offered whether or not a
+                  link is on show: the host who needs it most is the one who
+                  opened this sheet to kill a link, not to share one. */}
+              {isCreator && !planClosed && (
+                <button type="button" className="hit44" onClick={() => setNewLinkStep('confirm')} style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '44px', margin: '-8px 0 6px', padding: '0 2px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                  {Icons.repeat('var(--text-secondary)', 14)} Make a new link
+                </button>
               )}
 
               {/* Selected friends chips */}
@@ -4434,6 +4566,59 @@ export default function ChatDetail({
                 }} className="hit44 glass-btn glass-danger" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
                   {isLoading ? 'Leaving...' : 'Leave'}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Cancel Plan Confirmation Modal. Every clause is what the route does
+            and nothing more. "Tells everyone": PUT /api/flocks/:id fans
+            flock_updated out to every member (App.js toasts it, naming the
+            host) and pushes "Plan cancelled" to members who are not in the
+            app, the same reach "Lock it in" claims for its own push. "The
+            chat stays open": the flock row is kept and nothing refuses a
+            message on it. "Can't be reopened": the route answers 409 to any
+            later status. */}
+        {cancelPlanStep && (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
+            <DialogBehavior onClose={() => { if (cancelPlanStep !== 'working') setCancelPlanStep(null); }} label="Cancel this plan" />
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.ban('var(--accent-red-text)', 24)}</div>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Cancel this plan?</h3>
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
+                  {`Cancelling tells everyone in "${flock.name}" that it's off. The chat stays open, but the plan can't be reopened.`}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="button" className="hit44 glass-btn glass-secondary" disabled={cancelPlanStep === 'working'} onClick={() => setCancelPlanStep(null)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep plan</button>
+                <button type="button" className="hit44 glass-btn glass-danger" disabled={cancelPlanStep === 'working'} onClick={confirmCancelPlan} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
+                  {cancelPlanStep === 'working' ? 'Cancelling...' : 'Cancel plan'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* New Invite Link Confirmation Modal. It opens over the invite
+            sheet, so it sits above that sheet's z-index. The sentence is the
+            route's behaviour: regenerate revokes every live link on this flock
+            at once, and the rows of people who already came in through one
+            (members and guest answers alike) are not touched by that. The
+            buttons stack because two long labels side by side wrap at 320px. */}
+        {newLinkStep && (
+          <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+            <DialogBehavior onClose={() => { if (newLinkStep !== 'working') setNewLinkStep(null); }} label="Make a new invite link" />
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px', textAlign: 'center' }}>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Make a new link?</h3>
+              <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
+                The current link stops working right away, for everyone who has it. People who already joined with it stay in the plan.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <button type="button" className="hit44 glass-btn glass-danger" disabled={newLinkStep === 'working'} onClick={makeNewInviteLink} style={{ padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
+                  {newLinkStep === 'working' ? 'Making a new link...' : 'Make a new link'}
+                </button>
+                <button type="button" className="hit44 glass-btn glass-secondary" disabled={newLinkStep === 'working'} onClick={() => setNewLinkStep(null)} style={{ padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep this link</button>
               </div>
             </div>
           </div>

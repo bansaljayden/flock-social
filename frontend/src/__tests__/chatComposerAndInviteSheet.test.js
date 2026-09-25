@@ -172,6 +172,7 @@ function chatProps(over = {}) {
     colors: {},
     confirmClick: fn(),
     confirmFlockPlan: fn(),
+    cancelFlockPlan: fn(),
     copiedInviteUrl: '',
     crowdPredictions: {},
     dismissNotifAsk: fn(),

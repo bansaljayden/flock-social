@@ -450,7 +450,7 @@ const VenueDetailSheet = ({
                   </div>
                   {r.text && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
                   {/* Owner reply. No 2px side stripe — banned pattern
-                      (project documentation, DESIGN-STANDARD.md). The reply is set apart
+                      (DESIGN-STANDARD.md). The reply is set apart
                       by its own surface and an indent instead. */}
                   {r.venue_reply && (
                     <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>

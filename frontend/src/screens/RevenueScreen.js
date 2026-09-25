@@ -3,8 +3,10 @@
  *
  * This screen was 1,387 lines of `App.js`, declared as an arrow function
  * inside `FlockAppInner` and mounted as an element rather than called. It is
- * the founder-facing admin console: four tabs, Revenue, Costs, Projections and
- * Research, behind `authUser.role === 'admin'` and reachable by nobody else.
+ * the founder-facing admin console: four tabs, Overview (the money hub, which
+ * it opens on), Costs, Projections (with the what-if simulator that used to be
+ * the Revenue tab) and Research, behind `authUser.role === 'admin'` and
+ * reachable by nobody else. The admin routes enforce that on the server.
  * It is the largest single-screen block that was still bundled into the boot
  * chunk for every teenager who opened Flock to vote on a bar, and none of them
  * can reach it.
@@ -66,6 +68,13 @@ import {
   formatCurrency,
 } from '../lib/finance';
 import { saveAdminReconciled } from '../services/api';
+import {
+  createAdminExpense,
+  deleteAdminExpense,
+  getAdminMoneyHub,
+  importAdminExpenses,
+  updateAdminExpense,
+} from '../services/api';
 
 // One reconciled line's save form. Amount and date only; the note is optional
 // and short. Saving posts through the admin route and then the parent refetches
@@ -113,6 +122,999 @@ function ReconciledLineForm({ line, onSaved, colors }) {
   );
 }
 
+// ===========================================================================
+// THE MONEY HUB: the Overview tab, and the tab the console opens on.
+// ===========================================================================
+//
+// Every figure comes from GET /api/admin/money (backend/services/moneyHub.js),
+// which reads Stripe, RevenueCat, the cost model, the expense list and the
+// collector's own rows. Nothing here does arithmetic beyond formatting, for
+// the reason the Costs tab gives: the sums belong next to the sources they
+// read, where they cannot drift from them.
+//
+// A source that did not answer shows the server's words for why, and no
+// number. A zero appears only when a source answered with zero.
+
+// The last good payload, kept across a trip to another tab or screen so the
+// hub paints at once on return while it reads again. The server holds the
+// vendor answers for a few minutes, so reading again costs Stripe nothing.
+const hubMemo = { data: null };
+
+const HUB_KIND_LABEL = {
+  infrastructure: 'Running the app',
+  tooling: 'Building it',
+  legal: 'Legal and company',
+  other: 'Other',
+};
+const HUB_CADENCE_LABEL = { monthly: 'a month', yearly: 'a year', usage: 'a month, usage', one_time: 'once' };
+const HUB_PLAN_LABEL = { monthly: 'monthly', yearly: 'yearly', founding: 'founding rate', other: 'other plans' };
+const HUB_STORE_LABEL = {
+  app_store: 'App Store',
+  promotional: 'Promotional grants',
+  play_store: 'Google Play',
+  rc_billing: 'RevenueCat web billing',
+  other: 'Other stores',
+};
+
+const hubStyle = {
+  card: { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0 },
+  sub: { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.4 },
+  kicker: { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '14px 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  big: { fontSize: 'var(--t-display)', fontWeight: '600', margin: '2px 0 0', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' },
+  note: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35, overflowWrap: 'anywhere' },
+  foot: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.4, overflowWrap: 'anywhere' },
+  input: { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0, width: '100%', boxSizing: 'border-box' },
+  fieldLabel: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)', flex: '1 1 130px', minWidth: 0 },
+  textButton: { border: 'none', background: 'transparent', padding: '4px 0', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
+};
+
+const HUB_TONE = {
+  good: 'var(--accent-green-text)',
+  bad: 'var(--accent-red-text)',
+  warn: 'var(--accent-amber-text)',
+  muted: 'var(--text-tertiary)',
+};
+
+function hubTag(tone) {
+  const bg = tone === 'bad' ? 'var(--accent-red-bg)' : tone === 'good' ? 'var(--accent-green-bg)' : tone === 'warn' ? 'var(--accent-amber-bg)' : 'var(--bg-tertiary)';
+  return {
+    fontSize: 'var(--t-micro)',
+    fontWeight: '700',
+    color: HUB_TONE[tone] || 'var(--text-secondary)',
+    backgroundColor: bg,
+    borderRadius: '6px',
+    padding: '1px 5px',
+    marginLeft: '6px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    whiteSpace: 'nowrap',
+  };
+}
+
+// Cents to dollars, or null when there is no number to print. The minus sign
+// is the typographic one, so a loss lines up with a gain in a column.
+function hubMoney(cents, { sign = false } = {}) {
+  if (!Number.isFinite(cents)) return null;
+  const text = (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (cents < 0) return `−$${text}`;
+  return `${sign && cents > 0 ? '+' : ''}$${text}`;
+}
+
+const hubCount = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US') : null);
+const hubPlural = (n, one, many) => `${hubCount(n)} ${n === 1 ? one : many}`;
+const hubTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null);
+
+// A YYYY-MM-DD date read as that calendar day wherever the browser is.
+function hubDay(ymd) {
+  if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const [y, m, d] = ymd.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const opts = { month: 'short', day: 'numeric' };
+  if (y !== new Date().getFullYear()) opts.year = 'numeric';
+  return date.toLocaleDateString('en-US', opts);
+}
+
+function HubRow({ label, value, note, tone, tag, navy }) {
+  return (
+    <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', minWidth: 0, overflowWrap: 'anywhere' }}>
+          {label}
+          {tag && <span style={hubTag(tag.tone)}>{tag.text}</span>}
+        </span>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: HUB_TONE[tone] || navy, whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+      </div>
+      {note && <p style={hubStyle.note}>{note}</p>}
+    </div>
+  );
+}
+
+// The words for a source that gave no numbers. `not_connected` means nothing
+// was asked because the key is not set; anything else means it was asked.
+function HubNotice({ status, reason }) {
+  const word = status === 'not_connected' ? 'Not connected' : status === 'refused' ? 'Key cannot read this' : 'Could not load';
+  return (
+    <p style={{ ...hubStyle.note, margin: '4px 0 2px' }}>
+      <span style={{ ...hubTag('warn'), marginLeft: 0, marginRight: '6px' }}>{word}</span>
+      {reason || 'No reason was given.'}
+    </p>
+  );
+}
+
+function hubPlanRows(summary, prefix, navy) {
+  const rows = [];
+  for (const plan of ['monthly', 'yearly', 'founding', 'other']) {
+    const p = summary.byPlan && summary.byPlan[plan];
+    if (!p || (p.live === 0 && p.trialing === 0 && plan !== 'monthly' && plan !== 'yearly')) continue;
+    rows.push(
+      <HubRow
+        key={`${prefix}-${plan}`}
+        navy={navy}
+        label={`${prefix}, ${HUB_PLAN_LABEL[plan]}`}
+        value={`${hubCount(p.live)} active`}
+        note={p.trialing > 0 ? `${hubPlural(p.trialing, 'more on a trial', 'more on trials')}, not yet paying.` : null}
+      />
+    );
+  }
+  return rows;
+}
+
+// WHY A FIGURE IS EMPTY, in the codes backend/services/moneyHub.js buildNet
+// sends. A figure missing a source arrives null rather than smaller, and the
+// screen says which source it is waiting for.
+const HUB_GAP_SOURCE = {
+  stripe: 'Stripe',
+  stripe_partial: 'a full Stripe read',
+  app_store: 'RevenueCat',
+  app_store_partial: 'every Pro account in RevenueCat',
+  expenses: 'the expense list',
+};
+const HUB_GAP_WORDS = {
+  stripe: 'Stripe was not read',
+  stripe_partial: 'Stripe had more entries this month than the hub reads, and a missing page could move a total either way',
+  app_store: 'the App Store is not in it, because RevenueCat was not read',
+  app_store_partial: 'the App Store is not in it, because RevenueCat answered for only some Pro accounts',
+  expenses: 'the expense list could not be read',
+};
+const hubGaps = (list) => (Array.isArray(list) ? list : []);
+const hubNeeds = (gaps) => `Needs ${[...new Set(gaps.map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ')}`;
+function hubGapSentence(gaps) {
+  if (gaps.length === 0) return '';
+  const text = gaps.map((g) => HUB_GAP_WORDS[g] || g).join('; ');
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+}
+
+function HubSummary({ h, colors, loading, onRefresh }) {
+  const n = h.net || {};
+  const m = h.month || {};
+  const be = n.breakEven || {};
+  const stripe = (h.revenue && h.revenue.stripe) || {};
+  const navy = colors.navy;
+  const revenueMissing = hubGaps(n.revenueMissing);
+  const costsMissing = hubGaps(n.costsMissing);
+  const netMissing = hubGaps(n.netMissing);
+  const netBurnMissing = hubGaps(n.netBurnMissing);
+  const burnMissing = hubGaps(be.burnMissing);
+  const revenueWithheld = revenueMissing.includes('stripe_partial');
+  const appGap = revenueMissing.find((g) => g === 'app_store' || g === 'app_store_partial');
+  let revenueNote;
+  if (n.revenueThisMonthCents === null || n.revenueThisMonthCents === undefined) {
+    revenueNote = revenueWithheld
+      ? 'Stripe had more balance entries this month than the hub reads. A missing page could move the total either way, so it is withheld rather than shown short.'
+      : stripe.status === 'not_connected' ? 'Stripe is not connected, so there is no revenue figure to show.' : 'Stripe could not be read, so there is no revenue figure to show.';
+  } else if (appGap) {
+    revenueNote = `Stripe, after refunds, disputes and fees. ${hubGapSentence([appGap])}`;
+  } else {
+    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%.`;
+  }
+  const net = n.netThisMonthCents;
+  const netBurn = n.netBurnCents;
+  // A figure that is null is waiting for a source; the App Store alone never
+  // empties the net, which carries Stripe and says so.
+  const netNeeds = hubNeeds(netMissing.filter((g) => g !== 'app_store' && g !== 'app_store_partial'));
+  const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
+  const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe' ? 'the price Stripe charges' : 'the price the code states, because Stripe was not read'}` : 'no price');
+  const payingWords = (count, missing) => (Number.isFinite(count)
+    ? hubCount(count)
+    : `not known, waiting on ${[...new Set(hubGaps(missing).map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ') || 'a read'}`);
+  const cachedAge = stripe.cached && Number.isFinite(stripe.cachedAgeSeconds) ? stripe.cachedAgeSeconds : null;
+  return (
+    <div style={hubStyle.card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>{m.label || 'This month'}</h3>
+          <p style={hubStyle.sub}>Day {m.dayOfMonth} of {m.daysInMonth}, New York time. Each figure says where it came from.</p>
+        </div>
+        <button className="hit44" type="button" disabled={loading} onClick={onRefresh} style={{ ...hubStyle.textButton, cursor: loading ? 'default' : 'pointer', flexShrink: 0 }}>
+          {loading ? 'Reading' : 'Refresh'}
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '10px' }}>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ ...hubStyle.kicker, margin: 0 }}>Revenue this month</p>
+          <p style={{ ...hubStyle.big, color: navy }}>{hubMoney(n.revenueThisMonthCents) || (revenueWithheld ? 'Withheld' : 'Not read')}</p>
+          <p style={hubStyle.note}>{revenueNote}</p>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ ...hubStyle.kicker, margin: 0 }}>Costs this month</p>
+          <p style={{ ...hubStyle.big, color: navy }}>{hubMoney(n.costsThisMonthCents) || 'Not read'}</p>
+          <p style={hubStyle.note}>
+            {costsMissing.length > 0
+              ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
+              : 'Monthly bills in full, yearly bills at a twelfth, and one-time charges dated this month.'}
+          </p>
+        </div>
+      </div>
+      <div style={{ marginTop: '10px' }}>
+        <HubRow
+          navy={navy}
+          label="Net this month"
+          value={Number.isFinite(net) ? hubMoney(net, { sign: true }) : netNeeds}
+          tone={Number.isFinite(net) ? (net < 0 ? 'bad' : 'good') : 'muted'}
+          note={`Revenue this month less costs this month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
+        />
+        <HubRow
+          navy={navy}
+          label="Burn a month"
+          value={hubMoney(n.burnCents) || 'Not read'}
+          note={costsMissing.length > 0
+            ? 'Not totalled, because the expense list could not be read.'
+            : 'Every recurring cost at its monthly rate. One-time charges are left out.'}
+        />
+        <HubRow
+          navy={navy}
+          label="Burn after recurring revenue"
+          value={Number.isFinite(netBurn) ? hubMoney(netBurn) : hubNeeds(netBurnMissing)}
+          tone={Number.isFinite(netBurn) && netBurn <= 0 ? 'good' : undefined}
+          note={Number.isFinite(netBurn)
+            ? (netBurn <= 0
+              ? 'Subscribers already pay for the monthly costs, after Stripe fees and Apple’s cut.'
+              : 'The burn less what subscribers pay each month, after Stripe fees and Apple’s cut.')
+            : `The burn less what subscribers pay each month. ${hubGapSentence(netBurnMissing)}`}
+        />
+        <HubRow
+          navy={navy}
+          label="Break-even, Flock Pro"
+          value={burnMissing.length > 0 ? 'Not read' : `${needed(be.proWeb)} web, ${needed(be.proAppStore)} App Store`}
+          note={`Subscribers needed to cover the burn on their own, at ${priceWords(be.proWeb)}. After Stripe fees on the web, after Apple's ${n.appleCommissionPct}% in the App Store.${burnMissing.length > 0 ? ` ${hubGapSentence(burnMissing)}` : ''} Paying now: ${payingWords(be.payingPro, be.payingProMissing)}.`}
+        />
+        <HubRow
+          navy={navy}
+          label="Break-even, Roost"
+          value={burnMissing.length > 0 ? 'Not read' : `${needed(be.roost)} venues`}
+          note={`At ${priceWords(be.roost)}, after Stripe fees. Paying now: ${payingWords(be.payingRoost, be.payingRoostMissing)}.`}
+        />
+      </div>
+      <p style={hubStyle.foot}>
+        Read at {hubTime(h.generatedAt)}. Stripe and RevenueCat answers are held for {Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60)} minutes{cachedAge !== null ? `, and this one is ${cachedAge} seconds old` : ''}.
+      </p>
+    </div>
+  );
+}
+
+function HubRevenue({ h, colors }) {
+  const r = h.revenue || {};
+  const s = r.stripe || {};
+  const rc = r.revenuecat || {};
+  const db = r.database || {};
+  const flags = r.flags || {};
+  const navy = colors.navy;
+  const onOff = (v) => (v ? 'on' : 'off');
+  const subs = s.subscriptions || null;
+  const bal = s.balance || null;
+  const inv = s.invoices || null;
+  const rcSubs = rc.subscribers || null;
+  const overview = rc.overview || null;
+  const stripeReady = s.status === 'ok';
+
+  const recurringRows = (summary, prefix) => (
+    <HubRow
+      navy={navy}
+      label={`${prefix} recurring revenue`}
+      value={`${hubMoney(summary.mrrCents)} a month`}
+      note={`${hubMoney(summary.mrrCents * 12)} a year as annual recurring revenue. ${hubMoney(summary.mrrNetCents)} a month after Stripe fees.`}
+    />
+  );
+
+  const metricValue = (mt) => {
+    if (!Number.isFinite(mt.value)) return 'No value';
+    if (mt.unit === '$') return `$${mt.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return mt.value.toLocaleString('en-US');
+  };
+  const periodWords = (p) => (p === 'P0D' || !p ? 'now' : p === 'P28D' ? 'the last 28 days' : p);
+
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Revenue</h3>
+      <p style={hubStyle.sub}>
+        flockcorp.com sells through Stripe; the iOS app sells through the App Store, which RevenueCat reads. Paywall {onOff(flags.paywallEnabled)}, web checkout {onOff(flags.proWebCheckoutEnabled)}, venue billing {onOff(flags.venueBillingEnabled)}.
+      </p>
+      {stripeReady && s.mode === 'test' && (
+        <p style={hubStyle.note}><span style={{ ...hubTag('warn'), marginLeft: 0, marginRight: '6px' }}>Test mode</span>The Stripe key is a test key, so every Stripe figure below is test money.</p>
+      )}
+
+      <p style={hubStyle.kicker}>Flock Pro on the web</p>
+      {!stripeReady && <HubNotice status={s.status} reason={s.reason} />}
+      {stripeReady && subs && subs.status !== 'ok' && <HubNotice status="error" reason={subs.reason} />}
+      {stripeReady && subs && subs.status === 'ok' && (
+        <>
+          {hubPlanRows(subs.pro, 'Web', navy)}
+          <HubRow navy={navy} label="On a free code" value={hubCount(subs.pro.freeViaCode)} note="Active at 100% off, so counted as subscribers and not as revenue." />
+          {subs.pro.pastDue > 0 && <HubRow navy={navy} tone="warn" label="Past due" value={hubCount(subs.pro.pastDue)} note="A renewal failed and Stripe is retrying. Still counted as active." />}
+          {subs.pro.endingAtPeriodEnd > 0 && <HubRow navy={navy} label="Set to end" value={hubCount(subs.pro.endingAtPeriodEnd)} note="Cancelled, running to the end of the paid period." />}
+          {subs.pro.notPriced > 0 && <HubRow navy={navy} tone="warn" label="Not priced" value={hubCount(subs.pro.notPriced)} note="A discount or price this read could not work out, so these are left out of the recurring revenue." />}
+          {recurringRows(subs.pro, 'Web')}
+          {subs.truncated && <p style={hubStyle.foot}>Stripe had more subscriptions than this read pages through, so these counts are a floor.</p>}
+        </>
+      )}
+
+      <p style={hubStyle.kicker}>Flock Pro in the App Store</p>
+      {rc.status !== 'ok' && <HubNotice status={rc.status} reason={rc.reason} />}
+      {rc.status === 'ok' && rcSubs && rcSubs.status !== 'ok' && <HubNotice status="error" reason={rcSubs.reason} />}
+      {rc.status === 'ok' && rcSubs && rcSubs.status === 'ok' && (() => {
+        const stores = rcSubs.stores || {};
+        const app = stores.app_store || { live: 0, trialing: 0, mrrCents: 0, monthChargedCents: 0, unpriced: 0, byPlan: { monthly: { live: 0, trialing: 0 }, yearly: { live: 0, trialing: 0 } } };
+        return (
+          <>
+            {hubPlanRows(app, 'App Store', navy)}
+            <HubRow navy={navy} label="App Store recurring revenue" value={`${hubMoney(app.mrrCents)} a month`} note={`Before Apple's cut. ${app.unpriced > 0 ? `${hubPlural(app.unpriced, 'subscription carries', 'subscriptions carry')} no price in RevenueCat and ${app.unpriced === 1 ? 'is' : 'are'} left out.` : ''}`} />
+            <HubRow navy={navy} label="App Store charged this month" value={hubMoney(app.monthChargedCents)} note="Latest purchase or renewal dated this month, before Apple's cut." />
+            {Object.keys(stores).filter((k) => k !== 'app_store' && k !== 'stripe').map((k) => (
+              <HubRow key={`store-${k}`} navy={navy} label={HUB_STORE_LABEL[k] || k} value={hubCount(stores[k].live)} note={k === 'promotional' ? 'Granted by hand in RevenueCat. Nobody pays for these.' : null} />
+            ))}
+            {rcSubs.sandbox > 0 && <HubRow navy={navy} label="Sandbox" value={hubCount(rcSubs.sandbox)} note="Test purchases by allowed accounts. No money moves." />}
+            {rcSubs.premiumWithNothingLive > 0 && (
+              <HubRow navy={navy} tone="warn" label="Pro with nothing live" value={hubCount(rcSubs.premiumWithNothingLive)} note="Pro in the database, and RevenueCat shows no live subscription for them. The next webhook or sync should switch them off." />
+            )}
+            <p style={hubStyle.foot}>
+              Read from each Pro account's own record in RevenueCat: {hubCount(rcSubs.checked)} of {hubCount(db.proAccountsCheckedWithRevenueCat)} checked{rcSubs.failed > 0 ? `, ${hubCount(rcSubs.failed)} could not be read` : ''}.
+              {Number.isFinite(db.proAccounts) && db.proAccounts > db.proAccountsCheckedWithRevenueCat ? ` Only the first ${hubCount(db.proAccountsCheckedWithRevenueCat)} of ${hubCount(db.proAccounts)} Pro accounts are checked.` : ''}
+              {rcSubs.complete === false ? ' These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it.' : ''}
+            </p>
+          </>
+        );
+      })()}
+
+      <p style={hubStyle.kicker}>RevenueCat, every store</p>
+      {rc.status !== 'ok' && <HubNotice status={rc.status} reason={rc.reason} />}
+      {rc.status === 'ok' && overview && overview.status !== 'ok' && <HubNotice status={overview.status} reason={overview.reason} />}
+      {rc.status === 'ok' && overview && overview.status === 'ok' && (
+        <>
+          {(overview.metrics || []).map((mt) => (
+            <HubRow key={`rc-${mt.id}`} navy={navy} label={mt.name} value={metricValue(mt)} note={`RevenueCat's own figure, ${periodWords(mt.period)}.`} />
+          ))}
+          {Number.isFinite(overview.monthRevenueUsd) && (
+            <HubRow navy={navy} label="Revenue this month, every store" value={`$${overview.monthRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} note="RevenueCat's figure before store fees. It includes web sales, so it is a cross-check and is not added to anything." />
+          )}
+        </>
+      )}
+      <HubRow
+        navy={navy}
+        label="Pro accounts in Flock"
+        value={Number.isFinite(db.proAccounts) ? hubCount(db.proAccounts) : 'Not read'}
+        note={`users.is_premium, which only RevenueCat writes.${Number.isFinite(db.proAccountsWithWebSubscription) ? ` ${hubCount(db.proAccountsWithWebSubscription)} of them hold a web subscription.` : ''}`}
+      />
+
+      <p style={hubStyle.kicker}>Roost</p>
+      {!stripeReady && <HubNotice status={s.status} reason={s.reason} />}
+      {stripeReady && subs && subs.status === 'ok' && (
+        <>
+          {!flags.venueBillingEnabled && <p style={{ ...hubStyle.note, margin: '0 0 4px' }}>Venue billing is off (VENUE_BILLING_ENABLED), so no venue can buy Roost yet and a zero here is the expected reading.</p>}
+          {hubPlanRows(subs.roost, 'Roost', navy)}
+          {subs.roost.freeViaCode > 0 && <HubRow navy={navy} label="On a free code" value={hubCount(subs.roost.freeViaCode)} />}
+          {subs.roost.pastDue > 0 && <HubRow navy={navy} tone="warn" label="Past due" value={hubCount(subs.roost.pastDue)} />}
+          {recurringRows(subs.roost, 'Roost')}
+        </>
+      )}
+      <HubRow navy={navy} label="Paying venues in Flock" value={Number.isFinite(db.payingVenues) ? hubCount(db.payingVenues) : 'Not read'} note="venue_subscriptions granted as paid and still running." />
+
+      <p style={hubStyle.kicker}>Collected this month, whole Stripe account</p>
+      {!stripeReady && <HubNotice status={s.status} reason={s.reason} />}
+      {stripeReady && bal && bal.status !== 'ok' && <HubNotice status="error" reason={bal.reason} />}
+      {stripeReady && bal && bal.status === 'ok' && (
+        <>
+          <HubRow navy={navy} label="Charges" value={hubMoney(bal.grossCents)} note={`${hubPlural(bal.charges, 'charge', 'charges')}.`} />
+          <HubRow navy={navy} label="Refunds" value={hubMoney(bal.refundsCents)} />
+          <HubRow navy={navy} label="Disputes" value={hubMoney(bal.disputesCents)} tone={bal.disputesCents < 0 ? 'bad' : undefined} />
+          <HubRow navy={navy} label="Stripe fees" value={hubMoney(-bal.feesCents)} note="Card fees, dispute fees, and Billing or Tax fees Stripe charges on their own." />
+          {bal.otherCents !== 0 && (
+            <HubRow navy={navy} label="Other balance moves" value={hubMoney(bal.otherCents)} note={`Stripe reported: ${(bal.otherCategories || []).map((c) => `${c.category} (${c.count})`).join(', ')}.`} />
+          )}
+          <HubRow navy={navy} label="Net" value={hubMoney(bal.netCents)} tone={bal.netCents < 0 ? 'bad' : undefined} note="Payouts to the bank are movement, not revenue, and are left out." />
+          {bal.truncated && <p style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>Stripe had more balance entries this month than this read pages through, so these figures are incomplete, and with refunds and disputes in them they could be off in either direction. The revenue at the top is withheld for the same reason.</p>}
+          {bal.nonUsd > 0 && <p style={hubStyle.foot}>{hubPlural(bal.nonUsd, 'entry was', 'entries were')} not in US dollars and {bal.nonUsd === 1 ? 'is' : 'are'} not added.</p>}
+        </>
+      )}
+      {stripeReady && inv && inv.status === 'ok' && (
+        <>
+          <HubRow navy={navy} label="Paid invoices, Flock Pro" value={hubMoney(inv.byProduct.pro.paidCents)} note={`${hubPlural(inv.byProduct.pro.invoices, 'invoice', 'invoices')}${inv.byProduct.pro.zeroInvoices > 0 ? `, ${hubCount(inv.byProduct.pro.zeroInvoices)} of them at $0 through a code` : ''}.`} />
+          <HubRow navy={navy} label="Paid invoices, Roost" value={hubMoney(inv.byProduct.roost.paidCents)} note={`${hubPlural(inv.byProduct.roost.invoices, 'invoice', 'invoices')}.`} />
+          {inv.byProduct.other.invoices > 0 && <HubRow navy={navy} label="Paid invoices, other" value={hubMoney(inv.byProduct.other.paidCents)} note="Invoices that name neither product, such as one made by hand in Stripe." />}
+          <p style={hubStyle.foot}>
+            Paid this month, from invoices created {Number.isFinite(inv.lookbackDays) ? `up to ${hubCount(inv.lookbackDays)} days before the month began` : 'shortly before the month began'}: Stripe&apos;s list filters on the day an invoice was made, not the day it was paid, and a failed renewal is retried for at most two months. An older invoice marked paid by hand this month would be missed.
+            {inv.truncated ? ' There were more paid invoices than this read pages through, so these sums are a floor.' : ''}
+          </p>
+        </>
+      )}
+      {stripeReady && s.disputes && s.disputes.status === 'ok' && (s.disputes.open > 0 || s.disputes.openOtherCurrency > 0 || s.disputes.truncated) && (
+        <HubRow
+          navy={navy}
+          tone={s.disputes.open > 0 || s.disputes.openOtherCurrency > 0 ? 'bad' : undefined}
+          label="Open disputes"
+          value={hubCount(s.disputes.open + (s.disputes.openOtherCurrency || 0))}
+          note={`${hubMoney(s.disputes.openAmountCents)} at stake in dollars.${s.disputes.openOtherCurrency > 0 ? ` ${hubPlural(s.disputes.openOtherCurrency, 'more is', 'more are')} in another currency and not added.` : ''}${s.disputes.truncated ? ' There were more disputes than this read pages through, so there may be more.' : ''} Answer them in the Stripe dashboard before the deadline.`}
+        />
+      )}
+
+      <p style={hubStyle.kicker}>Promotion codes</p>
+      {!stripeReady && <HubNotice status={s.status} reason={s.reason} />}
+      {stripeReady && s.promotionCodes && s.promotionCodes.status !== 'ok' && <HubNotice status="error" reason={s.promotionCodes.reason} />}
+      {stripeReady && s.promotionCodes && s.promotionCodes.status === 'ok' && (
+        (s.promotionCodes.codes || []).length === 0
+          ? <p style={hubStyle.note}>No promotion codes exist in Stripe.</p>
+          : s.promotionCodes.codes.map((pc) => {
+            const c = pc.coupon;
+            const off = c ? (Number.isFinite(c.percentOff) ? `${c.percentOff}% off` : Number.isFinite(c.amountOffCents) ? `${hubMoney(c.amountOffCents)} off` : 'a discount') : 'a discount';
+            const how = c && c.duration ? (c.duration === 'repeating' && c.durationInMonths ? `for ${c.durationInMonths} months` : c.duration === 'forever' ? 'for as long as they subscribe' : 'on the first payment') : '';
+            return (
+              <HubRow
+                key={`code-${pc.code}`}
+                navy={navy}
+                label={pc.code}
+                tag={pc.active ? null : { tone: 'muted', text: 'Inactive' }}
+                value={`${hubCount(pc.timesRedeemed) || '0'} used`}
+                note={`${off} ${how}.${Number.isFinite(pc.maxRedemptions) ? ` Limit ${hubCount(pc.maxRedemptions)}.` : ''}${pc.expiresAt ? ` Expires ${new Date(pc.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.` : ''}`}
+              />
+            );
+          })
+      )}
+      {stripeReady && <p style={hubStyle.foot}>Stripe read at {hubTime(s.asOf)}{s.mode === 'live' ? ', live mode' : ''}.</p>}
+    </div>
+  );
+}
+
+function HubCosts({ h, colors }) {
+  const c = h.costs || {};
+  const navy = colors.navy;
+  const grid = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', columnGap: '12px', alignItems: 'baseline' };
+  const head = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'right', paddingBottom: '4px' };
+  const cell = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', padding: '5px 0', borderTop: '1px solid var(--border-light)', minWidth: 0, overflowWrap: 'anywhere' };
+  const num = { ...cell, textAlign: 'right', fontWeight: '600', color: navy, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
+  const totals = c.totals || {};
+  const table = (rows, keyOf, labelOf) => (
+    <div style={grid}>
+      <span />
+      <span style={head}>This month</span>
+      <span style={head}>A month</span>
+      {rows.map((row) => (
+        <React.Fragment key={keyOf(row)}>
+          <span style={cell}>{labelOf(row)}</span>
+          <span style={num}>{hubMoney(row.thisMonthCents)}</span>
+          <span style={num}>{hubMoney(row.perMonthCents)}</span>
+        </React.Fragment>
+      ))}
+      <span style={{ ...cell, fontWeight: '700', color: navy, borderTop: '1px solid var(--border-default)' }}>Total</span>
+      <span style={{ ...num, borderTop: '1px solid var(--border-default)' }}>{hubMoney(totals.thisMonthCents)}</span>
+      <span style={{ ...num, borderTop: '1px solid var(--border-default)' }}>{hubMoney(totals.perMonthCents)}</span>
+    </div>
+  );
+  const upcoming = c.upcoming || [];
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Costs</h3>
+      <p style={hubStyle.sub}>
+        The infrastructure bills in backend/services/costModel.js, the reconciled Google invoice, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
+      </p>
+      {c.status === 'error' && <HubNotice status="error" reason={c.reason} />}
+      <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>By kind</p>
+      {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
+      <p style={hubStyle.kicker}>By category</p>
+      {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
+
+      <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 60} days</p>
+      {upcoming.length === 0 ? (
+        <p style={hubStyle.note}>None dated. A bill on the expense list shows here once it has a renewal or last-charge date; the code's lines carry no dates.</p>
+      ) : upcoming.map((u) => (
+        <HubRow
+          key={`renew-${u.expenseId}-${u.on}`}
+          navy={navy}
+          label={`${hubDay(u.on)}, ${u.label}`}
+          value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
+          note={u.estimated ? 'Worked out from the last charge date.' : null}
+        />
+      ))}
+
+      {(c.replaced || []).length > 0 && (
+        <p style={hubStyle.foot}>Counted from the expense list instead of the code: {c.replaced.map((x) => x.label).join(', ')}.</p>
+      )}
+      {(c.possibleDoubles || []).map((d) => (
+        <p key={`dbl-${d.codeLineId}-${d.expenseId}`} style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>
+          Possibly counted twice: {d.expenseLabel} on the expense list and {d.codeLabel} in the code. Edit the row and choose the code line under Counts instead of, and it is counted once.
+        </p>
+      ))}
+      {(c.nonUsd || []).length > 0 && (
+        <p style={hubStyle.foot}>Not added, because nothing here converts currencies: {c.nonUsd.map((x) => `${x.label} (${(x.amountCents / 100).toFixed(2)} ${x.currency}${x.replacesLine ? ', and the code line it names still counts' : ''})`).join(', ')}.</p>
+      )}
+      {c.undatedCodeYearly > 0 && (
+        <p style={hubStyle.foot}>{hubPlural(c.undatedCodeYearly, 'yearly bill in the code has', 'yearly bills in the code have')} no charge date, so {c.undatedCodeYearly === 1 ? 'it counts' : 'they count'} at a twelfth every month. Add {c.undatedCodeYearly === 1 ? 'it' : 'them'} to the expense list with a renewal date to see the renewal coming.</p>
+      )}
+      {c.googleMeteredThisMonth && Number.isFinite(c.googleMeteredThisMonth.photosBought) && (
+        <p style={hubStyle.foot}>
+          Google photos bought this month: {hubCount(c.googleMeteredThisMonth.photosBought)}{Number.isFinite(c.googleMeteredThisMonth.photosUsd) ? `, ${hubMoney(Math.round(c.googleMeteredThisMonth.photosUsd * 100))}` : ''}, from places_photo_spend. That spend arrives on the Google Cloud invoice above and is not added twice.
+        </p>
+      )}
+      {c.reconciledReadError && <p style={hubStyle.foot}>{c.reconciledReadError}</p>}
+    </div>
+  );
+}
+
+const HUB_EMPTY_EXPENSE = {
+  vendor: '', product: '', category: '', kind: 'tooling', amount: '', currency: 'USD', cadence: 'monthly',
+  lastChargedOn: '', renewsOn: '', replacesLine: '', verified: false, active: true, note: '',
+};
+
+function hubFormFromExpense(x) {
+  return {
+    vendor: x.vendor || '',
+    product: x.product || '',
+    category: x.category || '',
+    kind: x.kind || 'other',
+    amount: Number.isFinite(x.amountCents) ? (x.amountCents / 100).toFixed(2) : '',
+    currency: x.currency || 'USD',
+    cadence: x.cadence || 'monthly',
+    lastChargedOn: x.lastChargedOn || '',
+    renewsOn: x.renewsOn || '',
+    replacesLine: x.replacesLine || '',
+    verified: !!x.verified,
+    active: x.active !== false,
+    note: x.note || '',
+  };
+}
+
+// What the expense routes take. Blank optional fields go as null, so the
+// server stores nothing rather than an empty string.
+function hubBodyFromForm(f) {
+  return {
+    vendor: f.vendor,
+    product: f.product.trim() ? f.product : null,
+    category: f.category.trim() ? f.category : null,
+    kind: f.kind,
+    amount: String(f.amount).trim(),
+    currency: f.currency.trim() ? f.currency.trim().toUpperCase() : null,
+    cadence: f.cadence,
+    lastChargedOn: f.lastChargedOn || null,
+    renewsOn: f.renewsOn || null,
+    replacesLine: f.replacesLine || null,
+    verified: !!f.verified,
+    active: !!f.active,
+    note: f.note.trim() ? f.note : null,
+  };
+}
+
+function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, onCancel }) {
+  const uid = React.useId();
+  const [form, setForm] = React.useState(() => (expense ? hubFormFromExpense(expense) : { ...HUB_EMPTY_EXPENSE }));
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const set = (key) => (e) => {
+    const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+    setForm((f) => ({ ...f, [key]: value }));
+  };
+  const save = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      if (expense) await updateAdminExpense(expense.id, hubBodyFromForm(form));
+      else await createAdminExpense(hubBodyFromForm(form));
+      onDone();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not save');
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await deleteAdminExpense(expense.id);
+      onDone();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not delete');
+      setBusy(false);
+    }
+  };
+  const I = hubStyle.input;
+  // Label and control side by side rather than nested, so a select's label is
+  // its own words and not its words plus every option's.
+  const field = (key, label, control, wide = false) => (
+    <div key={key} style={{ ...hubStyle.fieldLabel, ...(wide ? { flexBasis: '100%' } : null) }}>
+      <label htmlFor={`${uid}-${key}`}>{label}</label>
+      {control}
+    </div>
+  );
+  return (
+    <div style={{ padding: '10px 0', borderTop: '1px solid var(--border-light)' }}>
+      <p style={{ ...hubStyle.kicker, margin: '0 0 6px' }}>{expense ? `Edit ${expense.vendor}` : 'Add a bill'}</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+        {field('vendor', 'Vendor', <input id={`${uid}-vendor`} style={I} value={form.vendor} onChange={set('vendor')} maxLength={80} />)}
+        {field('product', 'Product', <input id={`${uid}-product`} style={I} value={form.product} onChange={set('product')} maxLength={120} />)}
+        {field('category', 'Category', <input id={`${uid}-category`} style={I} value={form.category} onChange={set('category')} maxLength={60} placeholder="Hosting, Legal" />)}
+        {field('kind', 'Kind', (
+          <select id={`${uid}-kind`} style={I} value={form.kind} onChange={set('kind')}>
+            {kinds.map((k) => <option key={k} value={k}>{HUB_KIND_LABEL[k] || k}</option>)}
+          </select>
+        ))}
+        {field('amount', 'Amount, dollars', <input id={`${uid}-amount`} style={I} type="number" min="0" step="0.01" inputMode="decimal" value={form.amount} onChange={set('amount')} />)}
+        {field('currency', 'Currency', <input id={`${uid}-currency`} style={I} value={form.currency} onChange={set('currency')} maxLength={3} />)}
+        {field('cadence', 'How often', (
+          <select id={`${uid}-cadence`} style={I} value={form.cadence} onChange={set('cadence')}>
+            {cadences.map((c) => <option key={c} value={c}>{c === 'one_time' ? 'once' : c === 'usage' ? 'usage, monthly' : c}</option>)}
+          </select>
+        ))}
+        {field('lastChargedOn', 'Last charged', <input id={`${uid}-lastChargedOn`} style={I} type="date" max={localToday()} value={form.lastChargedOn} onChange={set('lastChargedOn')} />)}
+        {field('renewsOn', 'Renews', <input id={`${uid}-renewsOn`} style={I} type="date" value={form.renewsOn} onChange={set('renewsOn')} />)}
+        {field('replacesLine', 'Counts instead of', (
+          <select id={`${uid}-replacesLine`} style={I} value={form.replacesLine} onChange={set('replacesLine')}>
+            <option value="">No code line</option>
+            {codeLines.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+          </select>
+        ))}
+        {field('note', 'Note', <input id={`${uid}-note`} style={I} value={form.note} onChange={set('note')} maxLength={500} />, true)}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', marginTop: '8px' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={form.verified} onChange={set('verified')} />Seen on an invoice
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={form.active} onChange={set('active')} />Still being charged
+        </label>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
+        <button className="hit44" type="button" disabled={busy || !form.vendor.trim() || String(form.amount).trim() === ''} onClick={save}
+          style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+          {busy ? 'Saving' : 'Save'}
+        </button>
+        <button className="hit44" type="button" disabled={busy} onClick={onCancel} style={hubStyle.textButton}>Cancel</button>
+        {expense && !confirmDelete && (
+          <button className="hit44" type="button" disabled={busy} onClick={() => setConfirmDelete(true)} style={{ ...hubStyle.textButton, marginLeft: 'auto' }}>Delete</button>
+        )}
+        {expense && confirmDelete && (
+          <button className="hit44" type="button" disabled={busy} onClick={remove} style={{ ...hubStyle.textButton, marginLeft: 'auto', color: 'var(--accent-red-text)' }}>Delete for good</button>
+        )}
+      </div>
+      {confirmDelete && <p style={hubStyle.note}>For a bill entered by mistake. A bill that stopped is better marked as no longer charged, which keeps it on the list.</p>}
+      {err && <p style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{err}</p>}
+    </div>
+  );
+}
+
+function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const toggle = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await updateAdminExpense(x.id, { ...hubBodyFromForm(hubFormFromExpense(x)), active: !x.active });
+      onChanged();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const label = x.product ? `${x.vendor}, ${x.product}` : x.vendor;
+  const line = x.replacesLine ? (codeLines.find((l) => l.id === x.replacesLine) || {}).label || x.replacesLine : null;
+  const amount = x.currency === 'USD' ? hubMoney(x.amountCents) : `${(x.amountCents / 100).toFixed(2)} ${x.currency}`;
+  const facts = [
+    HUB_KIND_LABEL[x.kind] || x.kind,
+    x.category,
+    x.renewsOn ? `renews ${hubDay(x.renewsOn)}` : null,
+    x.lastChargedOn ? `last charged ${hubDay(x.lastChargedOn)}` : null,
+    line ? `counts instead of ${line} in the code` : null,
+  ].filter(Boolean).join(', ');
+  return (
+    <div style={{ padding: '8px 0', borderTop: '1px solid var(--border-light)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: x.active ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
+          {label}
+          {!x.verified && <span style={hubTag('warn')}>Unverified</span>}
+          {!x.active && <span style={hubTag('muted')}>Stopped</span>}
+        </span>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: x.active ? colors.navy : 'var(--text-tertiary)', whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+          {amount} {HUB_CADENCE_LABEL[x.cadence] || x.cadence}
+        </span>
+      </div>
+      <p style={hubStyle.note}>{facts.charAt(0).toUpperCase() + facts.slice(1)}.{x.note ? ` ${x.note}` : ''}</p>
+      <div style={{ display: 'flex', gap: '16px' }}>
+        <button className="hit44" type="button" onClick={onEdit} style={hubStyle.textButton}>Edit</button>
+        <button className="hit44" type="button" disabled={busy} onClick={toggle} style={hubStyle.textButton}>
+          {busy ? 'Saving' : x.active ? 'Mark as stopped' : 'Mark as charged again'}
+        </button>
+      </div>
+      {err && <p style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{err}</p>}
+    </div>
+  );
+}
+
+const HUB_IMPORT_EXAMPLE = '[\n  { "vendor": "Example Host", "product": "Pro plan", "kind": "infrastructure",\n    "cadence": "monthly", "amount": 20, "renewsOn": "2026-10-16" }\n]';
+
+function HubExpenseImport({ colors, onImported }) {
+  const [open, setOpen] = React.useState(false);
+  const [text, setText] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState(null);
+  const run = async () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      setResult({ ok: false, text: 'That is not valid JSON. Paste a list in square brackets, one object per bill.' });
+      return;
+    }
+    const list = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.expenses) ? parsed.expenses : null);
+    if (!list) {
+      setResult({ ok: false, text: 'Paste a list: square brackets around one object per bill.' });
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await importAdminExpenses(list);
+      setResult({ ok: true, text: `${hubPlural(r.inserted, 'bill', 'bills')} added and ${hubCount(r.updated)} updated.` });
+      setText('');
+      onImported();
+    } catch (e) {
+      const errors = e && e.data && Array.isArray(e.data.errors) ? e.data.errors : [];
+      setResult({ ok: false, text: (e && e.message) || 'The import failed, and nothing was saved.', errors });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--border-default)' }}>
+      <button className="hit44" type="button" onClick={() => setOpen((o) => !o)} style={hubStyle.textButton} aria-expanded={open}>
+        {open ? 'Close the import' : 'Import a list'}
+      </button>
+      {open && (
+        <div style={{ marginTop: '6px' }}>
+          <p style={hubStyle.note}>
+            One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, verified, note, and replacesLine to count a bill instead of a code line. A bill already on the list with the same vendor, product and cadence is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
+          </p>
+          <pre style={{ ...hubStyle.note, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0' }}>{HUB_IMPORT_EXAMPLE}</pre>
+          <textarea
+            aria-label="Expense list to import"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={6}
+            style={{ ...hubStyle.input, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
+            <button className="hit44" type="button" disabled={busy || !text.trim()} onClick={run}
+              style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+              {busy ? 'Importing' : 'Import'}
+            </button>
+          </div>
+          {result && (
+            <div role="status" style={{ marginTop: '6px' }}>
+              <p style={{ ...hubStyle.note, color: result.ok ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{result.text}</p>
+              {(result.errors || []).slice(1).map((line) => <p key={line} style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{line}</p>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HubExpenses({ h, colors, onChanged }) {
+  const e = h.expenses || {};
+  const rows = Array.isArray(e.rows) ? e.rows : [];
+  const kinds = Array.isArray(e.kinds) ? e.kinds : Object.keys(HUB_KIND_LABEL);
+  const cadences = Array.isArray(e.cadences) ? e.cadences : Object.keys(HUB_CADENCE_LABEL);
+  const codeLines = Array.isArray(e.codeLines) ? e.codeLines : [];
+  const [editing, setEditing] = React.useState(null);
+  const done = () => { setEditing(null); onChanged(); };
+  return (
+    <div style={hubStyle.card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Expense list</h3>
+          <p style={hubStyle.sub}>Bills the code does not carry, from your own invoices: the tools the app is built with, company and legal costs, anything else. Stored in the database, never in the published source.</p>
+        </div>
+        {editing !== 'new' && (
+          <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Add a bill</button>
+        )}
+      </div>
+      {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled invoice only." />}
+      {editing === 'new' && (
+        <HubExpenseForm kinds={kinds} cadences={cadences} codeLines={codeLines} colors={colors} onDone={done} onCancel={() => setEditing(null)} />
+      )}
+      {e.status === 'ok' && rows.length === 0 && editing !== 'new' && (
+        <p style={hubStyle.note}>Nothing on the list yet. Add a bill, or import the whole list at once.</p>
+      )}
+      {rows.map((x) => (editing === x.id ? (
+        <HubExpenseForm key={`form-${x.id}`} expense={x} kinds={kinds} cadences={cadences} codeLines={codeLines} colors={colors} onDone={done} onCancel={() => setEditing(null)} />
+      ) : (
+        <HubExpenseRow key={`row-${x.id}`} x={x} codeLines={codeLines} colors={colors} onEdit={() => setEditing(x.id)} onChanged={onChanged} />
+      )))}
+      <HubExpenseImport colors={colors} onImported={onChanged} />
+    </div>
+  );
+}
+
+const HUB_VERDICT = {
+  match: { text: 'Matches', tone: 'good' },
+  mismatch: { text: 'Disagrees', tone: 'bad' },
+  missing: { text: 'Missing', tone: 'bad' },
+  unset: { text: 'Not set', tone: 'warn' },
+  unsold: { text: 'Not sold', tone: 'muted' },
+  unchecked: { text: 'Not checked', tone: 'muted' },
+};
+const HUB_VERDICT_ORDER = ['mismatch', 'missing', 'unset', 'unchecked', 'unsold', 'match'];
+
+function HubPrices({ h, colors }) {
+  const p = h.pricing || {};
+  const s = (h.revenue && h.revenue.stripe) || {};
+  const rc = (h.revenue && h.revenue.revenuecat) || {};
+  const navy = colors.navy;
+  const stated = [...(p.stated || [])].sort((a, b) => HUB_VERDICT_ORDER.indexOf(a.verdict) - HUB_VERDICT_ORDER.indexOf(b.verdict));
+  const live = s.status === 'ok' && s.prices && s.prices.status === 'ok' ? s.prices.live || [] : null;
+  const count = Number.isFinite(p.mismatches) ? p.mismatches : 0;
+  const every = (iv) => (iv === 'year' ? 'a year' : iv === 'month' ? 'a month' : iv ? `every ${iv}` : 'once');
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Prices</h3>
+      <p style={hubStyle.sub}>What Stripe and the App Store charge, next to every price written down in the code and the decision documents.</p>
+      <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: count > 0 ? 'var(--accent-red-text)' : s.status === 'ok' ? 'var(--accent-green-text)' : 'var(--text-secondary)' }}>
+        {count > 0 ? `${hubPlural(count, 'disagreement', 'disagreements')} to fix` : s.status === 'ok' ? 'No disagreements found' : 'Not checked against Stripe'}
+      </p>
+      {s.status !== 'ok' && <HubNotice status={s.status} reason={s.reason} />}
+
+      <p style={hubStyle.kicker}>Written in the code</p>
+      {stated.map((x) => {
+        const v = HUB_VERDICT[x.verdict] || HUB_VERDICT.unchecked;
+        return (
+          <HubRow
+            key={x.id}
+            navy={navy}
+            label={`${x.productLabel}, ${HUB_PLAN_LABEL[x.plan] || x.plan}`}
+            tag={v}
+            value={hubMoney(x.statedCents)}
+            tone={v.tone === 'bad' ? 'bad' : undefined}
+            note={`${x.file}, ${x.what}. ${x.words}`}
+          />
+        );
+      })}
+      {(p.internal || []).map((i) => (
+        <p key={`int-${i.product}-${i.plan}`} style={{ ...hubStyle.foot, color: 'var(--accent-red-text)' }}>{i.words}</p>
+      ))}
+
+      <p style={hubStyle.kicker}>App Store</p>
+      {(p.appStore || []).map((a) => {
+        const v = HUB_VERDICT[a.verdict] || HUB_VERDICT.unchecked;
+        const seen = Number.isFinite(a.listCents) ? a.listCents : a.lastChargedCents;
+        return (
+          <HubRow key={a.productId} navy={navy} label={a.productId} tag={v} value={Number.isFinite(seen) ? hubMoney(seen) : 'Not read'} tone={v.tone === 'bad' ? 'bad' : undefined} note={a.words} />
+        );
+      })}
+
+      <p style={hubStyle.kicker}>RevenueCat offering</p>
+      {p.offering && p.offering.status === 'ok' ? (
+        (p.offering.findings || []).map((f) => (
+          <HubRow key={f.words} navy={navy} label={f.words} value={f.ok ? 'Right' : 'Wrong'} tone={f.ok ? 'good' : 'bad'} />
+        ))
+      ) : rc.status !== 'ok' ? (
+        <HubNotice status={rc.status} reason={rc.reason} />
+      ) : (
+        <HubNotice status={p.offering && p.offering.status === 'error' ? 'error' : 'refused'} reason={(p.offering && p.offering.reason) || 'The offering could not be read with this key.'} />
+      )}
+
+      <p style={hubStyle.kicker}>Live in Stripe</p>
+      {live === null && <HubNotice status={s.status === 'ok' ? 'error' : s.status} reason={s.status === 'ok' && s.prices ? s.prices.reason : s.reason} />}
+      {live && live.length === 0 && <p style={hubStyle.note}>Stripe has no active prices.</p>}
+      {live && live.map((pr) => (
+        <HubRow
+          key={pr.id}
+          navy={navy}
+          label={`${pr.productName || 'Unnamed product'}${pr.nickname ? `, ${pr.nickname}` : ''}`}
+          tag={pr.env ? null : { tone: 'warn', text: 'Unused' }}
+          value={`${pr.currency === 'USD' ? hubMoney(pr.unitAmountCents) : `${(pr.unitAmountCents / 100).toFixed(2)} ${pr.currency}`} ${every(pr.interval)}`}
+          note={pr.env ? `${pr.env} points here (${pr.id}).` : `${pr.id}. Active in Stripe, and no price variable points at it, so the app never sells it.`}
+        />
+      ))}
+      {p.paywallNote && <p style={hubStyle.foot}>{p.paywallNote}</p>}
+    </div>
+  );
+}
+
+function HubHealth({ h, colors }) {
+  const c = (h.health && h.health.collector) || {};
+  const navy = colors.navy;
+  const STATE = { fresh: { text: 'Landing', tone: 'good' }, late: { text: 'Late', tone: 'warn' }, stopped: { text: 'Stopped', tone: 'bad' } };
+  const st = STATE[c.state] || { text: 'Not read', tone: 'muted' };
+  const ago = (min) => (min < 60 ? hubPlural(min, 'minute', 'minutes') : min < 48 * 60 ? hubPlural(Math.round(min / 60), 'hour', 'hours') : hubPlural(Math.round(min / 1440), 'day', 'days'));
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Health</h3>
+      <p style={hubStyle.sub}>The paid data feed, read from the rows it writes rather than from the job.</p>
+      {c.status === 'error' ? (
+        <HubNotice status="error" reason={c.reason} />
+      ) : (
+        <HubRow
+          navy={navy}
+          label="Crowd data collector"
+          value={st.text}
+          tone={st.tone}
+          note={`${c.latestAt ? `Last row ${ago(c.minutesSinceLatest)} ago, at ${hubTime(c.latestAt)}.` : 'No live crowd row has landed yet.'} ${hubPlural(c.rows24h, 'row', 'rows')} across ${hubPlural(c.hours24h, 'hour', 'hours')} of the last day. It runs hourly, so ${Math.round(((c.lateAfterMinutes || 150) / 60) * 10) / 10} hours without a row reads as late. Last heartbeat alert: ${c.lastAlertOn ? hubDay(c.lastAlertOn) : 'none'}. From ml_training_data.`}
+        />
+      )}
+      <HubRow
+        navy={navy}
+        label="Backups"
+        value="Not recorded here"
+        tone="muted"
+        note="Nothing in this database records a backup or a restore point, so this panel has nothing to report. Railway's dashboard holds both."
+      />
+    </div>
+  );
+}
+
+function MoneyHub({ colors }) {
+  const [data, setData] = React.useState(hubMemo.data);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const load = React.useCallback(async (refresh = false) => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await getAdminMoneyHub({ refresh });
+      hubMemo.data = d;
+      setData(d);
+    } catch (e) {
+      // A failed read shows no numbers rather than the last ones under a live
+      // label, the same rule the Costs tab keeps.
+      hubMemo.data = null;
+      setData(null);
+      setError((e && e.message) || 'The money hub did not load.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  React.useEffect(() => { load(false); }, [load]);
+
+  if (!data) {
+    return (
+      <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }} role="status">
+        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>
+          {loading ? 'Reading Stripe, RevenueCat and the database' : error ? 'The money hub did not load' : 'Nothing read yet'}
+        </h3>
+        <p style={hubStyle.sub}>
+          {loading ? 'The first read asks both vendors and can take a few seconds.' : error ? `${error} Nothing is shown rather than a guess.` : 'The hub has not been read yet.'}
+        </p>
+        {!loading && (
+          <button className="hit44" type="button" onClick={() => load(false)}
+            style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+            {error ? 'Try again' : 'Read it'}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
+      <HubRevenue h={data} colors={colors} />
+      <HubCosts h={data} colors={colors} />
+      <HubExpenses h={data} colors={colors} onChanged={() => load(false)} />
+      <HubPrices h={data} colors={colors} />
+      <HubHealth h={data} colors={colors} />
+    </div>
+  );
+}
+
 export default function RevenueScreen({
   adminTab,
   avgSpend,
@@ -155,12 +1157,22 @@ export default function RevenueScreen({
     // Costs landed 2026-08-20 as the fourth. It carries creditCard, which is
     // the only glyph in the set that says "a bill arrived" rather than "a
     // number went up", and the label is the one word used for it.
+    //
+    // Overview replaced Revenue as the first tab on 2026-09-25. Revenue was a
+    // what-if simulator under a word that now belongs to real money, and the
+    // money hub (real revenue, real costs, prices, health) is what the owner
+    // opens the console for. The simulator moved under Projections, which is
+    // what it always was, so the bar keeps four tabs, four glyphs and four
+    // meanings. Overview takes dollar, the glyph Revenue carried.
     const adminTabs = [
-      { id: 'revenue', label: 'Revenue', icon: Icons.dollar },
+      { id: 'overview', label: 'Overview', icon: Icons.dollar },
       { id: 'costs', label: 'Costs', icon: Icons.creditCard },
       { id: 'projections', label: 'Projections', icon: Icons.trendingUp },
       { id: 'research', label: 'Research', icon: Icons.barChart }
     ];
+    // A tab id this screen does not know, including 'revenue' from before the
+    // rename, opens the hub rather than a blank body.
+    const activeTab = adminTabs.some((t) => t.id === adminTab) ? adminTab : 'overview';
 
     // Revenue simulator state lives at FlockAppInner level, next to adminTab
     // and for the same reason. See the note there.
@@ -278,9 +1290,9 @@ export default function RevenueScreen({
         {/* Tab Navigation */}
         <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 4px', gap: '4px' }}>
           {adminTabs.map(tab => (
-            <button className="hit44" key={tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, padding: '12px 4px', border: 'none', backgroundColor: adminTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
-              {tab.icon(adminTab === tab.id ? 'white' : colors.navy, 18)}
-              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: adminTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
+            <button className="hit44" key={tab.id} aria-pressed={activeTab === tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, minWidth: 0, padding: '12px 4px', border: 'none', backgroundColor: activeTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
+              {tab.icon(activeTab === tab.id ? 'white' : colors.navy, 18)}
+              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: activeTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -288,9 +1300,19 @@ export default function RevenueScreen({
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
-          {/* REVENUE TAB */}
-          {adminTab === 'revenue' && (<>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          {/* OVERVIEW TAB: the money hub, defined above this component. */}
+          {activeTab === 'overview' && <MoneyHub colors={colors} />}
+
+          {/* THE WHAT-IF SIMULATOR, at the top of the Projections tab. It was
+              the Revenue tab until 2026-09-25, when real revenue got a tab of
+              its own; it is arithmetic on typed inputs, which is what the
+              Projections tab is for. The inputs still live in FlockAppInner. */}
+          {activeTab === 'projections' && (<>
+          <div style={{ marginBottom: '8px' }}>
+            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>What-if simulator</h3>
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>Type a venue count and a price and read what they would add up to. Real subscribers and revenue are on the Overview tab.</p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
 
             {/* LEFT COLUMN - INPUTS */}
             <div>
@@ -392,7 +1414,7 @@ export default function RevenueScreen({
             <div>
               <h3 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.navy, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Projections</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px', lineHeight: '1.4' }}>
-                Arithmetic on the numbers you typed, not measurements. Flock has no venue partners and has never charged anyone.
+                Arithmetic on the numbers you typed, not measurements. The real numbers are on the Overview tab.
               </p>
 
               {/* Revenue Breakdown */}
@@ -479,9 +1501,9 @@ export default function RevenueScreen({
               <div style={{ ...cardStyle, backgroundColor: 'var(--bg-card-solid)', border: `1px solid ${colors.creamDark}` }}>
                 <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px' }}>The plan behind these numbers</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
-                  Two intended streams: a monthly <strong>venue subscription</strong>, which would recur, and a
-                  cut of <strong>group transactions</strong>, which would not. Neither is live. There is no
-                  billing code in the app and no venue has ever been charged, so every figure above is what the
+                  Two streams: a monthly <strong>venue subscription</strong> (Roost), which recurs, and a
+                  cut of <strong>group transactions</strong>, which would not. Roost billing is built and
+                  switched off, and no transaction fee exists in the product, so every figure above is what the
                   arithmetic would say if the inputs on the left were real.
                 </p>
               </div>
@@ -518,7 +1540,7 @@ export default function RevenueScreen({
               and the arithmetic belong next to the meters that feed them and
               a second copy in JSX is how the old hand-typed expense array
               went five vendors out of date. */}
-          {adminTab === 'costs' && (() => {
+          {activeTab === 'costs' && (() => {
             const d = costsData;
 
             // Money, or an honest word when there is no number. A null here
@@ -738,7 +1760,18 @@ export default function RevenueScreen({
             // Two totals a person actually wants: what leaves the account every
             // month regardless of use, and what the usage on top of it is
             // running at. They are added only where both are real.
-            const allInMonthly = Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null;
+            //
+            // THE EXPENSE LIST IS PART OF THE ALL-IN FIGURE (2026-09-25). No
+            // tooling bill is written into costModel.js any more; those bills,
+            // and the company's other costs, are rows in business_expenses, and
+            // a row can stand in for a code line. d.expenses carries the same
+            // arithmetic the Overview tab uses (moneyHub.js costsLedger), each
+            // bill counted once, so the two tabs cannot disagree. A list that
+            // could not be read falls back to the code figures and says so.
+            const ledger = d.expenses && d.expenses.status === 'ok' ? d.expenses : null;
+            const allInMonthly = ledger
+              ? ledger.burnMonthlyUsd
+              : (Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);
 
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -760,7 +1793,9 @@ export default function RevenueScreen({
                       <p style={kicker}>All in, monthly</p>
                       <p style={big}>{moneyOr(allInMonthly, 'Not measured', 0)}</p>
                       <p style={{ ...sub, margin: '3px 0 0' }}>
-                        {moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus {moneyOr(reconciledTotal, 'nothing', 0)} of metered vendor spend.
+                        {ledger
+                          ? `The code's fixed bills, the reconciled invoice, and ${ledger.activeRows} ${ledger.activeRows === 1 ? 'bill' : 'bills'} from the expense list, each counted once.`
+                          : `${moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus ${moneyOr(reconciledTotal, 'nothing', 0)} of metered vendor spend. ${d.expenses && d.expenses.readError ? d.expenses.readError : 'The expense list was not read.'}`}
                       </p>
                     </div>
                     <div>
@@ -790,17 +1825,18 @@ export default function RevenueScreen({
                     </div>
                   )}
                   {/* WHICH NUMBER IS THE COST OF SERVICE. The all-in figure
-                      above carries development tooling that no user causes,
-                      and costModel.js says so on each of those lines. Quoting
-                      it as what a venue costs to serve is the wrong number,
-                      so the two halves are named here and the break-even is
-                      computed from the cost model at render time rather than
-                      typed in, so it cannot drift when a bill changes. */}
+                      above carries the tools the app is built with, which no
+                      user causes. Those bills come from the expense list now
+                      (kind 'tooling'), not from costModel.js. Quoting the
+                      all-in figure as what a venue costs to serve is the wrong
+                      number, so the two halves are named here and the
+                      break-even is computed at render time rather than typed
+                      in, so it cannot drift when a bill changes. */}
                   {(() => {
-                    const infra = Number.isFinite(fixed.infrastructureMonthlyUsd)
-                      ? fixed.infrastructureMonthlyUsd + reconciledTotal
-                      : null;
-                    const tooling = Number.isFinite(fixed.toolingMonthlyUsd) ? fixed.toolingMonthlyUsd : null;
+                    const infra = ledger
+                      ? ledger.infrastructureMonthlyUsd
+                      : (Number.isFinite(fixed.infrastructureMonthlyUsd) ? fixed.infrastructureMonthlyUsd + reconciledTotal : null);
+                    const tooling = ledger ? ledger.toolingMonthlyUsd : null;
                     const price = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
                     const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.ceil(usd / price) : null);
                     const infraVenues = venuesFor(infra);
@@ -816,8 +1852,12 @@ export default function RevenueScreen({
                           </div>
                           <div>
                             <p style={kicker}>Development tooling</p>
-                            <p style={big}>{moneyOr(tooling, 'Not measured', 0)}</p>
-                            <p style={{ ...sub, margin: '3px 0 0' }}>Real bills that no user causes. In the all-in total, and not in the cost of service.</p>
+                            <p style={big}>{moneyOr(tooling, 'Not read', 0)}</p>
+                            <p style={{ ...sub, margin: '3px 0 0' }}>
+                              {ledger
+                                ? 'Real bills that no user causes, from the expense list on the Overview tab. In the all-in total, and not in the cost of service.'
+                                : 'The expense list, where tooling bills live, could not be read, so this is not shown rather than shown as zero.'}
+                            </p>
                           </div>
                         </div>
                         {price ? (
@@ -927,7 +1967,7 @@ export default function RevenueScreen({
                 <div style={card}>
                   <h3 style={h3}>Fixed, whether anyone uses it or not</h3>
                   <p style={sub}>
-                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes.
+                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes. Bills the code does not carry are on the expense list on the Overview tab.
                   </p>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
                     <div>
@@ -988,13 +2028,13 @@ export default function RevenueScreen({
 
                       <p style={{ ...kicker, marginTop: '10px' }}>Venue side</p>
                       <p style={{ ...sub, margin: '2px 0 8px' }}>
-                        Roost is the product, at {moneyOr(pl.venuePriceUsd, 'an unset price', 0)} a location a month. The $35 Premium rung was retired on 2026-08-20 and still exists in the app only because dropping its server-side gates is owed work. Tier enforcement is <strong>{onOff(pl.venueBillingEnforced)}</strong>{pl.venueBillingEnforced ? '' : ', so the counts below describe what is written on each profile, not what anyone is being charged for'}.
+                        Two plans: a free venue account, and Roost at {moneyOr(pl.venuePriceUsd, 'an unset price', 0)} a location a month, stored as tier pro. Tier enforcement is <strong>{onOff(pl.venueBillingEnforced)}</strong>{pl.venueBillingEnforced ? '' : ', so the counts below describe what is written on each profile, not what anyone is being charged for'}.
                       </p>
                       {vt ? (
                         <>
-                          {row('tier-pro', 'Pro (Roost)', `${n(vt.pro)} ${vt.pro === 1 ? 'venue' : 'venues'}`, 'The paid tier. Gates the routes listed below.')}
-                          {row('tier-premium', 'Premium', `${n(vt.premium)} ${vt.premium === 1 ? 'venue' : 'venues'}`, 'Retired rung. Nothing should be sold on it; a count here is history, not revenue.')}
-                          {row('tier-free', 'Free', `${n(vt.free)} ${vt.free === 1 ? 'venue' : 'venues'}`, 'Everything Premium used to hold now lives here.')}
+                          {row('tier-pro', 'Roost', `${n(vt.pro)} ${vt.pro === 1 ? 'venue' : 'venues'}`, 'The paid plan. Gates the routes listed below.')}
+                          {row('tier-premium', 'Roost, older value', `${n(vt.premium)} ${vt.premium === 1 ? 'venue' : 'venues'}`, 'Stored as premium, the word a retired middle plan left behind. The gates read it as Roost and nothing sells it.')}
+                          {row('tier-free', 'Free', `${n(vt.free)} ${vt.free === 1 ? 'venue' : 'venues'}`, 'The listing, reviews and replies, the live number, deals, events and the incoming-flocks feed.')}
                           {row('tier-total', 'Venue profiles', `${n(vt.total)}`, 'Every profile with any tier value.')}
                         </>
                       ) : (
@@ -1003,7 +2043,7 @@ export default function RevenueScreen({
                       {row('tier-paying', 'Paying venues', `${n(d.venues?.paying)}`, 'Active, trialing or past due subscriptions granted as paid. The only row here that is money.')}
                       {Array.isArray(pl.proGates) && pl.proGates.length > 0 && (
                         <p style={{ ...foot, marginTop: '8px' }}>
-                          Pro gates exactly these routes and nothing else: {pl.proGates.join(', ')}. Promoted placement and slow-night offers were cut and are not gated by anything, because they do not exist.
+                          Roost gates exactly these routes and nothing else: {pl.proGates.join(', ')}. Promoted placement and slow-night offers were cut and are not gated by anything, because they do not exist.
                         </p>
                       )}
 
@@ -1426,7 +2466,7 @@ export default function RevenueScreen({
                     'paying',
                     'Venues paying today',
                     Number.isFinite(d.venues?.paying) ? String(d.venues.paying) : 'Not measured',
-                    'Nobody has ever been charged. Venue billing is unbuilt and its flag is unset.'
+                    'From venue_subscriptions. Venue billing is built and stays off until VENUE_BILLING_ENABLED is set; the Overview tab reads Stripe directly.'
                   )}
                 </div>
 
@@ -1477,7 +2517,7 @@ export default function RevenueScreen({
             );
           })()}
 
-          {adminTab === 'projections' && (
+          {activeTab === 'projections' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Deleted 2026-08-13, all three fabricated:
                     • "12-Month Projection" — $18K/$28K/$38K/$46K quarters and
@@ -1545,9 +2585,10 @@ export default function RevenueScreen({
                   measurement of anything that has happened. */}
               {(() => {
                 const fixed = costsData && costsData.fixed;
-                // Flock Pro, monthly plan. Priced but dormant: the paywall is
-                // gated behind PAYWALL_ENABLED and has never been switched on,
-                // so there are no subscribers and no revenue to report.
+                // Flock Pro, monthly plan, as the code states it. The money hub
+                // sets this beside the price Stripe charges
+                // (backend/services/statedPrices.js), so a change on either
+                // side shows as a disagreement on the Overview tab.
                 const PRO_MONTHLY_USD = 3.99;
 
                 if (!fixed) {
@@ -1572,7 +2613,11 @@ export default function RevenueScreen({
 
                 const monthlyTotal = fixed.monthlyUsd;
                 const annualTotal = fixed.annualUsd;
-                const effectiveMonthly = fixed.effectiveMonthlyUsd;
+                // The burn is the same figure the Costs tab calls all in: the
+                // code's bills, the reconciled invoice and the expense list,
+                // each counted once. The list below stays the code's own lines.
+                const ledger = costsData.expenses && costsData.expenses.status === 'ok' ? costsData.expenses : null;
+                const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd;
                 const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / PRO_MONTHLY_USD) : 0;
                 const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
@@ -1587,9 +2632,13 @@ export default function RevenueScreen({
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Burn and break-even</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                       <div>
-                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Fixed monthly burn</p>
+                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Monthly burn</p>
                         <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{usd0(effectiveMonthly)}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>{usd0(monthlyTotal)}/mo recurring plus {usd0(annualTotal)}/yr spread over twelve months. Metered API spend is on top and lives on the Costs tab.</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
+                          {ledger
+                            ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled invoice and the expense list.'
+                            : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months. The expense list could not be read, so its bills are not in this.`}
+                        </p>
                       </div>
                       <div>
                         <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target to cover it</p>
@@ -1598,13 +2647,13 @@ export default function RevenueScreen({
                       </div>
                     </div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)' }}>
-                      The paywall is switched off, so nobody is subscribed and revenue is $0. {subsToBreakEven} is what break-even would take, not a count of anything.
+                      {subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab, after fees.
                     </p>
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                      <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Fixed expenses</h4>
-                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{usd0(effectiveMonthly)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
+                      <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Fixed expenses in the code</h4>
+                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{usd0(fixed.effectiveMonthlyUsd)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
                     </div>
                     {/* A LINE NOBODY HAS SEEN ON AN INVOICE SAYS SO HERE TOO.
                         This list printed a label and a number and nothing
@@ -1626,7 +2675,7 @@ export default function RevenueScreen({
                       </p>
                     )}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
-                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab.
+                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab. Bills the code does not carry, such as the tools the app is built with, are on the Overview tab&apos;s expense list and in the burn above.
                     </p>
                   </div>
                   </>
@@ -1638,13 +2687,13 @@ export default function RevenueScreen({
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Revenue and growth</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-                  Nothing to show. Flock has never charged anyone and has no venue partners, so there is no revenue, no conversion rate and no acquisition cost to chart. This panel stays empty until the first real number exists.
+                  No chart here. Real revenue, subscribers and recurring revenue are on the Overview tab, read from Stripe and RevenueCat. A chart waits until those numbers have a history worth drawing.
                 </p>
               </div>
             </div>
           )}
 
-          {adminTab === 'research' && (() => {
+          {activeTab === 'research' && (() => {
             const demoMode = researchDemoMode;
             const data = demoMode ? {
               totalFlocks: 2340, completionRate: 78, avgGroupSize: 4.8, budgetAdoptionRate: 72,

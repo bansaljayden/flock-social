@@ -835,8 +835,12 @@ describe('a covered demo venue shows no crowd level', () => {
   });
 
   test('the copy is the one sentence, with no em dash', () => {
-    expect(COVERED_COPY).toBe('Make a free account to see crowd levels. Your first week has no limits.');
+    // The first week is unmetered only for a confirmed email, and Birdie keeps
+    // a daily cap in it (backend/services/entitlements.js), so the copy
+    // promises no venue limit and never "no limits".
+    expect(COVERED_COPY).toBe('Make a free account to see crowd levels. A new account with a confirmed email has no venue limit for its first week.');
     expect(COVERED_COPY).not.toMatch(/—/);
+    expect(COVERED_COPY).not.toMatch(/no limits/i);
   });
 
   test('the spoken sentence names the venue and the way in, never a percent', () => {

@@ -29,7 +29,7 @@
  * chunk of a completed production build.
  *
  * That block had a reputation for being load-bearing, recorded in
- * `project documentation` as "Icons + the shadcn-derived block (load-bearing)".
+ * the project notes as "Icons + the shadcn-derived block (load-bearing)".
  * The reputation was true once and had quietly stopped being true. Which is the
  * real lesson here and the reason this file is a test rather than a note: the
  * question "is anything still using this?" has a mechanical answer, and left to
