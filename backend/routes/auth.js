@@ -1548,7 +1548,7 @@ function oauthNonceClaimMatches(tokenNonce, suppliedNonce) {
 //      corrected date. Disposition of the frozen account (deletion, per
 //      §312.10's retention limits) is a human/moderation step, not a login
 //      handler's.
-const { ageFromDob, MIN_AGE } = require('../utils/age');
+const { ageFromDob, yearEndDob, MIN_AGE } = require('../utils/age');
 const UNDERAGE_MSG = "We can't create a Flock account for you.";
 
 // ---------------------------------------------------------------------------
@@ -2301,7 +2301,15 @@ router.post('/signup', signupValidation, async (req, res) => {
     // under-13 retry lockout above) and the lockout is consulted even for a
     // passing date, so "back-button, type an older year" gets the same
     // neutral sentence the first refusal did.
-    const age = ageFromDob(date_of_birth);
+    //
+    // JUDGED BY THE YEAR (utils/age.js yearEndDob). Creation asks for a birth
+    // year and the privacy policy promises the age is worked out from it in the
+    // one direction that can only count someone younger, so whatever day
+    // arrives with the year, the check runs on 31 December of it. This used to
+    // judge the full date in the body, which admitted 2013-01-01 on 2026-09-25
+    // while refusing 2013-12-31. The derived date is also what is stored below.
+    const judgedDob = yearEndDob(date_of_birth);
+    const age = judgedDob ? ageFromDob(judgedDob) : null;
     if (age === null) {
       return res.status(400).json({ error: 'Add your date of birth to create an account.', needsDob: true });
     }
@@ -2335,7 +2343,7 @@ router.post('/signup', signupValidation, async (req, res) => {
       `INSERT INTO users (email, password, name, interests, terms_accepted_at, date_of_birth, email_verified)
        VALUES ($1, $2, $3, $4, NOW(), $5, FALSE)
        RETURNING id, email, name, phone, interests, role, profile_image_url, email_verified, created_at`,
-      [email, hashedPassword, name, safeInterests, date_of_birth || null]
+      [email, hashedPassword, name, safeInterests, judgedDob]
     );
 
     const user = result.rows[0];
@@ -3282,7 +3290,12 @@ router.post('/google', [
         // DOB is REQUIRED for account creation on every path; a Google
         // sign-in without one means "sign up first" (needsDob tells the
         // client to route the user to the signup screen's DOB field).
-        const googleDob = suppliedDob(req.body.date_of_birth);
+        //
+        // Judged, and stored, as 31 December of the year that arrived, the
+        // same as password signup (utils/age.js yearEndDob): creation asks
+        // for a year, so a full date in the body must not buy a younger
+        // person an older answer.
+        const googleDob = yearEndDob(suppliedDob(req.body.date_of_birth));
         const dobAge = googleDob ? ageFromDob(googleDob) : null;
         if (dobAge === null) {
           // CREATION, not backfill, and the client has to be able to tell.
@@ -3697,7 +3710,9 @@ router.post('/apple', [
 
       // DOB required for creation, same as email + Google paths. Apple never
       // supplies it, so the client must send it (signup screen's DOB field).
-      const appleDob = suppliedDob(req.body.date_of_birth);
+      // Judged, and stored, as 31 December of the year that arrived, the same
+      // as the other two doors (utils/age.js yearEndDob).
+      const appleDob = yearEndDob(suppliedDob(req.body.date_of_birth));
       const appleDobAge = appleDob ? ageFromDob(appleDob) : null;
       if (appleDobAge === null) {
         // CREATION, not backfill, and the client has to be able to tell.

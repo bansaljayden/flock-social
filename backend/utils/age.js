@@ -79,4 +79,39 @@ function ageFromDob(dob, now = new Date()) {
   return age;
 }
 
-module.exports = { ageFromDob, MIN_AGE };
+// ACCOUNT CREATION IS JUDGED BY THE YEAR, AND ONLY EVER TOWARD YOUNGER.
+//
+// Creating an account asks for a birth year, and the privacy policy says the
+// server works the age out from that year in the one direction that can only
+// count somebody as younger. A year spans two ages, so an end has to be picked,
+// and 31 December is the end that makes everybody the younger of the two: it
+// can turn a thirteen-year-old away until January, and it can never admit a
+// twelve-year-old. frontend BirthYearField.js explains the same choice.
+//
+// The shipped screens already send 31 December, but the gate is the server's
+// alone and a body is whatever the caller sends. All three creation paths in
+// routes/auth.js used to judge the full date in the body, so on 2026-09-25 a
+// body of 2013-01-01 was thirteen and got an account while 2013-12-31 was
+// twelve and was refused, for the same birth year. This takes the year out of
+// whatever date arrived and returns 31 December of it, which is what the
+// creation paths check AND store: the row then holds a year, as the policy
+// says, and every later reader of it (the sign-in freeze, the Birdie age
+// bracket) judges the same date the gate did. That stored date passed the check
+// and age only grows, so it can never later read as under 13.
+//
+// CREATION ONLY. A year-derived date must never be written onto an account that
+// already exists: enforceDobOnLogin treats an under-13 answer there as actual
+// knowledge and freezes the account for good, and rounding an honest holder's
+// March birthday down to December could do exactly that. That path keeps
+// asking for, and judging, the full date.
+//
+// 'YYYY-12-31', or null for anything that is not a real calendar date in a
+// shape ageFromDob accepts, so every caller keeps its "no usable date of birth"
+// answer for junk.
+function yearEndDob(dob) {
+  const b = calendarParts(dob);
+  if (!b) return null;
+  return `${String(b.y).padStart(4, '0')}-12-31`;
+}
+
+module.exports = { ageFromDob, yearEndDob, MIN_AGE };

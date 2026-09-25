@@ -35,6 +35,7 @@ delete process.env.APPLE_REQUIRE_NONCE;
 delete process.env.NODE_ENV;
 
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const crypto = require('node:crypto');
@@ -265,22 +266,37 @@ test('the wire refusal for an under-13 signup is that sentence, with no needsDob
 });
 
 // ===========================================================================
-// 2. THE BOUNDARY — 13 exactly today is allowed, 13 tomorrow is not.
+// 2. THE BOUNDARY IS A YEAR. Creation asks for a birth year and judges it as
+//    31 December of that year (utils/age.js yearEndDob), the end that can only
+//    count someone younger. It used to be the full date in the body, so the
+//    13th birthday itself was the line and a year's January babies were in
+//    before its December ones.
 // ===========================================================================
-test('signup boundary: the 13th birthday today passes, a day short refuses', async () => {
+// The youngest birth year creation admits today: the year whose own 31
+// December is at least thirteen years back. That is this year minus 14, except
+// on 31 December, when this year minus 13 has its birthday.
+function youngestAdmittedYear() {
+  const y = new Date().getUTCFullYear() - 13;
+  return ageFromDob(`${y}-12-31`) >= MIN_AGE ? y : y - 1;
+}
+
+test('signup boundary: the youngest admitted year passes on its last day, the next year is refused on its first', async () => {
+  const y = youngestAdmittedYear();
+  // 1 January of the next year is thirteen today by its day (on every day but
+  // 31 December, when the two rules agree), and refused by its year.
   reset();
-  const young = await post('/api/auth/signup', signupBody({ email: 'a@example.com', date_of_birth: dobYearsAgo(13, 1) }));
+  const young = await post('/api/auth/signup', signupBody({ email: 'a@example.com', date_of_birth: `${y + 1}-01-01` }));
   assert.strictEqual(young.status, 403);
   assert.strictEqual((await young.json()).error, UNDERAGE_MSG);
   assert.deepStrictEqual(users, []);
 
   reset();
-  const ok = await post('/api/auth/signup', signupBody({ email: 'b@example.com', date_of_birth: dobYearsAgo(13) }));
+  const ok = await post('/api/auth/signup', signupBody({ email: 'b@example.com', date_of_birth: `${y}-12-31` }));
   assert.strictEqual(ok.status, 201);
   assert.strictEqual(users.length, 1);
-  // Belt and braces: the two dates really do sit on either side of MIN_AGE.
-  assert.strictEqual(ageFromDob(dobYearsAgo(13)), MIN_AGE);
-  assert.strictEqual(ageFromDob(dobYearsAgo(13, 1)), MIN_AGE - 1);
+  // Belt and braces: the two years really do sit on either side of MIN_AGE.
+  assert.ok(ageFromDob(`${y}-12-31`) >= MIN_AGE);
+  assert.ok(ageFromDob(`${y + 1}-12-31`) < MIN_AGE);
 });
 
 // ===========================================================================
@@ -584,4 +600,81 @@ test('the lockout stores digests, not addresses', () => {
   recordUnderageAttempt('kid-plaintext-probe@example.com', '203.0.113.7');
   assert.strictEqual(underageAttemptCount(), size, 'same identity, same keys — keyed digests');
   clearUnderageAttempts();
+});
+
+// ===========================================================================
+// 8. THE YEAR, NOT THE DAY, ON ALL THREE DOORS. The policy says the server
+//    works the age out from the birth YEAR in the one direction that can only
+//    count someone younger. Every creation path used to judge the full date in
+//    the body instead, so on 2026-09-25 a body of 2013-01-01 (thirteen by its
+//    day) got an account while 2013-12-31 was refused. The screens send 31
+//    December, but a body is whatever the caller sends.
+//
+//    Run on that date with a fixed clock. Only Date is replaced: the server's
+//    timers and the fetch underneath keep running on the real ones.
+// ===========================================================================
+async function onSep25(fn) {
+  mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-25T12:00:00Z') });
+  try { return await fn(); } finally { mock.timers.reset(); }
+}
+const JAN_FIRST_2013 = '2013-01-01';
+
+test('password signup: a full date that is 13 today by its day is refused by its year, and remembered', async () => {
+  reset();
+  await onSep25(async () => {
+    assert.strictEqual(ageFromDob(JAN_FIRST_2013), MIN_AGE, 'sanity: by its day this date passes today');
+    const res = await post('/api/auth/signup', signupBody({ email: 'jan@example.com', date_of_birth: JAN_FIRST_2013 }));
+    assert.strictEqual(res.status, 403);
+    const json = await res.json();
+    assert.strictEqual(json.error, UNDERAGE_MSG);
+    assert.ok(!('needsDob' in json));
+    assert.deepStrictEqual(users, [], 'a year that is twelve on its last day gets no row');
+
+    // It is a refusal like any other, so the lockout holds the corrected retry.
+    const retry = await post('/api/auth/signup', signupBody({ email: 'jan@example.com', date_of_birth: ADULT_DOB }));
+    assert.strictEqual(retry.status, 403);
+    assert.strictEqual((await retry.json()).error, UNDERAGE_MSG);
+    assert.deepStrictEqual(users, []);
+  });
+});
+
+test('Google creation: the same full date is refused by its year, neutrally', async () => {
+  reset();
+  await onSep25(async () => {
+    const res = await withGoogle(
+      { sub: 'g-jan', email: 'jan@gmail.com', email_verified: true, name: 'Jan' },
+      () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: JAN_FIRST_2013 })
+    );
+    assert.strictEqual(res.status, 403);
+    const json = await res.json();
+    assert.strictEqual(json.error, UNDERAGE_MSG);
+    assert.ok(!('needsDob' in json));
+    assert.deepStrictEqual(users, []);
+  });
+});
+
+test('Apple creation: the same full date is refused by its year, neutrally', async () => {
+  reset();
+  await onSep25(async () => {
+    const res = await post('/api/auth/apple', {
+      identityToken: appleIdentityToken({ sub: 'apple-jan', email: 'jan@icloud.com', email_verified: true }),
+      date_of_birth: JAN_FIRST_2013,
+    });
+    assert.strictEqual(res.status, 403);
+    const json = await res.json();
+    assert.strictEqual(json.error, UNDERAGE_MSG);
+    assert.ok(!('needsDob' in json));
+    assert.deepStrictEqual(users, []);
+  });
+});
+
+test('the year before passes on the same day, and the row holds 31 December of it', async () => {
+  reset();
+  await onSep25(async () => {
+    const res = await post('/api/auth/signup', signupBody({ email: 'dec@example.com', date_of_birth: '2012-03-09' }));
+    assert.strictEqual(res.status, 201);
+  });
+  assert.strictEqual(users.length, 1);
+  assert.strictEqual(users[0].date_of_birth, '2012-12-31',
+    'the stored date is the one the gate judged, not the day that came with it');
 });
