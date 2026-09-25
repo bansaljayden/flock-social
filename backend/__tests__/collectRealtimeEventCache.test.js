@@ -25,7 +25,11 @@
 //   * a list that is incomplete, or holds an event without coordinates, is
 //     never shared: those venues are asked one by one, with exactly the old
 //     request;
-//   * through a whole overlapped sweep, requests collapse to one per cell.
+//   * through a whole overlapped sweep, requests collapse to one per cell;
+//   * a reading is looked up for the moment its BestTime call STARTED, not the
+//     moment the answer landed: a call started at 21:59:55 and answered at
+//     22:00:10 is a 21:00 row, and its cell key, Discovery window and filter
+//     are 21:00's, through the sweep and storeReading as well as the lookup.
 //
 // The fake Discovery applies the real query's rules (radius, the UTC-hour time
 // window eventService builds, date order, the page cap and the total) to a
@@ -67,8 +71,9 @@ stubModule('../services/weatherService', {
 const events = require('../scripts/ml/eventService');
 const {
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
-  sweepVenues, LABEL_LIVE,
+  sweepVenues, storeReading, LABEL_LIVE,
 } = require('../scripts/ml/collectRealtime');
+const { getLocalTime } = require('../scripts/ml/config');
 const { virtualClock } = require('./helpers/virtualClock');
 
 const HOUR = 60 * 60 * 1000;
@@ -556,4 +561,130 @@ test('through an overlapped sweep, Ticketmaster is asked once per cell and every
     const expected = await clock.run(reference(own, v.latitude, v.longitude, row.at));
     assert.deepStrictEqual(row.answer, expected, `${v.name}'s row carries another venue's answer`);
   }
+});
+
+// ===========================================================================
+// 6. The moment a reading is looked up for is the moment its call started
+// ===========================================================================
+//
+// A BestTime call started at 21:59:55 UTC and answered fifteen seconds later.
+// The row is filed under the hour the call started in; the event lookup used
+// to take the time again when the answer landed, so it asked Discovery about
+// 22:00 and attached a show starting at 22:30 to the 21:00 observation.
+
+const CALL_STARTED = Date.UTC(2026, 8, 25, 21, 59, 55);
+const ANSWER_LANDED = Date.UTC(2026, 8, 25, 22, 0, 10);
+const LIVE_ANSWER = { forecastedBusyness: 40, liveBusyness: 70, liveAvailable: true };
+
+// One venue in a Philadelphia cell, and a show half a kilometre away that
+// starts at 22:30 UTC: inside the 22:00 window (19:00 to 22:59:59), outside
+// the 21:00 one (18:00 to 21:59:59).
+function lateShowAt() {
+  const cell = [3995, -7517];
+  const c = centreOf(cell);
+  const venue = {
+    id: 1, name: 'venue 1', besttime_venue_id: 'bt_1', city: 'philly', timezone: 'America/New_York',
+    latitude: c.lat + 0.001, longitude: c.lon - 0.001,
+  };
+  const universe = [event('late show', offset(c.lat, c.lon, 0.5, 30), Date.UTC(2026, 8, 25, 22, 30, 0))];
+  return { venue, universe };
+}
+
+// Console output kept off the report: storeReading logs its failed insert.
+async function quietly(fn) {
+  const saved = { log: console.log, warn: console.warn, error: console.error };
+  console.log = console.warn = console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    Object.assign(console, saved);
+  }
+}
+
+test('a reading whose call started before the hour turned gets the events of the hour it started in', async () => {
+  const { venue, universe } = lateShowAt();
+  const started = new Date(CALL_STARTED);
+  // The lookup runs when the answer lands, in the next hour.
+  const clock = virtualClock(ANSWER_LANDED);
+  const shared = discovery(clock, universe, { latencyMs: 100 });
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared);
+
+  const answer = await clock.run(lookup.lookup(venue.latitude, venue.longitude, started));
+  assert.deepStrictEqual(shared.calls.map((c) => c.hour % 24), [21],
+    'Discovery was asked about the hour the answer landed in, not the hour the row is filed under');
+  assert.strictEqual(answer.event_nearby, false, 'a 22:30 show was attached to a 21:00 observation');
+  assert.deepStrictEqual(answer, await clock.run(reference(own, venue.latitude, venue.longitude, started)));
+
+  // The same venue asked about 22:00 itself does see the show, from a request
+  // of its own: the moment decides the answer, and the cell is keyed on it.
+  const next = await clock.run(lookup.lookup(venue.latitude, venue.longitude, new Date(clock.now())));
+  assert.strictEqual(next.event_nearby, true);
+  assert.deepStrictEqual(shared.calls.map((c) => c.hour % 24), [21, 22]);
+});
+
+test('a venue asked for on its own is asked about the same moment', async () => {
+  const started = new Date(CALL_STARTED);
+  const asked = [];
+  const perVenue = async (lat, lon, radiusKm, at) => {
+    asked.push([lat, lon, radiusKm, at]);
+    return { observed: true, event_nearby: false };
+  };
+  // An event module without the shared-query parts,
+  await createEventLookup({ fetchPage: null, perVenue }).lookup(39.95, -75.16, started);
+  // and a venue with no usable position, which has no cell.
+  const clock = virtualClock(ANSWER_LANDED);
+  await clock.run(lookupWith(clock, discovery(clock, []), { perVenue }).lookup(null, null, started));
+  assert.deepStrictEqual(asked, [
+    [39.95, -75.16, events.NEARBY_KM, started],
+    [null, null, events.NEARBY_KM, started],
+  ]);
+});
+
+// storeReading reaches for the database on either side of its lookup, and the
+// URL above names a port nothing listens on, so those fail at once. The
+// timeout is the fence for a machine where that connect hangs instead.
+test('through the sweep and storeReading, the event lookup reads the instant the call started', { timeout: 30000 }, async () => {
+  const { venue, universe } = lateShowAt();
+
+  // The sweep: the call starts at 21:59:55 and BestTime answers at 22:00:10.
+  const clock = virtualClock(CALL_STARTED);
+  const handed = [];
+  const fetchLive = async () => {
+    await clock.pause(ANSWER_LANDED - CALL_STARTED);
+    return LIVE_ANSWER;
+  };
+  const store = async (v, at) => {
+    handed.push({ at, landedAt: clock.now() });
+    return LABEL_LIVE;
+  };
+  await quietly(() => clock.run(sweepVenues([['philly', [venue]]], {
+    store, fetchLive, weatherFor: async () => ({}), now: clock.now, pause: clock.pause,
+  })));
+  assert.strictEqual(handed.length, 1);
+  const [{ at, landedAt }] = handed;
+  assert.strictEqual(landedAt, ANSWER_LANDED, 'the fixture must land the answer in the next hour');
+  assert.ok(at.startedAt instanceof Date, 'the call\'s instant does not travel with it');
+  assert.strictEqual(at.startedAt.getTime(), CALL_STARTED);
+  assert.strictEqual(at.obs.hour, getLocalTime('America/New_York', CALL_STARTED).hour,
+    'the row\'s clock is read from that same instant');
+
+  // The write, handed that `at` once the hour has turned. There is no
+  // database here, so its insert fails; its event lookup runs first, and is
+  // what is under test.
+  const request = discovery({ pause: async () => {} }, universe);
+  const lookup = createEventLookup({ fetchPage: request.fetchPage, fetchSeatGeek: noSeatGeek, now: () => landedAt });
+  const answers = [];
+  const lookupEvents = async (...args) => {
+    const answer = await lookup.lookup(...args);
+    answers.push(answer);
+    return answer;
+  };
+  const outcome = await quietly(() => storeReading(venue, at, LIVE_ANSWER, lookupEvents));
+  assert.strictEqual(outcome, 'failed', 'expected the insert to fail with no database behind it');
+  assert.deepStrictEqual(request.calls.map((c) => c.hour % 24), [21],
+    'the row\'s events were asked for in the hour its answer landed, not the hour it is filed under');
+  assert.strictEqual(answers.length, 1);
+  assert.strictEqual(answers[0].observed, true);
+  assert.strictEqual(answers[0].event_nearby, false, 'a 22:30 show was attached to a 21:00 row');
 });
