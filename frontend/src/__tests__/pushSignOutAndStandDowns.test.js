@@ -273,4 +273,62 @@ describe('an SOS alarm tapped after its sender stood down', () => {
     const live = APP.slice(APP.indexOf('onSafetyAlertCancelled((data) => {'));
     expect(live.slice(0, 600)).toContain('noteSafetyStandDown(data.fromUserId, data.at);');
   });
+
+  // A stand-down calls off the alarms raised before it and never a newer one.
+  // Both times are the server's (backend routes/safety.js, WHICH ALARM A
+  // STAND-DOWN CALLS OFF); this device's clock is never one of them.
+  test('a stand-down calls off an alarm no later than itself, and only one whose time it can read', () => {
+    // eslint-disable-next-line global-require
+    const nav = require('../services/pushNavigation');
+    const at = '2026-09-25T22:01:02.345Z';
+    expect(nav.standDownCovers(at, at)).toBe(true);
+    expect(nav.standDownCovers('2026-09-25T22:01:02.344Z', at)).toBe(true);
+    expect(nav.standDownCovers('2026-09-25T22:01:02.346Z', at)).toBe(false);
+    expect(nav.standDownCovers(undefined, at)).toBe(false);
+    expect(nav.standDownCovers(at, undefined)).toBe(false);
+    expect(nav.standDownCovers(at, 'soon')).toBe(false);
+  });
+
+  test('a stand-down whose time cannot be read is not remembered, so it cannot refuse a newer alarm', () => {
+    // It used to be remembered at this device's own "now", which is later than
+    // an alarm the server raised a minute ago and every tap on it was refused.
+    // eslint-disable-next-line global-require
+    const nav = require('../services/pushNavigation');
+    nav.noteSafetyStandDown(7, undefined);
+    nav.noteSafetyStandDown(7, 'not a time');
+    expect(localStorage.getItem('flock_sos_stand_downs')).toBeNull();
+    expect(nav.safetyAlarmWasStoodDown(nav.intentFromData(alarmAt(minutesAgo(1))))).toBe(false);
+  });
+
+  test('an alarm whose time cannot be read is not refused: it may be the newer one', () => {
+    // eslint-disable-next-line global-require
+    const nav = require('../services/pushNavigation');
+    nav.noteSafetyStandDown(7, minutesAgo(5));
+    const unstamped = nav.intentFromData({ type: 'safety_alert', fromUserId: '7', fromUserName: 'Ava', toUserId: '42' });
+    expect(unstamped.at).toBeNull();
+    expect(nav.safetyAlarmWasStoodDown(unstamped)).toBe(false);
+    // A stamped one no later than the stand-down is still refused.
+    expect(nav.safetyAlarmWasStoodDown(nav.intentFromData(alarmAt(minutesAgo(6))))).toBe(true);
+  });
+
+  test('App.js closes the alarm on screen only when the stand-down covers it, live or tapped', () => {
+    const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+    // The alarm on screen, kept for handlers that run outside a render.
+    expect(APP).toMatch(/const safetyAlertRef = useRef\(null\);\n\s+useEffect\(\(\) => \{ safetyAlertRef\.current = safetyAlert; \}, \[safetyAlert\]\);/);
+
+    const live = APP.slice(APP.indexOf('onSafetyAlertCancelled((data) => {'));
+    const liveHandler = live.slice(0, live.indexOf('return unsub;'));
+    // A newer alarm from the same person stays up, and no "OK" is said over it.
+    expect(liveHandler).toMatch(/if \(shown && shown\.userId === from && !standDownCovers\(shown\.at, data\.at\)\) return;/);
+    expect(liveHandler).toMatch(/setSafetyAlert\(\(prev\) => \(prev && prev\.userId === from && standDownCovers\(prev\.at, data\.at\) \? null : prev\)\);/);
+    expect(liveHandler.indexOf('standDownCovers(shown.at, data.at)')).toBeLessThan(liveHandler.indexOf('showToast('));
+    expect(liveHandler).not.toMatch(/prev\.userId === String\(data\.fromUserId\) \? null : prev/);
+
+    const start = APP.indexOf('useEffect(() => onPushNavigate((intent) => {');
+    const handler = APP.slice(start, APP.indexOf('}), [showToast, loadFlocks, authUser?.id]);', start));
+    const tapped = handler.slice(handler.indexOf("intent.screen === 'safety' && intent.cancelled"),
+      handler.indexOf("} else if (intent.screen === 'safety' && safetyAlarmWasStoodDown(intent)) {"));
+    expect(tapped).toMatch(/if \(!\(shown && shown\.userId === from && !standDownCovers\(shown\.at, intent\.at\)\)\) \{/);
+    expect(tapped).toMatch(/setSafetyAlert\(\(prev\) => \(prev && prev\.userId === from && standDownCovers\(prev\.at, intent\.at\) \? null : prev\)\);/);
+  });
 });

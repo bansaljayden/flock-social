@@ -18,7 +18,9 @@ test('the flock is told before the email verdict can end the request, on the ala
   const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent, alertId, flockLeg)");
   const alarm502 = safety.indexOf('if (emailsSent === 0) {');
   assert.ok(alarmLeg > 0 && alarm502 > alarmLeg, 'the alarm flock leg runs before the 502');
-  const sdLeg = safety.indexOf("notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds)");
+  // `, cover.stoodDownAt` since the all-clear carries the stand-down's own
+  // time (withdrawn_at), which the app orders it against a newer alarm by.
+  const sdLeg = safety.indexOf("notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds, cover.stoodDownAt)");
   const sd502 = safety.indexOf('if (told.length === 0) {');
   assert.ok(sdLeg > 0 && sd502 > sdLeg, 'the stand-down flock leg runs before its 502');
   // And before the contact refusal too (safety audit 2026-09-05): a person
@@ -32,7 +34,7 @@ test('the flock is told before the email verdict can end the request, on the ala
 });
 
 test('the stand-down window is widened by the time since the alarm', () => {
-  assert.match(safety, /async function notifyFlockStandDown\(io, user, hoursSinceAlert = 0, recipientIds = null\)/);
+  assert.match(safety, /async function notifyFlockStandDown\(io, user, hoursSinceAlert = 0, recipientIds = null, stoodDownAt = null\)/);
   assert.match(safety, /const windowHours = SOS_FLOCK_WINDOW_HOURS \+ Math\.max\(0, Math\.ceil\(Number\(hoursSinceAlert\) \|\| 0\)\);/);
   assert.match(safety, /pool\.query\(SOS_FLOCK_AUDIENCE_SQL, \[user\.id, windowHours\]\)/);
 });

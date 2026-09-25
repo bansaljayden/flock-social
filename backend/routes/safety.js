@@ -56,8 +56,10 @@ const { escapeHtml, isMailableAddress, maskAddress } = emailService;
 const { suppressionReason, EMERGENCY_CATEGORY } = require('../services/emailSuppression');
 // The one push this file sends. See alertFlockMembers: pushAlways rather than
 // pushIfOffline, because being in the app is not a reason to stay quiet about
-// somebody pressing SOS on the plan you are both on.
-const { pushAlways } = require('../services/pushHelper');
+// somebody pressing SOS on the plan you are both on. newerSosAlarmReached is
+// rule 3 of pushHelper's SOS rules, which the stand-down's socket event obeys
+// as its push does (notifyFlockStandDown).
+const { pushAlways, newerSosAlarmReached } = require('../services/pushHelper');
 // What the alarm and the all-clear say. services/pushHelper.js builds the same
 // pushes from the same place when it has to send one again.
 const { COARSE_FIX_METRES, accuracyPhrase, alarmPush, allClearPush } = require('../services/sosPushes');
@@ -729,6 +731,26 @@ function standDownHoldMs(coords, includeLocation, withdrawnAlert, freshPress = f
   return hadNoLocation && reachedContacts && bringsLocation ? STOOD_DOWN_CHASE_HOLD_MS : ALERT_FLOOR_MS;
 }
 
+// THE CHASE IS OWED TO ITS OWN ALERT, NOT TO THE NEWEST ONE. The hold used to
+// be measured from the newest alert alone, so an older build's chase slipped
+// through whenever that was not the alert it followed: a second phone's press
+// with a fix, after the first phone's alert went out without one, made the
+// newest alert one that had a location, and the floor measured from it passed
+// while the first phone's chase could still land. So the newest alert stood
+// down inside the hold that could have started a chase (no location, reached a
+// contact) is asked for as well, and the hold runs from it too.
+const STOOD_DOWN_CHASE_SOURCE_SQL = `SELECT id, latitude, longitude,
+            COALESCE(contacts_alerted, 0) AS contacts_alerted,
+            EXTRACT(EPOCH FROM ((NOW() AT TIME ZONE 'UTC') - created_at)) * 1000 AS age_ms
+       FROM emergency_alerts
+      WHERE user_id = $1
+        AND withdrawn_at IS NOT NULL
+        AND latitude IS NULL AND longitude IS NULL
+        AND COALESCE(contacts_alerted, 0) > 0
+        AND created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 millisecond')
+      ORDER BY created_at DESC
+      LIMIT 1`;
+
 const CALL_911 = 'If you are in danger, call 911.';
 
 // Metres between two coordinate pairs (haversine). Only ever compared against
@@ -986,11 +1008,22 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // push against this table and sends the right one again if they disagree:
   // the newest alarm that still stands, or the all-clear when none does.
   const audience = members.rows.map((row) => Number(row.user_id));
+  // The alarm's `at` is read here, on Postgres's clock, while this write holds
+  // the alert's row, and never earlier than a millisecond after the sender's
+  // last stand-down, so the two cannot share a millisecond. See WHICH ALARM A
+  // STAND-DOWN CALLS OFF, above notifyFlockStandDown, for why it is this clock
+  // and this moment.
+  let toldMs = null;
   if (alertId) {
     const recorded = await pool.query(
       `UPDATE emergency_alerts SET flock_recipient_ids = $1::int[]
         WHERE id = $2 AND withdrawn_at IS NULL
-      RETURNING id`,
+      RETURNING id,
+                FLOOR(EXTRACT(EPOCH FROM GREATEST(
+                  clock_timestamp(),
+                  (SELECT MAX(w.withdrawn_at) FROM emergency_alerts w WHERE w.user_id = emergency_alerts.user_id)
+                    AT TIME ZONE 'UTC' + INTERVAL '1 millisecond'
+                )) * 1000)::bigint AS told_ms`,
       [audience, alertId]
     );
     if (recorded.rows.length === 0) {
@@ -999,6 +1032,8 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
         console.log(`[Safety] SOS ${alertId} from user ${user.id} was stood down before the flock heard it, so the flock is not told.`);
         return { notified: 0, recipientIds: [], withdrawn: true };
       }
+    } else {
+      toldMs = Number(recorded.rows[0].told_ms);
     }
   }
 
@@ -1015,7 +1050,7 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
     coords,
     fixMetres: coords ? readAccuracy(leg.fixMetres) : null,
     contactsAlerted,
-    at: new Date().toISOString(),
+    at: new Date(Number.isFinite(toldMs) && toldMs > 0 ? toldMs : Date.now()).toISOString(),
   });
 
   for (const row of members.rows) {
@@ -1091,6 +1126,36 @@ const SOS_STAND_DOWN_SNAPSHOT_SQL = `SELECT DISTINCT u.id AS user_id
              OR (b.blocker_id = u.id AND b.blocked_id = $1)
         )`;
 
+// ---------------------------------------------------------------------------
+// WHICH ALARM A STAND-DOWN CALLS OFF
+//
+// The app decides it by time. An all-clear closes the alarm on screen, and
+// refuses a later tap on an alarm from the tray, only when that alarm's `at` is
+// no later than the all-clear's (frontend/src/services/pushNavigation.js,
+// standDownCovers). So the two stamps have to put every alarm on the right side
+// of every stand-down, and both are read from Postgres's clock:
+//
+//   * an alarm's `at` is read in the write that records who it rang
+//     (alertFlockMembers), while that write holds the alert's row, and never
+//     earlier than a millisecond past the sender's last stand-down, so the
+//     two cannot round to the same millisecond;
+//   * a stand-down's `at` is its withdrawn_at, which is the start of the
+//     statement that sets it, and /alert/cancel runs that statement only after
+//     it has locked every alert it withdraws. A repeat stand-down carries the
+//     time of the one it repeats.
+//
+// An alarm told before the stand-down locked its alert was stamped before
+// that; after it, the write finds the alert withdrawn and nobody is told. A
+// newer alert is claimed under the same per-user lock the stand-down holds, so
+// it is told only after the stand-down has committed, and stamped later.
+//
+// The all-clear used to be stamped "now", after its audience read, and that
+// read can stall for long enough that a new alarm goes out first. The app then
+// closed the new alarm, said the person was OK, and refused every tap on it
+// for a day. The socket event also skipped the push's rule 3, so it is now
+// held back from anybody a newer alarm has reached, as the push is.
+// ---------------------------------------------------------------------------
+
 // The stand-down's flock leg, and the leg /alert/cancel forgot for as long as
 // it existed: the alarm above deliberately rings through quiet hours and puts
 // a full-screen "call 911" modal on every flockmate's phone, and cancelling
@@ -1100,7 +1165,10 @@ const SOS_STAND_DOWN_SNAPSHOT_SQL = `SELECT DISTINCT u.id AS user_id
 // window is re-evaluated at cancel time, which can only shrink the set toward
 // people whose plan is still near; anyone the alarm reached outside it holds
 // a stale alert, which the email contacts always risked too.
-async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds = null) {
+//
+// `stoodDownAt` is the stand-down's withdrawn_at in epoch milliseconds (see
+// WHICH ALARM A STAND-DOWN CALLS OFF above).
+async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds = null, stoodDownAt = null) {
   // `recipientIds` is what the alarm recorded (migration 063). When it is
   // there, the stand-down goes to that list and to nobody else; the live
   // audience query below is the fallback for alerts written before the
@@ -1125,14 +1193,22 @@ async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds 
 
   // Built in services/sosPushes.js, like the alarm, so the copy pushHelper
   // sends again when a phone ended on the wrong push says the same thing.
+  const stamped = Number(stoodDownAt);
   const { title, body, data: payload } = allClearPush({
     senderId: user.id,
     name: user.name,
-    at: new Date().toISOString(),
+    at: new Date(Number.isFinite(stamped) && stamped > 0 ? stamped : Date.now()).toISOString(),
   });
-  for (const row of members.rows) {
-    if (io) io.to(`user:${row.user_id}`).emit('safety_alert_cancelled', payload);
-  }
+  // Rule 3 for the socket event, asked just before it goes: nobody a newer
+  // alarm from this person has reached is told the person is OK. A read that
+  // fails answers "not reached", as it does for the push, and the app's own
+  // comparison of the two times is what still keeps it off a newer alarm.
+  const superseded = await Promise.all(
+    members.rows.map((row) => newerSosAlarmReached(row.user_id, payload))
+  );
+  members.rows.forEach((row, i) => {
+    if (io && !superseded[i]) io.to(`user:${row.user_id}`).emit('safety_alert_cancelled', payload);
+  });
   // pushAlways for the same reason the alarm uses it: the person this must
   // reach may have put the phone down to go help. It also rings through quiet
   // hours (pushHelper), because anyone it reaches was already woken by the
@@ -1289,9 +1365,20 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         // time that the ceiling would then break.
         if (withdrawn) {
           const holdMs = standDownHoldMs(coords, includeLocation, last, freshPress);
-          if (ageMs < holdMs) {
+          let leftMs = holdMs - ageMs;
+          // An older alert's chase is held off from that alert's claim, not
+          // the newest one's (STOOD_DOWN_CHASE_SOURCE_SQL). Only a request
+          // that could be a chase can be held longer than the floor.
+          if ((coords != null || includeLocation === true) && freshPress !== true) {
+            const chased = (await client.query(STOOD_DOWN_CHASE_SOURCE_SQL, [req.user.id, STOOD_DOWN_CHASE_HOLD_MS])).rows[0];
+            if (chased) {
+              leftMs = Math.max(leftMs,
+                standDownHoldMs(coords, includeLocation, chased, freshPress) - (Number(chased.age_ms) || 0));
+            }
+          }
+          if (leftMs > 0) {
             await client.query('ROLLBACK');
-            const secsLeft = Math.max(1, Math.ceil((holdMs - ageMs) / 1000));
+            const secsLeft = Math.max(1, Math.ceil(leftMs / 1000));
             const capped = Number(last.attempts_in_window) >= MAX_ATTEMPTS_PER_WINDOW;
             return res.status(429).json({
               error: capped
@@ -1879,7 +1966,13 @@ function standDownCoverage(found, marked = []) {
   }
 
   const oldest = covered.length > 0 ? covered[covered.length - 1].now.created_at : null;
-  return { alerts: covered.length, flockIds, contacts, legacyCutoff, oldestAt: oldest };
+  // When the stand-down covering these alerts took effect, for the all-clear's
+  // `at`: their withdrawn_at, which the statements read as epoch milliseconds
+  // (the column is a naive timestamp, and the driver would read it in this
+  // process's zone). On a repeat that is the earlier stand-down's own time.
+  const stamps = covered.map(({ now }) => Number(now.withdrawn_ms)).filter((n) => Number.isFinite(n) && n > 0);
+  const stoodDownAt = stamps.length > 0 ? Math.max(...stamps) : null;
+  return { alerts: covered.length, flockIds, contacts, legacyCutoff, oldestAt: oldest, stoodDownAt };
 }
 
 router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
@@ -1901,12 +1994,16 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     try {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('safety:' || $1::text))", [String(req.user.id)]);
+      // FOR UPDATE, so a flock leg writing who an alarm rang has finished
+      // before the stand-down is stamped (WHICH ALARM A STAND-DOWN CALLS OFF).
       found = await client.query(
-        `SELECT id, created_at, withdrawn_at, contacts_alerted, flock_recipient_ids, contact_recipients
+        `SELECT id, created_at, withdrawn_at, contacts_alerted, flock_recipient_ids, contact_recipients,
+                FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS withdrawn_ms
            FROM emergency_alerts
           WHERE user_id = $1
             AND created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int || ' milliseconds')::interval
-          ORDER BY created_at DESC`,
+          ORDER BY created_at DESC
+          FOR UPDATE`,
         [req.user.id, CANCEL_WINDOW_MS]
       );
       if (!found.rows.some(reachedAnybody)) {
@@ -1926,13 +2023,17 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
 
       // withdrawn_at and nothing else: created_at and contacts_alerted are
       // what the cooldown reads, and this must never block the next real SOS.
+      // statement_timestamp(), not NOW(): NOW() is when this transaction began,
+      // before it waited for the lock and the rows above, and an alarm told in
+      // that wait was stamped after it. Every row still shares the one value.
       const ids = found.rows.map((r) => Number(r.id)).filter((id) => Number.isInteger(id) && id > 0);
       if (ids.length > 0) {
         const withdrawn = await client.query(
           `UPDATE emergency_alerts
-              SET withdrawn_at = NOW()
+              SET withdrawn_at = statement_timestamp()
             WHERE user_id = $1 AND id = ANY($2::int[]) AND withdrawn_at IS NULL
-          RETURNING id, created_at, withdrawn_at, contacts_alerted, flock_recipient_ids, contact_recipients`,
+          RETURNING id, created_at, withdrawn_at, contacts_alerted, flock_recipient_ids, contact_recipients,
+                    FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS withdrawn_ms`,
           [req.user.id, ids]
         );
         marked = withdrawn.rows;
@@ -1984,7 +2085,7 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       `DELETE FROM push_outbox WHERE data->>'type' = 'safety_alert' AND data->>'fromUserId' = $1`,
       [String(req.user.id)]
     ).catch((outboxErr) => console.error('[Safety] Could not withdraw queued SOS pushes:', outboxErr?.message));
-    notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds).catch((fanErr) => {
+    notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds, cover.stoodDownAt).catch((fanErr) => {
       console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
     });
 
@@ -2286,6 +2387,7 @@ module.exports.__test = {
   escalationKind,
   isLocationFollowUp,
   SOS_STAND_DOWN_SNAPSHOT_SQL,
+  STOOD_DOWN_CHASE_SOURCE_SQL,
   reachedAnybody,
   standDownCoverage,
   agoPhrase,

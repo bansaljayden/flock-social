@@ -58,6 +58,31 @@ describe('the radius travels', () => {
     }
   });
 
+  test('an alarm sent again without its radius is an area, not a spot', () => {
+    // The server keeps no radius, so an alarm it builds again from the
+    // database says the location is approximate (services/sosPushes.js).
+    const rebuilt = intentFromData({
+      type: 'safety_alert', fromUserId: '7', fromUserName: 'Ava',
+      latitude: '40.05', longitude: '-75.12', approximate: 'true', at: 'x',
+    });
+    expect(rebuilt.approximate).toBe(true);
+    expect(rebuilt).not.toHaveProperty('accuracy');
+    // A radius says more than the flag, and no position needs neither.
+    expect(intentFromData({
+      type: 'safety_alert', fromUserId: '7', latitude: '40.05', longitude: '-75.12', accuracy: '2400', approximate: 'true', at: 'x',
+    })).not.toHaveProperty('approximate');
+    expect(intentFromData({ type: 'safety_alert', fromUserId: '7', approximate: 'true', at: 'x' })).not.toHaveProperty('approximate');
+    expect(intentFromData({
+      type: 'safety_alert', fromUserId: '7', latitude: '40.05', longitude: '-75.12', approximate: 'false', at: 'x',
+    })).not.toHaveProperty('approximate');
+
+    // The tap carries it into the alarm state, and the screen says so.
+    const tap = APP.slice(APP.indexOf("} else if (intent.screen === 'safety') {"));
+    expect(tap.slice(0, tap.indexOf('});'))).toMatch(/\.\.\.\(intent\.approximate === true \? \{ approximate: true \} : \{\}\),/);
+    const overlay = APP.slice(APP.indexOf('{safetyAlert && ('), APP.indexOf('{SOSModal()}'));
+    expect(overlay).toMatch(/safetyAlert\.lat !== null && safetyAlert\.approximate === true && !\(safetyAlert\.accuracy > 0\)\n\s+\? ' Their location is approximate, so treat it as the area to search rather than the spot\.'/);
+  });
+
   test('the live socket event and the tapped push both put it into the alarm state', () => {
     const socket = APP.slice(APP.indexOf('const unsub = onSafetyAlert((data) => {'), APP.indexOf('const unsub = onSafetyAlertCancelled('));
     expect(socket).toMatch(/\{ accuracy: Number\(data\.accuracy\) \}/);
@@ -103,7 +128,7 @@ describe('the words match the email', () => {
     expect(SAFETY).toMatch(/so treat it as the area to search rather than the spot\./);
     expect(overlay).toMatch(/safetyAlert\.lat !== null && safetyAlert\.accuracy > SOS_COARSE_FIX_METRES/);
     expect(overlay).toMatch(/Their location is approximate\. The phone put it within \$\{sosAccuracyPhrase\(safetyAlert\.accuracy\)\}, so treat it as the area to search rather than the spot\./);
-    expect(overlay).toMatch(/safetyAlert\.accuracy > SOS_COARSE_FIX_METRES \? 'See the area they are in' : 'See where they are'/);
+    expect(overlay).toMatch(/safetyAlert\.accuracy > SOS_COARSE_FIX_METRES \|\| safetyAlert\.approximate === true \? 'See the area they are in' : 'See where they are'/);
     // No em dash in anything the overlay says.
     const said = overlay.split('\n').filter((l) => !/^\s*(\/\/|\*|\{\/\*)/.test(l)).join('\n');
     expect(said).not.toContain(String.fromCharCode(0x2014));

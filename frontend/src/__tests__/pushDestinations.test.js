@@ -216,10 +216,13 @@ describe('every type the app declares has somewhere to go', () => {
     expect(intentFromData({ type: 'safety_alert_cancelled', fromUserId: '7', fromUserName: 'Ava' }))
       .toEqual({ screen: 'safety', cancelled: true, userId: 7, name: 'Ava', type: 'safety_alert_cancelled' });
     expect(intentFromData({ type: 'safety_alert_cancelled', fromUserName: 'Ava' })).toBeNull();
-    // App.js consumes it by clearing the same modal by the same id
+    // App.js consumes it by clearing the same modal by the same id, when the
+    // alarm on it is no newer than the stand-down (standDownCovers: a newer
+    // alarm from the same person stays up; pushSignOutAndStandDowns pins why).
     const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
     const branch = APP.slice(APP.indexOf("intent.screen === 'safety' && intent.cancelled"), APP.indexOf("} else if (intent.screen === 'safety') {"));
-    expect(branch).toMatch(/setSafetyAlert\(\(prev\) => \(prev && prev\.userId === String\(intent\.userId\) \? null : prev\)\);/);
+    expect(branch).toMatch(/const from = String\(intent\.userId\);/);
+    expect(branch).toMatch(/setSafetyAlert\(\(prev\) => \(prev && prev\.userId === from && standDownCovers\(prev\.at, intent\.at\) \? null : prev\)\);/);
     expect(branch).toMatch(/says they are OK/);
     // Its live fields are a name and a location, so it deliberately gets NO
     // deep-link URL: a cold web tap lands on the app, never a coordinate in the

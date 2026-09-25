@@ -30,7 +30,9 @@ test('safety: the audience is written before the alarm, and empty snapshots are 
   // Written before the alarm, and since migration 084 only while the alert is
   // still standing: a leg whose alert was stood down during the email fan-out
   // tells nobody (sosStandDownEndsTheChase.test.js drives that branch).
-  assert.match(src, /const audience = members\.rows\.map\(\(row\) => Number\(row\.user_id\)\);\n\s+if \(alertId\) \{\n\s+const recorded = await pool\.query\(\n\s+`UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\]\n\s+WHERE id = \$2 AND withdrawn_at IS NULL\n\s+RETURNING id`,\n\s+\[audience, alertId\]\n\s+\);/);
+  // The same write also reads the alarm's time (told_ms) while it holds the
+  // row, so the app can tell this alarm from a stand-down's.
+  assert.match(src, /const audience = members\.rows\.map\(\(row\) => Number\(row\.user_id\)\);[\s\S]{0,600}?if \(alertId\) \{\n\s+const recorded = await pool\.query\(\n\s+`UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\]\n\s+WHERE id = \$2 AND withdrawn_at IS NULL\n\s+RETURNING id,[\s\S]{0,400}?AS told_ms`,\n\s+\[audience, alertId\]\n\s+\);/);
   assert.match(src, /alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId, flockLeg\)/);
   assert.match(src, /VALUES \(\$1, \$2, \$3, 0, '\{\}'::int\[\], '\[\]'::jsonb\) RETURNING id/);
   assert.match(src, /flock_recipient_ids : null;/);

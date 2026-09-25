@@ -16,7 +16,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
-import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, forgetDeliveredNotifications } from './services/firebase';
+import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
@@ -7450,9 +7450,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the same user id the live event clears it by, and says who is OK.
       // Without this the tap resolved to nothing and the full-screen SOS from
       // the first push stayed up with no way to know it had been called off.
+      // Like the live event, it calls off only alarms no newer than itself.
       noteSafetyStandDown(intent.userId, intent.at);
-      setSafetyAlert((prev) => (prev && prev.userId === String(intent.userId) ? null : prev));
-      showToast(`${String(intent.name || 'They').slice(0, 80)} says they are OK`);
+      const from = String(intent.userId);
+      const shown = safetyAlertRef.current;
+      if (!(shown && shown.userId === from && !standDownCovers(shown.at, intent.at))) {
+        setSafetyAlert((prev) => (prev && prev.userId === from && standDownCovers(prev.at, intent.at) ? null : prev));
+        showToast(`${String(intent.name || 'They').slice(0, 80)} says they are OK`);
+      }
     } else if (intent.screen === 'safety' && safetyAlarmWasStoodDown(intent)) {
       // An alarm tapped from the tray after its sender had already called it
       // off, which this device heard live or from the all-clear. Drawing it
@@ -7475,6 +7480,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         lat: Number.isFinite(intent.lat) ? intent.lat : null,
         lng: Number.isFinite(intent.lng) ? intent.lng : null,
         ...(Number.isFinite(intent.accuracy) ? { accuracy: intent.accuracy } : {}),
+        // A position sent again without its radius: drawn as an area.
+        ...(intent.approximate === true ? { approximate: true } : {}),
         ...(Number.isFinite(intent.contactsAlerted) ? { contactsAlerted: intent.contactsAlerted } : {}),
         at: intent.at || new Date().toISOString(),
       });
@@ -11187,6 +11194,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      and has to be dismissed deliberately. Only the most recent is held: two
      alerts in one night is not a list to page through. */
   const [safetyAlert, setSafetyAlert] = useState(null);
+  // The alarm on screen, for the two ways a stand-down arrives (the live one
+  // below and a tapped one), which decide against it outside a render.
+  const safetyAlertRef = useRef(null);
+  useEffect(() => { safetyAlertRef.current = safetyAlert; }, [safetyAlert]);
 
   useEffect(() => {
     const unsub = onSafetyAlert((data) => {
@@ -11228,7 +11239,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Remembered, so the alarm's own notification still in the tray cannot
       // redraw the alarm when it is tapped later (pushNavigation.js).
       noteSafetyStandDown(data.fromUserId, data.at);
-      setSafetyAlert((prev) => (prev && prev.userId === String(data.fromUserId) ? null : prev));
+      // It calls off the alarms raised before it and never a newer one, by
+      // the two times the server stamped (standDownCovers). A newer alarm from
+      // the same person stays up, and nothing says they are OK over it.
+      const from = String(data.fromUserId);
+      const shown = safetyAlertRef.current;
+      if (shown && shown.userId === from && !standDownCovers(shown.at, data.at)) return;
+      setSafetyAlert((prev) => (prev && prev.userId === from && standDownCovers(prev.at, data.at) ? null : prev));
       showToast(`${String(data.fromUserName || 'They').slice(0, 80)} says they are OK`);
     });
     return unsub;
@@ -18690,6 +18707,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {safetyAlert.lat !== null && safetyAlert.accuracy > SOS_COARSE_FIX_METRES
                 ? ` Their location is approximate. The phone put it within ${sosAccuracyPhrase(safetyAlert.accuracy)}, so treat it as the area to search rather than the spot.`
                 : ''}
+              {/* An alarm sent again without the radius, which the server does
+                  not keep: said as an area too, without a number it lacks. */}
+              {safetyAlert.lat !== null && safetyAlert.approximate === true && !(safetyAlert.accuracy > 0)
+                ? ' Their location is approximate, so treat it as the area to search rather than the spot.'
+                : ''}
               {/* The alarm's own time. A push tapped at 9am used to read as a
                   live 9am alarm; the hour it actually fired changes what the
                   reader should do. */}
@@ -18701,7 +18723,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </a>
               {safetyAlert.lat !== null && (
                 <a className="hit44" href={`https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`} target="_blank" rel="noreferrer" style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
-                  {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES ? 'See the area they are in' : 'See where they are'}
+                  {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES || safetyAlert.approximate === true ? 'See the area they are in' : 'See where they are'}
                 </a>
               )}
               <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: '10px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>

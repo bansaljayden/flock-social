@@ -158,6 +158,7 @@ export function intentFromData(data) {
     // coarse one an area the way the email does. Same coercion, and only
     // alongside a position it describes.
     const accuracy = data.accuracy != null ? Number(data.accuracy) : NaN;
+    const hasRadius = Number.isFinite(accuracy) && accuracy > 0;
     const toUserId = asId(data.toUserId);
     return {
       screen: 'safety',
@@ -165,7 +166,10 @@ export function intentFromData(data) {
       name: data.fromUserName ? String(data.fromUserName) : '',
       lat: Number.isFinite(lat) ? lat : null,
       lng: Number.isFinite(lng) ? lng : null,
-      ...(Number.isFinite(lat) && Number.isFinite(accuracy) && accuracy > 0 ? { accuracy } : {}),
+      ...(Number.isFinite(lat) && hasRadius ? { accuracy } : {}),
+      // A position the server sent again without the radius it no longer has
+      // (an alarm rebuilt from the database): an area, not a spot.
+      ...(Number.isFinite(lat) && !hasRadius && String(data.approximate) === 'true' ? { approximate: true } : {}),
       ...(Number.isFinite(contactsAlerted) ? { contactsAlerted } : {}),
       at: data.at ? String(data.at) : null,
       // Who this copy was sent to. See safetyIntentIsFor below.
@@ -239,6 +243,15 @@ export function safetyIntentIsFor(intent, userId) {
 // localStorage so a tap that cold-starts the app is judged the same way,
 // under a flock* key so a sign-out sweeps it with the rest of the account,
 // and each entry lapses after a day.
+//
+// NOTHING NEWER THAN A STAND-DOWN IS EVER TAKEN FOR ONE IT CALLED OFF. Only
+// the server's two stamps are compared (backend routes/safety.js, WHICH ALARM
+// A STAND-DOWN CALLS OFF, puts every alarm on the right side of every
+// stand-down), never one of them against this device's clock, which only ages
+// an entry out: a stand-down whose time cannot be read is not remembered at
+// all, and an alarm whose time cannot be read is not refused. The stand-down
+// used to be stamped after a read that could stall, and a device that heard
+// it then closed a newer alarm and refused every tap on it for a day.
 // ---------------------------------------------------------------------------
 const STAND_DOWNS_KEY = 'flock_sos_stand_downs';
 const STAND_DOWN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -252,11 +265,20 @@ function readStandDowns() {
   }
 }
 
+// True when a stand-down stamped `standDownAt` calls off an alarm stamped
+// `alarmAt`: both are readable and the alarm is no later. The one comparison
+// for a tap from the tray, the alarm on screen, and a live all-clear.
+export function standDownCovers(alarmAt, standDownAt) {
+  const raised = Date.parse(alarmAt);
+  const stoodDown = Date.parse(standDownAt);
+  return Number.isFinite(raised) && Number.isFinite(stoodDown) && raised <= stoodDown;
+}
+
 export function noteSafetyStandDown(fromUserId, at) {
   const id = asId(fromUserId);
   if (!id) return;
-  const stamped = Date.parse(at);
-  const when = Number.isFinite(stamped) ? stamped : Date.now();
+  const when = Date.parse(at);
+  if (!Number.isFinite(when)) return;
   const now = Date.now();
   const seen = readStandDowns();
   for (const key of Object.keys(seen)) {
@@ -267,17 +289,14 @@ export function noteSafetyStandDown(fromUserId, at) {
 }
 
 // True for an alarm tap (never a stand-down) that a stand-down already seen
-// for the same sender has overtaken. An alarm that does not say when it was
-// raised cannot be shown to be the newer one, so once its sender has stood
-// down it is treated as the alarm that was called off.
+// for the same sender has overtaken.
 export function safetyAlarmWasStoodDown(intent) {
   if (!intent || intent.screen !== 'safety' || intent.cancelled) return false;
   const id = asId(intent.userId);
   if (!id) return false;
   const stoodDown = readStandDowns()[id];
   if (!Number.isFinite(stoodDown) || Date.now() - stoodDown >= STAND_DOWN_TTL_MS) return false;
-  const raised = Date.parse(intent.at);
-  return !Number.isFinite(raised) || raised <= stoodDown;
+  return standDownCovers(intent.at, new Date(stoodDown).toISOString());
 }
 
 // A URL -> what the app should open. Handles both the query form the backend

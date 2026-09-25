@@ -461,6 +461,26 @@ test('coverage: a repeat covers what the last stand-down covered, not an alert w
   assert.deepStrictEqual(cover.contacts.map((c) => c.contact_name), ['Dad']);
 });
 
+test('coverage: the all-clear is stamped with the stand-down\'s own time, on a repeat the earlier one\'s', () => {
+  // withdrawn_ms is withdrawn_at as the statement reads it (epoch ms).
+  const first = Date.parse('2026-09-25T02:01:00.250Z');
+  const second = Date.parse('2026-09-25T02:10:00.750Z');
+  const repeat = S.standDownCoverage([
+    row({ id: 9, created_at: new Date('2026-09-25T02:05:00Z'), withdrawn_at: new Date(second), withdrawn_ms: String(second), flock_recipient_ids: [22] }),
+    row({ id: 8, withdrawn_at: new Date(first), withdrawn_ms: String(first), flock_recipient_ids: [21] }),
+  ], []);
+  assert.strictEqual(repeat.stoodDownAt, second, 'a repeat carries the time of the stand-down it repeats');
+
+  const marked = S.standDownCoverage(
+    [row({ id: 5, flock_recipient_ids: [30] })],
+    [row({ id: 5, flock_recipient_ids: [30], withdrawn_at: new Date(second), withdrawn_ms: String(second) })]
+  );
+  assert.strictEqual(marked.stoodDownAt, second, 'a fresh stand-down carries the time its mark wrote');
+
+  // With nothing read back, no time is made up here; the leg stamps it then.
+  assert.strictEqual(S.standDownCoverage([row({ id: 4, flock_recipient_ids: [1] })]).stoodDownAt, null);
+});
+
 test('coverage: an empty recorded list is nobody, and only a pre-snapshot NULL reads the contact list', () => {
   const legacyAt = new Date('2026-09-25T02:00:00Z');
   const recordedEmpty = S.standDownCoverage([row({ id: 1, contacts_alerted: 0, flock_recipient_ids: [4], contact_recipients: [] })]);
@@ -485,8 +505,12 @@ test('the stand-down mails the union and pushes the union, under the alert\'s lo
     { id: 11, created_at: new Date(Date.now() - 120_000), withdrawn_at: null, contacts_alerted: 1,
       flock_recipient_ids: [21, 22], contact_recipients: [{ name: 'Mum', email: 'mum@example.com' }] },
   ];
+  // The time the mark wrote, as the statement reads it back.
+  const stamp = Date.parse('2026-09-25T22:01:02.345Z');
   const { calls, restore } = stubPool(async (sql) => {
-    if (sql.includes('UPDATE emergency_alerts')) return { rows: windowRows.map((r) => ({ ...r, withdrawn_at: new Date() })) };
+    if (sql.includes('UPDATE emergency_alerts')) {
+      return { rows: windowRows.map((r) => ({ ...r, withdrawn_at: new Date(stamp), withdrawn_ms: String(stamp) })) };
+    }
     if (sql.includes('FROM emergency_alerts')) return { rows: windowRows };
     if (/FROM users u\s+WHERE u\.id = ANY/.test(sql)) return { rows: [{ user_id: 21 }, { user_id: 22 }] };
     if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
@@ -503,11 +527,17 @@ test('the stand-down mails the union and pushes the union, under the alert\'s lo
     assert.deepStrictEqual(flock.params[1].sort(), [21, 22]);
     assert.deepStrictEqual(pushes.map((p) => p.userId).sort(), [21, 22]);
     assert.ok(pushes.every((p) => p.data.type === 'safety_alert_cancelled'));
-    // Locked, read, marked, in that order, before anything is sent.
+    // The all-clear carries the stand-down's own time, on the push and on the
+    // socket, not the moment its audience read came back.
+    assert.ok(pushes.every((p) => p.data.at === new Date(stamp).toISOString()), JSON.stringify(pushes.map((p) => p.data.at)));
+    assert.ok(emitted.length > 0 && emitted.every((e) => e.payload.at === new Date(stamp).toISOString()));
+    // Locked, read (and the rows locked), marked, in that order, before
+    // anything is sent.
     const lock = calls.findIndex((c) => c.text.includes('pg_advisory_xact_lock'));
-    const read = calls.findIndex((c) => c.text.includes('FROM emergency_alerts') && !c.text.includes('UPDATE'));
-    const mark = calls.findIndex((c) => c.text.includes('SET withdrawn_at = NOW()'));
+    const read = calls.findIndex((c) => c.text.includes('FROM emergency_alerts') && !c.text.includes('UPDATE emergency_alerts'));
+    const mark = calls.findIndex((c) => c.text.includes('SET withdrawn_at = statement_timestamp()'));
     assert.ok(lock > -1 && read > lock && mark > read);
+    assert.match(calls[read].text, /FOR UPDATE$/);
     assert.deepStrictEqual(calls[mark].params, [ME.id, [12, 11]]);
   } finally { mail.restore(); restore(); S.resetCancels(); }
 });
@@ -527,7 +557,7 @@ test('the mark is the person\'s word: it is written even when every all-clear fa
   try {
     const res = await call('POST', '/api/alert/cancel', {});
     assert.strictEqual(res.status, 502);
-    assert.ok(calls.some((c) => c.text.includes('SET withdrawn_at = NOW()')));
+    assert.ok(calls.some((c) => c.text.includes('SET withdrawn_at = statement_timestamp()')));
   } finally { mail.restore(); restore(); S.resetCancels(); }
 });
 

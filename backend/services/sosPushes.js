@@ -31,18 +31,24 @@ function shownName(name) {
 
 // The alarm, as { title, body, data }. `coords` is { lat, lng } or null, and
 // `fixMetres` is the phone's radius for the fix, already read, or null when
-// the phone gave none. The database does not keep that radius, so an alarm
-// built again from a stored alert is worded as a fix that came without one.
-// `at` is when the alarm was raised, as an ISO string. The recipient (toUserId)
-// and the server's own alertId are added by whoever sends it.
-function alarmPush({ senderId, name, coords = null, fixMetres = null, contactsAlerted, at }) {
+// the phone gave none. `radiusLost` says whatever radius the phone gave is not
+// known here: the database does not keep it, so an alarm built again from a
+// stored alert cannot say how wide the fix was, and it is worded as an area
+// rather than as a spot, because the first copy may have called it one. `at`
+// is the alarm's time on Postgres's clock, as an ISO string (WHICH ALARM A
+// STAND-DOWN CALLS OFF, routes/safety.js). The recipient (toUserId) and the
+// server's own alertId are added by whoever sends it.
+function alarmPush({ senderId, name, coords = null, fixMetres = null, radiusLost = false, contactsAlerted, at }) {
   const shown = shownName(name);
   const radius = coords && Number.isFinite(fixMetres) ? fixMetres : null;
   const coarse = radius !== null && radius > COARSE_FIX_METRES;
+  const approximate = Boolean(coords) && radius === null && radiusLost === true;
   const body = coords
     ? (coarse
       ? `They pressed SOS on Flock and shared an approximate location, within ${accuracyPhrase(radius)}. Open the app, then call them.`
-      : 'They pressed SOS on Flock and shared their location. Open the app, then call them.')
+      : approximate
+        ? 'They pressed SOS on Flock and shared an approximate location. Open the app, then call them.'
+        : 'They pressed SOS on Flock and shared their location. Open the app, then call them.')
     : 'They pressed SOS on Flock. Open the app, then call them.';
   return {
     title: `${shown} needs help`,
@@ -64,6 +70,9 @@ function alarmPush({ senderId, name, coords = null, fixMetres = null, contactsAl
       // screen can say "approximate" and "the area" exactly where the email
       // does. Absent when unknown, like the coordinates.
       ...(radius !== null ? { accuracy: Math.round(radius) } : {}),
+      // A position whose radius was lost, so the alarm screen calls it an
+      // area too (frontend/src/services/pushNavigation.js). Absent otherwise.
+      ...(approximate ? { approximate: true } : {}),
       // How many trusted contacts the emails actually reached. The flockmate's
       // alarm screen stated "their trusted contacts have already been emailed"
       // unconditionally, so when every email failed the only people who knew
@@ -76,7 +85,11 @@ function alarmPush({ senderId, name, coords = null, fixMetres = null, contactsAl
 }
 
 // The all-clear, as { title, body, data }. It carries no location, ever: the
-// whole content of the message is that the earlier one is withdrawn.
+// whole content of the message is that the earlier one is withdrawn. `at` is
+// the stand-down's own time (withdrawn_at), never the moment this copy was
+// built: the app compares it with an alarm's `at` to tell the alarm it called
+// off from a newer one (see WHICH ALARM A STAND-DOWN CALLS OFF in
+// routes/safety.js).
 function allClearPush({ senderId, name, at }) {
   const shown = shownName(name);
   return {
