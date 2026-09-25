@@ -421,7 +421,9 @@ test('an explicit null is treated as absent wherever the handler already does', 
     ['POST', '/api/dm/2', { message_text: 'hi', message_type: null, venue_data: null, image_url: null, reply_to_id: null }, true],
     ['POST', '/api/dm/2/venue-votes', { venue_name: 'The Bar', venue_id: null }, true],
     ['POST', '/api/flocks/10/vote', { venue_name: 'The Bar', venue_id: null }, true],
-    ['POST', '/api/reports', { content_type: 'profile', reason: 'spam', content_id: null, reported_user_id: null, details: null }, true],
+    // Names a user: a report naming nobody is refused on purpose
+    // (routes/moderation.js), so the explicit nulls ride on a real report.
+    ['POST', '/api/reports', { content_type: 'profile', reason: 'spam', content_id: null, reported_user_id: 2, details: null }, true],
     ['POST', '/api/billing/10/create', { totalAmount: 40, tipPercent: null, splitType: null, paidBy: null, customShares: null }, true],
     ['POST', '/api/notifications/register', { token: 'a'.repeat(64), deviceType: null }, true],
     ['POST', '/api/guest/abcd1234efgh/rsvp', { name: 'Sam', status: 'in', guestToken: null }, false],

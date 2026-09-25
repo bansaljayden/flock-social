@@ -143,26 +143,32 @@ router.post('/reports',
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
-      // KNOWN GAP, left open deliberately, round 20. A report naming NEITHER
-      // content nor a user — `{"content_type":"profile","reason":"spam"}` — is
-      // accepted and filed. Both ids are optional for good reasons (a profile
-      // report has no content_id, a guest RSVP report has no account behind
-      // it), and with neither present every check below is skipped, because
-      // each one is conditional on one of the two. The row that lands is
-      // unactionable in every direction: 'hide' refuses (no content), 'ban'
-      // refuses (nobody named), and dismiss is the only move. Ten an hour per
-      // account in a LIMIT 200 queue is a cheap way to push real reports off
-      // the bottom of it.
-      //
-      // It is NOT fixed here because the behaviour is pinned by a test in
-      // another owner's file: __tests__/arrayShapeSweep.test.js, the case
-      // `['POST', '/api/reports', { content_type: 'profile', reason: 'spam',
-      // content_id: null, reported_user_id: null, details: null }, true]`,
-      // which asserts this payload is NOT a 400 and DOES reach the database.
-      // That test is making a different and also correct point (an explicit
-      // null must read as absent, not as a validation error), so the two rules
-      // have to be reconciled by whoever owns that file, not routed around.
       const { content_type, content_id, reported_user_id, reason, details } = req.body;
+
+      // ---------------------------------------------------------------------
+      // A REPORT HAS TO NAME SOMETHING: the content, the person, or both.
+      // ---------------------------------------------------------------------
+      // Both ids are optional for good reasons (a profile report has no
+      // content_id, a guest RSVP report has no account behind it), but with
+      // NEITHER present every check below is skipped, because each one is
+      // conditional on one of the two. `{"content_type":"profile",
+      // "reason":"spam"}` used to be filed as a row that is unactionable in
+      // every direction: 'hide' refuses (no content), 'ban' refuses (nobody
+      // named), and dismiss is the only move. Ten an hour per account in a
+      // LIMIT 200 queue was a cheap way to push real reports off the bottom.
+      //
+      // This stayed open for a while because __tests__/arrayShapeSweep.test.js
+      // sent exactly that payload to prove an explicit null reads as "absent"
+      // rather than as a validation error. Both rules hold now: the sweep's
+      // report names a user and still carries its explicit nulls, and absent
+      // on BOTH ids is refused here as a report about nothing, not as a
+      // malformed field.
+      //
+      // Before the meter, for round 15's reason (see the self-report refusal
+      // below): nothing is stored, so nothing may spend one of the ten.
+      if (!content_id && !reported_user_id) {
+        return res.status(400).json({ error: 'A report has to name the message or the person it is about.' });
+      }
 
       // ---------------------------------------------------------------------
       // A REPORT NAMING YOURSELF IS NOT A REPORT (round 22).

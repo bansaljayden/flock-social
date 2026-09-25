@@ -685,28 +685,37 @@ test('the builder refuses anything that is not an identifier or a placeholder', 
 // F. Reports that name a target — and the one open case that names none
 // ===========================================================================
 
-test('KNOWN GAP: a report naming neither content nor a user is still accepted', async () => {
-  // Not an endorsement. This pins a hole so it cannot be forgotten, and records
-  // why it was not closed here: __tests__/arrayShapeSweep.test.js asserts this
-  // exact payload is NOT a 400 and DOES reach the database, making the point
-  // that an explicit null must read as "absent" rather than as a validation
-  // error. Both rules are right and they collide, so the fix belongs to
-  // whoever owns that file.
-  //
-  // What lands is a content_reports row with no content_id and no
-  // reported_user_id. In routes/admin.js 'hide' refuses it (no content row),
-  // 'ban' refuses it (nobody named) and dismiss is the only action left, so it
-  // is a queue entry that exists only to be cleared. The moment that test is
-  // reconciled, this one flips to asserting a 400.
+test('a report naming neither content nor a user is refused, and files nothing', async () => {
+  // It used to be filed: a content_reports row with no content_id and no
+  // reported_user_id, which routes/admin.js can neither hide (no content row)
+  // nor ban (nobody named), so it was a queue entry that existed only to be
+  // cleared. Explicit nulls count as absent, exactly as
+  // __tests__/arrayShapeSweep.test.js requires everywhere else.
   handlers = [
     [/SELECT id, status, created_at FROM content_reports/, () => ({ rows: [] })],
     [/INSERT INTO content_reports/, () => ({ rows: [{ id: 1, status: 'open', created_at: 'now' }], rowCount: 1 })],
   ];
-  const res = await call('POST', '/api/reports', { content_type: 'profile', reason: 'spam' });
-  assert.strictEqual(res.status, 201);
-  const insert = ran(/INSERT INTO content_reports/)[0];
-  assert.strictEqual(insert.params[1], null, 'no user named');
-  assert.strictEqual(insert.params[3], null, 'no content named');
+  for (const body of [
+    { content_type: 'profile', reason: 'spam' },
+    { content_type: 'profile', reason: 'spam', content_id: null, reported_user_id: null, details: null },
+  ]) {
+    const res = await call('POST', '/api/reports', body);
+    assert.strictEqual(res.status, 400, JSON.stringify(body));
+    assert.match(res.body.error, /name the message or the person/);
+  }
+  assert.strictEqual(ran(/INSERT INTO content_reports/).length, 0, 'nothing may be filed');
+});
+
+test('a report naming nothing is refused before the hourly budget is spent', async () => {
+  // Same order as the self-report refusal: nothing is stored, so none of the
+  // ten reports an hour may go on it. Eleven refusals in a row, all 400; if
+  // the meter were charged, the eleventh would be a 429.
+  handlers = [];
+  for (let i = 0; i < 11; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    const res = await call('POST', '/api/reports', { content_type: 'profile', reason: 'spam' });
+    assert.strictEqual(res.status, 400, `attempt ${i + 1}: ${JSON.stringify(res.body)}`);
+  }
 });
 
 test('a report naming only a user, or only content, is still accepted', async () => {
