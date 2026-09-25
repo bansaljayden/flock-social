@@ -90,8 +90,13 @@ const pool = new Pool({
   })(),
 });
 
+// pg-pool hangs the whole client off the error (err.client) before emitting
+// it, so logging the error object printed that client: host, port, user and
+// database, several hundred lines for one idle connection the proxy dropped.
+// The message and code say what happened.
 pool.on('error', (err) => {
-  console.error('Unexpected database pool error:', err);
+  const code = err && err.code ? ` (${err.code})` : '';
+  console.error(`Unexpected database pool error: ${err && err.message}${code}`);
 });
 
 // ---------------------------------------------------------------------------
