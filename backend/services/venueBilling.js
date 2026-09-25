@@ -47,9 +47,9 @@ const roostNotice = require('./roostNotice');
 const { longDate } = require('../templates/roostNoticeEmail');
 
 const KIND = 'venue';
-// With two tiers still in the product (VENUE-BILLING.md: the collapse to free
-// + Roost is decided but owed as its own change), Roost is the top rank. Every
-// Roost surface is gated at 'pro' or below, so this grant opens all of them.
+// 'pro' is Roost's stored name. There are two plans, a free venue account and
+// Roost (VENUE-PRICING.md section 4), and every Roost surface is gated at
+// 'pro', so this grant opens all of them.
 const ROOST_TIER = 'pro';
 // VENUE-PRICING.md: 14-day self-serve trial, card required.
 const TRIAL_DAYS = 14;
@@ -85,14 +85,25 @@ function roostPrices() {
   return plans;
 }
 
+// Prices no longer sold that existing subscribers are still billed on, comma
+// separated. Replacing STRIPE_PRICE_ROOST_MONTHLY or _YEARLY with a new price
+// moves every venue on the old one here, not onto the new one: Terms 9.6 says
+// a new price applies to a plan only after 30 days' notice, so until Stripe
+// moves them the old id has to keep meaning Roost.
+function legacyRoostPrices() {
+  const raw = plain(process.env.STRIPE_PRICE_ROOST_LEGACY);
+  return raw ? raw.split(',').map((id) => id.trim()).filter(Boolean) : [];
+}
+
 // Every price a Roost subscription may legitimately be on. The founding-cohort
 // rate (VENUE-PRICING.md: $59/month locked for 24 months) is its own Stripe
 // Price, sold by hand, so it is recognised here without being offered at
-// checkout.
+// checkout, and so are the retired prices above.
 function recognisedPrices() {
   const set = new Set(Object.values(roostPrices()));
   const founding = plain(process.env.STRIPE_PRICE_ROOST_FOUNDING);
   if (founding) set.add(founding);
+  for (const id of legacyRoostPrices()) set.add(id);
   return set;
 }
 
@@ -147,17 +158,26 @@ async function venueCustomerIdFor(userId) {
 // Account deletion. Deleting the customer cancels its Roost subscription at
 // once. THROWS if Stripe would not do it, so routes/users.js can refuse the
 // deletion instead of leaving a card being billed for a venue that is gone.
+//
+// "Would not do it" includes Stripe not being reachable at all. closeCustomer
+// answers false rather than throwing when STRIPE_SECRET_KEY is missing or too
+// short, and this returned that false to a caller that never read it, so the
+// account was deleted, the customer id went with the venue row, and Stripe
+// went on billing a venue nobody could cancel from inside Flock. A customer on
+// file that was not closed is a refusal now. No customer on file is still an
+// ordinary false: there is nothing to cancel.
 async function closeVenueCustomer(userId) {
   const customerId = await venueCustomerIdFor(userId);
   if (!customerId) return false;
   const closed = await billing.closeCustomer(customerId);
-  if (closed) {
-    await pool.query(
-      'UPDATE venue_profiles SET stripe_customer_id = NULL WHERE user_id = $1 AND stripe_customer_id = $2::text',
-      [userId, customerId]
-    );
+  if (!closed) {
+    throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
   }
-  return closed;
+  await pool.query(
+    'UPDATE venue_profiles SET stripe_customer_id = NULL WHERE user_id = $1 AND stripe_customer_id = $2::text',
+    [userId, customerId]
+  );
+  return true;
 }
 
 // The venue's Stripe customer, created once. Same idempotency reasoning as
@@ -208,7 +228,22 @@ async function expireOpenSessions(customerId) {
   }
 }
 
-async function createVenueCheckout(user, plan) {
+// ONE ROOST CHECKOUT BEING BUILT PER ACCOUNT AT A TIME. Expiring the open
+// sessions, checking for a live subscription and creating the session are
+// separate Stripe calls, and two requests that interleave them (a double
+// click, two tabs) could each create a session after the other's expire step:
+// two payable sessions, two subscriptions, one venue billed twice. Flock Pro
+// queued its builds through proBilling.withCheckoutLock from the start and
+// this path did not. It goes through the same queue now, under a key of its
+// own, so a venue's Roost builds run one after the other and the second
+// expires the session the first one made. A Pro checkout by the same person is
+// on a different Stripe customer and cannot double-bill a Roost one, so the
+// two products do not wait on each other.
+function createVenueCheckout(user, plan) {
+  return billing.withCheckoutLock(`venue:${user && user.id}`, () => buildVenueCheckout(user, plan));
+}
+
+async function buildVenueCheckout(user, plan) {
   const priceId = roostPrices()[plan];
   if (!priceId) throw refusal(400, 'That plan is not offered.');
   const profile = await venueProfileFor(user.id);
@@ -259,10 +294,16 @@ async function createVenueCheckout(user, plan) {
   const tax = billing.taxEnabled();
   const web = billing.webBase();
   const meta = { kind: KIND, flock_venue_user_id: String(user.id), plan };
+  // NO client_reference_id. RevenueCat's Stripe integration reads a Checkout
+  // Session's client_reference_id as the app user id, exactly as it reads
+  // app_user_id in metadata (the header of this file says why that key is kept
+  // off), so a Roost session carrying the Flock user id there could be
+  // imported as that person's consumer purchase. Nothing on the venue side
+  // reads it: the webhook and the confirm route both take the account from
+  // flock_venue_user_id in the metadata.
   const session = await stripe().checkout.sessions.create({
     mode: 'subscription',
     customer: customerId,
-    client_reference_id: String(user.id),
     line_items: [{ price: priceId, quantity: 1 }],
     metadata: meta,
     // Session metadata does not reach the subscription, and the webhook reads
@@ -313,11 +354,13 @@ function toDate(unixSeconds) {
 }
 
 // What one Stripe subscription means for the grant. Pure, so a test can walk
-// every status through it.
-function grantFromSubscription(sub, now = Date.now()) {
+// every status through it. unknownPriceIsRoost is for a subscription Stripe is
+// still billing on a price missing from the configuration (see
+// syncVenueSubscription): it counts that price as Roost.
+function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = false } = {}) {
   const item = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
   const priceId = item && item.price ? item.price.id : null;
-  const priceOk = !!priceId && recognisedPrices().has(priceId);
+  const priceOk = !!priceId && (unknownPriceIsRoost || recognisedPrices().has(priceId));
   // current_period_end moved onto the item in recent API versions; the
   // subscription-level field is the older home.
   const periodEnd = toDate(item && item.current_period_end) || toDate(sub.current_period_end);
@@ -412,14 +455,38 @@ const SYNC_SQL = `WITH old AS (
 // whatever Stripe says NOW is written, and writing it twice changes nothing.
 // Throws on a Stripe or database failure, so the webhook answers 500 and
 // Stripe retries.
+//
+// A LIVE SUBSCRIPTION ON A PRICE THIS SERVER DOES NOT RECOGNISE IS NOT A
+// CANCELLATION. It used to be written as tier free with expires_at now, so a
+// venue Stripe was still charging lost Roost the moment a price id changed
+// under it: a new Price made in the dashboard, a typo in STRIPE_PRICE_ROOST_*,
+// the founding price left unset, a price rise with the old id not moved to
+// STRIPE_PRICE_ROOST_LEGACY. That is a configuration fault on our side, and
+// the venue must not pay for it. So Roost is written through the period Stripe
+// is billing, the same as for a known price, and the error below names the
+// price to add. Only Stripe can create a subscription carrying venue metadata,
+// so an unknown price here is always one of ours.
+//
+// It does not throw. Leaving the old grant and answering 500 kept the end date
+// of the PREVIOUS period, so the venue still lost Roost three days after it
+// while Stripe billed the new one, and every retry repeated the refusal. An
+// endpoint that fails for days can also be disabled by Stripe, which would
+// stop every Pro and Roost event, not just this one.
+//
+// A DEAD subscription on an unknown price is still written, because revoking
+// is what a dead subscription means whatever it was on.
 async function syncVenueSubscription(subscriptionId) {
   const sub = await stripe().subscriptions.retrieve(subscriptionId);
   if (!isVenueObject(sub)) return { ignored: 'not_venue' };
   const userId = venueUserIdFrom(sub.metadata);
   if (!userId) return { ignored: 'no_account' };
-  const g = grantFromSubscription(sub);
+  let g = grantFromSubscription(sub);
+  if (!g.priceOk && KEEP_STATUSES.has(sub.status)) {
+    console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
+    g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
+  }
   if (!g.priceOk) {
-    console.error(`[venue-billing] subscription ${sub.id} is on price ${g.priceId}, which is not a configured Roost price. No tier granted; set STRIPE_PRICE_ROOST_* if this price is real.`);
+    console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
   }
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
   const r = await pool.query(SYNC_SQL, [
@@ -477,6 +544,7 @@ module.exports = {
   venueCustomerIdFor,
   closeVenueCustomer,
   grantFromSubscription,
+  legacyRoostPrices,
   TRIAL_DAYS,
   ROOST_TIER,
   __test: { SYNC_SQL, venueUserIdFrom, GRACE_MS, STRIPE_MIN_TRIAL_MS },

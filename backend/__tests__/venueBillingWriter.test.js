@@ -165,3 +165,30 @@ test('a past-due card keeps Roost (a failed card is not a cancellation); unpaid 
   await venueBilling.syncVenueSubscription(sub('sub_p1', id, 'unpaid'));
   assert.strictEqual((await state(id)).served, 'free');
 });
+
+test('a live subscription on a price this server does not recognise keeps Roost through the period Stripe is billing', async () => {
+  // It used to be written as tier free with expires_at now while Stripe went
+  // on charging: a Price made in the dashboard, or STRIPE_PRICE_ROOST_* left
+  // stale, and a paying venue lost Roost on the next event. Refusing the event
+  // instead kept the PREVIOUS period's end date, which lost it three days
+  // after that period while the new one was being billed.
+  const id = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_x1', id, 'active'));
+  const before = await state(id);
+  assert.strictEqual(before.served, 'pro');
+
+  const periodEnd = Math.floor(Date.now() / 1000) + 40 * 86400;
+  sub('sub_x1', id, 'active', { items: { data: [{ price: { id: 'price_not_configured' }, current_period_end: periodEnd }] } });
+  await venueBilling.syncVenueSubscription('sub_x1');
+  const after = await state(id);
+  assert.strictEqual(after.served, 'pro', 'a venue Stripe is still charging lost Roost over a price id');
+  assert.strictEqual(after.cached, 'pro');
+  assert.strictEqual(new Date(after.grant.expires_at).getTime(), periodEnd * 1000 + venueBilling.__test.GRACE_MS,
+    'Roost runs to the end of the period Stripe is billing, plus the usual grace');
+  assert.strictEqual(after.audit.length, before.audit.length, 'the tier did not change, so nothing is audited');
+
+  // Once it has ended it revokes, whatever price it was on.
+  sub('sub_x1', id, 'canceled', { items: { data: [{ price: { id: 'price_not_configured' } }] } });
+  await venueBilling.syncVenueSubscription('sub_x1');
+  assert.strictEqual((await state(id)).served, 'free');
+});

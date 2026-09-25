@@ -213,6 +213,18 @@ async function isPremium(userId) {
 // only, with every gate and meter applied to them exactly as it will be to
 // everyone. A caller with no signed-in account (the public demo, web
 // checkout's availability check) passes no id and gets the global answer.
+//
+// THE PUBLIC DEMO IS NOT METERED WHILE ONLY THE REVIEW LIST IS, AND THAT IS ON
+// PURPOSE. routes/publicCrowd.js calls paywallEnabled() with no id, so with
+// PAYWALL_ENABLED off and a review account listed, flockcorp.com's live demo
+// still shows the full forecast and every crowd level. That is not a way
+// round the wall: with the global switch off, every account except the listed
+// ones is unmetered too, so the demo is showing exactly what signing up would
+// give, and there is nothing to buy that the demo gives away. The list exists
+// so App Review can meet the wall on its own account, not to meter the
+// public; metering the anonymous demo for one review account would change
+// the site for every visitor. The demo's gates switch on with PAYWALL_ENABLED,
+// the moment accounts are metered.
 function previewUserIds() {
   const raw = typeof process.env.PAYWALL_PREVIEW_USER_IDS === 'string' ? process.env.PAYWALL_PREVIEW_USER_IDS : '';
   return new Set(raw.split(',').map((s) => s.trim()).filter((s) => /^[1-9][0-9]{0,9}$/.test(s)));
