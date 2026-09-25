@@ -9,10 +9,15 @@
 // admits no venue and spends nothing on the package plan. Nothing is written
 // anywhere, and no database is opened.
 //
+// THE REQUEST ITSELF LIVES IN services/besttimeAccount.js, which the admin
+// Overview's Crowd data block reads through as well, so this script and that
+// screen make the same call and screen its answer the same way. What stays here
+// is the printing.
+//
 // THE KEY IS READ FROM BESTTIME_API_KEY, the variable scripts/ml/bestTimeService.js
 // reads, so this reports on the same key the hourly collector uses. There is no
 // BESTTIME_API_KEY_PRIVATE; BESTTIME_API_KEY_PUBLIC exists in the local .env and
-// is not used here.
+// is read here only to screen the output for it.
 //
 // WHAT IT PRINTS, AND WHAT IT NEVER PRINTS. The response echoes both keys back
 // (api_key_private, api_key_public) along with the key's website restrictions.
@@ -42,42 +47,10 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
-const KEY_STATUS_URL = 'https://besttime.app/api/v1/keys/';
-
-// Field names worth printing if BestTime ever adds them. Matched against the
-// NAME only; the value is still screened for key material below.
-const REPORTABLE_NAME = /(plan|package|subscription|tier|credit|quota|allowance|limit|remaining|used|usage|venue|reset|renew|cycle|period|expire)/i;
-// Echoed identity, never printed, whatever the pattern above says.
-const NEVER_PRINT_NAME = /(api_key|key_private|key_public|restricted_website|email|token|secret|password)/i;
-
-function containsKeyMaterial(value, secrets) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  if (!text) return false;
-  if (/\b(pri|pub)_[0-9a-f]{8,}/i.test(text)) return true;
-  return secrets.some((s) => s && s.length >= 8 && text.includes(s));
-}
-
-// The first day of next month, UTC, as YYYY-MM-DD.
-function nextCalendarMonthStart(now = new Date()) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return d.toISOString().slice(0, 10);
-}
-
-// Flattens the response into [path, value] pairs, dropping anything that is
-// not a scalar (arrays and objects are walked, never printed whole).
-function flatten(value, prefix = '', out = []) {
-  if (Array.isArray(value)) {
-    value.forEach((v, i) => flatten(v, `${prefix}[${i}]`, out));
-  } else if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) flatten(v, prefix ? `${prefix}.${k}` : k, out);
-  } else {
-    out.push([prefix, value]);
-  }
-  return out;
-}
+const besttime = require('../../services/besttimeAccount');
 
 async function main() {
-  const key = process.env.BESTTIME_API_KEY;
+  const key = besttime.configuredKey();
   if (!key) {
     console.error('[BestTime:Status] BESTTIME_API_KEY is not set in backend/.env; nothing to check.');
     process.exitCode = 1;
@@ -85,46 +58,33 @@ async function main() {
   }
   const secrets = [key, process.env.BESTTIME_API_KEY_PUBLIC].filter(Boolean);
 
-  let response;
-  try {
-    response = await fetch(KEY_STATUS_URL + encodeURIComponent(key), {
-      method: 'GET',
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch (err) {
-    // The message of a failed fetch can quote the request, and the request
-    // carries the key. The code is enough to act on.
-    const code = (err && err.cause && err.cause.code) || (err && err.name) || 'unknown';
-    console.error(`[BestTime:Status] Request failed (${code}). Nothing was printed from the response.`);
+  const answer = await besttime.fetchKeyStatus(key, { timeoutMs: 20000 });
+  if (!answer.ok) {
+    if (answer.kind === 'network') {
+      // The message of a failed fetch can quote the request, and the request
+      // carries the key. The code is enough to act on.
+      console.error(`[BestTime:Status] Request failed (${answer.code}). Nothing was printed from the response.`);
+    } else if (answer.kind === 'http') {
+      console.error(`[BestTime:Status] HTTP ${answer.httpStatus} from the key endpoint. `
+        + '401/403 means the key or the account is rejected; 5xx is BestTime.');
+    } else {
+      console.error('[BestTime:Status] The key endpoint did not answer with JSON.');
+    }
     process.exitCode = 1;
     return;
   }
 
-  if (!response.ok) {
-    console.error(`[BestTime:Status] HTTP ${response.status} from the key endpoint. `
-      + '401/403 means the key or the account is rejected; 5xx is BestTime.');
-    process.exitCode = 1;
-    return;
-  }
-
-  let body;
-  try {
-    body = await response.json();
-  } catch (_) {
-    console.error('[BestTime:Status] The key endpoint did not answer with JSON.');
-    process.exitCode = 1;
-    return;
-  }
-
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-  const health = body.status === 'OK' && body.valid === true && body.active === true;
+  const body = answer.body;
+  const status = besttime.readKeyStatus(body, { secrets });
+  // The three health fields as BestTime sent them, screened like everything else.
+  const raw = (v) => (besttime.containsKeyMaterial(v, secrets) ? '[withheld]' : String(v));
 
   console.log(`[BestTime:Status] Checked ${new Date().toISOString()} (key from BESTTIME_API_KEY; the key itself is never printed)`);
-  console.log(`  Key health         : ${health ? 'OK (valid, active)' : `NOT OK (status=${String(body.status)}, valid=${String(body.valid)}, active=${String(body.active)})`}`);
+  console.log(`  Key health         : ${status.healthy ? 'OK (valid, active)' : `NOT OK (status=${raw(body.status)}, valid=${raw(body.valid)}, active=${raw(body.active)})`}`);
   console.log('  Plan name          : not reported by the key endpoint (see the besttime.app dashboard)');
 
-  const forecast = num(body.credits_forecast);
-  const query = num(body.credits_query);
+  const forecast = status.creditsForecast;
+  const query = status.creditsQuery;
   console.log(`  credits_forecast   : ${forecast === null ? 'not reported' : forecast}`
     + '   (undocumented; has read 1 on two package accounts with very different usage, so it is not the admission count)');
   console.log(`  credits_query      : ${query === null ? 'not reported' : query}`
@@ -134,17 +94,13 @@ async function main() {
 
   // Anything else that looks like a plan, quota or cycle field, in case the
   // endpoint grows one. Printed by name and screened for key material.
-  const known = new Set(['status', 'active', 'valid', 'credits_forecast', 'credits_query']);
-  for (const [path, value] of flatten(body)) {
-    if (known.has(path)) continue;
-    if (NEVER_PRINT_NAME.test(path) || !REPORTABLE_NAME.test(path)) continue;
-    if (value !== null && !['number', 'boolean', 'string'].includes(typeof value)) continue;
-    const shown = containsKeyMaterial(value, secrets) ? '[withheld: contains key material]' : String(value).slice(0, 80);
-    console.log(`  ${path.padEnd(19)}: ${shown}`);
+  for (const field of status.reported) {
+    const shown = field.withheld ? '[withheld: contains key material]' : String(field.value).slice(0, 80);
+    console.log(`  ${field.name.padEnd(19)}: ${shown}`);
   }
 
   console.log(`  Cycle reset        : not reported by the key endpoint; package allowances are per calendar `
-    + `month, so the next reset is ${nextCalendarMonthStart()} (derived, not read)`);
+    + `month, so the next reset is ${besttime.nextCalendarMonthStart()} (derived, not read)`);
 }
 
 module.exports = { main };

@@ -25,15 +25,26 @@
 //      only in their own month.
 //   7. Every price services/statedPrices.js lists is where it says, at the
 //      amount it says.
+//   8. Crowd data: with no BestTime key the block says not connected and asks
+//      nothing; with one it reads the key endpoint once per hold, carries the
+//      counters under BestTime's names and never either key; a failure is a
+//      reason in our words with no numbers; the plan terms beside it are the
+//      code's, labelled as stated.
+//   9. The model: the loaded version (or the artifact on disk, labelled not
+//      loaded), within one crowd band from the database with its sample and
+//      window, the goal and the gap, the share withheld under the minimum,
+//      and the check held for an hour.
 //
 // Stripe is a fake installed in the require cache before the billing service
-// loads it, RevenueCat is a fake global fetch, and Postgres is a scripted fake.
+// loads it, RevenueCat and BestTime are a fake global fetch, the predictor's
+// coverage read is stubbed on its module, and Postgres is a scripted fake.
 // Nothing leaves the process.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
 
@@ -41,6 +52,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'money-hub-test-secret';
 // Fake, and assembled at runtime so nothing here looks like a real key.
 const STRIPE_KEY = ['sk', 'test', `moneyhub${'0'.repeat(20)}`].join('_');
 const RC_KEY = 'rc_secret_moneyhub_fake_key_000';
+const BT_KEY = ['pri', 'feedface'.repeat(4)].join('_');
+const BT_PUBLIC_KEY = ['pub', 'decafbad'.repeat(4)].join('_');
 
 // ---- the fake Stripe -------------------------------------------------------
 const stripeCalls = [];
@@ -125,10 +138,45 @@ function resetRc() {
   rcCalls.length = 0;
 }
 resetRc();
+
+// ---- the fake BestTime -------------------------------------------------------
+// Every besttime.app URL is answered here, whatever the test, so no run of this
+// suite can reach the real key endpoint even with a real key in the shell.
+const btCalls = [];
+let bt;
+function resetBt() {
+  bt = {
+    // 'ok' answers `body`; 'status' answers `status` with `body`; 'throw'
+    // rejects the way a failed fetch does; 'text' answers 200 with no JSON.
+    mode: 'ok',
+    status: 200,
+    body: {
+      api_key_private: BT_KEY,
+      api_key_public: BT_PUBLIC_KEY,
+      status: 'OK',
+      active: true,
+      valid: true,
+      credits_forecast: 1,
+      credits_query: 1,
+      restricted_website_public: 'https://example.invalid',
+      restricted_website_private: '',
+    },
+    error: null,
+  };
+  btCalls.length = 0;
+}
+resetBt();
+
 const realFetch = global.fetch;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 global.fetch = async (url, init) => {
   const u = String(url);
+  if (u.startsWith('https://besttime.app/')) {
+    btCalls.push({ url: u, method: init && init.method });
+    if (bt.mode === 'throw') throw bt.error;
+    if (bt.mode === 'text') return new Response('<html>maintenance</html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
+    return json(bt.body, bt.mode === 'status' ? bt.status : 200);
+  }
   if (!u.startsWith('https://api.revenuecat.com/')) return realFetch(url, init);
   rcCalls.push(u);
   const auth = init && init.headers && init.headers.Authorization;
@@ -182,6 +230,13 @@ pool.connect = async () => ({
 const photoStore = require('../services/photoStore');
 photoStore.photoSpendStatus = async () => ({ monthUsed: 12, monthUsd: 0, dayUsed: 1, limits: {} });
 
+// The predictor's coverage read, stubbed on its module the same way: the hub
+// asks it which model is loaded, and no test here loads the 11 MB artifact.
+const mlPredictor = require('../services/mlPredictor');
+const LOADED_MODEL = { modelVersion: '2.6.0-starling', modelLoaded: true };
+let modelCoverage = LOADED_MODEL;
+mlPredictor.predictionCoverage = () => ({ total: 0, ml: 0, ruleEngine: 0, modelShare: null, byMethod: {}, inMemory: true, ...modelCoverage });
+
 // ---- the app -----------------------------------------------------------------
 const authMod = require('../middleware/auth');
 let CURRENT_USER = { id: 9, role: 'admin' };
@@ -220,6 +275,7 @@ const ENV_KEYS = [
   'STRIPE_SECRET_KEY', 'REVENUECAT_SECRET_API_KEY', 'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_PRO_YEARLY',
   'STRIPE_PRICE_ROOST_MONTHLY', 'STRIPE_PRICE_ROOST_YEARLY', 'STRIPE_PRICE_ROOST_FOUNDING',
   'STRIPE_PRICE_ROOST_LEGACY', 'PAYWALL_ENABLED', 'VENUE_BILLING_ENABLED', 'REVENUECAT_PROJECT_ID',
+  'BESTTIME_API_KEY',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 test.after(() => {
@@ -254,9 +310,16 @@ function dbRow(x) {
   };
 }
 
+// The served-forecast check's one row, as Postgres answers it: four counts and
+// the model versions seen. The default is a quiet month with nothing paired.
+const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, versions: [] };
+
 // Everything the hub asks Postgres, answered with a quiet but real database.
-function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14] } = {}) {
+function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accuracy = QUIET_ACCURACY } = {}) {
   return [
+    // First, because its WITH clause names no table the other patterns look for,
+    // and a check that fell through to "unscripted" would read as an error.
+    [/FROM served_predictions sp/, () => (accuracy instanceof Error ? Promise.reject(accuracy) : { rows: [accuracy], rowCount: 1 })],
     [/FROM business_expenses/, () => ({ rows: expenseRows.map(dbRow), rowCount: expenseRows.length })],
     [/FROM cost_reconciled/, () => ({ rows: [], rowCount: 0 })],
     [/SELECT id FROM users WHERE is_premium = true/, () => ({ rows: premiumIds.map((id) => ({ id })), rowCount: premiumIds.length })],
@@ -274,6 +337,7 @@ function clearVendors() {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.REVENUECAT_SECRET_API_KEY;
   delete process.env.REVENUECAT_PROJECT_ID;
+  delete process.env.BESTTIME_API_KEY;
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
 }
 
@@ -284,6 +348,8 @@ test.beforeEach(() => {
   CURRENT_USER = { id: 9, role: 'admin' };
   resetStripeState();
   resetRc();
+  resetBt();
+  modelCoverage = LOADED_MODEL;
   clearVendors();
   moneyHub.__test.resetCache();
   billing.__test.resetStripe();
@@ -369,6 +435,7 @@ function seedRevenueCat({ v2 = 'refuse' } = {}) {
 test('every money and expense route refuses a non-admin before a query or a vendor call', async () => {
   seedStripe();
   seedRevenueCat({ v2: 'ok' });
+  process.env.BESTTIME_API_KEY = BT_KEY;
   const routes = [
     ['GET', '/api/admin/money'],
     ['GET', '/api/admin/expenses'],
@@ -383,11 +450,13 @@ test('every money and expense route refuses a non-admin before a query or a vend
       log = [];
       stripeCalls.length = 0;
       rcCalls.length = 0;
+      btCalls.length = 0;
       const r = await req(method, p, body);
       assert.strictEqual(r.status, 403, `${method} ${p} answered ${r.status} for role ${String(role)}`);
       assert.deepStrictEqual(log, [], `${method} ${p} touched the database first`);
       assert.deepStrictEqual(stripeCalls, [], `${method} ${p} called Stripe first`);
       assert.deepStrictEqual(rcCalls, [], `${method} ${p} called RevenueCat first`);
+      assert.deepStrictEqual(btCalls, [], `${method} ${p} called BestTime first`);
     }
   }
 });
@@ -1377,4 +1446,376 @@ test('the health block reads the collector from its own rows', async () => {
   r = await req('GET', '/api/admin/money');
   assert.strictEqual(r.body.health.collector.state, 'stopped');
   assert.strictEqual(r.body.health.collector.latestAt, null);
+});
+
+// ===========================================================================
+// 8. CROWD DATA: what BestTime's key endpoint says, and the plan the code records
+// ===========================================================================
+
+// Every console line written while fn runs, so a test can prove none of them
+// carries the key.
+async function capturingLogs(fn) {
+  const saved = { error: console.error, warn: console.warn, log: console.log };
+  const lines = [];
+  const grab = (...args) => lines.push(args.map((a) => (a instanceof Error ? `${a.name}: ${a.message}` : String(a))).join(' '));
+  console.error = grab;
+  console.warn = grab;
+  console.log = grab;
+  try {
+    return { result: await fn(), lines: lines.join('\n') };
+  } finally {
+    console.error = saved.error;
+    console.warn = saved.warn;
+    console.log = saved.log;
+  }
+}
+
+function assertNoBestTimeKey(text, what) {
+  assert.ok(!text.includes(BT_KEY), `the private key reached ${what}`);
+  assert.ok(!text.includes(BT_PUBLIC_KEY), `the public key reached ${what}`);
+  assert.ok(!/\b(pri|pub)_[0-9a-f]{8,}/i.test(text), `something shaped like a BestTime key reached ${what}`);
+}
+
+test('crowd data with no BestTime key says not connected, asks nothing, and still states the plan', async () => {
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const cd = r.body.crowdData;
+  assert.strictEqual(cd.besttime.status, 'not_connected');
+  assert.match(cd.besttime.reason, /BESTTIME_API_KEY is not set on the server/);
+  for (const field of ['key', 'counters', 'reported']) {
+    assert.strictEqual(cd.besttime[field], undefined, `an unread BestTime must not carry ${field}`);
+  }
+  assert.deepStrictEqual(btCalls, [], 'nothing is asked without a key');
+  // The plan beside it is the code's, and says where it came from.
+  const line = require('../services/costModel').FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription');
+  assert.strictEqual(cd.plan.label, line.label);
+  assert.strictEqual(cd.plan.name, 'Pro, Package 100');
+  assert.strictEqual(cd.plan.usdPerMonth, line.usd);
+  assert.strictEqual(cd.plan.checked, line.checked);
+  assert.strictEqual(cd.plan.newVenuesPerMonth, 100);
+  assert.strictEqual(cd.plan.cycle, 'calendar_month');
+  assert.strictEqual(cd.plan.source, 'backend/services/costModel.js');
+  // The collector's rows stay the Health block's one read, not a second one.
+  assert.strictEqual(r.body.health.collector.rows24h, 3000);
+  assert.strictEqual(log.filter((q) => /COUNT\(DISTINCT date_trunc/.test(q.sql)).length, 1);
+});
+
+test('the stated admission cap is the number in the plan name the cost model records', () => {
+  const { STATED_PLAN } = require('../services/besttimeAccount');
+  const line = require('../services/costModel').FIXED_MONTHLY.find((e) => e.id === STATED_PLAN.costLineId);
+  assert.ok(line, 'the cost model no longer carries the BestTime line the plan terms point at');
+  const m = /Package\s+(\d+)/.exec(line.label);
+  assert.ok(m, `the cost model's plan label "${line.label}" no longer names a package size`);
+  assert.strictEqual(Number(m[1]), STATED_PLAN.newVenuesPerMonth,
+    'the plan changed in the cost model and not in the stated allowance, or the other way round');
+});
+
+test('the cycle dates are worked out from the calendar month, the rule the command-line check prints', () => {
+  const sep = moneyHub.statedBestTimePlan(new Date('2026-09-25T13:00:00Z'));
+  assert.strictEqual(sep.cycleEndsOn, '2026-09-30');
+  assert.strictEqual(sep.resetsOn, '2026-10-01');
+  const feb = moneyHub.statedBestTimePlan(new Date('2028-02-10T00:00:00Z'));
+  assert.strictEqual(feb.cycleEndsOn, '2028-02-29');
+  assert.strictEqual(feb.resetsOn, '2028-03-01');
+  const dec = moneyHub.statedBestTimePlan(new Date('2026-12-31T23:59:00Z'));
+  assert.strictEqual(dec.resetsOn, '2027-01-01');
+});
+
+test('crowd data reads the key endpoint once, carries the counters under BestTime\'s names, and never a key', async () => {
+  process.env.BESTTIME_API_KEY = BT_KEY;
+  bt.body = {
+    ...bt.body,
+    plan_name: 'Pro Package 100',
+    venues_new_remaining: 58,
+    subscription_ref: `ref ${BT_KEY}`,
+    account_email: 'owner@example.invalid',
+  };
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const b = r.body.crowdData.besttime;
+  assert.strictEqual(b.status, 'ok');
+  assert.strictEqual(b.cached, false);
+  assert.ok(Number.isFinite(Date.parse(b.asOf)));
+  assert.deepStrictEqual(b.key, { healthy: true, status: 'OK', valid: true, active: true });
+  assert.deepStrictEqual(b.counters, { creditsForecast: 1, creditsQuery: 1 });
+  // Plan and quota fields by BestTime's own names, in its order; one carrying
+  // the key is withheld whole, and the email and website are not quota fields.
+  assert.deepStrictEqual(b.reported, [
+    { name: 'plan_name', value: 'Pro Package 100' },
+    { name: 'venues_new_remaining', value: 58 },
+    { name: 'subscription_ref', withheld: true },
+  ]);
+  // One read, of the key endpoint, with the key where BestTime wants it.
+  assert.strictEqual(btCalls.length, 1);
+  assert.strictEqual(btCalls[0].url, `https://besttime.app/api/v1/keys/${BT_KEY}`);
+  assert.strictEqual(btCalls[0].method, 'GET');
+  // And nowhere else: not in the payload, not in a log line.
+  assertNoBestTimeKey(r.text, 'the payload');
+  assertNoBestTimeKey(lines, 'the log');
+  assert.ok(!r.text.includes('example.invalid'), 'the key\'s website restriction and the account email are not quota fields');
+});
+
+test('a key BestTime answers for but calls invalid reads as not working, with the three fields it sent', async () => {
+  process.env.BESTTIME_API_KEY = BT_KEY;
+  bt.body = { ...bt.body, status: 'Error', valid: false, active: true };
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.body.crowdData.besttime.status, 'ok', 'BestTime answered, so the read is ok and the key is what is not');
+  assert.deepStrictEqual(r.body.crowdData.besttime.key, { healthy: false, status: 'Error', valid: false, active: true });
+});
+
+test('a BestTime failure is a reason in our words, with no numbers, no key and none of BestTime\'s text', async () => {
+  const cases = [
+    {
+      set: () => { bt.mode = 'status'; bt.status = 403; bt.body = { api_key_private: BT_KEY, message: `Key ${BT_KEY} blocked for abuse` }; },
+      reason: /^BestTime refused the key \(403\): a rejected key or account, or its guard after a burst of calls\.$/,
+    },
+    {
+      set: () => { bt.mode = 'status'; bt.status = 401; bt.body = { message: 'Unauthorized key' }; },
+      reason: /^BestTime refused the key \(401\)\. BESTTIME_API_KEY needs checking\.$/,
+    },
+    {
+      set: () => { bt.mode = 'status'; bt.status = 503; bt.body = { message: 'upstream exploded' }; },
+      reason: /^BestTime answered 503, a fault on its side\.$/,
+    },
+    {
+      set: () => { bt.mode = 'status'; bt.status = 429; bt.body = { message: 'slow down' }; },
+      reason: /^BestTime is rate limiting this key \(429\)\.$/,
+    },
+    {
+      set: () => { bt.mode = 'text'; },
+      reason: /^BestTime answered, but not with the JSON its key endpoint sends\.$/,
+    },
+    {
+      set: () => {
+        bt.mode = 'throw';
+        bt.error = new TypeError(`fetch failed: https://besttime.app/api/v1/keys/${BT_KEY}`);
+        bt.error.cause = { code: 'ECONNRESET' };
+      },
+      reason: /^The request to BestTime failed \(ECONNRESET\)\.$/,
+    },
+    {
+      set: () => {
+        bt.mode = 'throw';
+        bt.error = new DOMException(`timed out reading /api/v1/keys/${BT_KEY}`, 'TimeoutError');
+      },
+      reason: /^BestTime did not answer in time\.$/,
+    },
+  ];
+  for (const c of cases) {
+    resetBt();
+    moneyHub.__test.resetCache();
+    process.env.BESTTIME_API_KEY = BT_KEY;
+    handlers = hubHandlers();
+    c.set();
+    const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+    assert.strictEqual(r.status, 200, r.text);
+    const b = r.body.crowdData.besttime;
+    assert.strictEqual(b.status, 'error', r.text);
+    assert.match(b.reason, c.reason);
+    for (const field of ['key', 'counters', 'reported']) {
+      assert.strictEqual(b[field], undefined, `a failed BestTime read carried ${field}`);
+    }
+    assertNoBestTimeKey(r.text, `the payload on "${b.reason}"`);
+    assertNoBestTimeKey(lines, `the log on "${b.reason}"`);
+    assert.ok(!/blocked for abuse|upstream exploded|Unauthorized key|slow down|maintenance|fetch failed|timed out reading/.test(r.text + lines),
+      `BestTime's own words, or a fetch error's, reached the hub on "${b.reason}"`);
+  }
+});
+
+test('the BestTime answer is held like the vendor reads: five minutes after a good one, one after a failure', async () => {
+  process.env.BESTTIME_API_KEY = BT_KEY;
+  handlers = hubHandlers();
+  const first = await req('GET', '/api/admin/money');
+  assert.strictEqual(first.body.crowdData.besttime.cached, false);
+  const second = await req('GET', '/api/admin/money?refresh=1');
+  assert.strictEqual(second.body.crowdData.besttime.cached, true, 'a refresh is honoured only once the answer is a minute old');
+  assert.strictEqual(btCalls.length, 1);
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_TTL_MS);
+  const third = await req('GET', '/api/admin/money');
+  assert.strictEqual(third.body.crowdData.besttime.cached, false, 'five minutes on, BestTime is asked again');
+  assert.strictEqual(btCalls.length, 2);
+
+  resetBt();
+  moneyHub.__test.resetCache();
+  bt.mode = 'status';
+  bt.status = 502;
+  await req('GET', '/api/admin/money');
+  const held = await req('GET', '/api/admin/money');
+  assert.strictEqual(held.body.crowdData.besttime.cached, true, 'a failure is held too, so a reload is not a retry storm');
+  assert.strictEqual(btCalls.length, 1);
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_FAIL_TTL_MS);
+  await req('GET', '/api/admin/money');
+  assert.strictEqual(btCalls.length, 2, 'a minute on, a failure is asked about again');
+  assert.ok(moneyHub.__test.cacheKeys().includes(moneyHub.__test.besttimeCacheKey()));
+});
+
+// ===========================================================================
+// 9. THE MODEL: which one is serving, and how its served forecasts are doing
+// ===========================================================================
+
+// 261 of 412 venue-hours within one band: 63.35%, shown as 63.3.
+const MEASURED = { served: 1280, matched: 412, days: 26, within_one_band: 261, versions: ['2.6.0-starling'] };
+const servedChecks = () => log.filter((q) => /FROM served_predictions sp/.test(q.sql));
+
+test('the model block: the loaded version, within one band from the database with its sample, the goal and the gap', async () => {
+  handlers = hubHandlers({ accuracy: MEASURED });
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const m = r.body.model;
+  assert.deepStrictEqual(m.version, { status: 'ok', value: '2.6.0-starling', source: 'loaded', loaded: true });
+  const a = m.accuracy;
+  assert.strictEqual(a.status, 'ok');
+  assert.strictEqual(a.cached, false);
+  assert.strictEqual(a.windowDays, 30);
+  assert.strictEqual(a.served, 1280);
+  assert.strictEqual(a.matched, 412);
+  assert.strictEqual(a.days, 26);
+  assert.strictEqual(a.enough, true);
+  assert.strictEqual(a.minSample, 100);
+  assert.strictEqual(a.minDays, 5);
+  assert.strictEqual(a.withinOneBand, 261);
+  assert.strictEqual(a.percent, 63.3);
+  assert.deepStrictEqual(a.versions, ['2.6.0-starling']);
+  assert.deepStrictEqual(m.goal, { percent: 85, metric: 'within_one_band' });
+  assert.strictEqual(m.gapPoints, 21.7);
+  assert.deepStrictEqual(m.bands, [
+    { label: 'Quiet', upTo: 20 },
+    { label: 'Not Busy', upTo: 39 },
+    { label: 'Steady', upTo: 69 },
+    { label: 'Busy', upTo: 84 },
+    { label: 'Packed', upTo: null },
+  ]);
+  assert.deepStrictEqual(m.cache, { ttlSeconds: 3600 });
+  // Asked the window, crowdEngine's cuts and the pairing window, and nothing else.
+  const q = servedChecks();
+  assert.strictEqual(q.length, 1);
+  assert.deepStrictEqual(q[0].params, [30, [20, 39, 69, 84], 3]);
+  // The blended training figure is not this and appears nowhere in it.
+  assert.ok(!/85\.1|87\.3/.test(JSON.stringify(m)), 'the blended training figure reached the model block');
+});
+
+test('under the minimum the share is withheld, count and all, so no noisy percentage can be printed', async () => {
+  assert.strictEqual(moneyHub.__test.MODEL_MIN_SAMPLE, 100);
+  assert.strictEqual(moneyHub.__test.MODEL_MIN_DAYS, 5);
+  const cases = [
+    [{ served: 300, matched: 99, days: 12, within_one_band: 99, versions: [] }, false, 'one venue-hour short'],
+    [{ served: 900, matched: 400, days: 4, within_one_band: 300, versions: [] }, false, 'plenty of venue-hours, too few days'],
+    [{ served: 0, matched: 0, days: 0, within_one_band: 0, versions: [] }, false, 'nothing paired at all'],
+    [{ served: 400, matched: 100, days: 5, within_one_band: 62, versions: [] }, true, 'exactly at both floors'],
+  ];
+  for (const [row, enough, why] of cases) {
+    moneyHub.__test.resetCache();
+    handlers = hubHandlers({ accuracy: row });
+    const r = await req('GET', '/api/admin/money');
+    const a = r.body.model.accuracy;
+    assert.strictEqual(a.status, 'ok', why);
+    assert.strictEqual(a.enough, enough, why);
+    assert.strictEqual(a.matched, row.matched, why);
+    assert.strictEqual(a.days, row.days, why);
+    assert.strictEqual(a.served, row.served, why);
+    if (enough) {
+      assert.strictEqual(a.percent, 62, why);
+      assert.strictEqual(a.withinOneBand, 62, why);
+      assert.strictEqual(r.body.model.gapPoints, 23, why);
+    } else {
+      assert.strictEqual(a.percent, null, why);
+      assert.strictEqual(a.withinOneBand, null, `${why}: the count would let anyone work the share out`);
+      assert.strictEqual(r.body.model.gapPoints, null, why);
+    }
+  }
+});
+
+test('the served-forecast check is held for an hour, not the five minutes a vendor read is', async () => {
+  handlers = hubHandlers({ accuracy: MEASURED });
+  const first = await req('GET', '/api/admin/money');
+  assert.strictEqual(first.body.model.accuracy.cached, false);
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_TTL_MS + 1000);
+  const second = await req('GET', '/api/admin/money');
+  assert.strictEqual(second.body.model.accuracy.cached, true, 'past the vendor hold, the check is still held');
+  assert.strictEqual(servedChecks().length, 1);
+  moneyHub.__test.ageCache(moneyHub.__test.MODEL_TTL_MS);
+  const third = await req('GET', '/api/admin/money');
+  assert.strictEqual(third.body.model.accuracy.cached, false, 'an hour on, it is checked again');
+  assert.strictEqual(servedChecks().length, 2);
+  assert.ok(moneyHub.__test.cacheKeys().includes(moneyHub.__test.modelAccuracyCacheKey(30, [20, 39, 69, 84])));
+});
+
+test('a check the database could not finish is an error with no figure and no gap, and the rest stands', async () => {
+  handlers = hubHandlers({ accuracy: new Error('canceling statement due to statement timeout') });
+  const { result: r } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const m = r.body.model;
+  assert.strictEqual(m.accuracy.status, 'error');
+  assert.match(m.accuracy.reason, /did not finish the check of served forecasts/);
+  for (const field of ['percent', 'matched', 'withinOneBand', 'served']) {
+    assert.strictEqual(m.accuracy[field], undefined, `a failed check carried ${field}`);
+  }
+  assert.strictEqual(m.gapPoints, null);
+  assert.deepStrictEqual(m.goal, { percent: 85, metric: 'within_one_band' }, 'the goal is a stated target and stands either way');
+  assert.strictEqual(m.version.value, '2.6.0-starling', 'the version is its own read');
+  assert.strictEqual(r.body.health.collector.status, 'ok');
+});
+
+test('with no model loaded, the version is the artifact on disk, labelled as not loaded', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moneyhub-model-'));
+  try {
+    const meta = path.join(dir, 'model_metadata.json');
+    fs.writeFileSync(meta, JSON.stringify({ model_version: '9.9.9-fixture', training_metrics: { within_15: 87.3 } }));
+    handlers = hubHandlers();
+    const notLoaded = { predictionCoverage: () => ({ modelLoaded: false, modelVersion: null }) };
+    const h = await moneyHub.buildMoneyHub({ db: pool, predictor: notLoaded, modelMetaPath: meta });
+    assert.deepStrictEqual(h.model.version, { status: 'ok', value: '9.9.9-fixture', source: 'artifact', loaded: false });
+    assert.ok(!/87\.3/.test(JSON.stringify(h.model)), 'only the version is read from the artifact');
+
+    const missing = await moneyHub.buildMoneyHub({ db: pool, predictor: notLoaded, modelMetaPath: path.join(dir, 'absent.json') });
+    assert.strictEqual(missing.model.version.status, 'error');
+    assert.strictEqual(missing.model.version.value, null);
+    assert.match(missing.model.version.reason, /no model_metadata\.json to read a version from/);
+
+    fs.writeFileSync(meta, JSON.stringify({ best_model: 'xgboost' }));
+    const unnamed = await moneyHub.buildMoneyHub({ db: pool, predictor: notLoaded, modelMetaPath: meta });
+    assert.strictEqual(unnamed.model.version.status, 'error');
+    assert.match(unnamed.model.version.reason, /names no version/);
+
+    // A loaded model wins over the file, whatever the file says.
+    const loaded = await moneyHub.buildMoneyHub({
+      db: pool,
+      predictor: { predictionCoverage: () => ({ modelLoaded: true, modelVersion: '2.6.0-starling' }) },
+      modelMetaPath: meta,
+    });
+    assert.deepStrictEqual(loaded.model.version, { status: 'ok', value: '2.6.0-starling', source: 'loaded', loaded: true });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the band ladder is crowdEngine\'s own, and a score\'s band is how many cuts it exceeds', () => {
+  const { getLabel } = require('../services/crowdEngine');
+  const ladder = moneyHub.crowdBandLadder();
+  // The ladder scripts/ml/MODEL-METRICS.md scores its band table on (re-cut 2026-08-28).
+  assert.deepStrictEqual(ladder.cuts, [20, 39, 69, 84]);
+  const names = ladder.bands.map((b) => b.label);
+  for (let s = 0; s <= 100; s += 1) {
+    const band = ladder.cuts.filter((c) => s > c).length;
+    assert.strictEqual(names[band], getLabel(s), `score ${s} lands in a different band than the card prints`);
+  }
+});
+
+test('the check pairs model forecasts with live readings of the same venue and hour, once per venue-hour', () => {
+  const sql = moneyHub.SERVED_BAND_ACCURACY_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /sp\.prediction_method = 'ml'/, 'only forecasts the model made');
+  assert.match(sql, /t\.label_source = 'live'/, 'only readings that are observations, never the vendor\'s forecast');
+  assert.match(sql, /t\.collection_mode = 'realtime'/);
+  assert.match(sql, /t\.day_of_week = s\.local_day AND t\.hour = s\.local_hour/, 'the same weekday and hour');
+  assert.match(sql, /t\.collected_at BETWEEN s\.served_at - make_interval\(hours => \$3::int\) AND s\.served_at \+ make_interval\(hours => \$3::int\)/,
+    'inside the window where that weekday and hour can only be the same day');
+  assert.match(sql, /DISTINCT ON \(t\.venue_id, t\.observed_date, t\.hour\)/, 'one pair per venue and hour');
+  assert.match(sql, /abs\(b\.served_band - b\.observed_band\) <= 1/, 'within one band, not the exact band');
+  assert.ok(!/\$\{/.test(moneyHub.SERVED_BAND_ACCURACY_SQL), 'static, so the sqlParameterTypes suite prepares it');
+  // The pairing window is short of the week that separates two of the same
+  // weekday and hour, by a wide margin.
+  assert.ok(moneyHub.__test.MODEL_PAIR_WINDOW_HOURS * 2 < 7 * 24);
 });
