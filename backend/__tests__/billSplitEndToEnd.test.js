@@ -290,6 +290,37 @@ test('a ghost estimate is readable exactly when the budget number is', async () 
   // The row itself is still described, so the client can say what state it is
   // in rather than pretending there is no bill.
   assert.strictEqual(res.body.bill.shares[0].committed, true);
+  assert.strictEqual(res.body.bill.estimate, true);
+});
+
+test('a posted bill whose payer deleted their account keeps its figures and is not an estimate', async () => {
+  // paid_by is ON DELETE SET NULL, so this bill reads payerless like a shell.
+  // had_payer (migration 086) says a payer was stored on it: its figures are
+  // what a dinner cost, not the budget ceiling, so the budget's gate is not
+  // even asked. Nothing in this list answers that gate, and a route that ran
+  // it would reject as an unscripted query.
+  handlers = [
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
+    [/SELECT bs\.\*, u\.name AS payer_name/, () => ({
+      rows: [{
+        id: 7, flock_id: 42, total_amount: '90.00', tip_percent: '0.0',
+        split_type: 'equal', paid_by: null, had_payer: true, payer_name: null, created_at: 'now',
+      }],
+    })],
+    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+      rows: [{ user_id: 1, name: 'Ava', amount: '30.00', paid_amount: '0', committed: true, settled: false, settled_at: null }],
+    })],
+    noBlocks,
+  ];
+
+  const res = await call('GET', '/api/billing/42');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.bill.hasPayer, false, 'there is still nobody to pay');
+  assert.strictEqual(res.body.bill.estimate, false);
+  assert.strictEqual(res.body.bill.totalWithTip, 90);
+  assert.strictEqual(res.body.bill.shares[0].amount, 30);
+  assert.strictEqual(res.body.bill.shares[0].outstanding, 30);
+  assert.ok(!log.some((q) => /AS shown/.test(q.sql)), 'a real bill was gated on the budget number');
 });
 
 test('the reveal billing asks is the one budget.js asks, from budget.js', async () => {
@@ -1101,7 +1132,7 @@ test('ghost-commit reads membership, mode, threshold and count after the lock', 
       () => ({ rows: [{ budget_ceiling: 30, budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM/, () => ({ rows: [{ n: 3 }] })],
     [/SELECT COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] })],
+    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7, paid_by: null }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] })],
