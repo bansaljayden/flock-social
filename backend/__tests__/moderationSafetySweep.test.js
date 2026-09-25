@@ -559,14 +559,17 @@ test('block: unblock evicts the cache too, and an unblock of nothing is a 404', 
 // D. SOS — channel isolation
 // ===========================================================================
 //
-// WHAT THE CHANNELS ACTUALLY ARE. An SOS has ONE delivery channel: email, one
-// message per trusted contact. There is no push leg and there cannot be one —
-// a trusted contact is an address somebody typed, not a Flock account, so there
-// is no device token to send to. PrivacyPolicy.js states this to users in so
-// many words ("SOS alerts are sent by email only"), and the phone column exists
-// only because the form asks for it. The isolation that matters here is
-// therefore between RECIPIENTS, and between the fan-out and the bookkeeping
-// write that follows it. Both are proved below.
+// WHAT THE CHANNELS ACTUALLY ARE. A trusted contact has ONE delivery channel:
+// email, one message per contact. There is no push leg to a contact and there
+// cannot be one: a trusted contact is an address somebody typed, not a Flock
+// account, so there is no device token to send to. PrivacyPolicy.js states this
+// to users in so many words ("Your trusted contacts get SOS alerts by email
+// only"), and the phone column exists only because the form asks for it. The
+// people on the sender's current plan are a second audience with its own
+// channel, a socket and a push (sosReachesTheFlock.test.js), and the policy
+// names that too. For the email leg the isolation that matters is between
+// RECIPIENTS, and between the fan-out and the bookkeeping write that follows
+// it. Both are proved below.
 
 const ALERT_BODY = { latitude: 40.7128, longitude: -74.006, includeLocation: true };
 
@@ -696,12 +699,21 @@ test('sos: only consented coordinates are stored, and the row matches what the e
   } finally { cap2.restore(); sender2.restore(); r2(); }
 
   // What is stored, what the privacy policy admits to, and what the data export
-  // returns have to be the same three things.
-  assert.match(USERS_SRC, /SELECT latitude, longitude, contacts_alerted, created_at\s*\n\s*FROM emergency_alerts/);
+  // returns have to agree. Since migration 084 the row also says when the alert
+  // was stood down, and the export and the policy both carry that. Who it
+  // reached (migration 063) is on the row and named in the policy; the export
+  // carries the trusted contacts it reached (the caller's own entries) and
+  // leaves the plan's roster out, as it does for every plan (Art. 20(4)).
+  assert.match(USERS_SRC, /SELECT latitude, longitude, contacts_alerted, contact_recipients, created_at, withdrawn_at\s*\n\s*FROM emergency_alerts/);
+  assert.doesNotMatch(USERS_SRC, /SELECT[^;]*flock_recipient_ids[^;]*FROM emergency_alerts WHERE user_id = \$1\s*\n\s*ORDER BY/);
   const privacy = fs.readFileSync(
     path.join(ROOT, '..', 'frontend', 'src', 'website', 'PrivacyPolicy.js'), 'utf8');
-  assert.match(privacy, /we store that alert \(your account, the coordinates, and how many contacts were emailed\)/);
-  assert.match(privacy, /SOS alerts are sent by <strong>email only<\/strong>/);
+  assert.match(privacy, /[Ww]e store that alert \(your account, the coordinates, how many contacts were emailed, who it reached, and when you stood it down\)/);
+  // Two audiences, each with its own channel: the contacts by email only, and
+  // the people on a current confirmed plan in the app (alertFlockMembers).
+  assert.match(privacy, /Your trusted contacts get SOS alerts by <strong>email only<\/strong>/);
+  assert.match(privacy, /We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app/);
+  assert.match(SAFETY_SRC, /const SOS_FLOCK_WINDOW_HOURS = 12;/);
 });
 
 test('sos: a degraded input degrades the alert, it never fails it', async () => {

@@ -71,7 +71,7 @@ export default function AboutPage() {
           afford, never anyone's number, so money stops being the silent veto. Check
           how busy a place is before you leave. Split the bill and send Venmo, Cash
           App, or Zelle links. Share live location with your group while the night
-          is on, with one-tap SOS to trusted contacts. Planning a night out with
+          is on, with two-tap SOS to trusted contacts. Planning a night out with
           friends costs nothing, and the app has no ads and no feed.
         </p>
       </section>
@@ -156,11 +156,20 @@ export default function AboutPage() {
           and lets it write a deal onto its own venue card, which a group reads
           when it opens that card while it is choosing.
         </p>
+        {/* TWO PAID PLANS, AND NEITHER IS CHARGING THE PUBLIC TODAY. This
+            paragraph used to call Roost the only paid plan while Terms section
+            10 and /pro describe Flock Pro, which backend/services/proBilling.js
+            sells only to the review accounts while PAYWALL_ENABLED is off for
+            everyone else. So Pro is named, and named as not on sale to the
+            public. When it goes on sale this sentence changes with it, and so
+            do its copies in api/marketing-page.js and public/llms.txt. */}
         <p>
           That's the business: the planning side stays free for you and your
-          friends, and the one paid plan is Roost, for venues, which adds the
-          venue's own hour-by-hour demand curve and the week ahead from the same
-          crowd model. No venue is being charged today. If you run a venue and
+          friends, and Roost, the paid plan for venues, adds the venue's own
+          hour-by-hour demand curve and the week ahead from the same crowd
+          model. No venue is being charged today. There is a paid plan for
+          people as well, Flock Pro, with more Birdie and more crowd forecasts,
+          and it is not on sale to the public today. If you run a venue and
           want in early, email{' '}
           <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
         </p>

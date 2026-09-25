@@ -243,8 +243,8 @@ export default function PrivacyPolicy() {
                 section 3.
               </p>
               <p>
-                This policy covers all of those. It applies whether you use Flock on iOS, on
-                Android, or in a browser, whether you have an account or answer an invite
+                This policy covers all of those. It applies whether you use Flock in the iOS
+                app or in a browser, whether you have an account or answer an invite
                 link as a guest, and whether you use Flock to make plans or to run a venue.
                 Write to us at {mail}.
                 {OPERATOR_ADDRESS ? ` Our postal address is ${OPERATOR_ADDRESS}.` : ''}
@@ -262,14 +262,14 @@ export default function PrivacyPolicy() {
                 <li><strong>Year of birth:</strong> collected at sign-up so we can confirm you're 13 or older. We ask for the year only. The check runs on our server, which works out your age from that year in the one way that can only ever count you as younger, so nobody under the minimum gets through on a rounding. Accounts created before 15 September 2026 gave a full date of birth, and an older account that never gave one is asked for the full date the next time it signs in; either is used for the same age check and for nothing else.</li>
                 <li><strong>Your acceptance of the terms:</strong> we store the moment you agreed to the Terms of Service, so both of us know what you agreed to and when.</li>
                 <li><strong>Interests:</strong> the tags you pick on your profile, such as live music or trivia. They are kept on your device and synced to your account so a second device agrees with the first.</li>
-                <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, email, and relationship you give us. SOS alerts are sent by <strong>email only</strong>. If you stand an alert down, an all-clear email goes to exactly the contacts who were sent that alert, and it carries no location. We store the phone number because the form asks for it and you may want it on file, but nothing in Flock texts or calls it.</li>
+                <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, email, and relationship you give us. Your trusted contacts get SOS alerts by <strong>email only</strong>. If you stand an alert down, an all-clear email goes to exactly the contacts your alert reached, including through any update to it, and it carries no location. We store the phone number because the form asks for it and you may want it on file, but nothing in Flock texts or calls it.</li>
                 <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, images you upload, venue reviews you write.</li>
                 <li><strong>Plans and votes:</strong> flocks you create or join, RSVPs, venue votes, budget submissions, check-ins (including NFC taps at a venue), and the venues you pin or vote on inside a direct message.</li>
                 <li><strong>Your calendar entries:</strong> anything you add to your Flock calendar (title, venue, date, time) is stored on our servers so it is there on your next device. It is yours alone; nobody else is shown it.</li>
                 <li><strong>Availability status:</strong> if you set "down tonight" or similar, we store that status, the note you attach, and when it expires. Your friends can see it until it expires or you clear it.</li>
                 <li><strong>Crowd reports:</strong> when you tell us how busy a venue actually is, we store that report with your account, the venue, and the time. We use it to correct our crowd predictions and to train the model that makes them. Other people see the corrected prediction, never that you were the one who reported.</li>
                 <li><strong>Reports and blocks:</strong> if you report content or block someone, we store what you reported, who you blocked, and what we did about it. Blocking is mutual, and it also ends the friendship if you had one.</li>
-                <li><strong>Guest RSVPs:</strong> if someone opens a flock invite link without a Flock account, we store the display name they type and the venues they vote for, tied to a random link token. No email, no phone, no account is created for them.</li>
+                <li><strong>Guest RSVPs:</strong> if someone opens a flock invite link without a Flock account, we store the display name they type, the venues they vote for, and the budget amount they enter if they choose to share one, tied to a random link token. Like a member's, that amount is never shown to anyone else. No email, no phone, no account is created for them.</li>
                 <li><strong>Bill splits:</strong> if your group splits a bill, we store the total, the tip, who paid, each person's share, and whether a share has been marked settled. The people in that flock see it. No money moves through Flock: paying someone back happens in Venmo, Cash App, or Zelle.</li>
                 <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames and handles only. Flock never collects or processes card, bank-account, or payment-card numbers.</li>
                 <li><strong>Venue owner details (optional):</strong> if you claim a venue, we store the business profile you fill in, the operating facts you tell us, and the promotions, events, occupancy readings and replies you post. That has its own section below, <a href="#venues">Venue owners and business data</a>.</li>
@@ -328,7 +328,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>Live location share in a flock:</strong> only when you explicitly turn it on inside an active flock, and only while you leave it on. Your coordinates are passed straight through our server to the other members of that flock and are never written to our database, so there is no trail of where you were. Blocked accounts are excluded from the hand-off. You can stop it at any time.</li>
                 <li><strong>Live location share in a direct message:</strong> the same thing, one to one. It reaches only the person you are talking to, only while you leave it on, only if the two of you are connected, never anyone either of you has blocked, and it is not written to our database either.</li>
-                <li><strong>SOS:</strong> when you press SOS, we email your trusted contacts with your current location, and we store that alert (your account, the coordinates, and how many contacts were emailed) so there is a record of what happened. It is deleted with your account. You can also send your trusted contacts your location without an SOS, from the Safety screen; that sends the same kind of email and is not stored. We never collect background location: Flock only reads your location while you are using it.</li>
+                <li><strong>SOS:</strong> when you press SOS, we email your trusted contacts with your current location. We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app, as a notification and on screen, with the same location when the alert has one. We store that alert (your account, the coordinates, how many contacts were emailed, who it reached, and when you stood it down) so there is a record of what happened and so an all-clear reaches the same people. It is deleted with your account. You can also send your trusted contacts your location without an SOS, from the Safety screen; that sends the same kind of email and is not stored. We never collect background location: Flock only reads your location while you are using it.</li>
                 <li><strong>Map, venue search, weather, events, and crowd levels:</strong> your device location centers the map on the device itself. When you search for venues, load the weather, look for events nearby, or ask Birdie for somewhere close, your coordinates are sent to our server so it can run that lookup, and the search area, not your account, goes on to Google Places, OpenWeatherMap or Ticketmaster. We do not store those coordinates in our database and we do not build a location history from them.</li>
                 <li><strong>Coordinates stay out of analytics:</strong> a few of those lookups carry your position inside the web address they request. Anything shaped like a coordinate is replaced with the word "redacted" before any analytics or error report leaves your device, in the address, in the referrer, in breadcrumbs, and in performance traces. A place name you typed is left readable, because a place name is not a position.</li>
               </ul>
@@ -340,7 +340,8 @@ export default function PrivacyPolicy() {
                 members. Until the budget settles, the only things other members see are
                 counts: how many have answered, how many are in the flock, and whether it is
                 ready. No number at all. The budget settles when the last member has answered
-                and at least three have shared an amount; only then is a single group figure
+                and at least three members have shared an amount (a guest's answer from an invite
+                link goes into the figure but does not count toward the three); only then is a single group figure
                 published, and what is published is a rounded-down band rather than anyone's
                 actual figure. It is published once and never moves, because a ceiling is a
                 minimum and a number that moved when the fourth person answered would name
@@ -440,7 +441,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and every analytics event described in <a href="#analytics">Analytics, error reports, and email</a>, the page views and the hand-written events tied to your account number alike, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
                 <li><strong>Our legitimate interests:</strong> keeping Flock safe and working. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, and improving the crowd model from reports people choose to file. We have weighed these against your interests, which is why the analytics are configured the way <a href="#analytics">Analytics, error reports, and email</a> describes and why the model's training data carries no account identifiers.</li>
                 <li><strong>Legal obligation:</strong> responding to lawful requests, and reporting apparent child sexual abuse material to the National Center for Missing and Exploited Children or the relevant authority.</li>
-                <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts your location because you are telling us something is wrong.</li>
+                <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts your location, and show it to the people on a confirmed plan with you in the app, because you are telling us something is wrong.</li>
               </ul>
               <p>
                 Where we rely on legitimate interests, you can object. See <a href="#gdpr">If
@@ -672,9 +673,11 @@ export default function PrivacyPolicy() {
                 Other members of a flock see what you share inside it: your messages, your
                 RSVP, your vote, your reliability score, and your live location while you have
                 it turned on. The person you are in a direct message with sees what you send
-                them. Your friends see your availability status while it is set. Your trusted
-                contacts receive an email with your current location when you press SOS. A
-                venue owner sees the reviews written about their venue, including yours.
+                them. Your friends see your availability status while it is set. When you press
+                SOS, your trusted contacts receive an email with your current location, and the
+                people on a confirmed plan with you get an alert in the app with the same
+                location. A venue owner sees the reviews written about their venue, including
+                yours.
               </p>
 
               <h3>Everyone else</h3>
@@ -802,7 +805,8 @@ export default function PrivacyPolicy() {
                 <li><strong>Crowd reports you file:</strong> kept while your account exists and deleted with it. A model that has already been trained on a report does not forget it, and the training set itself carries no account numbers.</li>
                 <li><strong>Predictions we served you:</strong> 180 days, then deleted automatically.</li>
                 <li><strong>Availability status:</strong> expires at the time you set. You can clear it yourself.</li>
-                <li><strong>Invite links:</strong> expire 14 days after they are created, or a week after the plan, whichever is <strong>later</strong>. A link made today for a plan two months out therefore lives about ten weeks. An invite link is a bearer credential: anyone holding it can join the flock, read its chat and see live location, so the expiry is the only thing that retires it on its own. If a link gets somewhere it should not, the person who created the plan can ask us to kill it.</li>
+                <li><strong>Invite links:</strong> expire 14 days after they are created, or a week after the plan, whichever is <strong>later</strong>. A link made today for a plan two months out therefore lives about ten weeks. An invite link is a bearer credential: anyone holding it can see the plan and who is on it, by first name, and can answer, vote and share a budget amount as a guest. Reading the flock's chat or seeing live location takes joining, which needs a signed-in Flock account with a confirmed email. So the expiry is the only thing that retires a link on its own. If a link gets somewhere it should not, the person who created the plan can ask us to kill it.</li>
+                <li><strong>Guest RSVPs:</strong> the display name, votes and budget amount a guest leaves on an invite link are kept with that plan, and deleted when the plan is deleted.</li>
                 <li><strong>Password reset records:</strong> the record of a reset <em>request</em>, which holds the requesting IP address and a one-way hash of the email, is deleted after 7 days. The record of an issued reset <em>link</em>, which holds your account number, the address it was mailed to and the requesting IP address, is deleted 7 days after it is spent or expires, and immediately with your account.</li>
                 <li><strong>Stories:</strong> there is no way to post or see a story anywhere in the Flock app, so using Flock does not create one. Our server does support them: a story there stops being visible to everyone 24 hours after it is posted, and the row is then removed by a cleanup that runs at most once an hour and takes stories that expired more than 24 hours ago. A story that has been reported is held until the report is closed.</li>
                 <li><strong>Push notification tokens:</strong> deleted when you sign out on that device or delete your account.</li>
@@ -837,7 +841,7 @@ export default function PrivacyPolicy() {
                 <li>Every message you sent in a flock chat, and your direct messages. A direct message belongs to both people, so deleting your account removes your direct message threads from the other person's app as well, along with anything pinned or voted on inside them.</li>
                 <li>Every flock you created, including its chat, RSVPs and votes, for everybody who was in it. Flocks you only joined survive; your membership in them does not.</li>
                 <li>Your crowd reports, your check-ins, your calendar entries, your availability status, your budget submissions, your bill split shares, your trusted contacts, your SOS alert records, your emoji reactions, your friendships, your blocks, your push tokens, your email verification records, and the record of the predictions we served you.</li>
-                <li>Your venue profile and everything on it, if you had one, including your occupancy readings, promotions and events.</li>
+                <li>Your venue profile and everything on it, if you had one, including your occupancy readings, promotions, events and your replies to reviews. The reviews themselves belong to the people who wrote them and stay.</li>
                 <li>If you signed in with Apple, the refresh token we held, after we use it to revoke Flock's access to your Apple ID.</li>
               </ul>
               <p><strong>What survives, and why</strong></p>

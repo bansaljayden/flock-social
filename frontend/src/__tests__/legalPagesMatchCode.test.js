@@ -314,7 +314,25 @@ describe('privacy claims that depend on how the code behaves', () => {
     // was moved into a validation message and gained a capital A, which is a
     // spelling changing, not the behaviour.
     expect(safety).toMatch(/alerts are sent by email/i);
-    expect(privacy).toMatch(/SOS alerts are sent by <strong>email only<\/strong>/);
+    expect(privacy).toMatch(/Your trusted contacts get SOS alerts by <strong>email only<\/strong>/);
+  });
+
+  test('the policy names the second audience an SOS reaches, because the code has one', () => {
+    // The page said "SOS alerts are sent by email only" while routes/safety.js
+    // also rang everyone on a confirmed plan within twelve hours, in the app,
+    // with the location. Whenever the flock leg exists, the page has to say
+    // who it reaches, how, and that the location goes with it; the crawler
+    // copy has to say the same thing.
+    const safety = read('backend', 'routes', 'safety.js');
+    const crawler = read('frontend', 'api', 'marketing-page.js');
+    expect(safety).toMatch(/async function alertFlockMembers\(/);
+    expect(safety).toMatch(/pushAlways\(row\.user_id, title, body/);
+    const hours = Number((safety.match(/const SOS_FLOCK_WINDOW_HOURS = (\d+);/) || [])[1]);
+    expect(hours).toBe(12);
+    const sentence = 'We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app, as a notification and on screen, with the same location when the alert has one.';
+    expect(privacy).toContain(sentence);
+    expect(crawler).toContain(sentence);
+    expect(privacy).toMatch(/who it reached, and when you stood it down/);
   });
 
   test('the do-not-mail list does not swallow an SOS, and the policy says so', () => {
@@ -656,5 +674,88 @@ describe('the promised in-app data export exists and is gated the way the policy
     // The old sentence: "ask us at {mail} and we will send you one." Email is
     // still offered, and it is no longer the only route.
     expect(privacy).not.toMatch(/copy of your data before you delete it, ask us at/);
+  });
+});
+
+// Whitespace is flattened because these sentences wrap across source lines, and
+// comments are dropped because a note recording why a sentence went may quote it.
+const flat = (s) => s.replace(/\s+/g, ' ');
+const withoutComments = (src) => src
+  .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
+describe('the age check the pages describe is the one the server runs', () => {
+  // The policy, the guidelines and the crawler copy say sign-up takes a birth
+  // YEAR and the server works the age out from it in the one direction that can
+  // only count someone younger. Every creation path used to judge the full date
+  // in the body instead, so 2013-01-01 got an account on 2026-09-25 while
+  // 2013-12-31 did not. backend/__tests__/minorsCompliance.test.js drives the
+  // three doors; this holds the pages to the code they describe.
+  test('all three creation paths judge 31 December of the submitted year', () => {
+    const auth = read('backend', 'routes', 'auth.js');
+    const age = read('backend', 'utils', 'age.js');
+    expect(age).toMatch(/return `\$\{String\(b\.y\)\.padStart\(4, '0'\)\}-12-31`;/);
+    expect(auth).toMatch(/const judgedDob = yearEndDob\(date_of_birth\);\s*const age = judgedDob \? ageFromDob\(judgedDob\) : null;/);
+    expect(auth).toMatch(/const googleDob = yearEndDob\(suppliedDob\(req\.body\.date_of_birth\)\);/);
+    expect(auth).toMatch(/const appleDob = yearEndDob\(suppliedDob\(req\.body\.date_of_birth\)\);/);
+
+    expect(flat(privacy)).toMatch(/works out your age from that year in the one way that can only ever count you as younger/);
+    expect(flat(guidelines)).toMatch(/works out the age from it in the one way that can only count someone as younger/);
+  });
+});
+
+describe('invite links and guest answers are described as the guest routes behave', () => {
+  const guest = read('backend', 'routes', 'guest.js');
+
+  test('a link shows the plan and its roster; the chat and live location need a verified account that joins', () => {
+    // The one authenticated route in guest.js is the join, and it wants a
+    // confirmed email. No guest route reads a message or a position.
+    expect(guest).toMatch(/router\.post\('\/:token\/join',\s*authenticate,\s*requireVerified,/);
+    expect(withoutComments(guest)).not.toMatch(/\bFROM messages\b|\blatitude\b|\blongitude\b/i);
+    // Live location is relayed only to a socket whose account is a member.
+    const handlers = read('backend', 'sockets', 'handlers.js');
+    const start = handlers.indexOf("socket.on('update_location'");
+    expect(start).toBeGreaterThan(-1);
+    const relay = handlers.slice(start, handlers.indexOf("socket.on('stop_sharing_location'", start));
+    expect(relay).toMatch(/if \(!\(await verifyMembership\(flockId, user\.id\)\)\)/);
+
+    const p = flat(privacy);
+    expect(p).toMatch(/anyone holding it can see the plan and who is on it, by first name, and can answer, vote and share a budget amount as a guest/);
+    expect(p).toMatch(/Reading the flock's chat or seeing live location takes joining, which needs a signed-in Flock account with a confirmed email/);
+    expect(p).not.toMatch(/anyone holding it can join the flock, read its chat and see live location/);
+  });
+
+  test("a guest's budget amount is stored, and the policy says so and for how long", () => {
+    expect(guest).toMatch(/INSERT INTO budget_submissions \(flock_id, guest_rsvp_id, amount, skipped, updated_at\)/);
+    // The amount goes with the guest row, and the guest row goes with the plan.
+    expect(read('backend', 'migrations', '071_guest_budget_answers.sql'))
+      .toMatch(/guest_rsvp_id INTEGER REFERENCES guest_rsvps\(id\) ON DELETE CASCADE/);
+    expect(read('backend', 'migrations', '001_baseline.sql'))
+      .toMatch(/CREATE TABLE IF NOT EXISTS guest_rsvps \(\s*id SERIAL PRIMARY KEY,\s*flock_id INTEGER NOT NULL REFERENCES flocks\(id\) ON DELETE CASCADE/);
+
+    const p = flat(privacy);
+    expect(p).toMatch(/the budget amount they enter if they choose to share one, tied to a random link token/);
+    expect(p).toMatch(/the display name, votes and budget amount a guest leaves on an invite link are kept with that plan, and deleted when the plan is deleted/);
+  });
+});
+
+describe('the pages describe the apps that exist', () => {
+  // Flock is an iOS shell and a browser app. There is no Android project, no
+  // @capacitor/android and no Play billing, so a page that sells a subscription
+  // "through Google Play" or covers use "on Android" describes an app nobody can
+  // install. If an Android build ships, this fails and the pages get it back.
+  test('no Android project exists, so no legal page or crawler copy names Google Play or an Android app', () => {
+    const pkg = JSON.parse(read('frontend', 'package.json'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    expect(deps['@capacitor/ios']).toBeDefined();
+    expect(deps['@capacitor/android']).toBeUndefined();
+    expect(exists('frontend', 'android')).toBe(false);
+
+    const mirror = read('frontend', 'api', 'marketing-page.js');
+    for (const [name, src] of [...Object.entries(PAGES), ['marketing-page.js', mirror]]) {
+      const hit = flat(withoutComments(src)).match(/Google Play|Play Store|on Android|Android app/i);
+      expect([name, hit && hit[0]]).toEqual([name, null]);
+    }
   });
 });
