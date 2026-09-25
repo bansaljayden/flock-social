@@ -31,7 +31,8 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 // ---- the fake Stripe ------------------------------------------------------
 const stripeCalls = [];
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {} };
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false };
+let createdSessions = 0;
 function FakeStripe() {
   return {
     customers: {
@@ -47,10 +48,23 @@ function FakeStripe() {
     },
     checkout: {
       sessions: {
-        create: async (args) => { stripeCalls.push(['checkout.create', args]); return { id: 'cs_test_v', url: 'https://checkout.stripe.com/c/pay/cs_test_v' }; },
+        create: async (args) => {
+          stripeCalls.push(['checkout.create', args]);
+          // When a test asks, a new session stays open (payable) until it is
+          // expired, the way a real one does.
+          if (!stripeState.keepCreatedOpen) return { id: 'cs_test_v', url: 'https://checkout.stripe.com/c/pay/cs_test_v' };
+          createdSessions += 1;
+          const id = `cs_test_v${createdSessions}`;
+          stripeState.openSessions.push({ id });
+          return { id, url: `https://checkout.stripe.com/c/pay/${id}` };
+        },
         retrieve: async (id) => stripeState.sessions[id] || null,
-        list: async () => ({ data: stripeState.openSessions }),
-        expire: async (id) => ({ id, status: 'expired' }),
+        list: async () => { stripeCalls.push(['checkout.list']); return { data: [...stripeState.openSessions] }; },
+        expire: async (id) => {
+          stripeCalls.push(['checkout.expire', id]);
+          stripeState.openSessions = stripeState.openSessions.filter((s) => s.id !== id);
+          return { id, status: 'expired' };
+        },
       },
     },
     webhooks: {
@@ -122,6 +136,7 @@ const ON = {
   STRIPE_PRICE_ROOST_MONTHLY: 'price_roost_month',
   STRIPE_PRICE_ROOST_YEARLY: 'price_roost_year',
   STRIPE_PRICE_ROOST_FOUNDING: undefined,
+  STRIPE_PRICE_ROOST_LEGACY: undefined,
   STRIPE_AUTOMATIC_TAX: undefined,
 };
 const saved = {};
@@ -149,6 +164,8 @@ test.beforeEach(() => {
   stripeState.sessions = {};
   stripeState.openSessions = [];
   stripeState.subById = {};
+  stripeState.keepCreatedOpen = false;
+  createdSessions = 0;
   billing.__test.resetStripe();
 });
 test.afterEach(() => resetEnv());
@@ -248,6 +265,11 @@ test('a Roost session: venue metadata twice, never app_user_id, a first-time car
       assert.strictEqual(md.flock_venue_user_id, String(ME.id));
       assert.ok(!('app_user_id' in md), 'RevenueCat attributes by app_user_id; a venue sale must not carry it');
     }
+    // Nor the session's client_reference_id, which RevenueCat's Stripe
+    // integration reads as the app user id in the same way. It was set to the
+    // Flock user id here, so a Roost purchase could land on that person's
+    // consumer record; the venue path reads the account from metadata alone.
+    assert.ok(!('client_reference_id' in args), 'a Roost session carried the Flock user id where RevenueCat reads an app user id');
     assert.strictEqual(args.subscription_data.trial_period_days, 14);
     assert.strictEqual(args.subscription_data.trial_settings.end_behavior.missing_payment_method, 'cancel');
     assert.strictEqual(args.payment_method_collection, 'always');
@@ -274,6 +296,31 @@ test('a venue that has subscribed before gets no second trial; a live subscripti
     assert.strictEqual(again.status, 409);
     assert.strictEqual(again.body.code, 'ALREADY_SUBSCRIBED');
     assert.strictEqual(stripeCalls.filter(([n]) => n === 'checkout.create').length, 0);
+  } finally { restore(); }
+});
+
+test('two Roost checkouts started at once are built one after the other, so only one can be paid', async () => {
+  // THE RACE THIS PINS. Expiring the open sessions, checking for a live
+  // subscription and creating a session are separate Stripe calls. Two
+  // requests for one venue (a double click, two tabs) each expired what was
+  // open and then each created a session, leaving two payable at once. Pro
+  // queued its builds per account from the start; Roost now goes through the
+  // same queue, so the second build expires the session the first one made.
+  setEnv(ON);
+  stripeState.keepCreatedOpen = true;
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1' }));
+  try {
+    const owner = { id: ME.id, email: ME.email, name: ME.name };
+    await Promise.all([
+      venueBilling.createVenueCheckout(owner, 'monthly'),
+      venueBilling.createVenueCheckout(owner, 'monthly'),
+    ]);
+    const order = stripeCalls.map(([n]) => n).filter((n) => n === 'checkout.list' || n === 'checkout.create');
+    assert.deepStrictEqual(order, ['checkout.list', 'checkout.create', 'checkout.list', 'checkout.create'],
+      'the second build looked for open sessions before the first had made its own');
+    assert.deepStrictEqual(stripeCalls.filter(([n]) => n === 'checkout.expire').map(([, id]) => id), ['cs_test_v1'],
+      'the second build expired the session the first one made');
+    assert.deepStrictEqual(stripeState.openSessions.map((s) => s.id), ['cs_test_v2'], 'exactly one session is left payable');
   } finally { restore(); }
 });
 
@@ -376,6 +423,92 @@ test('a venue subscription deleted event revokes', async () => {
     const res = await stripeWebhook({ id: 'evt_2', type: 'customer.subscription.deleted', data: { object: sub({ status: 'canceled' }) } });
     assert.strictEqual(res.status, 200);
     const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.strictEqual(write.params[2], 'canceled');
+    assert.strictEqual(write.params[10], false);
+    assert.strictEqual(write.params[11], 'free');
+  } finally { restore(); }
+});
+
+test('a live subscription on a price we do not recognise keeps Roost through the period Stripe is billing', async () => {
+  // THE BUG THIS PINS, twice over. A subscription Stripe was still charging,
+  // on a price id missing from STRIPE_PRICE_ROOST_* (a new Price made in the
+  // dashboard, a typo, the founding price left unset, a price rise with the
+  // old id not moved to the legacy list), was first written as tier free with
+  // expires_at now. Then it was left unwritten with a 500, which kept the
+  // PREVIOUS period's end date, so the venue still lost Roost three days after
+  // it while Stripe billed the new period, and a webhook failing for days can
+  // get the endpoint disabled. Now the billed period is written as Roost.
+  setEnv(ON);
+  const periodEnd = Math.floor(Date.now() / 1000) + 30 * 86400;
+  stripeState.subById.sub_V1 = sub({ status: 'active', items: { data: [{ price: { id: 'price_made_in_the_dashboard' }, current_period_end: periodEnd }] } });
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified: true }] };
+    return null;
+  });
+  try {
+    const res = await stripeWebhook({ id: 'evt_p1', type: 'customer.subscription.updated', data: { object: stripeState.subById.sub_V1 } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.ok(write, 'the billed period was written');
+    assert.strictEqual(write.params[1], 'pro', 'the grant is Roost');
+    assert.strictEqual(write.params[6], 'price_made_in_the_dashboard', 'the unknown price is recorded as it is');
+    assert.strictEqual(write.params[10], true, 'live');
+    assert.strictEqual(write.params[11], 'pro');
+    assert.strictEqual(write.params[3].getTime(), periodEnd * 1000 + venueBilling.__test.GRACE_MS,
+      'Roost runs to the end of the period Stripe is billing, plus the usual grace');
+  } finally { restore(); }
+});
+
+test('the unknown-price rule is only for a live subscription: called plainly, an unknown price still grants nothing', () => {
+  setEnv(ON);
+  const stray = venueBilling.grantFromSubscription(sub({ items: { data: [{ price: { id: 'price_someone_else' } }] } }));
+  assert.strictEqual(stray.priceOk, false);
+  const kept = venueBilling.grantFromSubscription(sub({ items: { data: [{ price: { id: 'price_someone_else' } }] } }), Date.now(), { unknownPriceIsRoost: true });
+  assert.strictEqual(kept.live, true);
+  const empty = venueBilling.grantFromSubscription(sub({ items: { data: [] } }), Date.now(), { unknownPriceIsRoost: true });
+  assert.strictEqual(empty.live, false, 'a subscription with no price at all is never Roost');
+});
+
+test('a price moved to STRIPE_PRICE_ROOST_LEGACY keeps Roost for the venues still billed on it', async () => {
+  // A price rise replaces STRIPE_PRICE_ROOST_MONTHLY. Venues on the old price
+  // keep paying it until they are moved (Terms 9.6: 30 days' notice first), so
+  // their renewals must still read as Roost, not be refused as unknown.
+  setEnv({ ...ON, STRIPE_PRICE_ROOST_MONTHLY: 'price_roost_month_v2', STRIPE_PRICE_ROOST_LEGACY: ' price_roost_month , price_roost_2025 ,' });
+  assert.deepStrictEqual(venueBilling.legacyRoostPrices(), ['price_roost_month', 'price_roost_2025']);
+  const kept = venueBilling.grantFromSubscription(sub({ status: 'active' }));
+  assert.strictEqual(kept.live, true);
+  assert.strictEqual(kept.cachedTier, 'pro');
+  const stray = venueBilling.grantFromSubscription(sub({ items: { data: [{ price: { id: 'price_someone_else' } }] } }));
+  assert.strictEqual(stray.live, false, 'the legacy list is not a wildcard');
+
+  stripeState.subById.sub_V1 = sub({ status: 'active' });
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified: true }] };
+    return null;
+  });
+  try {
+    const res = await stripeWebhook({ id: 'evt_p3', type: 'customer.subscription.updated', data: { object: stripeState.subById.sub_V1 } });
+    assert.strictEqual(res.status, 200, `the renewal on the old price was refused: ${JSON.stringify(res.body)}`);
+    const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.ok(write, 'the renewal was written');
+    assert.strictEqual(write.params[6], 'price_roost_month');
+    assert.strictEqual(write.params[10], true, 'the renewal on the old price keeps the grant live');
+    assert.strictEqual(write.params[11], 'pro');
+  } finally { restore(); }
+});
+
+test('a subscription that has ended on an unrecognised price still revokes', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'canceled', items: { data: [{ price: { id: 'price_made_in_the_dashboard' } }] } });
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified: true }] };
+    return null;
+  });
+  try {
+    const res = await stripeWebhook({ id: 'evt_p2', type: 'customer.subscription.deleted', data: { object: stripeState.subById.sub_V1 } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.ok(write, 'a dead subscription must still be written');
     assert.strictEqual(write.params[2], 'canceled');
     assert.strictEqual(write.params[10], false);
     assert.strictEqual(write.params[11], 'free');

@@ -420,6 +420,23 @@ router.post('/webhook', async (req, res) => {
         return res.json({ ok: true, source: 'subscriber' });
       }
 
+      // A SANDBOX TRANSFER MOVES NOTHING ANYBODY PAID FOR. TestFlight and App
+      // Review restore purchases in Apple's sandbox, and RevenueCat reports that
+      // as a TRANSFER like any other. This branch used to grant is_premium to
+      // every transferred_to id before any sandbox rule was applied, so a free
+      // sandbox purchase restored on a second login became production Pro on
+      // that account. The rule INITIAL_PURCHASE gets below applies here too:
+      // in the sandbox only the allowlisted accounts move, on either side. A
+      // non-listed account cannot hold Pro from a sandbox purchase on this path,
+      // so its Pro came from a real one and a sandbox transfer must not take it.
+      const sandbox = event.environment === 'SANDBOX';
+      const moves = (id) => !sandbox || proBilling.sandboxAllowed(id);
+      const giving = from.filter(moves);
+      const getting = to.filter(moves);
+      if (sandbox && giving.length === 0 && getting.length === 0) {
+        return res.json({ ok: true, ignored: 'sandbox' });
+      }
+
       // An id on BOTH sides keeps its entitlement and is never revoked on the
       // way through. A subscriber's alias set is "every app_user_id this SDK has
       // been logged in as", so an overlap is ordinary rather than exotic. The
@@ -429,8 +446,8 @@ router.post('/webhook', async (req, res) => {
       // services/entitlements.js is a fresh read with no cache, so a request
       // landing in that window showed a paying subscriber the upgrade sheet.
       // The net result was always right; the window was the bug.
-      const receiving = new Set(to);
-      const revoking = from.filter((id) => !receiving.has(id));
+      const receiving = new Set(getting);
+      const revoking = giving.filter((id) => !receiving.has(id));
 
       // Revoke and grant in ONE statement when both sides exist. They used to
       // be two autocommits, and the comment above only closed the
@@ -440,11 +457,11 @@ router.post('/webhook', async (req, res) => {
       // transferred_to id premium until RevenueCat's retry converged, and
       // services/entitlements.js reads the column fresh on every check, so a
       // paying subscriber saw the upgrade sheet in between. The two sets are
-      // disjoint by construction (revoking = from minus to), which is what
+      // disjoint by construction (revoking = giving minus getting), which is what
       // lets one statement touch both without updating any row twice. A
       // one-sided transfer still issues only the statement it needs, so a
       // from-only or to-only event reads exactly as it did.
-      if (revoking.length && to.length) {
+      if (revoking.length && getting.length) {
         await pool.query(
           `WITH revoked AS (
              UPDATE users SET is_premium = false
@@ -453,20 +470,20 @@ router.post('/webhook', async (req, res) => {
            )
            UPDATE users SET is_premium = true
             WHERE id = ANY($2::int[]) AND is_premium IS DISTINCT FROM true`,
-          [revoking, to]
+          [revoking, getting]
         );
       } else if (revoking.length) {
         await pool.query(
           'UPDATE users SET is_premium = false WHERE id = ANY($1::int[]) AND is_premium IS DISTINCT FROM false',
           [revoking]
         );
-      } else if (to.length) {
+      } else if (getting.length) {
         await pool.query(
           'UPDATE users SET is_premium = true WHERE id = ANY($1::int[]) AND is_premium IS DISTINCT FROM true',
-          [to]
+          [getting]
         );
       }
-      console.log(`[RevenueCat] TRANSFER from [${revoking}] to [${to}]`);
+      console.log(`[RevenueCat] TRANSFER from [${revoking}] to [${getting}]${sandbox ? ' (sandbox, allowlisted accounts only)' : ''}`);
       return res.json({ ok: true });
     }
 
@@ -534,24 +551,50 @@ router.post('/webhook', async (req, res) => {
 module.exports = router;
 
 // THE ONE WRITE THAT ASKS REVENUECAT. Used by the webhook above whenever the
-// API key is configured, and by routes/pro.js right after a web checkout so
-// the buyer lands in the app already Pro. Returns what it wrote. Throws when
-// RevenueCat could not give a clear answer, and writes nothing in that case.
+// API key is configured, by routes/stripeWebhook.js, and by routes/pro.js
+// right after a web checkout so the buyer lands in the app already Pro.
+// Returns what it wrote. Throws when RevenueCat could not give a clear answer,
+// and writes nothing in that case.
+//
+// ONE SYNC PER ACCOUNT AT A TIME, AND THE LAST ONE READS LAST. Every caller
+// writes an absolute is_premium, and two of them can overlap: Stripe's
+// checkout.session.completed beside RevenueCat's own webhook for the same
+// purchase, or a refund's event beside a retried renewal. Unserialised, a
+// slow read taken before the refund could commit after a fast read taken
+// after it and leave a refunded account Pro, with no later event left to
+// correct it. (An earlier version read a "no" twice and never re-read a
+// "yes", which narrowed the window in one direction and left it open in the
+// one that gives Pro away.) So the read happens INSIDE a transaction that
+// holds a per-account advisory lock: a second sync for the same account waits
+// for the first to commit, then reads RevenueCat itself and writes that, so
+// the last write is always the freshest read.
+//
+// The cost is a pooled connection held for one RevenueCat read, which
+// fetchProActive bounds at ten seconds. Syncs for different accounts do not
+// wait on each other. The two-int lock form keys on the exact account id, the
+// way routes/feedback.js does, so no two accounts can share a lock by hash.
+const PREMIUM_SYNC_LOCK_NAMESPACE = 81431;
+
 async function syncPremiumFromRevenueCat(userId) {
   const id = userIdFrom(userId);
   if (!id) throw new Error('syncPremiumFromRevenueCat needs a Flock user id');
-  let active = await proBilling.fetchProActive(id);
-  // A "no" is read twice. Two syncs can overlap (a cancellation and a
-  // re-purchase seconds apart), and a slow read of the old state landing after
-  // a fast read of the new one would switch a payer off until their next
-  // event. Reading again immediately before the write narrows that to nothing
-  // a person can do by hand. A "yes" is never read twice: it cannot hurt.
-  if (!active) active = await proBilling.fetchProActive(id);
-  await pool.query(
-    'UPDATE users SET is_premium = $1 WHERE id = $2 AND is_premium IS DISTINCT FROM $1',
-    [active, id]
-  );
-  return active;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [PREMIUM_SYNC_LOCK_NAMESPACE, id]);
+    const active = await proBilling.fetchProActive(id);
+    await client.query(
+      'UPDATE users SET is_premium = $1 WHERE id = $2 AND is_premium IS DISTINCT FROM $1',
+      [active, id]
+    );
+    await client.query('COMMIT');
+    return active;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 module.exports.syncPremiumFromRevenueCat = syncPremiumFromRevenueCat;
 // One view of "configured", shared rather than duplicated. The cross-file gap

@@ -115,15 +115,32 @@ const ME = { id: 7, email: 'me@example.com', name: 'Me', role: 'user', is_banned
 
 function stubPool(handler) {
   const realQuery = pool.query;
+  const realConnect = pool.connect;
   const calls = [];
-  pool.query = async (text, params) => {
+  const run = async (text, params) => {
     const sql = String(text);
     calls.push({ text: sql, params });
     if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) return { rows: [ME] };
     const r = await handler(sql, params);
     return r || { rows: [], rowCount: 0 };
   };
-  return { calls, restore: () => { pool.query = realQuery; } };
+  pool.query = run;
+  // The Pro sync (routes/revenuecat.js syncPremiumFromRevenueCat) runs in a
+  // transaction on a checked-out client, under a per-account lock. Its
+  // statements land in the same log, in order, so a test can see the lock taken
+  // before RevenueCat is read and the write made before the COMMIT.
+  pool.connect = async () => ({
+    query: async (text, params) => {
+      const sql = String(text);
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\b/i.test(sql) || sql.includes('pg_advisory_xact_lock')) {
+        calls.push({ text: sql, params });
+        return { rows: [], rowCount: 0 };
+      }
+      return run(text, params);
+    },
+    release() {},
+  });
+  return { calls, restore: () => { pool.query = realQuery; pool.connect = realConnect; } };
 }
 
 async function call(mount, router, method, urlPath, body, headers = {}) {
@@ -422,13 +439,15 @@ test('on the fallback path a refund revokes Pro, and an ordinary cancellation do
   } finally { restore(); }
 });
 
-test('closing a Stripe customer deletes it; with no key, deletion is not blocked forever', async () => {
+test('closing a Stripe customer deletes it; with no key it reports "not closed" instead of throwing', async () => {
   setEnv(ON);
   assert.strictEqual(await billing.closeCustomer('cus_TEST123'), true);
   assert.ok(stripeCalls.some((c) => c[0] === 'customers.del' && c[1] === 'cus_TEST123'));
   assert.strictEqual(await billing.closeCustomer(null), false);
-  // No key: account deletion must stay possible (App Store 5.1.1(v)), so this
-  // reports "not closed" and logs, rather than refusing every deletion.
+  // No key: nothing was attempted, so this answers false and logs. The
+  // deletion route reads that false as a refusal and keeps the account
+  // (__tests__/accountDeletionSurface.test.js), because deleting it would
+  // leave the card billed with nothing left to cancel it from.
   setEnv({ STRIPE_SECRET_KEY: undefined });
   billing.__test.resetStripe();
   assert.strictEqual(await billing.closeCustomer('cus_TEST123'), false);
@@ -504,6 +523,97 @@ test('a TRANSFER under the subscriber re-read re-reads both sides instead of tru
     assert.deepStrictEqual(writes, [[true, 7], [true, 8]]);
     assert.strictEqual(rcCalls.filter((c) => c[0].includes('/subscribers/')).length, 2);
   } finally { restore(); }
+});
+
+test('two Pro syncs for one account run one after the other, so the last write is the freshest read', async () => {
+  // THE RACE THIS PINS. Stripe's checkout.session.completed and RevenueCat's
+  // own webhook, or a refund and a retried renewal, each re-read RevenueCat and
+  // write an absolute is_premium. Unserialised, a slow read taken before a
+  // refund committed after a fast read taken after it and left the refunded
+  // account Pro, with no later event to correct it. The lock below behaves the
+  // way Postgres's advisory lock does: a second holder of the same key waits
+  // until the first transaction ends.
+  setEnv(ON);
+  const { syncPremiumFromRevenueCat } = revenuecatRoutes;
+  const realQuery = pool.query;
+  const realConnect = pool.connect;
+  const held = new Map();
+  const events = [];
+  pool.query = async () => ({ rows: [], rowCount: 0 });
+  pool.connect = async () => {
+    let unlock = null;
+    return {
+      query: async (text, params) => {
+        const sql = String(text);
+        if (sql.includes('pg_advisory_xact_lock')) {
+          const key = params.join(':');
+          while (held.has(key)) await held.get(key);
+          let done;
+          held.set(key, new Promise((r) => { done = r; }));
+          unlock = () => { held.delete(key); done(); };
+          events.push('lock');
+          return { rows: [] };
+        }
+        if (/^\s*(COMMIT|ROLLBACK)\b/i.test(sql)) {
+          events.push('commit');
+          if (unlock) unlock();
+          unlock = null;
+          return { rows: [] };
+        }
+        if (sql.includes('SET is_premium')) { events.push(`write:${params[0]}`); return { rows: [], rowCount: 1 }; }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    };
+  };
+  // RevenueCat answers with the state as it stood when the read ARRIVED, and
+  // the first read is slow to come back.
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  let rcActive = true;
+  let reads = 0;
+  let letFirstReadFinish;
+  const firstReadHeld = new Promise((r) => { letFirstReadFinish = r; });
+  const prevFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    if (!String(url).includes('/subscribers/')) return prevFetch(url, init);
+    reads += 1;
+    const n = reads;
+    const answer = rcActive;
+    events.push(`read${n}:${answer}`);
+    if (n === 1) await firstReadHeld;
+    return new Response(JSON.stringify({ subscriber: { entitlements: answer ? { pro: { expires_date: future } } : {} } }), { status: 200 });
+  };
+  const until = async (cond) => { for (let i = 0; i < 200 && !cond(); i += 1) await new Promise((r) => setTimeout(r, 5)); };
+  try {
+    const first = syncPremiumFromRevenueCat(7);
+    await until(() => reads === 1);
+    rcActive = false; // a refund lands at RevenueCat while the first read is out
+    const second = syncPremiumFromRevenueCat(7);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.strictEqual(reads, 1, 'the second sync read RevenueCat while the first still held the account');
+    letFirstReadFinish();
+    assert.deepStrictEqual(await Promise.all([first, second]), [true, false]);
+    assert.deepStrictEqual(events,
+      ['lock', 'read1:true', 'write:true', 'commit', 'lock', 'read2:false', 'write:false', 'commit'],
+      'the lock is taken before the read and held until the write commits, so the last write is the refund');
+  } finally {
+    pool.query = realQuery;
+    pool.connect = realConnect;
+    global.fetch = prevFetch;
+  }
+});
+
+test('a Pro sync whose RevenueCat read fails rolls back and writes nothing', async () => {
+  setEnv(ON);
+  const prev = global.fetch;
+  global.fetch = async (url, init) => (String(url).includes('/subscribers/') ? new Response('down', { status: 503 }) : prev(url, init));
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    await assert.rejects(revenuecatRoutes.syncPremiumFromRevenueCat(7), /RevenueCat subscriber lookup answered 503/);
+    assert.ok(!calls.some((c) => c.text.includes('SET is_premium')));
+    const order = calls.map((c) => c.text.trim().split(/\s+/)[0] + (c.text.includes('pg_advisory_xact_lock') ? ':lock' : ''));
+    assert.deepStrictEqual(order, ['BEGIN', 'SELECT:lock', 'ROLLBACK']);
+  } finally { restore(); global.fetch = prev; }
 });
 
 // ---- the Stripe webhook ---------------------------------------------------

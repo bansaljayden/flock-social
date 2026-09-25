@@ -663,6 +663,58 @@ test('a TRANSFER of somebody else’s entitlement does not move Flock Pro', asyn
   assert.deepEqual(writes(), []);
 });
 
+test('a SANDBOX TRANSFER on the fallback path moves nothing unless the account is allowlisted', async () => {
+  // THE BUG THIS PINS. With no REVENUECAT_SECRET_API_KEY the route writes from
+  // the event, and TRANSFER granted is_premium to every transferred_to id
+  // before any sandbox rule ran. INITIAL_PURCHASE has refused a sandbox
+  // purchase for a non-listed account since the sandbox rule went in, so a
+  // TestFlight restore on a second login was the way round it: it cost
+  // nothing and left production Pro on the receiving account.
+  delete process.env.REVENUECAT_SECRET_API_KEY;
+  const savedList = process.env.REVENUECAT_SANDBOX_USER_IDS;
+  delete process.env.REVENUECAT_SANDBOX_USER_IDS;
+  process.env.REVENUECAT_WEBHOOK_SECRET = SECRET;
+  try {
+    const res = await signed({
+      event: { type: 'TRANSFER', environment: 'SANDBOX', transferred_from: ['11'], transferred_to: ['13'] },
+    });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.body.ignored, 'sandbox');
+    assert.deepEqual(writes(), [], 'a sandbox restore granted or revoked production Pro');
+
+    // An allowlisted account (App Review, the operator's test account) still
+    // moves, and it is the only one that does: the non-listed account on the
+    // giving side keeps the Pro a real purchase gave it.
+    process.env.REVENUECAT_SANDBOX_USER_IDS = '13';
+    log = [];
+    const listed = await signed({
+      event: { type: 'TRANSFER', environment: 'SANDBOX', transferred_from: ['11'], transferred_to: ['13', '14'] },
+    });
+    assert.equal(listed.status, 200, listed.text);
+    const touching = premiumWrites();
+    assert.equal(touching.length, 1);
+    assert.match(touching[0].sql, /SET is_premium = true/);
+    assert.doesNotMatch(touching[0].sql, /is_premium = false/, 'a non-listed account lost Pro to a sandbox transfer');
+    assert.deepEqual(touching[0].params[0], [13]);
+  } finally {
+    if (savedList === undefined) delete process.env.REVENUECAT_SANDBOX_USER_IDS;
+    else process.env.REVENUECAT_SANDBOX_USER_IDS = savedList;
+  }
+});
+
+test('a PRODUCTION TRANSFER on the fallback path still moves both sides in one statement', async () => {
+  delete process.env.REVENUECAT_SECRET_API_KEY;
+  process.env.REVENUECAT_WEBHOOK_SECRET = SECRET;
+  const res = await signed({
+    event: { type: 'TRANSFER', environment: 'PRODUCTION', transferred_from: ['11'], transferred_to: ['13'] },
+  });
+  assert.equal(res.status, 200, res.text);
+  const w = premiumWrites();
+  assert.equal(w.length, 1);
+  assert.match(w[0].sql, /WITH revoked AS/);
+  assert.deepEqual(w[0].params, [[11], [13]]);
+});
+
 // ===========================================================================
 // 7b. Payload shapes that are not the shape the route expects
 // ===========================================================================

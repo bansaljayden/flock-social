@@ -358,7 +358,8 @@ function constructWebhookEvent(rawBody, signature) {
 // Stripe calls, and two requests that interleave them (a double click, two
 // tabs) could each create a session after the other's expire step, leaving
 // two payable at once and charging one person twice. Queued per account on
-// this one instance (the app runs on exactly one, root project documentation), the second
+// this one instance (the app runs on exactly one server; a second would need
+// this queue in Postgres, like every other in-memory lock here), the second
 // request runs after the first and expires the session the first one made,
 // which is the rule the comment inside says it keeps.
 const checkoutQueues = new Map();
@@ -622,11 +623,13 @@ async function closeCustomer(customerId) {
   if (!customerId) return false;
   const client = stripe();
   if (!client) {
-    // Deleting an account has to stay possible (App Store guideline 5.1.1(v)),
-    // so a missing key does not block it forever. It is logged as an error
-    // because a subscription may now outlive the account: whoever removed the
-    // key has to cancel it by hand in the Stripe dashboard.
-    console.error(`[pro] STRIPE_SECRET_KEY is not set: Stripe customer ${customerId} was NOT cancelled during account deletion. Cancel it in the Stripe dashboard.`);
+    // False, not a throw: nothing was attempted. Both deletion callers
+    // (routes/users.js for Pro, services/venueBilling.js closeVenueCustomer
+    // for Roost) treat a customer on file that was not closed as a refusal,
+    // so the account is kept and deleting it works again once the key is
+    // back. Deleting it here would leave the card billed with no record of
+    // which customer to cancel.
+    console.error(`[pro] STRIPE_SECRET_KEY is not set: Stripe customer ${customerId} was NOT cancelled, so the account deletion asking for it is refused. Restore the key, or cancel the customer in the Stripe dashboard.`);
     return false;
   }
   try {
@@ -688,6 +691,9 @@ module.exports = {
   // The one Stripe client, shared with services/venueBilling.js (Roost), so
   // both products use the same key and the same retry and timeout settings.
   stripeClient: stripe,
+  // The per-account checkout queue, shared with Roost for the same reason:
+  // two interleaved builds can each leave a payable session.
+  withCheckoutLock,
   webBase,
   revenueCatApiConfigured,
   PRO_ENTITLEMENT,
