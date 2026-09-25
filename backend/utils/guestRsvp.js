@@ -168,10 +168,14 @@ const RETIRE_ON_LINK_JOIN_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
 // lock only later, inside carryGuestVote, so a vote and a join for the same
 // person at the same moment each held what the other needed next, and
 // Postgres broke the cycle by failing one of them (40P01). Every transaction
-// that may carry a vote now takes this lock first: before the plan's row, and
-// in the link join for somebody already in, before the guest row it hides.
-// Advisory transaction locks nest, so carryGuestVote taking it again inside
-// the same transaction costs nothing.
+// that may carry a vote now takes this lock first, then the plan's row, then
+// the rows it writes: the joins take the row FOR UPDATE (the link join for
+// somebody already in included, before the guest row it hides, since a plan
+// delete takes the row and then cascades into that guest row), and the vote
+// routes take its key share (routes/venues.js VOTE_PLAN_LOCK_SQL) before the
+// old vote row they delete, for the same reason. Advisory transaction locks
+// nest, so carryGuestVote taking it again inside the same transaction costs
+// nothing.
 // ---------------------------------------------------------------------------
 function lockVoteSlot(run, flockId, userId) {
   return run(
@@ -219,7 +223,12 @@ function lockVoteSlot(run, flockId, userId) {
 // write was refused because the plan is over it also carries `closed: true`,
 // and the caller rolls the retirement back: a row hidden while its vote could
 // not be copied would take that vote off the tally of a plan that is already
-// a record.
+// a record. That flag is a backstop and not the plan-state check: it is only
+// raised when a vote write is attempted, so a retired row with no vote, or one
+// whose member vote is newer, never raises it. Every caller therefore holds
+// the plan's row FOR UPDATE and has read its status under that lock before it
+// retires anything, and a cancel, which is an UPDATE on that row, waits for
+// the caller's COMMIT.
 async function carryGuestVote(run, flockId, userId, guestRsvpIds) {
   const ids = (Array.isArray(guestRsvpIds) ? guestRsvpIds : [guestRsvpIds])
     .map(Number)

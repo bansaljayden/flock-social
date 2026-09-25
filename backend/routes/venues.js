@@ -87,6 +87,32 @@ async function votingClosedReason(flockId, db = pool) {
     : 'This plan is finished, so its venue vote is closed';
 }
 
+// ---------------------------------------------------------------------------
+// A VOTE TAKES THE PLAN'S ROW BEFORE IT TOUCHES A VOTE ROW.
+//
+// Switching a vote deletes the member's old venue_votes row and then inserts
+// the new one, and that INSERT's foreign key takes a key share on the plan's
+// flocks row. Every way a plan is deleted (DELETE /:id, a host's leave, the
+// last member leaving, an account deletion through ACCOUNT_FLOCK_LOCKS_SQL in
+// routes/users.js) locks that row FOR UPDATE first and then cascades through
+// the plan's vote rows, the old one included. So the vote held the old row
+// while it waited for the plan, the delete held the plan while it waited for
+// the old row, and Postgres failed one of them with a deadlock: whichever had
+// been waiting longer, which could as easily be the host's delete.
+//
+// Taken right after the flockvote: lock, before any vote row, so whichever
+// side reaches the plan's row first finishes and the other waits holding
+// nothing the first needs: flockvote:, then the plan, then the rows it
+// writes, the order every join takes them in (utils/guestRsvp.js
+// lockVoteSlot). A KEY SHARE, not FOR UPDATE: it is the lock the INSERT's
+// foreign key takes anyway, only taken earlier, so votes by different members
+// still never wait on each other and a status change is not held up; it
+// conflicts only with the FOR UPDATE the deletes, joins, bills and budget
+// settles take. A plan deleted while this waits returns no row, and the write
+// that follows then writes nothing, which each vote writer already answers as
+// a plan that is gone. Shared with sockets/handlers.js vote_venue.
+const VOTE_PLAN_LOCK_SQL = `SELECT id FROM flocks WHERE id = $1 FOR KEY SHARE`;
+
 // Every tally in this file comes from here so the REST responses, the socket
 // broadcasts and the GET all agree: member votes carry identities (kept
 // internally so each recipient's blocked users can be stripped), guest-link
@@ -373,6 +399,10 @@ router.post('/:id/vote',
           "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
           [String(flockId), String(req.user.id)]
         );
+        // THEN THE PLAN'S ROW, BEFORE ANY VOTE ROW (VOTE_PLAN_LOCK_SQL has
+        // why): flockvote:, the plan, then the rows it writes, the order every
+        // join takes them in.
+        await client.query(VOTE_PLAN_LOCK_SQL, [flockId]);
         const before = await client.query(
           'SELECT venue_name FROM venue_votes WHERE flock_id = $1 AND user_id = $2',
           [flockId, req.user.id]
@@ -616,3 +646,4 @@ module.exports.broadcastGuestVote = broadcastGuestVote;
 module.exports.collectVoteRows = collectVoteRows;
 module.exports.tailorVotes = tailorVotes;
 module.exports.votingClosedReason = votingClosedReason;
+module.exports.VOTE_PLAN_LOCK_SQL = VOTE_PLAN_LOCK_SQL;

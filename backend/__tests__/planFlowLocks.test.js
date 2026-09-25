@@ -5,7 +5,7 @@
 // THE PLAN FLOW'S JOINS, VOTES AND LEAVES, ON REAL LOCKS
 // ---------------------------------------------------------------------------
 //
-// Five rules, each about what a statement does to rows or connections another
+// Seven rules, each about what a statement does to rows or connections another
 // writer is using, so each is run against a real migrated Postgres:
 //
 //   1. WHOSE GUEST ROW A JOIN MAY RETIRE. A guest identity proves only that a
@@ -20,12 +20,25 @@
 //      the old order on the same interleaving and shows the deadlock, so the
 //      route tests passing means the lock order, not a lucky schedule.
 //   3. A PLAN THAT CLOSES MID-JOIN KEEPS ITS GUEST ROWS AND THEIR VOTES, on both
-//      of the link join's paths.
+//      of the link join's paths. The link join for somebody already in holds
+//      the plan's row from before its hide to its COMMIT, so a cancel that
+//      arrives in between waits for it, whatever the vote carry finds.
 //   4. A LEAVE OR A PLAN DELETE ANNOUNCES ON THE CONNECTION IT HOLDS. With the
 //      pool one connection from full, the fan-outs used to wait for a second
 //      connection that never came, and the plan heard nothing.
 //   5. AN UN-VOTE THAT FOUND NOTHING SAYS SO, even when the same person's vote
 //      from another device lands right after it.
+//   6. A PLAN DELETE QUEUES BEHIND A VOTE SWITCH OR A RE-TAP, AND THEY BEHIND
+//      IT, INSTEAD OF DEADLOCKING. A delete locks the plan's row and then
+//      cascades through its vote and guest rows; the vote switch and the re-tap
+//      used to take one of those rows first and then wait on the plan's row.
+//      The delete's side runs with a short deadlock_timeout, so a cycle, if one
+//      forms, fails the delete, the way it failed a host's.
+//   7. A LEAVE OR A DELETE IS ANNOUNCED ONLY ONCE IT HAS COMMITTED, and a leave
+//      whose audience read fails still happens. A failed statement aborts the
+//      transaction in Postgres whatever the JavaScript catches; these cancel a
+//      route's own statement (pg_cancel_backend), which is what a statement
+//      timeout does, to make that failure real.
 //
 // The interleavings are made with locks held on connections of the test's own,
 // never with timers: a test holds what a route needs next, waits until
@@ -67,6 +80,7 @@ let server;
 let base;
 let signUserToken;
 let guestRsvp;
+let registerHandlers;
 let seq = 0;
 
 // Every socket event the routes send, by room. `sockets` is what the push
@@ -96,6 +110,7 @@ test.before(async () => {
 
   ({ signUserToken } = require('../middleware/auth'));
   guestRsvp = require('../utils/guestRsvp');
+  ({ registerHandlers } = require('../sockets/handlers'));
 
   const app = express();
   app.use(express.json());
@@ -248,6 +263,60 @@ async function quiesce() {
     if (Date.now() > deadline) throw new Error('the pool never went idle');
     await new Promise((r) => setTimeout(r, 20));
   }
+}
+
+// Whether `pending` finished on its own or is queued on a lock `match` picks
+// out of pg_stat_activity: a writer that went straight through, or one that
+// waited for the transaction holding the row it needs.
+async function finishedOrQueued(pending, match) {
+  let settled = false;
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    if (settled) return 'finished';
+    if ((await lockWaiters()).some(match)) return 'queued';
+    if (Date.now() > deadline) throw new Error('neither finished nor queued on a lock');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+const flat = (sql) => String(sql).replace(/\s+/g, ' ').trim();
+
+// The rooms one plan's `event` went to, sorted.
+const roomsFor = (flockId, event) => emits
+  .filter((e) => e.event === event && e.payload && Number(e.payload.flockId) === Number(flockId))
+  .map((e) => e.room)
+  .sort();
+const rooms = (...users) => users.map((u) => `user:${u.id}`).sort();
+
+// Fail a route's statement the way a statement timeout fails it: while it
+// waits on a lock the test holds, cancel it. Its transaction is aborted; its
+// connection is fine.
+async function cancelWhileWaiting(label, match) {
+  const waiter = await waitForWaiter(label, match);
+  await pool.query('SELECT pg_cancel_backend($1)', [waiter.pid]);
+  return waiter;
+}
+
+// A connected socket for `user`, driven through the real handlers.
+function socketFor(user) {
+  seq += 1;
+  const errors = [];
+  const handlers = new Map();
+  const socket = {
+    id: `plan-flow-socket-${seq}`,
+    user: { id: user.id, name: user.name },
+    rooms: new Set(),
+    handshake: null,
+    disconnected: false,
+    on(event, handler) { handlers.set(event, handler); },
+    join(room) { socket.rooms.add(room); },
+    leave(room) { socket.rooms.delete(room); },
+    emit(event, payload) { if (event === 'error') errors.push(payload && payload.message); },
+    to() { const op = { except() { return op; }, emit() {} }; return op; },
+  };
+  registerHandlers(io, socket);
+  return { fire: (event, data) => handlers.get(event)(data), errors };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -500,33 +569,63 @@ test('already in: a plan cancelled before the retire keeps the guest row and its
   assert.deepEqual(await votesOf(flockId, sam), []);
 });
 
-test('already in: a plan cancelled between the retire and the vote copy takes the retire back', async () => {
-  const host = await mkUser('Host Closed B');
-  const sam = await mkUser('Sam Between');
-  const flockId = await mkFlock(host);
-  const link = await mkLink(flockId, host);
-  await addMember(flockId, sam, 'accepted');
-  const g = await guestRow(flockId, 'Sam');
-  await guestVote(flockId, g, 'Link Pick', 1);
+// A cancel arriving between the hide and the COMMIT, for each thing the vote
+// carry can find. The route used to hold nothing the cancel needed: the hide's
+// open-plan test is a read, and the carry reports a closed plan only when its
+// own vote write is refused, so with no vote on the row, or a newer vote of
+// the member's own, the hide committed on a plan cancelled a moment before.
+// It holds the plan's row from before the hide now, so the cancel waits for
+// its COMMIT and the two are ordered: the answer retired on an open plan, and
+// then the plan cancelled.
+const CARRY_OUTCOMES = [
+  ['its vote is carried', async (flockId, sam, g) => { await guestVote(flockId, g, 'Link Pick', 1); }, ['Link Pick']],
+  ['it holds no vote', async () => {}, []],
+  ['the member\'s own vote is newer', async (flockId, sam, g) => {
+    await guestVote(flockId, g, 'Link Pick', 10);
+    await memberVote(flockId, sam, 'App Pick');
+  }, ['App Pick']],
+];
 
-  // The carry reads guest_votes right after the hide, so holding that table
-  // stops the route with the row already hidden and the vote not yet copied.
-  const hold = await holder();
-  try {
-    await hold.client.query('LOCK TABLE guest_votes IN ACCESS EXCLUSIVE MODE');
-    const join = call('POST', `/api/guest/${link}/join`, { token: sam.token, body: { guestToken: g.guest_token } });
-    await waitForWaiter('the vote copy', (w) => /FROM guest_votes gv/.test(w.query));
-    await pool.query("UPDATE flocks SET status = 'cancelled' WHERE id = $1", [flockId]);
-    await hold.end();
-    const res = await join;
-    assert.equal(res.status, 200, res.text);
-  } finally {
-    await hold.end();
-  }
-  assert.equal(await hidden(g), false, 'the copy was refused, so the hide went back with it');
-  assert.deepEqual(await guestVotesOf(g), ['Link Pick']);
-  assert.deepEqual(await votesOf(flockId, sam), []);
-});
+for (const [found, arrange, memberVotes] of CARRY_OUTCOMES) {
+  test(`already in: a cancel arriving between the retire and its commit waits for it when ${found}`, async () => {
+    const host = await mkUser('Host Closed B');
+    const sam = await mkUser('Sam Between');
+    const flockId = await mkFlock(host);
+    const link = await mkLink(flockId, host);
+    await addMember(flockId, sam, 'accepted');
+    const g = await guestRow(flockId, 'Sam');
+    await arrange(flockId, sam, g);
+
+    // The carry reads guest_votes right after the hide, so holding that table
+    // stops the route with the row already hidden and nothing committed.
+    const hold = await holder();
+    let cancel = null;
+    let cancelBeforeCommit = null;
+    try {
+      await hold.client.query('LOCK TABLE guest_votes IN ACCESS EXCLUSIVE MODE');
+      const join = call('POST', `/api/guest/${link}/join`, { token: sam.token, body: { guestToken: g.guest_token } });
+      await waitForWaiter('the vote copy', (w) => /FROM guest_votes gv/.test(w.query));
+      cancel = pool.query("UPDATE flocks SET status = 'cancelled' WHERE id = $1", [flockId]);
+      cancelBeforeCommit = await finishedOrQueued(cancel, (w) => /UPDATE flocks SET status = 'cancelled'/.test(w.query));
+      await hold.end();
+      const res = await join;
+      await cancel;
+      assert.equal(res.status, 200, res.text);
+      assert.equal(res.body.joined, false);
+    } finally {
+      await hold.end();
+      if (cancel) await cancel.catch(() => {});
+    }
+    const retired = await hidden(g);
+    assert.ok(!(retired && cancelBeforeCommit === 'finished'),
+      'the guest answer was retired by a transaction that committed after the plan was cancelled');
+    assert.equal(cancelBeforeCommit, 'queued', 'the cancel waits for the re-tap, which holds the plan\'s row');
+    assert.equal(retired, true, 'retired while the plan was open');
+    assert.deepEqual(await votesOf(flockId, sam), memberVotes);
+    const { rows: [plan] } = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+    assert.equal(plan.status, 'cancelled', 'and cancelled after');
+  });
+}
 
 test('new member: a plan cancelled while the join waits for its row is refused, and nothing moves', async () => {
   const host = await mkUser('Host Closed C');
@@ -646,3 +745,245 @@ test('an un-vote that removed nothing answers 200 even when the same person\'s v
   }
   assert.deepEqual(await votesOf(flockId, ava), ['New Place'], 'the vote from her other device stands');
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. A plan delete queues behind a vote switch or a re-tap, and they behind it
+// ═══════════════════════════════════════════════════════════════════════════
+
+// The first step of every plan delete (DELETE /:id, a host's leave, the last
+// member leaving, an account deletion), on a connection of the test's own: the
+// plan's row FOR UPDATE. Its deadlock_timeout is short, so if a cycle forms
+// this side detects it first and is the one that fails, as a host's delete
+// was; the route keeps the default and waits. finish() is the rest of the
+// delete, the cascade through the plan's rows, and resolves to its error.
+async function planDeleteHolding(flockId) {
+  const del = await holder();
+  await del.client.query("SET LOCAL deadlock_timeout = '100ms'");
+  await del.client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+  const finish = () => del.client.query('DELETE FROM flocks WHERE id = $1', [flockId]).then(() => null, (e) => e);
+  return { ...del, finish };
+}
+const failedDelete = (e) => (e ? `the plan delete failed: ${e.code} ${e.message}` : '');
+const plansLeft = async (flockId) => (await pool.query(
+  'SELECT COUNT(*)::int AS n FROM flocks WHERE id = $1', [flockId]
+)).rows[0].n;
+
+test('already in: a plan deleted while a re-tap carries a vote: both finish, and the delete is no deadlock victim', async () => {
+  const host = await mkUser('Host Gone');
+  const sam = await mkUser('Sam Gone');
+  const flockId = await mkFlock(host);
+  const link = await mkLink(flockId, host);
+  await addMember(flockId, sam, 'accepted');
+  const g = await guestRow(flockId, 'Sam');
+  // Newer than any vote of his, so the carry reaches its vote write, whose
+  // foreign key needs the plan's row.
+  await guestVote(flockId, g, 'Link Pick', 1);
+
+  const del = await planDeleteHolding(flockId);
+  try {
+    const join = call('POST', `/api/guest/${link}/join`, { token: sam.token, body: { guestToken: g.guest_token } });
+    const queued = await waitForWaiter('the re-tap',
+      (w) => /FROM flocks WHERE id = \$1 FOR UPDATE|INSERT INTO venue_votes/.test(w.query));
+    const failed = await del.finish();
+    assert.equal(failed, null, failedDelete(failed));
+    await del.end('COMMIT');
+    const res = await join;
+    assert.equal(res.status, 200, res.text);
+    assert.equal(res.body.joined, false);
+    // Where it waited is the fix: on the plan's row, before it took the guest
+    // row the delete's cascade needed.
+    assert.match(flat(queued.query), /^SELECT id FROM flocks WHERE id = \$1 FOR UPDATE$/);
+  } finally {
+    await del.end();
+  }
+  assert.equal(await plansLeft(flockId), 0);
+});
+
+// Both member vote writers, each answering what it told the voter.
+const VOTE_DOORS = [
+  ['the REST vote', async (flockId, voter, venue) => {
+    const res = await call('POST', `/api/flocks/${flockId}/vote`, { token: voter.token, body: { venue_name: venue } });
+    return `${res.status} ${res.body && res.body.error}`;
+  }, '404 Flock not found'],
+  ['the socket vote', async (flockId, voter, venue) => {
+    const s = socketFor(voter);
+    await s.fire('vote_venue', { flockId, venue_name: venue });
+    return `socket ${s.errors.join(' | ')}`;
+  }, 'socket Flock not found'],
+];
+
+for (const [door, castVote, gone] of VOTE_DOORS) {
+  test(`${door}: a member switching their vote while the plan is deleted: both finish, and the delete is no deadlock victim`, async () => {
+    const host = await mkUser('Host Switch');
+    const ava = await mkUser('Ava Switch');
+    const flockId = await mkFlock(host);
+    await addMember(flockId, ava, 'accepted');
+    await memberVote(flockId, ava, 'Old Pick');
+
+    const del = await planDeleteHolding(flockId);
+    let outcome;
+    try {
+      const voting = castVote(flockId, ava, 'New Pick');
+      const queued = await waitForWaiter('the vote', (w) => /FOR KEY SHARE|INSERT INTO venue_votes/.test(w.query));
+      const failed = await del.finish();
+      assert.equal(failed, null, failedDelete(failed));
+      await del.end('COMMIT');
+      outcome = await voting;
+      // It waits on the plan before it deletes its old vote, the row the
+      // delete's cascade needs.
+      assert.match(flat(queued.query), /^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+    } finally {
+      await del.end();
+    }
+    assert.equal(outcome, gone, 'the vote finds the plan gone and says so');
+    assert.equal(await plansLeft(flockId), 0);
+  });
+}
+
+test('two members switching their votes at once do not wait on each other for the plan\'s row', async () => {
+  // A key share, not FOR UPDATE: it is the lock the vote's own foreign key
+  // takes anyway, so taking it first costs the plan's voters nothing.
+  const host = await mkUser('Host Pair');
+  const ava = await mkUser('Ava Pair');
+  const bo = await mkUser('Bo Pair');
+  const flockId = await mkFlock(host);
+  await addMember(flockId, ava, 'accepted');
+  await addMember(flockId, bo, 'accepted');
+  const avaOld = await memberVote(flockId, ava, 'Old Pick');
+
+  // Ava's switch stops after it has taken the plan's key share, at the delete
+  // of her old vote, which the test holds.
+  const hold = await holder();
+  let boVote = null;
+  let avaVote = null;
+  try {
+    await hold.client.query('SELECT id FROM venue_votes WHERE id = $1 FOR UPDATE', [avaOld]);
+    avaVote = call('POST', `/api/flocks/${flockId}/vote`, { token: ava.token, body: { venue_name: 'Ava New' } });
+    await waitForWaiter('Ava\'s switch', (w) => /DELETE FROM venue_votes/.test(w.query));
+    boVote = call('POST', `/api/flocks/${flockId}/vote`, { token: bo.token, body: { venue_name: 'Bo Pick' } });
+    const bos = await finishedOrQueued(boVote, (w) => /FOR KEY SHARE/.test(w.query));
+    assert.equal(bos, 'finished', 'Bo\'s vote waited on Ava\'s hold of the plan');
+  } finally {
+    await hold.end();
+  }
+  assert.equal((await boVote).status, 201);
+  assert.equal((await avaVote).status, 201);
+  assert.deepEqual(await votesOf(flockId, ava), ['Ava New']);
+  assert.deepEqual(await votesOf(flockId, bo), ['Bo Pick']);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. A leave or a delete is announced only once it has committed
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function planOfFour() {
+  const host = await mkUser('Host Told');
+  const leaver = await mkUser('Ada Told');
+  const stay = await mkUser('Bo Told');
+  const invitee = await mkUser('Cy Told');
+  const flockId = await mkFlock(host);
+  await addMember(flockId, leaver, 'accepted');
+  await addMember(flockId, stay, 'accepted');
+  await addMember(flockId, invitee, 'invited');
+  return { host, leaver, stay, invitee, flockId };
+}
+
+test('a leave whose audience read fails still happens, and the plan still hears it', async () => {
+  const { host, leaver, stay, flockId } = await planOfFour();
+  await quiesce();
+  // The leave reads the leaver's block list under its row lock. Holding
+  // user_blocks stops that read there, and cancelling it fails the statement.
+  // It used to abort the leave's transaction: the DELETE then failed with
+  // "current transaction is aborted", the leave answered 500 and the member
+  // stayed in.
+  const hold = await holder();
+  let res;
+  try {
+    await hold.client.query('LOCK TABLE user_blocks IN ACCESS EXCLUSIVE MODE');
+    const leave = call('POST', `/api/flocks/${flockId}/leave`, { token: leaver.token });
+    await cancelWhileWaiting('the audience read', (w) => /FROM user_blocks/.test(w.query));
+    await hold.end();
+    res = await leave;
+  } finally {
+    await hold.end();
+  }
+  assert.equal(res.status, 200, `a failed read took the leave down with it: ${res.text}`);
+  assert.equal(await memberStatus(flockId, leaver), null, 'the leaver is out');
+  // Read again on the pool once the COMMIT released the row, and told.
+  assert.deepEqual(roomsFor(flockId, 'flock_member_left'), rooms(host, stay));
+  assert.deepEqual(roomsFor(flockId, 'member_stopped_sharing'), rooms(host, stay));
+});
+
+test('a leave that fails at its DELETE tells nobody the person left, and ends nobody\'s share', async () => {
+  const { leaver, flockId } = await planOfFour();
+  // Holding the leaver's membership row stops the leave at its DELETE, after
+  // everything it reads; cancelling it there fails the leave.
+  const hold = await holder();
+  let res;
+  try {
+    await hold.client.query(
+      'SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 FOR UPDATE', [flockId, leaver.id]
+    );
+    const leave = call('POST', `/api/flocks/${flockId}/leave`, { token: leaver.token });
+    await cancelWhileWaiting('the leave\'s DELETE', (w) => /DELETE FROM flock_members/.test(w.query));
+    await hold.end();
+    res = await leave;
+  } finally {
+    await hold.end();
+  }
+  assert.equal(res.status, 500, res.text);
+  assert.equal(await memberStatus(flockId, leaver), 'accepted', 'the leave did not happen');
+  assert.deepEqual(roomsFor(flockId, 'flock_member_left'), [], 'so nobody may be told it did');
+  assert.deepEqual(roomsFor(flockId, 'member_stopped_sharing'), [],
+    'nor that the share of somebody still in the plan has ended');
+});
+
+const PLAN_DELETE_DOORS = [
+  ['the host deletes the plan', (ctx) => call('DELETE', `/api/flocks/${ctx.flockId}`, { token: ctx.host.token })],
+  ['the host leaves the plan', (ctx) => call('POST', `/api/flocks/${ctx.flockId}/leave`, { token: ctx.host.token })],
+];
+
+for (const [door, act] of PLAN_DELETE_DOORS) {
+  test(`${door} and the DELETE fails: nobody is told the plan is gone`, async () => {
+    const ctx = await planOfFour();
+    // Holding one membership row stops the cascade; cancelling it fails the
+    // DELETE after the audience has been read.
+    const hold = await holder();
+    let res;
+    try {
+      await hold.client.query(
+        'SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 FOR UPDATE', [ctx.flockId, ctx.stay.id]
+      );
+      const pending = act(ctx);
+      await cancelWhileWaiting('the plan delete', (w) => /DELETE FROM flocks/.test(w.query));
+      await hold.end();
+      res = await pending;
+    } finally {
+      await hold.end();
+    }
+    assert.equal(res.status, 500, res.text);
+    assert.equal(await plansLeft(ctx.flockId), 1, 'the plan stands');
+    assert.deepEqual(roomsFor(ctx.flockId, 'flock_deleted'), [], 'so nobody may be told it is gone');
+  });
+
+  test(`${door} and its audience cannot be read: the delete is refused rather than done unannounced`, async () => {
+    const ctx = await planOfFour();
+    await quiesce();
+    const hold = await holder();
+    let res;
+    try {
+      await hold.client.query('LOCK TABLE user_blocks IN ACCESS EXCLUSIVE MODE');
+      const pending = act(ctx);
+      await cancelWhileWaiting('the audience read', (w) => /FROM user_blocks/.test(w.query));
+      await hold.end();
+      res = await pending;
+    } finally {
+      await hold.end();
+    }
+    // The cascade takes the roster with the plan, so nobody could be told
+    // afterwards, push included; the host is answered 500 and can try again.
+    assert.equal(res.status, 500, res.text);
+    assert.equal(await plansLeft(ctx.flockId), 1);
+    assert.deepEqual(roomsFor(ctx.flockId, 'flock_deleted'), []);
+  });
+}

@@ -19,6 +19,14 @@
 // write. A scripted pool cannot show that a lock blocks anything, so this
 // suite runs the real routes and the real sync against a migrated embedded
 // Postgres and fires the requests together.
+//
+// And a fourth, with no lock to take: an image DM, on both transports, checked
+// the pair for a block and then waited on the image screen for as long as it
+// took, and a block or a ban that landed in that wait changed nothing. The
+// message was stored and delivered to the person who had just blocked its
+// sender. Both sends ask the pair again after the screen now
+// (utils/blocks.js isBlockedOrBannedBetween); the screen is held open here
+// while the block or the ban is written.
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
@@ -55,12 +63,39 @@ global.fetch = async (url, init) => {
   return realFetch(url, init);
 };
 
+// The image screen, replaced before anything that sends a DM is required
+// (routes/messages.js and sockets/handlers.js take moderateImage when they
+// load). Every screen passes; `imageScreen`, when set, holds it open.
+const moderation = require('../utils/moderation');
+let imageScreen = null;
+let screens = 0;
+moderation.moderateImage = async () => {
+  screens += 1;
+  if (imageScreen) await imageScreen;
+  return { allowed: true };
+};
+
 let pg;
 let pool;
 let dataDir;
 let server;
 let base;
 let authRouter;
+let dmServer;
+let dmBase;
+let signUserToken;
+let registerHandlers;
+
+// What the DM routes and handlers send, by room.
+const dmEmits = [];
+const dmIo = {
+  sockets: { sockets: new Map(), adapter: { rooms: new Map() } },
+  to(room) {
+    const op = { except() { return op; }, emit(event, payload) { dmEmits.push({ room, event, payload }); } };
+    return op;
+  },
+  in() { return { socketsLeave() {}, disconnectSockets() {} }; },
+};
 
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), `flock-check-then-act-pg-${Date.now()}`);
@@ -80,10 +115,22 @@ test.before(async () => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
   });
   base = `http://127.0.0.1:${server.address().port}`;
+
+  ({ signUserToken } = require('../middleware/auth'));
+  ({ registerHandlers } = require('../sockets/handlers'));
+  const dmApp = express();
+  dmApp.use(express.json({ limit: '1mb' }));
+  dmApp.set('io', dmIo);
+  dmApp.use('/api', require('../routes/messages'));
+  dmServer = await new Promise((resolve) => {
+    const s = http.createServer(dmApp).listen(0, '127.0.0.1', () => resolve(s));
+  });
+  dmBase = `http://127.0.0.1:${dmServer.address().port}`;
 });
 
 test.after(async () => {
   global.fetch = realFetch;
+  if (dmServer) await new Promise((r) => dmServer.close(r));
   if (server) await new Promise((r) => server.close(r));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
@@ -235,3 +282,113 @@ test('Pro syncs for different accounts do not wait on each other', async () => {
     rcHandler = null;
   }
 });
+
+// ---------------------------------------------------------------------------
+// An image DM, and a block or a ban that lands while its image is screened.
+// ---------------------------------------------------------------------------
+
+const IMAGE = `data:image/png;base64,${Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(24),
+]).toString('base64')}`;
+let dmSeq = 0;
+
+async function friendsForDm() {
+  const make = async (name) => {
+    dmSeq += 1;
+    const { rows: [u] } = await pool.query(
+      `INSERT INTO users (email, password, name, email_verified) VALUES ($1, 'x', $2, true) RETURNING *`,
+      [`dm${dmSeq}.${Date.now()}@example.com`, name]
+    );
+    return { ...u, token: signUserToken(u) };
+  };
+  const sender = await make('Sender');
+  const receiver = await make('Receiver');
+  await pool.query(
+    "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'accepted')", [sender.id, receiver.id]
+  );
+  return { sender, receiver };
+}
+
+// Each door sends one image DM and answers whether it was refused as closed.
+const DM_DOORS = [
+  ['over REST', async (sender, receiver) => {
+    const res = await fetch(`${dmBase}/api/dm/${receiver.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sender.token}` },
+      body: JSON.stringify({ image_url: IMAGE, message_type: 'image' }),
+    });
+    const text = await res.text();
+    return { closed: res.status === 403 && /no longer message this user/.test(text), sent: res.status === 201, detail: `${res.status} ${text}` };
+  }],
+  ['over the socket', async (sender, receiver) => {
+    const errors = [];
+    const handlers = new Map();
+    dmSeq += 1;
+    const socket = {
+      id: `dm-race-${dmSeq}`,
+      user: { id: sender.id, name: sender.name },
+      rooms: new Set(),
+      handshake: null,
+      on(event, handler) { handlers.set(event, handler); },
+      join(room) { socket.rooms.add(room); },
+      leave(room) { socket.rooms.delete(room); },
+      emit(event, payload) { if (event === 'error') errors.push(payload && payload.message); },
+      to(room) { return dmIo.to(room); },
+    };
+    registerHandlers(dmIo, socket);
+    await handlers.get('send_dm')({ receiverId: receiver.id, image_url: IMAGE, message_type: 'image' });
+    return {
+      closed: errors.includes('You can no longer message this user.'),
+      sent: errors.length === 0,
+      detail: JSON.stringify(errors),
+    };
+  }],
+];
+
+const CLOSERS = [
+  ['the recipient blocks the sender', ({ sender, receiver }) => pool.query(
+    'INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [receiver.id, sender.id]
+  )],
+  ['the sender is banned', ({ sender }) => pool.query('UPDATE users SET is_banned = true WHERE id = $1', [sender.id])],
+];
+
+const deliveredTo = (user) => dmEmits.filter((e) => e.event === 'new_dm' && e.room === `user:${user.id}`);
+
+for (const [door, send] of DM_DOORS) {
+  for (const [what, close] of CLOSERS) {
+    test(`an image DM ${door}: ${what} while the image is screened, and nothing is stored or delivered`, async () => {
+      const pair = await friendsForDm();
+      let letScreenFinish = () => {};
+      imageScreen = new Promise((r) => { letScreenFinish = r; });
+      const before = screens;
+      let outcome;
+      try {
+        const sending = send(pair.sender, pair.receiver);
+        await until(() => screens > before); // the send is inside the screen, past every check
+        assert.ok(screens > before, 'the send never reached the image screen');
+        await close(pair);
+        letScreenFinish();
+        outcome = await sending;
+      } finally {
+        imageScreen = null;
+        letScreenFinish();
+      }
+      assert.ok(outcome.closed, `the message went through: ${outcome.detail}`);
+      assert.strictEqual(
+        await count('SELECT COUNT(*)::int AS n FROM direct_messages WHERE sender_id = $1', [pair.sender.id]), 0,
+        'the message was stored'
+      );
+      assert.deepStrictEqual(deliveredTo(pair.receiver), [], 'and delivered');
+    });
+  }
+
+  test(`an image DM ${door} with nothing changed during the screen is stored and delivered`, async () => {
+    const pair = await friendsForDm();
+    const outcome = await send(pair.sender, pair.receiver);
+    assert.ok(outcome.sent, outcome.detail);
+    assert.strictEqual(
+      await count('SELECT COUNT(*)::int AS n FROM direct_messages WHERE sender_id = $1', [pair.sender.id]), 1
+    );
+    assert.strictEqual(deliveredTo(pair.receiver).length, 1);
+  });
+}

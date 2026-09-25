@@ -697,6 +697,14 @@ test('a member who answered the link by name before signing in has that guest ro
   const commit = at(/^COMMIT/);
   assert.ok(begin > -1 && begin < at(/UPDATE guest_rsvps SET is_hidden = TRUE/)
     && at(/INSERT INTO venue_votes/) < commit, 'the hide and the carried vote commit together');
+  // The order every join takes: flockvote:, the plan's row, and only then the
+  // guest row. The plan's row before the hide is what makes a cancel wait for
+  // this COMMIT, and what keeps a plan delete (row, then a cascade into the
+  // guest row) from deadlocking with it.
+  assert.ok(at(/flockvote:/) > begin && at(/flockvote:/) < at(/^SELECT id FROM flocks WHERE id = \$1 FOR UPDATE$/)
+    && at(/^SELECT id FROM flocks WHERE id = \$1 FOR UPDATE$/) < at(/^SELECT status FROM flocks WHERE id = \$1$/)
+    && at(/^SELECT status FROM flocks WHERE id = \$1$/) < at(/UPDATE guest_rsvps SET is_hidden = TRUE/),
+  'flockvote:, then the plan\'s row and its status, then the guest row');
 });
 
 // ── ONE PERSON, ONE VOTE, ON BOTH JOIN PATHS ────────────────────────────────

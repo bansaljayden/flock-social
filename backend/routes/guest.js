@@ -1819,14 +1819,24 @@ router.post('/:token/join',
         // plain "you are already in". Announced after the response exactly
         // as the new-member path announces it.
         //
-        // THE PLAN'S STATE IS DECIDED IN HERE, NOT BY flockIsOver ABOVE. That
-        // check read the link on the pool before this transaction, and this
-        // path takes no row lock, so a plan completed or cancelled in between
-        // had the guest row hidden while carryGuestVote, which reads the
-        // status itself, refused to copy its vote: the vote left the tally of
-        // a plan that was already a record. The hide now carries the
-        // open-plan test in its own statement, and a carry refused because
-        // the plan closed after the hide takes the hide back with it.
+        // THE PLAN'S STATE IS DECIDED IN HERE, UNDER THE PLAN'S ROW LOCK, NOT
+        // BY flockIsOver ABOVE. That check read the link on the pool before
+        // this transaction. The open-plan test inside the hide is a read and
+        // not a lock, and carryGuestVote reports `closed` only when its own
+        // vote write is refused, so a plan cancelled or completed after the
+        // hide still had it committed whenever the retired row held no vote
+        // or the member's own vote was newer: the answer left the record of a
+        // plan that was already over. And the order was wrong for a plan
+        // delete, which locks this row and then cascades into the guest row:
+        // the hide held the guest row while the carry's vote write waited on
+        // this row's key share, and one of the two failed with a deadlock,
+        // which could as easily be the host's delete. So the row is taken
+        // here, after flockvote: and before the guest row, the order every
+        // join uses (flockvote:, then the plan's row, then what the join
+        // writes). A cancel is an UPDATE on this row and waits for the
+        // COMMIT, so the status read under it is the one the hide commits
+        // against. A plan deleted first leaves no row, and the hide's own
+        // open-plan test then retires nothing.
         let hiddenGuestId = null;
         let carriedVote = null;
         if (guestUuid) {
@@ -1837,14 +1847,24 @@ router.post('/:token/join',
             // The vote routes' lock first, the order every vote writer takes
             // (utils/guestRsvp.js lockVoteSlot).
             await lockVoteSlot((q, p) => retireClient.query(q, p), link.flock_id, req.user.id);
-            const hid = await retireClient.query(RETIRE_ON_LINK_JOIN_SQL, [link.flock_id, guestUuid, req.user.id]);
-            hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
-            if (hiddenGuestId) {
-              carriedVote = await carryGuestVote(
-                (q, p) => retireClient.query(q, p), link.flock_id, req.user.id, [hiddenGuestId]
-              );
+            // The same two statements, and the same reading of them, as the
+            // new-member path below, so a fixture that answers one path
+            // answers both.
+            await retireClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [link.flock_id]);
+            const locked = await retireClient.query('SELECT status FROM flocks WHERE id = $1', [link.flock_id]);
+            const planOver = TERMINAL_FLOCK_STATUSES.has(String((locked.rows[0] && locked.rows[0].status) || ''));
+            if (!planOver) {
+              const hid = await retireClient.query(RETIRE_ON_LINK_JOIN_SQL, [link.flock_id, guestUuid, req.user.id]);
+              hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
+              if (hiddenGuestId) {
+                carriedVote = await carryGuestVote(
+                  (q, p) => retireClient.query(q, p), link.flock_id, req.user.id, [hiddenGuestId]
+                );
+              }
             }
-            if (carriedVote && carriedVote.closed) {
+            // Under the row lock the carry cannot find the plan closed; if it
+            // ever does, the hide goes back with it, as on every other door.
+            if (planOver || (carriedVote && carriedVote.closed)) {
               await retireClient.query('ROLLBACK');
               hiddenGuestId = null;
               carriedVote = null;
