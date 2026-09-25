@@ -57,11 +57,24 @@ function classifyHttpFailure(status, context) {
 // to be one place. A second copy is how they drift.
 const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i;
 
-async function fetchWithTimeout(url, options, ms) {
+// THE DEADLINE LASTS UNTIL THE BODY HAS BEEN READ. `await fetch()` resolves
+// when the response HEADERS arrive, and this used to clear its timer right
+// there, so the `.json()` each caller ran next had no deadline at all: a body
+// that trickled in, or stalled after prompt headers, held the caller for as long
+// as the connection stayed open. In the realtime sweep that is a call slot held
+// with no end, and the sweep's drain waits for every slot, so one such answer
+// could keep the collector alive until its three-hour watchdog and cost every
+// hourly run in between. utils/upstream.js describes the same trap. The body is
+// now read here, inside the deadline; an abort mid-body rejects the read with
+// "This operation was aborted", which NETWORK_ERR_RE already counts as ours.
+// A failed status is answered from the status alone and its body is never
+// read. Returns { response, data }, with data null when the status failed.
+async function fetchJsonWithTimeout(url, options, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return { response, data: response.ok ? await response.json() : null };
   } finally {
     // Round 13: previously cleared only on the success path — a network error
     // left a 30s timer pending, keeping the process alive after pool.end().
@@ -80,7 +93,7 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       ? new URLSearchParams({ api_key_private: apiKey, venue_id: existingVenueId })
       : new URLSearchParams({ api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress });
 
-    const response = await fetchWithTimeout(
+    const { response, data } = await fetchJsonWithTimeout(
       `https://besttime.app/api/v1/forecasts?${params}`,
       { method: 'POST' },
       30000
@@ -92,8 +105,6 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       if (err) throw err;
       return null; // genuine venue-level 404 → caller marks as 404, never retries
     }
-
-    const data = await response.json();
 
     if (!data.analysis || data.status !== 'OK') {
       console.error(`[ML:BestTime] No analysis data for ${venueName}:`, data.message || 'unknown error');
@@ -166,7 +177,7 @@ async function fetchLiveBusyness(venueId) {
 
   try {
     const params = new URLSearchParams({ api_key_private: apiKey, venue_id: venueId });
-    const response = await fetchWithTimeout(
+    const { response, data } = await fetchJsonWithTimeout(
       `https://besttime.app/api/v1/forecasts/live?${params}`,
       { method: 'POST' },
       // 20 s. A live answer normally lands in a second or two, but BestTime
@@ -187,8 +198,6 @@ async function fetchLiveBusyness(venueId) {
       if (err) throw err;
       return null;
     }
-
-    const data = await response.json();
 
     if (data.status !== 'OK') {
       return null;

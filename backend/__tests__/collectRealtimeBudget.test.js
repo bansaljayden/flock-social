@@ -89,7 +89,7 @@ test('the pace itself is untouched: one call STARTED per second', () => {
   // second, holds included) is pinned in collectRealtimeConcurrency.test.js.
   assert.match(collect, /const START_INTERVAL_MS = 1000;/);
   assert.match(collect, /const gate = createCallGate\(\{ maxInFlight, intervalMs: START_INTERVAL_MS, now, pause \}\);/);
-  assert.match(collect, /gate\.start\(\(\) => callVenue\(venue, \{ obs, weather, obsSpecial, obsHolidayEve \}\)\);/);
+  assert.match(collect, /gate\.start\(\(\) => callVenue\(venue, \{ obs, weather, obsSpecial, obsHolidayEve, startedAt \}\)\);/);
   // Bounded overlap, refused rather than clamped when the flag is out of range.
   assert.match(collect, /const DEFAULT_MAX_IN_FLIGHT = 8;/);
   assert.match(collect, /const MAX_IN_FLIGHT_CEILING = 10;/);
@@ -278,8 +278,11 @@ test('a row is stamped with the hour it was observed, not the hour the sweep beg
   // built from the same clock.
   // Read when the call STARTS (`now()` is Date.now in production), and carried
   // with the call, so an answer landing in the next hour is still filed under
-  // the hour it was asked in.
-  assert.match(collect, /const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz, now\(\)\);/);
+  // the hour it was asked in. One instant, read once: the row's clock comes
+  // from it, and the event lookup that runs when the answer lands is handed
+  // the same instant rather than taking the time again.
+  assert.match(collect, /const startedAt = new Date\(now\(\)\);\s*const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz, startedAt\);/);
+  assert.match(collect, /eventData = await lookupEvents\(venue\.latitude, venue\.longitude, startedAt\);/);
   for (const col of ['day_of_week', 'hour', 'month', 'season', 'observed_date']) {
     assert.ok(collect.includes("['" + col + "', obs."), col + ' reads the row clock');
   }

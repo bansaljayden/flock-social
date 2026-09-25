@@ -782,7 +782,13 @@ async function sweepVenues(cityOrder, {
         //
         // The tell was already in the file: the open-hours test below computed a
         // FRESH per-venue hour and the row then recorded the stale city one.
-        const obs = getLocalTime(venue.timezone || cityConfig.tz, now());
+        //
+        // Read ONCE, as an instant, and the clock is derived from it. The event
+        // lookup runs only when the answer lands, which can be in the next hour,
+        // so it is handed this same instant (storeReading) rather than taking
+        // the time again: a row filed under 21:00 gets 21:00's events.
+        const startedAt = new Date(now());
+        const obs = getLocalTime(venue.timezone || cityConfig.tz, startedAt);
         const venueHour = obs.hour;
         // Same reasoning for the DATE-derived columns. A sweep crossing midnight
         // would otherwise stamp the previous day's holiday, holiday-eve and
@@ -798,10 +804,11 @@ async function sweepVenues(cityOrder, {
 
         called++;
         // EVERYTHING THE ROW NEEDS FROM THIS MOMENT TRAVELS WITH THE CALL: its
-        // clock, its date answers, and the weather as it stands now. `weather`
-        // is read here, at the start, and the call keeps that object even if the
-        // hour turns or the sweep reaches another city before the answer lands.
-        gate.start(() => callVenue(venue, { obs, weather, obsSpecial, obsHolidayEve }));
+        // instant, its clock, its date answers, and the weather as it stands
+        // now. `weather` is read here, at the start, and the call keeps that
+        // object even if the hour turns or the sweep reaches another city
+        // before the answer lands.
+        gate.start(() => callVenue(venue, { obs, weather, obsSpecial, obsHolidayEve, startedAt }));
       }
     }
   } catch (err) {
@@ -919,12 +926,16 @@ function sharedEventRadiusKm(nearbyKm, cellDeg = EVENT_CELL_DEG, marginKm = EVEN
   return Math.ceil(nearbyKm + cellHalfDiagonalKm(cellDeg) + marginKm);
 }
 
-// Built once per sweep. lookup(lat, lon) answers what getNearestEvent(lat, lon)
-// would, sharing the Ticketmaster request with the other venues of its cell
-// and hour when the rules above allow it. Everything is injectable for
-// __tests__/collectRealtimeEventCache.test.js. An event module without the
-// shared-query parts (a test double that only answers getNearestEvent) is
-// asked per venue, as before.
+// Built once per sweep. lookup(lat, lon, at) answers what
+// getNearestEvent(lat, lon, NEARBY_KM, at) would, sharing the Ticketmaster
+// request with the other venues of its cell and hour when the rules above
+// allow it. `at` is the moment the observation was taken, which storeReading
+// passes as the instant its BestTime call started; the cell's hour,
+// Discovery's window and the filter all read it, never the moment the answer
+// landed, which can be in the next hour. Without one it is now. Everything is
+// injectable for __tests__/collectRealtimeEventCache.test.js. An event module
+// without the shared-query parts (a test double that only answers
+// getNearestEvent) is asked per venue, as before.
 function createEventLookup({
   perVenue = getNearestEvent,
   fetchPage = fetchTicketmasterPage,
@@ -940,17 +951,19 @@ function createEventLookup({
   const stats = { lookups: 0, sharedCalls: 0, perVenueCalls: 0, failedSharedCalls: 0 };
   const canShare = [fetchPage, fetchSeatGeek, answerFor, distance].every((f) => typeof f === 'function')
     && Number.isFinite(nearbyKm) && Number.isInteger(perVenuePage);
-  const askPerVenue = (lat, lon) => {
+  // The venue's own request, at getNearestEvent's own radius, about the same
+  // moment.
+  const askPerVenue = (lat, lon, at) => {
     stats.perVenueCalls++;
-    return perVenue(lat, lon);
+    return perVenue(lat, lon, NEARBY_KM, at);
   };
   if (!canShare) {
     return {
       shared: false,
       stats,
-      lookup(lat, lon) {
+      lookup(lat, lon, at) {
         stats.lookups++;
-        return askPerVenue(lat, lon);
+        return askPerVenue(lat, lon, at);
       },
     };
   }
@@ -1000,11 +1013,13 @@ function createEventLookup({
     shared: true,
     stats,
     radiusKm,
-    async lookup(lat, lon) {
+    async lookup(lat, lon, observedAt) {
       stats.lookups++;
+      const at = observedAt instanceof Date && Number.isFinite(observedAt.getTime())
+        ? observedAt
+        : new Date(now());
       // A venue with no usable position has no cell; it is asked as before.
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return askPerVenue(lat, lon);
-      const at = new Date(now());
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return askPerVenue(lat, lon, at);
       const [tmEvents, sgEvents] = await Promise.all([
         ticketmasterFor(lat, lon, at),
         fetchSeatGeek(lat, lon, nearbyKm),
@@ -1017,9 +1032,9 @@ function createEventLookup({
 // ---------------------------------------------------------------------------
 // THE WRITE: one venue's answer into one row. The sweep calls this once per
 // answered call, with the venue, what the moment of the call looked like
-// (`at`: its clock, its weather, its special night, all captured when the call
-// STARTED) and BestTime's answer. It returns what happened and the sweep does
-// the counting:
+// (`at`: its instant, its clock, its weather, its special night, all captured
+// when the call STARTED) and BestTime's answer. It returns what happened and
+// the sweep does the counting:
 //   'skipped'             the answer held nothing nameable (classifyReading)
 //   'vanished'            the repair retired or unmapped the venue mid-sweep
 //   'duplicate'           this venue-hour-date was already recorded
@@ -1030,11 +1045,13 @@ function createEventLookup({
 // OVERLAPPING CALLS above), so by the time an answer lands the sweep may be
 // venues, a city or an hour further on, and a row must never be stamped with
 // what the sweep's own variables say at write time. Everything below that
-// describes the moment reads `at`. `lookupEvents` is the sweep's shared event
-// lookup; called on its own this falls back to one request per venue.
+// describes the moment reads `at`, the event lookup included: it is handed
+// `startedAt`. `lookupEvents(lat, lon, at)` is the sweep's shared event lookup;
+// called on its own this falls back to one request per venue.
 // ---------------------------------------------------------------------------
-async function storeReading(venue, at, live, lookupEvents = getNearestEvent) {
-  const { obs, weather, obsSpecial, obsHolidayEve } = at;
+async function storeReading(venue, at, live,
+  lookupEvents = (lat, lon, observedAt) => getNearestEvent(lat, lon, NEARBY_KM, observedAt)) {
+  const { obs, weather, obsSpecial, obsHolidayEve, startedAt } = at;
   // Use live busyness if available, else forecasted — and record WHICH, so
   // training can stop treating a vendor forecast as ground truth. The
   // decision itself is classifyReading()'s, not this loop's.
@@ -1086,7 +1103,13 @@ async function storeReading(venue, at, live, lookupEvents = getNearestEvent) {
     // The sweep's shared lookup (ONE TICKETMASTER QUERY PER CELL PER HOUR,
     // above): the same answer getNearestEvent gives, from a request this
     // venue may share with its neighbours.
-    eventData = await lookupEvents(venue.latitude, venue.longitude);
+    //
+    // About the moment the call STARTED, the one `obs` was read from. It used
+    // to take the time again here, after the answer landed: a call started at
+    // 21:59:55 and answered at 22:00:10 was filed under 21:00 and handed the
+    // 22:00 window's events, so a show starting at 22:30 was attached to the
+    // hour before it.
+    eventData = await lookupEvents(venue.latitude, venue.longitude, startedAt);
   } catch (err) {
     console.error(`  Event fetch error for ${venue.name}:`, err.message);
   }
@@ -1719,6 +1742,9 @@ module.exports = {
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
+  // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading
+  // whose call started before the hour turned.
+  storeReading,
 };
 
 if (require.main === module) {
