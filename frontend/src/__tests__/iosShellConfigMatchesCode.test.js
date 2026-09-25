@@ -723,7 +723,7 @@ const PLUGIN_CLASSES = {
   // API made WKWebView raise its own '"localhost" would like to use your
   // current location' sheet next to the real one. Every call goes through
   // services/geolocation.js, which uses navigator.geolocation on the web.
-  '@capacitor/geolocation': 'GeolocationPlugin',
+  '@capacitor/geolocation': 'GeolocationPlugin',
   /* Keyboard joined 2026-09-05 with the composer dock. It is the only
      Objective-C plugin in this list: its class is registered by the CAP_PLUGIN
      macro in ios/Sources/KeyboardPlugin/KeyboardPlugin.m rather than by a
@@ -1026,8 +1026,10 @@ describe('the build stops on the failures that used to ship green', () => {
     // runs. Push is dead on every device and the only signal was one WARNING
     // line in a green build's log. This workflow publishes to TestFlight
     // unconditionally, so "green" meant real testers on a build whose
-    // notifications did nothing.
-    expect(codemagic).toMatch(/submit_to_testflight:\s*true/);
+    // notifications did nothing. The upload to App Store Connect is what puts
+    // a build in front of internal testers; submit_to_testflight only adds
+    // Beta App Review for external ones, so the upload is what is pinned.
+    expect(codemagic).toMatch(/app_store_connect:\s*\n\s*auth:\s*integration/);
     expect(codemagic).toContain('PUSH CHECK FAILED');
     expect(codemagic).toContain('ALLOW_PUSHLESS_BUILD');
     // The placeholder still exists, but only behind the explicit override.

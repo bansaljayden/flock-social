@@ -471,7 +471,14 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        # The upload alone puts a build in TestFlight for the team's internal
+        # testers. submit_to_testflight also sends it to Beta App Review for
+        # external testers, which App Store Connect refuses (422, "Beta App
+        # Description is missing") until TestFlight's Test Information is filled
+        # in, so every build ended "post-processing failed" after a good upload.
+        # Turn it back on once that description exists and external testers are
+        # wanted.
+        submit_to_testflight: false
   # ---------------------------------------------------------------------------
   # APPLE 2.1 REVIEW RECORDING, UNATTENDED (2026-09-01)
   # ---------------------------------------------------------------------------
