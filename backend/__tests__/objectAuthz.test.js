@@ -169,7 +169,9 @@ pool.query = async (text, params = []) => {
     return { rows, rowCount: rows.length };
   }
   if (has('FROM guest_rsvps')) return { rows: [], rowCount: 0 };
-  if (has('FROM venue_votes WHERE flock_id = $1')) return { rows: [{ voters: 0 }], rowCount: 1 };
+  // The momentum voter count joins the roster now (only accepted, unbanned
+  // members' votes count, as on the venue tally), so it reads venue_votes vv.
+  if (has('FROM venue_votes WHERE flock_id = $1') || has('AS voters FROM venue_votes vv')) return { rows: [{ voters: 0 }], rowCount: 1 };
   if (has('FROM guest_votes gv')) return { rows: [{ voters: 0 }], rowCount: 1 };
   if (has('FROM budget_submissions')) return { rows: [{ submissions: 0, n: 0 }], rowCount: 1 };
 
@@ -216,6 +218,11 @@ pool.query = async (text, params = []) => {
   // measuring only what it is about.
   if (has('UPDATE direct_messages SET delivered_at')) return { rows: [], rowCount: 0 };
   if (has('INSERT INTO dm_emoji_reactions')) {
+    return { rows: [{ id: 1, dm_id: params[0], user_id: params[1], emoji: params[2] }], rowCount: 1 };
+  }
+  // The caller's own reaction row; the route decides whose, and the fixture
+  // answers as if that reaction exists.
+  if (has('DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3')) {
     return { rows: [{ id: 1, dm_id: params[0], user_id: params[1], emoji: params[2] }], rowCount: 1 };
   }
 
@@ -424,11 +431,57 @@ test('reacting to a message in a flock you are not in reveals nothing about that
 
 // ── Direct messages ─────────────────────────────────────────────────────────
 
-test('a third party cannot react to somebody else\'s DM', async () => {
-  const res = await call('POST', '/api/dm/messages/200/react', 'mallory', { emoji: '🔥' });
-  assert.strictEqual(res.status, 403);
+test('a third party cannot react to somebody else\'s DM, and learns nothing about it by trying', async () => {
+  const real = await call('POST', '/api/dm/messages/200/react', 'mallory', { emoji: '🔥' });
+  const fake = await call('POST', '/api/dm/messages/424242/react', 'mallory', { emoji: '🔥' });
+  // Same answer for a DM between two other people and an id never issued.
+  // When these differed (403 vs 404) the pair was an oracle over the serial
+  // DM ids, the one the flock twin above was already closed against.
+  assert.strictEqual(real.status, 404);
+  assert.strictEqual(fake.status, 404);
+  assert.deepStrictEqual(await real.json(), await fake.json());
   assertQueriesUnderstood();
   noWritesTo('dm_emoji_reactions');
+});
+
+test('removing a reaction from somebody else\'s DM is the same 404 as an id never issued, block or no block', async () => {
+  // DELETE /api/dm/messages/:id/react/:emoji read the message's SENDER as the
+  // caller's counterpart when the caller was neither party, then asked about a
+  // block with them. So an outsider with a block against Alice got a 403 for
+  // every DM Alice ever sent and a 404 for everything else: a walk over the
+  // serial DM ids that picked one person's messages out. DM 200 is Alice to Bob.
+  const fire = encodeURIComponent('🔥');
+  blocks = [[1, 3]]; // Alice blocked Mallory
+  const blockedSender = await call('DELETE', `/api/dm/messages/200/react/${fire}`, 'mallory');
+  blocks = [];
+  const stranger = await call('DELETE', `/api/dm/messages/200/react/${fire}`, 'mallory');
+  const neverIssued = await call('DELETE', `/api/dm/messages/424242/react/${fire}`, 'mallory');
+
+  for (const res of [blockedSender, stranger, neverIssued]) assert.strictEqual(res.status, 404);
+  const [a, b, c] = await Promise.all([blockedSender.json(), stranger.json(), neverIssued.json()]);
+  assert.deepStrictEqual(a, c, 'a block with the sender separated that message from one that does not exist');
+  assert.deepStrictEqual(b, c);
+  assertQueriesUnderstood();
+  noWritesTo('dm_emoji_reactions');
+  assert.ok(!queries.some((q) => q.sql.includes('FROM user_blocks')),
+    'the block question is for the two people in the thread, and was asked about an outsider');
+});
+
+test('a participant still removes their own reaction, and a block still stops them', async () => {
+  const fire = encodeURIComponent('🔥');
+  const ok = await call('DELETE', `/api/dm/messages/200/react/${fire}`, 'bob');
+  assert.strictEqual(ok.status, 200);
+  const del = writes.find((w) => w.sql.includes('DELETE FROM dm_emoji_reactions'));
+  assert.ok(del, 'the participant\'s own reaction row is the one removed');
+  assert.deepStrictEqual(del.params, [200, 2, '🔥']);
+  assertQueriesUnderstood();
+
+  reset();
+  blocks = [[2, 1]]; // Bob blocked Alice: removals end too, for the pair
+  const refused = await call('DELETE', `/api/dm/messages/200/react/${fire}`, 'bob');
+  assert.strictEqual(refused.status, 403);
+  noWritesTo('dm_emoji_reactions');
+  assertQueriesUnderstood();
 });
 
 test('a participant can react, and the emoji is validated before it reaches the column', async () => {

@@ -141,6 +141,9 @@ const HANDLERS_SRC = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'hand
 
 const DM_LOOKUP = /SELECT sender_id, receiver_id FROM direct_messages/;
 const INVISIBLE_IDS = /blocked_id AS id FROM user_blocks/; // getInvisibleUserIds
+// hasDmRelationship, which dm_react asks after the block check so a banned
+// counterpart is refused on this transport as on the REST one.
+const RELATIONSHIP = /SELECT 1 WHERE EXISTS/;
 
 // A direct_messages lookup that behaves the way Postgres would: the row comes
 // back only when the statement did NOT ask for a visible one. The PREDICATE is
@@ -158,6 +161,7 @@ test('dm_react asks for the takedown flag, exactly as its REST twin does', async
   routes = [
     [DM_LOOKUP, dmRow],
     [/FROM user_blocks/, []],
+    [RELATIONSHIP, [{ '?column?': 1 }]],
     [/INSERT INTO dm_emoji_reactions/, []],
   ];
 
@@ -194,6 +198,7 @@ test('a visible DM is still reactable — the predicate is a filter, not an off 
   routes = [
     [DM_LOOKUP, dmRow], // a row that is not hidden: the predicate lets it through
     [/FROM user_blocks/, []],
+    [RELATIONSHIP, [{ '?column?': 1 }]], // a related pair, counterpart not banned
     [/INSERT INTO dm_emoji_reactions/, []],
   ];
 
