@@ -34,6 +34,13 @@
 //      loaded), within one crowd band from the database with its sample and
 //      window, the goal and the gap, the share withheld under the minimum,
 //      and the check held for an hour.
+//  10. The operator's own steps: each check the server can make reads to do
+//      or done from the variable or table behind it, the database step
+//      follows the host the pool really dials and carries its fix, one
+//      SELECT 1 is timed and held like a vendor read and fails into words,
+//      the steps the server cannot see carry no state, and no variable's
+//      value (a key, the host, the user, the password) reaches the payload
+//      or a log line.
 //
 // Stripe is a fake installed in the require cache before the billing service
 // loads it, RevenueCat and BestTime are a fake global fetch, the predictor's
@@ -282,6 +289,10 @@ const ENV_KEYS = [
   'STRIPE_PRICE_ROOST_LEGACY', 'PAYWALL_ENABLED', 'VENUE_BILLING_ENABLED', 'REVENUECAT_PROJECT_ID',
   'REVENUECAT_V2_SECRET_API_KEY',
   'BESTTIME_API_KEY',
+  // The operator's steps (section 10) read these. The pool itself never sees
+  // them change: it is scripted below and was built before any test ran.
+  'REVENUECAT_WEBHOOK_SECRET', 'SENTRY_DSN',
+  'DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 test.after(() => {
@@ -336,6 +347,8 @@ function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accura
       : { rows: [{ collected_at: new Date(Date.now() - collectorMinutesAgo * 60000) }], rowCount: 1 })],
     [/COUNT\(DISTINCT date_trunc/, () => ({ rows: [{ n: 3000, hours: 24 }], rowCount: 1 })],
     [/FROM ops_alert_ledger/, () => ({ rows: [{ last: null }], rowCount: 1 })],
+    // The round trip the operator's database step times.
+    [/^SELECT 1$/, () => ({ rows: [{ '?column?': 1 }], rowCount: 1 })],
   ];
 }
 
@@ -345,6 +358,9 @@ function clearVendors() {
   delete process.env.REVENUECAT_V2_SECRET_API_KEY;
   delete process.env.REVENUECAT_PROJECT_ID;
   delete process.env.BESTTIME_API_KEY;
+  delete process.env.REVENUECAT_WEBHOOK_SECRET;
+  delete process.env.SENTRY_DSN;
+  for (const k of ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) delete process.env[k];
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
 }
 
@@ -1859,4 +1875,357 @@ test('the check pairs model forecasts with live readings of the same venue and h
   // The pairing window is short of the week that separates two of the same
   // weekday and hour, by a wide margin.
   assert.ok(moneyHub.__test.MODEL_PAIR_WINDOW_HOURS * 2 < 7 * 24);
+});
+
+// ===========================================================================
+// 10. ONLY YOU CAN DO THESE: the operator's own steps
+// ===========================================================================
+
+// Fake, and built at runtime like the keys at the top, so nothing here reads
+// as a real credential. Each is distinctive enough that finding it anywhere in
+// a response or a log line can only mean it leaked.
+const DB_PUBLIC_HOST = ['moneyhub-fixture', 'proxy', 'example', 'invalid'].join('.');
+const DB_PRIVATE_HOST = ['moneyhub-fixture-db', 'railway', 'internal'].join('.');
+const DB_USER = ['moneyhub', 'fixture', 'user'].join('_');
+const DB_PASSWORD = ['pw', 'moneyhub', 'f1xture', 'q9z7'].join('_');
+const DB_NAME = ['moneyhub', 'fixture', 'db'].join('_');
+const DB_PORT = '47913';
+const WEBHOOK_SECRET = ['rcwh', 'moneyhub', 'fixture', '0123456789abcdef'].join('_');
+const SENTRY_DSN_FAKE = ['https://', 'e'.repeat(32), '@', 'o0.ingest.example.invalid/0'].join('');
+const dbUrl = (host) => ['postgresql://', DB_USER, ':', DB_PASSWORD, '@', host, ':', DB_PORT, '/', DB_NAME].join('');
+
+// The command the database step offers, word for word, as the operator will
+// paste it.
+const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST=postgres.railway.internal --set PGPORT=5432';
+
+const OWNER_STEP_IDS = [
+  'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting',
+  'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
+];
+const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
+const roundTrips = () => log.filter((q) => q.sql === 'SELECT 1').length;
+const aBill = { id: 1, vendor: 'Example Tool', product: 'Team', kind: 'tooling', amount_cents: 2000, cadence: 'monthly' };
+
+test('with nothing set, every step the server checks reads to do, and the database step carries its fix and a timed round trip', async () => {
+  process.env.PGHOST = DB_PUBLIC_HOST;
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const oa = r.body.ownerActions;
+  assert.deepStrictEqual(oa.items.map((s) => s.id), OWNER_STEP_IDS);
+
+  const db = ownerStep(r.body, 'database_private_network');
+  assert.strictEqual(db.checkedBy, 'server');
+  assert.strictEqual(db.state, 'todo');
+  assert.strictEqual(db.network, 'public');
+  assert.strictEqual(db.via, 'PGHOST');
+  assert.strictEqual(db.fix, PRIVATE_NETWORK_FIX);
+  assert.strictEqual(moneyHub.__test.DB_PRIVATE_NETWORK_FIX, PRIVATE_NETWORK_FIX);
+  assert.match(db.words, /^PGHOST names no railway\.internal address, so every query travels through Railway's public proxy\./);
+  // One SELECT 1, timed, on a connection checked out of the pool.
+  assert.strictEqual(db.roundTrip.status, 'ok');
+  assert.ok(Number.isFinite(db.roundTrip.ms) && db.roundTrip.ms >= 0, `round trip ${db.roundTrip.ms}`);
+  assert.ok(Number.isFinite(Date.parse(db.roundTrip.asOf)));
+  assert.strictEqual(db.roundTrip.cached, false);
+  assert.strictEqual(roundTrips(), 1);
+
+  for (const [id, words] of [
+    ['revenuecat_project_figures', /^REVENUECAT_V2_SECRET_API_KEY is not set, so RevenueCat's project-wide figures and the offering are not read\. In RevenueCat, open Project settings, then API keys/],
+    ['revenuecat_webhook', /^REVENUECAT_WEBHOOK_SECRET is not set to a usable value, 16 characters or more, so the server refuses every webhook RevenueCat sends\..*The server cannot see RevenueCat's side\.$/],
+    ['expense_list', /^The expense list is empty, .*Paste the list into Import a list, at the bottom of the Expense list card\.$/],
+    ['error_reporting', /^SENTRY_DSN is not set\. Server errors still reach the Railway logs/],
+  ]) {
+    const s = ownerStep(r.body, id);
+    assert.strictEqual(s.checkedBy, 'server', id);
+    assert.strictEqual(s.state, 'todo', id);
+    assert.match(s.words, words, id);
+    assert.strictEqual(s.fix, null, `${id} offered a command it does not have`);
+  }
+  assert.strictEqual(ownerStep(r.body, 'error_reporting').optional, true);
+  assert.strictEqual(ownerStep(r.body, 'revenuecat_project_figures').lastRead, null, 'no key, so nothing to say about a read with it');
+  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook']) {
+    assert.deepStrictEqual(ownerStep(r.body, id).link, { href: 'https://app.revenuecat.com/', text: 'RevenueCat' });
+  }
+  // Four required steps to do and one optional one, counted apart.
+  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 1, done: 0, unknown: 0, checkYourself: 5 });
+
+  // A good round trip is held for the vendor reads' five minutes: a reload
+  // and an early refresh reuse it rather than ping the database again.
+  const again = await req('GET', '/api/admin/money?refresh=1');
+  assert.strictEqual(ownerStep(again.body, 'database_private_network').roundTrip.cached, true);
+  assert.strictEqual(roundTrips(), 1);
+  assert.ok(moneyHub.__test.cacheKeys().includes(moneyHub.__test.databaseRoundTripCacheKey()));
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_TTL_MS);
+  const later = await req('GET', '/api/admin/money');
+  assert.strictEqual(ownerStep(later.body, 'database_private_network').roundTrip.cached, false);
+  assert.strictEqual(roundTrips(), 2, 'five minutes on, it is timed again');
+});
+
+test('each step reads done once it is in place, and a v2 key is judged with what RevenueCat did with it', async () => {
+  process.env.PGHOST = DB_PRIVATE_HOST;
+  process.env.REVENUECAT_V2_SECRET_API_KEY = RC_V2_KEY;
+  process.env.REVENUECAT_WEBHOOK_SECRET = WEBHOOK_SECRET;
+  process.env.SENTRY_DSN = SENTRY_DSN_FAKE;
+  expenseRows = [aBill];
+  handlers = hubHandlers();
+  let r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const db = ownerStep(r.body, 'database_private_network');
+  assert.strictEqual(db.state, 'done');
+  assert.strictEqual(db.network, 'private');
+  assert.strictEqual(db.via, 'PGHOST');
+  assert.strictEqual(db.fix, null, 'nothing to fix, so no command');
+  assert.strictEqual(db.words, 'PGHOST names a railway.internal address, so every query stays on Railway\'s private network.');
+  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting']) {
+    assert.strictEqual(ownerStep(r.body, id).state, 'done', id);
+  }
+  assert.match(ownerStep(r.body, 'revenuecat_webhook').words,
+    /^REVENUECAT_WEBHOOK_SECRET is set on the server\..*Authorization header, with or without Bearer in front\. The server cannot see RevenueCat's side, so that half is yours to check\.$/);
+  assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
+  assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry.');
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 });
+  // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
+  // not yet used, and the step says so rather than implying it works.
+  let rc = ownerStep(r.body, 'revenuecat_project_figures');
+  assert.strictEqual(rc.lastRead, 'not_asked');
+  assert.match(rc.words, /asks RevenueCat nothing until REVENUECAT_SECRET_API_KEY is set as well, so it is not used yet\.$/);
+
+  // Both keys, and RevenueCat refuses the v2 one: the variable is set, so the
+  // step is done, and the refusal is said beside it.
+  moneyHub.__test.resetCache();
+  seedRevenueCat({ v2: 'refuse' });
+  r = await req('GET', '/api/admin/money');
+  rc = ownerStep(r.body, 'revenuecat_project_figures');
+  assert.strictEqual(rc.state, 'done');
+  assert.strictEqual(rc.lastRead, 'refused');
+  assert.match(rc.words, /RevenueCat refused it on the last read\. It must be a secret key for API v2 with read access to charts and metrics and to project configuration\.$/);
+
+  moneyHub.__test.resetCache();
+  seedRevenueCat({ v2: 'ok' });
+  r = await req('GET', '/api/admin/money');
+  rc = ownerStep(r.body, 'revenuecat_project_figures');
+  assert.strictEqual(rc.lastRead, 'answered');
+  assert.match(rc.words, /so the hub reads RevenueCat's project-wide figures and the offering with it\.$/);
+});
+
+test('a secret too short to use counts as not set, the way the webhook route and the RevenueCat read count it', async () => {
+  // The route strips a Bearer prefix and wants 16 characters; the hub wants 16
+  // for a RevenueCat key. Present but short is refused by both, so the step
+  // must not read done for it.
+  process.env.REVENUECAT_WEBHOOK_SECRET = 'Bearer tooShort';
+  process.env.REVENUECAT_V2_SECRET_API_KEY = 'sk_short';
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(ownerStep(r.body, 'revenuecat_webhook').state, 'todo');
+  const rc = ownerStep(r.body, 'revenuecat_project_figures');
+  assert.strictEqual(rc.state, 'todo');
+  assert.match(rc.words, /^REVENUECAT_V2_SECRET_API_KEY is too short to be a RevenueCat secret key, so the hub does not use it\./);
+  for (const value of ['tooShort', 'sk_short']) {
+    assert.ok(!r.text.includes(value), 'a short secret is still a secret');
+    assert.ok(!lines.includes(value), 'the route names the length of a short secret, never the value');
+  }
+  // Whitespace is not a secret either.
+  process.env.REVENUECAT_WEBHOOK_SECRET = '   ';
+  const blank = await req('GET', '/api/admin/money');
+  assert.strictEqual(ownerStep(blank.body, 'revenuecat_webhook').state, 'todo');
+});
+
+test('the database step follows DATABASE_URL when it is set, because the pool takes its host from it before PGHOST', async () => {
+  handlers = hubHandlers();
+  // A private PGHOST decides nothing while DATABASE_URL names a public host.
+  process.env.PGHOST = DB_PRIVATE_HOST;
+  process.env.DATABASE_URL = dbUrl(DB_PUBLIC_HOST);
+  let db = ownerStep((await req('GET', '/api/admin/money')).body, 'database_private_network');
+  assert.strictEqual(db.state, 'todo');
+  assert.strictEqual(db.network, 'public');
+  assert.strictEqual(db.via, 'DATABASE_URL');
+  assert.strictEqual(db.fix, null, 'setting PGHOST cannot fix a host DATABASE_URL chooses, so that command is not offered');
+  assert.match(db.words, /^DATABASE_URL names no railway\.internal address, .*ahead of PGHOST, so point DATABASE_URL at the private address, or remove it and let PGHOST decide\.$/);
+
+  // And the other way round.
+  process.env.PGHOST = DB_PUBLIC_HOST;
+  process.env.DATABASE_URL = dbUrl(DB_PRIVATE_HOST);
+  db = ownerStep((await req('GET', '/api/admin/money')).body, 'database_private_network');
+  assert.strictEqual(db.state, 'done');
+  assert.strictEqual(db.network, 'private');
+  assert.strictEqual(db.via, 'DATABASE_URL');
+
+  // A DATABASE_URL that will not parse is never taken for the private network.
+  process.env.DATABASE_URL = 'not a connection string';
+  db = ownerStep((await req('GET', '/api/admin/money')).body, 'database_private_network');
+  assert.strictEqual(db.state, 'todo');
+  assert.strictEqual(db.network, 'public');
+
+  // The rule on its own, host case and all.
+  const net = moneyHub.__test.databaseNetwork;
+  assert.deepStrictEqual(net({ PGHOST: 'Postgres.Railway.Internal' }), { network: 'private', via: 'PGHOST' });
+  assert.deepStrictEqual(net({ PGHOST: 'railway.internal.example.invalid' }), { network: 'public', via: 'PGHOST' });
+  assert.deepStrictEqual(net({}), { network: 'public', via: 'PGHOST' });
+  assert.deepStrictEqual(net({ DATABASE_URL: '  ', PGHOST: DB_PRIVATE_HOST }), { network: 'private', via: 'PGHOST' }, 'a blank DATABASE_URL is unset, as node-postgres reads it');
+});
+
+test('the expense list step: done with a bill, to do when empty, and not read when the list cannot be read', async () => {
+  expenseRows = [aBill];
+  handlers = hubHandlers();
+  let s = ownerStep((await req('GET', '/api/admin/money')).body, 'expense_list');
+  assert.strictEqual(s.state, 'done');
+
+  expenseRows = [];
+  s = ownerStep((await req('GET', '/api/admin/money')).body, 'expense_list');
+  assert.strictEqual(s.state, 'todo');
+
+  // An unread list is neither: no claim that it is empty, and no claim that it is not.
+  handlers = [[/FROM business_expenses/, () => Promise.reject(new Error('relation "business_expenses" does not exist'))], ...hubHandlers()];
+  const { result: r } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  s = ownerStep(r.body, 'expense_list');
+  assert.strictEqual(s.state, 'unknown');
+  assert.strictEqual(s.words, 'The expense list could not be read, so this step cannot be checked right now.');
+  assert.strictEqual(r.body.ownerActions.counts.unknown, 1);
+  assert.strictEqual(r.body.expenses.status, 'error', 'the same read the Expense list card reports');
+});
+
+test('a round trip that cannot be timed is an error with no number, the step still judges the network, and the failure is held a minute', async () => {
+  process.env.PGHOST = DB_PUBLIC_HOST;
+  // The words a real connection error carries, host and all.
+  const unreachable = () => Promise.reject(Object.assign(new Error(`getaddrinfo ENOTFOUND ${DB_PUBLIC_HOST}`), { code: 'ENOTFOUND' }));
+  handlers = [[/^SELECT 1$/, unreachable], ...hubHandlers()];
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const db = ownerStep(r.body, 'database_private_network');
+  assert.strictEqual(db.state, 'todo', 'the network comes from the variables, not from the round trip');
+  assert.strictEqual(db.fix, PRIVATE_NETWORK_FIX);
+  assert.strictEqual(db.roundTrip.status, 'error');
+  assert.strictEqual(db.roundTrip.reason, 'The database did not answer SELECT 1, so there is no round trip to show.');
+  assert.strictEqual(db.roundTrip.ms, undefined, 'no time for a trip that did not finish');
+  assert.match(lines, /\[money\] database round trip failed: ENOTFOUND/);
+  assert.ok(!lines.includes(DB_PUBLIC_HOST), 'the log names the error code, not the host in its message');
+  assert.ok(!r.text.includes(DB_PUBLIC_HOST));
+  assert.strictEqual(r.body.costs.status, 'ok', 'the rest of the hub stands');
+
+  // Held a minute like a failed vendor read, even through a refresh, then timed again.
+  assert.strictEqual(roundTrips(), 1);
+  const held = await req('GET', '/api/admin/money?refresh=1');
+  assert.strictEqual(ownerStep(held.body, 'database_private_network').roundTrip.cached, true);
+  assert.strictEqual(roundTrips(), 1);
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_FAIL_TTL_MS);
+  handlers = hubHandlers();
+  const back = ownerStep((await req('GET', '/api/admin/money')).body, 'database_private_network').roundTrip;
+  assert.strictEqual(back.status, 'ok');
+  assert.strictEqual(back.cached, false);
+  assert.strictEqual(roundTrips(), 2);
+
+  // No connection to time at all is its own error, and the hub still stands.
+  moneyHub.__test.resetCache();
+  const realConnect = pool.connect;
+  pool.connect = async () => { throw Object.assign(new Error(`connect ECONNREFUSED ${DB_PUBLIC_HOST}:${DB_PORT}`), { code: 'ECONNREFUSED' }); };
+  try {
+    const { result: none, lines: noneLines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+    assert.strictEqual(none.status, 200, none.text);
+    const rt = ownerStep(none.body, 'database_private_network').roundTrip;
+    assert.strictEqual(rt.status, 'error');
+    assert.strictEqual(rt.reason, 'The server could not get a database connection to time, so there is no round trip to show.');
+    assert.strictEqual(rt.ms, undefined);
+    assert.match(noneLines, /\[money\] database round trip: no connection: ECONNREFUSED/);
+    assert.ok(!noneLines.includes(DB_PUBLIC_HOST) && !none.text.includes(DB_PUBLIC_HOST));
+  } finally {
+    pool.connect = realConnect;
+  }
+
+  // A connection whose SELECT 1 failed goes back to the pool marked broken.
+  const released = [];
+  const failing = { connect: async () => ({ query: unreachable, release: (err) => released.push(err) }) };
+  const { result: out } = await capturingLogs(() => moneyHub.__test.measureDatabaseRoundTrip(failing));
+  assert.strictEqual(out.status, 'error');
+  assert.strictEqual(released.length, 1);
+  assert.ok(released[0] instanceof Error, 'a failed connection is handed back as broken, so the pool closes it');
+  const healthy = [];
+  const { result: good } = await capturingLogs(() => moneyHub.__test.measureDatabaseRoundTrip({
+    connect: async () => ({ query: async () => ({ rows: [] }), release: (err) => healthy.push(err) }),
+  }));
+  assert.strictEqual(good.status, 'ok');
+  assert.deepStrictEqual(healthy, [undefined], 'a good connection goes back to be lent again');
+  // A db seam that can only query has no connection to lend: the same answer
+  // as a pool that could not give one, and nothing logged as a failure.
+  const { result: seam, lines: seamLines } = await capturingLogs(() => moneyHub.__test.measureDatabaseRoundTrip({ query: async () => ({ rows: [] }) }));
+  assert.strictEqual(seam.status, 'error');
+  assert.match(seam.reason, /could not get a database connection to time/);
+  assert.strictEqual(seamLines, '');
+});
+
+test('the steps the server cannot see carry no state, and each links to the page where it is done', async () => {
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const yours = r.body.ownerActions.items.filter((s) => s.checkedBy === 'you');
+  assert.deepStrictEqual(yours.map((s) => [s.id, s.link.href]), [
+    ['paid_apps_agreement', 'https://appstoreconnect.apple.com/'],
+    ['small_business_program', 'https://developer.apple.com/app-store/small-business-program/'],
+    ['subscription_review_screenshot', 'https://appstoreconnect.apple.com/apps'],
+    ['apple_organization_account', 'https://developer.apple.com/contact/'],
+    ['besttime_admissions', 'https://besttime.app/settings'],
+  ]);
+  for (const s of yours) {
+    assert.strictEqual(s.state, null, `${s.id} made a claim the server cannot check`);
+    assert.strictEqual(s.fix, null, s.id);
+    assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
+    assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
+  }
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 5);
+  assert.match(yours[0].words, /Apple sells no in-app purchase until the Account Holder signs it/);
+  // The Small Business Program step quotes the cost model's two rates, and the
+  // break-even it talks about is worked from the standard one.
+  const { stores } = require('../services/costModel').RATES;
+  const sbp = yours.find((s) => s.id === 'small_business_program');
+  assert.match(sbp.words, new RegExp(`^Enrolling takes Apple's cut from ${stores.appleStandardPct}% to ${stores.appleSmallBusinessPct}%\\. The App Store break-even on this page assumes ${stores.appleStandardPct}%`));
+  assert.strictEqual(r.body.net.appleCommissionPct, stores.appleStandardPct);
+  assert.match(yours.find((s) => s.id === 'besttime_admissions').words, /key endpoint does not report them/);
+
+  // Plain sentences in the words this block sends: no em dash, and none of the
+  // marketing words the copy rules ban.
+  const text = JSON.stringify(r.body.ownerActions);
+  assert.ok(!/—/.test(text), 'an em dash in the steps block');
+  assert.ok(!/seamless|effortless|empower|unlock/i.test(text));
+});
+
+test('no variable\'s value reaches the payload or a log line: not a key, the host, the port, the user or the password', async () => {
+  seedStripe();
+  seedRevenueCat({ v2: 'ok' });
+  process.env.BESTTIME_API_KEY = BT_KEY;
+  process.env.REVENUECAT_WEBHOOK_SECRET = WEBHOOK_SECRET;
+  process.env.SENTRY_DSN = SENTRY_DSN_FAKE;
+  const values = [STRIPE_KEY, RC_KEY, RC_V2_KEY, BT_KEY, WEBHOOK_SECRET, SENTRY_DSN_FAKE, DB_PUBLIC_HOST, DB_PRIVATE_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT];
+  // Twice: with the pool reading PGHOST and its siblings, and with a
+  // DATABASE_URL that carries all of them at once. Each time the SELECT 1
+  // fails with the words a real authentication error uses, user and host in
+  // them, so the failure path is swept as well as the good one.
+  const setups = [
+    ['PG variables', () => {
+      process.env.PGHOST = DB_PUBLIC_HOST;
+      process.env.PGPORT = DB_PORT;
+      process.env.PGUSER = DB_USER;
+      process.env.PGPASSWORD = DB_PASSWORD;
+      process.env.PGDATABASE = DB_NAME;
+    }],
+    ['DATABASE_URL', () => { process.env.DATABASE_URL = dbUrl(DB_PRIVATE_HOST); }],
+  ];
+  for (const [name, setup] of setups) {
+    moneyHub.__test.resetCache();
+    setup();
+    const authFailed = () => Promise.reject(Object.assign(
+      new Error(`password authentication failed for user "${DB_USER}" at ${DB_PUBLIC_HOST}:${DB_PORT} (${DB_PASSWORD})`),
+      { code: '28P01' }
+    ));
+    handlers = [[/^SELECT 1$/, authFailed], ...hubHandlers()];
+    const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+    assert.strictEqual(r.status, 200, r.text);
+    assert.ok(r.body.ownerActions && r.body.ownerActions.items.length === OWNER_STEP_IDS.length, name);
+    for (const value of values) {
+      assert.ok(!r.text.includes(value), `${name}: a configured value reached the payload`);
+      assert.ok(!lines.includes(value), `${name}: a configured value reached the log`);
+    }
+    // Only the verdict and the variable's name describe the database.
+    const db = ownerStep(r.body, 'database_private_network');
+    assert.deepStrictEqual(Object.keys(db).sort(), ['checkedBy', 'fix', 'id', 'label', 'link', 'network', 'optional', 'roundTrip', 'state', 'via', 'words']);
+    assert.ok(['private', 'public'].includes(db.network), name);
+  }
 });

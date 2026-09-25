@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // THE OWNER'S MONEY HUB: every dollar in and out, read where it actually is.
 //
-// GET /api/admin/money (routes/admin.js) is the only caller. It answers seven
+// GET /api/admin/money (routes/admin.js) is the only caller. It answers eight
 // questions on one screen, each from the system that holds the answer:
 //
 //   revenue  Stripe for everything sold on flockcorp.com (Flock Pro on the web
@@ -24,6 +24,11 @@
 //            forecasts landed within one crowd band of what the collector
 //            then measured, against the goal.
 //   health   whether the crowd-data collector is still landing rows.
+//   steps    what only the operator can do: a variable on the Railway
+//            service, a key made in RevenueCat, an agreement with Apple.
+//            Checked here where the server can see the answer, and marked
+//            for the operator to check where it cannot (ONLY YOU CAN DO
+//            THESE, below).
 //
 // HONEST WHEN A SOURCE IS MISSING. Every block carries a status: 'ok',
 // 'not_connected' (the key is not set, so nothing was asked) or 'error' (it was
@@ -39,11 +44,13 @@
 // was read with (the month, and for RevenueCat the Pro accounts it was asked
 // about), so a new month or a new subscriber is a new read rather than a stale
 // one. The database reads (expenses, costs, health) are never cached: an edit
-// shows on the next load. The one exception is the model's served-forecast
-// check, a month of serves joined to the collector's readings, which is held
-// for MODEL_TTL_MS (an hour): the readings it scores against land once an
-// hour, so the hold costs at most one collector run of freshness. THE MODEL
-// section below says why it is held here rather than precomputed.
+// shows on the next load. There are two exceptions. The model's served-forecast
+// check, a month of serves joined to the collector's readings, is held for
+// MODEL_TTL_MS (an hour): the readings it scores against land once an hour, so
+// the hold costs at most one collector run of freshness. THE MODEL section
+// below says why it is held here rather than precomputed. And the one SELECT 1
+// the steps block times is held like a vendor read, so reloading the page does
+// not turn into a stream of pings against the database.
 //
 // NOTHING PERSONAL LEAVES THIS FILE. Counts and sums only: no customer email,
 // no customer name, no account id, no key. Price and promotion code ids are
@@ -302,6 +309,12 @@ function besttimeCacheKey() {
 // scores with, so both are in the key: a re-cut ladder is a new question.
 function modelAccuracyCacheKey(windowDays, cuts) {
   return `model:${windowDays}d:${cuts.join('-')}`;
+}
+
+// The database round trip takes no input: it times the pool this process
+// already holds, and the host that pool dials is never part of a key.
+function databaseRoundTripCacheKey() {
+  return 'database:roundtrip';
 }
 
 // ttlMs and failTtlMs default to the vendor holds; the model check passes its
@@ -2336,6 +2349,266 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
 }
 
 // ---------------------------------------------------------------------------
+// ONLY YOU CAN DO THESE: the operator's own steps, checked where the server can
+// ---------------------------------------------------------------------------
+//
+// Some of what this page depends on is a switch no code here can throw: a
+// variable on the Railway service, a key made in RevenueCat's dashboard, an
+// agreement signed with Apple. This block lists those steps. Where the server
+// can see the answer it checks it on every build of the hub and says done or
+// to do, with the fix. Where it cannot, because Apple and BestTime keep the
+// answer behind their own sign-ins, the step carries no state at all and the
+// screen marks it for the operator to check.
+//
+// NOTHING SECRET LEAVES. A check reads a variable and sends back whether it is
+// set, never what it holds. The database step sends which network the pool's
+// host is on and the NAME of the variable that chose it, never the host, the
+// port, the user or the password, and its fix is a fixed string. Its round
+// trip is one SELECT 1 on a pooled connection, held under the vendor reads'
+// rules (cachedRead).
+
+const PRIVATE_DB_HOST_SUFFIX = '.railway.internal';
+const DB_PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST=postgres.railway.internal --set PGPORT=5432';
+const DB_ROUND_TRIP_SQL = 'SELECT 1';
+const REVENUECAT_DASHBOARD_URL = 'https://app.revenuecat.com/';
+
+// Which network the pool dials, by config/database.js's own rule: it hands
+// DATABASE_URL to node-postgres as the connection string, a host in that
+// string wins, and PGHOST is read only when DATABASE_URL is unset. A value that
+// will not parse counts as public, so the step never reads done on a guess.
+// Only the verdict and the variable's name leave this function.
+function databaseNetwork(env = process.env) {
+  const url = plain(env.DATABASE_URL);
+  let host = null;
+  if (url) {
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      host = null;
+    }
+  } else {
+    host = plain(env.PGHOST);
+  }
+  const onPrivate = typeof host === 'string' && host.toLowerCase().endsWith(PRIVATE_DB_HOST_SUFFIX);
+  return { network: onPrivate ? 'private' : 'public', via: url ? 'DATABASE_URL' : 'PGHOST' };
+}
+
+// One SELECT 1 on a pooled connection, timed from the moment the query goes
+// out to the moment its answer is back. The checkout is not timed: opening a
+// connection costs far more than a query does, and the per-query trip is what
+// the private network changes. A failure is logged by its code alone, because
+// a connection error's message names the host and the user.
+async function measureDatabaseRoundTrip(db = pool) {
+  const code = (err) => (err && (err.code || err.name)) || 'unknown error';
+  const noConnection = { status: 'error', reason: 'The server could not get a database connection to time, so there is no round trip to show.' };
+  // The route always passes the pool. A db seam with no connect() has no
+  // connection to lend, which is the same answer, and not an error to log.
+  if (!db || typeof db.connect !== 'function') return noConnection;
+  let client;
+  try {
+    client = await db.connect();
+  } catch (err) {
+    console.error('[money] database round trip: no connection:', code(err));
+    return noConnection;
+  }
+  let broken;
+  try {
+    const started = process.hrtime.bigint();
+    await client.query(DB_ROUND_TRIP_SQL);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    return { status: 'ok', ms: Math.round(ms * 100) / 100, asOf: new Date().toISOString() };
+  } catch (err) {
+    broken = err;
+    console.error('[money] database round trip failed:', code(err));
+    return { status: 'error', reason: 'The database did not answer SELECT 1, so there is no round trip to show.' };
+  } finally {
+    // A connection whose SELECT 1 failed goes back marked broken, so the pool
+    // closes it instead of lending it to the next request.
+    if (client && typeof client.release === 'function') client.release(broken);
+  }
+}
+
+// The webhook route's own answer to "is the secret configured": trimmed,
+// without a Bearer prefix, and at least 16 characters, or it refuses every
+// event. Asked rather than restated, so the step and the route cannot
+// disagree, and required at call time, as services/entitlements.js does, so
+// this service does not load a router when it loads. null when the route
+// could not be asked.
+function revenueCatWebhookConfigured() {
+  try {
+    return !!require('../routes/revenuecat').configuredSecret();
+  } catch (err) {
+    console.error('[money] webhook secret check failed:', (err && err.name) || 'unknown error');
+    return null;
+  }
+}
+
+// What the last RevenueCat read did with the v2 key, from the block the hub
+// already built. The step is done once the key is set; this says whether
+// RevenueCat took it, so a refused key is never shown as simply done.
+function rcV2LastRead(revenuecat) {
+  if (!revenuecat || revenuecat.status === 'not_connected') return 'not_asked';
+  const o = revenuecat.overview;
+  if (!o) return null;
+  if (o.status === 'ok') return 'answered';
+  if (o.status === 'refused') return 'refused';
+  if (o.status === 'error') return 'failed';
+  return null;
+}
+
+const RC_V2_HOWTO = 'In RevenueCat, open Project settings, then API keys, and make a secret key for API v2 with read access to charts and metrics and to project configuration. Set it on the server as REVENUECAT_V2_SECRET_API_KEY, and leave REVENUECAT_SECRET_API_KEY as it is.';
+
+// expensesRead is { ok, rows }: whether the list was read, and how many bills
+// it returned. roundTrip is the cached SELECT 1 answer. revenuecat is the
+// block the hub built, read only for what it did with the v2 key.
+function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
+  const { network, via } = databaseNetwork();
+  const onPrivate = network === 'private';
+  let dbWords;
+  if (onPrivate) {
+    dbWords = `${via} names a railway.internal address, so every query stays on Railway's private network.`;
+  } else if (via === 'DATABASE_URL') {
+    dbWords = 'DATABASE_URL names no railway.internal address, so every query travels through Railway\'s public proxy. The pool takes its host from DATABASE_URL ahead of PGHOST, so point DATABASE_URL at the private address, or remove it and let PGHOST decide.';
+  } else {
+    dbWords = 'PGHOST names no railway.internal address, so every query travels through Railway\'s public proxy. The fix is one command, and Railway redeploys the service when its variables change.';
+  }
+
+  const rcV2Set = rcV2Key() !== null;
+  const lastRead = rcV2Set ? rcV2LastRead(revenuecat) : null;
+  let rcV2Words;
+  if (!rcV2Set) {
+    rcV2Words = plain(process.env.REVENUECAT_V2_SECRET_API_KEY)
+      ? `REVENUECAT_V2_SECRET_API_KEY is too short to be a RevenueCat secret key, so the hub does not use it. ${RC_V2_HOWTO}`
+      : `REVENUECAT_V2_SECRET_API_KEY is not set, so RevenueCat's project-wide figures and the offering are not read. ${RC_V2_HOWTO}`;
+  } else if (lastRead === 'not_asked') {
+    rcV2Words = 'REVENUECAT_V2_SECRET_API_KEY is set. The hub asks RevenueCat nothing until REVENUECAT_SECRET_API_KEY is set as well, so it is not used yet.';
+  } else if (lastRead === 'refused') {
+    rcV2Words = 'REVENUECAT_V2_SECRET_API_KEY is set, and RevenueCat refused it on the last read. It must be a secret key for API v2 with read access to charts and metrics and to project configuration.';
+  } else {
+    rcV2Words = 'REVENUECAT_V2_SECRET_API_KEY is set, so the hub reads RevenueCat\'s project-wide figures and the offering with it.';
+  }
+
+  const webhookSet = revenueCatWebhookConfigured();
+  let webhookState = 'unknown';
+  let webhookWords = 'The server could not ask the webhook route whether its secret is set, so this step cannot be checked right now.';
+  if (webhookSet === true) {
+    webhookState = 'done';
+    webhookWords = 'REVENUECAT_WEBHOOK_SECRET is set on the server. RevenueCat\'s webhook, under Integrations, then Webhooks, must send the same value as its Authorization header, with or without Bearer in front. The server cannot see RevenueCat\'s side, so that half is yours to check.';
+  } else if (webhookSet === false) {
+    webhookState = 'todo';
+    webhookWords = 'REVENUECAT_WEBHOOK_SECRET is not set to a usable value, 16 characters or more, so the server refuses every webhook RevenueCat sends. Set a long random one on the server (openssl rand -hex 32 makes one), and put the same value in the Authorization header of RevenueCat\'s webhook, under Integrations, then Webhooks. The server cannot see RevenueCat\'s side.';
+  }
+
+  let expensesState = 'unknown';
+  let expensesWords = 'The expense list could not be read, so this step cannot be checked right now.';
+  if (expensesRead && expensesRead.ok && expensesRead.rows > 0) {
+    expensesState = 'done';
+    expensesWords = 'The expense list has bills on it, so the costs on this page count them.';
+  } else if (expensesRead && expensesRead.ok) {
+    expensesState = 'todo';
+    expensesWords = 'The expense list is empty, so the costs on this page count only the code\'s own lines and the reconciled invoice. Paste the list into Import a list, at the bottom of the Expense list card.';
+  }
+
+  // instrument.js's own test, so this step and the boot log line agree.
+  const sentrySet = Boolean(process.env.SENTRY_DSN);
+
+  const server = [
+    {
+      id: 'database_private_network',
+      label: 'Database on Railway\'s private network',
+      state: onPrivate ? 'done' : 'todo',
+      network,
+      via,
+      words: dbWords,
+      // The command sets PGHOST, which decides nothing while DATABASE_URL is
+      // set, so it is offered only when PGHOST is what the pool reads.
+      fix: !onPrivate && via === 'PGHOST' ? DB_PRIVATE_NETWORK_FIX : null,
+      roundTrip,
+    },
+    {
+      id: 'revenuecat_project_figures',
+      label: 'RevenueCat project figures',
+      state: rcV2Set ? 'done' : 'todo',
+      lastRead,
+      words: rcV2Words,
+      link: { href: REVENUECAT_DASHBOARD_URL, text: 'RevenueCat' },
+    },
+    {
+      id: 'revenuecat_webhook',
+      label: 'RevenueCat webhook',
+      state: webhookState,
+      words: webhookWords,
+      link: { href: REVENUECAT_DASHBOARD_URL, text: 'RevenueCat' },
+    },
+    {
+      id: 'expense_list',
+      label: 'Company expense list',
+      state: expensesState,
+      words: expensesWords,
+    },
+    {
+      id: 'error_reporting',
+      label: 'Error reporting',
+      state: sentrySet ? 'done' : 'todo',
+      optional: true,
+      words: sentrySet
+        ? 'SENTRY_DSN is set, so server errors are collected in Sentry.'
+        : 'SENTRY_DSN is not set. Server errors still reach the Railway logs, but nothing collects them or sends an alert. Setting it needs no code change.',
+    },
+  ].map((s) => ({ optional: false, fix: null, link: null, ...s, checkedBy: 'server' }));
+
+  // The steps the server cannot see. Each goes out with no state, so nothing
+  // downstream can print a done or a to do for it. The Apple rates are the
+  // cost model's, the same ones the App Store break-even is worked from.
+  const { appleStandardPct, appleSmallBusinessPct } = costModel.RATES.stores;
+  const yours = [
+    {
+      id: 'paid_apps_agreement',
+      label: 'Paid Apps Agreement',
+      words: 'Apple sells no in-app purchase until the Account Holder signs it, in App Store Connect under Business, then Agreements.',
+      link: { href: 'https://appstoreconnect.apple.com/', text: 'App Store Connect' },
+    },
+    {
+      id: 'small_business_program',
+      label: 'App Store Small Business Program',
+      words: `Enrolling takes Apple's cut from ${appleStandardPct}% to ${appleSmallBusinessPct}%. The App Store break-even on this page assumes ${appleStandardPct}%, because the server cannot see whether the account is enrolled. Once it is, each App Store subscriber covers more of the burn. Apple asks for the Paid Apps Agreement first.`,
+      link: { href: 'https://developer.apple.com/app-store/small-business-program/', text: 'Small Business Program' },
+    },
+    {
+      id: 'subscription_review_screenshot',
+      label: 'Review screenshot on each subscription',
+      words: 'Each subscription needs a screenshot under Review Information before Apple will review it. Without one, App Store Connect shows it as Missing Metadata. Open the app, then Monetization, then Subscriptions.',
+      link: { href: 'https://appstoreconnect.apple.com/apps', text: 'App Store Connect apps' },
+    },
+    {
+      id: 'apple_organization_account',
+      label: 'Apple developer account under the company',
+      words: 'Moving the developer account to the company\'s organization account is a request to Apple Developer Support. Apple verifies the company through its D-U-N-S Number.',
+      link: { href: 'https://developer.apple.com/contact/', text: 'Apple Developer Support' },
+    },
+    {
+      id: 'besttime_admissions',
+      label: 'BestTime new-venue admissions this month',
+      words: 'BestTime\'s key endpoint does not report them, so the server cannot count them. BestTime\'s settings page shows how many are left this month.',
+      link: { href: 'https://besttime.app/settings', text: 'BestTime settings' },
+    },
+  ].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));
+
+  return {
+    items: [...server, ...yours],
+    // A required step left to do and an optional one are counted apart, so
+    // the screen can say which without doing arithmetic of its own.
+    counts: {
+      todo: server.filter((s) => s.state === 'todo' && !s.optional).length,
+      optionalTodo: server.filter((s) => s.state === 'todo' && s.optional).length,
+      done: server.filter((s) => s.state === 'done').length,
+      unknown: server.filter((s) => s.state === 'unknown').length,
+      checkYourself: yours.length,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // THE HUB
 // ---------------------------------------------------------------------------
 
@@ -2357,6 +2630,15 @@ async function buildMoneyHub({
   };
 
   const ladder = safeLadder();
+
+  // Timed before the other reads start, so the SELECT 1 does not wait behind
+  // their answers on the event loop and time their work along with its own.
+  // Held like a vendor read; a failure is logged by its code alone.
+  const roundTrip = await cachedRead(
+    databaseRoundTripCacheKey(),
+    () => measureDatabaseRoundTrip(db),
+    { force, logMessage: false }
+  );
 
   const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
@@ -2440,6 +2722,11 @@ async function buildMoneyHub({
     appStoreComplete: !!(revenuecat && revenuecat.subscribers && revenuecat.subscribers.complete === true),
     pricing,
   });
+  const ownerActions = buildOwnerActions({
+    roundTrip,
+    expensesRead: { ok: expensesR.ok, rows: expenses.length },
+    revenuecat,
+  });
   const { boolFlag } = require('./entitlements');
 
   return {
@@ -2490,6 +2777,9 @@ async function buildMoneyHub({
     },
     model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder }),
     health,
+    // See ONLY YOU CAN DO THESE above. Whether each variable is set, never
+    // its value.
+    ownerActions,
   };
 }
 
@@ -2507,6 +2797,7 @@ module.exports = {
   readModelVersion,
   crowdBandLadder,
   SERVED_BAND_ACCURACY_SQL,
+  buildOwnerActions,
   importExpenses,
   expenseFromRow,
   expenseRowFromInput,
@@ -2540,6 +2831,10 @@ module.exports = {
     revenueCatCacheKey,
     besttimeCacheKey,
     modelAccuracyCacheKey,
+    databaseRoundTripCacheKey,
+    databaseNetwork,
+    measureDatabaseRoundTrip,
+    DB_PRIVATE_NETWORK_FIX,
     cacheKeys: () => [...externalCache.keys()],
     // Ages every held answer by ms, as if that much time had passed, so the
     // suite can cross a hold without waiting it out.
