@@ -286,9 +286,11 @@ export default function TermsOfService() {
           own safety and for your own judgement when meeting people or going out.
         </p>
         <p>
-          The SOS feature emails the trusted contacts you set up, with your current location,
-          and alerts everyone who has accepted a confirmed plan with you whose start time is within twelve hours of the alert, in the app, with the same location when the alert has one.
-          It is a convenience, not an emergency service. It depends on your phone having
+          The SOS feature emails the trusted contacts you set up, with your location when your
+          phone can find one. It also alerts, in the app, the people who, like you, have accepted
+          a confirmed plan that starts within twelve hours of the alert, before or after, unless
+          they are banned or one of you has blocked the other, with the same location when the
+          alert has one. It is a convenience, not an emergency service. It depends on your phone having
           signal, on our servers being up, on your email provider delivering the message, and
           on somebody reading it. <strong>It does not contact the police, an ambulance, or any
           emergency service, and it does not text or call anyone.</strong> In an emergency,

@@ -66,10 +66,11 @@ const FAQ = [
   },
   {
     q: 'What happens when I tap SOS?',
-    a: 'Your trusted contacts (You → Safety → Trusted Contacts) get an email with your '
-      + 'current location and a timestamp. Anyone who has accepted a confirmed plan with you '
-      + 'whose start time is within twelve hours of the alert also gets an alert in the app, '
-      + 'with the same location. Add at least one contact before you need it.',
+    a: 'Your trusted contacts (You → Safety → Trusted Contacts) get an email with the time '
+      + 'and, when your phone can find it, your location. People who, like you, have accepted '
+      + 'a confirmed plan that starts within twelve hours of the alert also get an alert in the '
+      + 'app, with the same location when there is one, unless they are banned or one of you '
+      + 'has blocked the other. Add at least one contact before you need it.',
   },
   {
     q: 'How do I report a bug or suggest a feature?',
@@ -181,10 +182,11 @@ export default function SupportPage() {
 
         <h3>What happens when I tap SOS?</h3>
         <p>
-          Your trusted contacts (You → Safety → Trusted Contacts) get an email with your
-          current location and a timestamp. Anyone who has accepted a confirmed plan with you
-          whose start time is within twelve hours of the alert also gets an alert in the app,
-          with the same location. Add at least one contact before you need it.
+          Your trusted contacts (You → Safety → Trusted Contacts) get an email with the time
+          and, when your phone can find it, your location. People who, like you, have accepted
+          a confirmed plan that starts within twelve hours of the alert also get an alert in the
+          app, with the same location when there is one, unless they are banned or one of you
+          has blocked the other. Add at least one contact before you need it.
         </p>
 
         <h3>How do I report a bug or suggest a feature?</h3>

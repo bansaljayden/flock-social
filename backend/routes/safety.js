@@ -683,6 +683,44 @@ const ESCALATION_METERS = 250;             // "I have moved" threshold
 // the exemption with it; this is its own policy and stays its own.
 const LOCATION_FOLLOWUP_WINDOW_MS = 60 * 1000;
 
+// AFTER "I'M OK", HOW LONG AN OLDER BUILD'S LOCATION CHASE IS REFUSED.
+//
+// Every build before the one that tags its follow-ups (followUpTo), the build
+// in App Review among them, keeps chasing a fix after an SOS that went out
+// without one and posts it untagged, and its stand-down does not end that
+// chase. Nothing but time tells its fix apart from a fresh press, so the
+// refusal after a stand-down has to outlast the latest moment that fix can
+// arrive, counted from the alert's claim (created_at):
+//
+//   the first answer   under 30 s. The app gives POST /alert thirty seconds and
+//                      starts the chase only on a 200, and the claim is written
+//                      before the email fan-out that answer waits on.
+//   the chase          under 46 s: SOS_FOLLOW_UP_FIX_MS (45 s) and the half
+//                      second guard over it, in frontend/src/App.js.
+//   the follow-up      about 30 s more at most. The same thirty second leash;
+//                      the app abandons a request still uploading past it.
+//
+// That is 106 seconds at the outside. The refusal used to end at the sixty
+// second floor, and a slow email fan-out followed by a full chase passed it:
+// the fix was then stored as a new alert, with a new emergency email and a new
+// flock alarm with a map, after everybody had been told the person was OK.
+// Two minutes clears the worst case with room for the server's own work.
+//
+// It applies only where such a chase can exist: the withdrawn alert went out
+// with no location (the chase runs only then) and this request brings one (the
+// chase posts only a fix). Everything else keeps the sixty second floor,
+// because every second of this refusal is a second in which somebody who said
+// "I'm OK" and then needs help again is told to wait, and pointed at 911.
+const STOOD_DOWN_CHASE_HOLD_MS = 120 * 1000;
+
+// How long after a withdrawn alert's claim this request is refused. See
+// STOOD_DOWN_CHASE_HOLD_MS for why the two lengths differ.
+function standDownHoldMs(coords, includeLocation, withdrawnAlert) {
+  const hadNoLocation = withdrawnAlert.latitude == null && withdrawnAlert.longitude == null;
+  const bringsLocation = coords != null || includeLocation === true;
+  return hadNoLocation && bringsLocation ? STOOD_DOWN_CHASE_HOLD_MS : ALERT_FLOOR_MS;
+}
+
 const CALL_911 = 'If you are in danger, call 911.';
 
 // Metres between two coordinate pairs (haversine). Only ever compared against
@@ -722,7 +760,8 @@ function isEscalation(coords, previous) {
 //      they are OK (withdrawn_at, migration 084) there is nothing to add a
 //      location to, and a map sent after the all-clear is a new alarm. An
 //      older build's chase does not name the alert it follows, so this bound,
-//      and the floor it leaves in place, is all that stops that build.
+//      and the hold /alert keeps after a stand-down (STOOD_DOWN_CHASE_HOLD_MS),
+//      is all that stops that build.
 //
 // ONCE. There is no counter for this because there does not need to be one:
 // bound 2 is the counter. A granted follow-up writes its coordinates into the
@@ -929,6 +968,15 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // write either lands first, and the stand-down then reads the list and calls
   // these people off, or finds the row withdrawn, and nobody in the flock is
   // told about an emergency the person has already said is over.
+  //
+  // That settles who is TOLD, not what their phone shows last. The pushes
+  // below go out after this write, with no lock held, and a stand-down can
+  // land while they are on their way. services/pushHelper.js closes that: it
+  // sends no alarm for an alert already stood down (checked just before the
+  // send, and again before any retry), and when an alarm was already at the
+  // provider as the all-clear went out, it sends that person the all-clear
+  // again once the alarm has landed, so the all-clear is what stays on the
+  // lock screen.
   const audience = members.rows.map((row) => Number(row.user_id));
   if (alertId) {
     const recorded = await pool.query(
@@ -1003,8 +1051,20 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // account. The app now opens it only for the account named here
   // (frontend/src/services/pushNavigation.js, safetyIntentIsFor). The socket
   // copy needs no such field: it is delivered to that account's own room.
+  //
+  // Each push copy also names the alert it belongs to (alertId), for the
+  // server alone. The alarm and the all-clear share one lock-screen slot, so
+  // an alarm that reaches a phone after "I'm OK" puts "needs help" back over
+  // it. services/pushHelper.js therefore drops the alarm of an alert that has
+  // been stood down, whether it had not reached the provider yet, was waiting
+  // in the outbox for a retry, or failed at the provider after the stand-down,
+  // and it strips this id before anything goes to a device.
   const results = await Promise.allSettled(
-    members.rows.map((row) => pushAlways(row.user_id, title, body, { ...payload, toUserId: String(row.user_id) }))
+    members.rows.map((row) => pushAlways(row.user_id, title, body, {
+      ...payload,
+      toUserId: String(row.user_id),
+      ...(alertId ? { alertId: String(alertId) } : {}),
+    }))
   );
   // A member with no registered device answers { sent: 0 }, which is not
   // reached; only a delivered push counts, so the log does not over-report.
@@ -1221,24 +1281,37 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         const delivered = last.contacts_alerted > 0;
         const withdrawn = last.withdrawn_at != null;
 
-        // THE LAST ALERT WAS STOOD DOWN. Inside the floor nothing goes out: an
-        // older build's chase does not name the alert it follows, and its fix
-        // lands well inside these sixty seconds, so this refusal is what keeps
-        // that build from re-raising an alarm the person has just withdrawn.
-        // No alreadySent, because the contacts no longer hold that alert, and
-        // the app arms its stand-down control off that flag.
+        // THE LAST ALERT WAS STOOD DOWN, and for a while after it nothing
+        // untagged goes out. An older build's chase does not name the alert it
+        // follows and its stand-down does not end that chase, so a fix landing
+        // after "I'm OK" arrives here looking like a fresh press. That fix can
+        // come as late as 106 seconds after the alert's claim, well past the
+        // sixty second floor this refusal used to stop at (see
+        // STOOD_DOWN_CHASE_HOLD_MS), so a request shaped like that chase is
+        // held for two minutes and anything else for the floor
+        // (standDownHoldMs). No alreadySent, because the contacts no longer
+        // hold that alert, and the app arms its stand-down control off that
+        // flag.
         //
-        // Past the floor a new press is a NEW alert. Everybody it reaches has
+        // Past the hold a new press is a NEW alert. Everybody it reaches has
         // been told the person is OK, so it is not a duplicate of anything,
         // and neither the five minute cooldown nor the "update" framing below
-        // applies to it. The attempt ceiling at the bottom still does.
-        if (withdrawn && ageMs < ALERT_FLOOR_MS) {
-          await client.query('ROLLBACK');
-          const secsLeft = Math.max(1, Math.ceil((ALERT_FLOOR_MS - ageMs) / 1000));
-          return res.status(429).json({
-            error: `You said you are OK a moment ago, so this was not sent. You can send a new alert in ${secsLeft} second${secsLeft === 1 ? '' : 's'}. ${CALL_911}`,
-            withdrawn: true,
-          });
+        // applies to it. The attempt ceiling at the bottom still does, and
+        // when it is already reached the refusal says so instead of naming a
+        // time that the ceiling would then break.
+        if (withdrawn) {
+          const holdMs = standDownHoldMs(coords, includeLocation, last);
+          if (ageMs < holdMs) {
+            await client.query('ROLLBACK');
+            const secsLeft = Math.max(1, Math.ceil((holdMs - ageMs) / 1000));
+            const capped = Number(last.attempts_in_window) >= MAX_ATTEMPTS_PER_WINDOW;
+            return res.status(429).json({
+              error: capped
+                ? `You said you are OK a moment ago, so this was not sent, and you have sent several alerts in the last few minutes. Give it a moment before the next one. ${CALL_911}`
+                : `You said you are OK a moment ago, so this was not sent. You can send a new alert in ${secsLeft} second${secsLeft === 1 ? '' : 's'}. ${CALL_911}`,
+              withdrawn: true,
+            });
+          }
         }
 
         // The floor's one exemption (see isLocationFollowUp). Evaluated once,
@@ -1676,7 +1749,9 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
 //     alerts it stands down (migration 084), and nothing else: not created_at
 //     and not contacts_alerted, which are what the cooldown reads. A withdrawn
 //     alert cannot be followed up and does not hold the cooldown against a new
-//     alert past the sixty second floor (see /alert).
+//     alert once /alert's hold after a stand-down has passed: the sixty second
+//     floor, or two minutes for a request shaped like an older build's
+//     location chase (STOOD_DOWN_CHASE_HOLD_MS).
 //   * It sends no location, ever. The whole content of the message is that the
 //     earlier one is withdrawn.
 //   * It cannot invent an alert. With nothing delivered in the window there is
@@ -1912,7 +1987,11 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     const flockCount = Array.isArray(flockIds) ? flockIds.length : 0;
     // A push the alarm queued for a retry (a device that timed out) must not
     // be released after the all-clear: it would put "X needs help" back on a
-    // lock screen minutes after "X says they are OK". Best effort.
+    // lock screen minutes after "X says they are OK". Best effort, and not the
+    // only guard: a retry queued after this runs, by a send that was still out
+    // at the provider's deadline, is dropped when it is released, because
+    // services/pushHelper.js sends no alarm for an alert that has been stood
+    // down (withdrawn_at).
     pool.query(
       `DELETE FROM push_outbox WHERE data->>'type' = 'safety_alert' AND data->>'fromUserId' = $1`,
       [String(req.user.id)]
@@ -2233,6 +2312,8 @@ module.exports.__test = {
   ALERT_COOLDOWN_MS,
   ALERT_FLOOR_MS,
   LOCATION_FOLLOWUP_WINDOW_MS,
+  STOOD_DOWN_CHASE_HOLD_MS,
+  standDownHoldMs,
   MAX_ESCALATIONS,
   MAX_ATTEMPTS_PER_WINDOW,
   ESCALATION_METERS,

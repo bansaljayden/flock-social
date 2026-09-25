@@ -710,10 +710,14 @@ test('sos: only consented coordinates are stored, and the row matches what the e
     path.join(ROOT, '..', 'frontend', 'src', 'website', 'PrivacyPolicy.js'), 'utf8');
   assert.match(privacy, /[Ww]e store that alert \(your account, the coordinates, how many contacts were emailed, who it reached, and when you stood it down\)/);
   // Two audiences, each with its own channel: the contacts by email only, and
-  // the people on a current confirmed plan in the app (alertFlockMembers).
+  // the people on a current confirmed plan in the app (alertFlockMembers). The
+  // in-app one is who SOS_FLOCK_AUDIENCE_SQL selects: the sender AND the
+  // recipient accepted, nobody banned, nobody in a block with the sender.
+  // frontend/src/__tests__/legalPagesMatchCode.test.js holds every page to it.
   assert.match(privacy, /Your trusted contacts get SOS alerts by <strong>email only<\/strong>/);
-  assert.match(privacy, /We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app/);
+  assert.match(privacy, /We also alert people in the app, as a notification and on screen: those who, like you, have accepted a confirmed plan that starts within twelve hours of that moment, before or after, other than anyone banned from Flock and anyone you have blocked or who has blocked you\./);
   assert.match(SAFETY_SRC, /const SOS_FLOCK_WINDOW_HOURS = 12;/);
+  assert.match(SAFETY_SRC, /JOIN flock_members me\s+ON me\.flock_id = f\.id AND me\.user_id = \$1 AND me\.status = 'accepted'/);
 });
 
 test('sos: a degraded input degrades the alert, it never fails it', async () => {

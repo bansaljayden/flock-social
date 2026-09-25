@@ -15,7 +15,9 @@
 //    with a map. The stand-down now marks every alert in its window
 //    withdrawn (migration 084) under the alert's own lock, and /alert refuses
 //    a follow-up to a withdrawn alert: tagged ones outright, an older build's
-//    untagged ones by the floor.
+//    untagged ones by holding off anything shaped like its chase for as long
+//    as that chase can still land (STOOD_DOWN_CHASE_HOLD_MS, two minutes; the
+//    sixty second floor it replaced was too short).
 //
 // 2. THE STAND-DOWN READ ONLY THE NEWEST ALERT. Each SOS, follow-up and
 //    escalation is its own row with its own recipients, and anybody an
@@ -181,9 +183,10 @@ test('a follow-up that names a withdrawn alert is refused: nothing claimed, mail
   } finally { mail.restore(); restore(); }
 });
 
-test('an older build\'s untagged follow-up after a stand-down is refused inside the floor', async () => {
-  // It does not name the alert, so the withdrawn row itself has to refuse it.
-  // Its fix lands well inside sixty seconds, which is where the floor holds.
+test('an older build\'s untagged follow-up after a stand-down is refused for the two minute hold', async () => {
+  // It does not name the alert, so the withdrawn row itself has to refuse it,
+  // and its fix can land as late as 106 seconds after the alert: the hold, not
+  // the sixty second floor, is what the wait counts down.
   resetLegs();
   const mail = stubMail();
   const { calls, restore } = stubPool(alertFixtures({
@@ -197,12 +200,31 @@ test('an older build\'s untagged follow-up after a stand-down is refused inside 
     assert.strictEqual(res.body.withdrawn, true);
     assert.ok(!('alreadySent' in res.body), 'the contacts no longer hold that alert, so the band must not re-arm');
     assert.match(res.body.error, /You said you are OK/);
-    assert.match(res.body.error, /48 seconds/, 'says when a new alert can go');
+    assert.match(res.body.error, /in 108 seconds/, 'says when a new alert can go');
     assert.match(res.body.error, /911/);
     assert.ok(!claimed(calls));
     assert.strictEqual(mail.mails.length, 0);
     assert.strictEqual(pushes.length + emitted.length, 0);
   } finally { mail.restore(); restore(); }
+});
+
+test('the hold after a stand-down is two minutes only for the shape of an older build\'s chase', () => {
+  // The chase runs only after an alert that went out without a location, and
+  // it posts only a fix. Anything else keeps the sixty second floor.
+  const noFix = { latitude: null, longitude: null };
+  const hadFix = { latitude: 40.7, longitude: -74 };
+  const fix = { lat: 40.7, lng: -74 };
+  assert.strictEqual(S.STOOD_DOWN_CHASE_HOLD_MS, 120_000);
+  // The app waits up to 30 s for the first answer, chases for 45.5 s, and
+  // gives the follow-up 30 s on the wire: 105.5 s at the outside.
+  assert.ok(S.STOOD_DOWN_CHASE_HOLD_MS > 30_000 + 45_500 + 30_000);
+  assert.strictEqual(S.standDownHoldMs(fix, true, noFix), S.STOOD_DOWN_CHASE_HOLD_MS);
+  // A fix the server could not read is still the chase's shape: the app said
+  // it was sending a location.
+  assert.strictEqual(S.standDownHoldMs(null, true, noFix), S.STOOD_DOWN_CHASE_HOLD_MS);
+  assert.strictEqual(S.standDownHoldMs(null, false, noFix), S.ALERT_FLOOR_MS);
+  assert.strictEqual(S.standDownHoldMs(null, undefined, noFix), S.ALERT_FLOOR_MS);
+  assert.strictEqual(S.standDownHoldMs(fix, true, hadFix), S.ALERT_FLOOR_MS);
 });
 
 test('a withdrawn alert is never the thing a location follows up', () => {
@@ -237,6 +259,22 @@ test('past the floor, a new press after a stand-down is a NEW alert, not an upda
 });
 
 test('the attempt ceiling still bites on a new alert after a stand-down', async () => {
+  // Past the hold, so it is the ceiling that answers and not the stand-down.
+  const mail = stubMail();
+  const { calls, restore } = stubPool(alertFixtures({
+    last: lastAlert({ withdrawn_at: new Date(), age_ms: 130_000, attempts_in_window: S.MAX_ATTEMPTS_PER_WINDOW }),
+  }));
+  try {
+    const res = await call('POST', '/api/alert', WITH_LOCATION);
+    assert.strictEqual(res.status, 429);
+    assert.match(res.body.error, /several alerts/);
+    assert.ok(!('withdrawn' in res.body));
+    assert.ok(!claimed(calls));
+  } finally { mail.restore(); restore(); }
+});
+
+test('inside the hold with the ceiling reached, the refusal says so instead of naming a time', async () => {
+  // The seconds it named were a promise the ceiling then broke.
   const mail = stubMail();
   const { calls, restore } = stubPool(alertFixtures({
     last: lastAlert({ withdrawn_at: new Date(), age_ms: 90_000, attempts_in_window: S.MAX_ATTEMPTS_PER_WINDOW }),
@@ -244,6 +282,11 @@ test('the attempt ceiling still bites on a new alert after a stand-down', async 
   try {
     const res = await call('POST', '/api/alert', WITH_LOCATION);
     assert.strictEqual(res.status, 429);
+    assert.strictEqual(res.body.withdrawn, true);
+    assert.match(res.body.error, /You said you are OK/);
+    assert.match(res.body.error, /several alerts/);
+    assert.doesNotMatch(res.body.error, /\d+ seconds?/);
+    assert.match(res.body.error, /911/);
     assert.ok(!claimed(calls));
   } finally { mail.restore(); restore(); }
 });

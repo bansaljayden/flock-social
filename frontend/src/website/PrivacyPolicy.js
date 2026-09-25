@@ -328,7 +328,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>Live location share in a flock:</strong> only when you explicitly turn it on inside an active flock, and only while you leave it on. Your coordinates are passed straight through our server to the other members of that flock and are never written to our database, so there is no trail of where you were. Blocked accounts are excluded from the hand-off. You can stop it at any time.</li>
                 <li><strong>Live location share in a direct message:</strong> the same thing, one to one. It reaches only the person you are talking to, only while you leave it on, only if the two of you are connected, never anyone either of you has blocked, and it is not written to our database either.</li>
-                <li><strong>SOS:</strong> when you press SOS, we email your trusted contacts with your current location. We also alert everyone who has accepted a confirmed plan with you whose start time is within twelve hours of that moment, in the app, as a notification and on screen, with the same location when the alert has one. We store that alert (your account, the coordinates, how many contacts were emailed, who it reached, and when you stood it down) so there is a record of what happened and so an all-clear reaches the same people. It is deleted with your account. You can also send your trusted contacts your location without an SOS, from the Safety screen; that sends the same kind of email and is not stored. We never collect background location: Flock only reads your location while you are using it.</li>
+                <li><strong>SOS:</strong> when you press SOS, we email your trusted contacts, with your location when your phone can find one. We also alert people in the app, as a notification and on screen: those who, like you, have accepted a confirmed plan that starts within twelve hours of that moment, before or after, other than anyone banned from Flock and anyone you have blocked or who has blocked you. Their alert carries the same location when the alert has one. We store that alert (your account, the coordinates, how many contacts were emailed, who it reached, and when you stood it down) so there is a record of what happened and so an all-clear goes back to the people it reached. The all-clear in the app leaves out anyone who has since been banned, or who has since blocked you or been blocked by you. It is deleted with your account. You can also send your trusted contacts your location without an SOS, from the Safety screen; that sends the same kind of email and is not stored. We never collect background location: Flock only reads your location while you are using it.</li>
                 <li><strong>Map, venue search, weather, events, and crowd levels:</strong> your device location centers the map on the device itself. When you search for venues, load the weather, look for events nearby, or ask Birdie for somewhere close, your coordinates are sent to our server so it can run that lookup, and the search area, not your account, goes on to Google Places, OpenWeatherMap or Ticketmaster. We do not store those coordinates in our database and we do not build a location history from them.</li>
                 <li><strong>Coordinates stay out of analytics:</strong> a few of those lookups carry your position inside the web address they request. Anything shaped like a coordinate is replaced with the word "redacted" before any analytics or error report leaves your device, in the address, in the referrer, in breadcrumbs, and in performance traces. A place name you typed is left readable, because a place name is not a position.</li>
               </ul>
@@ -339,9 +339,12 @@ export default function PrivacyPolicy() {
                 individual amounts are <strong>never</strong> returned to other flock
                 members. Until the budget settles, the only things other members see are
                 counts: how many have answered, how many are in the flock, and whether it is
-                ready. No number at all. The budget settles when the last member has answered
-                and at least three members have shared an amount (a guest's answer from an invite
-                link goes into the figure but does not count toward the three); only then is a single group figure
+                ready. No number at all. The budget settles when every member who has accepted
+                the plan and every guest who said they are in from an invite link has answered,
+                and at least three members have shared an amount (a guest's amount goes into the
+                figure but does not count toward the three). The person who created the plan can
+                settle it sooner by locking it, which also needs three members' amounts and closes
+                it to anyone who has not answered yet. Only when it settles is a single group figure
                 published, and what is published is a rounded-down band rather than anyone's
                 actual figure. It is published once and never moves, because a ceiling is a
                 minimum and a number that moved when the fourth person answered would name
@@ -441,7 +444,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and every analytics event described in <a href="#analytics">Analytics, error reports, and email</a>, the page views and the hand-written events tied to your account number alike, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
                 <li><strong>Our legitimate interests:</strong> keeping Flock safe and working. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, and improving the crowd model from reports people choose to file. We have weighed these against your interests, which is why the analytics are configured the way <a href="#analytics">Analytics, error reports, and email</a> describes and why the model's training data carries no account identifiers.</li>
                 <li><strong>Legal obligation:</strong> responding to lawful requests, and reporting apparent child sexual abuse material to the National Center for Missing and Exploited Children or the relevant authority.</li>
-                <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts your location, and show it to the people on a confirmed plan with you in the app, because you are telling us something is wrong.</li>
+                <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts, and alert in the app the people on a plan with you that the SOS entry above describes, with your location when your phone can find one, because you are telling us something is wrong.</li>
               </ul>
               <p>
                 Where we rely on legitimate interests, you can object. See <a href="#gdpr">If
@@ -630,7 +633,7 @@ export default function PrivacyPolicy() {
 
               <h3>They receive something about you</h3>
               <ul>
-                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert with your location, the waitlist confirmation, the Monday venue digest. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
+                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert (with your location when it has one), the waitlist confirmation, the Monday venue digest. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> deliver push notifications. They receive the device token and the notification.</li>
                 <li><strong>Google Cloud Vision</strong> screens every image you upload against our content rules before anyone can see it. The image is sent for that check and for nothing else. If the check cannot run, the upload is refused rather than let through.</li>
                 <li><strong>Google Gemini</strong> powers Birdie and Roost. <a href="#ai">Birdie and Roost</a> says exactly what each of them sends.</li>
@@ -674,10 +677,11 @@ export default function PrivacyPolicy() {
                 RSVP, your vote, your reliability score, and your live location while you have
                 it turned on. The person you are in a direct message with sees what you send
                 them. Your friends see your availability status while it is set. When you press
-                SOS, your trusted contacts receive an email with your current location, and the
-                people on a confirmed plan with you get an alert in the app with the same
-                location. A venue owner sees the reviews written about their venue, including
-                yours.
+                SOS, your trusted contacts receive an email, and people who, like you, have
+                accepted a confirmed plan starting within twelve hours of the alert get an alert
+                in the app, unless they are banned or one of you has blocked the other. Both
+                carry your location when your phone can find one. A venue owner sees the
+                reviews written about their venue, including yours.
               </p>
 
               <h3>Everyone else</h3>
