@@ -10578,6 +10578,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('This plan is over, so there is nobody to share your location with.', 'error');
       return;
     }
+    // ONE SHARE AT A TIME, AND THE ONE IT REPLACES ENDS LIKE ANY OTHER STOP.
+    // Share location in a second plan's chat while a share runs in the first
+    // moves the share: from here on every send goes to the second plan. The
+    // first was never told. Nothing sent its stop, so its members kept the last
+    // position under a live dot until the staleness sweep took it, and the
+    // room the share had held open stayed joined for the rest of the session.
+    // The running share now ends through stopLocationSharing itself, before
+    // anything goes to the new plan: the stop that marks the share ended on
+    // the server and takes the pin off every map holding it, then the room.
+    const running = sharingLocationRef.current;
+    if (running && running !== flockId) stopLocationSharingRef.current();
     setMyTravel(travel);
     myTravelRef.current = travel;
     if (userLocation) {
@@ -10640,6 +10651,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // update it could also wipe a position that had landed after the render.
     setSharingLocationForFlock(null);
   }, [sharingLocationForFlock]);
+  // startSharingLocation, declared above, ends a share running in another plan
+  // by calling exactly this, so it reads the current one here.
+  const stopLocationSharingRef = useRef(stopLocationSharing);
+  stopLocationSharingRef.current = stopLocationSharing;
 
   // Emit location every 10 seconds while sharing is active
   const userLocationRef = useRef(userLocation);
@@ -10750,9 +10765,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const sharingFlockStatusRef = useRef(null);
   useEffect(() => {
     if (!sharingLocationForFlock) { sharingFlockStatusRef.current = null; return; }
+    // THE STATUS IS KEPT WITH THE PLAN IT WAS READ FROM. A share can move
+    // straight from one plan to another (Share location in a second chat while
+    // the first share runs), and a bare status carried the first plan's over:
+    // a share begun in a plan still being decided read as a plan that had just
+    // left 'confirmed', and stopped after its first position. A plan this has
+    // not looked at yet has no status here.
+    const seen = sharingFlockStatusRef.current;
+    const known = seen && seen.flockId === sharingLocationForFlock ? seen.status : null;
     const flock = flocks.find(f => f.id === sharingLocationForFlock);
     if (!flock) {
-      if (sharingFlockStatusRef.current !== null) {
+      if (known !== null) {
         stopLocationSharing();
         sharingFlockStatusRef.current = null;
       }
@@ -10773,8 +10796,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // status is followed on every pass instead, and only a step out of
     // 'confirmed' ends it. The empty string marks a status seen but missing,
     // so the gone check above still knows the list held the plan.
-    const was = sharingFlockStatusRef.current;
-    sharingFlockStatusRef.current = flock.status || '';
+    const was = known;
+    sharingFlockStatusRef.current = { flockId: sharingLocationForFlock, status: flock.status || '' };
     if (was === 'confirmed' && flock.status !== 'confirmed') {
       stopLocationSharing();
       sharingFlockStatusRef.current = null;
@@ -11559,6 +11582,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const timer = setTimeout(() => {
         if (!pendingEchoRef.current.has(tempId)) return;
         pendingEchoRef.current.delete(tempId);
+        // DELIVERED, IF THE BUBBLE IS GONE. The drop that lost the echo is
+        // usually followed by a history read (the reconnect catch-up, or the
+        // chat opened again), and that read brought this send's own row in and
+        // took the bubble down in its place (mergeHistory). Failed and stored
+        // anyway, the delivered message came back on the next read as a second
+        // copy offering a retry that would post it twice, because a row already
+        // on screen never settles a stored failure (landedSends). Only a bubble
+        // still on screen and still sending has anything to fail.
+        const held = (flocksRef.current.find(f => f.id === flockId) || {}).messages || [];
+        if (!held.some(m => m.id === tempId && m.pending)) return;
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
@@ -13639,6 +13672,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // and the loading flag is put down by the newest read alone.
   const dmListReadSeqRef = useRef(0);
 
+  // AND THE BLOCKS A READ CANNOT KNOW ABOUT. The server leaves a blocked person
+  // out of the list it builds, but a read that left before a block can land
+  // after it, and its answer put back the row the block had just taken off the
+  // screen: their name, their photo and their last message. Each read now notes
+  // where the retraction log stood when it went out (retractionsRef), and
+  // anybody blocked since is left as the block left them: no row for the
+  // person who blocked, and for the person who was blocked, the emptied thread
+  // kept open under its notice (handleUserBlocked, keepDmOpen).
+
   // Load DM conversations from backend (filter out deleted ones). Named so the
   // Messages error card retries the read the screen already ran.
   // Read through a ref, not closed over. The loader's dependency list is
@@ -13655,12 +13697,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const turn = dmListReadSeqRef.current + 1;
     dmListReadSeqRef.current = turn;
     const overtaken = () => dmListReadSeqRef.current !== turn;
+    // And the blocks it cannot know about (above).
+    const since = retractionsRef.current.seq;
     setDmsLoading(true);
     setDmsError('');
     return getDMConversations()
       .then(data => {
         if (overtaken()) return;
         const hidden = deletedDmUserIdsRef.current;
+        const drop = retractedSince(retractionsRef.current.log, since, 'dm');
+        const blockedSince = (c) => !!drop && drop.senders.has(String(c.userId));
         // Merge, not replace, exactly as loadFlocks does. This runs on every
         // reconnect and every return from background, and a wholesale replace
         // threw away the open thread's scrollback and any failed bubble, which
@@ -13673,6 +13719,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // list would not show (notifications audit, 2026-09-05).
         const revivedIds = (data.conversations || [])
           .filter(c => hidden.includes(c.userId) && Number(c.unread) > 0)
+          .filter(c => !blockedSince(c))
           .map(c => c.userId);
         if (revivedIds.length > 0) {
           setDeletedDmUserIds(prevDeleted => {
@@ -13684,6 +13731,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const fresh = (data.conversations || []).filter(c => !hidden.includes(c.userId) || revivedIds.includes(c.userId));
         setDirectMessages(prev => fresh.map(c => {
           const old = Array.isArray(prev) ? prev.find(p => p.userId === c.userId) : null;
+          if (blockedSince(c)) return old || null;
           return {
             userId: c.userId,
             name: c.name,
@@ -13694,7 +13742,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             lastMessageIsYou: c.lastMessageIsYou,
             unread: c.unread,
           };
-        }));
+        }).filter(Boolean));
       })
       // The list already on screen is left alone, exactly as loadFlocks leaves
       // its own. The empty state is what has to be suppressed, not the data.

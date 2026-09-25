@@ -59,6 +59,15 @@
  *      flag down.
  *   17. A pin or unpin answer cut before a block and landing after it put the
  *      blocked person's pin back on the bar. It is filtered like the live copy.
+ *   18. A socket send that landed but lost its echo: a history read brought
+ *      its row in and took the bubble down, and then the eight second timer
+ *      failed it anyway and stored it, so the next read put the delivered
+ *      message back as a failed copy with a retry. The timer fails only a
+ *      bubble still on screen and still sending.
+ *   19. A read of the DM list that went out before a block and landed after
+ *      it put the blocked person's row back: name, photo, last message. The
+ *      read notes where the retraction log stood, and anybody blocked since
+ *      is left as the block left them.
  *
  * App.js cannot be imported (it is the whole app), so its pure helpers are
  * lifted out by name and run, the way chatSurface.test.js and
@@ -177,7 +186,7 @@ const HELPERS = [
   'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction', 'mergeHistory',
   'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'mapDmRow', 'messagePreview',
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
-  'writeFailedFlockMessages', 'TYPING_REFRESH_MS', 'TYPING_EXPIRE_MS', 'NOT_CONNECTED_HINT',
+  'writeFailedFlockMessages', 'persistFailedFlockMessage', 'TYPING_REFRESH_MS', 'TYPING_EXPIRE_MS', 'NOT_CONNECTED_HINT',
 ];
 const H = (() => {
   const chunk = HELPERS.map((n) => extractDeclaration(appSource, n)).join('\n');
@@ -1320,6 +1329,9 @@ describe('two reads of the DM list answering out of order', () => {
       deletedDmUserIdsRef: { current: [] },
       setDeletedDmUserIds: setterOn(state, 'deleted'),
       setDirectMessages: setterOn(state, 'threads'),
+      // Nobody is blocked in these; 19 below runs the blocks.
+      retractionsRef: { current: { seq: 0, log: [] } },
+      retractedSince: H.retractedSince,
     });
     return { state, reads, load };
   }
@@ -1433,5 +1445,234 @@ describe('a pin or unpin answer cut before a block does not put their pin back',
     run.answers[0]([pinOf(3, 9), pinOf(4, 2)]);
     await pending;
     expect(run.state.flocks.map((f) => f.pins.map((p) => p.id))).toEqual([[3, 4], [9]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 18. A socket send that landed, lost its echo, and was brought in by a read
+// ---------------------------------------------------------------------------
+describe('a send delivered while its echo was lost never comes back as a failed copy', () => {
+  // The send path and the history read, lifted and run over ONE state, so the
+  // read settles the bubble the send drew. The socket is up and takes the
+  // send; its echo is what never arrives. The failure timer is held so a test
+  // can fire it: timers[n] is the nth timer's { fn, ms }. The reload store is
+  // the real one, in jsdom's localStorage.
+  function liftedSocketSendAndRead(flocks) {
+    const state = { flocks, errors: [], acks: [], toasts: [] };
+    const timers = [];
+    const reads = [];
+    const pendingEchoRef = { current: new Map() };
+    const flocksRef = { get current() { return state.flocks; } };
+    const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
+      useCallback: (fn) => fn,
+      makeChatThumb: async () => PHOTO_THUMB,
+      newClientId: H.newClientId,
+      newestServerId: H.newestServerId,
+      flocksRef,
+      addMessageToFlock: (flockId, msg) => {
+        state.flocks = state.flocks.map((f) => (f.id === flockId ? { ...f, messages: [...(f.messages || []), msg] } : f));
+      },
+      authUser: { id: ME },
+      profilePicRef: { current: null },
+      getSocket: () => ({ connected: true }),
+      socketSendMessage: () => true,
+      trackFlockMessageSent: () => {},
+      pendingEchoRef,
+      setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+      setFlocks: setterOn(state, 'flocks'),
+      persistFailedFlockMessage: H.persistFailedFlockMessage,
+      apiSendMessage: () => { throw new Error('the socket took this send, so REST is never asked'); },
+      isServerId: H.isServerId,
+      orderByServerId: H.orderByServerId,
+      showToast: (message) => state.toasts.push(message),
+    });
+    const load = runLifted(`${liftCallback(appSource, 'loadFlockMessages')}\nreturn loadFlockMessages;`, {
+      useCallback: (fn) => fn,
+      historyReadAtRef: { current: {} },
+      historyReadSeqRef: { current: {} },
+      retractionsRef: { current: { seq: 0, log: [] } },
+      setMessagesLoading: () => {},
+      setMessagesError: (e) => { if (e) state.errors.push(e); },
+      getMessages: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+      mapFlockRow: H.mapFlockRow,
+      meRef: { current: { id: ME } },
+      retractedSince: H.retractedSince,
+      readFailedFlockMessages: H.readFailedFlockMessages,
+      flocksRef,
+      isServerId: H.isServerId,
+      landedSends: H.landedSends,
+      writeFailedFlockMessages: H.writeFailedFlockMessages,
+      setFlockAtTop: () => {},
+      retractedIdsIn: H.retractedIdsIn,
+      dropRetractedPins: H.dropRetractedPins,
+      setFlocks: setterOn(state, 'flocks'),
+      mergeHistory: H.mergeHistory,
+      sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
+    });
+    // One history read, answered with these rows.
+    const readWith = async (rows) => {
+      const done = load(7);
+      reads[reads.length - 1].resolve({ messages: rows, readers: [], pins: [] });
+      await done;
+    };
+    return { state, timers, pendingEchoRef, transmit, readWith };
+  }
+
+  const ids = (run) => run.state.flocks[0].messages.map((m) => m.id);
+
+  beforeEach(() => localStorage.clear());
+  afterAll(() => localStorage.clear());
+
+  test('the read took the bubble down, so the timer fails nothing and stores nothing', async () => {
+    const run = liftedSocketSendAndRead([{ id: 7, messages: [row(20, 'before')], pins: [] }]);
+    await run.transmit(7, 'on my way');
+    expect(run.state.flocks[0].messages[1].pending).toBe(true);
+    expect(run.timers.map((t) => t.ms)).toEqual([8000]);
+    // No echo. The reconnect's catch-up read answers with the stored row.
+    await run.readWith([srv(20, 'before'), srv(21, 'on my way')]);
+    expect(ids(run)).toEqual([20, 21]);
+    // Eight seconds after the send, the timer fires.
+    run.timers[0].fn();
+    expect(run.pendingEchoRef.current.size).toBe(0);
+    expect(H.readFailedFlockMessages(7)).toEqual([]);
+    expect(ids(run)).toEqual([20, 21]);
+    // The chat opened again: one row, delivered, and no copy offering a retry.
+    await run.readWith([srv(20, 'before'), srv(21, 'on my way')]);
+    expect(ids(run)).toEqual([20, 21]);
+    expect(run.state.flocks[0].messages.filter((m) => m.failed || m.pending)).toEqual([]);
+    expect(run.state.toasts).toEqual([]);
+  });
+
+  test('a send no read has accounted for still fails, and is kept for the next launch', async () => {
+    const run = liftedSocketSendAndRead([{ id: 7, messages: [row(20, 'before')], pins: [] }]);
+    await run.transmit(7, 'on my way');
+    const bubbleId = run.state.flocks[0].messages[1].id;
+    // A read lands without the row: this send really did not arrive.
+    await run.readWith([srv(20, 'before')]);
+    run.timers[0].fn();
+    const bubble = run.state.flocks[0].messages.find((m) => m.id === bubbleId);
+    expect([bubble.pending, bubble.failed]).toEqual([false, true]);
+    expect(H.readFailedFlockMessages(7).map((m) => [m.id, m.text, m.failed])).toEqual([[bubbleId, 'on my way', true]]);
+    expect(run.pendingEchoRef.current.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 19. A read of the DM list that went out before a block
+// ---------------------------------------------------------------------------
+describe('a DM list read from before a block does not put the blocked person back', () => {
+  const conv = (userId, name, over = {}) => ({
+    userId, name, image: null, lastMessage: 'hi', lastMessageTime: AT, lastMessageIsYou: false, unread: 0, ...over,
+  });
+  const thread = (userId, name, over = {}) => ({ ...conv(userId, name, over), messages: [] });
+
+  // loadDmConversations and handleUserBlocked, lifted and run over ONE list and
+  // ONE retraction log, the way FlockAppInner holds them. Each list read waits
+  // for a test to answer it: reads[n] is the nth read's { resolve, reject }.
+  function liftedListAndBlock({ threads, selectedDmId = null, deleted = [] }) {
+    const state = { threads, deleted, flocks: [], screens: [] };
+    const reads = [];
+    const noop = () => {};
+    const retractionsRef = { current: { seq: 0, log: [] } };
+    const load = runLifted(`${liftCallback(appSource, 'loadDmConversations')}\nreturn loadDmConversations;`, {
+      useCallback: (fn) => fn,
+      dmListReadSeqRef: { current: 0 },
+      setDmsLoading: noop,
+      setDmsError: noop,
+      getDMConversations: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+      deletedDmUserIdsRef: { get current() { return state.deleted; } },
+      setDeletedDmUserIds: setterOn(state, 'deleted'),
+      setDirectMessages: setterOn(state, 'threads'),
+      retractionsRef,
+      retractedSince: H.retractedSince,
+    });
+    const block = runLifted(`${liftCallback(appSource, 'handleUserBlocked')}\nreturn handleUserBlocked;`, {
+      useCallback: (fn) => fn,
+      blockedIdsRef: { current: new Set() },
+      selectedDmId,
+      selectedFlockId: null,
+      setDirectMessages: setterOn(state, 'threads'),
+      setSelectedDmId: noop,
+      setCurrentScreen: (screen) => state.screens.push(screen),
+      noteRetraction: H.noteRetraction,
+      retractionsRef,
+      setFlocks: setterOn(state, 'flocks'),
+      saidByAny: H.saidByAny,
+      setFlockReplyingTo: noop,
+      setFriendsPulses: noop,
+      setPendingRequests: noop,
+      setOutgoingRequests: noop,
+      setAddFriendsResults: noop,
+      setFriendSuggestions: noop,
+      setConnectResults: noop,
+      setContactsUsers: noop,
+      setPhoneLookupUsers: noop,
+      setFriendStatuses: noop,
+      setFlockMemberLocations: noop,
+      withoutPersonPin: (pins) => pins,
+      setDmMemberLocation: noop,
+      refreshFlockRoster: noop,
+      loadFlockMessages: noop,
+      loadBlockedUsers: noop,
+    });
+    return { state, reads, load, block };
+  }
+
+  const listed = (run) => run.state.threads.map((d) => d.userId);
+
+  afterAll(() => localStorage.clear());
+
+  test('the person you just blocked is not recreated by a read that was already on its way', async () => {
+    const run = liftedListAndBlock({ threads: [thread(5, 'Bo'), thread(9, 'Cy', { lastMessage: 'door code 4411' })] });
+    // A reconnect's list read goes out and the server builds its answer.
+    const read = run.load();
+    // Then Cy is blocked, and the row comes off the list at once.
+    run.block(9);
+    expect(listed(run)).toEqual([5]);
+    // The answer, built before the block, lands after it.
+    run.reads[0].resolve({ conversations: [conv(9, 'Cy', { lastMessage: 'door code 4411', unread: 2 }), conv(5, 'Bo')] });
+    await read;
+    expect(listed(run)).toEqual([5]);
+    expect(JSON.stringify(run.state.threads)).not.toMatch(/Cy|door code/);
+  });
+
+  test('nor is their thread undeleted by that answer', async () => {
+    const run = liftedListAndBlock({ threads: [thread(5, 'Bo')], deleted: [9] });
+    const read = run.load();
+    run.block(9);
+    // Unread messages would revive a deleted thread; from somebody blocked
+    // since, they are not this answer's to count.
+    run.reads[0].resolve({ conversations: [conv(9, 'Cy', { unread: 2 }), conv(5, 'Bo')] });
+    await read;
+    expect(run.state.deleted).toEqual([9]);
+    expect(listed(run)).toEqual([5]);
+  });
+
+  test('for the person who was blocked, the thread left open stays exactly as the block left it', async () => {
+    const run = liftedListAndBlock({
+      threads: [thread(5, 'Bo'), { ...thread(9, 'Cy', { lastMessage: 'see you there' }), messages: [{ id: 40, text: 'see you there' }] }],
+      selectedDmId: 9,
+    });
+    const read = run.load();
+    // Cy blocked this account while the thread was open: emptied, kept, and
+    // left on screen under its notice.
+    run.block(9, { keepDmOpen: true });
+    const kept = run.state.threads.find((d) => d.userId === 9);
+    expect(kept.messages).toEqual([]);
+    run.reads[0].resolve({ conversations: [conv(9, 'Cy', { lastMessage: 'see you there', unread: 3 }), conv(5, 'Bo')] });
+    await read;
+    expect(run.state.threads.find((d) => d.userId === 9)).toBe(kept);
+    expect(run.state.screens).toEqual([]);
+  });
+
+  test("a read that went out after the block is the server's answer, taken whole", async () => {
+    const run = liftedListAndBlock({ threads: [thread(5, 'Bo'), thread(9, 'Cy')] });
+    run.block(9);
+    // Unblocked since, somewhere: the server lists them again, and a read that
+    // left after the block knows everything the block did.
+    const read = run.load();
+    run.reads[0].resolve({ conversations: [conv(9, 'Cy'), conv(5, 'Bo')] });
+    await read;
+    expect(listed(run)).toEqual([9, 5]);
   });
 });

@@ -16,7 +16,9 @@
  * App.js and run. So are the two position listeners, which drop a position
  * from somebody blocked, and the stop, which ends this device's share and no
  * one else's pin. The auto-stop ends a share when its plan LEAVES confirmed,
- * never because a plan still being decided is not confirmed yet.
+ * never because a plan still being decided is not confirmed yet. A share
+ * moved from one plan to another ends in the first through that same stop,
+ * before anything goes to the second.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -234,6 +236,82 @@ describe("stopping this device's share leaves everyone else's pin", () => {
   });
 });
 
+describe('a share moved to another plan ends in the first one the way a stop does', () => {
+  // startSharingLocation and the stop it calls, both lifted out of App.js and
+  // run over one log of what went on the wire and into state. The stop is the
+  // real stopLocationSharing, closed over the share that is running, so this
+  // holds only if the move takes the ordinary stop's path. Plan 4 is sharing;
+  // plan 5's chat is on screen, where Share location was tapped.
+  function startWith({
+    sharing = 4,
+    chatOnScreen = 5,
+    plans = [{ id: 4, status: 'confirmed' }, { id: 5, status: 'voting' }],
+  } = {}) {
+    const calls = [];
+    const myTravelRef = { current: null };
+    const stop = runLifted(`return ${liftCallbackFn('stopLocationSharing')};`, {
+      sharingLocationForFlock: sharing,
+      socketStopSharing: (id) => calls.push(['stop sent', id]),
+      setMyTravel: (v) => calls.push(['travel', v]),
+      myTravelRef,
+      prevFlockIdRef: { current: chatOnScreen },
+      leaveFlock: (id) => calls.push(['left room', id]),
+      setSharingLocationForFlock: (v) => calls.push(['sharing', v]),
+    });
+    const start = runLifted(`return ${liftCallbackFn('startSharingLocation')};`, {
+      flocksRef: { current: plans },
+      showToast: (message) => calls.push(['toast', message]),
+      sharingLocationRef: { current: sharing },
+      stopLocationSharingRef: { current: stop },
+      setMyTravel: (v) => calls.push(['travel', v]),
+      myTravelRef,
+      userLocation: { lat: 40.7, lng: -74 },
+      emitLocation: (id, lat, lng, travel) => calls.push(['position sent', id, travel]),
+      setSharingLocationForFlock: (v) => calls.push(['sharing', v]),
+      geolocationAvailable: () => true,
+      getCurrentPosition: () => calls.push(['fix asked']),
+      setUserLocation: () => {},
+      trackLocationError: () => {},
+    });
+    return { calls, start, myTravelRef };
+  }
+
+  test("plan 4's stop goes out and its room is left before anything goes to plan 5", () => {
+    const { calls, start, myTravelRef } = startWith();
+    start(5, { intent: 'omw' });
+    expect(calls).toEqual([
+      // Exactly the ordinary stop, for the plan the share is leaving: the
+      // server marks the share ended and takes the pin off plan 4's maps.
+      ['stop sent', 4], ['travel', null], ['left room', 4], ['sharing', null],
+      // Then the new share, as a share has always started.
+      ['travel', { intent: 'omw' }], ['position sent', 5, { intent: 'omw' }], ['sharing', 5],
+    ]);
+    expect(myTravelRef.current).toEqual({ intent: 'omw' });
+  });
+
+  test('starting again in the plan already being shared sends no stop', () => {
+    const { calls, start } = startWith({ sharing: 5 });
+    start(5, { intent: 'omw' });
+    expect(calls).toEqual([['travel', { intent: 'omw' }], ['position sent', 5, { intent: 'omw' }], ['sharing', 5]]);
+  });
+
+  test('with nothing running, a share starts exactly as before', () => {
+    const { calls, start } = startWith({ sharing: null });
+    start(5);
+    expect(calls).toEqual([['travel', null], ['position sent', 5, null], ['sharing', 5]]);
+  });
+
+  test('a plan that is over is refused before the running share is touched', () => {
+    const { calls, start } = startWith({ plans: [{ id: 4, status: 'confirmed' }, { id: 6, status: 'cancelled' }] });
+    start(6);
+    expect(calls).toEqual([['toast', 'This plan is over, so there is nobody to share your location with.']]);
+  });
+
+  test('the stop it calls is the current stopLocationSharing, read again every render', () => {
+    expect(app).toMatch(/const stopLocationSharingRef = useRef\(stopLocationSharing\);\s*stopLocationSharingRef\.current = stopLocationSharing;/);
+  });
+});
+
 describe('the share stops for a plan that is over or no longer this person\'s', () => {
   // The auto-stop effect, lifted and run with useEffect as a plain call.
   const body = (() => {
@@ -329,6 +407,36 @@ describe('the share stops for a plan that is over or no longer this person\'s', 
     bare.step([{ id: 4 }], 4);
     bare.step([], 4);
     expect(bare.state.stops).toBe(1);
+  });
+
+  test('a share moved to a second plan is judged by that plan, not the first one', () => {
+    // Sharing in confirmed plan 4, then Share location in the chat of plan 5,
+    // still being decided. The share moves straight from 4 to 5, and used to
+    // carry 4's 'confirmed' with it: 5's 'voting' read as a step out of
+    // confirmed, and the new share stopped after its first position.
+    const plans = [{ id: 4, status: 'confirmed' }, { id: 5, status: 'voting' }];
+    const h = harness();
+    h.step(plans, 4);
+    h.step(plans, 5);
+    expect(h.state.stops).toBe(0);
+    // And every update after it, as the share runs.
+    h.step([{ id: 4, status: 'confirmed' }, { id: 5, status: 'voting', messages: [{ id: 1 }] }], 5);
+    expect(h.state.stops).toBe(0);
+    // Plan 5's own rule still holds: locked in, then out again, stops it.
+    h.step([{ id: 4, status: 'confirmed' }, { id: 5, status: 'confirmed' }], 5);
+    h.step([{ id: 4, status: 'confirmed' }, { id: 5, status: 'voting' }], 5);
+    expect(h.state.stops).toBe(1);
+  });
+
+  test('a share moved to a plan the list has not loaded yet is not taken for a plan that went away', () => {
+    const h = harness();
+    h.step([{ id: 4, status: 'confirmed' }], 4);
+    h.step([{ id: 4, status: 'confirmed' }], 6);
+    expect(h.state.stops).toBe(0);
+    // Once plan 6 has been on the list, its leaving does stop the share.
+    h.step([{ id: 4, status: 'confirmed' }, { id: 6, status: 'voting' }], 6);
+    h.step([{ id: 4, status: 'confirmed' }], 6);
+    expect(h.state.stops).toBe(1);
   });
 
   test('and no share starts in a plan that is over, with the reason said', () => {
