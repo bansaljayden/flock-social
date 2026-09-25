@@ -33,8 +33,24 @@ export const owedOn = (s) => {
 };
 
 /**
- * The one figure a payerless bill (a ghost-commit shell) honestly stands for:
- * a per-person estimate.
+ * Whether a bill is an ESTIMATE: a ghost-commit shell that nobody has posted,
+ * whose every figure is the group budget rather than anything anybody paid.
+ *
+ * `hasPayer: false` does not say that on its own. It is also a real bill whose
+ * payer deleted their account (bill_splits.paid_by is ON DELETE SET NULL), and
+ * that bill keeps its total and its rows: somebody rang it up and people may
+ * already have paid on it. Reading it as an estimate put "~$40 each" off the
+ * budget over a $180 dinner and "Nobody has paid yet" over rows marked paid.
+ * GET /api/billing/:flockId tells the two apart with `estimate`, which is false
+ * on that bill. A body without the field is read the old way, as an estimate:
+ * an older server, and the stand-in the chat draws before a shell exists.
+ */
+export const isEstimateBill = (bill) => !!bill && bill.hasPayer === false && bill.estimate !== false;
+
+/**
+ * The one figure an estimate (see isEstimateBill) honestly stands for: a
+ * per-person estimate. A posted bill has none, so it gets null, including one
+ * whose payer has since deleted their account.
  *
  * Every share on a shell is the settled budget ceiling as it stood when that
  * person committed, and the shell's total is that times the head count at the
@@ -48,6 +64,7 @@ export const owedOn = (s) => {
  * cannot name two different amounts for one night.
  */
 export const shellEstimate = (bill, viewerId, estimatedShare) => {
+  if (bill && !isEstimateBill(bill)) return null;
   if (typeof estimatedShare === 'number' && Number.isFinite(estimatedShare) && estimatedShare > 0) {
     return estimatedShare;
   }

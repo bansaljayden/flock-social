@@ -1094,17 +1094,25 @@ async function settleAfterPopulationChange(io, flockId) {
 // billing.js takes, and the first commit after the next settle starts a fresh
 // one at the new number.
 //
-// Only a bill holding nothing but those estimates. paid_by NULL is two states
-// (billing.js, noPayerRefusal): a shell, and a real bill whose payer deleted
-// their account. A share that is settled, carries a credit, or was never a
-// commitment is a record of real money, and its bill stays. A payerless bill
-// whose every share is an unpaid commitment is an estimate whichever way it
-// got there, with nobody left to pay.
+// Only a bill that never had a payer, and only while it holds nothing but
+// those estimates. paid_by NULL is two states (billing.js, noPayerRefusal): a
+// shell, and a real bill whose payer deleted their account, and the shares
+// cannot tell the two apart. Posting a bill over a shell copies `committed`
+// onto the real rows, and the payer's own settled row goes with their
+// account, so a real bill can be left holding nothing but unpaid commitments
+// at real amounts. This used to call that shape an estimate "whichever way it
+// got there" and deleted a dinner somebody had rung up. bill_splits.had_payer
+// (migration 086) is set in the statement that stores a payer and nothing
+// clears it, so it is the test. The share check stays for payerless rows from
+// before that column which the migration could not prove were ever posted: a
+// share that is settled, carries a credit, or was never a commitment is a
+// record of real money, and its bill stays.
 const RESET_SHELL_SQL = `DELETE FROM bill_splits b
    WHERE b.flock_id = $1 AND b.paid_by IS NULL
      AND NOT EXISTS (SELECT 1 FROM bill_split_shares s
                       WHERE s.bill_id = b.id
-                        AND (s.committed IS NOT TRUE OR s.settled IS TRUE OR COALESCE(s.paid_amount, 0) <> 0))`;
+                        AND (s.committed IS NOT TRUE OR s.settled IS TRUE OR COALESCE(s.paid_amount, 0) <> 0))
+     AND b.had_payer IS NOT TRUE`;
 router.post('/:flockId/reset',
   [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
   async (req, res) => {

@@ -189,7 +189,7 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
-import { owedOn, shellEstimate } from '../lib/billShares';
+import { isEstimateBill, owedOn, shellEstimate } from '../lib/billShares';
 import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
@@ -1314,7 +1314,15 @@ export default function ChatDetail({
     // A ghost commit creates a REAL bill_splits row with paid_by NULL, so it is
     // not "no bill yet": it is a shell holding estimates from the group budget,
     // and the server marks it hasPayer: false.
+    //
+    // hasPayer: false is ALSO a real bill whose payer deleted their account,
+    // so this flag means "payerless", and it gates only what both states
+    // share: the bill form opens over either one, because the way out of both
+    // is to post the bill with who paid. What the sheet and the pill SAY is
+    // billSplitIsEstimate's, below. Reading every payerless bill as an
+    // estimate printed "~$40 each" off the budget over a $180 dinner.
     const billSplitIsShell = !!billSplit && billSplit.hasPayer === false;
+    const billSplitIsEstimate = billSplitIsShell && isEstimateBill(billSplit);
     /* The viewer's own figure before a bill exists, for the card's shell
        state. It is the settled budget ceiling, which is the same number
        POST /ghost-commit answers with, so the card and the budget band cannot
@@ -1333,13 +1341,14 @@ export default function ChatDetail({
        a $40 budget in a flock of four read "$160.00 · 0/1"), and nobody has a
        debt to settle yet, so "0/1" was a count of nothing. It gets the one
        honest figure, the per-person estimate the card shows (shellEstimate),
-       and no count. */
-    const shellFigure = billSplitIsShell ? shellEstimate(billSplit, authUser?.id, estimatedShare) : null;
-    const billPillMoney = billSplitIsShell
+       and no count. A posted bill whose payer has gone is not a shell: it
+       keeps its total and its count, like any bill somebody rang up. */
+    const shellFigure = billSplitIsEstimate ? shellEstimate(billSplit, authUser?.id, estimatedShare) : null;
+    const billPillMoney = billSplitIsEstimate
       ? (shellFigure != null ? `~$${shellFigure.toFixed(2)} each` : null)
       : (typeof billSplit?.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)}` : null);
-    const billPillCount = !billSplitIsShell && billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
-    const billPillLabel = billBar.all && !billSplitIsShell
+    const billPillCount = !billSplitIsEstimate && billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
+    const billPillLabel = billBar.all && !billSplitIsEstimate
       ? (billPillMoney ? `${billPillMoney} · settled` : 'Settled')
       : ([billPillMoney, billPillCount].filter(Boolean).join(' · ') || 'Bill');
     /* THE GHOST STATE IS THE SAME CARD, WHICH MEANS IT HAS TO EXIST BEFORE THE
@@ -2277,7 +2286,10 @@ export default function ChatDetail({
         for (const mem of flock.members || []) {
           if (mem && typeof mem === 'object' && mem.id != null) roster[mem.id] = { avatarUrl: mem.image || undefined };
         }
-        const isShell = bill.hasPayer === false;
+        // Payerless and estimate are two questions; see billSplitIsEstimate.
+        // A commit belongs on an estimate only, and nothing pays or settles
+        // on either payerless state.
+        const payerless = bill.hasPayer === false;
         const myShare = (bill.shares || []).find((s) => String(s.userId) === String(authUser?.id)) || null;
         return (
           <BillCard
@@ -2286,12 +2298,14 @@ export default function ChatDetail({
             members={roster}
             estimatedShare={estimatedShare}
             onOpen={() => setShowChatPool(true)}
-            onCommit={isShell ? commitEstimatedShare : undefined}
-            onSettle={!isShell && myShare && !myShare.settled ? startSettleUp : undefined}
+            onCommit={isEstimateBill(bill) ? commitEstimatedShare : undefined}
+            onSettle={!payerless && myShare && !myShare.settled ? startSettleUp : undefined}
             /* Hidden for the payer and for a share settled by carried credit,
                rather than shown and refused: the server answers 409 on both
-               and a control that exists only to be rejected is a dead one. */
-            onUndo={myShare && myShare.settled && !coveredByCredit(myShare)
+               and a control that exists only to be rejected is a dead one.
+               Hidden on a payerless bill too: POST /settle refuses one, so a
+               payment taken back there could never be marked paid again. */
+            onUndo={!payerless && myShare && myShare.settled && !coveredByCredit(myShare)
               && String(bill.paidBy?.id ?? '') !== String(authUser?.id ?? '')
               ? undoMySettle
               : undefined}
@@ -3870,16 +3884,24 @@ export default function ChatDetail({
                             show; its total is the ceiling times the head count,
                             which nobody rang up. A real bill's total can be
                             withheld from a viewer with a share hidden from
-                            them, and says so in its own words. */}
-                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{billSplitIsShell
+                            them, and says so in its own words. A posted bill
+                            whose payer deleted their account is a real bill,
+                            total and all. */}
+                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{billSplitIsEstimate
                           ? (shellFigure != null ? `Estimated share: $${shellFigure.toFixed(2)} each` : `Estimated share · ${HIDDEN_FIGURE}`)
                           : (typeof billSplit.totalWithTip === 'number' ? `Total: $${billSplit.totalWithTip.toFixed(2)}` : `Total · ${HIDDEN_TOTAL}`)}</span>
                         {billSplit.tipPercent > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
                       </div>
+                      {/* "Nobody has paid yet" is the estimate's sentence
+                          only. Over a posted bill whose payer has gone it was
+                          false twice: somebody paid for the dinner, and rows
+                          under it can be marked paid. */}
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
-                        {billSplit.hasPayer === false
+                        {billSplitIsEstimate
                           ? 'Nobody has paid yet. These are estimates from the group budget. Whoever pays can post the real bill.'
-                          : `Paid by ${billSplit.paidBy?.name || 'a member'}`}
+                          : (billSplit.hasPayer === false
+                            ? 'Paid by someone who has deleted their account. There is nobody left to pay here.'
+                            : `Paid by ${billSplit.paidBy?.name || 'a member'}`)}
                       </p>
                       <div style={{ borderTop: '1px solid var(--divider)', paddingTop: '8px' }}>
                         {(billSplit.shares || []).map(s => (
@@ -3906,7 +3928,10 @@ export default function ChatDetail({
                                 /* "left of" already says it for a part-paid row,
                                    a withheld figure is not a debt to label, and
                                    nobody owes anything on a shell: nobody has
-                                   paid, so there is nobody to owe. */
+                                   paid, so there is nobody to owe. A posted bill
+                                   whose payer has gone keeps its figures but
+                                   has nobody here to owe either, which the line
+                                   above the rows says. */
                                 billSplit.hasPayer !== false && typeof s.amount === 'number' && !(Number(s.paidAmount) > 0) && (
                                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Owes</span>
                                 )
@@ -3967,9 +3992,14 @@ export default function ChatDetail({
                         nothing of theirs to unmark, and a control that exists
                         only to be rejected is a dead button. Hidden for the
                         same reason on a share settled by carried credit, where
-                        the server answers 409 reason:'credit' every time. */}
+                        the server answers 409 reason:'credit' every time.
+
+                        And hidden on a payerless bill. POST /settle refuses a
+                        bill with nobody recorded as having paid, so taking a
+                        payment back there is the one-way door in the other
+                        direction: marked unpaid, and never markable again. */}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled && !coveredByCredit(s))
-                      && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && (
+                      && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && billSplit.hasPayer !== false && (
                       <button className="hit44 glass-btn glass-secondary" onClick={undoMySettle} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         That was a mistake, I have not paid
                       </button>

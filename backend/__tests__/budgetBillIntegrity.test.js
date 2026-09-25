@@ -32,6 +32,13 @@
 //      readers that publish it. It used to vanish, which told the room the
 //      person who left had shared an amount. A flock locked without three
 //      shared amounts at all still publishes nothing.
+//   7. A REAL BILL WHOSE PAYER DELETED THEIR ACCOUNT IS NOT AN ESTIMATE. It
+//      reads paid_by NULL like a ghost-commit shell and can hold nothing but
+//      unpaid commitments. A reset used to delete it, GET withheld its total
+//      and every share, and a ghost commit could write the budget number into
+//      it. bill_splits.had_payer (migration 086) tells the two apart.
+//   8. MIGRATION 086 ON ROWS ALREADY THERE marks every bill a payer was
+//      stored on, leaves every shell an estimate, and moves nothing on replay.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -321,6 +328,7 @@ test('a reset takes the ghost-commit shell with it, so the next estimate is the 
   const bill = await call('GET', `/api/billing/${flockId}`, { token: a.token });
   assert.equal(bill.status, 200, bill.text);
   assert.equal(bill.body.bill.hasPayer, false);
+  assert.equal(bill.body.bill.estimate, true, 'a bill nobody ever posted is an estimate');
   assert.deepEqual(bill.body.bill.shares.map((s) => [s.userId, s.amount]), [[b.id, 30]],
     'an old commitment at the old cap is still on the bill');
   assert.equal(bill.body.bill.totalAmount, 120);
@@ -528,4 +536,176 @@ test('a flock locked over fewer than three shared amounts publishes nothing on a
   for (const res of [budget, list, detail, updated, ghost]) {
     assert.ok(!res.text.includes('47.13') && !res.text.includes('"45'), `a one-amount number reached the wire: ${res.text.slice(0, 200)}`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. A real bill whose payer deleted their account is not an estimate
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// bill_splits.paid_by is ON DELETE SET NULL, so a posted bill whose payer
+// deletes their account reads paid_by NULL exactly like a ghost-commit shell.
+// Posting over a shell copies `committed` onto the real rows, and the payer's
+// own settled row cascades away with their account, so what is left can be
+// nothing but unpaid commitments at real amounts.
+
+// Ghost commitments from everyone, then the real bill posted over them by
+// Pat, then Pat's account deleted. The DELETE is the account deletion's
+// effect on these tables: the foreign keys do all of it.
+async function postedOverShellThenPayerGone() {
+  const host = await mkUser('Hana');
+  const pat = await mkUser('Pat');
+  const bea = await mkUser('Bea');
+  const cal = await mkUser('Cal');
+  const flockId = await mkFlock(host, [pat, bea, cal]);
+  for (const [u, amt] of [[host, 40], [pat, 50], [bea, 60]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  assert.equal((await submit(flockId, cal, 70)).body.ceiling, 40);
+  for (const u of [host, pat, bea, cal]) {
+    const r = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: u.token });
+    assert.equal(r.status, 200, r.text);
+  }
+  const posted = await call('POST', `/api/billing/${flockId}/create`, { token: pat.token, body: { totalAmount: 180 } });
+  assert.equal(posted.status, 201, posted.text);
+  const bill = await one('SELECT id FROM bill_splits WHERE flock_id = $1', [flockId]);
+  const rows = (await pool.query('SELECT user_id, amount, committed, settled FROM bill_split_shares WHERE bill_id = $1', [bill.id])).rows;
+  assert.ok(rows.every((s) => s.committed === true), 'every real row carried the commitment across');
+  await pool.query('DELETE FROM users WHERE id = $1', [pat.id]);
+  const after = await one('SELECT paid_by FROM bill_splits WHERE id = $1', [bill.id]);
+  assert.equal(after.paid_by, null, 'the foreign key cleared the payer');
+  return { host, bea, cal, flockId, billId: bill.id };
+}
+
+test('a reset keeps a posted bill whose payer deleted their account, every row a commitment or not', async () => {
+  const { host, flockId, billId } = await postedOverShellThenPayerGone();
+  const r = await call('POST', `/api/budget/${flockId}/reset`, { token: host.token });
+  assert.equal(r.status, 200, r.text);
+  const bill = await one('SELECT total_amount FROM bill_splits WHERE id = $1', [billId]);
+  assert.ok(bill, 'the reset deleted a bill somebody rang up');
+  assert.equal(Number(bill.total_amount), 180);
+  const rows = (await pool.query('SELECT amount FROM bill_split_shares WHERE bill_id = $1', [billId])).rows;
+  assert.deepEqual(rows.map((s) => Number(s.amount)), [45, 45, 45]);
+});
+
+test('a posted bill whose payer deleted their account keeps its real figures on GET, whatever the budget says', async () => {
+  const { host, bea, flockId } = await postedOverShellThenPayerGone();
+  const read = async () => {
+    const res = await call('GET', `/api/billing/${flockId}`, { token: bea.token });
+    assert.equal(res.status, 200, res.text);
+    return res.body.bill;
+  };
+  const expectReal = (bill, when) => {
+    assert.equal(bill.hasPayer, false, when);
+    assert.equal(bill.totalAmount, 180, `${when}: the total somebody rang up was withheld`);
+    assert.equal(bill.totalWithTip, 180, when);
+    assert.deepEqual(bill.shares.map((s) => [s.amount, s.outstanding]), [[45, 45], [45, 45], [45, 45]], when);
+    assert.equal(bill.estimate, false, `${when}: a posted bill is not an estimate`);
+  };
+  expectReal(await read(), 'settled');
+  assert.equal((await call('POST', `/api/budget/${flockId}/reset`, { token: host.token })).status, 200);
+  expectReal(await read(), 'open again after a reset');
+});
+
+test('a bill with no budget behind it keeps its figures when its payer deletes their account', async () => {
+  const pat = await mkUser('Pat');
+  const bea = await mkUser('Bea');
+  const cal = await mkUser('Cal');
+  const flockId = await mkFlock(bea, [pat, cal], { budget: false, ghost: false });
+  const posted = await call('POST', `/api/billing/${flockId}/create`, {
+    token: pat.token,
+    body: { totalAmount: 100, tipPercent: 20, splitType: 'custom', customShares: [{ userId: pat.id, amount: 40 }, { userId: bea.id, amount: 40 }, { userId: cal.id, amount: 40 }] },
+  });
+  assert.equal(posted.status, 201, posted.text);
+  assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: cal.token })).status, 200);
+  await pool.query('DELETE FROM users WHERE id = $1', [pat.id]);
+  const res = await call('GET', `/api/billing/${flockId}`, { token: bea.token });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.body.bill.totalWithTip, 120);
+  assert.deepEqual(res.body.bill.shares.map((s) => [s.name, s.amount, s.settled]), [['Bea', 40, false], ['Cal', 40, true]]);
+  assert.equal(res.body.bill.estimate, false);
+});
+
+test('a ghost commit cannot land on a posted bill whose payer deleted their account', async () => {
+  const { flockId, billId } = await postedOverShellThenPayerGone();
+  // Somebody with no row on the bill: they joined after it was posted.
+  const dee = await mkUser('Dee');
+  await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [flockId, dee.id]);
+  const r = await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: dee.token });
+  assert.equal(r.status, 400, r.text);
+  assert.equal((await pool.query('SELECT 1 FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2', [billId, dee.id])).rowCount, 0,
+    'the budget number was written into a bill somebody rang up');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. Migration 086 on the rows that were already there
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Applies the had_payer migration again, the way a deploy meets rows written
+// before it: its schema_migrations row goes and the real runner runs. Found by
+// name rather than number so a renumbering does not break it.
+async function applyHadPayerMigration() {
+  const file = fs.readdirSync(path.join(__dirname, '..', 'migrations')).find((f) => /^\d+_bill_had_payer\.sql$/.test(f));
+  assert.ok(file, 'the had_payer migration is missing');
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [file]);
+  const { migrate } = require('../db/migrate');
+  await migrate(pool);
+}
+
+test('the had_payer backfill marks every bill a payer was stored on, and nothing else, and a second pass moves nothing', async () => {
+  const ann = await mkUser('Ann');
+  const ben = await mkUser('Ben');
+  const cy = await mkUser('Cy');
+  const billOf = async (flockId) => (await one('SELECT id FROM bill_splits WHERE flock_id = $1', [flockId])).id;
+  const rawBill = async (flockId, { tip = 0, split = 'equal' } = {}) => (await one(
+    'INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent) VALUES ($1, 120, $2, NULL, $3) RETURNING id',
+    [flockId, split, tip]
+  )).id;
+  const rawShares = (billId, rows) => Promise.all(rows.map(([u, over = {}]) => pool.query(
+    'INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, paid_amount) VALUES ($1, $2, 40, $3, $4, $5)',
+    [billId, u.id, over.committed ?? true, over.settled ?? false, over.paid ?? 0]
+  )));
+
+  // Real, and posted through the routes.
+  const overShell = (await postedOverShellThenPayerGone()).billId;
+  const freshFlock = await mkFlock(ann, [ben, cy], { budget: false, ghost: false });
+  const pat = await mkUser('Pat');
+  await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [freshFlock, pat.id]);
+  assert.equal((await call('POST', `/api/billing/${freshFlock}/create`, { token: pat.token, body: { totalAmount: 80 } })).status, 201);
+  const fresh = await billOf(freshFlock);
+  await pool.query('DELETE FROM users WHERE id = $1', [pat.id]);
+  const liveFlock = await mkFlock(ann, [ben, cy], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${liveFlock}/create`, { token: ben.token, body: { totalAmount: 60 } })).status, 201);
+  const live = await billOf(liveFlock);
+
+  // Payerless rows only POST /create could have written, in the shapes
+  // older code left behind.
+  const tipped = await rawBill(await mkFlock(ann, [ben, cy]), { tip: 15 });
+  await rawShares(tipped, [[ben], [cy]]);
+  const custom = await rawBill(await mkFlock(ann, [ben, cy]), { split: 'custom' });
+  await rawShares(custom, [[ben], [cy]]);
+  const credited = await rawBill(await mkFlock(ann, [ben, cy]));
+  await rawShares(credited, [[ben, { paid: 10 }], [cy]]);
+
+  // And what ghost commit writes: a shell, and a shell somebody marked paid
+  // before /settle refused a payerless bill. Neither ever had a payer.
+  const shell = await rawBill(await mkFlock(ann, [ben, cy]));
+  await rawShares(shell, [[ben], [cy]]);
+  const settledShell = await rawBill(await mkFlock(ann, [ben, cy]));
+  await rawShares(settledShell, [[ben, { settled: true }], [cy]]);
+
+  const ids = { overShell, fresh, live, tipped, custom, credited, shell, settledShell };
+  // Back to the state before the column existed, then the deploy.
+  await pool.query('UPDATE bill_splits SET had_payer = false WHERE id = ANY($1::int[])', [Object.values(ids)]);
+  await applyHadPayerMigration();
+  const flags = async () => Object.fromEntries(await Promise.all(Object.entries(ids).map(
+    async ([k, id]) => [k, (await one('SELECT had_payer FROM bill_splits WHERE id = $1', [id])).had_payer]
+  )));
+  assert.deepEqual(await flags(), {
+    overShell: true, fresh: true, live: true, tipped: true, custom: true, credited: true,
+    shell: false, settledShell: false,
+  });
+
+  // The replay migrationBootSafety runs over every file: nothing moves.
+  const everyRow = async () => (await pool.query('SELECT id, had_payer, paid_by, updated_at FROM bill_splits ORDER BY id')).rows;
+  const before = await everyRow();
+  await applyHadPayerMigration();
+  assert.deepEqual(await everyRow(), before);
 });

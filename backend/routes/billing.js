@@ -894,12 +894,20 @@ router.post('/:flockId/create',
           }));
         }
 
-        // UPSERT bill_splits
+        // UPSERT bill_splits.
+        //
+        // had_payer (migration 086) is set here, beside the payer, because
+        // this is the only statement in the app that stores one, and nothing
+        // clears it. paid_by is ON DELETE SET NULL, so once this payer deletes
+        // their account the row reads paid_by NULL exactly like a ghost-commit
+        // shell, and had_payer is what still says that somebody rang this bill
+        // up: GET /:flockId keeps its real figures, the ghost commit refuses
+        // it, and a budget reset (routes/budget.js RESET_SHELL_SQL) leaves it.
         const billResult = await client.query(
-          `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent)
-           VALUES ($1, $2, $3, $4, $5)
+          `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, had_payer)
+           VALUES ($1, $2, $3, $4, $5, true)
            ON CONFLICT (flock_id) DO UPDATE
-           SET total_amount = $2, split_type = $3, paid_by = $4, tip_percent = $5, updated_at = NOW()
+           SET total_amount = $2, split_type = $3, paid_by = $4, tip_percent = $5, had_payer = true, updated_at = NOW()
            RETURNING id`,
           [flockId, billTotal, effectiveSplit, payerId, tipPct]
         );
@@ -1062,6 +1070,9 @@ router.post('/:flockId/create',
         // fetched bill are the same shape and the client has one field to
         // branch on rather than two. See the note in GET /:flockId.
         hasPayer: true,
+        // And never an estimate, for the same reason: this route just stored
+        // a payer. Same shape as GET /:flockId.
+        estimate: false,
         paidBy: { id: payerId, name: payer?.name || 'Unknown' },
         fullySettled: shareCount > 0 && settledCount === shareCount,
         settledCount,
@@ -1192,12 +1203,22 @@ router.get('/:flockId',
       // Both are honestly described by one sentence, that nobody is recorded
       // as having paid this bill, and both have the same way out: post the
       // bill again naming who paid, which POST /:flockId/create allows any
-      // member to do while paid_by is NULL. So one flag, not a guess between
-      // two states this schema cannot distinguish after the fact.
+      // member to do while paid_by is NULL. So `hasPayer` is one flag for
+      // both, and every control that pays or settles gates on it.
+      //
+      // They are not the same bill, and reading them as one hid a real
+      // bill's money. The first holds the budget's number; the second holds
+      // what a dinner cost. `estimate` tells them apart, off
+      // bill_splits.had_payer (migration 086): the UPSERT in /create sets it
+      // beside the payer and nothing clears it, so a bill whose payer deleted
+      // their account still says somebody rang it up. A shell never had a
+      // payer, and a payerless row the migration could not prove was ever
+      // posted stays an estimate, the side on which the budget rule holds.
       const hasPayer = bill.paid_by !== null && bill.paid_by !== undefined;
+      const estimate = !hasPayer && bill.had_payer !== true;
 
-      // A payerless bill's numbers ARE the budget ceiling: ghost-commit writes
-      // the banded ceiling into every share and ceiling * memberCount into the
+      // A shell's numbers ARE the budget ceiling: ghost-commit writes the
+      // banded ceiling into every share and ceiling * memberCount into the
       // total. So they are shown exactly when routes/budget.js shows the
       // ceiling: settled, over the crowd it settled over (settledNumberShown).
       // This route once published them from a cached row and never asked,
@@ -1207,11 +1228,14 @@ router.get('/:flockId',
       // every reader of the number asks now, and an open budget (a reset, a
       // shell left from before one) shows no estimate at all.
       //
-      // Only shells are gated: once a real bill lands the amounts are what
-      // somebody actually spent, which is not a budget submission and is not
-      // the ceiling's to withhold.
+      // Only estimates are gated. A bill somebody rang up holds what they
+      // actually spent, which is not a budget submission and is not the
+      // ceiling's to withhold, and that stays true after its payer deletes
+      // their account. Gating every payerless bill blanked that dinner's
+      // total and every share whenever the budget was open, reset or never
+      // on at all.
       let revealShellAmounts = true;
-      if (!hasPayer) {
+      if (estimate) {
         revealShellAmounts = await settledNumberShown((q, p) => pool.query(q, p), flockId);
       }
       const money = (v) => (revealShellAmounts ? parseFloat(v) : null);
@@ -1230,9 +1254,15 @@ router.get('/:flockId',
           totalWithTip: showTotals ? totalWithTip : null,
           splitType: bill.split_type,
           // Nobody is recorded as having paid. The client must not offer a way
-          // to pay them or a way to mark them paid, and must not print the
-          // total as a bill somebody rang up.
+          // to pay them or a way to mark them paid.
           hasPayer,
+          // A payerless bill that never had a payer: its figures are the
+          // budget ceiling and nobody has paid anything, so the client draws
+          // an estimate rather than a bill. false on a bill whose payer
+          // deleted their account, which keeps its total and its rows. Older
+          // clients ignore it and read every payerless bill as an estimate,
+          // as they always did.
+          estimate,
           paidBy: {
             id: bill.paid_by,
             name: invisible.has(bill.paid_by) ? null : bill.payer_name,
@@ -1802,7 +1832,7 @@ router.post('/:flockId/ghost-commit',
         // Create or find placeholder bill
         let billId;
         const existingBill = await client.query(
-          'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
+          'SELECT id, paid_by, had_payer FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
 
@@ -1815,7 +1845,14 @@ router.post('/:flockId/ghost-commit',
           // could flip `committed` on rows the payer had already finalized.
           // Inserting that share also handed them /payment-links, which
           // discloses the payer's Venmo, Cash App and Zelle handles.
-          if (existingBill.rows[0].paid_by !== null) {
+          //
+          // paid_by NULL is not proof of a shell. A bill whose payer deleted
+          // their account reads NULL too (ON DELETE SET NULL), and it is as
+          // real as it was the day before: a member with no row on it wrote
+          // the budget number in as a share, which GET /:flockId then served
+          // as a real figure and a budget reset could no longer take back.
+          // had_payer (migration 086) is what says a payer was ever stored.
+          if (existingBill.rows[0].paid_by !== null || existingBill.rows[0].had_payer === true) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'The bill for this flock is already in, so there is nothing to pre-commit' });
           }
@@ -1837,7 +1874,7 @@ router.post('/:flockId/ghost-commit',
             `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent)
              VALUES ($1, $2, 'equal', NULL, 0)
              ON CONFLICT (flock_id) DO UPDATE SET flock_id = EXCLUDED.flock_id
-             RETURNING id, paid_by`,
+             RETURNING id, paid_by, had_payer`,
             [flockId, estimatedTotal]
           );
           // The row we lost the race to could be a real posted bill, which is
@@ -1845,6 +1882,12 @@ router.post('/:flockId/ghost-commit',
           // a payer": it is a driver or a fake that did not return the column,
           // and a freshly inserted row has none by construction.
           if (newBill.rows[0].paid_by !== null && newBill.rows[0].paid_by !== undefined) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'The bill for this flock is already in, so there is nothing to pre-commit' });
+          }
+          // Or a posted bill whose payer has since deleted their account, the
+          // second state the branch above refuses.
+          if (newBill.rows[0].had_payer === true) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'The bill for this flock is already in, so there is nothing to pre-commit' });
           }

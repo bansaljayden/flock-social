@@ -47,6 +47,7 @@ import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import SystemRow, { formatMoney, CardShell, MemberAvatar } from '../components/chat/cards/SystemRow';
 import NudgeRow from '../components/chat/cards/NudgeRow';
 import BillCard, { billTally } from '../components/chat/cards/BillCard';
+import { isEstimateBill, shellEstimate } from '../lib/billShares';
 import PollCard from '../components/chat/cards/PollCard';
 import VenueCardRow from '../components/chat/cards/VenueCardRow';
 import LocationCard, { remainingLabel, distanceLabel } from '../components/chat/cards/LocationCard';
@@ -618,6 +619,84 @@ describe('BillCard, the ghost state before a payer exists', () => {
   test('no bill at all renders nothing', () => {
     const { container } = render(<BillCard bill={null} viewerId={3} />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('BillCard, a posted bill whose payer deleted their account', () => {
+  // paid_by is ON DELETE SET NULL, so GET /api/billing/:flockId serves this
+  // bill with hasPayer false, like a shell, and with estimate false, which a
+  // shell never has. Its figures are what the dinner cost. The card used to
+  // take hasPayer false for a shell and print the budget's $40 as the viewer's
+  // "Estimated share" over a $180 bill two people had already paid on.
+  const payerGone = (over = {}) => realBill({
+    hasPayer: false,
+    estimate: false,
+    paidBy: { id: null, name: null },
+    totalAmount: 180,
+    totalWithTip: 180,
+    fullySettled: false,
+    settledCount: 1,
+    shareCount: 3,
+    shares: [
+      { userId: 2, name: 'Ben', amount: 45, paidAmount: 0, outstanding: 0, committed: true, settled: true },
+      { userId: 3, name: 'Ava', amount: 45, paidAmount: 0, outstanding: 45, committed: true, settled: false },
+      { userId: 4, name: 'Sam', amount: 45, paidAmount: 0, outstanding: 45, committed: true, settled: false },
+    ],
+    ...over,
+  });
+
+  test('it is a bill with its total and its count, not an estimate off the budget', () => {
+    const { container } = render(
+      <BillCard bill={payerGone()} viewerId={3} estimatedShare={40} onCommit={() => {}} onSettle={() => {}} />
+    );
+    expect(screen.getByText('Bill $180')).toBeTruthy();
+    expect(screen.getByText('Paid by someone who has deleted their account')).toBeTruthy();
+    expect(screen.getByText('1 of 3 settled')).toBeTruthy();
+    expect(container.querySelector('[data-bill-shell="false"]')).not.toBeNull();
+    const all = textOf(container);
+    expect(all).not.toMatch(/Estimated share|Nobody has paid yet/);
+    expect(all).not.toContain('$40');
+    expect(screen.queryByRole('button', { name: /Commit/ })).toBeNull();
+  });
+
+  test('nobody is offered a way to pay a payer who is not there, whatever the parent hands in', () => {
+    render(<BillCard bill={payerGone()} viewerId={3} onSettle={() => {}} onUndo={() => {}} />);
+    expect(screen.queryByRole('button', { name: /Settle up/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mark as paid' })).toBeNull();
+  });
+
+  test('somebody who paid before the payer left reads Paid, with no Undo that could never be redone', () => {
+    // POST /settle refuses a bill with no payer, so an Undo here would be a
+    // payment taken back for good.
+    render(<BillCard bill={payerGone()} viewerId={2} onSettle={() => {}} onUndo={() => {}} />);
+    expect(screen.getByText('Paid')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  test('an older server that sends no estimate field still gets the shell it always drew', () => {
+    const bill = payerGone({ estimate: undefined, totalAmount: 160, totalWithTip: 160, shares: [] });
+    const { container } = render(<BillCard bill={bill} viewerId={3} estimatedShare={40} onCommit={() => {}} />);
+    expect(container.querySelector('[data-bill-shell="true"]')).not.toBeNull();
+    expect(screen.getByText('Estimated share $40')).toBeTruthy();
+  });
+});
+
+describe('isEstimateBill and shellEstimate', () => {
+  test('only a payerless bill nobody posted is an estimate', () => {
+    expect(isEstimateBill({ hasPayer: false })).toBe(true);
+    expect(isEstimateBill({ hasPayer: false, estimate: true })).toBe(true);
+    expect(isEstimateBill({ hasPayer: false, estimate: false })).toBe(false);
+    expect(isEstimateBill({ hasPayer: true, estimate: false })).toBe(false);
+    expect(isEstimateBill({})).toBe(false);
+    expect(isEstimateBill(null)).toBe(false);
+  });
+
+  test('a posted bill has no per-person estimate, whatever the budget says', () => {
+    const mine = [{ userId: 3, amount: 45 }];
+    expect(shellEstimate({ hasPayer: false, estimate: false, shares: mine }, 3, 40)).toBeNull();
+    expect(shellEstimate({ hasPayer: true, estimate: false, shares: mine }, 3, 40)).toBeNull();
+    expect(shellEstimate({ hasPayer: false, shares: mine }, 3, 40)).toBe(40);
+    expect(shellEstimate({ hasPayer: false, shares: mine }, 3, null)).toBe(45);
   });
 });
 

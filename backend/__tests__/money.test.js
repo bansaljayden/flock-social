@@ -1219,7 +1219,7 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: 2 }] })],
+    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: 2, had_payer: true }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 
@@ -1227,6 +1227,27 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
 
   assert.strictEqual(res.status, 400);
   assert.strictEqual(inserts('bill_split_shares').length, 0);
+});
+
+test('ghost commit cannot write a share into a posted bill whose payer deleted their account', async () => {
+  // paid_by is ON DELETE SET NULL, so that bill reads payerless like a shell.
+  // had_payer (migration 086) is what says a payer was stored on it, and a
+  // share at the budget ceiling does not belong on a bill somebody rang up.
+  handlers = [
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+    [/SELECT id FROM flock_members/, isMember],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
+    [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
+    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: true }] })],
+    [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
+  ];
+
+  const res = await call('POST', '/api/billing/42/ghost-commit');
+
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(inserts('bill_split_shares').length, 0);
+  assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)), 'the refusal rolls the transaction back');
 });
 
 test('ghost commit refuses completed and cancelled flocks before bill writes', async () => {
@@ -1258,7 +1279,7 @@ test('ghost commit still works against an unclaimed placeholder bill', async () 
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null }] })],
+    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: false }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 
@@ -1291,7 +1312,7 @@ test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)',
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '500' }] })],
-    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] })],
+    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];

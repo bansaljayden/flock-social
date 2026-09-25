@@ -483,6 +483,55 @@ describe('a payerless shell shows the per-person estimate and nothing owed', () 
 });
 
 // ---------------------------------------------------------------------------
+// 4b2. A posted bill whose payer deleted their account is a bill
+// ---------------------------------------------------------------------------
+describe('a posted bill whose payer deleted their account is drawn as a bill, not an estimate', () => {
+  // bill_splits.paid_by is ON DELETE SET NULL, so GET /api/billing/:flockId
+  // serves this bill with hasPayer false, like a shell, and with estimate
+  // false, which a shell never has. Fails without the fix: the pill read
+  // "~$40.00 each" off the settled budget, the sheet "Estimated share: $40.00
+  // each" over "Nobody has paid yet", and Ava's paid row sat under that line.
+  const payerGone = () => bill([
+    share(2, 'Ava', 45, { committed: true, settled: true, outstanding: 0 }),
+    share(9, 'Jay', 45, { committed: true }),
+    share(3, 'Cy', 45, { committed: true }),
+  ], { hasPayer: false, estimate: false, paidBy: { id: null, name: null }, totalAmount: 180, totalWithTip: 180 });
+  const settledBudget = {
+    budgetStatus: { budgetEnabled: true, budgetLocked: true, ceiling: 40, submissionCount: 4, totalMembers: 4, memberCount: 4, isReady: true },
+  };
+
+  test('the pill, the sheet and the card carry the real total and count, and nothing reads as an estimate', () => {
+    const { container } = mount(payerGone(), settledBudget);
+    expect(screen.getByLabelText('Open bill split details').textContent).toBe('$180.00 · 1/3');
+    expect(screen.getByText('Total: $180.00')).toBeTruthy();
+    expect(screen.getByText('Paid by someone who has deleted their account. There is nobody left to pay here.')).toBeTruthy();
+    expect(screen.getAllByText('$45.00')).toHaveLength(3);
+    // The card in the stream says the same.
+    expect(screen.getByText('Bill $180')).toBeTruthy();
+    expect(screen.getByText('Paid by someone who has deleted their account')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/Estimated share|Nobody has paid yet|~\$/);
+  });
+
+  test('nobody is offered a way to pay a payer who is not there', () => {
+    mount(payerGone(), settledBudget);
+    expect(screen.queryByRole('button', { name: /Settle Up/ })).toBeNull();
+    expect(screen.queryByText('Mark as Paid (cash or other)')).toBeNull();
+    expect(screen.queryByText('Owes')).toBeNull();
+  });
+
+  test('somebody who paid before the payer left cannot take it back, because it could never be marked again', () => {
+    mount(payerGone(), { ...settledBudget, authUser: { id: 2, name: 'Ava' } });
+    expect(screen.queryByText('That was a mistake, I have not paid')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  test('the bill form still opens over it, which is the way out the server names', () => {
+    mount(payerGone(), { ...settledBudget, showCreateBill: true });
+    expect(screen.getByText('Who paid?')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4c. A real bill whose total is withheld from this viewer
 // ---------------------------------------------------------------------------
 test('a bill total withheld from a viewer with a hidden share says so without the budget\'s words', () => {

@@ -8,22 +8,26 @@
  * The header keeps a 24pt pill ("$84.50 . 2/5") and that pill is not this
  * component's business.
  *
- * THE GHOST STATE IS THE SAME COMPONENT. Before anyone has paid, `hasPayer`
- * is false and the card reads "Estimated share $40" with "Commit $40". After
- * somebody posts the real bill it becomes "Bill $84.50" with "Paid by Maya"
- * under it. Two cards for one object was the old shape and it is why a member
- * could see a commit card and a bill bar disagreeing about the same night.
+ * THE GHOST STATE IS THE SAME COMPONENT. Before anyone has posted the bill it
+ * is an estimate (`hasPayer` false, `estimate` not false) and the card reads
+ * "Estimated share $40" with "Commit $40". After somebody posts the real bill
+ * it becomes "Bill $84.50" with "Paid by Maya" under it, and it stays a bill
+ * if Maya later deletes her account. Two cards for one object was the old
+ * shape and it is why a member could see a commit card and a bill bar
+ * disagreeing about the same night.
  *
  * THE FIELD NAMES ARE THE SERVER'S, READ OFF backend/routes/billing.js
  * (GET /api/billing/:flockId), not invented here:
  *
  *   bill.hasPayer      false means NOBODY IS RECORDED AS HAVING PAID. It is
- *                      two states the schema cannot tell apart after the fact,
- *                      a ghost shell and a payer who deleted their account,
- *                      and the route deliberately describes both with one
- *                      sentence. This card must not offer a way to pay a
- *                      person who is not there, so every settle control is
- *                      behind hasPayer !== false.
+ *                      two states, a ghost shell and a real bill whose payer
+ *                      deleted their account. This card must not offer a way
+ *                      to pay a person who is not there, so every settle
+ *                      control, Undo included, is behind hasPayer !== false,
+ *                      in this component and not only in its parent.
+ *   bill.estimate      false on the second of those, which keeps its total
+ *                      and its rows (lib/billShares.js isEstimateBill). Only
+ *                      a bill that never had a payer is drawn as an estimate.
  *   bill.totalWithTip  total * (1 + tip/100), or NULL when withheld.
  *   bill.totalAmount   the pre-tip figure, or NULL when withheld.
  *   bill.paidBy        { id, name }. `name` is null when the viewer has
@@ -62,7 +66,7 @@
  */
 import React from 'react';
 import { CardShell, MemberAvatar, formatMoney } from './SystemRow';
-import { shellEstimate } from '../../../lib/billShares';
+import { isEstimateBill, shellEstimate } from '../../../lib/billShares';
 import './cards.css';
 
 // Kept out of the component so the tests can reason about it and so the
@@ -108,8 +112,17 @@ export default function BillCard({
   const shares = Array.isArray(bill.shares) ? bill.shares : [];
   const mine = shares.find((s) => same(s.userId, viewerId)) || null;
   const tally = billTally(bill);
-  const isShell = bill.hasPayer === false;
-  const viewerIsPayer = !isShell && same(bill.paidBy?.id, viewerId);
+  // Two questions, and answering them as one drew a real bill whose payer
+  // deleted their account as an estimate: "~$40" off the budget over a $180
+  // dinner, and "Nobody has paid yet" over rows people had paid. `payerless`
+  // is whether anybody is recorded as having paid, which decides that nothing
+  // on this card pays or settles anyone. `isShell` is whether anybody ever
+  // posted the bill, which decides whether its figures are the budget's
+  // (lib/billShares.js isEstimateBill). Every shell is payerless; a posted
+  // bill whose payer has gone is payerless and is not a shell.
+  const payerless = bill.hasPayer === false;
+  const isShell = isEstimateBill(bill);
+  const viewerIsPayer = !payerless && same(bill.paidBy?.id, viewerId);
   const roster = members || {};
 
   const stop = (fn) => (e) => {
@@ -136,11 +149,16 @@ export default function BillCard({
     ? (shellFigure ? `Estimated share ${shellFigure}` : 'Estimated share')
     : (billFigure ? `Bill ${billFigure}` : 'Bill');
 
+  // A posted bill whose payer deleted their account keeps its title and its
+  // figures. What changes is who it is paid by, and that is the one thing
+  // the server no longer has a name for.
   const subtitle = isShell
     ? (shellFigure
       ? 'Nobody has paid yet. These are estimates from the group budget.'
       : 'Nobody has paid yet, and there is no group number to show.')
-    : (bill.paidBy?.name ? `Paid by ${bill.paidBy.name}` : 'Paid by a member');
+    : (payerless
+      ? 'Paid by someone who has deleted their account'
+      : (bill.paidBy?.name ? `Paid by ${bill.paidBy.name}` : 'Paid by a member'));
 
   // ---------------------------------------------------------------- footer
   // A SHELL HAS NO SETTLED COUNT. Nobody settles a bill nobody has paid, and
@@ -229,7 +247,9 @@ export default function BillCard({
       : (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-green-text)' }}>Paid</span>
-          {typeof onUndo === 'function' && (
+          {/* Not on a payerless bill. POST /settle refuses one, so a payment
+              taken back there could never be marked paid again. */}
+          {typeof onUndo === 'function' && !payerless && (
             <button
               type="button"
               className="hit44"
@@ -242,7 +262,9 @@ export default function BillCard({
           )}
         </span>
       );
-  } else if (mine && typeof onSettle === 'function') {
+  } else if (mine && typeof onSettle === 'function' && !payerless) {
+    // Nobody to pay on a payerless bill, whatever the parent hands in.
+    //
     // "Mark as paid" is the honest label when the parent has told us there is
     // no payment route to hand off to: the payer has no Venmo, Cash App or
     // Zelle handle on file, so the only thing a tap can do is record it.
