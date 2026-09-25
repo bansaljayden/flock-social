@@ -1646,6 +1646,37 @@ router.put('/reports/:id', async (req, res) => {
       }
     }
 
+    // A TAKEDOWN RETIRES THE PIN TOO (migration 068). Every pin read drops a
+    // hidden message, so its pin row stayed where nobody could see it to
+    // unpin it, holding one of the flock's three seats, and the members'
+    // pinned bar was never told it had changed. The row goes and the list is
+    // sent again, filtered per member by routes/messages.js broadcastPins.
+    //
+    // After the commit and best effort, like the notices above: the content
+    // IS down, and a pin that fails to clear costs nothing a reader can see,
+    // because the pin count and every pin read already skip a hidden message.
+    // A restore does not bring the pin back; anyone in the flock can pin it
+    // again, and a returning pin could otherwise push the flock past three.
+    // Required here rather than at the top so loading this router does not
+    // load the messages router with it.
+    // `audience` is set only when the takedown UPDATE really changed a row, so
+    // with `action` it means "a flock message just came down".
+    if (audience && action === 'hide' && report.content_type === 'flock_message' && report.content_id) {
+      try {
+        const unpinned = await pool.query(
+          'DELETE FROM pinned_messages WHERE message_id = $1 RETURNING flock_id',
+          [report.content_id]
+        );
+        const pinnedIn = [...new Set(unpinned.rows.map((r) => r.flock_id))];
+        if (pinnedIn.length > 0) {
+          const { broadcastPins } = require('./messages');
+          for (const flockId of pinnedIn) broadcastPins(req, flockId);
+        }
+      } catch (pinErr) {
+        console.error('Takedown unpin failed (the action itself committed):', pinErr.message);
+      }
+    }
+
     res.json({ message: 'Action applied', status: newStatus, action: actionType, alsoResolved });
   } catch (err) {
     console.error('Admin moderate error:', err);
@@ -2211,6 +2242,9 @@ router.get('/moderation-actions', async (req, res) => {
 // measured" rather than 500 the whole panel, because the fixed-cost half is
 // still worth showing when the database is unreachable.
 const costModel = require('../services/costModel');
+// The owner's money hub: revenue, costs, prices and the expense list. See the
+// routes at the bottom of this file and services/moneyHub.js.
+const moneyHub = require('../services/moneyHub');
 // boolFlag is the one reader of PAYWALL_ENABLED and VENUE_BILLING_ENABLED, so the
 // plans block below reports the same truth the entitlement gates enforce.
 const { boolFlag } = require('../services/entitlements');
@@ -2276,8 +2310,8 @@ function meterBlockOrNull(read) {
 // mid-month snapshot before anyone noticed. This writes one row to
 // cost_reconciled (migration 059) for a line id the constant already names;
 // costModel.readReconciled merges it over the code figure for the panel and
-// for the cost heartbeat. Validation is by hand, like the tier route above,
-// because this router does not use express-validator.
+// for the cost heartbeat. Validation is by hand, like the tier route above;
+// the expense routes at the bottom of this file use express-validator.
 // ---------------------------------------------------------------------------
 router.post('/costs/reconciled', async (req, res) => {
   try {
@@ -2580,6 +2614,19 @@ router.get('/costs', async (req, res) => {
   // costs nothing: it sends zero images. utils/moderation.js explains why.
   const visionProvider = await safe(() => require('../utils/moderation').probeVisionEnabled());
 
+  // THE EXPENSE LIST, reduced to what this panel shows. Tooling bills left
+  // costModel.js for business_expenses (migration 080), so the all-in and
+  // tooling figures here come from the same arithmetic the money hub uses,
+  // with a row that stands in for a code line counted once. A list that
+  // cannot be read says so and leaves the code figures standing.
+  const expenseRows = await safe(() => moneyHub.readExpenses(pool));
+  const expenses = moneyHub.costsLedger({
+    expenses: expenseRows || [],
+    reconciled: reconciledBlock,
+    month: moneyHub.monthOf(moneyHub.ymdIn(moneyHub.HUB_TZ)),
+    readError: expenseRows ? null : 'The expense list could not be read.',
+  });
+
   res.json({
     generatedAt: new Date().toISOString(),
     observed,
@@ -2643,6 +2690,10 @@ router.get('/costs', async (req, res) => {
     googleQuotas: costModel.buildGoogleQuotas({
       photoBurstPerDay: require('../services/photoStore').PHOTO_FETCH_BURST_PER_DAY,
     }),
+    // The expense list's totals by kind (services/moneyHub.js costsLedger):
+    // where the tooling figure and the all-in figure on this panel now come
+    // from, since no tooling bill is written into costModel.js.
+    expenses,
     // Whether images can be screened at all right now. A cost panel that
     // says Vision billed nothing, without saying whether Vision answers, is
     // reporting the least useful true thing available.
@@ -2661,19 +2712,22 @@ router.get('/costs', async (req, res) => {
       perVenue: venueSpend,
     },
     plans: {
-      // The venue side. Roost at VENUE_PRICE_USD is the product; the $35
-      // Premium rung was retired 2026-08-20 and survives in the app only
-      // because dropping its server-side gates is still owed work
-      // (VENUE-BILLING.md). Both are reported so the retired rung cannot hide.
+      // The venue side: a free venue account and Roost at VENUE_PRICE_USD,
+      // stored as tier 'pro' (VENUE-PRICING.md section 4). A profile can
+      // still hold the old value 'premium', which the gates read as Roost;
+      // it is counted on its own so an old hand grant cannot hide.
       venueTiers: venueTierCounts,
       venuePriceUsd: VENUE_PRICE_USD,
       venueBillingEnforced: boolFlag('VENUE_BILLING_ENABLED'),
-      // What Pro actually gates today, named by route rather than by brochure.
-      // These are the only requirePro call sites in the codebase.
+      // What Roost actually gates today, named by route rather than by
+      // brochure. These are the only requirePro call sites in the codebase.
       proGates: [
-        'GET /api/advisor/questions',
-        'POST /api/advisor/ask',
-        'POST /api/advisor/question',
+        'GET /api/venue/advisor/cards',
+        'GET /api/venue/advisor/questions',
+        'POST /api/venue/advisor/ask',
+        'POST /api/venue/advisor/question',
+        'GET /api/venue-dashboard/intelligence',
+        'GET /api/venue-dashboard/strip',
         'GET /api/venue-dashboard/this-week',
       ],
       // The consumer side. One writer, routes/revenuecat.js, and it refuses
@@ -2688,6 +2742,229 @@ router.get('/costs', async (req, res) => {
       'observed is priced from meters and is an estimate of a bill, not a bill. worstCase is what ceilings permit and nothing has ever reached one. reconciled is the only line a human has seen on an invoice.',
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE MONEY HUB (2026-09-25)
+// ---------------------------------------------------------------------------
+// GET /api/admin/money. Every dollar in and out on one payload: Stripe and
+// RevenueCat for revenue, the cost model plus the expense list for costs, the
+// live prices beside every price the code states, and the collector's
+// freshness. services/moneyHub.js owns all of it; this route passes the one
+// price only this file can read (VENUE_PRICE_USD) and the refresh request.
+//
+// Admin only, like everything on this router (requireAdmin at the top). The
+// two external reads are cached server side for a few minutes and a refresh
+// is honoured only once the held answer is a minute old, so reloading the tab
+// cannot turn into a stream of Stripe requests. Nothing personal is in the
+// payload: counts and sums, never a customer's email, name or account id.
+router.get('/money', async (req, res) => {
+  try {
+    const hub = await moneyHub.buildMoneyHub({
+      venuePriceUsd: VENUE_PRICE_USD,
+      force: req.query.refresh === '1',
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(hub);
+  } catch (err) {
+    console.error('Money hub error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// THE EXPENSE LIST (migration 080)
+// ---------------------------------------------------------------------------
+// One row per bill the company pays that costModel.js does not carry: the
+// tools the app is built with, legal and company costs, and anything else the
+// owner pastes in from his own invoices. Amounts arrive here and nowhere in
+// code. Validated with express-validator; the shape checks come first because
+// validators coerce, and `["Railway"]` would otherwise pass as a vendor name
+// and reach Postgres as an array (the same trap routes/flocks.js documents).
+const { body, validationResult } = require('express-validator');
+const { stripHtml } = require('../utils/sanitize');
+
+const EXPENSE_IMPORT_MAX = 200;
+const EXPENSE_CODE_LINES = moneyHub.codeLineIds();
+const isText = (v) => typeof v === 'string';
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// A pasted list may use snake_case or everyday words ("annual", "tools"), and
+// may be a bare array rather than { expenses: [...] }. Both are folded onto
+// the one shape before anything is validated.
+function normalizeExpenseBody(req, res, next) {
+  if (Array.isArray(req.body)) req.body = { expenses: req.body };
+  if (req.body && Array.isArray(req.body.expenses)) {
+    req.body.expenses = req.body.expenses.map(moneyHub.normalizeExpenseAliases);
+  } else if (isPlainObject(req.body)) {
+    req.body = moneyHub.normalizeExpenseAliases(req.body);
+  }
+  next();
+}
+
+// The same rules for one bill (prefix '') and for each bill in an import
+// (prefix 'expenses.*.').
+function expenseRules(prefix) {
+  const f = (name) => body(`${prefix}${name}`);
+  // A new chain on every call: an express-validator chain is a builder, and
+  // two rules added to one instance would both run twice.
+  const whole = () => (prefix ? body(prefix.replace(/\.$/, '')) : body());
+  const optionalText = (name, max) => f(name)
+    .optional({ values: 'null' })
+    .custom(isText).withMessage(`${name} must be text`)
+    .bail()
+    .customSanitizer(stripHtml)
+    .trim()
+    .isLength({ max }).withMessage(`${name} must be at most ${max} characters`);
+  return [
+    whole().custom(isPlainObject).withMessage('Each bill must be an object'),
+    f('vendor')
+      .custom((v) => isText(v) && v.trim().length > 0).withMessage('vendor is required')
+      .bail()
+      .customSanitizer(stripHtml)
+      .trim()
+      .isLength({ min: 1, max: 80 }).withMessage('vendor must be 1 to 80 characters'),
+    optionalText('product', 120),
+    optionalText('category', 60),
+    f('kind')
+      .custom((v) => isText(v) && moneyHub.EXPENSE_KINDS.includes(v))
+      .withMessage(`kind must be one of ${moneyHub.EXPENSE_KINDS.join(', ')}`),
+    f('cadence')
+      .custom((v) => isText(v) && moneyHub.EXPENSE_CADENCES.includes(v))
+      .withMessage(`cadence must be one of ${moneyHub.EXPENSE_CADENCES.join(', ')}`),
+    whole()
+      .custom((item) => moneyHub.centsFromInput(item) !== null)
+      .withMessage('amount must be dollars from 0 to 10,000,000 with at most two decimals, or amountCents a whole number of cents'),
+    f('currency')
+      .optional({ values: 'null' })
+      .custom((v) => isText(v) && /^[A-Z]{3}$/.test(v)).withMessage('currency must be a three-letter code such as USD'),
+    f('lastChargedOn')
+      .optional({ values: 'null' })
+      .custom(moneyHub.isYmd).withMessage('lastChargedOn must be a date, YYYY-MM-DD')
+      .bail()
+      .custom((v) => v <= businessToday()).withMessage('lastChargedOn cannot be in the future'),
+    f('renewsOn')
+      .optional({ values: 'null' })
+      .custom(moneyHub.isYmd).withMessage('renewsOn must be a date, YYYY-MM-DD'),
+    f('active').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('active must be true or false'),
+    f('verified').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('verified must be true or false'),
+    optionalText('note', 500),
+    f('replacesLine')
+      .optional({ values: 'null' })
+      .custom((v) => isText(v) && EXPENSE_CODE_LINES.includes(v))
+      .withMessage(`replacesLine must be one of ${EXPENSE_CODE_LINES.join(', ')}`),
+  ];
+}
+
+// "Row 3: vendor is required" for an import, the bare message otherwise.
+function expenseErrorText(e) {
+  const m = /^expenses\[(\d+)\]/.exec(String(e.path || ''));
+  return m ? `Row ${Number(m[1]) + 1}: ${e.msg}` : e.msg;
+}
+
+function expenseValidationFailure(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return false;
+  const list = [...new Set(errors.array().map(expenseErrorText))];
+  res.status(400).json({ error: list[0], errors: list.slice(0, 10) });
+  return true;
+}
+
+// The list, newest decisions first within each kind. Bounded like every list
+// on this router.
+router.get('/expenses', async (req, res) => {
+  try {
+    const expenses = await moneyHub.readExpenses(pool);
+    res.set('Cache-Control', 'no-store');
+    res.json({ expenses, limit: moneyHub.EXPENSE_LIST_LIMIT });
+  } catch (err) {
+    console.error('List expenses error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// The same vendor, product and cadence is the same bill (migration 080's
+// business_expenses_bill_key). A second copy typed into the add or edit form is
+// a conflict to show the person, not a server fault.
+const DUPLICATE_BILL = 'That bill is already on the list: same vendor, product and how often. Edit that row, or give this one a different product name.';
+const isDuplicateBill = (err) => !!err && err.code === '23505' && err.constraint === 'business_expenses_bill_key';
+
+router.post('/expenses', normalizeExpenseBody, expenseRules(''), async (req, res) => {
+  try {
+    if (expenseValidationFailure(req, res)) return;
+    const row = moneyHub.expenseRowFromInput(req.body);
+    const r = await pool.query(moneyHub.EXPENSE_INSERT_SQL, [...moneyHub.expenseParams(row), req.user.id]);
+    res.status(201).json({ success: true, expense: moneyHub.expenseFromRow(r.rows[0]) });
+  } catch (err) {
+    if (isDuplicateBill(err)) return res.status(409).json({ error: DUPLICATE_BILL });
+    console.error('Create expense error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// A whole-row replace. The dashboard always holds the full row, so an edit and
+// a deactivate are the same write with different fields, and one static
+// statement serves both.
+router.put('/expenses/:id', normalizeExpenseBody, expenseRules(''), async (req, res) => {
+  try {
+    const id = serialId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Expense not found' });
+    if (expenseValidationFailure(req, res)) return;
+    const row = moneyHub.expenseRowFromInput(req.body);
+    const r = await pool.query(moneyHub.EXPENSE_UPDATE_SQL, [id, ...moneyHub.expenseParams(row), req.user.id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true, expense: moneyHub.expenseFromRow(r.rows[0]) });
+  } catch (err) {
+    if (isDuplicateBill(err)) return res.status(409).json({ error: DUPLICATE_BILL });
+    console.error('Update expense error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// For a row entered by mistake. A bill that stopped is deactivated instead,
+// which keeps it on the list.
+router.delete('/expenses/:id', async (req, res) => {
+  try {
+    const id = serialId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Expense not found' });
+    const r = await pool.query(`DELETE FROM business_expenses WHERE id = $1 RETURNING id`, [id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Expense not found' });
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error('Delete expense error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Paste the whole list once. Every row is validated before any is written,
+// the write is one transaction, and a bill already on the list (same vendor,
+// product and cadence, ignoring case) is updated rather than added again, so
+// pasting the list a second time corrects it instead of doubling it. A field
+// the paste leaves out keeps what is stored.
+router.post(
+  '/expenses/import',
+  normalizeExpenseBody,
+  [
+    body('expenses')
+      .custom((v) => Array.isArray(v) && v.length >= 1 && v.length <= EXPENSE_IMPORT_MAX)
+      .withMessage(`expenses must be a list of 1 to ${EXPENSE_IMPORT_MAX} bills`),
+    ...expenseRules('expenses.*.'),
+  ],
+  async (req, res) => {
+    try {
+      if (expenseValidationFailure(req, res)) return;
+      const out = await moneyHub.importExpenses(req.body.expenses, req.user.id);
+      res.status(out.inserted.length > 0 ? 201 : 200).json({
+        success: true,
+        inserted: out.inserted.length,
+        updated: out.updated.length,
+        expenses: [...out.inserted, ...out.updated],
+      });
+    } catch (err) {
+      console.error('Import expenses error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
 
 module.exports = router;
 // Exposed for __tests__/adminEvidence.test.js, which diffs CONTENT_TEXT_SQL and

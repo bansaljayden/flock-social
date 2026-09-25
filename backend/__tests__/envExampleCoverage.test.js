@@ -2,7 +2,7 @@
 //
 // EVERY VARIABLE THE BACKEND READS IS DOCUMENTED IN .env.example.
 //
-// project documentation names backend/.env.example as "the authoritative list" of
+// backend/.env.example is kept as "the authoritative list" of
 // every variable the code actually reads, with what BREAKS when each is
 // missing. That promise had no guard, and on 2026-09-01 six variables were
 // being read with no entry at all, two of them added that same day
@@ -75,7 +75,7 @@ test('every variable the backend reads has an entry in .env.example', () => {
   const documented = documentedVars();
   const missing = [...read].filter((n) => !documented.has(n)).sort();
   assert.deepStrictEqual(missing, [],
-    `these variables are read by the backend and have no entry in backend/.env.example, which project documentation calls the authoritative list:\n  `
+    `these variables are read by the backend and have no entry in backend/.env.example, which is meant to be the authoritative list:\n  `
     + missing.join('\n  ')
     + '\nAdd each with what it does, where it is read, and what breaks when it is missing.');
 });

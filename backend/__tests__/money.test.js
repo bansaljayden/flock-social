@@ -120,7 +120,7 @@ const deletes = (table) => log.filter((q) => q.sql.startsWith(`DELETE FROM ${tab
 // 1. Budget privacy
 // ---------------------------------------------------------------------------
 
-// The hard invariant (project documentation): the client sees { ceiling, submissionCount,
+// The hard invariant: the client sees { ceiling, submissionCount,
 // isReady, skipCount } and nothing else. VICTIM_AMOUNT is a value no aggregate
 // in these fixtures can coincidentally equal, so finding it anywhere in a
 // response body is proof of a leak.

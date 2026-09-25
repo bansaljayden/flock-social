@@ -1,0 +1,2108 @@
+'use strict';
+// ---------------------------------------------------------------------------
+// THE OWNER'S MONEY HUB: every dollar in and out, read where it actually is.
+//
+// GET /api/admin/money (routes/admin.js) is the only caller. It answers five
+// questions on one screen, each from the system that holds the answer:
+//
+//   revenue  Stripe for everything sold on flockcorp.com (Flock Pro on the web
+//            and Roost), RevenueCat for the App Store. Subscriptions by plan,
+//            trials, recurring revenue, what was collected this month, refunds,
+//            disputes, Stripe's fees and promotion code redemptions.
+//   costs    the infrastructure lines in services/costModel.js, the reconciled
+//            invoice in cost_reconciled (059), and every row of the expense
+//            list in business_expenses (080), without counting a bill twice.
+//   net      revenue less costs this month, the monthly burn, and how many
+//            subscribers or venues would cover it.
+//   pricing  every price Stripe will charge next to every price the code
+//            writes down (services/statedPrices.js), with each disagreement
+//            said in words.
+//   health   whether the crowd-data collector is still landing rows.
+//
+// HONEST WHEN A SOURCE IS MISSING. Every block carries a status: 'ok',
+// 'not_connected' (the key is not set, so nothing was asked) or 'error' (it was
+// asked and did not answer). A block that is not ok carries no numbers at all,
+// because a zero printed for an unread source is a claim that nothing was sold.
+// A zero from a source that answered is a real zero and says so.
+//
+// CACHED, BECAUSE STRIPE AND REVENUECAT ARE NOT OURS TO HAMMER. The two
+// external reads are held for EXTERNAL_TTL_MS after a good answer and
+// EXTERNAL_FAIL_TTL_MS after a failed one, a second request while one is in
+// flight waits for it, and a manual refresh is honoured only once the held
+// answer is MIN_FORCE_REFRESH_MS old. Each answer is held under the inputs it
+// was read with (the month, and for RevenueCat the Pro accounts it was asked
+// about), so a new month or a new subscriber is a new read rather than a stale
+// one. The database reads (expenses, costs, health) are never cached: an edit
+// shows on the next load.
+//
+// NOTHING PERSONAL LEAVES THIS FILE. Counts and sums only: no customer email,
+// no customer name, no account id, no key. Price and promotion code ids are
+// the operator's own configuration and are shown so a mismatch can be fixed.
+// ---------------------------------------------------------------------------
+
+const crypto = require('node:crypto');
+const pool = require('../config/database');
+const costModel = require('./costModel');
+const billing = require('./proBilling');
+const { legacyRoostPrices } = require('./venueBilling');
+const {
+  STATED_PRICES, PRICE_ENV, APP_STORE_PRODUCTS, PRODUCT_LABEL, PLAN_INTERVAL,
+} = require('./statedPrices');
+
+// The business keeps New York time. "This month" starts at midnight there, the
+// same rule routes/admin.js businessToday() applies to invoice dates.
+const HUB_TZ = 'America/New_York';
+
+const EXTERNAL_TTL_MS = 5 * 60 * 1000;
+const EXTERNAL_FAIL_TTL_MS = 60 * 1000;
+const MIN_FORCE_REFRESH_MS = 60 * 1000;
+
+// Stripe. Short timeouts and one retry: this is a dashboard, and a slow vendor
+// must cost a panel, not the whole page.
+const STRIPE_REQUEST = { timeout: 10000, maxNetworkRetries: 1 };
+const STRIPE_PAGE = 100;
+const SUBSCRIPTION_MAX_PAGES = 10;
+const BALANCE_MAX_PAGES = 20;
+const INVOICE_MAX_PAGES = 10;
+const DISPUTE_MAX_PAGES = 10;
+// Stripe's invoice list filters on when an invoice was CREATED, not when it
+// was paid, so the paid-this-month split asks for every paid invoice created
+// up to this many days before the month began and keeps the ones paid inside
+// it. Stripe retries a failed renewal for at most two months, so a renewal
+// paid this month was created inside this window. An old invoice marked paid
+// by hand later than that is the one case it can miss, and the payload says so.
+const INVOICE_LOOKBACK_DAYS = 70;
+const PRICE_MAX_PAGES = 3;
+const COUPON_LOOKUP_MAX = 25;
+const LIVE_SUB_STATUSES = ['active', 'trialing', 'past_due', 'unpaid'];
+const OPEN_DISPUTE_STATUSES = new Set(['warning_needs_response', 'warning_under_review', 'needs_response', 'under_review']);
+
+// RevenueCat. v2 for the project-wide overview, v1 for each Pro account's own
+// subscriptions, which is the only read that splits the App Store out by plan.
+const RC_V1 = 'https://api.revenuecat.com/v1';
+const RC_V2 = 'https://api.revenuecat.com/v2';
+const RC_TIMEOUT_MS = 8000;
+const RC_SUBSCRIBER_CAP = 200;
+const RC_CONCURRENCY = 5;
+const RC_MIN_KEY_LENGTH = 16;
+
+// Apple's cut, conservatively. The Small Business Program would make it 15,
+// and nothing here can see whether the account is enrolled, so a net figure
+// assumes the standard rate rather than flattering itself.
+const APPLE_COMMISSION_PCT = costModel.RATES.stores.appleStandardPct;
+
+const EXPENSE_KINDS = ['infrastructure', 'tooling', 'legal', 'other'];
+const EXPENSE_CADENCES = ['monthly', 'yearly', 'usage', 'one_time'];
+const EXPENSE_LIST_LIMIT = 500;
+const RENEWAL_WINDOW_DAYS = 60;
+
+// The collector runs hourly at :07 (collectRealtime.js on the Railway BESTTIME
+// cron). Two and a half hours without a row means at least one run is missing.
+const COLLECTOR_LATE_MINUTES = 150;
+const COLLECTOR_STOPPED_HOURS = 26;
+
+// Where each costModel line sits in the by-category table. Presentation only:
+// the amounts still come from costModel.js.
+const CODE_LINE_CATEGORY = {
+  railway: 'Hosting',
+  vercel: 'Hosting',
+  'besttime-subscription': 'Crowd data',
+  'besttime-corpus': 'Crowd data',
+  sportsdb: 'Crowd data',
+  'apple-developer': 'App Store',
+  domain: 'Domain and email',
+  'google-cloud': 'Google Cloud',
+};
+
+// A vendor name on the expense list that probably IS a code line. Used only to
+// warn that a bill may be counted twice; nothing is linked on a guess. The
+// owner links the row by choosing the line in its "Counts instead of" field.
+const CODE_LINE_LOOKALIKE = {
+  railway: /railway/i,
+  vercel: /vercel/i,
+  'besttime-subscription': /best ?time/i,
+  sportsdb: /sports ?db/i,
+  'apple-developer': /apple developer|developer program/i,
+  domain: /flockcorp|porkbun|\bdomain\b/i,
+  'google-cloud': /google cloud|\bgcp\b|cloud billing/i,
+};
+
+// ---------------------------------------------------------------------------
+// Dates. Everything below works in YYYY-MM-DD strings in the business's own
+// zone, so a bill dated the 1st is the 1st in Pennsylvania and not in UTC.
+// ---------------------------------------------------------------------------
+
+function ymdIn(tz, date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+// Milliseconds to add to a UTC instant to read the wall clock in `tz`.
+function tzOffsetMs(tz, at) {
+  const parts = {};
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  for (const p of fmt.formatToParts(at)) parts[p.type] = p.value;
+  const wall = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second));
+  return wall - Math.floor(at.getTime() / 1000) * 1000;
+}
+
+// The UTC instant of midnight at the start of `ymd` in `tz`.
+function zonedMidnightMs(ymd, tz) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const guess = Date.UTC(y, m - 1, d);
+  let t = guess - tzOffsetMs(tz, new Date(guess));
+  const again = guess - tzOffsetMs(tz, new Date(t));
+  if (again !== t) t = again;
+  return t;
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+function isYmd(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+function addDaysYmd(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d) + n * 86400000);
+  return `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`;
+}
+
+// Calendar months, clamped to the month's last day, always counted from the
+// same base date so the 31st does not drift to the 28th after February.
+function addMonthsYmd(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const total = (m - 1) + n;
+  const year = y + Math.floor(total / 12);
+  const month = ((total % 12) + 12) % 12;
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return `${year}-${pad2(month + 1)}-${pad2(Math.min(d, last))}`;
+}
+
+function monthOf(todayYmd, tz = HUB_TZ) {
+  const [y, m] = todayYmd.split('-').map(Number);
+  const startYmd = `${y}-${pad2(m)}-01`;
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const endYmd = `${y}-${pad2(m)}-${pad2(daysInMonth)}`;
+  const label = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' })
+    .format(new Date(Date.UTC(y, m - 1, 1)));
+  return {
+    todayYmd,
+    startYmd,
+    endYmd,
+    startUnix: Math.floor(zonedMidnightMs(startYmd, tz) / 1000),
+    daysInMonth,
+    dayOfMonth: Number(todayYmd.slice(8, 10)),
+    label,
+    tz,
+  };
+}
+
+const inMonth = (ymd, month) => typeof ymd === 'string' && ymd >= month.startYmd && ymd <= month.endYmd;
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+const has = (obj, key) => obj !== null && typeof obj === 'object' && Object.prototype.hasOwnProperty.call(obj, key);
+
+function plain(raw) {
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+// Monthly share of an amount billed every `recurring` interval.
+function monthsPerCharge(recurring) {
+  const count = recurring && Number.isFinite(recurring.interval_count) && recurring.interval_count > 0
+    ? recurring.interval_count : 1;
+  switch (recurring && recurring.interval) {
+    case 'year': return 12 * count;
+    case 'week': return (12 / 52) * count;
+    case 'day': return (12 / 365.25) * count;
+    case 'month':
+    default: return count;
+  }
+}
+
+// What a subscriber paying `grossMonthlyCents` a month leaves after Stripe's
+// card and Billing shares and the fixed fee on each charge, per costModel's
+// rate card. A charge of nothing costs nothing to process.
+function stripeNetMonthlyCents(grossMonthlyCents, recurring) {
+  if (!(grossMonthlyCents > 0)) return 0;
+  const s = costModel.RATES.stripe;
+  const pct = (s.percent + s.billingPercent) / 100;
+  const fixed = (s.fixedUsd * 100) / monthsPerCharge(recurring);
+  return Math.max(0, grossMonthlyCents * (1 - pct) - fixed);
+}
+
+// ---------------------------------------------------------------------------
+// THE EXTERNAL CACHE
+// ---------------------------------------------------------------------------
+
+const externalCache = new Map();
+
+// A key is `<source>:<inputs>`. The inputs are part of the key because the
+// read depends on them: last month's Stripe balance is not this month's, and a
+// RevenueCat tally taken before somebody subscribed does not count them. A
+// request shares an answer, or a read in flight, only with a request that asked
+// the same question.
+const cacheSourceOf = (key) => {
+  const i = key.indexOf(':');
+  return i === -1 ? key : key.slice(0, i);
+};
+
+function stripeCacheKey(month) {
+  return `stripe:${month.startYmd}`;
+}
+
+function revenueCatCacheKey(month, premiumIds) {
+  const digest = crypto.createHash('sha256').update(premiumIds.join(',')).digest('hex').slice(0, 16);
+  return `revenuecat:${month.startYmd}:${premiumIds.length}:${digest}`;
+}
+
+async function cachedRead(key, read, { force = false } = {}) {
+  const hit = externalCache.get(key);
+  if (hit && hit.pending) {
+    const v = await hit.pending;
+    return { ...v, cached: false, cachedAgeSeconds: 0 };
+  }
+  const now = Date.now();
+  if (hit && hit.value) {
+    const age = now - hit.at;
+    const ttl = hit.value.status === 'ok' ? EXTERNAL_TTL_MS : EXTERNAL_FAIL_TTL_MS;
+    const forced = force && age >= MIN_FORCE_REFRESH_MS;
+    if (age < ttl && !forced) {
+      return { ...hit.value, cached: true, cachedAgeSeconds: Math.round(age / 1000) };
+    }
+  }
+  const pending = (async () => {
+    try {
+      return await read();
+    } catch (err) {
+      console.error(`[money] ${key} read failed:`, err && err.message ? err.message : err);
+      return { status: 'error', reason: 'The read failed before it could answer.' };
+    }
+  })();
+  externalCache.set(key, { at: hit ? hit.at : 0, value: hit ? hit.value : null, pending });
+  const value = await pending;
+  externalCache.set(key, { at: Date.now(), value, pending: null });
+  // One settled answer per source. An answer to an older question (last
+  // month, an earlier list of Pro accounts) can never be served again, so it
+  // goes; a read still in flight for another question is left to finish.
+  const source = cacheSourceOf(key);
+  for (const [k, v] of externalCache) {
+    if (k !== key && cacheSourceOf(k) === source && !v.pending) externalCache.delete(k);
+  }
+  return { ...value, cached: false, cachedAgeSeconds: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// EXPENSES
+// ---------------------------------------------------------------------------
+
+// Every id a row's replaces_line may name: the fixed, annual and one-time
+// lines, and the reconciled invoice line(s). Read from costModel so a line
+// added there is linkable here without a second list.
+function codeLineIds() {
+  return [
+    ...costModel.FIXED_MONTHLY.map((e) => e.id),
+    ...costModel.FIXED_ANNUAL.map((e) => e.id),
+    ...costModel.ONE_TIME.map((e) => e.id),
+    ...costModel.RECONCILED.lines.map((l) => l.id),
+  ];
+}
+
+function codeLineOptions() {
+  const out = [];
+  for (const e of costModel.FIXED_MONTHLY) out.push({ id: e.id, label: e.label, cadence: 'monthly' });
+  for (const e of costModel.FIXED_ANNUAL) out.push({ id: e.id, label: e.label, cadence: 'yearly' });
+  for (const e of costModel.ONE_TIME) out.push({ id: e.id, label: e.label, cadence: 'one_time' });
+  for (const l of costModel.RECONCILED.lines) out.push({ id: l.id, label: l.label, cadence: 'usage' });
+  return out;
+}
+
+// The columns every read of business_expenses returns. Dates come back as
+// text: node-postgres turns a DATE into a JavaScript Date at LOCAL midnight,
+// which is the day before in any zone west of the server.
+function expenseFromRow(r) {
+  return {
+    id: Number(r.id),
+    vendor: r.vendor,
+    product: r.product || null,
+    category: r.category || null,
+    kind: r.kind,
+    amountCents: Number(r.amount_cents),
+    currency: r.currency,
+    cadence: r.cadence,
+    lastChargedOn: r.last_charged_on ? String(r.last_charged_on).slice(0, 10) : null,
+    renewsOn: r.renews_on ? String(r.renews_on).slice(0, 10) : null,
+    active: r.active === true,
+    verified: r.verified === true,
+    note: r.note || null,
+    replacesLine: r.replaces_line || null,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+  };
+}
+
+async function readExpenses(db = pool) {
+  const r = await db.query(
+    `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
+            last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
+            active, verified, note, replaces_line, updated_at
+       FROM business_expenses
+      ORDER BY active DESC, kind, lower(vendor), id
+      LIMIT ${EXPENSE_LIST_LIMIT}`
+  );
+  return (r.rows || []).map(expenseFromRow);
+}
+
+// The words people type for a kind or a cadence, folded onto the four the
+// table accepts. Anything else is left as typed so validation can name it.
+const KIND_WORDS = {
+  infrastructure: 'infrastructure', infra: 'infrastructure', hosting: 'infrastructure', running: 'infrastructure',
+  tooling: 'tooling', tools: 'tooling', tool: 'tooling', building: 'tooling', development: 'tooling',
+  legal: 'legal', company: 'legal',
+  other: 'other',
+};
+const CADENCE_WORDS = {
+  monthly: 'monthly', month: 'monthly', mo: 'monthly',
+  yearly: 'yearly', year: 'yearly', annual: 'yearly', annually: 'yearly', yr: 'yearly',
+  usage: 'usage', metered: 'usage',
+  one_time: 'one_time', onetime: 'one_time', once: 'one_time', one_off: 'one_time',
+};
+
+function foldWord(value, map) {
+  if (typeof value !== 'string') return value;
+  const k = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return has(map, k) ? map[k] : value;
+}
+
+const BOOL_WORDS = { true: true, false: false, yes: true, no: false };
+
+// Accept the snake_case spellings a pasted list may use, and the plain words
+// above, before validation sees the object. Nothing here invents a value: a
+// field the paste left out stays out and gets its default later.
+function normalizeExpenseAliases(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const out = { ...raw };
+  const alias = (from, to) => {
+    if (has(out, from) && !has(out, to)) out[to] = out[from];
+    delete out[from];
+  };
+  alias('amount_cents', 'amountCents');
+  alias('last_charged_on', 'lastChargedOn');
+  alias('renews_on', 'renewsOn');
+  alias('replaces_line', 'replacesLine');
+  if (has(out, 'kind')) out.kind = foldWord(out.kind, KIND_WORDS);
+  if (has(out, 'cadence')) out.cadence = foldWord(out.cadence, CADENCE_WORDS);
+  if (typeof out.currency === 'string') out.currency = out.currency.trim().toUpperCase();
+  for (const b of ['active', 'verified']) {
+    if (typeof out[b] === 'string') {
+      const k = out[b].trim().toLowerCase();
+      if (has(BOOL_WORDS, k)) out[b] = BOOL_WORDS[k];
+    }
+  }
+  for (const d of ['lastChargedOn', 'renewsOn', 'replacesLine', 'product', 'category', 'note', 'currency']) {
+    if (typeof out[d] === 'string' && out[d].trim() === '') out[d] = null;
+  }
+  return out;
+}
+
+// Cents from either `amountCents` (an integer) or `amount` (dollars, as a
+// number or a string with at most two decimals). Returns null when neither is
+// usable, and the validators refuse that before this is ever trusted.
+function centsFromInput(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.amountCents !== undefined && raw.amountCents !== null) {
+    const n = raw.amountCents;
+    return Number.isInteger(n) && n >= 0 && n <= 1000000000 ? n : null;
+  }
+  if (raw.amount === undefined || raw.amount === null) return null;
+  let text;
+  if (typeof raw.amount === 'number') {
+    if (!Number.isFinite(raw.amount)) return null;
+    text = String(raw.amount);
+  } else if (typeof raw.amount === 'string') {
+    text = raw.amount.trim().replace(/^\$/, '').replace(/,/g, '');
+  } else {
+    return null;
+  }
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
+  const cents = Math.round(Number(text) * 100);
+  return cents >= 0 && cents <= 1000000000 ? cents : null;
+}
+
+// The row as the table stores it, from input that has already passed the
+// route's validators. Defaults live here and nowhere else.
+function expenseRowFromInput(raw) {
+  const text = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  return {
+    vendor: text(raw.vendor, 80),
+    product: text(raw.product, 120),
+    category: text(raw.category, 60),
+    kind: raw.kind,
+    amountCents: centsFromInput(raw),
+    currency: typeof raw.currency === 'string' && raw.currency ? raw.currency : 'USD',
+    cadence: raw.cadence,
+    lastChargedOn: raw.lastChargedOn || null,
+    renewsOn: raw.renewsOn || null,
+    active: raw.active === undefined || raw.active === null ? true : raw.active === true,
+    verified: raw.verified === true,
+    note: text(raw.note, 500),
+    replacesLine: raw.replacesLine || null,
+  };
+}
+
+function expenseParams(row) {
+  return [
+    row.vendor, row.product, row.category, row.kind, row.amountCents, row.currency,
+    row.cadence, row.lastChargedOn, row.renewsOn, row.active, row.verified, row.note,
+    row.replacesLine,
+  ];
+}
+
+const EXPENSE_INSERT_SQL = `INSERT INTO business_expenses
+       (vendor, product, category, kind, amount_cents, currency, cadence,
+        last_charged_on, renews_on, active, verified, note, replaces_line,
+        updated_at, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14)
+     RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
+               last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
+               active, verified, note, replaces_line, updated_at`;
+
+// A whole-row write by id. The admin PUT route and the import both use it, so
+// an edit on the screen and a corrected paste store a bill the same way.
+const EXPENSE_UPDATE_SQL = `UPDATE business_expenses
+        SET vendor = $2, product = $3, category = $4, kind = $5, amount_cents = $6,
+            currency = $7, cadence = $8, last_charged_on = $9, renews_on = $10,
+            active = $11, verified = $12, note = $13, replaces_line = $14,
+            updated_at = NOW(), updated_by = $15
+      WHERE id = $1
+      RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
+                last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
+                active, verified, note, replaces_line, updated_at`;
+
+// The import's insert. The same vendor, product and cadence is the same bill,
+// and migration 080 makes that a unique key (business_expenses_bill_key), so
+// when a second import inserted the bill after this one looked for it, this
+// insert waits for that one to commit and then does nothing, and the import
+// reads the row again and merges into it instead of adding a copy.
+const EXPENSE_IMPORT_INSERT_SQL = `INSERT INTO business_expenses
+       (vendor, product, category, kind, amount_cents, currency, cadence,
+        last_charged_on, renews_on, active, verified, note, replaces_line,
+        updated_at, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14)
+     ON CONFLICT (lower(vendor), lower(COALESCE(product, '')), cadence) DO NOTHING
+     RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
+               last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
+               active, verified, note, replaces_line, updated_at`;
+
+// The import's match: the same vendor, product and cadence, ignoring case,
+// is the same bill, so pasting the list again updates rather than doubles it.
+// Locked, because the merge below reads the row before it writes it.
+const EXPENSE_MATCH_SQL = `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
+            last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
+            active, verified, note, replaces_line, updated_at
+       FROM business_expenses
+      WHERE lower(vendor) = lower($1)
+        AND lower(COALESCE(product, '')) = lower(COALESCE($2, ''))
+        AND cadence = $3
+      ORDER BY id
+      FOR UPDATE`;
+
+// Which stored field each pasted key sets. A key the paste left out keeps
+// what is stored: a list pasted again without its renewal dates must not
+// erase the dates typed in since.
+const IMPORT_FIELD_KEYS = {
+  category: ['category'],
+  kind: ['kind'],
+  amountCents: ['amount', 'amountCents'],
+  currency: ['currency'],
+  lastChargedOn: ['lastChargedOn'],
+  renewsOn: ['renewsOn'],
+  active: ['active'],
+  verified: ['verified'],
+  note: ['note'],
+  replacesLine: ['replacesLine'],
+};
+
+function mergeIntoStored(stored, item) {
+  const incoming = expenseRowFromInput(item);
+  const merged = {
+    vendor: stored.vendor,
+    product: stored.product,
+    category: stored.category,
+    kind: stored.kind,
+    amountCents: stored.amountCents,
+    currency: stored.currency,
+    cadence: stored.cadence,
+    lastChargedOn: stored.lastChargedOn,
+    renewsOn: stored.renewsOn,
+    active: stored.active,
+    verified: stored.verified,
+    note: stored.note,
+    replacesLine: stored.replacesLine,
+  };
+  for (const [field, keys] of Object.entries(IMPORT_FIELD_KEYS)) {
+    if (keys.some((k) => has(item, k) && item[k] !== undefined)) merged[field] = incoming[field];
+  }
+  return merged;
+}
+
+// One transaction for the whole paste: either every row lands or none does,
+// so a list that fails halfway cannot leave half of itself behind. `items`
+// are the validated request objects, not rows, so the merge can tell a field
+// the paste set from one it never mentioned.
+//
+// TWO IMPORTS AT ONCE. The match below locks a row that exists; it cannot lock
+// one that does not exist yet, so two pastes of the same new bill would each
+// find nothing. The unique key settles it: the second insert waits for the
+// first to commit, does nothing, and this reads the bill again (a new statement
+// sees the committed row) and merges into it.
+async function importExpenses(items, userId, db = pool) {
+  const client = await db.connect();
+  const inserted = [];
+  const updated = [];
+  const mergeInto = async (rows, item) => {
+    for (const r of rows) {
+      const merged = mergeIntoStored(expenseFromRow(r), item);
+      const u = await client.query(EXPENSE_UPDATE_SQL, [Number(r.id), ...expenseParams(merged), userId]);
+      if (u.rows && u.rows[0]) updated.push(expenseFromRow(u.rows[0]));
+    }
+  };
+  try {
+    await client.query('BEGIN');
+    for (const item of items) {
+      const row = expenseRowFromInput(item);
+      const key = [row.vendor, row.product, row.cadence];
+      const found = await client.query(EXPENSE_MATCH_SQL, key);
+      if (found.rows && found.rows.length > 0) {
+        await mergeInto(found.rows, item);
+        continue;
+      }
+      const ins = await client.query(EXPENSE_IMPORT_INSERT_SQL, [...expenseParams(row), userId]);
+      if (ins.rows && ins.rows[0]) {
+        inserted.push(expenseFromRow(ins.rows[0]));
+        continue;
+      }
+      const raced = await client.query(EXPENSE_MATCH_SQL, key);
+      await mergeInto((raced.rows || []), item);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+  return { inserted, updated };
+}
+
+// ---------------------------------------------------------------------------
+// THE COST PICTURE
+// ---------------------------------------------------------------------------
+//
+// Three sources, one rule each:
+//   * costModel.js lines (monthly, annual, one-time): counted unless an active
+//     expense row names the line in replaces_line.
+//   * the reconciled invoice (cost_reconciled over costModel.RECONCILED): the
+//     same, a usage bill read as this much a month.
+//   * expense rows: counted while active and in USD.
+//
+// Two figures come out of every line:
+//   perMonth   the run rate. Monthly and usage bills in full, yearly bills at
+//              a twelfth, one-time bills never. The sum is the monthly burn.
+//   thisMonth  what belongs to this calendar month: the run rate, plus any
+//              one-time bill charged this month. Yearly bills are spread, so a
+//              renewal does not make one month look eleven times worse; the
+//              renewal list below is where the cash dates are.
+
+const KIND_LABEL = {
+  infrastructure: 'Running the app',
+  tooling: 'Building it',
+  legal: 'Legal and company',
+  other: 'Other',
+};
+
+function perMonthCents(cadence, amountCents) {
+  if (!Number.isFinite(amountCents)) return 0;
+  switch (cadence) {
+    case 'monthly':
+    case 'usage':
+      return amountCents;
+    case 'yearly':
+      return amountCents / 12;
+    default:
+      return 0;
+  }
+}
+
+// The next charge date of a recurring expense, and whether it was typed or
+// worked out from the last charge.
+function nextChargeOn(x, todayYmd) {
+  if (x.renewsOn && x.renewsOn >= todayYmd) return { on: x.renewsOn, estimated: false };
+  const step = x.cadence === 'monthly' ? 1 : x.cadence === 'yearly' ? 12 : null;
+  const base = x.renewsOn || x.lastChargedOn;
+  if (!step || !base) return null;
+  for (let k = 1; k <= 240; k += 1) {
+    const next = addMonthsYmd(base, k * step);
+    if (next >= todayYmd) return { on: next, estimated: true };
+  }
+  return null;
+}
+
+function codeCostLines(reconciled) {
+  const lines = [];
+  const add = (e, cadence) => lines.push({
+    id: e.id,
+    origin: 'code',
+    label: e.label,
+    kind: EXPENSE_KINDS.includes(e.kind) ? e.kind : 'infrastructure',
+    category: CODE_LINE_CATEGORY[e.id] || 'Other',
+    cadence,
+    amountCents: Math.round(Number(e.usd) * 100),
+    currency: 'USD',
+    verified: !!e.verified,
+    checked: e.checked || null,
+  });
+  for (const e of costModel.FIXED_MONTHLY) add(e, 'monthly');
+  for (const e of costModel.FIXED_ANNUAL) add(e, 'yearly');
+  for (const e of costModel.ONE_TIME) add(e, 'one_time');
+  const recLines = reconciled && Array.isArray(reconciled.lines)
+    ? reconciled.lines
+    : costModel.RECONCILED.lines.map((l) => ({ ...l, asOf: costModel.RECONCILED.asOf, source: 'code' }));
+  for (const l of recLines) {
+    lines.push({
+      id: l.id,
+      origin: 'reconciled',
+      label: l.label,
+      kind: 'infrastructure',
+      category: CODE_LINE_CATEGORY[l.id] || 'Google Cloud',
+      cadence: 'usage',
+      amountCents: Math.round(Number(l.usdPerMonth) * 100),
+      currency: 'USD',
+      verified: true,
+      checked: l.asOf || null,
+      recordedIn: l.source === 'dashboard' ? 'dashboard' : 'code',
+    });
+  }
+  return lines;
+}
+
+function buildCostPicture({ expenses = [], reconciled = null, month }) {
+  // Only a row that is itself counted may take a code line out of the total:
+  // active, and in dollars. A euro bill linked to Railway would otherwise
+  // remove the $20 and add nothing, since nothing here converts currencies.
+  const replacedBy = new Map();
+  for (const x of expenses) {
+    if (x.active && x.currency === 'USD' && x.replacesLine) {
+      if (!replacedBy.has(x.replacesLine)) replacedBy.set(x.replacesLine, []);
+      replacedBy.get(x.replacesLine).push(x.id);
+    }
+  }
+
+  const lines = [];
+  for (const c of codeCostLines(reconciled)) {
+    const by = replacedBy.get(c.id) || null;
+    lines.push({ ...c, counted: !by, replacedBy: by });
+  }
+  for (const x of expenses) {
+    const usd = x.currency === 'USD';
+    lines.push({
+      id: `expense-${x.id}`,
+      origin: 'expense',
+      expenseId: x.id,
+      label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
+      kind: x.kind,
+      category: x.category || 'Uncategorised',
+      cadence: x.cadence,
+      amountCents: x.amountCents,
+      currency: x.currency,
+      verified: x.verified,
+      lastChargedOn: x.lastChargedOn,
+      renewsOn: x.renewsOn,
+      replacesLine: x.replacesLine,
+      counted: x.active && usd,
+      inactive: !x.active,
+      nonUsd: !usd,
+    });
+  }
+
+  for (const l of lines) {
+    const run = l.counted ? perMonthCents(l.cadence, l.amountCents) : 0;
+    const once = l.counted && l.cadence === 'one_time' && inMonth(l.lastChargedOn, month) ? l.amountCents : 0;
+    l.perMonthCents = Math.round(run);
+    l.thisMonthCents = Math.round(run + once);
+  }
+
+  const byKind = {};
+  for (const k of EXPENSE_KINDS) byKind[k] = { kind: k, label: KIND_LABEL[k], thisMonthCents: 0, perMonthCents: 0, lines: 0 };
+  const byCategory = new Map();
+  let thisMonthCents = 0;
+  let perMonthTotal = 0;
+  for (const l of lines) {
+    if (!l.counted) continue;
+    const k = byKind[l.kind] || byKind.other;
+    k.thisMonthCents += l.thisMonthCents;
+    k.perMonthCents += l.perMonthCents;
+    k.lines += 1;
+    if (!byCategory.has(l.category)) byCategory.set(l.category, { category: l.category, thisMonthCents: 0, perMonthCents: 0, lines: 0 });
+    const c = byCategory.get(l.category);
+    c.thisMonthCents += l.thisMonthCents;
+    c.perMonthCents += l.perMonthCents;
+    c.lines += 1;
+    thisMonthCents += l.thisMonthCents;
+    perMonthTotal += l.perMonthCents;
+  }
+
+  // Renewals in the window, from the expense list. Code lines carry no charge
+  // dates, and the panel says so rather than guessing one.
+  const horizon = addDaysYmd(month.todayYmd, RENEWAL_WINDOW_DAYS);
+  const upcoming = [];
+  for (const x of expenses) {
+    if (!x.active || (x.cadence !== 'monthly' && x.cadence !== 'yearly')) continue;
+    const next = nextChargeOn(x, month.todayYmd);
+    if (!next || next.on > horizon) continue;
+    upcoming.push({
+      expenseId: x.id,
+      label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
+      on: next.on,
+      estimated: next.estimated,
+      amountCents: x.amountCents,
+      currency: x.currency,
+      cadence: x.cadence,
+    });
+  }
+  upcoming.sort((a, b) => (a.on < b.on ? -1 : a.on > b.on ? 1 : a.label.localeCompare(b.label)));
+
+  // Probably the same bill twice: a code line still counted, and an active
+  // expense row whose name looks like it and whose cadence fits.
+  const possibleDoubles = [];
+  const fits = (codeCadence, rowCadence) => codeCadence === rowCadence
+    || (codeCadence === 'usage' && rowCadence === 'monthly')
+    || (codeCadence === 'monthly' && rowCadence === 'usage');
+  for (const c of lines) {
+    if (c.origin === 'expense' || !c.counted || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
+    for (const x of expenses) {
+      if (!x.active || x.replacesLine) continue;
+      const name = `${x.vendor} ${x.product || ''}`;
+      if (CODE_LINE_LOOKALIKE[c.id].test(name) && fits(c.cadence, x.cadence)) {
+        possibleDoubles.push({ codeLineId: c.id, codeLabel: c.label, expenseId: x.id, expenseLabel: x.product ? `${x.vendor}, ${x.product}` : x.vendor });
+      }
+    }
+  }
+
+  const replaced = lines
+    .filter((l) => l.origin !== 'expense' && !l.counted)
+    .map((l) => ({ id: l.id, label: l.label, byExpenseIds: l.replacedBy || [] }));
+
+  return {
+    lines,
+    byKind: EXPENSE_KINDS.map((k) => byKind[k]),
+    byCategory: [...byCategory.values()].sort((a, b) => b.perMonthCents - a.perMonthCents || a.category.localeCompare(b.category)),
+    totals: { thisMonthCents, perMonthCents: perMonthTotal },
+    upcoming,
+    upcomingWindowDays: RENEWAL_WINDOW_DAYS,
+    possibleDoubles,
+    replaced,
+    nonUsd: lines.filter((l) => l.nonUsd && !l.inactive).map((l) => ({
+      label: l.label,
+      amountCents: l.amountCents,
+      currency: l.currency,
+      // Named so the screen can say the code line it points at still counts.
+      replacesLine: l.replacesLine || null,
+    })),
+    undatedCodeYearly: lines.filter((l) => l.origin === 'code' && l.cadence === 'yearly' && l.counted).length,
+  };
+}
+
+// What GET /api/admin/costs carries for the Costs tab: the same arithmetic,
+// reduced to the figures that panel shows. One function, so the two tabs
+// cannot disagree about a total.
+function costsLedger({ expenses, reconciled, month, readError = null }) {
+  const pic = buildCostPicture({ expenses: expenses || [], reconciled, month });
+  const usd = (c) => Math.round(c) / 100;
+  const kind = (k) => usd((pic.byKind.find((x) => x.kind === k) || { perMonthCents: 0 }).perMonthCents);
+  return {
+    status: readError ? 'error' : 'ok',
+    readError: readError || null,
+    rows: (expenses || []).length,
+    activeRows: (expenses || []).filter((x) => x.active).length,
+    burnMonthlyUsd: usd(pic.totals.perMonthCents),
+    infrastructureMonthlyUsd: kind('infrastructure'),
+    toolingMonthlyUsd: kind('tooling'),
+    legalMonthlyUsd: kind('legal'),
+    otherMonthlyUsd: kind('other'),
+    replacedLines: pic.replaced.map((r) => r.label),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// STRIPE
+// ---------------------------------------------------------------------------
+
+function stripeMode() {
+  const k = typeof process.env.STRIPE_SECRET_KEY === 'string' ? process.env.STRIPE_SECRET_KEY.trim() : '';
+  if (/^(sk|rk)_live_/.test(k)) return 'live';
+  if (/^(sk|rk)_test_/.test(k)) return 'test';
+  return 'unknown';
+}
+
+// Each price variable read by its literal name, so the environment inventory
+// test sees what this file depends on.
+function configuredPriceIds() {
+  return [
+    { env: 'STRIPE_PRICE_PRO_MONTHLY', product: 'pro', plan: 'monthly', id: plain(process.env.STRIPE_PRICE_PRO_MONTHLY) },
+    { env: 'STRIPE_PRICE_PRO_YEARLY', product: 'pro', plan: 'yearly', id: plain(process.env.STRIPE_PRICE_PRO_YEARLY) },
+    { env: 'STRIPE_PRICE_ROOST_MONTHLY', product: 'roost', plan: 'monthly', id: plain(process.env.STRIPE_PRICE_ROOST_MONTHLY) },
+    { env: 'STRIPE_PRICE_ROOST_YEARLY', product: 'roost', plan: 'yearly', id: plain(process.env.STRIPE_PRICE_ROOST_YEARLY) },
+    { env: 'STRIPE_PRICE_ROOST_FOUNDING', product: 'roost', plan: 'founding', id: plain(process.env.STRIPE_PRICE_ROOST_FOUNDING) },
+    // Retired prices still billed to existing venues. No plan of their own:
+    // they count under Roost and are checked for existence, not against a
+    // stated price.
+    ...legacyRoostPrices().map((id) => ({ env: 'STRIPE_PRICE_ROOST_LEGACY', product: 'roost', plan: 'legacy', id })),
+  ];
+}
+
+function priceRoleMap(configured) {
+  const map = new Map();
+  for (const c of configured) if (c.id) map.set(c.id, { product: c.product, plan: c.plan, env: c.env });
+  return map;
+}
+
+// A failure in words a person can act on. Stripe's own message is never
+// passed through: an authentication error quotes part of the key.
+function stripeProblem(err) {
+  const type = err && (err.type || err.rawType);
+  const status = err && err.statusCode;
+  if (type === 'StripeAuthenticationError' || status === 401) {
+    return { code: 'auth', words: 'Stripe refused the key (401). STRIPE_SECRET_KEY needs replacing.' };
+  }
+  if (type === 'StripePermissionError' || status === 403) {
+    return { code: 'permission', words: 'The key is not allowed to read this (403). A restricted key needs read access to it.' };
+  }
+  if (type === 'StripeRateLimitError' || status === 429) {
+    return { code: 'rate', words: 'Stripe is rate limiting this account (429).' };
+  }
+  if (type === 'StripeConnectionError' || (err && /timed? ?out|ETIMEDOUT|ECONNRESET|ENOTFOUND/i.test(String(err.message || '')))) {
+    return { code: 'network', words: 'Stripe did not answer in time.' };
+  }
+  return { code: 'other', words: status ? `Stripe answered ${status}.` : 'The Stripe read failed.' };
+}
+
+async function listAll(fetchPage, params, maxPages) {
+  const data = [];
+  let after = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const r = await fetchPage({ ...params, limit: STRIPE_PAGE, ...(after ? { starting_after: after } : {}) });
+    const rows = r && Array.isArray(r.data) ? r.data : [];
+    data.push(...rows);
+    if (!r || !r.has_more || rows.length === 0) return { data, truncated: false };
+    after = rows[rows.length - 1].id;
+  }
+  return { data, truncated: true };
+}
+
+function classifySubscription(sub, roles) {
+  const items = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data : [];
+  for (const it of items) {
+    const id = it && it.price && it.price.id;
+    if (id && roles.has(id)) {
+      const r = roles.get(id);
+      return { product: r.product, plan: r.plan };
+    }
+  }
+  const meta = (sub && sub.metadata) || {};
+  const product = meta.kind === 'venue' ? 'roost' : (meta.app_user_id ? 'pro' : 'other');
+  const rec = items[0] && items[0].price && items[0].price.recurring;
+  const plan = rec && rec.interval === 'year' ? 'yearly' : rec && rec.interval === 'month' ? 'monthly' : 'other';
+  return { product, plan };
+}
+
+function couponOf(discount, coupons) {
+  if (!discount || typeof discount !== 'object') return undefined;
+  const raw = (discount.source && discount.source.coupon !== undefined) ? discount.source.coupon : discount.coupon;
+  if (raw && typeof raw === 'object') return raw;
+  if (typeof raw === 'string' && coupons.has(raw)) return coupons.get(raw);
+  return undefined;
+}
+
+// Recurring revenue from one subscription, in cents a month, after the
+// discounts still running on it. `once` coupons are left out on purpose: they
+// take one invoice off and are not part of what recurs.
+function subscriptionMonthly(sub, coupons, nowSec) {
+  const items = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data : [];
+  let base = 0;
+  let currency = null;
+  let recurring = null;
+  let unpriced = false;
+  for (const it of items) {
+    const p = (it && it.price) || {};
+    if (!Number.isFinite(p.unit_amount)) { unpriced = true; continue; }
+    const qty = Number.isFinite(it.quantity) ? it.quantity : 1;
+    base += (p.unit_amount * qty) / monthsPerCharge(p.recurring);
+    currency = currency || p.currency || null;
+    recurring = recurring || p.recurring || null;
+  }
+  let factor = 1;
+  let amountOff = 0;
+  let unreadableDiscount = false;
+  for (const d of (sub && Array.isArray(sub.discounts) ? sub.discounts : [])) {
+    if (typeof d === 'string') { unreadableDiscount = true; continue; }
+    if (d && Number.isFinite(d.end) && d.end <= nowSec) continue;
+    const c = couponOf(d, coupons);
+    if (!c) { unreadableDiscount = true; continue; }
+    if (c.duration === 'once') continue;
+    if (Number.isFinite(c.percent_off)) factor *= Math.max(0, 1 - c.percent_off / 100);
+    else if (Number.isFinite(c.amount_off)) amountOff += c.amount_off / monthsPerCharge(recurring);
+  }
+  const cents = Math.max(0, base * factor - amountOff);
+  return { cents, currency: currency ? String(currency).toLowerCase() : null, recurring, unpriced, unreadableDiscount };
+}
+
+function emptyProductSummary() {
+  const plan = () => ({ live: 0, trialing: 0, mrrCents: 0 });
+  return {
+    live: 0,
+    pastDue: 0,
+    trialing: 0,
+    unpaid: 0,
+    endingAtPeriodEnd: 0,
+    freeViaCode: 0,
+    notPriced: 0,
+    mrrCents: 0,
+    mrrNetCents: 0,
+    byPlan: { monthly: plan(), yearly: plan(), founding: plan(), other: plan() },
+  };
+}
+
+function summarizeSubscriptions(subs, { roles, coupons = new Map(), nowSec = Math.floor(Date.now() / 1000) }) {
+  const out = { pro: emptyProductSummary(), roost: emptyProductSummary(), other: emptyProductSummary() };
+  const seen = new Set();
+  const webProAccounts = new Set();
+  for (const sub of subs) {
+    if (!sub || !sub.id || seen.has(sub.id)) continue;
+    seen.add(sub.id);
+    const { product, plan } = classifySubscription(sub, roles);
+    const s = out[product] || out.other;
+    const p = s.byPlan[plan] || s.byPlan.other;
+    if (sub.status === 'trialing') {
+      s.trialing += 1;
+      p.trialing += 1;
+    } else if (sub.status === 'unpaid') {
+      s.unpaid += 1;
+    } else if (sub.status === 'active' || sub.status === 'past_due') {
+      s.live += 1;
+      p.live += 1;
+      if (sub.status === 'past_due') s.pastDue += 1;
+      const m = subscriptionMonthly(sub, coupons, nowSec);
+      if (m.unpriced || m.unreadableDiscount || (m.currency && m.currency !== 'usd')) {
+        s.notPriced += 1;
+      } else {
+        const cents = Math.round(m.cents);
+        s.mrrCents += cents;
+        p.mrrCents += cents;
+        s.mrrNetCents += stripeNetMonthlyCents(cents, m.recurring);
+        if (cents === 0) s.freeViaCode += 1;
+      }
+    } else {
+      continue;
+    }
+    if (sub.cancel_at_period_end) s.endingAtPeriodEnd += 1;
+    if (product === 'pro' && sub.metadata && /^[1-9][0-9]{0,9}$/.test(String(sub.metadata.app_user_id || ''))) {
+      webProAccounts.add(Number(sub.metadata.app_user_id));
+    }
+  }
+  for (const key of Object.keys(out)) out[key].mrrNetCents = Math.round(out[key].mrrNetCents);
+  return { ...out, webProAccounts };
+}
+
+// Money that moved through the Stripe balance this month, by what it was.
+// Payouts and transfers move money that was already counted, so they are
+// left out; anything unrecognised is kept, added at its net, and named.
+function summarizeBalance(transactions) {
+  const agg = { grossCents: 0, refundsCents: 0, disputesCents: 0, feesCents: 0, otherCents: 0, otherCategories: [], charges: 0, refunds: 0, nonUsd: 0 };
+  const other = new Map();
+  for (const bt of transactions) {
+    if (!bt || typeof bt !== 'object') continue;
+    if (String(bt.currency || '').toLowerCase() !== 'usd') { agg.nonUsd += 1; continue; }
+    const amount = Number(bt.amount) || 0;
+    const fee = Number(bt.fee) || 0;
+    switch (bt.reporting_category) {
+      case 'charge':
+        agg.grossCents += amount;
+        agg.feesCents += fee;
+        agg.charges += 1;
+        break;
+      case 'refund':
+      case 'refund_failure':
+      case 'partial_capture_reversal':
+        agg.refundsCents += amount;
+        agg.feesCents += fee;
+        agg.refunds += 1;
+        break;
+      case 'dispute':
+      case 'dispute_reversal':
+        agg.disputesCents += amount;
+        agg.feesCents += fee;
+        break;
+      case 'fee':
+        agg.feesCents += -amount + fee;
+        break;
+      case 'payout':
+      case 'payout_reversal':
+      case 'transfer':
+      case 'transfer_reversal':
+      case 'topup':
+      case 'topup_reversal':
+        break;
+      default: {
+        agg.otherCents += Number(bt.net) || 0;
+        const cat = String(bt.reporting_category || bt.type || 'unknown').slice(0, 40);
+        other.set(cat, (other.get(cat) || 0) + 1);
+      }
+    }
+  }
+  agg.otherCategories = [...other.entries()].map(([category, count]) => ({ category, count }));
+  agg.netCents = agg.grossCents + agg.refundsCents + agg.disputesCents - agg.feesCents + agg.otherCents;
+  return agg;
+}
+
+function invoiceProduct(inv, roles) {
+  const meta = inv && inv.parent && inv.parent.subscription_details ? inv.parent.subscription_details.metadata : null;
+  if (meta && meta.kind === 'venue') return 'roost';
+  if (meta && meta.app_user_id) return 'pro';
+  const lines = inv && inv.lines && Array.isArray(inv.lines.data) ? inv.lines.data : [];
+  for (const l of lines) {
+    const pd = l && l.pricing && l.pricing.price_details;
+    const id = pd ? (typeof pd.price === 'string' ? pd.price : pd.price && pd.price.id) : null;
+    if (id && roles.has(id)) return roles.get(id).product;
+  }
+  return 'other';
+}
+
+function summarizeInvoices(invoices, { roles, month }) {
+  const byProduct = {
+    pro: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
+    roost: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
+    other: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
+  };
+  let nonUsd = 0;
+  for (const inv of invoices) {
+    if (!inv || inv.status !== 'paid') continue;
+    const paidAt = inv.status_transitions && inv.status_transitions.paid_at;
+    if (!Number.isFinite(paidAt) || paidAt < month.startUnix) continue;
+    if (String(inv.currency || '').toLowerCase() !== 'usd') { nonUsd += 1; continue; }
+    const b = byProduct[invoiceProduct(inv, roles)];
+    const paid = Number(inv.amount_paid) || 0;
+    b.paidCents += paid;
+    b.invoices += 1;
+    if (paid === 0) b.zeroInvoices += 1;
+  }
+  return { byProduct, nonUsd };
+}
+
+function summarizePromotionCodes(codes, coupons) {
+  return codes.slice(0, 50).map((pc) => {
+    const raw = pc && pc.promotion && pc.promotion.coupon !== undefined ? pc.promotion.coupon : pc && pc.coupon;
+    const c = raw && typeof raw === 'object' ? raw : (typeof raw === 'string' && coupons.has(raw) ? coupons.get(raw) : null);
+    return {
+      code: String(pc.code || ''),
+      active: pc.active === true,
+      timesRedeemed: Number.isFinite(pc.times_redeemed) ? pc.times_redeemed : null,
+      maxRedemptions: Number.isFinite(pc.max_redemptions) ? pc.max_redemptions : null,
+      expiresAt: Number.isFinite(pc.expires_at) ? new Date(pc.expires_at * 1000).toISOString() : null,
+      coupon: c ? {
+        percentOff: Number.isFinite(c.percent_off) ? c.percent_off : null,
+        amountOffCents: Number.isFinite(c.amount_off) ? c.amount_off : null,
+        currency: c.currency ? String(c.currency).toUpperCase() : null,
+        duration: c.duration || null,
+        durationInMonths: Number.isFinite(c.duration_in_months) ? c.duration_in_months : null,
+      } : null,
+    };
+  });
+}
+
+function priceView(p, roles) {
+  const product = p && p.product;
+  const role = roles.get(p.id) || null;
+  return {
+    id: p.id,
+    productName: product && typeof product === 'object' ? (product.name || null) : null,
+    unitAmountCents: Number.isFinite(p.unit_amount) ? p.unit_amount : null,
+    currency: p.currency ? String(p.currency).toUpperCase() : null,
+    interval: p.recurring ? p.recurring.interval : null,
+    intervalCount: p.recurring && Number.isFinite(p.recurring.interval_count) ? p.recurring.interval_count : null,
+    lookupKey: p.lookup_key || null,
+    nickname: p.nickname || null,
+    active: p.active !== false,
+    env: role ? role.env : null,
+    product: role ? role.product : null,
+    plan: role ? role.plan : null,
+  };
+}
+
+async function readStripePrices(client, configured, roles) {
+  const list = await listAll((p) => client.prices.list(p, STRIPE_REQUEST), { active: true, expand: ['data.product'] }, PRICE_MAX_PAGES);
+  const live = list.data.map((p) => priceView(p, roles));
+  const byId = new Map(live.map((p) => [p.id, p]));
+  const envs = [];
+  for (const c of configured) {
+    if (!c.id) { envs.push({ env: c.env, product: c.product, plan: c.plan, set: false }); continue; }
+    let found = byId.get(c.id) || null;
+    if (!found) {
+      try {
+        const p = await client.prices.retrieve(c.id, { expand: ['product'] }, STRIPE_REQUEST);
+        found = p ? priceView(p, roles) : null;
+      } catch (err) {
+        const missing = err && (err.statusCode === 404 || err.code === 'resource_missing');
+        envs.push({ env: c.env, product: c.product, plan: c.plan, set: true, id: c.id, found: false, reason: missing ? 'Stripe has no price with that id.' : stripeProblem(err).words });
+        continue;
+      }
+    }
+    envs.push({ env: c.env, product: c.product, plan: c.plan, set: true, id: c.id, found: !!found, price: found });
+  }
+  return { status: 'ok', live, envs, truncated: list.truncated };
+}
+
+async function readStripe(month) {
+  const client = billing.stripeClient();
+  if (!client) {
+    return { status: 'not_connected', reason: 'STRIPE_SECRET_KEY is not set on the server, so nothing here can read Stripe.' };
+  }
+  const configured = configuredPriceIds();
+  const roles = priceRoleMap(configured);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const readSubs = async () => {
+    const lists = await Promise.all(LIVE_SUB_STATUSES.map((status) => listAll(
+      (p) => client.subscriptions.list(p, STRIPE_REQUEST),
+      { status, expand: ['data.discounts'] },
+      SUBSCRIPTION_MAX_PAGES
+    )));
+    return { data: lists.flatMap((l) => l.data), truncated: lists.some((l) => l.truncated) };
+  };
+
+  const [subsR, btR, invR, dispR, promoR, priceR] = await Promise.allSettled([
+    readSubs(),
+    listAll((p) => client.balanceTransactions.list(p, STRIPE_REQUEST), { created: { gte: month.startUnix } }, BALANCE_MAX_PAGES),
+    listAll((p) => client.invoices.list(p, STRIPE_REQUEST), { status: 'paid', created: { gte: month.startUnix - INVOICE_LOOKBACK_DAYS * 86400 } }, INVOICE_MAX_PAGES),
+    // No status filter exists on this list, so every page is read and the
+    // open ones are picked out below.
+    listAll((p) => client.disputes.list(p, STRIPE_REQUEST), {}, DISPUTE_MAX_PAGES),
+    client.promotionCodes.list({ limit: STRIPE_PAGE }, STRIPE_REQUEST),
+    readStripePrices(client, configured, roles),
+  ]);
+
+  const settled = [subsR, btR, invR, dispR, promoR, priceR];
+  if (settled.every((r) => r.status === 'rejected')) {
+    return { status: 'error', reason: stripeProblem(settled[0].reason).words, mode: stripeMode() };
+  }
+
+  // Coupons the subscriptions and promotion codes point at, fetched once each.
+  const couponIds = new Set();
+  const collect = (raw) => { if (typeof raw === 'string') couponIds.add(raw); };
+  if (subsR.status === 'fulfilled') {
+    for (const s of subsR.value.data) {
+      for (const d of (Array.isArray(s.discounts) ? s.discounts : [])) {
+        if (d && typeof d === 'object') collect(d.source && d.source.coupon !== undefined ? d.source.coupon : d.coupon);
+      }
+    }
+  }
+  if (promoR.status === 'fulfilled') {
+    for (const pc of (promoR.value && promoR.value.data) || []) {
+      collect(pc && pc.promotion && pc.promotion.coupon !== undefined ? pc.promotion.coupon : pc && pc.coupon);
+    }
+  }
+  const coupons = new Map();
+  await mapLimit([...couponIds].slice(0, COUPON_LOOKUP_MAX), 5, async (id) => {
+    try {
+      const c = await client.coupons.retrieve(id, {}, STRIPE_REQUEST);
+      if (c) coupons.set(id, c);
+    } catch { /* the subscription reads as not priced rather than full price */ }
+  });
+
+  const block = (r, build) => (r.status === 'fulfilled'
+    ? { status: 'ok', ...build(r.value) }
+    : { status: 'error', reason: stripeProblem(r.reason).words });
+
+  const subscriptions = block(subsR, (v) => {
+    const s = summarizeSubscriptions(v.data, { roles, coupons, nowSec });
+    const { webProAccounts, ...rest } = s;
+    return { ...rest, truncated: v.truncated, webProAccountCount: webProAccounts.size, _webProAccounts: webProAccounts };
+  });
+  const balance = block(btR, (v) => ({ ...summarizeBalance(v.data), truncated: v.truncated }));
+  const invoices = block(invR, (v) => ({
+    ...summarizeInvoices(v.data, { roles, month }),
+    truncated: v.truncated,
+    lookbackDays: INVOICE_LOOKBACK_DAYS,
+  }));
+  // Dollars only in the sum: a dispute in another currency is counted apart
+  // rather than added to cents it is not measured in.
+  const disputes = block(dispR, (v) => {
+    const open = ((v && v.data) || []).filter((d) => d && OPEN_DISPUTE_STATUSES.has(d.status));
+    const usd = open.filter((d) => String(d.currency || '').toLowerCase() === 'usd');
+    return {
+      open: usd.length,
+      openAmountCents: usd.reduce((sum, d) => sum + (Number(d.amount) || 0), 0),
+      openOtherCurrency: open.length - usd.length,
+      truncated: v.truncated,
+    };
+  });
+  const promotionCodes = block(promoR, (v) => ({ codes: summarizePromotionCodes((v && v.data) || [], coupons) }));
+  const prices = priceR.status === 'fulfilled' ? priceR.value : { status: 'error', reason: stripeProblem(priceR.reason).words };
+
+  return {
+    status: 'ok',
+    mode: stripeMode(),
+    asOf: new Date().toISOString(),
+    subscriptions,
+    balance,
+    invoices,
+    disputes,
+    promotionCodes,
+    prices,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// REVENUECAT
+// ---------------------------------------------------------------------------
+
+function rcKey() {
+  const raw = typeof process.env.REVENUECAT_SECRET_API_KEY === 'string' ? process.env.REVENUECAT_SECRET_API_KEY.trim() : '';
+  return raw.length >= RC_MIN_KEY_LENGTH ? raw : null;
+}
+
+async function rcGet(url, key) {
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(RC_TIMEOUT_MS),
+  });
+  let body = null;
+  try { body = await r.json(); } catch { body = null; }
+  if (!r.ok) {
+    const err = new Error(`RevenueCat answered ${r.status}`);
+    err.status = r.status;
+    throw err;
+  }
+  return body;
+}
+
+function rcProblem(err) {
+  const s = err && err.status;
+  if (s === 401) return 'RevenueCat refused the key (401).';
+  if (s === 403) return 'The key is not allowed to read this (403).';
+  if (s === 429) return 'RevenueCat is rate limiting this key (429).';
+  if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) return 'RevenueCat did not answer in time.';
+  return s ? `RevenueCat answered ${s}.` : 'The RevenueCat read failed.';
+}
+
+function micros(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (/micros$/i.test(k) && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+const RC_V2_KEY_WORDS = 'The project-wide figures need a RevenueCat API v2 secret key that can read the project and its charts.';
+
+// WHICH PROJECT. REVENUECAT_PROJECT_ID names it when set. Unset, the hub uses
+// the one project the key can see, and refuses to pick when it can see more
+// than one: figures from somebody else's project under Flock's name would be
+// worse than no figures.
+async function rcProjectFor(key) {
+  const configured = plain(process.env.REVENUECAT_PROJECT_ID);
+  if (configured) return { id: configured, name: null };
+  const list = await rcGet(`${RC_V2}/projects?limit=5`, key);
+  const items = list && Array.isArray(list.items) ? list.items : [];
+  if (items.length === 0) return { problem: 'RevenueCat listed no project for this key.' };
+  if (items.length > 1) {
+    return {
+      problem: 'This key can read more than one RevenueCat project, so the hub will not guess which is Flock\'s. Set REVENUECAT_PROJECT_ID to its project id.',
+    };
+  }
+  return { id: String(items[0].id), name: typeof items[0].name === 'string' ? items[0].name.slice(0, 80) : null };
+}
+
+async function readRcOverview(key, month) {
+  let project;
+  try {
+    project = await rcProjectFor(key);
+  } catch (err) {
+    const refused = err && (err.status === 401 || err.status === 403);
+    return { status: refused ? 'refused' : 'error', reason: `${rcProblem(err)} ${RC_V2_KEY_WORDS}` };
+  }
+  if (project.problem) return { status: 'error', reason: project.problem };
+  const base = `${RC_V2}/projects/${encodeURIComponent(String(project.id))}`;
+
+  let metrics = null;
+  let metricsReason = null;
+  let metricsRefused = false;
+  try {
+    const o = await rcGet(`${base}/metrics/overview?currency=USD`, key);
+    metrics = (o && Array.isArray(o.metrics) ? o.metrics : []).slice(0, 12).map((m) => ({
+      id: String(m.id || ''),
+      name: String(m.name || m.id || ''),
+      value: Number.isFinite(m.value) ? m.value : null,
+      unit: typeof m.unit === 'string' ? m.unit : null,
+      period: typeof m.period === 'string' ? m.period : null,
+    }));
+  } catch (err) {
+    metricsRefused = !!err && (err.status === 401 || err.status === 403);
+    metricsReason = metricsRefused ? `${rcProblem(err)} ${RC_V2_KEY_WORDS}` : rcProblem(err);
+  }
+
+  let monthRevenueUsd = null;
+  try {
+    const r = await rcGet(`${base}/metrics/revenue?start_date=${month.startYmd}&end_date=${month.todayYmd}&currency=USD&revenue_type=revenue`, key);
+    if (r && Number.isFinite(r.value)) monthRevenueUsd = r.value;
+  } catch { /* optional: the overview still stands without it */ }
+
+  // Products (with the App Store price RevenueCat holds, when it holds one)
+  // and the current offering's packages, for the pricing panel.
+  let products = null;
+  try {
+    let body;
+    try {
+      body = await rcGet(`${base}/products?limit=50&expand=items.app&expand=items.indicative_price`, key);
+    } catch (err) {
+      if (err && err.status === 400) body = await rcGet(`${base}/products?limit=50`, key);
+      else throw err;
+    }
+    products = (body && Array.isArray(body.items) ? body.items : []).map((p) => {
+      const ip = p.indicative_price || null;
+      const m = micros(ip);
+      return {
+        id: String(p.id || ''),
+        storeIdentifier: p.store_identifier || null,
+        store: p.app && p.app.type ? String(p.app.type) : null,
+        duration: p.subscription && p.subscription.duration ? p.subscription.duration : null,
+        trialDuration: p.subscription && p.subscription.trial_duration ? p.subscription.trial_duration : null,
+        state: p.state || null,
+        indicativeCents: Number.isFinite(m) ? Math.round(m / 10000) : null,
+        indicativeCurrency: ip && ip.currency ? String(ip.currency).toUpperCase() : null,
+      };
+    });
+  } catch { products = null; }
+
+  // Without the product list a package's products are bare ids, and checking
+  // them would report every package as wrong. Say it could not be checked.
+  let offering = products === null
+    ? { status: 'error', reason: 'RevenueCat would not list the products for this key, so the offering could not be checked.' }
+    : null;
+  if (offering === null) {
+    try {
+      const list = await rcGet(`${base}/offerings?limit=20`, key);
+      const items = list && Array.isArray(list.items) ? list.items : [];
+      const current = items.find((o) => o && o.is_current) || null;
+      if (!current) {
+        offering = { status: 'ok', identifier: null, packages: [] };
+      } else {
+        const pk = await rcGet(`${base}/offerings/${encodeURIComponent(String(current.id))}/packages?limit=20`, key);
+        const byId = new Map(products.map((p) => [p.id, p]));
+        const packages = (pk && Array.isArray(pk.items) ? pk.items : []).map((p) => {
+          const assoc = p.products && Array.isArray(p.products.items) ? p.products.items : [];
+          return {
+            lookupKey: p.lookup_key || null,
+            products: assoc.map((a) => {
+              const id = a && a.product && typeof a.product === 'object' ? a.product.id : a && a.product_id;
+              const prod = byId.get(String(id)) || (a && a.product && typeof a.product === 'object' ? {
+                id: String(a.product.id),
+                storeIdentifier: a.product.store_identifier || null,
+                store: null,
+                duration: a.product.subscription ? a.product.subscription.duration : null,
+              } : null);
+              return prod
+                ? { storeIdentifier: prod.storeIdentifier, store: prod.store, duration: prod.duration }
+                : { storeIdentifier: null, store: null, duration: null };
+            }),
+          };
+        });
+        offering = { status: 'ok', identifier: current.lookup_key || null, packages };
+      }
+    } catch (err) {
+      offering = { status: 'error', reason: rcProblem(err) };
+    }
+  }
+
+  return {
+    status: metrics ? 'ok' : (metricsRefused ? 'refused' : 'error'),
+    reason: metrics ? null : metricsReason,
+    projectName: project.name,
+    metrics: metrics || [],
+    monthRevenueUsd,
+    products,
+    offering,
+  };
+}
+
+function storeBucket(store) {
+  const s = String(store || '').toLowerCase();
+  if (s === 'app_store' || s === 'mac_app_store') return 'app_store';
+  if (s === 'stripe' || s === 'promotional' || s === 'play_store' || s === 'rc_billing') return s;
+  return 'other';
+}
+
+function planOfProduct(productId, s) {
+  if (has(APP_STORE_PRODUCTS, productId)) return APP_STORE_PRODUCTS[productId].plan;
+  if (/year|annual/i.test(productId)) return 'yearly';
+  if (/month/i.test(productId)) return 'monthly';
+  const start = s && s.purchase_date ? Date.parse(s.purchase_date) : NaN;
+  const end = s && s.expires_date ? Date.parse(s.expires_date) : NaN;
+  if (Number.isFinite(start) && Number.isFinite(end) && s.period_type !== 'trial') {
+    const days = (end - start) / 86400000;
+    if (days >= 300) return 'yearly';
+    if (days >= 25 && days <= 35) return 'monthly';
+  }
+  return 'other';
+}
+
+function emptyStoreTally() {
+  const plan = () => ({ live: 0, trialing: 0 });
+  return {
+    live: 0,
+    trialing: 0,
+    unpriced: 0,
+    mrrCents: 0,
+    monthChargedCents: 0,
+    byPlan: { monthly: plan(), yearly: plan(), other: plan() },
+  };
+}
+
+// Tally every Pro account's live subscriptions by store, from RevenueCat's
+// record of each one. Only the counts and sums leave this function.
+function tallySubscribers(bodies, { month, nowMs }) {
+  const stores = {};
+  const tally = (name) => { if (!stores[name]) stores[name] = emptyStoreTally(); return stores[name]; };
+  let sandbox = 0;
+  let premiumWithNothingLive = 0;
+  const appStorePrices = {};
+  for (const body of bodies) {
+    const subs = body && body.subscriber && body.subscriber.subscriptions && typeof body.subscriber.subscriptions === 'object'
+      ? body.subscriber.subscriptions : {};
+    let anyLive = false;
+    for (const [productId, s] of Object.entries(subs)) {
+      if (!s || typeof s !== 'object' || s.refunded_at) continue;
+      const exp = s.expires_date ? Date.parse(s.expires_date) : null;
+      const grace = s.grace_period_expires_date ? Date.parse(s.grace_period_expires_date) : null;
+      const live = s.expires_date === null || s.expires_date === undefined
+        || (Number.isFinite(exp) && exp > nowMs) || (Number.isFinite(grace) && grace > nowMs);
+      if (!live) continue;
+      anyLive = true;
+      if (s.is_sandbox === true) { sandbox += 1; continue; }
+      const store = storeBucket(s.store);
+      const t = tally(store);
+      const plan = planOfProduct(productId, s);
+      const trial = s.period_type === 'trial';
+      if (trial) { t.trialing += 1; t.byPlan[plan].trialing += 1; continue; }
+      t.live += 1;
+      t.byPlan[plan].live += 1;
+      // Number(null) is 0, so an absent amount has to be refused before it
+      // is read as a purchase that cost nothing.
+      const rawAmount = s.price ? s.price.amount : null;
+      const amount = rawAmount !== null && rawAmount !== undefined && rawAmount !== '' && Number.isFinite(Number(rawAmount))
+        ? Number(rawAmount) : null;
+      const currency = s.price && s.price.currency ? String(s.price.currency).toUpperCase() : null;
+      if (amount === null || currency !== 'USD') { t.unpriced += 1; continue; }
+      const cents = Math.round(amount * 100);
+      t.mrrCents += plan === 'yearly' ? cents / 12 : cents;
+      const boughtMs = s.purchase_date ? Date.parse(s.purchase_date) : NaN;
+      const bought = Number.isFinite(boughtMs) ? ymdIn(HUB_TZ, new Date(boughtMs)) : null;
+      if (inMonth(bought, month)) t.monthChargedCents += cents;
+      // THE PRICE AN APP STORE PRODUCT CHARGES, from full-price periods only:
+      // an introductory offer is a different price on purpose. The newest
+      // purchase is the one kept, and every distinct live price is kept too,
+      // because two subscribers paying different amounts for one product is
+      // itself a finding.
+      if (store === 'app_store' && (!s.period_type || s.period_type === 'normal')) {
+        const seen = appStorePrices[productId] || { amountCents: null, currency, purchasedAtMs: -Infinity, amounts: new Set() };
+        seen.amounts.add(cents);
+        const at = Number.isFinite(boughtMs) ? boughtMs : -Infinity;
+        if (seen.amountCents === null || at >= seen.purchasedAtMs) {
+          seen.amountCents = cents;
+          seen.purchasedAtMs = at;
+        }
+        appStorePrices[productId] = seen;
+      }
+    }
+    if (!anyLive) premiumWithNothingLive += 1;
+  }
+  for (const t of Object.values(stores)) t.mrrCents = Math.round(t.mrrCents);
+  const prices = {};
+  for (const [productId, seen] of Object.entries(appStorePrices)) {
+    prices[productId] = {
+      amountCents: seen.amountCents,
+      currency: seen.currency,
+      purchasedAt: Number.isFinite(seen.purchasedAtMs) ? new Date(seen.purchasedAtMs).toISOString() : null,
+      distinctAmountsCents: [...seen.amounts].sort((a, b) => a - b),
+    };
+  }
+  return { stores, sandbox, premiumWithNothingLive, appStorePrices: prices };
+}
+
+async function readRcSubscribers(key, premiumIds, month) {
+  if (premiumIds.length === 0) {
+    return { status: 'ok', checked: 0, failed: 0, ...tallySubscribers([], { month, nowMs: Date.now() }) };
+  }
+  const results = await mapLimit(premiumIds, RC_CONCURRENCY, async (id) => {
+    try {
+      return { ok: true, body: await rcGet(`${RC_V1}/subscribers/${encodeURIComponent(String(id))}`, key) };
+    } catch (err) {
+      return { ok: false, err };
+    }
+  });
+  const ok = results.filter((r) => r.ok).map((r) => r.body);
+  const failed = results.filter((r) => !r.ok);
+  if (ok.length === 0) {
+    return { status: 'error', reason: rcProblem(failed[0] && failed[0].err), checked: 0, failed: failed.length };
+  }
+  return { status: 'ok', checked: ok.length, failed: failed.length, ...tallySubscribers(ok, { month, nowMs: Date.now() }) };
+}
+
+async function readRevenueCat(month, premiumIds) {
+  const key = rcKey();
+  if (!key) {
+    return { status: 'not_connected', reason: 'REVENUECAT_SECRET_API_KEY is not set on the server, so nothing here can read RevenueCat.' };
+  }
+  const [overview, subscribers] = await Promise.all([
+    readRcOverview(key, month).catch((err) => ({ status: 'error', reason: rcProblem(err) })),
+    readRcSubscribers(key, premiumIds, month).catch((err) => ({ status: 'error', reason: rcProblem(err) })),
+  ]);
+  return {
+    status: overview.status === 'ok' || subscribers.status === 'ok' ? 'ok' : 'error',
+    reason: overview.status === 'ok' || subscribers.status === 'ok' ? null : (subscribers.reason || overview.reason),
+    asOf: new Date().toISOString(),
+    overview,
+    subscribers,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PRICING: what Stripe and RevenueCat will charge, beside what the code says
+// ---------------------------------------------------------------------------
+
+const money = (cents, currency = 'USD') => {
+  if (!Number.isFinite(cents)) return 'no amount';
+  const dollars = (cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+  return currency === 'USD' ? `$${dollars}` : `${dollars} ${currency}`;
+};
+
+const PER = { month: 'a month', year: 'a year', week: 'a week', day: 'a day' };
+const planWords = (plan) => (plan === 'founding' ? 'founding monthly' : plan);
+
+function buildPricing({ stripe, revenuecat, venuePriceUsd }) {
+  const stripeOk = stripe && stripe.status === 'ok' && stripe.prices && stripe.prices.status === 'ok';
+  const envByRole = new Map();
+  if (stripeOk) for (const e of stripe.prices.envs) envByRole.set(`${e.product}/${e.plan}`, e);
+
+  const stated = STATED_PRICES.map((s) => {
+    const usd = s.runtime === 'VENUE_PRICE_USD' && Number.isFinite(venuePriceUsd) ? venuePriceUsd : s.usd;
+    const statedCents = Math.round(usd * 100);
+    const label = PRODUCT_LABEL[s.product] || s.product;
+    const base = {
+      id: s.id, product: s.product, productLabel: label, plan: s.plan, statedCents, file: s.file, what: s.what, kind: s.kind,
+    };
+    const envName = PRICE_ENV[s.product] && PRICE_ENV[s.product][s.plan];
+    if (!envName) {
+      return { ...base, verdict: 'unsold', words: `${s.file} states ${money(statedCents)} ${PER[PLAN_INTERVAL[s.plan]] || ''} for ${label}, and nothing in Stripe sells it.` };
+    }
+    if (!stripe || stripe.status !== 'ok') {
+      return { ...base, verdict: 'unchecked', words: 'Stripe is not connected, so this price cannot be checked.' };
+    }
+    if (!stripeOk) {
+      return { ...base, verdict: 'unchecked', words: `Stripe's prices could not be read: ${stripe.prices ? stripe.prices.reason : 'no answer'}` };
+    }
+    const e = envByRole.get(`${s.product}/${s.plan}`);
+    if (!e || !e.set) {
+      return { ...base, verdict: 'unset', env: envName, words: `${envName} is not set, so there is no Stripe price to compare with the ${money(statedCents)} in ${s.file}.` };
+    }
+    if (!e.found || !e.price) {
+      return { ...base, verdict: 'missing', env: envName, words: `${envName} names ${e.id}. ${e.reason || 'Stripe has no price with that id.'}` };
+    }
+    const p = e.price;
+    const want = PLAN_INTERVAL[s.plan];
+    const problems = [];
+    if (p.active === false) problems.push(`the price ${p.id} is archived in Stripe, so checkout cannot use it`);
+    if (p.currency !== 'USD') problems.push(`Stripe charges in ${p.currency}`);
+    if (p.interval !== want || (p.intervalCount && p.intervalCount !== 1)) {
+      problems.push(`Stripe bills it every ${p.intervalCount && p.intervalCount !== 1 ? `${p.intervalCount} ` : ''}${p.interval || 'once'}, not every ${want}`);
+    }
+    if (p.unitAmountCents !== statedCents) {
+      problems.push(`Stripe charges ${money(p.unitAmountCents, p.currency || 'USD')} and ${s.file} says ${money(statedCents)}`);
+    }
+    if (problems.length === 0) {
+      return { ...base, verdict: 'match', env: envName, liveCents: p.unitAmountCents, priceId: p.id, words: `Matches Stripe (${envName}).` };
+    }
+    const sentence = problems.join('; ');
+    return {
+      ...base,
+      verdict: 'mismatch',
+      env: envName,
+      liveCents: p.unitAmountCents,
+      priceId: p.id,
+      words: `${label} ${planWords(s.plan)}: ${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`,
+    };
+  });
+
+  // The code against itself: two places stating different amounts for the
+  // same thing is a discrepancy whether or not Stripe can be read.
+  const internal = [];
+  const byRole = new Map();
+  for (const s of stated) {
+    const k = `${s.product}/${s.plan}`;
+    if (!byRole.has(k)) byRole.set(k, []);
+    byRole.get(k).push(s);
+  }
+  for (const [, group] of byRole) {
+    const amounts = [...new Set(group.map((g) => g.statedCents))];
+    if (amounts.length > 1) {
+      internal.push({
+        product: group[0].product,
+        plan: group[0].plan,
+        words: `The code disagrees with itself about ${group[0].productLabel} ${planWords(group[0].plan)}: ${group.map((g) => `${g.file} says ${money(g.statedCents)}`).join(', ')}.`,
+      });
+    }
+  }
+
+  // Live Stripe prices nothing in the app points at: a price a customer could
+  // be on that no plan here knows about.
+  const unreferenced = stripeOk
+    ? stripe.prices.live.filter((p) => !p.env).map((p) => ({
+      id: p.id,
+      productName: p.productName,
+      unitAmountCents: p.unitAmountCents,
+      currency: p.currency,
+      interval: p.interval,
+      lookupKey: p.lookupKey,
+    }))
+    : [];
+
+  // The App Store side. RevenueCat's API does not always carry Apple's list
+  // price, so each line says where its number came from.
+  const rcOk = revenuecat && revenuecat.status === 'ok';
+  const products = rcOk && revenuecat.overview && Array.isArray(revenuecat.overview.products) ? revenuecat.overview.products : [];
+  const charged = rcOk && revenuecat.subscribers && revenuecat.subscribers.status === 'ok'
+    ? revenuecat.subscribers.appStorePrices || {} : {};
+  const appStore = Object.entries(APP_STORE_PRODUCTS).map(([productId, meta]) => {
+    const statedEntry = STATED_PRICES.find((s) => s.product === 'pro' && s.plan === meta.plan);
+    const statedCents = statedEntry ? Math.round(statedEntry.usd * 100) : null;
+    const product = products.find((p) => p.storeIdentifier === productId && (p.store === null || p.store === 'app_store')) || null;
+    const listCents = product && Number.isFinite(product.indicativeCents) && product.indicativeCurrency === 'USD' ? product.indicativeCents : null;
+    const chargedEntry = has(charged, productId) ? charged[productId] : null;
+    const lastCharged = chargedEntry ? chargedEntry.amountCents : null;
+    const liveAmounts = chargedEntry && Array.isArray(chargedEntry.distinctAmountsCents) ? chargedEntry.distinctAmountsCents : [];
+    const seen = listCents !== null ? listCents : lastCharged;
+    let verdict = 'unchecked';
+    let words;
+    if (!rcOk) {
+      words = revenuecat && revenuecat.status === 'not_connected'
+        ? 'RevenueCat is not connected, so the App Store price cannot be read here.'
+        : 'RevenueCat could not be read, so the App Store price cannot be checked.';
+    } else if (liveAmounts.length > 1) {
+      verdict = 'mismatch';
+      words = `Live App Store subscribers of ${productId} pay different full prices: ${liveAmounts.map((c) => money(c)).join(', ')}. The newest purchase charged ${money(lastCharged)}, and PAYWALL.md says ${money(statedCents)}.`;
+    } else if (seen === null) {
+      words = 'Apple sets this price in App Store Connect, RevenueCat reported none, and no live App Store purchase carries one yet.';
+    } else if (seen === statedCents) {
+      verdict = 'match';
+      words = listCents !== null ? 'RevenueCat reports the same App Store price.' : 'The newest App Store purchase charged the same price.';
+    } else {
+      verdict = 'mismatch';
+      words = listCents !== null
+        ? `RevenueCat reports an App Store price of ${money(seen)} for ${productId}, and PAYWALL.md says ${money(statedCents)}.`
+        : `The newest App Store purchase of ${productId} charged ${money(seen)}, and PAYWALL.md says ${money(statedCents)}.`;
+    }
+    return { productId, plan: meta.plan, statedCents, listCents, lastChargedCents: lastCharged, verdict, words };
+  });
+
+  // The offering the app sells from: each package should carry the App Store
+  // product meant for it, at the length its name promises.
+  let offering = { status: rcOk ? 'unchecked' : 'unavailable', identifier: null, findings: [] };
+  const off = rcOk && revenuecat.overview ? revenuecat.overview.offering : null;
+  if (off && off.status === 'ok') {
+    const findings = [];
+    for (const [productId, meta] of Object.entries(APP_STORE_PRODUCTS)) {
+      const pkg = (off.packages || []).find((p) => p.lookupKey === meta.packageKey);
+      if (!pkg) {
+        findings.push({ ok: false, words: `The current offering has no ${meta.packageKey} package, so the paywall cannot show the ${meta.plan} plan.` });
+        continue;
+      }
+      const hit = (pkg.products || []).find((p) => p.storeIdentifier === productId);
+      if (!hit) {
+        findings.push({ ok: false, words: `${meta.packageKey} does not carry ${productId}.` });
+      } else if (hit.duration && hit.duration !== meta.duration) {
+        findings.push({ ok: false, words: `${productId} in ${meta.packageKey} lasts ${hit.duration}, not ${meta.duration}.` });
+      } else {
+        findings.push({ ok: true, words: `${meta.packageKey} carries ${productId}.` });
+      }
+    }
+    offering = { status: 'ok', identifier: off.identifier, findings };
+  } else if (off && off.status === 'error') {
+    offering = { status: 'error', identifier: null, findings: [], reason: off.reason };
+  } else if (rcOk && revenuecat.overview && revenuecat.overview.status !== 'ok') {
+    offering = { status: 'unavailable', identifier: null, findings: [], reason: revenuecat.overview.reason };
+  }
+
+  const mismatches = stated.filter((s) => s.verdict === 'mismatch' || s.verdict === 'missing').length
+    + internal.length
+    + appStore.filter((a) => a.verdict === 'mismatch').length
+    + (offering.findings || []).filter((f) => !f.ok).length;
+
+  return {
+    stated,
+    internal,
+    unreferenced,
+    appStore,
+    offering,
+    mismatches,
+    paywallNote: 'The paywall reads its prices from the store at run time: from Stripe on the web, and from the App Store through RevenueCat in the iOS app. No Pro price is typed into it.',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HEALTH
+// ---------------------------------------------------------------------------
+
+async function readHealth(db = pool, now = new Date()) {
+  let collector;
+  try {
+    const latest = await db.query(
+      `SELECT collected_at FROM ml_training_data
+        WHERE collection_mode = 'realtime'
+        ORDER BY collected_at DESC
+        LIMIT 1`
+    );
+    const window = await db.query(
+      `SELECT COUNT(*)::int AS n,
+              COUNT(DISTINCT date_trunc('hour', collected_at))::int AS hours
+         FROM ml_training_data
+        WHERE collection_mode = 'realtime'
+          AND collected_at > NOW() - INTERVAL '24 hours'`
+    );
+    const alert = await db.query(
+      `SELECT MAX(sent_on)::text AS last FROM ops_alert_ledger WHERE alert_key = 'collection_heartbeat'`
+    );
+    const at = latest.rows[0] && latest.rows[0].collected_at ? new Date(latest.rows[0].collected_at) : null;
+    const minutes = at ? Math.max(0, Math.round((now.getTime() - at.getTime()) / 60000)) : null;
+    const state = minutes === null
+      ? 'stopped'
+      : minutes <= COLLECTOR_LATE_MINUTES ? 'fresh' : minutes <= COLLECTOR_STOPPED_HOURS * 60 ? 'late' : 'stopped';
+    collector = {
+      status: 'ok',
+      state,
+      latestAt: at ? at.toISOString() : null,
+      minutesSinceLatest: minutes,
+      rows24h: Number(window.rows[0] && window.rows[0].n) || 0,
+      hours24h: Number(window.rows[0] && window.rows[0].hours) || 0,
+      lastAlertOn: alert.rows[0] && alert.rows[0].last ? String(alert.rows[0].last).slice(0, 10) : null,
+      lateAfterMinutes: COLLECTOR_LATE_MINUTES,
+    };
+  } catch (err) {
+    collector = { status: 'error', reason: 'The collector tables could not be read.' };
+    console.error('[money] collector read failed:', err && err.message ? err.message : err);
+  }
+  return {
+    collector,
+    // Nothing in this database records a backup or a restore point. Saying so
+    // is the whole block: a status here would be invented.
+    backups: { recorded: false },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// NET AND BREAK-EVEN
+// ---------------------------------------------------------------------------
+
+// WHY A FIGURE IS MISSING, in codes the screen turns into words:
+//   stripe             Stripe was not read: no key, or it did not answer
+//   stripe_partial     Stripe answered with more entries than the hub pages
+//                      through, and a missing page can move a total either way
+//   app_store          RevenueCat was not read
+//   app_store_partial  RevenueCat answered for some Pro accounts and not for
+//                      others, or there were more Pro accounts than it is asked
+//                      about
+//   expenses           the expense list could not be read
+// A figure with a source missing is null, never a smaller number that looks
+// whole. The one exception is revenueThisMonthCents, which carries Stripe alone
+// when only the App Store is missing, because the screen says so beside it.
+function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreComplete = null, pricing }) {
+  const stripeOk = stripe && stripe.status === 'ok';
+  const balance = stripeOk && stripe.balance && stripe.balance.status === 'ok' ? stripe.balance : null;
+  const subs = stripeOk && stripe.subscriptions && stripe.subscriptions.status === 'ok' ? stripe.subscriptions : null;
+  const rcSubs = revenuecat && revenuecat.status === 'ok' && revenuecat.subscribers && revenuecat.subscribers.status === 'ok'
+    ? revenuecat.subscribers : null;
+  const appComplete = rcSubs !== null
+    && (appStoreComplete === null ? !(rcSubs.failed > 0) : appStoreComplete === true);
+  const appStore = rcSubs && rcSubs.stores ? rcSubs.stores.app_store || null : null;
+  const keep = (1 - APPLE_COMMISSION_PCT / 100);
+
+  const balanceGap = !balance ? 'stripe' : (balance.truncated ? 'stripe_partial' : null);
+  const subsGap = !subs ? 'stripe' : (subs.truncated ? 'stripe_partial' : null);
+  const appGap = rcSubs === null ? 'app_store' : (appComplete ? null : 'app_store_partial');
+  const costGap = costsComplete ? null : 'expenses';
+  const gaps = (...list) => [...new Set(list.filter(Boolean))];
+
+  const stripeNetCents = balanceGap ? null : balance.netCents;
+  const appStoreNetCents = appGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);
+  const revenueCents = stripeNetCents === null ? null : stripeNetCents + (appStoreNetCents || 0);
+  const missing = gaps(balanceGap, appGap);
+
+  const costsThisMonthCents = costGap ? null : costs.totals.thisMonthCents;
+  const burnCents = costGap ? null : costs.totals.perMonthCents;
+
+  const recurringMissing = gaps(subsGap, appGap);
+  const recurringCents = recurringMissing.length > 0
+    ? null
+    : subs.pro.mrrNetCents + subs.roost.mrrNetCents + subs.other.mrrNetCents
+      + Math.round((appStore ? appStore.mrrCents : 0) * keep);
+
+  // The price a break-even is worked from: Stripe's, when Stripe answered,
+  // otherwise the price the code states, and the payload says which.
+  const priceFor = (product, plan) => {
+    const live = (pricing.stated || []).find((s) => s.product === product && s.plan === plan && Number.isFinite(s.liveCents));
+    if (live) return { cents: live.liveCents, source: 'stripe' };
+    const stated = STATED_PRICES.find((s) => s.product === product && s.plan === plan);
+    return stated ? { cents: Math.round(stated.usd * 100), source: 'stated' } : null;
+  };
+  // No burn, no break-even: a count worked from a partial burn would be a
+  // smaller number that looks whole.
+  const need = (netPerUnit) => (burnCents !== null && netPerUnit > 0 ? Math.ceil(burnCents / netPerUnit) : null);
+  const proPrice = priceFor('pro', 'monthly');
+  const roostPrice = priceFor('roost', 'monthly');
+  const proWebNet = proPrice ? stripeNetMonthlyCents(proPrice.cents, { interval: 'month', interval_count: 1 }) : null;
+  const proAppNet = proPrice ? proPrice.cents * keep : null;
+  const roostNet = roostPrice ? stripeNetMonthlyCents(roostPrice.cents, { interval: 'month', interval_count: 1 }) : null;
+
+  // Paying Pro subscribers live in two stores, so the count needs both.
+  const payingProMissing = gaps(subsGap, appGap);
+  const payingRoostMissing = gaps(subsGap);
+
+  return {
+    revenueThisMonthCents: revenueCents,
+    revenueParts: { stripeNetCents, appStoreNetCents },
+    revenueMissing: missing,
+    costsThisMonthCents,
+    costsMissing: gaps(costGap),
+    netThisMonthCents: revenueCents === null || costsThisMonthCents === null ? null : revenueCents - costsThisMonthCents,
+    netMissing: gaps(...missing, costGap),
+    burnCents,
+    recurringNetCents: recurringCents,
+    recurringMissing,
+    netBurnCents: recurringCents === null || burnCents === null ? null : burnCents - recurringCents,
+    netBurnMissing: gaps(...recurringMissing, costGap),
+    appleCommissionPct: APPLE_COMMISSION_PCT,
+    breakEven: {
+      proWeb: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, netPerUnitCents: Math.round(proWebNet), needed: need(proWebNet) } : null,
+      proAppStore: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, netPerUnitCents: Math.round(proAppNet), needed: need(proAppNet) } : null,
+      roost: roostPrice ? { priceCents: roostPrice.cents, source: roostPrice.source, netPerUnitCents: Math.round(roostNet), needed: need(roostNet) } : null,
+      burnMissing: gaps(costGap),
+      payingPro: payingProMissing.length > 0 ? null : subs.pro.live - subs.pro.freeViaCode + (appStore ? appStore.live : 0),
+      payingProMissing,
+      payingRoost: payingRoostMissing.length > 0 ? null : subs.roost.live - subs.roost.freeViaCode,
+      payingRoostMissing,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE HUB
+// ---------------------------------------------------------------------------
+
+async function buildMoneyHub({ db = pool, venuePriceUsd = null, force = false, now = new Date() } = {}) {
+  const today = ymdIn(HUB_TZ, now);
+  const month = monthOf(today);
+
+  const safe = async (fn, label) => {
+    try {
+      return { ok: true, value: await fn() };
+    } catch (err) {
+      console.error(`[money] ${label} read failed:`, err && err.message ? err.message : err);
+      return { ok: false };
+    }
+  };
+
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health] = await Promise.all([
+    safe(() => readExpenses(db), 'expenses'),
+    costModel.readReconciled(db),
+    safe(async () => {
+      const r = await db.query(
+        `SELECT id FROM users WHERE is_premium = true ORDER BY id LIMIT ${RC_SUBSCRIBER_CAP + 1}`
+      );
+      const c = await db.query(`SELECT COUNT(*)::int AS n FROM users WHERE is_premium = true`);
+      return { ids: (r.rows || []).map((x) => Number(x.id)), total: Number(c.rows[0] && c.rows[0].n) || 0 };
+    }, 'premium accounts'),
+    safe(async () => {
+      const r = await db.query(
+        `SELECT COUNT(*)::int AS n FROM venue_subscriptions
+          WHERE granted_reason = 'paid'
+            AND status IN ('active', 'trialing', 'past_due')
+            AND (expires_at IS NULL OR expires_at > NOW())`
+      );
+      return Number(r.rows[0] && r.rows[0].n) || 0;
+    }, 'paying venues'),
+    safe(() => require('./photoStore').photoSpendStatus(), 'photo ledger'),
+    readHealth(db, now),
+  ]);
+
+  const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
+  // More Pro accounts than RevenueCat is asked about means the App Store tally
+  // is a partial one, and nothing below may add it into a total as if whole.
+  const premiumCapped = premiumR.ok && premiumR.value.ids.length > RC_SUBSCRIBER_CAP;
+  const [stripeRaw, revenuecatRaw] = await Promise.all([
+    cachedRead(stripeCacheKey(month), () => readStripe(month), { force }),
+    premiumR.ok
+      ? cachedRead(revenueCatCacheKey(month, premiumIds), () => readRevenueCat(month, premiumIds), { force })
+      : Promise.resolve({ status: 'error', reason: 'The Pro accounts could not be read from the database, so RevenueCat was not asked.' }),
+  ]);
+
+  // Whether the App Store tally covers every Pro account: every read answered
+  // and none was left off the list. A copy, so the cached answer is untouched.
+  let revenuecat = revenuecatRaw;
+  if (revenuecatRaw && revenuecatRaw.subscribers && revenuecatRaw.subscribers.status === 'ok') {
+    const s = revenuecatRaw.subscribers;
+    revenuecat = { ...revenuecatRaw, subscribers: { ...s, capped: premiumCapped, complete: !(s.failed > 0) && !premiumCapped } };
+  }
+
+  // The web subscribers' account ids stay on the server: only the overlap
+  // with the database's Pro accounts goes out, as a count.
+  const stripe = { ...stripeRaw };
+  let webProInDatabase = null;
+  if (stripe.subscriptions && stripe.subscriptions._webProAccounts) {
+    const web = stripe.subscriptions._webProAccounts;
+    if (premiumR.ok && premiumR.value.ids.length <= RC_SUBSCRIBER_CAP) {
+      webProInDatabase = premiumR.value.ids.filter((id) => web.has(id)).length;
+    }
+    const subs = { ...stripe.subscriptions };
+    delete subs._webProAccounts;
+    stripe.subscriptions = subs;
+  }
+
+  const expenses = expensesR.ok ? expensesR.value : [];
+  const costs = buildCostPicture({ expenses, reconciled, month });
+  const pricing = buildPricing({ stripe, revenuecat, venuePriceUsd });
+  // A list that could not be read leaves the Costs card showing what could be
+  // read, labelled, and leaves every net figure null: a total missing the
+  // tooling and company bills would read as the real one.
+  const net = buildNet({
+    stripe,
+    revenuecat,
+    costs,
+    costsComplete: expensesR.ok,
+    appStoreComplete: !!(revenuecat && revenuecat.subscribers && revenuecat.subscribers.complete === true),
+    pricing,
+  });
+  const { boolFlag } = require('./entitlements');
+
+  return {
+    generatedAt: new Date().toISOString(),
+    month: { label: month.label, startYmd: month.startYmd, todayYmd: month.todayYmd, daysInMonth: month.daysInMonth, dayOfMonth: month.dayOfMonth, tz: HUB_TZ },
+    cache: { ttlSeconds: EXTERNAL_TTL_MS / 1000, minRefreshSeconds: MIN_FORCE_REFRESH_MS / 1000 },
+    revenue: {
+      stripe,
+      revenuecat,
+      database: {
+        status: premiumR.ok ? 'ok' : 'error',
+        proAccounts: premiumR.ok ? premiumR.value.total : null,
+        proAccountsCheckedWithRevenueCat: premiumIds.length,
+        proAccountsWithWebSubscription: webProInDatabase,
+        payingVenues: venuesR.ok ? venuesR.value : null,
+      },
+      flags: {
+        paywallEnabled: boolFlag('PAYWALL_ENABLED'),
+        venueBillingEnabled: boolFlag('VENUE_BILLING_ENABLED'),
+        proWebCheckoutEnabled: boolFlag('PRO_WEB_CHECKOUT_ENABLED'),
+      },
+    },
+    costs: {
+      status: expensesR.ok ? 'ok' : 'error',
+      reason: expensesR.ok ? null : 'The expense list could not be read, so only the code lines and the reconciled invoice are counted.',
+      ...costs,
+      reconciledReadError: reconciled && reconciled.readError ? 'The saved invoice figure could not be read; the code figure stands in.' : null,
+      googleMeteredThisMonth: photoR.ok && photoR.value ? {
+        photosBought: Number.isFinite(photoR.value.monthUsed) ? photoR.value.monthUsed : null,
+        photosUsd: Number.isFinite(photoR.value.monthUsd) ? photoR.value.monthUsd : null,
+      } : null,
+    },
+    expenses: {
+      status: expensesR.ok ? 'ok' : 'error',
+      rows: expenses,
+      limit: EXPENSE_LIST_LIMIT,
+      kinds: EXPENSE_KINDS,
+      cadences: EXPENSE_CADENCES,
+      codeLines: codeLineOptions(),
+    },
+    net,
+    pricing,
+    health,
+  };
+}
+
+module.exports = {
+  buildMoneyHub,
+  buildCostPicture,
+  buildPricing,
+  buildNet,
+  costsLedger,
+  readExpenses,
+  readHealth,
+  importExpenses,
+  expenseFromRow,
+  expenseRowFromInput,
+  expenseParams,
+  normalizeExpenseAliases,
+  centsFromInput,
+  codeLineIds,
+  isYmd,
+  monthOf,
+  ymdIn,
+  EXPENSE_KINDS,
+  EXPENSE_CADENCES,
+  EXPENSE_LIST_LIMIT,
+  EXPENSE_INSERT_SQL,
+  EXPENSE_UPDATE_SQL,
+  HUB_TZ,
+  __test: {
+    resetCache: () => externalCache.clear(),
+    summarizeSubscriptions,
+    summarizeBalance,
+    summarizeInvoices,
+    subscriptionMonthly,
+    tallySubscribers,
+    nextChargeOn,
+    addMonthsYmd,
+    zonedMidnightMs,
+    stripeNetMonthlyCents,
+    readStripe,
+    readRevenueCat,
+    stripeCacheKey,
+    revenueCatCacheKey,
+    cacheKeys: () => [...externalCache.keys()],
+    EXTERNAL_TTL_MS,
+    MIN_FORCE_REFRESH_MS,
+    RC_SUBSCRIBER_CAP,
+    BALANCE_MAX_PAGES,
+    INVOICE_LOOKBACK_DAYS,
+    DISPUTE_MAX_PAGES,
+  },
+};
