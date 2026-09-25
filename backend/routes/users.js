@@ -3305,19 +3305,6 @@ async function deleteAccount(req, res) {
       // user's flock messages so no authored content is retained after deletion.
       await client.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]);
 
-      // Same rule for a venue owner's replies to reviews. The review belongs to
-      // the person who wrote it and stays, so the key from the reply to its
-      // author is SET NULL (migration 083); the reply is this account's words,
-      // and the privacy policy says everything on the venue listing goes, so
-      // the words are erased here rather than left unpublished in somebody
-      // else's row.
-      await client.query(
-        `UPDATE venue_reviews
-            SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL
-          WHERE venue_reply_user_id = $1`,
-        [req.user.id]
-      );
-
       // Round 16: a BAN has to outlive the account it was imposed on, or
       // deleting the account is a one-tap ban reset. Same transaction as the
       // evidence de-attribution above and for the same reason — the account
@@ -3347,6 +3334,31 @@ async function deleteAccount(req, res) {
       if (wasBanned) {
         tombstoned = await recordBannedIdentity(client, banState);
       }
+
+      // Same rule as the messages for a venue owner's replies to reviews, run
+      // under the lock above and not before it. The review belongs to the
+      // person who wrote it and stays, so the key from the reply to its author
+      // is SET NULL (migration 083); the reply is this account's words, and
+      // the privacy policy says everything on the venue listing goes, so the
+      // words are erased here rather than left unpublished in somebody else's
+      // row.
+      //
+      // The erase reaches only rows that already name this account. While the
+      // account row was unlocked, a reply to any other review could commit
+      // between the erase and the DELETE below (its foreign key check needs
+      // only a key-share lock on this row), and the DELETE's SET NULL then
+      // emptied its author and kept the words. Now that reply waits on the lock
+      // and fails once the account is gone, and one that committed first is
+      // erased with the rest. No new deadlock with the reply route: it takes
+      // this row only when a reply's author becomes this account, and the
+      // erase waits only on reviews whose author already is. The plan locks
+      // still come first (ACCOUNT_FLOCK_LOCKS_SQL).
+      await client.query(
+        `UPDATE venue_reviews
+            SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL
+          WHERE venue_reply_user_id = $1`,
+        [req.user.id]
+      );
 
       const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [req.user.id]);
       deleted = result.rows.length > 0;

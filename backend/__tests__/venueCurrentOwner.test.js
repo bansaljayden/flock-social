@@ -25,6 +25,10 @@
 //   5. an unverified co-claim read the venue's sensor hardware and whether it
 //      is online.
 //
+// And two things about who wrote a reply: 6. the replies migration 083 gave
+// out on the day it ran, decided again by 087, and 7. a reply sent while its
+// author's account is being deleted.
+//
 // These are properties of SQL (which rows a join keeps), so a scripted fake
 // cannot prove them: it answers whatever it was told to. The routes and
 // services run here unmodified against the real schema.
@@ -37,6 +41,7 @@ const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
@@ -49,6 +54,14 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'venue-current-owner-test-sec
 delete process.env.VENUE_BILLING_ENABLED;
 
 const PG_PORT = pickEmbeddedPgPort('venueCurrentOwner');
+const DB_NAME = 'flock_venue_owner_test';
+// Before config/database is required: its Pool reads these at require time,
+// and backend/.env points at the live database. The shared pool's query and
+// connect are also routed to the test database below, but this suite mounts
+// the account deletion route, so the pool must not be able to reach anything
+// else even through a path that skips them.
+process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/${DB_NAME}`;
+for (const k of ['PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT']) delete process.env[k];
 let pg;
 let testPool;
 let dataDir;
@@ -59,8 +72,10 @@ const realConnect = appPool.connect;
 const venueDashboardRoutes = require('../routes/venueDashboard');
 const checkinRoutes = require('../routes/checkin');
 const sensorRoutes = require('../routes/sensors');
+const userRoutes = require('../routes/users');
 const advisorFacts = require('../services/advisorFacts');
 const lastNightVerdict = require('../services/lastNightVerdict');
+const { migrate } = require('../db/migrate');
 
 let server;
 let base;
@@ -69,9 +84,8 @@ test.before(async () => {
   dataDir = path.join(os.tmpdir(), `flock-venueowner-pg-${Date.now()}`);
   pg = createEmbeddedPostgres(EmbeddedPostgres, { suite: 'venueCurrentOwner', port: PG_PORT, databaseDir: dataDir });
   await startEmbeddedPostgres(pg);
-  await pg.createDatabase('flock_venue_owner_test');
-  testPool = new Pool({ connectionString: `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_venue_owner_test` });
-  const { migrate } = require('../db/migrate');
+  await pg.createDatabase(DB_NAME);
+  testPool = new Pool({ connectionString: `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/${DB_NAME}` });
   await migrate(testPool);
   appPool.query = (text, params) => testPool.query(text, params);
   appPool.connect = () => testPool.connect();
@@ -82,6 +96,7 @@ test.before(async () => {
   app.use('/api/venue-dashboard', venueDashboardRoutes);
   app.use('/api/checkin', checkinRoutes);
   app.use('/api/sensors', sensorRoutes);
+  app.use('/api/users', userRoutes);
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -112,11 +127,38 @@ async function user(name, { banned = false } = {}) {
 }
 
 async function claim(userId, placeId, { verified, name = 'The Room' }) {
-  await testPool.query(
+  const { rows } = await testPool.query(
     `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified, created_at)
-     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days')`,
+     VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days') RETURNING id`,
     [userId, name, placeId, verified]
   );
+  return rows[0].id;
+}
+
+// The audit row PUT /api/admin/venues/:profileId/verify writes with each
+// decision, dated `ago` before now.
+async function audit(userId, profileId, action, ago) {
+  await testPool.query(
+    `INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, created_at)
+     VALUES (NULL, $1, $2, 'venue_profile', $3, NOW() - $4::interval)`,
+    [userId, action, profileId, ago]
+  );
+}
+
+// Backends in this database waiting on a lock right now, polled until one
+// matches. Interleavings below are made with row locks, never with timers.
+async function waitForWaiter(label, match) {
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    const { rows } = await testPool.query(
+      `SELECT pid, query FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`
+    );
+    const found = rows.find(match);
+    if (found) return found;
+    if (Date.now() > deadline) throw new Error(`${label} never blocked on a lock; waiting now: ${JSON.stringify(rows)}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 // Verification moving between accounts, the way PUT /api/admin/venues/:id/verify
@@ -390,4 +432,212 @@ test("an unverified claim on the venue does not read its sensor hardware; the ve
   assert.strictEqual(served.status, 200, served.text);
   assert.deepStrictEqual(served.body.devices.map((d) => d.device_id), ['sensor_current_owner_1']);
   assert.strictEqual(served.body.devices[0].online, true);
+});
+
+// ── 6. the replies 083 gave out, decided again by 087 ───────────────────────
+//
+// 083 gave each reply written before its column existed to the place's
+// verified owner on the day it ran, and it ran in production with a rule that
+// left an owner's own replies from before a later verification with no author
+// and handed an undated reply to whoever held the place. 087 corrects what it
+// wrote. It runs here the way it ran there: 083 alone over replies with no
+// author, the reply route writing its own afterwards, then 087, read back
+// through the card and the owner's Reviews tab.
+
+test('087: a re-verified owner gets its earlier reply back, an undated reply goes to nobody, and replies the route wrote are left alone', async () => {
+  const PLACE = 'ChIJcurrentOwner087a01';
+  const OTHER = 'ChIJcurrentOwner087b01';
+  const owner = await user('Returning owner');
+  const previous = await user('Previous owner');
+  const otherOwner = await user('Other owner');
+  const nextOwner = await user('Next owner');
+  const reader = await user('Card reader');
+  const reviewers = [];
+  for (let i = 0; i < 5; i += 1) reviewers.push(await user(`Reviewer 087 ${i}`));
+
+  // The table 083 met: the words, and no column saying whose. Dropping the
+  // column takes 087's index with it, so 087 is due again once released.
+  await testPool.query('ALTER TABLE venue_reviews DROP COLUMN venue_reply_user_id');
+  await testPool.query(`DELETE FROM schema_migrations WHERE name = '083_venue_reply_author.sql'`);
+
+  const ownerProfile = await claim(owner, PLACE, { verified: true, name: 'Returning Bar' });
+  const previousProfile = await claim(previous, PLACE, { verified: false, name: 'Previous Bar' });
+  const otherProfile = await claim(otherOwner, OTHER, { verified: true, name: 'Other Bar' });
+  const nextProfile = await claim(nextOwner, OTHER, { verified: false, name: 'Next Bar' });
+  // The previous owner held the place first and was un-verified.
+  await audit(previous, previousProfile, 'venue_verified', '60 days');
+  await audit(previous, previousProfile, 'venue_unverified', '40 days');
+  // The owner was verified; its claim then moved off the place and back, which
+  // clears the badge and writes no audit row (routes/venueProfile.js); an
+  // admin verified it again.
+  await audit(owner, ownerProfile, 'venue_verified', '20 days');
+  await audit(owner, ownerProfile, 'venue_verified', '5 days');
+  await audit(otherOwner, otherProfile, 'venue_verified', '30 days');
+
+  const oldReply = async (place, by, words, ago) => (await testPool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at)
+     VALUES ($1, $2, 4, 'Good night', $3, CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() - ($4::text)::interval END)
+     RETURNING id`,
+    [place, by, words, ago]
+  )).rows[0].id;
+  // The owner's, between its two verifications.
+  const earlier = await oldReply(PLACE, reviewers[0], 'Thanks, see you soon', '10 days');
+  // The previous owner's, retired by a rewrite of its review: no date.
+  const undated = await oldReply(PLACE, reviewers[1], 'Words from the previous owner', null);
+  // The previous owner's, from before the owner's claim began.
+  const older = await oldReply(PLACE, reviewers[2], 'Also the previous owner', '50 days');
+
+  await migrate(testPool); // 083, as production ran it; 087 is recorded and waits
+
+  const author = async (id) => (await testPool.query(
+    'SELECT venue_reply_user_id FROM venue_reviews WHERE id = $1', [id]
+  )).rows[0].venue_reply_user_id;
+  const card = async (id) => {
+    const res = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE}`, { as: reader });
+    assert.strictEqual(res.status, 200, res.text);
+    return res.body.reviews.find((r) => r.id === id);
+  };
+  const tab = async (id) => {
+    const res = await call('GET', '/api/venue-dashboard/reviews', { as: owner });
+    assert.strictEqual(res.status, 200, res.text);
+    return res.body.reviews.find((r) => r.id === id);
+  };
+
+  // What 083 left: the owner's own reply off the card, and the previous
+  // owner's undated words on the owner's tab as the owner's earlier reply.
+  assert.strictEqual(await author(earlier), null);
+  assert.strictEqual((await card(earlier)).venue_reply, null);
+  assert.strictEqual(await author(undated), owner);
+  assert.strictEqual((await tab(undated)).venue_reply, 'Words from the previous owner');
+  assert.strictEqual(await author(older), null);
+
+  // After 083 the reply route writes its own author, in the same statement.
+  const answered = (await testPool.query(
+    "INSERT INTO venue_reviews (google_place_id, user_id, rating, text) VALUES ($1, $2, 5, 'Lovely') RETURNING id",
+    [OTHER, reviewers[3]]
+  )).rows[0].id;
+  let res = await call('POST', `/api/venue-dashboard/reviews/${answered}/reply`, { as: otherOwner, body: { reply: 'Thank you' } });
+  assert.strictEqual(res.status, 200, res.text);
+  // A newer review the owner answered, then rewritten by its reviewer, which
+  // retires the reply the way submit-review does: no date, words kept.
+  const retired = (await testPool.query(
+    "INSERT INTO venue_reviews (google_place_id, user_id, rating, text) VALUES ($1, $2, 3, 'Fine') RETURNING id",
+    [PLACE, reviewers[4]]
+  )).rows[0].id;
+  res = await call('POST', `/api/venue-dashboard/reviews/${retired}/reply`, { as: owner, body: { reply: 'Sorry about the wait' } });
+  assert.strictEqual(res.status, 200, res.text);
+  await testPool.query('UPDATE venue_reviews SET text = $2, venue_replied_at = NULL WHERE id = $1', [retired, 'Slow service']);
+  // Then the other place's verification moves on, so the rule, asked today,
+  // would take the route's reply away from the account that wrote it.
+  await testPool.query('UPDATE venue_profiles SET verified = false WHERE id = $1', [otherProfile]);
+  await audit(otherOwner, otherProfile, 'venue_unverified', '0 seconds');
+  await testPool.query('UPDATE venue_profiles SET verified = true WHERE id = $1', [nextProfile]);
+  await audit(nextOwner, nextProfile, 'venue_verified', '0 seconds');
+
+  // The deploy that carries 087.
+  await testPool.query(`DELETE FROM schema_migrations WHERE name = '087_venue_reply_author_repair.sql'`);
+  await migrate(testPool);
+
+  assert.strictEqual(await author(earlier), owner, "the owner's own reply from before its later verification has no author");
+  assert.strictEqual((await card(earlier)).venue_reply, 'Thanks, see you soon');
+  const mine = await tab(earlier);
+  assert.strictEqual(mine.venue_reply, 'Thanks, see you soon');
+  assert.strictEqual(mine.reply_needs_review, false);
+
+  assert.strictEqual(await author(undated), null, 'an undated reply stayed with whoever holds the place');
+  const notMine = await tab(undated);
+  assert.strictEqual(notMine.venue_reply, null, "the owner's tab still reads the previous owner's words as its own");
+  assert.strictEqual(notMine.reply_needs_review, false);
+  assert.strictEqual(await author(older), null);
+
+  assert.strictEqual(await author(answered), otherOwner, '087 re-decided a reply the route wrote after 083');
+  assert.strictEqual(await author(retired), owner, '087 took a retired reply on a newer review from the owner who wrote it');
+  const stillMine = await tab(retired);
+  assert.strictEqual(stillMine.venue_reply, 'Sorry about the wait');
+  assert.strictEqual(stillMine.reply_needs_review, true);
+
+  const { rows: [index] } = await testPool.query(
+    `SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE c.relname = 'idx_venue_reviews_reply_user'`
+  );
+  assert.ok(index && index.indisvalid, '087 did not build the index that marks it as applied');
+});
+
+// ── 7. an owner deleting their account while replying ───────────────────────
+//
+// deleteAccount erases the account's replies and then deletes the account
+// row, in one transaction. A reply to a review the erase had not touched could
+// commit between the two, and the row's SET NULL then emptied its author and
+// kept its words. The account row is now locked before the erase, so a reply
+// that has not committed by then waits on the lock and fails when the account
+// is gone. The interleaving is made with a row lock the test holds: the
+// deletion is parked on the erase, the reply is sent, and the lock is let go
+// only once the reply is seen waiting.
+
+// Assembled at runtime so the secret scanners do not read a test fixture as a
+// credential.
+const DELETION_PASSWORD = ['Leaving', 'Owner', '1'].join('-');
+const DELETION_PASSWORD_HASH = bcrypt.hashSync(DELETION_PASSWORD, 4);
+
+test("an owner's reply cannot land between their account deletion's erase and the account's delete", async () => {
+  const PLACE = 'ChIJcurrentOwnerGone001';
+  const owner = await user('Leaving owner');
+  await testPool.query('UPDATE users SET password = $2 WHERE id = $1', [owner, DELETION_PASSWORD_HASH]);
+  const reviewerA = await user('Reviewer of the old reply');
+  const reviewerB = await user('Reviewer of the new one');
+  await claim(owner, PLACE, { verified: true, name: 'Leaving Bar' });
+  const answered = (await testPool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at, venue_reply_user_id)
+     VALUES ($1, $2, 5, 'Lovely', 'Thanks for coming', NOW(), $3) RETURNING id`,
+    [PLACE, reviewerA, owner]
+  )).rows[0].id;
+  const unanswered = (await testPool.query(
+    "INSERT INTO venue_reviews (google_place_id, user_id, rating, text) VALUES ($1, $2, 4, 'Good night') RETURNING id",
+    [PLACE, reviewerB]
+  )).rows[0].id;
+
+  // Holding the answered review's row parks the deletion on its erase.
+  const holder = await testPool.connect();
+  await holder.query('BEGIN');
+  await holder.query('SELECT id FROM venue_reviews WHERE id = $1 FOR UPDATE', [answered]);
+  let holding = true;
+  const release = async () => {
+    if (!holding) return;
+    holding = false;
+    await holder.query('ROLLBACK').catch(() => {});
+    holder.release();
+  };
+  try {
+    const deletion = call('DELETE', '/api/users/me', { as: owner, body: { password: DELETION_PASSWORD } });
+    await waitForWaiter('the account deletion', (w) => /SET venue_reply = NULL/.test(w.query));
+
+    // The owner's other session answers the other review now.
+    const reply = call('POST', `/api/venue-dashboard/reviews/${unanswered}/reply`, {
+      as: owner, body: { reply: 'Written on the way out' },
+    });
+    const first = await Promise.race([
+      reply.then((r) => ({ finished: r })),
+      waitForWaiter('the reply', (w) => /SET venue_reply = \$1/.test(w.query))
+        .then(() => ({ waiting: true }), () => ({ waiting: false })),
+    ]);
+    assert.ok(first.waiting,
+      `the reply committed while the deletion was between its erase and the account's delete (${first.finished && first.finished.status})`);
+
+    await release();
+    const [del, rep] = await Promise.all([deletion, reply]);
+    assert.strictEqual(del.status, 200, del.text);
+    assert.notStrictEqual(rep.status, 200, 'a reply from an account that no longer exists was stored');
+  } finally {
+    await release();
+  }
+
+  const { rows } = await testPool.query(
+    'SELECT id, venue_reply, venue_reply_user_id FROM venue_reviews WHERE id = ANY($1::int[]) ORDER BY id',
+    [[answered, unanswered]]
+  );
+  assert.strictEqual(rows.length, 2, "the reviewers' reviews stay");
+  for (const r of rows) {
+    assert.strictEqual(r.venue_reply, null, `review ${r.id} still carries the words of a deleted account`);
+    assert.strictEqual(r.venue_reply_user_id, null);
+  }
 });

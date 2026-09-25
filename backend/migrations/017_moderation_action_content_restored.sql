@@ -39,7 +39,8 @@
 --     name is Postgres's deterministic one for a column-level CHECK
 --     (<table>_<column>_check), the same name 016 relies on.
 --   * The new list is a strict SUPERSET of the old one, so no existing row can
---     violate it and ADD CONSTRAINT cannot fail validation.
+--     violate it on the first application. A replay is another matter; see
+--     NOT VALID below.
 --
 -- The only way these statements fail is moderation_actions not existing, which
 -- would mean 001 never applied and admin.js's audit INSERT is already broken on
@@ -50,6 +51,15 @@
 -- takedown is reversible-hide, never a delete), but it is a distinct meaning
 -- from content_restored and dropping a value that historic rows may hold would
 -- fail this very migration.
+--
+-- NOT VALID, added 2026-09-25: 020 widens this list with venue_verified,
+-- venue_unverified, tier_changed and evidence_viewed, and production writes
+-- venue_verified on every verification. A replay of the whole chain over such
+-- a database (schema_migrations emptied, as migrationBootSafety's section 3
+-- does) re-adds this narrower list first, and validating it against those rows
+-- failed the boot here with 23514 before 020 was reached. NOT VALID checks new
+-- writes only; 020 then drops this constraint and adds the full list, which it
+-- validates. On a fresh database nothing changes: there are no rows yet.
 
 ALTER TABLE moderation_actions DROP CONSTRAINT IF EXISTS moderation_actions_action_check;
 
@@ -62,4 +72,4 @@ ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_action_check
     'user_banned',
     'user_unbanned',
     'dismissed'
-  ));
+  )) NOT VALID;

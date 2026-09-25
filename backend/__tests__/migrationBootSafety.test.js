@@ -379,9 +379,20 @@ test('the whole chain replays over a populated database without throwing', async
   };
   const alertsBefore = await alertRecipients();
   assert.equal(alertsBefore.length, 3, 'the SOS rows seeded for 064 must be here to be checked');
+  // An audit row only 020's list allows, the kind production writes on every
+  // verification. A replay reaches 017 first, which re-adds the narrower list;
+  // it did that validated and failed the boot on this row until it went NOT
+  // VALID.
+  const { rows: [audit] } = await pool.query(
+    `INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id)
+     VALUES (NULL, NULL, 'venue_verified', 'venue_profile', 0) RETURNING id`
+  );
 
   await pool.query('DELETE FROM schema_migrations');
   await migrate(pool); // THE assertion: a second pass must not fail the boot
+  const { rows: auditAfter } = await pool.query('SELECT action FROM moderation_actions WHERE id = $1', [audit.id]);
+  assert.deepEqual(auditAfter.map((r) => r.action), ['venue_verified'], 'the replay moved the verification audit row');
+  await pool.query('DELETE FROM moderation_actions WHERE id = $1', [audit.id]);
 
   assert.deepEqual({
     users: await count('SELECT COUNT(*) AS n FROM users'),
@@ -898,6 +909,10 @@ test('082 recovers on the next boot when a copy stored mid-deploy failed its bui
 // has to run ONCE: a replay must not hand a reply nobody could be given to
 // whoever holds the place on the day of the replay, which is the exact
 // misattribution the column exists to end.
+//
+// This section pins what 083 itself does, because that is what production
+// ran. Some of its answers are wrong (the undated reply below among them) and
+// 087 corrects them; section 10 is that correction.
 
 const replyRows = async () => (await pool.query(
   `SELECT id, google_place_id, venue_reply, venue_replied_at, venue_reply_user_id
@@ -988,6 +1003,217 @@ test('083 gives an old reply only to an owner who could have written it, and a r
 
   await pool.query(`DELETE FROM venue_reviews WHERE google_place_id LIKE 'ChIJbootsafety083%'`);
   await pool.query(`DELETE FROM users WHERE email LIKE '%083@example.com'`);
+});
+
+// ---------------------------------------------------------------------------
+// 10. 087, AND THE REPLIES 083 GAVE OUT ON THE DAY IT RAN.
+// ---------------------------------------------------------------------------
+//
+// 083 ran in production before its rule was corrected, and its guard means it
+// never runs again, so 087 decides again what it wrote. This is that deploy on
+// a populated table: 083 applied alone (087 held back by its recorded name,
+// the way section 1 holds files back), replies written the reply route's way
+// afterwards, then 087. It may decide again only the replies 083 could have
+// written, and the replay at the end, which records 083 at the moment it runs
+// and so makes every reply "older than 083", must move nothing.
+
+const REPAIR_087 = '087_venue_reply_author_repair.sql';
+
+const replyAuthorIndex = async () => (await pool.query(
+  `SELECT c.oid, i.indisvalid, pg_get_indexdef(i.indexrelid) AS def
+     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relname = 'idx_venue_reviews_reply_user'`
+)).rows[0] || null;
+
+const repairRows = async () => (await pool.query(
+  `SELECT id, venue_reply, venue_replied_at, venue_reply_user_id
+     FROM venue_reviews WHERE google_place_id LIKE 'ChIJbootsafety087%' ORDER BY id`
+)).rows;
+
+test('087 gives each reply 083 gave out to the owner who could have written it, once', async () => {
+  // The table 083 met, with 087 recorded so the runner holds it back. The
+  // index 087 builds goes with the column, so 087 is due again when released.
+  await pool.query('ALTER TABLE venue_reviews DROP COLUMN IF EXISTS venue_reply_user_id');
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '083_venue_reply_author.sql'`);
+  assert.equal(await migrationRowCount(REPAIR_087), 1, '087 must be recorded here, or it runs alongside 083');
+  assert.equal(await replyAuthorIndex(), null);
+
+  const owners = {};
+  const profile = async (key, place, { verified = true } = {}) => {
+    owners[key] = await insertUser(`${key}087@example.com`, `Owner ${key}`);
+    return (await pool.query(
+      `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '90 days') RETURNING id`,
+      [owners[key], `Room ${key}`, place, verified]
+    )).rows[0].id;
+  };
+  // The row PUT /api/admin/venues/:profileId/verify writes with each decision.
+  const audit = (userId, profileId, action, ago) => pool.query(
+    `INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, created_at)
+     VALUES (NULL, $1, $2, 'venue_profile', $3, NOW() - $4::interval)`,
+    [userId, action, profileId, ago]
+  );
+  // One review per reviewer per place, so every reply gets a reviewer of its own.
+  let reviewers = 0;
+  const review = async (place, reply, repliedAgo) => {
+    reviewers += 1;
+    const by = await insertUser(`r${reviewers}.reviewer087@example.com`, `Reviewer ${reviewers}`);
+    return (await pool.query(
+      `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at)
+       VALUES ($1, $2, 4, 'Good night', $3, CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() - ($4::text)::interval END)
+       RETURNING id`,
+      [place, by, reply, repliedAgo]
+    )).rows[0].id;
+  };
+
+  // Verified, then the claim moved off the place and back, which writes no
+  // audit row, then verified again. The owner's own reply sits between.
+  const moved = await profile('moved', 'ChIJbootsafety087a');
+  await audit(owners.moved, moved, 'venue_verified', '20 days');
+  await audit(owners.moved, moved, 'venue_verified', '5 days');
+  const movedEarlier = await review('ChIJbootsafety087a', 'Thanks from before', '10 days');
+  const movedLater = await review('ChIJbootsafety087a', 'Thanks from after', '2 days');
+
+  // Verified, un-verified by an admin, verified again. The claim begins again
+  // at the un-verify: the audit row cannot say which place the first
+  // verification was for.
+  const unverified = await profile('unverified', 'ChIJbootsafety087b');
+  await audit(owners.unverified, unverified, 'venue_verified', '20 days');
+  await audit(owners.unverified, unverified, 'venue_unverified', '8 days');
+  await audit(owners.unverified, unverified, 'venue_verified', '5 days');
+  const beforeUnverify = await review('ChIJbootsafety087b', 'Words from the first stretch', '10 days');
+
+  // A retired reply on a review written before 083: no date to judge it by.
+  const retired = await profile('retired', 'ChIJbootsafety087c');
+  await audit(owners.retired, retired, 'venue_verified', '20 days');
+  const undated = await review('ChIJbootsafety087c', 'Undated words', null);
+
+  // Verified before migration 020 wrote audit rows: no venue_verified row.
+  await profile('legacy', 'ChIJbootsafety087d');
+  const legacyReply = await review('ChIJbootsafety087d', 'Words on a legacy claim', '2 days');
+
+  // The owner's claim left the place, a rival held it, and the owner came back
+  // and was verified again. The rival's claim is still on the place.
+  const current = await profile('current', 'ChIJbootsafety087e');
+  const rival = await profile('rival', 'ChIJbootsafety087e', { verified: false });
+  await audit(owners.current, current, 'venue_verified', '20 days');
+  await audit(owners.rival, rival, 'venue_verified', '12 days');
+  await audit(owners.rival, rival, 'venue_unverified', '6 days');
+  await audit(owners.current, current, 'venue_verified', '3 days');
+  const beforeRival = await review('ChIJbootsafety087e', "The owner's, before it left", '15 days');
+  const rivalWords = await review('ChIJbootsafety087e', "The rival's, while it held the place", '8 days');
+  const afterReturn = await review('ChIJbootsafety087e', "The owner's, after it came back", '1 day');
+
+  // A deleted venue account's audit rows outlive its profile (deleteAccount
+  // de-attributes them), so nothing says which place they were for.
+  const survivor = await profile('survivor', 'ChIJbootsafety087f');
+  await audit(owners.survivor, survivor, 'venue_verified', '70 days');
+  await audit(owners.survivor, survivor, 'venue_verified', '3 days');
+  const gone = Number((await pool.query('SELECT COALESCE(MAX(id), 0) + 100000 AS id FROM venue_profiles')).rows[0].id);
+  await audit(null, gone, 'venue_verified', '60 days');
+  await audit(null, gone, 'venue_unverified', '55 days');
+  const whileGoneHeld = await review('ChIJbootsafety087f', 'Written while the deleted account was verified', '58 days');
+  const afterGone = await review('ChIJbootsafety087f', 'Written after it no longer was', '50 days');
+
+  // Nobody verified on the place.
+  await profile('claimant', 'ChIJbootsafety087g', { verified: false });
+  const unowned = await review('ChIJbootsafety087g', 'Words with no verified owner', '2 days');
+
+  await migrate(pool); // 083, as production ran it
+
+  const authors = async () => Object.fromEntries((await repairRows()).map((r) => [r.id, r.venue_reply_user_id]));
+  let by = await authors();
+  // 083's answers, which are what 087 meets.
+  assert.equal(by[movedEarlier], null);
+  assert.equal(by[movedLater], owners.moved);
+  assert.equal(by[beforeUnverify], null);
+  assert.equal(by[undated], owners.retired);
+  assert.equal(by[legacyReply], owners.legacy);
+  assert.equal(by[beforeRival], null);
+  assert.equal(by[rivalWords], null);
+  assert.equal(by[afterReturn], owners.current);
+  assert.equal(by[whileGoneHeld], null);
+  assert.equal(by[afterGone], null);
+  assert.equal(by[unowned], null);
+
+  // After 083 the reply route writes the author with the words: a reply dated
+  // after 083, and a retired one on a review written after 083.
+  const route = await profile('route', 'ChIJbootsafety087h');
+  await audit(owners.route, route, 'venue_verified', '30 days');
+  const routeReply = await review('ChIJbootsafety087h', null, null);
+  const retiredLater = await review('ChIJbootsafety087h', null, null);
+  for (const id of [routeReply, retiredLater]) {
+    await pool.query(
+      `UPDATE venue_reviews SET venue_reply = 'From the route', venue_replied_at = NOW(), venue_reply_user_id = $2
+        WHERE id = $1`,
+      [id, owners.route]
+    );
+  }
+  await pool.query('UPDATE venue_reviews SET text = $2, venue_replied_at = NULL WHERE id = $1', [retiredLater, 'Rewritten']);
+  // Then the place changes hands, so the rule, asked now, would take both
+  // replies from the account that wrote them.
+  const next = await profile('next', 'ChIJbootsafety087h', { verified: false });
+  await pool.query('UPDATE venue_profiles SET verified = false WHERE id = $1', [route]);
+  await audit(owners.route, route, 'venue_unverified', '0 seconds');
+  await pool.query('UPDATE venue_profiles SET verified = true WHERE id = $1', [next]);
+  await audit(owners.next, next, 'venue_verified', '0 seconds');
+
+  const before087 = await repairRows();
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [REPAIR_087]);
+  await migrate(pool); // the deploy that carries 087
+
+  by = await authors();
+  assert.equal(by[movedEarlier], owners.moved, "an owner's own reply from before a later verification has no author");
+  assert.equal(by[movedLater], owners.moved);
+  assert.equal(by[beforeUnverify], null, 'a reply from before an admin un-verified the claim was given to it');
+  assert.equal(by[undated], null, 'an undated reply stayed with whoever held the place when 083 ran');
+  assert.equal(by[legacyReply], null, 'a claim with no venue_verified row kept a reply on the date of its profile');
+  assert.equal(by[beforeRival], owners.current);
+  assert.equal(by[rivalWords], null, "a rival's reply, from while the rival was verified, was given to the owner");
+  assert.equal(by[afterReturn], owners.current);
+  assert.equal(by[whileGoneHeld], null, 'a reply from while a deleted account held a verification was given to the owner');
+  assert.equal(by[afterGone], owners.survivor);
+  assert.equal(by[unowned], null);
+  assert.equal(by[routeReply], owners.route, '087 decided again a reply the route wrote after 083');
+  assert.equal(by[retiredLater], owners.route, '087 decided again a retired reply on a review written after 083');
+
+  // The author moved and nothing else did.
+  const after087 = await repairRows();
+  const wordsAndDates = (rows) => rows.map(({ id, venue_reply, venue_replied_at }) => ({ id, venue_reply, venue_replied_at }));
+  assert.deepEqual(wordsAndDates(after087), wordsAndDates(before087), "087 touched a reply's words or its date");
+
+  const index = await replyAuthorIndex();
+  assert.ok(index, '087 did not build its index');
+  assert.equal(index.indisvalid, true);
+  assert.match(index.def, /\(venue_reply_user_id\) WHERE \(venue_reply_user_id IS NOT NULL\)$/);
+
+  // THE REPLAY: 083 and 087 again over this data, with their rows gone from
+  // schema_migrations, so 083 is recorded now and every reply above is "older
+  // than 083". Place h is held by `next`, so a second pass of 087 would empty
+  // both route replies. (Section 3 replays the whole chain, over a venue audit
+  // row as well since 017's narrower CHECK went NOT VALID; this one replays
+  // only 083 and 087, so it can count exactly what those two move.)
+  await pool.query('DELETE FROM schema_migrations WHERE name = ANY($1)', [['083_venue_reply_author.sql', REPAIR_087]]);
+  await migrate(pool);
+  assert.deepEqual(await repairRows(), after087, 'a replay of 087 moved a row');
+  assert.equal((await replyAuthorIndex()).oid, index.oid, 'a replay rebuilt the index');
+  assert.equal(await migrationRowCount('083_venue_reply_author.sql'), 1);
+  assert.equal(await migrationRowCount(REPAIR_087), 1);
+
+  // The control, so the replay above is not passing on nothing: the index is
+  // what holds it. Without the index the same replay decides the route's
+  // replies again, against today's owner, and empties them.
+  await pool.query('DROP INDEX idx_venue_reviews_reply_user');
+  await pool.query('DELETE FROM schema_migrations WHERE name = ANY($1)', [['083_venue_reply_author.sql', REPAIR_087]]);
+  await migrate(pool);
+  by = await authors();
+  assert.equal(by[routeReply], null, 'the control did not reach the route reply, so the replay proved nothing');
+  assert.equal(by[retiredLater], null);
+  assert.ok(await replyAuthorIndex(), 'the control run rebuilds the index');
+
+  await pool.query(`DELETE FROM venue_reviews WHERE google_place_id LIKE 'ChIJbootsafety087%'`);
+  await pool.query('DELETE FROM moderation_actions WHERE content_id = $1', [gone]);
+  await pool.query(`DELETE FROM users WHERE email LIKE '%087@example.com'`);
 });
 
 test('every migration file declares post-conditions the runner can actually parse', async () => {
