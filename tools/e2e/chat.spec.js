@@ -336,7 +336,11 @@ async function sendInFlock(page, text) {
 async function openDmWith(page, personName) {
   await leaveOpenThread(page);
   await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
-  const row = page.getByRole('button', { name: new RegExp(escapeRe(personName)) }).first();
+  // The thread's own row, whose name STARTS with the avatar initial and the
+  // person's name. A plain "contains the name" lookup could also match a plan
+  // row whose last line mentions them, and plan rows move whenever a message
+  // lands, so the click waited on a row that never held still.
+  const row = page.getByRole('button', { name: new RegExp(`^\\s*\\S{0,2}\\s*${escapeRe(personName)}`) }).first();
   if (await row.count()) {
     await row.click();
   } else {
