@@ -263,7 +263,11 @@ export default function ProfileSettings({
                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
                   <div>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>Emergency Contacts</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Trusted contacts get an email when you press SOS. It includes your location if your phone has a fix at the time, and Flock keeps trying for one just after.</p>
+                    {/* Both audiences. The flock leg (routes/safety.js,
+                        alertFlockMembers) rings everyone on a confirmed plan
+                        with you whose time is within twelve hours, with the
+                        same location, and this card named only the email. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Trusted contacts get an email when you press SOS. It includes your location if your phone has a fix at the time, and Flock keeps trying for one just after. People on a confirmed plan with you around now also get an alert in the app, with the same location.</p>
                   </div>
                 </div>
 

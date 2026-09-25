@@ -130,7 +130,7 @@ const SHARES = [
   { id: 3, bill_id: 101, user_id: 1, amount: '15.00', committed: true, settled: true, settled_at: '2026-03-06T01:00:00Z' },
 ];
 const SOS = [
-  { id: 1, user_id: 1, latitude: 40.7128, longitude: -74.006, contacts_alerted: 2, created_at: '2026-03-07T00:00:00Z' },
+  { id: 1, user_id: 1, latitude: 40.7128, longitude: -74.006, contacts_alerted: 2, contact_recipients: [{ name: 'Sam', email: 'sam@example.com' }], created_at: '2026-03-07T00:00:00Z', withdrawn_at: '2026-03-07T00:04:00Z' },
   { id: 2, user_id: 2, latitude: 34.0522, longitude: -118.2437, contacts_alerted: 1, created_at: '2026-03-07T00:01:00Z' },
 ];
 const STORIES = [
@@ -237,8 +237,12 @@ function handle(text, params = []) {
     return { rows: capped(rows, params[1]), rowCount: rows.length };
   }
   if (has('FROM emergency_alerts WHERE user_id = $1')) {
+    // Only the columns the route's SELECT names come back, so a column the
+    // route stops selecting drops out of the export here as well.
+    const cols = ['latitude', 'longitude', 'contacts_alerted', 'contact_recipients', 'created_at', 'withdrawn_at']
+      .filter((c) => new RegExp(`\\b${c}\\b`).test(text));
     const rows = SOS.filter((r) => r.user_id === uid)
-      .map((r) => pick(r, ['latitude', 'longitude', 'contacts_alerted', 'created_at']));
+      .map((r) => pick(r, cols));
     return { rows: capped(rows, params[1]), rowCount: rows.length };
   }
   if (has('FROM stories WHERE user_id = $1')) {
@@ -339,6 +343,11 @@ test('the export carries votes, reactions, reviews, crowd reports, bill splits, 
   assert.strictEqual(b.crowd_reports[0].crowd_level, 2);
   assert.strictEqual(b.crowd_reports[0].venue_place_id, 'place-abc');
   assert.strictEqual(b.sos_alerts[0].latitude, 40.7128);
+  // Who the alert reached and when it was stood down are both stored, and
+  // the privacy policy names both, so the caller's copy carries both.
+  assert.deepStrictEqual(b.sos_alerts[0].contact_recipients, [{ name: 'Sam', email: 'sam@example.com' }]);
+  assert.strictEqual(b.sos_alerts[0].withdrawn_at, '2026-03-07T00:04:00Z');
+  assert.ok(!('flock_recipient_ids' in b.sos_alerts[0]), 'the plan roster stays out of the export');
   assert.strictEqual(b.friends.length, 1);
   assert.strictEqual(b.friends[0].friend_user_id, 2);
   // The bio is data the user typed about themselves, so the export carries it

@@ -2820,8 +2820,15 @@ router.get('/export', async (req, res) => {
       [userId], EXPORT_ROW_CAP
     );
 
+    // withdrawn_at is when the caller stood the alert down (migration 084):
+    // their own action, and the privacy policy names it. contact_recipients
+    // (migration 063) is which of the caller's own trusted contacts the alert
+    // email reached, as the name and address the caller entered, and the
+    // policy says the record keeps who it reached. flock_recipient_ids is not
+    // exported: it is the plan's roster, which the flock rows above leave out
+    // for the same Art. 20(4) reason.
     const sosAlerts = await exportRows(
-      `SELECT latitude, longitude, contacts_alerted, created_at
+      `SELECT latitude, longitude, contacts_alerted, contact_recipients, created_at, withdrawn_at
          FROM emergency_alerts WHERE user_id = $1
         ORDER BY created_at ASC, id ASC LIMIT $2`,
       [userId], EXPORT_ROW_CAP

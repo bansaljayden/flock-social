@@ -130,7 +130,7 @@ const A = authRouter.__testing;
 const REQUIRED_BOUNDS = [
   'MAX_EMAIL', 'MAX_OAUTH_ID', 'MAX_NAME', 'MAX_PASSWORD', 'MAX_INTERESTS',
   'MAX_INTEREST_LEN', 'MAX_DOB_LENGTH', 'MAX_LINK_TOKEN', 'MAX_OAUTH_TOKEN',
-  'MAX_OAUTH_ACCESS_TOKEN',
+  'MAX_OAUTH_ACCESS_TOKEN', 'MAX_PUSH_TOKEN',
 ];
 
 test('routes/auth.js still declares every bound this file drives', () => {
@@ -361,7 +361,7 @@ function emailOfLength(n) {
 const PROBED_FIELDS = new Set([
   'email', 'password', 'name', 'interests', 'date_of_birth',
   'token', 'credential', 'access_token', 'identityToken', 'fullName',
-  'authorizationCode', 'nonce',
+  'authorizationCode', 'nonce', 'pushToken',
 ]);
 
 test('every field routes/auth.js declares is one this file bounds', () => {
@@ -566,6 +566,7 @@ test('no field on the auth router accepts an 8000-character value', async () => 
     ['POST', '/api/auth/apple', { identityToken: pad(60), authorizationCode: OVERSIZED }],
     ['POST', '/api/auth/apple', { identityToken: pad(60), fullName: { givenName: OVERSIZED } }],
     ['POST', '/api/auth/apple', { identityToken: pad(60), fullName: { familyName: OVERSIZED } }],
+    ['POST', '/api/auth/logout', { pushToken: OVERSIZED }],
   ];
   for (const [method, pathname, body] of cases) {
     scriptSignup();
@@ -655,6 +656,29 @@ test('signup takes a date of birth of exactly MAX_DOB_LENGTH and refuses one mor
     { email: 'new@example.com', password: 'Password1', name: 'Sam', date_of_birth: frac(atLength + 1) });
   assert.equal(over.status, 400, over.text);
   assert.deepEqual(noQueries(), [], 'an oversized date of birth must be refused before any query');
+});
+
+test('sign-out takes a push token of exactly MAX_PUSH_TOKEN and refuses one more', async () => {
+  // The width device registration stores a token at, read out of that route,
+  // so every token that could have been registered can also be signed out.
+  const reg = /body\('token'\)\.isString\(\)\.trim\(\)\.isLength\(\{ min: \d+, max: (\d+) \}\)/
+    .exec(read('routes/notifications.js'));
+  assert.ok(reg, 'routes/notifications.js must still bound the token it registers');
+  assert.equal(A.MAX_PUSH_TOKEN, Number(reg[1]),
+    'a token wider than sign-out accepts could be registered and then never signed out');
+
+  const at = pad(A.MAX_PUSH_TOKEN);
+  handlers = [[/^DELETE FROM device_tokens WHERE user_id = \$1 AND token = \$2/, () => ({ rows: [], rowCount: 1 })]];
+  const ok = await call('POST', '/api/auth/logout', { pushToken: at });
+  assert.equal(ok.status, 200, ok.text);
+  const del = log.find((q) => /^DELETE FROM device_tokens/.test(q.sql));
+  assert.ok(del, 'a push token at the ceiling must still be signed out');
+  assert.deepEqual(del.params, [CURRENT_USER.id, at]);
+
+  log = [];
+  const over = await call('POST', '/api/auth/logout', { pushToken: `${at}a` });
+  assert.equal(over.status, 400, over.text);
+  assert.deepEqual(noQueries(), [], 'one past the ceiling must be refused before any query');
 });
 
 // The one date_of_birth that has NO chain behind it: /login (and /google and

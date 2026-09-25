@@ -655,7 +655,9 @@ test('device token registration', async (t) => {
   const http = require('node:http');
 
   const authMod = require('../middleware/auth');
-  authMod.authenticate = (req, _res, next) => { req.user = { id: 1, name: 'Ava' }; next(); };
+  // tokenIssuedAt is what the real middleware reads off the JWT's iat.
+  const SIGNED_IN = 1790000000;
+  authMod.authenticate = (req, _res, next) => { req.user = { id: 1, name: 'Ava' }; req.tokenIssuedAt = SIGNED_IN; next(); };
   const notificationsRouter = require('../routes/notifications');
 
   const app = express();
@@ -684,7 +686,20 @@ test('device token registration', async (t) => {
     const res = await call('/api/notifications/register', 'POST', { token: 'a'.repeat(160), deviceType: 'ios' });
     assert.strictEqual(res.status, 200);
     assert.match(upsert.sql, /ON CONFLICT \(token\) DO UPDATE/i);
-    assert.deepStrictEqual(upsert.params, [1, 'a'.repeat(160), 'ios', null]);
+    assert.deepStrictEqual(upsert.params, [1, 'a'.repeat(160), 'ios', null, SIGNED_IN]);
+    // The transfer is the newer session's to make, never the last request's
+    // to commit (migration 085). __tests__/deviceTokenClaims.test.js runs
+    // the race on a real Postgres; this pins the clause that decides it.
+    assert.match(upsert.sql, /WHERE device_tokens\.user_id = EXCLUDED\.user_id\s+OR device_tokens\.signed_in_at IS NULL\s+OR EXCLUDED\.signed_in_at >= device_tokens\.signed_in_at/);
+  });
+
+  await t.test('a registration an older session lost to a newer one is refused, not applied', async () => {
+    reset();
+    // Zero rows back is Postgres saying the conflict WHERE refused the update.
+    on(/INSERT INTO device_tokens/i, () => ({ rows: [], rowCount: 0 }));
+    on(/DELETE FROM device_tokens/i, () => { throw new Error('a refused registration must not prune anything'); });
+    const res = await call('/api/notifications/register', 'POST', { token: 'a'.repeat(160), deviceType: 'ios' });
+    assert.strictEqual(res.status, 409);
   });
 
   await t.test('a device registers the clock quiet hours are decided on', async () => {

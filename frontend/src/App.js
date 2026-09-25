@@ -16,7 +16,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
-import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, forgetDeliveredNotifications } from './services/firebase';
+import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
@@ -41,6 +41,7 @@ import SignupScreen from './components/auth/SignupScreen';
 // somebody else's content.
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
+import { createSosFollowUp } from './services/sosFollowUp';
 // deliverExport is NOT imported here. It is the one caller, it runs inside a
 // click handler that is already async, and the file it lives in carries the
 // Capacitor filesystem and share plumbing. An `await import()` at the call
@@ -4408,6 +4409,27 @@ const DialogBehavior = ({ onClose, label, modal = true }) => {
    moved (safety audit, 2026-09-05). */
 const SOS_FIRST_FIX_MS = 4000;
 const SOS_FOLLOW_UP_FIX_MS = 45000;
+// The server accepts a stand-down for six hours (routes/safety.js,
+// CANCEL_WINDOW_MS). Module scope so rememberSosAlert can read it from a
+// callback with no dependencies.
+const SOS_CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/* ── HOW SURE THE PHONE WAS ABOUT AN SOS POSITION ──────────────────────────
+   The alert email has called a fix coarser than a kilometre an area to search
+   since round 23 (routes/safety.js, COARSE_FIX_METRES), because a pin drawn
+   from a cell tower two kilometres off is the claim that makes somebody stop
+   looking when they arrive. The flockmate's alarm screen still drew every fix
+   as "See where they are". The server now sends the radius with the alarm,
+   and these two say it in the same words the email uses. */
+const SOS_COARSE_FIX_METRES = 1000;
+function sosAccuracyPhrase(metres) {
+  if (metres >= 1000) {
+    const km = metres / 1000;
+    return `about ${km >= 10 ? Math.round(km) : Math.round(km * 10) / 10} km`;
+  }
+  if (metres >= 100) return `about ${Math.round(metres / 100) * 100} m`;
+  return `about ${Math.max(5, Math.round(metres / 5) * 5)} m`;
+}
 
 // Resolves { coords, denied } and never rejects: an emergency path has no use
 // for an exception. `denied` means the user refused location permission, which
@@ -7397,7 +7419,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the same user id the live event clears it by, and says who is OK.
       // Without this the tap resolved to nothing and the full-screen SOS from
       // the first push stayed up with no way to know it had been called off.
+      noteSafetyStandDown(intent.userId, intent.at);
       setSafetyAlert((prev) => (prev && prev.userId === String(intent.userId) ? null : prev));
+      showToast(`${String(intent.name || 'They').slice(0, 80)} says they are OK`);
+    } else if (intent.screen === 'safety' && safetyAlarmWasStoodDown(intent)) {
+      // An alarm tapped from the tray after its sender had already called it
+      // off, which this device heard live or from the all-clear. Drawing it
+      // again sent people looking for somebody who had said they were OK, so
+      // the tap says that instead.
       showToast(`${String(intent.name || 'They').slice(0, 80)} says they are OK`);
     } else if (intent.screen === 'safety') {
       // A tapped SOS. The alert modal is a top-level overlay that does not
@@ -7414,6 +7443,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         name: String(intent.name || 'Someone on your plan').slice(0, 80),
         lat: Number.isFinite(intent.lat) ? intent.lat : null,
         lng: Number.isFinite(intent.lng) ? intent.lng : null,
+        ...(Number.isFinite(intent.accuracy) ? { accuracy: intent.accuracy } : {}),
         ...(Number.isFinite(intent.contactsAlerted) ? { contactsAlerted: intent.contactsAlerted } : {}),
         at: intent.at || new Date().toISOString(),
       });
@@ -7897,7 +7927,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      six-hour check below hides the band without asking. The clock is the
      server's, not this one's, and the local copy only decides whether to
      OFFER the action. */
-  const SOS_CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
   const [sosAlertAt, setSosAlertAt] = useState(() => {
     try {
       const raw = window.localStorage.getItem('flock.sosAlertAt');
@@ -7909,13 +7938,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       return 0;
     }
   });
+  /* WHETHER ANY CONTACT WAS ACTUALLY EMAILED. A 502 from the alert means no
+     contact email was accepted, but the flock may still have heard, so there
+     is something to withdraw and the band is offered. It used to say "Your
+     contacts were alerted" regardless, to somebody whose contacts had been
+     told nothing. This is what the band's sentence rests on. Remembered with
+     the timestamp, and only '0' means "not reached": a value written before
+     this key existed keeps the meaning it had. */
+  const [sosContactsReached, setSosContactsReached] = useState(() => {
+    try {
+      return window.localStorage.getItem('flock.sosContactsReached') !== '0';
+    } catch (_) {
+      return true;
+    }
+  });
+  const sosAlertMemoryRef = useRef({ at: sosAlertAt, reached: sosContactsReached });
   const [sosStandingDown, setSosStandingDown] = useState(false);
 
-  const rememberSosAlert = useCallback((at) => {
+  // `contactsReached` for a live alert only ever grows: a later send that
+  // reached nobody (an escalation, a follow-up) does not un-tell the contacts
+  // an earlier one reached, and they are still holding that one.
+  const rememberSosAlert = useCallback((at, contactsReached = true) => {
+    const prev = sosAlertMemoryRef.current;
+    const prevLive = prev.at > 0 && (Date.now() - prev.at) < SOS_CANCEL_WINDOW_MS;
+    const reached = !!at && (!!contactsReached || (prevLive && prev.reached));
+    sosAlertMemoryRef.current = { at, reached };
     setSosAlertAt(at);
+    setSosContactsReached(reached);
     try {
-      if (at) window.localStorage.setItem('flock.sosAlertAt', String(at));
-      else window.localStorage.removeItem('flock.sosAlertAt');
+      if (at) {
+        window.localStorage.setItem('flock.sosAlertAt', String(at));
+        window.localStorage.setItem('flock.sosContactsReached', reached ? '1' : '0');
+      } else {
+        window.localStorage.removeItem('flock.sosAlertAt');
+        window.localStorage.removeItem('flock.sosContactsReached');
+      }
     } catch (_) { /* see above */ }
   }, []);
 
@@ -11082,6 +11139,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // map pin would put somebody at the equator.
         lat: Number.isFinite(data.latitude) ? data.latitude : null,
         lng: Number.isFinite(data.longitude) ? data.longitude : null,
+        // The phone's radius for that fix, when it gave one, so a coarse fix
+        // is drawn as an area rather than a spot (see sosAccuracyPhrase).
+        ...(Number.isFinite(data.latitude) && Number.isFinite(Number(data.accuracy)) && Number(data.accuracy) > 0
+          ? { accuracy: Number(data.accuracy) } : {}),
         // How many trusted contacts were actually emailed. The server has
         // sent this since 2026-09-04 and the screen branches on it; nothing
         // carried it into state, so "their trusted contacts have already
@@ -11104,6 +11165,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const unsub = onSafetyAlertCancelled((data) => {
       if (!data || !data.fromUserId) return;
+      // Remembered, so the alarm's own notification still in the tray cannot
+      // redraw the alarm when it is tapped later (pushNavigation.js).
+      noteSafetyStandDown(data.fromUserId, data.at);
       setSafetyAlert((prev) => (prev && prev.userId === String(data.fromUserId) ? null : prev));
       showToast(`${String(data.fromUserName || 'They').slice(0, 80)} says they are OK`);
     });
@@ -12819,41 +12883,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // The alert has already gone out with no location. Keep trying for a fix and,
   // when one lands, send it as a second alert so contacts get the map link they
-  // were missing. Only one of these is ever in flight; a second SOS press starts
-  // over rather than stacking timers. `gen` is what makes that true: clearing
-  // the timer alone is not enough, because a run can be sitting inside a 45
-  // second GPS wait with no timer to clear yet, and bumping the generation
-  // makes that run land on a number that is no longer current and drop itself.
-  const sosFollowUpRef = useRef({ timer: null, gen: 0 });
+  // were missing. The chase is services/sosFollowUp.js, where a test can drive
+  // it: only one runs at a time, a second SOS press starts over rather than
+  // stacking, and the stand-down ends it (handleStandDown). A fix that lands
+  // after either is dropped, including one that lands inside the 45 second
+  // wait on the phone, where there is no timer to clear. One controller per
+  // mount; useState's initializer is what guarantees it is the same one.
+  const [sosFollowUp] = useState(() => createSosFollowUp(
+    () => getSosPosition(SOS_FOLLOW_UP_FIX_MS, 0),
+    sendEmergencyAlert,
+  ));
   const cancelSosLocationFollowUp = useCallback(() => {
-    const s = sosFollowUpRef.current;
-    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
-    s.gen += 1;
-  }, []);
+    sosFollowUp.cancel();
+  }, [sosFollowUp]);
   useEffect(() => () => cancelSosLocationFollowUp(), [cancelSosLocationFollowUp]);
 
-  const startSosLocationFollowUp = useCallback(() => {
-    const s = sosFollowUpRef.current;
-    if (s.timer) { clearTimeout(s.timer); s.timer = null; }
-    s.gen += 1;
-    const gen = s.gen;
+  // `alertId` is the alert the fix belongs to, as the server answered it. The
+  // follow-up names it, and the server refuses a follow-up to an alert that
+  // has been stood down, from this phone or any other.
+  const startSosLocationFollowUp = useCallback((alertId) => {
     const sentAt = Date.now();
-    getSosPosition(SOS_FOLLOW_UP_FIX_MS, 0).then(async ({ coords }) => {
-      if (!coords || sosFollowUpRef.current.gen !== gen) return;
-      // Sent now, not after a gap: the server admits a location follow-up
-      // inside its floor, and every second here is a second the parent does
-      // not have the map. `sentAt` stays for the log line.
-      try {
-        await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, includeLocation: true });
+    // Sent the moment a fix lands, not after a gap: the server admits a
+    // location follow-up inside its floor, and every second here is a second
+    // the parent does not have the map. `sentAt` stays for the log line.
+    sosFollowUp.start(alertId, {
+      onSent: (data) => {
+        // Still a live alert, and possibly the send that first reached a
+        // contact, so the stand-down band is kept current with it.
+        rememberSosAlert(Date.now(), Number(data?.contactsAlerted) > 0);
         showToast('Your location has been sent to your contacts');
-      } catch (err) {
-        // The alert itself was delivered, so this is a smaller failure than
-        // it sounds and the copy has to say which half worked.
+      },
+      // The person already said they are OK, here or on another phone, and the
+      // server refused the location for that reason. Nothing went out, and
+      // there is nothing on this phone left to withdraw.
+      onWithdrawn: () => {
+        rememberSosAlert(0);
+        showToast('You already said you are OK, so your location was not sent.');
+      },
+      // The alert itself was delivered, so this is a smaller failure than it
+      // sounds and the copy has to say which half worked.
+      onFailed: () => {
         showToast('Could not send your location. Your alert already went out.', 'error');
-      }
+      },
+    }).then(() => {
       if (Date.now() - sentAt > SOS_FOLLOW_UP_FIX_MS + 5000) console.warn('[SOS] the location follow-up took longer than its chase');
     });
-  }, [showToast]);
+  }, [sosFollowUp, showToast, rememberSosAlert]);
 
   const handleEmergencyAlert = useCallback(async () => {
     if (trustedContacts.length === 0 && trustedContactsLoaded) {
@@ -12886,8 +12961,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         includeLocation: !!loc,
       });
       // There is now something to withdraw. Recorded before the toast so a
-      // render triggered by the toast already knows.
-      rememberSosAlert(Date.now());
+      // render triggered by the toast already knows. A 200 means at least one
+      // contact's email was accepted; the server answers 502 otherwise.
+      rememberSosAlert(Date.now(), true);
       const sent = data.message || 'Emergency alert sent';
       // Say plainly what went out. No promise about the follow-up here: it may
       // never arrive, and a safety screen is the last place to write a cheque
@@ -12895,18 +12971,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast(loc ? sent : `${sent}. Your location was not available.`);
       setShowSOS(false);
       // Skip the chase when there is nothing to chase: no geolocation at all,
-      // or a permission the user has already refused.
-      if (!loc && !first.denied && geolocationAvailable()) startSosLocationFollowUp();
+      // or a permission the user has already refused. The chase names this
+      // alert, so the server can refuse its fix once the alert is stood down.
+      if (!loc && !first.denied && geolocationAvailable()) startSosLocationFollowUp(data.alertId);
     } catch (err) {
       // A 429 carrying alreadySent is the server confirming a live alert is
       // out and this device just did not know (a second phone, cleared
-      // storage), so the stand-down band arms off the server's word.
-      if (err?.status === 429 && err?.data?.alreadySent === true) rememberSosAlert(Date.now());
+      // storage), so the stand-down band arms off the server's word. The
+      // server sends that flag only for an alert that reached contacts.
+      if (err?.status === 429 && err?.data?.alreadySent === true) rememberSosAlert(Date.now(), true);
       // A 502 is "no contact could be emailed", and the flock alarm went out
-      // regardless, so there IS something to withdraw. The band is offered;
-      // if the flock leg reached nobody either, the server answers the tap
-      // with nothingToCancel and the band clears itself.
-      if (err?.status === 502) rememberSosAlert(Date.now());
+      // regardless, so there IS something to withdraw. The band is offered,
+      // and it says the contacts were NOT reached; if the flock leg reached
+      // nobody either, the server answers the tap with nothingToCancel and the
+      // band clears itself.
+      if (err?.status === 502) rememberSosAlert(Date.now(), false);
       const line = err?.message || 'Failed to send alert';
       // The offline and timeout failures are client-authored and were the
       // only SOS failures that did not name 911; every server refusal does.
@@ -12920,10 +12999,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [trustedContacts, trustedContactsLoaded, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp, rememberSosAlert]);
 
   /* THE STAND-DOWN.
-     The server does the hard part: it finds the most recent alert that
-     actually reached somebody, mails those contacts an all clear, and refuses
-     politely when there is nothing out there. This handler's whole job is to
-     be honest about which of those happened.
+     The server does the hard part: it finds every alert still standing that
+     actually reached somebody, tells everyone any of them reached that it is
+     over, and refuses politely when there is nothing out there. This
+     handler's whole job is to be honest about which of those happened.
 
      The three answers are deliberately not collapsed into one toast:
 
@@ -12936,10 +13015,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                         stays, because the person needs to try again or call.
        success          Cleared, and the server's own sentence is shown rather
                         than a generic one: it knows how many contacts were
-                        reached and how many were not. */
+                        reached and how many were not.
+
+     THE LOCATION CHASE ENDS FIRST, whatever the server answers. An SOS sent
+     indoors keeps asking the phone for a fix for up to 45 seconds, and a fix
+     that landed after "Tell them I'm OK" used to go out as a new alarm with a
+     map, to contacts and flockmates who had just been told the person was OK.
+     The person has said they are OK, so nothing from that chase may go out,
+     even if this request then fails. A follow-up already on the wire cannot
+     be recalled, so the stand-down waits for it and goes second: the server
+     then counts it among the alerts it withdraws, rather than the follow-up
+     landing after the all-clear. */
   const handleStandDown = useCallback(async () => {
     setSosStandingDown(true);
+    cancelSosLocationFollowUp();
     try {
+      await sosFollowUp.settled();
       const data = await cancelEmergencyAlert();
       rememberSosAlert(0);
       showToast(data.message || 'Your contacts have been told you are OK');
@@ -12965,7 +13056,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       setSosStandingDown(false);
     }
-  }, [rememberSosAlert, showToast]);
+  }, [rememberSosAlert, showToast, cancelSosLocationFollowUp, sosFollowUp]);
 
   /* The export, end to end.
      The 401 here is a RE-PROMPT, not a failure: the server answers
@@ -13298,6 +13389,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadTrustedContacts();
       }}
       alertLive={sosAlertLive}
+      contactsAlerted={sosContactsReached}
       standingDown={sosStandingDown}
       onStandDown={handleStandDown}
       onClose={() => { setSosArmed(false); setShowSOS(false); }}
@@ -18490,6 +18582,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   ? ' Their trusted contacts have already been emailed.'
                   : ''}
               {safetyAlert.lat === null ? ' They did not share their location.' : ''}
+              {/* The same words the alert email uses for a fix the phone put
+                  wider than a kilometre: an area to search, not a spot. */}
+              {safetyAlert.lat !== null && safetyAlert.accuracy > SOS_COARSE_FIX_METRES
+                ? ` Their location is approximate. The phone put it within ${sosAccuracyPhrase(safetyAlert.accuracy)}, so treat it as the area to search rather than the spot.`
+                : ''}
               {/* The alarm's own time. A push tapped at 9am used to read as a
                   live 9am alarm; the hour it actually fired changes what the
                   reader should do. */}
@@ -18501,7 +18598,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </a>
               {safetyAlert.lat !== null && (
                 <a className="hit44" href={`https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`} target="_blank" rel="noreferrer" style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
-                  {Icons.mapPin('currentColor', 16)} See where they are
+                  {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES ? 'See the area they are in' : 'See where they are'}
                 </a>
               )}
               <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: '10px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>

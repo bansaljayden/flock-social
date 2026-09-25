@@ -282,12 +282,53 @@ function normalizeTitle(title) {
   return clean ? clip(clean, MAX_TITLE) : 'Flock';
 }
 
+// ---------------------------------------------------------------------------
+// WHAT COUNTS AS ONE CONVERSATION
+//
+// The collapse key below and the quiet-hours merge in services/pushHelper.js
+// both ask it, so the two cannot disagree. The plan (flockId) is the
+// conversation, else the person (senderId, else fromUserId).
+//
+// fromUserId used to be no scope at all, so every friend request, every "you
+// are now friends" and every free-tonight pulse shared ONE slot per type: the
+// second person replaced the first on the lock screen, and a quiet-hours hold
+// kept only the last name until morning.
+//
+// Two types are not "the plan is the conversation":
+//   bill_settled   each person who says they paid is a separate claim the
+//                  recipient has to check against their payment app. A second
+//                  payer replaced the first, day or night, and the earlier
+//                  "says they paid you $12" was gone. One slot per payer.
+//   safety_alert and safety_alert_cancelled share ONE slot per sender. They
+//                  had one each, so the all-clear arrived NEXT TO the "needs
+//                  help" notification, which stayed in the tray and redrew the
+//                  full-screen alarm when tapped. Sharing it, the all-clear
+//                  replaces the alarm. Two people's alarms keep their own.
+// ---------------------------------------------------------------------------
+const ONE_SLOT_PER_PAYER = new Set(['bill_settled']);
+const SAFETY_SLOT = new Set(['safety_alert', 'safety_alert_cancelled']);
+const SCOPE_PREFIX = { flockId: 'f', senderId: 'u', fromUserId: 'u' };
+
+// The payload keys, in order, whose values name the conversation.
+function scopeKeys(data = {}) {
+  const type = data.type ? String(data.type) : '';
+  if (SAFETY_SLOT.has(type)) return data.fromUserId != null ? ['fromUserId'] : [];
+  if (data.flockId != null) {
+    return ONE_SLOT_PER_PAYER.has(type) && data.fromUserId != null ? ['flockId', 'fromUserId'] : ['flockId'];
+  }
+  if (data.senderId != null) return ['senderId'];
+  if (data.fromUserId != null) return ['fromUserId'];
+  return [];
+}
+
 // Collapse key: a second notification about the same conversation replaces the
 // first on the device instead of stacking a wall of them on the lock screen.
 function collapseId(data = {}) {
   const type = data.type ? String(data.type) : 'flock';
-  const scope = data.flockId != null ? `f${data.flockId}` : (data.senderId != null ? `u${data.senderId}` : '');
-  return `${type}${scope ? `-${scope}` : ''}`.slice(0, 64);
+  const scope = scopeKeys(data).map((k) => `${SCOPE_PREFIX[k]}${data[k]}`).join('-');
+  // The alarm and its stand-down are one slot, so the type is not in the key.
+  const head = SAFETY_SLOT.has(type) ? 'safety' : type;
+  return `${head}${scope ? `-${scope}` : ''}`.slice(0, 64);
 }
 
 function buildFcmMessage(token, title, body, data = {}) {
@@ -425,9 +466,9 @@ function isStaleError(err) {
 // push after responding, so that particular hang is gone — but the deadline
 // stays, because it is what makes "a notification failing must never be
 // something the user experiences as the app hanging" a property of this file
-// rather than a habit every caller has to remember. Resolving as a plain
-// failure is safe: the timeout carries no provider code, so isStaleError reads
-// it as transient and the token survives.
+// rather than a habit every caller has to remember. The deadline's answer is
+// never read as a dead token, so the token survives it, and the send's real
+// answer follows in `late` (see sendWithDeadline).
 // ---------------------------------------------------------------------------
 const SEND_TIMEOUT_MS = 8000;
 
@@ -436,48 +477,59 @@ const SEND_TIMEOUT_MS = 8000;
 // supplies.
 const MAX_TOKENS_PER_USER = 20;
 
-function timeoutError() {
-  const err = new Error(`push send exceeded ${SEND_TIMEOUT_MS}ms`);
-  err.code = 'push/deadline-exceeded';
-  return err;
-}
-
 async function rawSend(message) {
   if (senderOverride) return senderOverride(message);
   return admin.messaging().send(message);
 }
 
-async function sendWithDeadline(message, timeoutMs) {
+// What one device's send came to, as { success } or { success: false, stale }.
+// Never rejects: a thrown error IS the answer, read for whether it names the
+// token as gone.
+function settleSend(buildMessage, label) {
+  return Promise.resolve()
+    .then(() => rawSend(buildMessage()))
+    .then(
+      () => ({ success: true }),
+      (err) => {
+        const stale = isStaleError(err);
+        if (!stale) console.error(`[Firebase] ${label}:`, err.code || err.message);
+        return { success: false, stale };
+      }
+    );
+}
+
+// THE DEADLINE ENDS THE WAIT, NOT THE SEND. firebase-admin has no way to cancel
+// a request, so the send carries on after the deadline, retrying on its own
+// clock, and a slow SUCCESS used to come back from here as a plain failure.
+// Everything downstream believed it: pushHelper queued a retry and a second
+// copy went out a minute later, and services/crowdAlerts.js released its
+// once-per-flock claim so the next sweep sent the whole alert again.
+//
+// So a send still out at the deadline answers { success: false, stale: false,
+// late }, where `late` settles with what the send actually came to. The caller
+// is released on time, exactly as before, and whoever has to decide something
+// on the outcome (a retry, a claim) decides on `late` instead.
+function sendWithDeadline(buildMessage, timeoutMs, label) {
+  const outcome = settleSend(buildMessage, label);
   let timer = null;
-  try {
-    return await Promise.race([
-      rawSend(message),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(timeoutError()), timeoutMs);
-        if (typeof timer.unref === 'function') timer.unref();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      console.error(`[Firebase] ${label}:`, 'push/deadline-exceeded (still in flight)');
+      resolve({ success: false, stale: false, late: outcome });
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  return Promise.race([outcome, deadline]).finally(() => clearTimeout(timer));
 }
 
 // Send push notification to a single device token
-// Returns { success: true } or { success: false, stale: boolean }
+// Returns { success: true }, { success: false, stale: boolean }, or, for a send
+// still in flight at the deadline, { success: false, stale: false, late }.
 async function sendPushNotification(token, title, body, data = {}, opts = {}) {
   if (!senderOverride && !init()) return { success: false, stale: false };
 
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : SEND_TIMEOUT_MS;
-  try {
-    await sendWithDeadline(buildFcmMessage(token, title, body, data), timeoutMs);
-    return { success: true };
-  } catch (err) {
-    const stale = isStaleError(err);
-    if (!stale) {
-      console.error('[Firebase] Send error:', err.code || err.message);
-    }
-    return { success: false, stale };
-  }
+  return sendWithDeadline(() => buildFcmMessage(token, title, body, data), timeoutMs, 'Send error');
 }
 
 // ---------------------------------------------------------------------------
@@ -509,16 +561,7 @@ function buildBadgeOnlyMessage(token, badge) {
 async function sendBadgeNotification(token, badge, opts = {}) {
   if (!senderOverride && !init()) return { success: false, stale: false };
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : SEND_TIMEOUT_MS;
-  try {
-    await sendWithDeadline(buildBadgeOnlyMessage(token, badge), timeoutMs);
-    return { success: true };
-  } catch (err) {
-    const stale = isStaleError(err);
-    if (!stale) {
-      console.error('[Firebase] Badge send error:', err.code || err.message);
-    }
-    return { success: false, stale };
-  }
+  return sendWithDeadline(() => buildBadgeOnlyMessage(token, badge), timeoutMs, 'Badge send error');
 }
 
 // Send push notification to all devices belonging to a user
@@ -531,9 +574,64 @@ async function sendBadgeToUser(userId, badge) {
   return sendToUserDevices(userId, (row) => sendBadgeNotification(row.token, badge));
 }
 
+// The device ids a caller restricted a send to (a queued retry names the
+// devices it is still owed to), or null for every device on the account.
+function targetIds(value) {
+  if (!Array.isArray(value)) return null;
+  return value.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
+
+// Best-effort, and scoped to the account pushed to: see the long note at its
+// call in sendToUserDevices.
+async function pruneStale(userId, staleIds) {
+  if (!staleIds.length) return;
+  await pool
+    .query(
+      'DELETE FROM device_tokens WHERE id = ANY($1) AND user_id = $2',
+      [staleIds, userId]
+    )
+    .catch((pruneErr) => {
+      console.error('[Firebase] stale token prune failed (will retry on next send):', pruneErr.message);
+    });
+}
+
+// The tally the batch really came to, once every send that was still out at
+// the deadline has answered. Starts from the deadline's tally, in which those
+// sends were counted as failed, and never rejects.
+async function settleLate(userId, atDeadline, late) {
+  try {
+    const finals = await Promise.all(late.map((out) => Promise.resolve(out.late).then(
+      (fin) => ({ id: out.id, ...(fin || { success: false, stale: false }) }),
+      () => ({ id: out.id, success: false, stale: false })
+    )));
+    let { sent, failed } = atDeadline;
+    const staleIds = [];
+    const retryIds = Array.isArray(atDeadline.retryIds) ? [...atDeadline.retryIds] : [];
+    for (const fin of finals) {
+      if (fin.success) { sent += 1; failed -= 1; }
+      else if (fin.stale) staleIds.push(fin.id);
+      else retryIds.push(fin.id);
+    }
+    await pruneStale(userId, staleIds);
+    const out = atDeadline.attended > 0 ? { sent, failed, attended: atDeadline.attended } : { sent, failed };
+    if (retryIds.length) out.retryIds = retryIds;
+    return out;
+  } catch (err) {
+    return { sent: atDeadline.sent, failed: atDeadline.failed };
+  }
+}
+
 // One send loop for every per-user push. `perToken(row)` returns the same
-// { success, stale } shape sendPushNotification does, so the stale-token prune
-// below applies to badge syncs exactly as it applies to alerts.
+// { success, stale, late? } shape sendPushNotification does, so the stale-token
+// prune below applies to badge syncs exactly as it applies to alerts.
+//
+// The answer is { sent, failed } as it always was, plus, only when they apply:
+//   attended   devices left out because a live socket names them
+//   retryIds   devices whose send failed for a reason a second try can fix
+//              (not a dead token, not one still in flight), for a retry that
+//              goes to them and not to the devices that already have it
+//   inFlight / settled   how many sends were still out at the deadline, and a
+//              promise of the tally once they have answered
 async function sendToUserDevices(userId, perToken, opts = {}) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
@@ -545,9 +643,10 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     const result = await pool.query(
       `SELECT id, token FROM device_tokens
         WHERE user_id = $1
+          AND ($2::int[] IS NULL OR id = ANY($2::int[]))
         ORDER BY updated_at DESC NULLS LAST, id DESC
         LIMIT ${MAX_TOKENS_PER_USER}`,
-      [userId]
+      [userId, targetIds(opts.onlyIds)]
     );
 
     if (result.rows.length === 0) return { sent: 0, failed: 0 };
@@ -576,11 +675,15 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     let sent = 0;
     let failed = 0;
     const staleIds = [];
+    const retryIds = [];
+    const late = [];
     for (const out of outcomes) {
       if (out.success) sent++;
       else {
         failed++;
         if (out.stale) staleIds.push(out.id);
+        else if (out.late) late.push(out);
+        else retryIds.push(out.id);
       }
     }
 
@@ -602,18 +705,16 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     // every member who already had it on their lock screen. A prune that fails
     // costs one wasted send attempt next time; a delivery report that lies
     // costs a duplicate push.
-    if (staleIds.length > 0) {
-      await pool
-        .query(
-          'DELETE FROM device_tokens WHERE id = ANY($1) AND user_id = $2',
-          [staleIds, userId]
-        )
-        .catch((pruneErr) => {
-          console.error('[Firebase] stale token prune failed (will retry on next send):', pruneErr.message);
-        });
-    }
+    await pruneStale(userId, staleIds);
 
-    return attended > 0 ? { sent, failed, attended } : { sent, failed };
+    const tally = attended > 0 ? { sent, failed, attended } : { sent, failed };
+    if (retryIds.length) tally.retryIds = retryIds;
+    if (late.length) {
+      const atDeadline = { ...tally };
+      tally.inFlight = late.length;
+      tally.settled = settleLate(userId, atDeadline, late);
+    }
+    return tally;
   } catch (err) {
     console.error('[Firebase] sendToUserDevices error:', err.message);
     return { sent: 0, failed: 0 };
@@ -633,5 +734,9 @@ module.exports = {
   isStaleError,
   normalizeBody,
   normalizeTitle,
+  // "Which conversation is this", shared with the quiet-hours merge in
+  // services/pushHelper.js so a held row and a lock-screen slot agree.
+  scopeKeys,
+  collapseId,
   __setSenderForTests,
 };

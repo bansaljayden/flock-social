@@ -59,16 +59,51 @@ router.post('/register',
       // could both delete, then both insert, leaving the token on two
       // accounts. UNIQUE(token) (migration 002) makes this single upsert a
       // true ownership transfer.
-      await pool.query(
-        `INSERT INTO device_tokens (user_id, token, device_type, timezone)
-         VALUES ($1, $2, $3, $4)
+      //
+      // AND THE NEWER SESSION KEEPS IT (migration 085). The transfer used to
+      // be unconditional, so the LAST request to commit won, not the last
+      // person to sign in. A registration is sent with the bearer token the
+      // request started with, and a plain sign-out revokes nothing, so one
+      // still in flight when its account signed out, or a token rotation
+      // landing mid-handoff, could commit after the next account on the same
+      // phone had registered and point the phone back at the account that
+      // left. Every later push for that account then landed on the phone the
+      // next person was holding. So the row remembers when the session that
+      // holds it signed in (its JWT iat, middleware/auth.js), and another
+      // account takes it only with a session that signed in no earlier. The
+      // same account always refreshes its own row. A row from before 085, or
+      // a request whose token carries no iat, falls back to the old rule only
+      // where the row has no claim to defend.
+      //
+      // timezone_reported_at is when this device last said what its clock
+      // is. Quiet hours read the zone that was reported most recently
+      // (services/pushHelper.js recipientZone), and a registration that sends
+      // no zone reports nothing, so it leaves the stamp where it was.
+      const claim = await pool.query(
+        `INSERT INTO device_tokens (user_id, token, device_type, timezone, signed_in_at, timezone_reported_at)
+         VALUES ($1, $2, $3, $4::text, to_timestamp($5::double precision),
+                 CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() END)
          ON CONFLICT (token) DO UPDATE
          SET user_id = EXCLUDED.user_id,
              device_type = EXCLUDED.device_type,
              timezone = COALESCE(EXCLUDED.timezone, device_tokens.timezone),
-             updated_at = NOW()`,
-        [req.user.id, token, safeDeviceType, timezone]
+             timezone_reported_at = COALESCE(EXCLUDED.timezone_reported_at, device_tokens.timezone_reported_at),
+             signed_in_at = CASE WHEN device_tokens.user_id = EXCLUDED.user_id
+                                 THEN GREATEST(device_tokens.signed_in_at, EXCLUDED.signed_in_at)
+                                 ELSE EXCLUDED.signed_in_at END,
+             updated_at = NOW()
+         WHERE device_tokens.user_id = EXCLUDED.user_id
+            OR device_tokens.signed_in_at IS NULL
+            OR EXCLUDED.signed_in_at >= device_tokens.signed_in_at
+         RETURNING id`,
+        [req.user.id, token, safeDeviceType, timezone, req.tokenIssuedAt ?? null]
       );
+      // Zero rows is the refusal above: a newer sign-in on this device holds
+      // the token, so this session is not the one using it. 409 rather than
+      // a quiet 200, because the client marks a session registered on a 2xx.
+      if (claim && claim.rowCount === 0) {
+        return res.status(409).json({ error: 'This device is signed in to a newer session.' });
+      }
 
       // Nothing bounded how many tokens one account could accumulate. Every
       // push to a user fans out CONCURRENTLY over every row here, so an account
@@ -98,9 +133,12 @@ router.post('/register',
 );
 
 // DELETE /api/notifications/unregister — Remove a specific device token
-// This is the logout path. It deletes THIS device's token and leaves the
-// user's other devices alone; /unregister-all is the "sign me out everywhere"
-// hammer and signing out of a laptop should not kill push on a phone.
+// A sign-out's second line. POST /api/auth/logout deletes the same row inside
+// the request that ends the session, and the client sends this one as well,
+// so the row goes if either request lands. It deletes THIS device's token and
+// leaves the user's other devices alone; /unregister-all is the "sign me out
+// everywhere" hammer and signing out of a laptop should not kill push on a
+// phone.
 router.delete('/unregister',
   [body('token').isString().trim().isLength({ min: 1, max: 1024 }).withMessage('Token is required')],
   async (req, res) => {

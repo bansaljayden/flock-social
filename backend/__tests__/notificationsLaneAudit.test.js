@@ -18,7 +18,10 @@ test('the attentive set is handed to the send and only unattended tokens are pus
   const helper = read('services/pushHelper.js');
   const fb = read('services/firebaseService.js');
   assert.match(helper, /const skipTokens = opts\.io \? attentiveTokens\(opts\.io, userId\) : null;/);
-  assert.match(helper, /sendPushToUser\(userId, title, body, payload, \{ skipTokens \}\)/);
+  // Every send carries the attentive set; a queued row adds the devices it is
+  // still owed to (migration 085) and nothing else.
+  assert.match(helper, /const sendOpts = Array\.isArray\(opts\.onlyIds\) \? \{ skipTokens, onlyIds: opts\.onlyIds \} : \{ skipTokens \};/);
+  assert.match(helper, /sendPushToUser\(userId, title, body, payload, sendOpts\)/);
   assert.match(helper, /return deliver\(userId, title, body, data, \{ io \}\);/);
   assert.match(helper, /const result = await deliver\(userId, title, body, data, \{ io \}\);/);
   assert.match(helper, /attendedOnly \? OUTCOME\.ONLINE : OUTCOME\.NO_DEVICE/);
@@ -28,7 +31,8 @@ test('the attentive set is handed to the send and only unattended tokens are pus
   assert.match(fb, /async function sendToUserDevices\(userId, perToken, opts = \{\}\)/);
   assert.match(fb, /const rows = skip \? result\.rows\.filter\(\(row\) => !skip\.has\(row\.token\)\) : result\.rows;/);
   assert.match(fb, /if \(rows\.length === 0\) return \{ sent: 0, failed: 0, attended \};/);
-  assert.match(fb, /return attended > 0 \? \{ sent, failed, attended \} : \{ sent, failed \};/);
+  assert.match(fb, /const tally = attended > 0 \? \{ sent, failed, attended \} : \{ sent, failed \};/);
+  assert.match(fb, /return tally;/);
 });
 
 test('unregister-all is scoped to the caller\'s kind of device when it says which', () => {
@@ -39,7 +43,8 @@ test('unregister-all is scoped to the caller\'s kind of device when it says whic
 
 test('a quiet hold releases the debounce, and a retry row that waits for morning becomes quiet', () => {
   const helper = read('services/pushHelper.js');
-  assert.match(helper, /const nothingSent = !result \|\| result\.skipped \|\| \(result\.sent === 0\);/);
+  // A send still in flight at the deadline keeps the window; a hold does not.
+  assert.match(helper, /const nothingSent = !result \|\| result\.skipped \|\| \(result\.sent === 0 && !result\.settled\);/);
   assert.ok(!/result\.skipped && !held/.test(helper), 'the hold no longer keeps the claim');
   // $2 is cast now, and has to be: bare, the planner reads the arithmetic
   // below it as interval plus interval and GREATEST refuses the statement.

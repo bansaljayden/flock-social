@@ -66,6 +66,11 @@ const EmergencySheet = ({
   // absent rather than disabled: a dead "tell them I am OK" on a safety screen
   // is worse than no button, because it reads as an offer.
   alertLive = false,
+  // Whether any trusted contact's email was actually accepted for the live
+  // alert. False after a 502: the flock may have heard, so there is still
+  // something to withdraw, but the contacts were told nothing and the band
+  // must not say they were.
+  contactsAlerted = true,
   onStandDown,
   standingDown = false,
 }) => {
@@ -171,7 +176,17 @@ const EmergencySheet = ({
     ? "Couldn't check your contacts. You can still send the alert."
     : noContacts
       ? 'No trusted contacts set up'
-      : `${contactCount} trusted contact${contactCount === 1 ? '' : 's'} will be notified`;
+      : `${contactCount} trusted contact${contactCount === 1 ? '' : 's'} will be emailed.`;
+  // THE SECOND AUDIENCE, SAID BEFORE THE PRESS. An alert also rings everyone
+  // on a confirmed plan with the sender whose time is within twelve hours of
+  // now (routes/safety.js, alertFlockMembers), in the app, with the location
+  // when the alert carries one. This sheet used to name only the contacts, so
+  // somebody pressing SOS was not told their position was about to reach the
+  // people on their plan. Absent with no contacts, because the server refuses
+  // an alert with nobody to email before either leg runs.
+  const flockLine = noContacts
+    ? null
+    : 'People on a confirmed plan with you around now also get an alert in the app, with your location if your phone has a fix.';
 
   return (
     <div className="es-backdrop">
@@ -192,8 +207,12 @@ const EmergencySheet = ({
           </span>
           <div>
             <h2 id="es-title" className="es-title">Emergency</h2>
-            {/* The described-by text: the accurate contact count, live. */}
-            <p id="es-desc" className="es-desc">{contactLine}</p>
+            {/* The described-by text: the accurate contact count, live, and
+                who else an alert reaches. */}
+            <p id="es-desc" className="es-desc">
+              {contactLine}
+              {flockLine && ` ${flockLine}`}
+            </p>
           </div>
         </div>
 
@@ -212,7 +231,15 @@ const EmergencySheet = ({
             contacts a second time. */}
         {alertLive && (
           <div className="es-standdown">
-            <p className="es-standdown-line">Your contacts were alerted. They have not been told anything since.</p>
+            {/* Only after a contact's email was actually accepted. A 502
+                reached no contact, and the band said they were alerted
+                anyway; the flock may still have heard, which is why the
+                band is here at all. */}
+            <p className="es-standdown-line">
+              {contactsAlerted
+                ? 'Your contacts were alerted. They have not been told anything since.'
+                : 'None of your contacts could be emailed. Anyone on a plan with you may still have been alerted in the app.'}
+            </p>
             <button
               type="button"
               className="es-btn es-ok"

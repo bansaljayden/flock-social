@@ -75,6 +75,10 @@ function dispatch(text, params = []) {
     contactInsert = params;
     return Promise.resolve({ rows: [{ id: 1 }], rowCount: 1 });
   }
+  // A device registration that applied answers with its row (RETURNING id).
+  // Zero rows is the route's signal that a newer session holds the token
+  // (migration 085), which is a 409 and not what these probes are about.
+  if (/^INSERT INTO device_tokens/i.test(sql)) return Promise.resolve({ rows: [{ id: 1 }], rowCount: 1 });
 
   // Opt-in: enough of the guest-vote world to let the fan-out tests run the
   // whole route, including the member-facing tally it now delegates to

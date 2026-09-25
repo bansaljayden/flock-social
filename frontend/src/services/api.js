@@ -164,6 +164,12 @@ function setToken(token) {
  *     flock_location_enabled     their location consent, re-asked per account
  *     flock_birdie_corner, flock_sos_corner   synced per account
  *     flock_push_token           the FCM registration this session owned
+ *     flock_push_token_delete_owed  a sign-out's token deletion still owed
+ *                                (services/firebase.js). Written AFTER this
+ *                                sweep by the sign-out that owes it, so it
+ *                                outlives that one and no other.
+ *     flock_sos_stand_downs      which senders' SOS alarms were called off
+ *                                (services/pushNavigation.js)
  *     flock_pending_invite       an invite stashed for whoever redeems it
  *     flock_guest_<token>        a guest identity from an invite page
  *
@@ -1114,14 +1120,16 @@ export async function getCurrentUser() {
 // Sign out: tell the server, then wipe the device. In that order, and the
 // second half is not conditional on the first.
 //
-// POST /api/auth/logout takes no body, requires the bearer token, and answers
-// { message }. Today the backend calls it advisory (tokens carry no per-session
-// id, so single-device revocation would have to bump token_version and sign the
-// user out of their laptop too) — but the call is made anyway, because the
-// client's job is to declare the session over and the day that route learns to
-// revoke, every shipped app already asks it to. POST /api/auth/logout-all is
-// the one that truly revokes, by bumping token_version; no UI reaches it, so
-// nothing here calls it.
+// POST /api/auth/logout requires the bearer token, takes this device's push
+// token as { pushToken } when there is one, and answers { message }. The
+// session half is advisory (tokens carry no per-session id, so single-device
+// revocation would have to bump token_version and sign the user out of their
+// laptop too) — but the call is made anyway, because the client's job is to
+// declare the session over. The device half is not advisory: the server
+// deletes this device's push registration in the same request, so the next DM
+// or SOS for the account does not ring a phone sitting on the sign-in screen.
+// POST /api/auth/logout-all is the one that truly revokes, by bumping
+// token_version; no UI reaches it, so nothing here calls it.
 //
 // FAILURE BEHAVIOR, which is the whole point: the local wipe is synchronous and
 // runs whether the server answers, refuses, or never hears us. A user hitting
@@ -1129,8 +1137,20 @@ export async function getCurrentUser() {
 // A short timeout keeps a hung connection from holding the caller.
 const LOGOUT_TIMEOUT_MS = 4000;
 
+// The push token this device holds, handed over at sign-out by
+// services/firebase.js, which owns that key and has to read it before the wipe
+// in logout() removes it (unregisterPushToken runs first in App.js's
+// endSession). Held for the one logout() that follows and cleared by it, so it
+// can never ride along with a later session's sign-out.
+let signOutPushToken = null;
+export function handOverPushTokenForSignOut(token) {
+  signOutPushToken = typeof token === 'string' && token.length >= 8 && token.length <= 1024 ? token : null;
+}
+
 export async function logout() {
   const token = getToken();
+  const pushToken = signOutPushToken;
+  signOutPushToken = null;
   // Issued before the wipe so it carries a live credential, with the header
   // pinned explicitly so the order of these two lines can never quietly become
   // load-bearing. .catch() here, not try/await: nothing this returns can
@@ -1140,6 +1160,7 @@ export async function logout() {
       method: 'POST',
       timeout: LOGOUT_TIMEOUT_MS,
       headers: { Authorization: `Bearer ${token}` },
+      ...(pushToken ? { body: JSON.stringify({ pushToken }) } : {}),
     }).catch(() => null)
     : null;
   clearLocalSession();
@@ -2227,17 +2248,21 @@ export async function deleteTrustedContact(id) {
 // Safety endpoints get double the default leash. The server fans the alert
 // out to trusted contacts before answering, and an SOS is the one request
 // that must not give up early on a weak connection.
-export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation }) {
+export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation, followUpTo }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   // accuracy is the phone's own radius for the fix, in metres. The server has
   // labelled coarse fixes honestly since round 23 ("treat it as the area to
   // search rather than the spot"), and until this field was sent that whole
   // layer was dead code: a cell-tower fix wrong by two kilometres mailed a
   // parent six decimal places and a pin.
+  // followUpTo is set only by the location chase: the id of the alert this fix
+  // belongs to, so the server can refuse it once that alert has been stood
+  // down. JSON.stringify drops it when it is undefined, which is every
+  // deliberate press.
   return request('/api/safety/alert', {
     method: 'POST',
     timeout: 30000,
-    body: JSON.stringify({ latitude, longitude, accuracy, includeLocation, timezone }),
+    body: JSON.stringify({ latitude, longitude, accuracy, includeLocation, timezone, followUpTo }),
   });
 }
 

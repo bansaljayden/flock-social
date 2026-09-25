@@ -30,7 +30,7 @@
 // tell "already registered this session" from "a different account is signed in
 // now", and an account switch that happens in another tab never passes through
 // a logged-out state for a boolean to notice.
-import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken } from './api';
+import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken, handOverPushTokenForSignOut } from './api';
 import { startPushNavigation, handleNotificationData, clearPendingNavigation } from './pushNavigation';
 // The socket needs to know which device it is speaking for, so the backend can
 // suppress a push on THIS device without silencing the account. The token is
@@ -89,6 +89,39 @@ function rememberPushToken(token) {
 function knownPushToken() {
   if (currentPushToken) return currentPushToken;
   try { return localStorage.getItem(PUSH_TOKEN_KEY); } catch (err) { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// A SIGN-OUT OWES THE TOKEN'S DELETION UNTIL ONE LANDS (native app).
+//
+// Signing out removes this device's row on our server twice over (POST
+// /api/auth/logout names the token, and DELETE /api/notifications/unregister
+// follows it), and asks the messaging plugin to delete the FCM token itself,
+// which is what makes every later send to it fail however many rows still name
+// it. All three need the network. A sign-out on the subway, or an app killed
+// before the requests left, used to leave the token alive and registered to
+// the account, so its next DM, bill or SOS rang a phone sitting on the sign-in
+// screen until somebody signed in on it again.
+//
+// The plugin's deletion needs no credential of ours, so it is the one that can
+// still be made after the session is gone. The debt is written down when the
+// attempt starts and cleared when one lands, and it is paid on the next launch,
+// focus or reconnect while nobody is signed in. A registration clears it: a
+// token a new session has just registered belongs to that session. It is
+// written from the attempt, which runs as a microtask after api.js's sign-out
+// sweep, so the sweep does not erase it.
+// ---------------------------------------------------------------------------
+const TOKEN_DELETE_OWED_KEY = 'flock_push_token_delete_owed';
+
+function markTokenDeleteOwed(owed) {
+  try {
+    if (owed) localStorage.setItem(TOKEN_DELETE_OWED_KEY, '1');
+    else localStorage.removeItem(TOKEN_DELETE_OWED_KEY);
+  } catch (err) { /* private mode */ }
+}
+
+function tokenDeleteOwed() {
+  try { return localStorage.getItem(TOKEN_DELETE_OWED_KEY) === '1'; } catch (err) { return false; }
 }
 
 // Whether there is a Firebase project to register a token with at all. This is
@@ -231,6 +264,9 @@ async function completeNativeRegistration(FirebaseMessaging) {
   if (!token) return null;
   const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
   await registerDeviceToken(token, platform, deviceTimezone());
+  // Registered to the session signed in now, so no earlier sign-out still owes
+  // this token's deletion (see TOKEN_DELETE_OWED_KEY).
+  markTokenDeleteOwed(false);
   rememberPushToken(token);
   markSessionRegistered();
   // Firebase rotates tokens while the app stays installed; without this
@@ -241,7 +277,9 @@ async function completeNativeRegistration(FirebaseMessaging) {
     FirebaseMessaging.addListener('tokenReceived', (event) => {
       if (event?.token) {
         rememberPushToken(event.token);
-        registerDeviceToken(event.token, platform, deviceTimezone()).catch(() => {});
+        registerDeviceToken(event.token, platform, deviceTimezone())
+          .then(() => markTokenDeleteOwed(false))
+          .catch(() => {});
       }
     }).catch(() => { tokenRotationSubscribed = false; });
   }
@@ -548,6 +586,29 @@ async function rearmIfUnresolvedInner() {
   attempts = 0;
 }
 
+// Pays the deletion a sign-out still owes (TOKEN_DELETE_OWED_KEY above), and
+// only while nobody is signed in: with a session up, the token may be the one
+// that session is registered with. If somebody signs in while the deletion is
+// out, their session registers again once it lands, so it gets a fresh token
+// rather than keeping the one just deleted.
+let owedDeleteInFlight = false;
+function settleOwedTokenDelete() {
+  if (owedDeleteInFlight || !isNativeApp() || !tokenDeleteOwed() || readAuthToken()) return;
+  owedDeleteInFlight = true;
+  import('@capacitor-firebase/messaging')
+    .then(({ FirebaseMessaging }) => FirebaseMessaging.deleteToken())
+    .then(() => {
+      markTokenDeleteOwed(false);
+      if (readAuthToken()) {
+        handledAuthToken = null;
+        attempts = 0;
+        syncPushForSession();
+      }
+    })
+    .catch(() => { /* still owed; the next launch, focus or reconnect tries again */ })
+    .finally(() => { owedDeleteInFlight = false; });
+}
+
 let watcherStarted = false;
 
 export function startPushSessionWatcher() {
@@ -587,8 +648,9 @@ export function startPushSessionWatcher() {
 
   const tick = () => { syncPushForSession(); if (settled()) stopPoll(); };
   const startPoll = () => { if (pollId === null && !settled()) pollId = setInterval(tick, 2000); };
-  const retry = () => { rearmIfUnresolved(); syncPushForSession(); if (settled()) stopPoll(); else startPoll(); };
+  const retry = () => { settleOwedTokenDelete(); rearmIfUnresolved(); syncPushForSession(); if (settled()) stopPoll(); else startPoll(); };
 
+  settleOwedTokenDelete();
   tick();
   startPoll();
   window.addEventListener('focus', retry);
@@ -610,11 +672,17 @@ export function startPushSessionWatcher() {
  *
  * Fires the unregister call synchronously so the request captures the auth
  * header before the caller clears the session.
+ *
+ * It is the second line, not the first. The token is also handed to api.js,
+ * whose logout() (called straight after this in App.js's endSession) sends it
+ * with POST /api/auth/logout, and the server deletes this device's row inside
+ * the request that ends the session. Either request landing is enough.
  */
 export function unregisterPushToken() {
   handledAuthToken = null;
   attempts = 0;
   const token = knownPushToken();
+  try { handOverPushTokenForSignOut(token); } catch (err) { /* a sign-out never fails on this */ }
   rememberPushToken(null);
 
   // THE ACCOUNT-WIDE PATH IS FOR A DEVICE THAT HAD A TOKEN AND LOST TRACK OF
@@ -641,8 +709,12 @@ export function unregisterPushToken() {
   Promise.resolve().then(async () => {
     try {
       if (isNativeApp()) {
+        // Owed from here until a deletion lands (TOKEN_DELETE_OWED_KEY). This
+        // runs after api.js's sign-out sweep, so the note survives it.
+        if (token) markTokenDeleteOwed(true);
         const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
         await FirebaseMessaging.deleteToken();
+        markTokenDeleteOwed(false);
         return;
       }
       // Only if this page load actually reached for the SDK, which means this
@@ -661,7 +733,10 @@ export function unregisterPushToken() {
       if (!m) return;
       const [, { deleteToken }] = await loadMessagingSdk();
       await deleteToken(m);
-    } catch (err) { /* the server-side row is already gone */ }
+    } catch (err) {
+      // On the device the deletion stays owed and is retried while signed out
+      // (settleOwedTokenDelete). The server-side row goes with either request.
+    }
   });
 
   return request;
@@ -751,7 +826,7 @@ export function getNotificationStatus() {
 
 // Re-exported so App.js has a single import for "take me to the thing the
 // notification was about".
-export { onPushNavigate, peekPendingNavigation, watchPendingNavigation, safetyIntentIsFor } from './pushNavigation';
+export { onPushNavigate, peekPendingNavigation, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown } from './pushNavigation';
 
 /**
  * A sign-out takes this account's notifications with it: every one this

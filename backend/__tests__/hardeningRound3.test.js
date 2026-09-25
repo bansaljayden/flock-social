@@ -27,11 +27,16 @@ test('admin: omitting expiresAt keeps only a live grant', () => {
 
 test('safety: the audience is written before the alarm, and empty snapshots are authoritative', () => {
   const src = read('routes/safety.js');
-  assert.match(src, /const audience = members\.rows\.map\(\(row\) => Number\(row\.user_id\)\);\n\s+if \(alertId\) \{\n\s+await pool\.query\('UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\] WHERE id = \$2', \[audience, alertId\]\);/);
-  assert.match(src, /alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId\)/);
+  // Written before the alarm, and since migration 084 only while the alert is
+  // still standing: a leg whose alert was stood down during the email fan-out
+  // tells nobody (sosStandDownEndsTheChase.test.js drives that branch).
+  assert.match(src, /const audience = members\.rows\.map\(\(row\) => Number\(row\.user_id\)\);\n\s+if \(alertId\) \{\n\s+const recorded = await pool\.query\(\n\s+`UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\]\n\s+WHERE id = \$2 AND withdrawn_at IS NULL\n\s+RETURNING id`,\n\s+\[audience, alertId\]\n\s+\);/);
+  assert.match(src, /alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId, flockLeg\)/);
   assert.match(src, /VALUES \(\$1, \$2, \$3, 0, '\{\}'::int\[\], '\[\]'::jsonb\) RETURNING id/);
   assert.match(src, /flock_recipient_ids : null;/);
-  assert.match(src, /: null;\n\s+\/\/ A recorded empty list[\s\S]{0,200}if \(withEmail === null\) \{/);
+  // The stand-down reads every covered alert's recorded contacts, and only a
+  // pre-snapshot NULL falls back to the contact list; an empty list is nobody.
+  assert.match(src, /\/\/ A recorded empty list is "no contact got this alarm"[\s\S]{0,200}if \(!Array\.isArray\(now\.contact_recipients\)\) \{/);
   const mig = read('migrations/064_emergency_alert_snapshot_sentinel.sql');
   assert.match(mig, /ALTER COLUMN flock_recipient_ids DROP DEFAULT/);
   assert.match(mig, /SET flock_recipient_ids = NULL, contact_recipients = NULL/);
@@ -58,9 +63,11 @@ test('moderation and friends: a block keeps the decline cooldown, cancel is not 
 
 test('push: the merged-hold repair carries the survivor sender and skips blocked or banned senders', () => {
   const src = read('services/pushHelper.js');
-  assert.match(src, /SELECT m\.id, m\.sender_id\n\s+FROM messages m/);
+  // The survivor's name and plan ride along now, so the title is rebuilt from
+  // the survivor too (__tests__/mergedHoldRepair.test.js).
+  assert.match(src, /SELECT m\.id, m\.sender_id, su\.name AS sender_name, f\.name AS flock_name\n\s+FROM messages m/);
   assert.match(src, /JOIN users su ON su\.id = m\.sender_id AND su\.is_banned IS NOT TRUE/);
-  assert.match(src, /senderId: String\(r\.rows\[0\]\.sender_id\)/);
+  assert.match(src, /senderId: String\(survivor\.sender_id\)/);
   assert.match(src, /JOIN users su ON su\.id = dm\.sender_id AND su\.is_banned IS NOT TRUE/);
 });
 

@@ -190,6 +190,10 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync('flock-login-timing-equalizer', SALT
 //                  Apple one about 44 — so this is a backstop on the one
 //                  remaining value this file writes to a bounded column without
 //                  measuring it, not a gate anybody can reach.
+//   MAX_PUSH_TOKEN the push token /logout deletes this device's row by. The
+//                  same width POST /api/notifications/register stores one at
+//                  (an FCM registration token is 160-350 characters), so any
+//                  token that could have been registered can be signed out.
 const MAX_EMAIL = 255;
 const MAX_OAUTH_ID = 255;
 const MAX_NAME = 255;
@@ -200,6 +204,7 @@ const MAX_DOB_LENGTH = 40;
 const MAX_LINK_TOKEN = 200;
 const MAX_OAUTH_TOKEN = 4096;
 const MAX_OAUTH_ACCESS_TOKEN = 2048;
+const MAX_PUSH_TOKEN = 1024;
 
 // ---------------------------------------------------------------------------
 // Email identity (round 15)
@@ -2858,10 +2863,50 @@ router.get('/me', authenticate, async (req, res) => {
 // Single-device sign-out. Tokens carry no per-session id, so the only thing
 // that can be revoked is EVERY session at once (token_version) — doing that
 // here would sign a user out of their laptop every time they signed out of
-// their phone. So this stays advisory: the client discards the token.
-// POST /api/auth/logout-all below is the one that actually revokes.
-router.post('/logout', authenticate, (req, res) => {
-  res.json({ message: 'Logged out successfully' });
+// their phone. So the session half stays advisory: the client discards the
+// token. POST /api/auth/logout-all below is the one that actually revokes.
+//
+// THE DEVICE HALF IS NOT ADVISORY. The client sends the push token this device
+// registered (pushToken) and its row is deleted here, inside the request that
+// ends the session. The only thing that used to drop it was a separate
+// fire-and-forget DELETE /api/notifications/unregister, so a sign-out whose
+// second request never landed left the phone registered to the account, and
+// the next DM, bill or SOS for it rang a phone sitting on the sign-in screen.
+// The client still sends that request as a second line. Scoped to the caller,
+// user_id AND token: a token that has since moved to another account on the
+// same phone belongs to that account, and this sign-out must not take it. A
+// database blip is retried a couple of times before the request gives up,
+// because this row is the one thing a sign-out changes on the server.
+const LOGOUT_DEVICE_DELETE_ATTEMPTS = 3;
+router.post('/logout', authenticate, [
+  body('pushToken').optional({ values: 'null' }).isString().trim()
+    .isLength({ min: 8, max: MAX_PUSH_TOKEN }).withMessage('Invalid push token'),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+    const pushToken = typeof req.body?.pushToken === 'string' ? req.body.pushToken.trim() : '';
+    if (pushToken) {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await pool.query(
+            'DELETE FROM device_tokens WHERE user_id = $1 AND token = $2',
+            [req.user.id, pushToken]
+          );
+          break;
+        } catch (err) {
+          if (attempt >= LOGOUT_DEVICE_DELETE_ATTEMPTS) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        }
+      }
+    }
+    res.json({ message: 'Logged out successfully' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ error: 'Failed to sign out this device' });
+  }
 });
 
 // POST /api/auth/logout-all — sign out on every device, for real.
@@ -3999,6 +4044,7 @@ module.exports.__testing = {
   MAX_LINK_TOKEN,
   MAX_OAUTH_TOKEN,
   MAX_OAUTH_ACCESS_TOKEN,
+  MAX_PUSH_TOKEN,
   clampName,
   // Minors-compliance audit 2026-08-14 (COPPA neutral age screen). The message
   // is exported so the test can assert it TEACHES NOTHING (no age, no
