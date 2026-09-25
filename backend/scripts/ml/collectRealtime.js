@@ -10,7 +10,10 @@ const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
 const { fetchLiveBusyness, NETWORK_ERR_RE } = require('./bestTimeService');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep, withCorpusWriteLock } = require('./config');
-const { getNearestEvent } = require('./eventService');
+const {
+  getNearestEvent, fetchTicketmasterPage, fetchSeatGeekEvents, nearestEventFromAnswers, distanceKm,
+  NEARBY_KM, TM_PAGE_SIZE,
+} = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
 const { buildRecentDeviation } = require('./buildRecentDeviation');
@@ -117,7 +120,9 @@ const clampPct = (v) => (v == null ? null : Math.max(0, Math.min(100, v)));
 // is one call per second and it is not negotiable (two account-wide 403s bought
 // that number), so a sweep of the ~1,400 PA venues is the 47 to 60 minutes
 // RETRAIN.md measured on 2026-09-01, whatever else changes. Skipping calls is
-// the only lever that does not touch pacing.
+// the only lever that does not touch pacing. (Superseded on 2026-09-25 in one
+// respect: the pace now limits STARTS, and overlapping slow calls is a second
+// lever that leaves it alone. See OVERLAPPING CALLS below.)
 //
 // BE PRECISE ABOUT WHICH SKIPS THIS CAN RECOVER, because the counters are easy
 // to misread. The last run before this filter existed reported 245 rows against
@@ -285,6 +290,960 @@ async function loadOpenHourMasks(cityScope) {
   return masks;
 }
 
+// ---------------------------------------------------------------------------
+// OVERLAPPING CALLS AT THE SAME START PACE (2026-09-25).
+// ---------------------------------------------------------------------------
+// The pace has always been "one call per second", and it was enforced by
+// sleeping a second AFTER each call finished. So a call's latency was added to
+// the pace rather than hidden behind it: a live answer that took eighteen
+// seconds, or a timeout at the twenty seconds bestTimeService allows, held the
+// whole sweep for that long. Production logs on 2026-09-25 show what that adds
+// up to. Sweeps ended with "Time budget reached after 255-277 calls", about a
+// thousand of the 1,365 venues were left for the next run, every hour, and
+// 47 to 59 live rows were written. The hour was spent waiting, not calling.
+//
+// So the pace is now what it always claimed to be, a limit on STARTS: at most
+// one new call per START_INTERVAL_MS, and a slow call no longer holds the
+// queue, because up to `maxInFlight` calls may be waiting on BestTime at once.
+// The rate BestTime receives is the same one request a second (a fifth of the
+// published 300 a minute); what changes is how many answers may be
+// outstanding. Nothing about the pace history is relaxed: it is in the comment
+// on START_INTERVAL_MS, and the gate below enforces it start to start.
+//
+// Every backoff the serial loop had is kept, as a hold on NEW starts rather
+// than a sleep: a 503 holds new calls for sixty seconds, any other failure for
+// two. Through a 503 wall that reproduces the serial rhythm exactly, because a
+// 503 comes back fast and each one pushes the next start a minute out.
+//
+// The breakers count in COMPLETION order, which is the only order there is once
+// calls overlap: consecutive means consecutive answers. The first breaker to
+// trip stops new starts at once; calls already in flight finish on their own
+// timeout, their readings are stored like any other, and they can neither
+// trip a second breaker nor rename the abort.
+// ---------------------------------------------------------------------------
+
+// One call STARTED per second, a fifth of BestTime's stated 300 a minute. The
+// history that earned this humility, same day: 100ms pacing (600 a minute) drew
+// a hard key block; 250ms (240 a minute, lawfully under the limit) still drew a
+// soft 503 wall after ~475 calls and then the same 403, because a key that has
+// offended once is not judged by the published ceiling. Speed buys nothing
+// here and trust buys everything, which is why overlapping the waits is the
+// lever and raising this number is not.
+const START_INTERVAL_MS = 1000;
+
+// How many calls may be waiting on BestTime at once. At one start a second, a
+// sweep keeps about as many calls in flight as the average call occupies a
+// slot in seconds, and a timeout occupies one for its twenty seconds plus the
+// two second hold after it. Sized on the simulated clock in
+// __tests__/collectRealtimeConcurrency.test.js, with a mix of answers that
+// reproduces production's serial numbers: two in five calls timing out, one in
+// ten answering in fifteen seconds, the rest in two. That mix run serially
+// makes about 270 calls in fifty minutes, where production made 255-277 on
+// 2026-09-25. Over the full 1,365 venues:
+//     in flight   40% time out     50% time out
+//         6       48.7 min, all    budget hit, 173 left over
+//         8       41.1 min, all    45.9 min, all
+//        10       38.3 min, all    41.7 min, all
+// Six is too close to the budget to call finished, so the default is eight.
+// --max-in-flight=N changes it for one run; 1 restores the serial sweep, with
+// the pace measured start to start. The ceiling is pg's default pool size,
+// because every call in flight can hold one connection for its write.
+const DEFAULT_MAX_IN_FLIGHT = 8;
+const MAX_IN_FLIGHT_CEILING = 10;
+
+// THE GATE every call starts through. Three rules, all checked with nothing
+// awaited between the last check and the start, so an answer cannot go stale:
+//   * at most one start per `intervalMs`, measured start to start;
+//   * at most `maxInFlight` calls unfinished;
+//   * no start before a hold a completion has asked for (holdOff).
+// And one limit on waiting: ready(deadline) stops waiting at the deadline and
+// says so ('late') rather than serving a pace or a hold that runs past it.
+// stop() ends it: a waiting ready() wakes and answers false, and no later one
+// answers true. A task that throws stops it too, because a throw a call did not
+// handle is a bug, and drain() rethrows it once everything in flight has
+// settled, so the run still fails loudly and the pool is not ended under a
+// write.
+//
+// `now` and `pause` are injectable so a test can drive the gate on a simulated
+// clock. Each wait is served ONCE rather than re-measured in a loop, which
+// keeps the gate honest under a pause that returns early: the suites that stub
+// config.sleep to keep a run to seconds would otherwise spin here until a real
+// second had passed.
+function createCallGate({
+  maxInFlight = DEFAULT_MAX_IN_FLIGHT,
+  intervalMs = START_INTERVAL_MS,
+  now = Date.now,
+  pause = sleep,
+} = {}) {
+  const inFlight = new Set();
+  let lastStartAt = null;
+  let paceOwed = false;
+  let notBefore = -Infinity;
+  let holdOwed = false;
+  let stopped = false;
+  let failure = null;
+  let wake = null;
+  let peak = 0;
+
+  // Resolves when `promise` settles or stop() is called, whichever is first.
+  const waitFor = (promise) => new Promise((resolve) => {
+    wake = resolve;
+    promise.then(resolve, resolve);
+  }).then(() => { wake = null; });
+
+  const stop = () => {
+    stopped = true;
+    if (wake) wake();
+  };
+
+  return {
+    // Resolves true when one more call may start NOW, and false once stopped.
+    // Given a `deadline` (the sweep's time budget, on the same clock as `now`)
+    // it also resolves 'late' once the deadline has passed, and a wait for the
+    // pace or for a hold is cut at the deadline instead of being served in
+    // full: a 503 just before the budget asks for a sixty second hold, and
+    // serving that before looking at the budget carried the sweep up to a
+    // minute past it. 'late' never starts a call; the caller's budget check
+    // acts on it. A wait for a free slot is not cut, because a slot frees when
+    // a call in flight answers and that call's own timeout bounds it.
+    async ready(deadline = Infinity) {
+      // The deadline cuts one wait, once. A pause that returns early (the
+      // stubbed sleep some suites use) must not turn the cut into a spin, so
+      // after it every wait is served in full, as before.
+      let cut = false;
+      const napToward = (until) => {
+        const wait = until - now();
+        const toDeadline = deadline + 1 - now();
+        if (!cut && toDeadline < wait) {
+          cut = true;
+          return { nap: toDeadline, served: false };
+        }
+        return { nap: wait, served: true };
+      };
+      for (;;) {
+        if (stopped) return false;
+        if (now() > deadline) return 'late';
+        if (inFlight.size >= maxInFlight) {
+          await waitFor(Promise.race(inFlight));
+          continue;
+        }
+        if (paceOwed) {
+          if (lastStartAt + intervalMs > now()) {
+            const { nap, served } = napToward(lastStartAt + intervalMs);
+            if (served) paceOwed = false;
+            await waitFor(pause(nap));
+            continue;
+          }
+          paceOwed = false;
+        }
+        if (holdOwed) {
+          if (notBefore > now()) {
+            const { nap, served } = napToward(notBefore);
+            if (served) holdOwed = false;
+            await waitFor(pause(nap));
+            continue;
+          }
+          holdOwed = false;
+        }
+        return true;
+      }
+    },
+    // Starts `task` now. Call only after ready() answered true, with nothing
+    // awaited in between.
+    start(task) {
+      if (stopped) throw new Error('createCallGate: start() after stop()');
+      lastStartAt = now();
+      paceOwed = true;
+      const tracked = (async () => {
+        try {
+          await task();
+        } catch (err) {
+          if (!failure) failure = err;
+          stop();
+        }
+      })().then(() => { inFlight.delete(tracked); });
+      inFlight.add(tracked);
+      if (inFlight.size > peak) peak = inFlight.size;
+      return tracked;
+    },
+    // No new start for `ms` from now. Never shortens a hold already set.
+    holdOff(ms) {
+      notBefore = Math.max(notBefore, now() + ms);
+      holdOwed = true;
+    },
+    stop,
+    // Waits for every call in flight, then rethrows the first task failure.
+    async drain() {
+      while (inFlight.size > 0) await Promise.race(inFlight);
+      if (failure) throw failure;
+    },
+    get inFlight() { return inFlight.size; },
+    get peak() { return peak; },
+    get stopped() { return stopped; },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE SWEEP. Everything between "here is the ordered venue list" and "here is
+// what the run did": the city blocks and their weather, the time budget, the
+// open-hours skip, the calls through the gate, and the breakers. It opens no
+// database connection of its own. The write is `store`, which collectRealtime
+// passes in as storeReading, and it returns the counters the summary line and
+// the refusals below read.
+//
+// Split out of collectRealtime so the pacing, the in-flight bound, the breakers
+// and the budget can be driven on a simulated clock (`now`, `pause`), with a
+// fake BestTime (`fetchLive`) and a fake write, by
+// __tests__/collectRealtimeConcurrency.test.js. Production passes none of those
+// and gets Date.now, config.sleep, bestTimeService and weatherService.
+// ---------------------------------------------------------------------------
+async function sweepVenues(cityOrder, {
+  store,
+  openHourMasks = new Map(),
+  maxInFlight = DEFAULT_MAX_IN_FLIGHT,
+  fetchLive = fetchLiveBusyness,
+  weatherFor = getWeather,
+  now = Date.now,
+  pause = sleep,
+} = {}) {
+  if (typeof store !== 'function') throw new TypeError('sweepVenues needs a store(venue, at, live) function');
+  let totalRows = 0;
+  let skipped = 0;
+  // Venues never called because their own weekly curve says they are shut at
+  // their own local hour. Counted separately from `skipped`, which keeps its
+  // old meaning exactly: a venue that WAS called and had nothing to say.
+  let closedSkips = 0;
+  // Venues actually asked about. Counted rather than derived, so an aborted run
+  // reports what it spent instead of what it planned to.
+  let called = 0;
+  let liveRows = 0;
+  let forecastRows = 0;
+  // Rows the unique index turned away because this venue-hour-date was already
+  // recorded. Counted and printed rather than swallowed: before migration 024
+  // these became extra rows and nothing said so.
+  let duplicateRows = 0;
+  // Venues that were in this run's list but, by the time their write came,
+  // had been retired or unmapped by scripts/ml/repairBestTimeDiscoveredVenues.js.
+  // Their reading is not stored (see the write below) and they are accounted
+  // for here rather than folded into `skipped`.
+  let vanished = 0;
+  // Round 13: fetchLiveBusyness now throws on outage/rate-limit (transient)
+  // and key/credit failures (fatal) instead of returning null. Before, a dead
+  // key or a BestTime outage looked identical to "no live data for this
+  // venue": the loop kept firing one doomed request per venue (thousands of
+  // them, 250ms apart) and the summary line cheerfully reported them as
+  // "skipped". Transient errors bail after 10 in a row; fatal bails instantly.
+  let consecutiveErrors = 0;
+  // Throttles are counted apart from errors: see the catch block below.
+  let consecutiveThrottles = 0;
+  // And so are OUR OWN timeouts, for the same reason and a worse incident.
+  // 2026-09-04 16:56 UTC: the sweep stopped after 271 of 1414 calls having
+  // written 149 rows, and exited non-zero telling the reader to go and check
+  // the BestTime subscription. Every one of the ten errors that tripped the
+  // breaker was "This operation was aborted", which is the AbortController in
+  // bestTimeService firing at twenty seconds, and nine of the ten were
+  // consecutive Starbucks venues. Not one 403. Not one 5xx. A slow answer is
+  // not evidence that the vendor is down, and the venue list groups chains
+  // together, so a run of slow ones is the normal shape of this data rather
+  // than a coincidence: it will land in the same place every sweep.
+  let consecutiveNetwork = 0;
+  let aborted = false;
+  // Which of the three ceilings stopped the run, so the refusal at the bottom
+  // can name what actually happened instead of naming the worst thing it could
+  // have been.
+  let abortReason = null;
+
+  const gate = createCallGate({ maxInFlight, intervalMs: START_INTERVAL_MS, now, pause });
+  // The FIRST breaker to trip names the abort and stops new starts. A call
+  // already in flight that fails afterwards cannot rename it: a run stopped by
+  // a 403 whose last few timeouts land a moment later is still a 403 run, and
+  // the refusal must say so.
+  function abortRun(reason) {
+    if (aborted) return;
+    aborted = true;
+    abortReason = reason;
+    gate.stop();
+  }
+
+  // THE TIME BUDGET. A sweep that outlives the hour forfeits the next hour:
+  // Railway skips a cron trigger while the previous execution is still
+  // running, which is what happened at 02:07 on 2026-09-04 after the 01:07
+  // sweep took 58 minutes (1 s pace, ~1 s BestTime latency, and a burst of
+  // 30 s timeouts). Fifty minutes leaves the slot free by the next trigger
+  // (:07 fires ~:08:30). What is not reached is counted and reported, not
+  // silently dropped, and the random start above gives it a different tail
+  // next time.
+  //
+  // It bounds STARTS, and it is looked at the moment it runs out, not only when
+  // the gate next opens: the gate cuts a wait for the pace or for a hold at the
+  // budget (ready's deadline). Without that cut, a 503 at 49:58 asks for a
+  // sixty second hold and the sweep sat in the gate until 50:58 before it saw
+  // the budget at all. Once it is reached no new call begins, and the calls
+  // already in flight are waited for and counted before the summary prints.
+  // Each is bounded by its own twenty second timeout in bestTimeService, and
+  // storing its reading adds one event lookup (Ticketmaster's own fifteen
+  // second timeout) and one write, so the sweep ends at most one BestTime
+  // timeout plus one store past fifty minutes. A wait for a free slot at the
+  // budget ends inside that same twenty seconds, because a slot frees when a
+  // call in flight answers.
+  const RUN_TIME_BUDGET_MS = 50 * 60 * 1000;
+  const runClockStart = now();
+  let budgetHit = false;
+  let leftForNextRun = 0;
+
+  // ONE VENUE'S CALL, from the request to the counted outcome. It runs in a
+  // gate slot, overlapping others, so it reads nothing the sweep moves on:
+  // everything about the moment of the call arrives in `at`, captured when the
+  // call started. Every counter update below happens between awaits, and
+  // JavaScript runs one completion at a time, so two answers landing together
+  // cannot interleave inside one update.
+  async function callVenue(venue, at) {
+    let live;
+    try {
+      live = await fetchLive(venue.besttime_venue_id);
+      consecutiveErrors = 0;
+      consecutiveThrottles = 0;
+      consecutiveNetwork = 0;
+    } catch (err) {
+      // A call that was already in flight when a breaker tripped. The run is
+      // stopping; the failure is logged and counts toward nothing.
+      if (aborted) {
+        console.error(`[ML:Realtime] In-flight call for ${venue.name} failed after the run stopped: ${err.message}`);
+        return;
+      }
+      if (err.fatal) {
+        console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
+        abortRun('fatal');
+        return;
+      }
+      // A 503 is BestTime asking for space, not a venue problem, so it
+      // gets its OWN budget. The first version of this cooldown counted
+      // a throttle as a transient error before waiting, so ten throttles
+      // still ended the run, just nine minutes later than before
+      // (2026-09-01 review). A throttle wall now has to last forty
+      // minutes to stop a night, and a genuinely broken venue still
+      // trips the ten-error abort exactly as it always did.
+      const throttled = err && /503/.test(String(err.message || ''));
+      if (throttled) {
+        consecutiveThrottles++;
+        console.error(`[ML:Realtime] Throttled ${consecutiveThrottles}/40 at ${venue.name}, holding new calls for 60s`);
+        if (consecutiveThrottles >= 40) {
+          console.error('[ML:Realtime] 40 consecutive throttles, BestTime is not letting us in, aborting run');
+          abortRun('throttled');
+          return;
+        }
+        gate.holdOff(60000);
+        return;
+      }
+      // OUR clock, not their answer. `NETWORK_ERR_RE` in bestTimeService is
+      // the same test that decides these are worth rethrowing rather than
+      // swallowing; this is the same classification applied one level up so
+      // the ten-error ceiling keeps meaning what its message says. The
+      // ceiling is higher because the cost of being wrong is asymmetric:
+      // stopping a sweep that could have run costs a night of corpus, and
+      // continuing through a real outage costs one wasted credit per venue
+      // until the run-time budget ends the hour anyway. A genuinely dead
+      // network fails fast (ECONNREFUSED, not a twenty second hang), so
+      // twenty-five of those is seconds, and twenty-five real hangs is about
+      // nine minutes, which the time budget already bounds. (With calls
+      // overlapping, twenty-five hangs arrive in about two minutes.)
+      const networkish = err && NETWORK_ERR_RE.test(String(err.message || ''));
+      if (networkish) {
+        consecutiveNetwork++;
+        console.error(`[ML:Realtime] Slow or unreachable ${consecutiveNetwork}/25 for ${venue.name}: ${err.message}`);
+        if (consecutiveNetwork >= 25) {
+          console.error('[ML:Realtime] 25 calls in a row timed out or could not connect, aborting run');
+          abortRun('network');
+          return;
+        }
+        gate.holdOff(2000);
+        return;
+      }
+      consecutiveErrors++;
+      console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${err.message}`);
+      if (consecutiveErrors >= 10) {
+        console.error('[ML:Realtime] 10 consecutive errors, BestTime looks down, aborting run');
+        abortRun('upstream');
+        return;
+      }
+      gate.holdOff(2000);
+      return;
+    }
+    if (!live) {
+      skipped++;
+      return;
+    }
+
+    const outcome = await store(venue, at, live);
+    if (outcome === 'skipped') {
+      skipped++;
+    } else if (outcome === 'vanished') {
+      vanished++;
+    } else if (outcome === 'duplicate') {
+      duplicateRows++;
+    } else if (outcome === LABEL_LIVE || outcome === LABEL_FORECAST) {
+      totalRows++;
+      if (outcome === LABEL_LIVE) liveRows++; else forecastRows++;
+    }
+    // 'failed' is an insert that threw. storeReading logged it, and it is not
+    // a row, which is what the old loop counted it as too.
+  }
+
+  // A THROW IN THE LOOP STILL WAITS FOR THE CALLS IT STARTED. Anything that
+  // throws in here (a venue time zone Intl does not know makes getLocalTime
+  // throw RangeError, for one) used to leave the sweep at once with up to
+  // maxInFlight calls still waiting on BestTime. run() then ended the pg pool,
+  // and those answers came back to storeReading on a pool that was gone. So a
+  // throw stops new starts, the drain below waits for every call in flight to
+  // land and be written, and only then does the error go on up and fail the
+  // run, as it always has.
+  let sweepError = null;
+  try {
+    for (const [cityKey, cityVenues] of cityOrder) {
+      if (aborted || gate.stopped) break;
+      const cityConfig = CITIES[cityKey];
+      if (!cityConfig) continue;
+
+      // One weather call per city, REFRESHED WHEN THE HOUR TURNS.
+      //
+      // getWeather returns current conditions, and these six columns are model
+      // features on the scarce live rows this collector exists to produce. A
+      // single reading held across a fifty-eight minute sweep stops describing
+      // the moment the busyness was measured and starts describing when the city
+      // block began - which for the last venues in a long block is a different
+      // hour, sometimes a different sky. One extra call per hour crossed, per
+      // city, against a corpus of live labels: the cheapest thing here.
+      //
+      // The reading a row gets is the one current when its CALL STARTED, captured
+      // into the call's `at` below. Calls overlap, so an answer can land after
+      // this block has refreshed the weather or moved on to the next city; the
+      // row still carries its own moment's sky, never whatever `weather` holds
+      // by the time it is written.
+      let weather = await weatherFor(cityConfig.lat, cityConfig.lon);
+      let weatherHour = new Date(now()).getUTCHours();
+      const local = getLocalTime(cityConfig.tz, now());
+      const special = specialNightFor(cityKey, local.dateStr);
+      const holidayEve = isHolidayEve(cityKey, local.dateStr);
+
+      console.log(`\n[ML:Realtime] ${cityConfig.name} (${local.dateStr} ${local.hour}:00 local)`
+        + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
+
+      // Waits until the gate lets one more call start, refreshing this city's
+      // weather first when the hour has turned. It loops rather than refreshing
+      // and returning because the refetch takes time, in which a completion can
+      // stop the run or ask for a hold: the gate is asked again after it, so no
+      // await separates the last check from the start. It answers true to
+      // start, false to stop, and 'late' when the budget ran out during the
+      // wait, which the budget check in the loop then acts on.
+      const readyToCall = async (deadline) => {
+        for (;;) {
+          const verdict = await gate.ready(deadline);
+          if (verdict !== true) return verdict;
+          // Only on an hour boundary, and only replaced if the refetch answered -
+          // a transient failure must not blank the reading we already have.
+          const nowHour = new Date(now()).getUTCHours();
+          if (nowHour === weatherHour) return true;
+          const fresher = await weatherFor(cityConfig.lat, cityConfig.lon);
+          if (fresher) { weather = fresher; }
+          weatherHour = nowHour;
+        }
+      };
+
+      for (const venue of cityVenues) {
+        if (aborted) break;
+        // The gate first, so the budget, the skip and the row's clock below are
+        // all read at the moment the call would start. A closed venue passes the
+        // gate and starts nothing, so the next venue finds it still open: the
+        // skip costs no time it would not have spent anyway.
+        if (!budgetHit && (await readyToCall(runClockStart + RUN_TIME_BUDGET_MS)) === false) break;
+        if (budgetHit || now() - runClockStart > RUN_TIME_BUDGET_MS) {
+          if (!budgetHit) console.warn(`[ML:Realtime] Time budget reached after ${called} calls; the rest of this sweep is left for the next run.`);
+          budgetHit = true;
+          leftForNextRun++;
+          continue;
+        }
+        // THE SKIP, BEFORE THE CALL. `local` is the same clock the row's `hour`
+        // is written from, so the decision and the row can never disagree about
+        // what time it is. ml_venues.timezone equals its city's timezone for all
+        // 22,151 rows in production today (checked 2026-09-03), but if one ever
+        // diverged the venue is judged on BOTH hours and called if EITHER says
+        // open — a disagreement about the clock must cost a call, not a reading.
+        const mask = openHourMasks.get(venue.id);
+        // THE ROW'S OWN CLOCK, read now, not the one read when this city's block
+        // started. `local` is taken once per city and a sweep runs up to fifty
+        // minutes (58 observed in production on 2026-09-04), so the tail of a run
+        // that crosses an hour boundary was filed under the previous hour: a 22:40
+        // sweep still going at 23:30 recorded genuine 23:00 observations as
+        // hour = 22. This is a DELTA model whose anchor is keyed on
+        // (venue, day_of_week, hour), so those rows were differenced against the
+        // wrong baseline cell and refreshed the wrong ml_venue_baselines slot. The
+        // dedupe key is built from the same clock, so a sweep crossing midnight
+        // could collide with the previous night and be dropped by DO NOTHING.
+        //
+        // The tell was already in the file: the open-hours test below computed a
+        // FRESH per-venue hour and the row then recorded the stale city one.
+        const obs = getLocalTime(venue.timezone || cityConfig.tz, now());
+        const venueHour = obs.hour;
+        // Same reasoning for the DATE-derived columns. A sweep crossing midnight
+        // would otherwise stamp the previous day's holiday, holiday-eve and
+        // special-night answers onto rows observed after it. The city-level pair
+        // above stays as it is: it is the header log line, which describes the
+        // run rather than any row.
+        const obsSpecial = specialNightFor(cityKey, obs.dateStr);
+        const obsHolidayEve = isHolidayEve(cityKey, obs.dateStr);
+        if (!isOpenAtHour(mask, local.hour) && !isOpenAtHour(mask, venueHour)) {
+          closedSkips++;
+          continue;
+        }
+
+        called++;
+        // EVERYTHING THE ROW NEEDS FROM THIS MOMENT TRAVELS WITH THE CALL: its
+        // clock, its date answers, and the weather as it stands now. `weather`
+        // is read here, at the start, and the call keeps that object even if the
+        // hour turns or the sweep reaches another city before the answer lands.
+        gate.start(() => callVenue(venue, { obs, weather, obsSpecial, obsHolidayEve }));
+      }
+    }
+  } catch (err) {
+    sweepError = err;
+    gate.stop();
+  }
+
+  // THE DRAIN. Every call that was started is allowed to finish, each on its
+  // own twenty second timeout, and only then are the counters handed back. A
+  // summary printed before this would undercount, and the provenance audit
+  // after it would find rows the tally never saw.
+  //
+  // When the sweep itself has already failed, that is the error to surface. A
+  // call that also fails while it drains is reported beside it rather than
+  // allowed to replace it, which an await in a finally block would do.
+  try {
+    await gate.drain();
+  } catch (callError) {
+    if (!sweepError) throw callError;
+    console.error(`[ML:Realtime] A call also failed while the sweep was stopping: ${callError.message}`);
+  }
+  if (sweepError) throw sweepError;
+
+  return {
+    totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
+    aborted, abortReason, budgetHit, leftForNextRun, peakInFlight: gate.peak,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ONE TICKETMASTER QUERY PER CELL PER HOUR (2026-09-25).
+// ---------------------------------------------------------------------------
+// Every stored reading asks Ticketmaster for the events near its venue, one
+// request per row. Once the sweep reaches every venue each hour that is
+// thousands of requests a day against Discovery's free tier of 5,000, which
+// the product's own event features (routes/events.js, mlPredictor,
+// nightContext) already budget 3,700 of in services/costModel.js. Past the
+// quota every lookup fails. A failed lookup is recorded honestly
+// (events_observed=false, 'lookup_failed'), so nothing is fabricated, but the
+// event features go dark without anything saying so.
+//
+// WHAT IS SHARED IS THE LIST, NEVER THE ANSWER. A venue's answer is its own:
+// its distance to each event, the 2 km filter, which event is nearest and the
+// reason when none is all come from the venue's own coordinates and clock
+// (eventService.nearestEventFromAnswers). Two venues a few hundred metres
+// apart routinely get different answers from one list. So neighbouring venues
+// share one REQUEST, and each still reaches its answer through the same code
+// a per-venue request feeds.
+//
+// WHY THE SHARED QUERY IS WIDER, derived rather than assumed. A venue's own
+// query is a disk of NEARBY_KM around the venue. Rounding the query's centre
+// to a cell and keeping that radius is not safe at ANY cell size: a venue d km
+// from the cell's centre loses the part of its own disk that sticks out past
+// the shared one, as close as NEARBY_KM - d km to the venue, so at 0.01
+// degrees an event 1.3 km from a venue in a corner of the cell could vanish.
+// The shared disk contains every member's disk exactly when its radius is at
+// least NEARBY_KM plus the farthest a venue can sit from the centre, which is
+// the cell's half-diagonal (the triangle inequality). That is widest at the
+// equator, where a degree of longitude is longest: 0.786 km for a 0.01 degree
+// cell, 0.700 km at Philadelphia's latitude. Discovery takes its radius in
+// whole km, so the shared query asks for ceil(2 + 0.786 + 0.1) = 3 km, and
+// 0.01 degrees is the round cell that fits under 3 km with the margin to
+// spare (the limit is 0.0114). The margin absorbs any difference between
+// Discovery's distance and ours near the edge.
+//
+// WHEN A SHARED LIST MAY BE USED:
+//   * it is COMPLETE. A per-venue query is capped at TM_PAGE_SIZE events, and
+//     a shared list cut off at its own page could be missing an event a
+//     member venue would have seen. The shared query asks for
+//     EVENT_SHARED_PAGE and is used only when Discovery's own total says that
+//     was everything.
+//   * every event in it has coordinates. One without them cannot be placed
+//     inside or outside a member's 2 km, and it decides the
+//     'events_without_coordinates' reason.
+// A cell that fails either test is asked for venue by venue for that hour,
+// which is exactly the old behaviour.
+//
+// A FAILED SHARED QUERY IS NEVER KEPT AS AN ANSWER, empty or otherwise. The
+// cell falls back to venue-by-venue requests for that hour, the rows that
+// were waiting on the failed one included, so every row's result is again its
+// own request's: a row records events_observed=false, 'lookup_failed' exactly
+// when its own request fails, as before. Keeping the failure and retrying the
+// shared query on the next row instead would turn one transient error into
+// failed lookups for rows whose own requests would have answered, and a
+// shared request Discovery rejects every time (a page size it refuses, say)
+// into a dead event channel. This way the most a failing shared query costs is
+// one extra request per cell per hour.
+//
+// A venue's view of a complete list is the events within NEARBY_KM of it, in
+// Discovery's order, cut at TM_PAGE_SIZE: the list its own query would have
+// returned. The two can differ only for an event within metres of exactly
+// 2 km, where Discovery's distance and ours could round differently, and for
+// a tie in start time at the twentieth place.
+//
+// The key is the query's own inputs: the cell, and the UTC hour Discovery's
+// time window is built from (eventService), which for the whole-hour zones of
+// every collected city is also the local hour. SeatGeek is still asked per
+// venue, as before; it is off in every environment.
+// ---------------------------------------------------------------------------
+const EVENT_CELL_DEG = 0.01;
+const EVENT_EDGE_MARGIN_KM = 0.1;
+const EVENT_SHARED_PAGE = 100;
+// eventService.distanceKm's earth (R = 6371 km), per degree of arc.
+const KM_PER_DEGREE = (6371 * Math.PI) / 180;
+const HOUR_MS = 60 * 60 * 1000;
+
+// Centre to corner of a cell, at the equator where a cell is widest.
+function cellHalfDiagonalKm(cellDeg) {
+  return 0.5 * Math.hypot(cellDeg, cellDeg) * KM_PER_DEGREE;
+}
+
+// The radius a cell's shared query needs so that its disk holds every
+// member's own disk, in the whole km Discovery accepts.
+function sharedEventRadiusKm(nearbyKm, cellDeg = EVENT_CELL_DEG, marginKm = EVENT_EDGE_MARGIN_KM) {
+  return Math.ceil(nearbyKm + cellHalfDiagonalKm(cellDeg) + marginKm);
+}
+
+// Built once per sweep. lookup(lat, lon) answers what getNearestEvent(lat, lon)
+// would, sharing the Ticketmaster request with the other venues of its cell
+// and hour when the rules above allow it. Everything is injectable for
+// __tests__/collectRealtimeEventCache.test.js. An event module without the
+// shared-query parts (a test double that only answers getNearestEvent) is
+// asked per venue, as before.
+function createEventLookup({
+  perVenue = getNearestEvent,
+  fetchPage = fetchTicketmasterPage,
+  fetchSeatGeek = fetchSeatGeekEvents,
+  answerFor = nearestEventFromAnswers,
+  distance = distanceKm,
+  nearbyKm = NEARBY_KM,
+  perVenuePage = TM_PAGE_SIZE,
+  cellDeg = EVENT_CELL_DEG,
+  sharedPage = EVENT_SHARED_PAGE,
+  now = Date.now,
+} = {}) {
+  const stats = { lookups: 0, sharedCalls: 0, perVenueCalls: 0, failedSharedCalls: 0 };
+  const canShare = [fetchPage, fetchSeatGeek, answerFor, distance].every((f) => typeof f === 'function')
+    && Number.isFinite(nearbyKm) && Number.isInteger(perVenuePage);
+  const askPerVenue = (lat, lon) => {
+    stats.perVenueCalls++;
+    return perVenue(lat, lon);
+  };
+  if (!canShare) {
+    return {
+      shared: false,
+      stats,
+      lookup(lat, lon) {
+        stats.lookups++;
+        return askPerVenue(lat, lon);
+      },
+    };
+  }
+  const radiusKm = sharedEventRadiusKm(nearbyKm, cellDeg);
+  const cells = new Map();
+
+  // One promise per cell and hour, shared by every venue that asks while it is
+  // pending or after it answered. It settles to { events } when the list may
+  // be shared, and to { perVenue: true } otherwise, a failure included: a
+  // failed request is never kept as an answer, and the venues of that cell ask
+  // for themselves for the rest of the hour.
+  function cellAnswer(cellLat, cellLon, hour, at) {
+    const key = `${hour}:${cellLat}:${cellLon}`;
+    const known = cells.get(key);
+    if (known) return known;
+    stats.sharedCalls++;
+    const failed = () => {
+      stats.failedSharedCalls++;
+      return { perVenue: true };
+    };
+    const pending = Promise.resolve()
+      .then(() => fetchPage((cellLat + 0.5) * cellDeg, (cellLon + 0.5) * cellDeg, radiusKm, at, sharedPage))
+      .then((page) => {
+        if (!page || !Array.isArray(page.events)) return failed();
+        const complete = Number.isInteger(page.total) && page.total <= page.events.length;
+        const placeable = page.events.every((e) => e.lat && e.lon);
+        return complete && placeable ? { events: page.events } : { perVenue: true };
+      }, failed);
+    cells.set(key, pending);
+    return pending;
+  }
+
+  async function ticketmasterFor(lat, lon, at) {
+    const hour = Math.floor(at.getTime() / HOUR_MS);
+    const shared = await cellAnswer(Math.floor(lat / cellDeg), Math.floor(lon / cellDeg), hour, at);
+    if (shared.perVenue) {
+      stats.perVenueCalls++;
+      const own = await fetchPage(lat, lon, nearbyKm, at);
+      return own ? own.events : null;
+    }
+    return shared.events
+      .filter((e) => distance(lat, lon, e.lat, e.lon) <= nearbyKm)
+      .slice(0, perVenuePage);
+  }
+
+  return {
+    shared: true,
+    stats,
+    radiusKm,
+    async lookup(lat, lon) {
+      stats.lookups++;
+      // A venue with no usable position has no cell; it is asked as before.
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return askPerVenue(lat, lon);
+      const at = new Date(now());
+      const [tmEvents, sgEvents] = await Promise.all([
+        ticketmasterFor(lat, lon, at),
+        fetchSeatGeek(lat, lon, nearbyKm),
+      ]);
+      return answerFor(tmEvents, sgEvents, lat, lon, at);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE WRITE: one venue's answer into one row. The sweep calls this once per
+// answered call, with the venue, what the moment of the call looked like
+// (`at`: its clock, its weather, its special night, all captured when the call
+// STARTED) and BestTime's answer. It returns what happened and the sweep does
+// the counting:
+//   'skipped'             the answer held nothing nameable (classifyReading)
+//   'vanished'            the repair retired or unmapped the venue mid-sweep
+//   'duplicate'           this venue-hour-date was already recorded
+//   'failed'              the insert threw; logged here, not a row
+//   'live' / 'forecast'   a row was written with that label
+//
+// `at` is the whole point of the signature. Calls overlap now (see
+// OVERLAPPING CALLS above), so by the time an answer lands the sweep may be
+// venues, a city or an hour further on, and a row must never be stamped with
+// what the sweep's own variables say at write time. Everything below that
+// describes the moment reads `at`. `lookupEvents` is the sweep's shared event
+// lookup; called on its own this falls back to one request per venue.
+// ---------------------------------------------------------------------------
+async function storeReading(venue, at, live, lookupEvents = getNearestEvent) {
+  const { obs, weather, obsSpecial, obsHolidayEve } = at;
+  // Use live busyness if available, else forecasted — and record WHICH, so
+  // training can stop treating a vendor forecast as ground truth. The
+  // decision itself is classifyReading()'s, not this loop's.
+  const reading = classifyReading(live);
+  if (!reading) return 'skipped';
+  const { source: labelSource, busyness } = reading;
+  // Belt and braces on the one column this round exists to protect. If the
+  // classifier ever returns a value outside the domain, the run stops here
+  // rather than writing a row nobody can interpret later.
+  if (labelSource !== LABEL_LIVE && labelSource !== LABEL_FORECAST) {
+    throw new Error(`[ML:Realtime] classifyReading returned an unknown label_source: ${labelSource}`);
+  }
+
+  // Look up the weekly baseline for this venue at the current venue-local
+  // day/hour, on the venue's own clock (obs), not the city clock the block
+  // header was printed from. obs.hour is a wall clock hour, so only weekly rows that
+  // DECLARE the venue-local axis may answer it: before migration 023 the
+  // weekly rows held BestTime array indices, and this lookup silently
+  // stamped every realtime row with the busyness of a slot six hours away.
+  // An undeclared corpus now yields NULL — an honest "no baseline" — rather
+  // than a confident wrong number. (Nothing in training reads this column:
+  // train/export_training_data.js recomputes the baseline leave-one-out at
+  // export time. It is kept for operational inspection.)
+  let baseline = null;
+  try {
+    const { rows: baselineRows } = await pool.query(
+      `SELECT ROUND(AVG(busyness_pct)) AS avg
+       FROM ml_training_data
+       WHERE venue_id = $1 AND collection_mode = 'weekly'
+         AND hour_axis = $4
+         AND day_of_week = $2 AND hour = $3 AND busyness_pct IS NOT NULL`,
+      // `obs`, NOT `local`. The block above converted every date-derived
+      // column on this row to the venue's own clock; this lookup was left
+      // on the city clock captured once at the top of the city, and
+      // RUN_TIME_BUDGET_MS is fifty minutes against runs that have
+      // measured fifty-eight. A sweep crossing an hour boundary therefore
+      // wrote hour = 23 with the 22:00 baseline attached to it.
+      [venue.id, obs.dayOfWeek, obs.hour, HOUR_AXIS_VENUE_LOCAL]
+    );
+    baseline = baselineRows[0]?.avg ?? null;
+  } catch (_) {}
+
+  // Fetch nearby event data (graceful — nulls if no API key or error)
+  // observed/reason ride the lookup itself (migration 045 applied at the
+  // source): a thrown lookup and a measured quiet night must never write
+  // the same row. The default covers the throw path.
+  let eventData = { event_nearby: null, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null, observed: false, reason: 'lookup_failed' };
+  try {
+    // The sweep's shared lookup (ONE TICKETMASTER QUERY PER CELL PER HOUR,
+    // above): the same answer getNearestEvent gives, from a request this
+    // venue may share with its neighbours.
+    eventData = await lookupEvents(venue.latitude, venue.longitude);
+  } catch (err) {
+    console.error(`  Event fetch error for ${venue.name}:`, err.message);
+  }
+
+  // One value per column, in the column list's order, with the placeholder
+  // string generated from it. The previous form hand-numbered $1..$30 with
+  // hour_axis bound to $30 but written third, which is exactly the shape
+  // that miscounts the next time a column is added.
+  const columns = [
+    ['venue_id', venue.id],
+    ['hour_axis', HOUR_AXIS_VENUE_LOCAL],
+    ['day_of_week', obs.dayOfWeek],
+    ['hour', obs.hour],
+    ['month', obs.month],
+    ['season', obs.season],
+    ['is_holiday', isHoliday(obs.dateStr)],
+    ['is_school_break', isSchoolBreak(obs.dateStr)],
+    ['venue_category', venue.venue_category],
+    ['price_level', venue.price_level],
+    ['rating', venue.rating],
+    ['review_count', venue.review_count],
+    ['temperature', weather?.temp ?? null],
+    ['humidity', weather?.humidity ?? null],
+    ['wind_speed', weather?.windSpeed ?? null],
+    ['weather_condition', weather?.conditions ?? null],
+    // The OWM condition id. NULL in 100% of the corpus before this line,
+    // because no collector ever wrote it — which left ten weather_* features
+    // constant in training and dead at inference. weatherService has exposed
+    // conditionId since the 2026-08-12 audit.
+    ['weather_condition_code', weather?.conditionId ?? null],
+    ['is_raining', weather?.isRaining ?? null],
+    ['event_nearby', eventData.event_nearby],
+    ['event_distance_km', eventData.event_distance_km],
+    ['event_size', eventData.event_size],
+    ['event_type', eventData.event_type],
+    ['event_hours_until', eventData.event_hours_until],
+    ['events_observed', eventData.observed === true],
+    // The SEVEN enrichment columns are written EXPLICITLY, because their
+    // defaults are false, false, 0 and 0: omitting them wrote a measured
+    // absence beside an events_observed of false, which is exactly the
+    // fabricated negative migration 045 exists to end. A 2026-09-01
+    // review found 132,432 rows already carrying it.
+    //
+    // SEVEN, not six, and the count in this comment was the tell. Until
+    // 2026-09-04 `nearest_event_attendance` was left off this list while the
+    // other six were named, and enrichWithEvents.js declares it
+    // `INTEGER DEFAULT 0`. So every row the hourly sweep wrote asserted that
+    // the nearest event had nobody at it, next to an event_size that might
+    // say two hundred, and the model carries both `nearest_event_attendance`
+    // and `log_nearest_event_attendance` as features. It was the exact bug
+    // the paragraph above describes, in the column the paragraph forgot to
+    // count. Realtime rows are the scarce live labels the hourly cadence
+    // exists to produce, so it was wrong on the rows that matter most.
+    //
+    // The value mirrors total_nearby_attendance because the realtime
+    // enrichment resolves ONE nearest event: its attendance is that event's
+    // size. null when the lookup did not happen, never a defaulted zero.
+    ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
+    ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
+    // THREE STATES, NOT TWO. The comment above says "null when the lookup
+    // did not happen, never a defaulted zero", and `|| 0` broke it in the
+    // other direction: Ticketmaster publishes capacity for almost nothing,
+    // eventService maps a missing capacity to null, and `null || 0` is 0.
+    // So every live detection wrote "there is an event within 2km and
+    // nobody is at it" - all 1,052 such rows in the corpus. Meanwhile
+    // enrichWithEvents defaults the same quantity to 500, so the two
+    // writers disagreed by construction.
+    //
+    //   observed, no event nearby  -> 0      (a real measurement)
+    //   observed, event of unknown size -> null (we looked, they do not say)
+    //   not observed               -> null   (we could not look)
+    ['total_nearby_attendance', eventData.observed === true
+      ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
+      : null],
+    ['nearest_event_attendance', eventData.observed === true
+      ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
+      : null],
+    ['nearest_event_distance_km', eventData.event_distance_km],
+    ['nearest_event_type', eventData.event_type],
+    ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
+    ['baseline_busyness', baseline],
+    ['busyness_pct', clampPct(busyness)],
+    ['observed_date', obs.dateStr],
+    ['is_holiday_eve', obsHolidayEve],
+    ['special_night', obsSpecial?.name ?? null],
+    ['special_night_effect', obsSpecial?.effect ?? null],
+    ['special_night_conf', obsSpecial?.conf ?? null],
+    ['label_source', labelSource],
+    ['vendor_forecast_pct', clampPct(reading.vendorForecast)],
+  ];
+
+  try {
+    // ON CONFLICT DO NOTHING against ml_training_data_realtime_slot_uniq
+    // (migration 024): one row per venue per venue-local hour per observed
+    // date. A second pull inside the same clock hour is the same observation
+    // re-read, not a new one.
+    //
+    // DO NOTHING here where collectWeekly.js does DO UPDATE, and the
+    // asymmetry is deliberate: a weekly row is an ESTIMATE of a typical week
+    // and a re-collection is a fresher read of it, so refreshing is right; a
+    // realtime row is an OBSERVATION of one venue-hour on one date, and
+    // overwriting a recorded observation is a different act.
+    //
+    // The predicate is repeated verbatim because the index is partial: it is
+    // what lets Postgres infer this arbiter. Legacy rows with no
+    // observed_date are outside the index, so nothing here can collide with
+    // or delete them.
+    //
+    // UNDER THE CORPUS WRITE LOCK, WITH THE VENUE RE-RESOLVED FIRST. The
+    // venue list was read once at the top of this sweep and a sweep runs
+    // up to fifty minutes. scripts/ml/repairBestTimeDiscoveredVenues.js
+    // retires `bt_` twins by deleting their ml_venues row, and
+    // ml_training_data.venue_id cascades on delete: a row inserted here
+    // between the repair moving the twin's rows and deleting the twin is
+    // deleted with it, and one inserted after the delete fails its foreign
+    // key, both after the credit is spent. It also unmaps a real place
+    // sharing an id, whose reading would otherwise be filed under a second
+    // name again. So the row's existence and its id are checked inside the
+    // same transaction as the write, under the lock the repair takes per
+    // group; the answer cannot change before COMMIT. The keeper of the id
+    // is in this same list and gets its own row.
+    const result = await withCorpusWriteLock(pool, async (client) => {
+      // review_count comes back with the identity check because the
+      // venue list was read before the lock: the repair's phase two nulls
+      // a synthetic zero on ml_venues under this same lock, and a value
+      // read before it would be written straight back here (adversarial
+      // audit round 2, 2026-09-05). What the row says NOW is what is
+      // stored.
+      const { rows: still } = await client.query(
+        'SELECT review_count FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2',
+        [venue.id, venue.besttime_venue_id]
+      );
+      if (still.length === 0) return null;
+      const rc = columns.find(([c]) => c === 'review_count');
+      if (rc) rc[1] = still[0].review_count;
+      return client.query(
+        `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
+         VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})
+         ON CONFLICT (venue_id, day_of_week, hour, observed_date)
+           WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
+         DO NOTHING`,
+        columns.map(([, v]) => v)
+      );
+    });
+    if (!result) {
+      console.warn(`[ML:Realtime] ${venue.name}: ml_venues ${venue.id} no longer holds ${venue.besttime_venue_id} `
+        + '(retired or unmapped by the venue repair mid-sweep); reading not stored');
+      return 'vanished';
+    }
+    if (result.rowCount === 0) return 'duplicate';
+    return labelSource;
+  } catch (err) {
+    console.error(`  Insert error for ${venue.name}:`, err.message);
+    return 'failed';
+  }
+}
+
 async function collectRealtime() {
   await ensureHolidayColumns();
   await requireSlotIndex(pool, REALTIME_SLOT_INDEX);
@@ -407,7 +1366,24 @@ async function collectRealtime() {
       + 'Exiting non-zero so the scheduler records a failure rather than a green run that collected nothing.');
   }
 
+  // How many calls may overlap (OVERLAPPING CALLS, above). Refused rather than
+  // clamped when it is not a whole number in range, the same way --max-credits
+  // is: a mistyped flag should fail the cron, not quietly run a shape nobody
+  // asked for. The start pace is not a flag at all.
+  const maxInFlightArg = process.argv.find((a) => a.startsWith('--max-in-flight='));
+  const maxInFlight = maxInFlightArg ? Number(maxInFlightArg.split('=')[1]) : DEFAULT_MAX_IN_FLIGHT;
+  if (!Number.isInteger(maxInFlight) || maxInFlight < 1 || maxInFlight > MAX_IN_FLIGHT_CEILING) {
+    await pool.end();
+    throw new Error(
+      `REFUSED: --max-in-flight must be a whole number from 1 to ${MAX_IN_FLIGHT_CEILING}. `
+      + 'Exiting non-zero so the scheduler records a failure rather than guessing.');
+  }
+
   console.log(`[ML:Realtime] Starting real-time collection for ${venues.length} venues...`);
+  // Stated every run, like the holdout config above, so "did the flag arrive"
+  // is one line to read rather than something to infer from the timing.
+  console.log(`[ML:Realtime] Pacing: at most one call started every ${START_INTERVAL_MS} ms, `
+    + `up to ${maxInFlight} in flight at once.`);
 
   // The open-hours evidence, loaded once. --no-open-hours turns the filter off
   // for the run (a deliberate "call everything and see"), and a failed load
@@ -464,433 +1440,25 @@ async function collectRealtime() {
   const cityOrder = Object.entries(byCity);
   if (cityOrder.length > 1 && Math.random() < 0.5) cityOrder.reverse();
 
-  let totalRows = 0;
-  let skipped = 0;
-  // Venues never called because their own weekly curve says they are shut at
-  // their own local hour. Counted separately from `skipped`, which keeps its
-  // old meaning exactly: a venue that WAS called and had nothing to say.
-  let closedSkips = 0;
-  // Venues actually asked about. Counted rather than derived, so an aborted run
-  // reports what it spent instead of what it planned to.
-  let called = 0;
-  let liveRows = 0;
-  let forecastRows = 0;
-  // Rows the unique index turned away because this venue-hour-date was already
-  // recorded. Counted and printed rather than swallowed: before migration 024
-  // these became extra rows and nothing said so.
-  let duplicateRows = 0;
-  // Venues that were in this run's list but, by the time their write came,
-  // had been retired or unmapped by scripts/ml/repairBestTimeDiscoveredVenues.js.
-  // Their reading is not stored (see the write below) and they are accounted
-  // for here rather than folded into `skipped`.
-  let vanished = 0;
-  // Round 13: fetchLiveBusyness now throws on outage/rate-limit (transient)
-  // and key/credit failures (fatal) instead of returning null. Before, a dead
-  // key or a BestTime outage looked identical to "no live data for this
-  // venue": the loop kept firing one doomed request per venue (thousands of
-  // them, 250ms apart) and the summary line cheerfully reported them as
-  // "skipped". Transient errors bail after 10 in a row; fatal bails instantly.
-  let consecutiveErrors = 0;
-  // Throttles are counted apart from errors: see the catch block below.
-  let consecutiveThrottles = 0;
-  // And so are OUR OWN timeouts, for the same reason and a worse incident.
-  // 2026-09-04 16:56 UTC: the sweep stopped after 271 of 1414 calls having
-  // written 149 rows, and exited non-zero telling the reader to go and check
-  // the BestTime subscription. Every one of the ten errors that tripped the
-  // breaker was "This operation was aborted", which is the AbortController in
-  // bestTimeService firing at twenty seconds, and nine of the ten were
-  // consecutive Starbucks venues. Not one 403. Not one 5xx. A slow answer is
-  // not evidence that the vendor is down, and the venue list groups chains
-  // together, so a run of slow ones is the normal shape of this data rather
-  // than a coincidence: it will land in the same place every sweep.
-  let consecutiveNetwork = 0;
-  let aborted = false;
-  // Which of the three ceilings stopped the run, so the refusal at the bottom
-  // can name what actually happened instead of naming the worst thing it could
-  // have been.
-  let abortReason = null;
+  // One per sweep, so a cell's Ticketmaster list is shared within this run
+  // and never outlives it.
+  const events = createEventLookup();
+  const {
+    totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
+    aborted, abortReason, budgetHit, leftForNextRun, peakInFlight,
+  } = await sweepVenues(cityOrder, {
+    openHourMasks, maxInFlight, store: (venue, at, live) => storeReading(venue, at, live, events.lookup),
+  });
 
-  // THE TIME BUDGET. A sweep that outlives the hour forfeits the next hour:
-  // Railway skips a cron trigger while the previous execution is still
-  // running, which is what happened at 02:07 on 2026-09-04 after the 01:07
-  // sweep took 58 minutes (1 s pace, ~1 s BestTime latency, and a burst of
-  // 30 s timeouts). Fifty minutes leaves the slot free by the next trigger
-  // (:07 fires ~:08:30). What is not reached is counted and reported, not
-  // silently dropped, and the random start above gives it a different tail
-  // next time.
-  const RUN_TIME_BUDGET_MS = 50 * 60 * 1000;
-  const runClockStart = Date.now();
-  let budgetHit = false;
-  let leftForNextRun = 0;
-
-  for (const [cityKey, cityVenues] of cityOrder) {
-    if (aborted) break;
-    const cityConfig = CITIES[cityKey];
-    if (!cityConfig) continue;
-
-    // One weather call per city, REFRESHED WHEN THE HOUR TURNS.
-    //
-    // getWeather returns current conditions, and these six columns are model
-    // features on the scarce live rows this collector exists to produce. A
-    // single reading held across a fifty-eight minute sweep stops describing
-    // the moment the busyness was measured and starts describing when the city
-    // block began - which for the last venues in a long block is a different
-    // hour, sometimes a different sky. One extra call per hour crossed, per
-    // city, against a corpus of live labels: the cheapest thing here.
-    let weather = await getWeather(cityConfig.lat, cityConfig.lon);
-    let weatherHour = new Date().getUTCHours();
-    const local = getLocalTime(cityConfig.tz);
-    const special = specialNightFor(cityKey, local.dateStr);
-    const holidayEve = isHolidayEve(cityKey, local.dateStr);
-
-    console.log(`\n[ML:Realtime] ${cityConfig.name} (${local.dateStr} ${local.hour}:00 local)`
-      + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
-
-    for (const venue of cityVenues) {
-      if (budgetHit || Date.now() - runClockStart > RUN_TIME_BUDGET_MS) {
-        if (!budgetHit) console.warn(`[ML:Realtime] Time budget reached after ${called} calls; the rest of this sweep is left for the next run.`);
-        budgetHit = true;
-        leftForNextRun++;
-        continue;
-      }
-      // THE SKIP, BEFORE THE CALL. `local` is the same clock the row's `hour`
-      // is written from, so the decision and the row can never disagree about
-      // what time it is. ml_venues.timezone equals its city's timezone for all
-      // 22,151 rows in production today (checked 2026-09-03), but if one ever
-      // diverged the venue is judged on BOTH hours and called if EITHER says
-      // open — a disagreement about the clock must cost a call, not a reading.
-      const mask = openHourMasks.get(venue.id);
-      // THE ROW'S OWN CLOCK, read now, not the one read when this city's block
-      // started. `local` is taken once per city and a sweep runs up to fifty
-      // minutes (58 observed in production on 2026-09-04), so the tail of a run
-      // that crosses an hour boundary was filed under the previous hour: a 22:40
-      // sweep still going at 23:30 recorded genuine 23:00 observations as
-      // hour = 22. This is a DELTA model whose anchor is keyed on
-      // (venue, day_of_week, hour), so those rows were differenced against the
-      // wrong baseline cell and refreshed the wrong ml_venue_baselines slot. The
-      // dedupe key is built from the same clock, so a sweep crossing midnight
-      // could collide with the previous night and be dropped by DO NOTHING.
-      //
-      // The tell was already in the file: the open-hours test below computed a
-      // FRESH per-venue hour and the row then recorded the stale city one.
-      const obs = getLocalTime(venue.timezone || cityConfig.tz);
-
-      // Only on an hour boundary, and only replaced if the refetch answered -
-      // a transient failure must not blank the reading we already have.
-      const nowHour = new Date().getUTCHours();
-      if (nowHour !== weatherHour) {
-        const fresher = await getWeather(cityConfig.lat, cityConfig.lon);
-        if (fresher) { weather = fresher; }
-        weatherHour = nowHour;
-      }
-      const venueHour = obs.hour;
-      // Same reasoning for the DATE-derived columns. A sweep crossing midnight
-      // would otherwise stamp the previous day's holiday, holiday-eve and
-      // special-night answers onto rows observed after it. The city-level pair
-      // above stays as it is: it is the header log line, which describes the
-      // run rather than any row.
-      const obsSpecial = specialNightFor(cityKey, obs.dateStr);
-      const obsHolidayEve = isHolidayEve(cityKey, obs.dateStr);
-      if (!isOpenAtHour(mask, local.hour) && !isOpenAtHour(mask, venueHour)) {
-        closedSkips++;
-        continue;
-      }
-
-      let live;
-      called++;
-      try {
-        live = await fetchLiveBusyness(venue.besttime_venue_id);
-        consecutiveErrors = 0;
-        consecutiveThrottles = 0;
-        consecutiveNetwork = 0;
-      } catch (err) {
-        if (err.fatal) {
-          console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
-          aborted = true;
-          abortReason = 'fatal';
-          break;
-        }
-        // A 503 is BestTime asking for space, not a venue problem, so it
-        // gets its OWN budget. The first version of this cooldown counted
-        // a throttle as a transient error before waiting, so ten throttles
-        // still ended the run, just nine minutes later than before
-        // (2026-09-01 review). A throttle wall now has to last forty
-        // minutes to stop a night, and a genuinely broken venue still
-        // trips the ten-error abort exactly as it always did.
-        const throttled = err && /503/.test(String(err.message || ''));
-        if (throttled) {
-          consecutiveThrottles++;
-          console.error(`[ML:Realtime] Throttled ${consecutiveThrottles}/40 at ${venue.name}, waiting 60s`);
-          if (consecutiveThrottles >= 40) {
-            console.error('[ML:Realtime] 40 consecutive throttles, BestTime is not letting us in, aborting run');
-            aborted = true;
-            abortReason = 'throttled';
-            break;
-          }
-          await sleep(60000);
-          continue;
-        }
-        // OUR clock, not their answer. `NETWORK_ERR_RE` in bestTimeService is
-        // the same test that decides these are worth rethrowing rather than
-        // swallowing; this is the same classification applied one level up so
-        // the ten-error ceiling keeps meaning what its message says. The
-        // ceiling is higher because the cost of being wrong is asymmetric:
-        // stopping a sweep that could have run costs a night of corpus, and
-        // continuing through a real outage costs one wasted credit per venue
-        // until the run-time budget ends the hour anyway. A genuinely dead
-        // network fails fast (ECONNREFUSED, not a twenty second hang), so
-        // twenty-five of those is seconds, and twenty-five real hangs is about
-        // nine minutes, which the time budget already bounds.
-        const networkish = err && NETWORK_ERR_RE.test(String(err.message || ''));
-        if (networkish) {
-          consecutiveNetwork++;
-          console.error(`[ML:Realtime] Slow or unreachable ${consecutiveNetwork}/25 for ${venue.name}: ${err.message}`);
-          if (consecutiveNetwork >= 25) {
-            console.error('[ML:Realtime] 25 calls in a row timed out or could not connect, aborting run');
-            aborted = true;
-            abortReason = 'network';
-            break;
-          }
-          await sleep(2000);
-          continue;
-        }
-        consecutiveErrors++;
-        console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${err.message}`);
-        if (consecutiveErrors >= 10) {
-          console.error('[ML:Realtime] 10 consecutive errors, BestTime looks down, aborting run');
-          aborted = true;
-          abortReason = 'upstream';
-          break;
-        }
-        await sleep(2000);
-        continue;
-      }
-      if (!live) {
-        skipped++;
-        continue;
-      }
-
-      // Use live busyness if available, else forecasted — and record WHICH, so
-      // training can stop treating a vendor forecast as ground truth. The
-      // decision itself is classifyReading()'s, not this loop's.
-      const reading = classifyReading(live);
-      if (!reading) {
-        skipped++;
-        continue;
-      }
-      const { source: labelSource, busyness } = reading;
-      const usedLive = labelSource === LABEL_LIVE;
-      // Belt and braces on the one column this round exists to protect. If the
-      // classifier ever returns a value outside the domain, the run stops here
-      // rather than writing a row nobody can interpret later.
-      if (labelSource !== LABEL_LIVE && labelSource !== LABEL_FORECAST) {
-        throw new Error(`[ML:Realtime] classifyReading returned an unknown label_source: ${labelSource}`);
-      }
-
-      // Look up the weekly baseline for this venue at the current venue-local
-      // day/hour, on the venue's own clock (obs), not the city clock the block
-      // header was printed from. obs.hour is a wall clock hour, so only weekly rows that
-      // DECLARE the venue-local axis may answer it: before migration 023 the
-      // weekly rows held BestTime array indices, and this lookup silently
-      // stamped every realtime row with the busyness of a slot six hours away.
-      // An undeclared corpus now yields NULL — an honest "no baseline" — rather
-      // than a confident wrong number. (Nothing in training reads this column:
-      // train/export_training_data.js recomputes the baseline leave-one-out at
-      // export time. It is kept for operational inspection.)
-      let baseline = null;
-      try {
-        const { rows: baselineRows } = await pool.query(
-          `SELECT ROUND(AVG(busyness_pct)) AS avg
-           FROM ml_training_data
-           WHERE venue_id = $1 AND collection_mode = 'weekly'
-             AND hour_axis = $4
-             AND day_of_week = $2 AND hour = $3 AND busyness_pct IS NOT NULL`,
-          // `obs`, NOT `local`. The block above converted every date-derived
-          // column on this row to the venue's own clock; this lookup was left
-          // on the city clock captured once at the top of the city, and
-          // RUN_TIME_BUDGET_MS is fifty minutes against runs that have
-          // measured fifty-eight. A sweep crossing an hour boundary therefore
-          // wrote hour = 23 with the 22:00 baseline attached to it.
-          [venue.id, obs.dayOfWeek, obs.hour, HOUR_AXIS_VENUE_LOCAL]
-        );
-        baseline = baselineRows[0]?.avg ?? null;
-      } catch (_) {}
-
-      // Fetch nearby event data (graceful — nulls if no API key or error)
-      // observed/reason ride the lookup itself (migration 045 applied at the
-      // source): a thrown lookup and a measured quiet night must never write
-      // the same row. The default covers the throw path.
-      let eventData = { event_nearby: null, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null, observed: false, reason: 'lookup_failed' };
-      try {
-        eventData = await getNearestEvent(venue.latitude, venue.longitude);
-      } catch (err) {
-        console.error(`  Event fetch error for ${venue.name}:`, err.message);
-      }
-
-      // One value per column, in the column list's order, with the placeholder
-      // string generated from it. The previous form hand-numbered $1..$30 with
-      // hour_axis bound to $30 but written third, which is exactly the shape
-      // that miscounts the next time a column is added.
-      const columns = [
-        ['venue_id', venue.id],
-        ['hour_axis', HOUR_AXIS_VENUE_LOCAL],
-        ['day_of_week', obs.dayOfWeek],
-        ['hour', obs.hour],
-        ['month', obs.month],
-        ['season', obs.season],
-        ['is_holiday', isHoliday(obs.dateStr)],
-        ['is_school_break', isSchoolBreak(obs.dateStr)],
-        ['venue_category', venue.venue_category],
-        ['price_level', venue.price_level],
-        ['rating', venue.rating],
-        ['review_count', venue.review_count],
-        ['temperature', weather?.temp ?? null],
-        ['humidity', weather?.humidity ?? null],
-        ['wind_speed', weather?.windSpeed ?? null],
-        ['weather_condition', weather?.conditions ?? null],
-        // The OWM condition id. NULL in 100% of the corpus before this line,
-        // because no collector ever wrote it — which left ten weather_* features
-        // constant in training and dead at inference. weatherService has exposed
-        // conditionId since the 2026-08-12 audit.
-        ['weather_condition_code', weather?.conditionId ?? null],
-        ['is_raining', weather?.isRaining ?? null],
-        ['event_nearby', eventData.event_nearby],
-        ['event_distance_km', eventData.event_distance_km],
-        ['event_size', eventData.event_size],
-        ['event_type', eventData.event_type],
-        ['event_hours_until', eventData.event_hours_until],
-        ['events_observed', eventData.observed === true],
-        // The SEVEN enrichment columns are written EXPLICITLY, because their
-        // defaults are false, false, 0 and 0: omitting them wrote a measured
-        // absence beside an events_observed of false, which is exactly the
-        // fabricated negative migration 045 exists to end. A 2026-09-01
-        // review found 132,432 rows already carrying it.
-        //
-        // SEVEN, not six, and the count in this comment was the tell. Until
-        // 2026-09-04 `nearest_event_attendance` was left off this list while the
-        // other six were named, and enrichWithEvents.js declares it
-        // `INTEGER DEFAULT 0`. So every row the hourly sweep wrote asserted that
-        // the nearest event had nobody at it, next to an event_size that might
-        // say two hundred, and the model carries both `nearest_event_attendance`
-        // and `log_nearest_event_attendance` as features. It was the exact bug
-        // the paragraph above describes, in the column the paragraph forgot to
-        // count. Realtime rows are the scarce live labels the hourly cadence
-        // exists to produce, so it was wrong on the rows that matter most.
-        //
-        // The value mirrors total_nearby_attendance because the realtime
-        // enrichment resolves ONE nearest event: its attendance is that event's
-        // size. null when the lookup did not happen, never a defaulted zero.
-        ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
-        ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
-        // THREE STATES, NOT TWO. The comment above says "null when the lookup
-        // did not happen, never a defaulted zero", and `|| 0` broke it in the
-        // other direction: Ticketmaster publishes capacity for almost nothing,
-        // eventService maps a missing capacity to null, and `null || 0` is 0.
-        // So every live detection wrote "there is an event within 2km and
-        // nobody is at it" - all 1,052 such rows in the corpus. Meanwhile
-        // enrichWithEvents defaults the same quantity to 500, so the two
-        // writers disagreed by construction.
-        //
-        //   observed, no event nearby  -> 0      (a real measurement)
-        //   observed, event of unknown size -> null (we looked, they do not say)
-        //   not observed               -> null   (we could not look)
-        ['total_nearby_attendance', eventData.observed === true
-          ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
-          : null],
-        ['nearest_event_attendance', eventData.observed === true
-          ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
-          : null],
-        ['nearest_event_distance_km', eventData.event_distance_km],
-        ['nearest_event_type', eventData.event_type],
-        ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
-        ['baseline_busyness', baseline],
-        ['busyness_pct', clampPct(busyness)],
-        ['observed_date', obs.dateStr],
-        ['is_holiday_eve', obsHolidayEve],
-        ['special_night', obsSpecial?.name ?? null],
-        ['special_night_effect', obsSpecial?.effect ?? null],
-        ['special_night_conf', obsSpecial?.conf ?? null],
-        ['label_source', labelSource],
-        ['vendor_forecast_pct', clampPct(reading.vendorForecast)],
-      ];
-
-      try {
-        // ON CONFLICT DO NOTHING against ml_training_data_realtime_slot_uniq
-        // (migration 024): one row per venue per venue-local hour per observed
-        // date. A second pull inside the same clock hour is the same observation
-        // re-read, not a new one.
-        //
-        // DO NOTHING here where collectWeekly.js does DO UPDATE, and the
-        // asymmetry is deliberate: a weekly row is an ESTIMATE of a typical week
-        // and a re-collection is a fresher read of it, so refreshing is right; a
-        // realtime row is an OBSERVATION of one venue-hour on one date, and
-        // overwriting a recorded observation is a different act.
-        //
-        // The predicate is repeated verbatim because the index is partial: it is
-        // what lets Postgres infer this arbiter. Legacy rows with no
-        // observed_date are outside the index, so nothing here can collide with
-        // or delete them.
-        //
-        // UNDER THE CORPUS WRITE LOCK, WITH THE VENUE RE-RESOLVED FIRST. The
-        // venue list was read once at the top of this sweep and a sweep runs
-        // up to fifty minutes. scripts/ml/repairBestTimeDiscoveredVenues.js
-        // retires `bt_` twins by deleting their ml_venues row, and
-        // ml_training_data.venue_id cascades on delete: a row inserted here
-        // between the repair moving the twin's rows and deleting the twin is
-        // deleted with it, and one inserted after the delete fails its foreign
-        // key, both after the credit is spent. It also unmaps a real place
-        // sharing an id, whose reading would otherwise be filed under a second
-        // name again. So the row's existence and its id are checked inside the
-        // same transaction as the write, under the lock the repair takes per
-        // group; the answer cannot change before COMMIT. The keeper of the id
-        // is in this same list and gets its own row.
-        const result = await withCorpusWriteLock(pool, async (client) => {
-          // review_count comes back with the identity check because the
-          // venue list was read before the lock: the repair's phase two nulls
-          // a synthetic zero on ml_venues under this same lock, and a value
-          // read before it would be written straight back here (adversarial
-          // audit round 2, 2026-09-05). What the row says NOW is what is
-          // stored.
-          const { rows: still } = await client.query(
-            'SELECT review_count FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2',
-            [venue.id, venue.besttime_venue_id]
-          );
-          if (still.length === 0) return null;
-          const rc = columns.find(([c]) => c === 'review_count');
-          if (rc) rc[1] = still[0].review_count;
-          return client.query(
-            `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
-             VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})
-             ON CONFLICT (venue_id, day_of_week, hour, observed_date)
-               WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
-             DO NOTHING`,
-            columns.map(([, v]) => v)
-          );
-        });
-        if (!result) {
-          vanished++;
-          console.warn(`[ML:Realtime] ${venue.name}: ml_venues ${venue.id} no longer holds ${venue.besttime_venue_id} `
-            + '(retired or unmapped by the venue repair mid-sweep); reading not stored');
-        } else if (result.rowCount === 0) {
-          duplicateRows++;
-        } else {
-          totalRows++;
-          if (usedLive) liveRows++; else forecastRows++;
-        }
-      } catch (err) {
-        console.error(`  Insert error for ${venue.name}:`, err.message);
-      }
-
-      // One call per second, a fifth of BestTime's stated 300 a minute. The
-      // history that earned this humility, same day: 100ms pacing (600 a
-      // minute) drew a hard key block; 250ms (240 a minute, lawfully under
-      // the limit) still drew a soft 503 wall after ~475 calls and then the
-      // same 403, because a key that has offended once is not judged by the
-      // published ceiling. The full corpus at this pace is still only ~30
-      // minutes, so speed buys nothing and trust buys everything.
-      await sleep(1000);
-    }
-  }
+  // Their own lines, so the summary below keeps the exact shape monitoring reads.
+  console.log(`[ML:Realtime] Calls in flight at once: peak ${peakInFlight} of ${maxInFlight} allowed.`);
+  const ev = events.stats;
+  console.log(events.shared
+    ? `[ML:Realtime] Event lookups: ${ev.lookups} for stored readings took ${ev.sharedCalls + ev.perVenueCalls} `
+      + `Ticketmaster calls (${ev.sharedCalls} shared by ${EVENT_CELL_DEG} degree cell and hour, `
+      + `${ev.perVenueCalls} per venue where a cell's list could not be shared, `
+      + `${ev.failedSharedCalls} shared calls failed and were not reused).`
+    : `[ML:Realtime] Event lookups: ${ev.lookups} for stored readings, each asked per venue.`);
 
   // The contract of this line is unchanged — "N rows inserted (live, forecast).
   // K venues skipped." — with the new number named beside it rather than folded
@@ -1149,6 +1717,8 @@ async function run() {
 module.exports = {
   run, classifyReading, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
+  createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
+  createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
 };
 
 if (require.main === module) {

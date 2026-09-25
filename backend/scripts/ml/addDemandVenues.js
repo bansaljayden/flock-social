@@ -104,6 +104,34 @@ function categoryFor(types) {
   return 'restaurant';
 }
 
+// A place somebody goes OUT to. The demand list is every place a crowd score
+// was served for, and served_predictions also holds searches that resolved to
+// an auto shop, a property manager, an airline and a bare street address
+// (dry run, 2026-09-25): each would have spent one of the month's 100
+// admissions on a place nobody plans a night around, and most 404 anyway. So
+// a candidate needs a food, drink or going-out type of its own, and a
+// business type that is only ever an office, a garage, an airport or a farm
+// is refused unless it is also a restaurant or a bar.
+const GOING_OUT_EXTRA = new Set([
+  'food', 'meal_takeaway', 'meal_delivery', 'tea_house', 'juice_shop',
+  'bar_and_grill', 'beer_garden', 'beer_hall', 'brewpub', 'gastropub', 'lounge', 'taproom', 'winery', 'distillery',
+  'karaoke', 'comedy_club', 'dance_club', 'dance_hall', 'live_music_venue', 'concert_hall', 'event_venue',
+  'performing_arts_theater', 'opera_house', 'philharmonic_hall', 'amphitheatre', 'video_arcade', 'stadium', 'arena',
+]);
+const NOT_A_NIGHT_OUT = new Set(['car_repair', 'car_dealer', 'car_wash', 'car_rental', 'gas_station', 'airport', 'airline', 'real_estate_agency', 'insurance_agency', 'accounting', 'lawyer', 'finance', 'bank', 'corporate_office', 'general_contractor', 'farm', 'storage', 'moving_company', 'hospital', 'doctor', 'dentist']);
+// Every *_bar and *_pub type (wine_bar, cocktail_bar, sports_bar, hookah_bar,
+// irish_pub, ...) is a drink, the same way every *_restaurant is a meal.
+const isDrinkOrMeal = (t) => t === 'restaurant' || t === 'bar' || t === 'pub'
+  || t.endsWith('_restaurant') || t.endsWith('_bar') || t.endsWith('_pub');
+function isGoingOutPlace(types) {
+  const list = types || [];
+  const hospitality = list.some((t) => GOING_OUT_EXTRA.has(t)
+    || isDrinkOrMeal(t)
+    || TYPE_TO_CATEGORY.some(([gType]) => gType === t));
+  if (!hospitality) return false;
+  return list.some(isDrinkOrMeal) || !list.some((t) => NOT_A_NIGHT_OUT.has(t));
+}
+
 async function fetchDetails(placeId) {
   // 429 is Google saying slow down, not Google saying this place is gone.
   // The first dry run mislabeled live venues as unresolvable for exactly
@@ -192,6 +220,7 @@ async function main() {
   let inserted = 0;
   let outOfArea = 0;
   let gone = 0;
+  let notVenue = 0;
   let rateLimited = 0;
   let probed = 0;
   for (let i = 0; i < candidates.length; i++) {
@@ -240,6 +269,12 @@ async function main() {
       continue;
     }
 
+    if (!isGoingOutPlace(p.types)) {
+      notVenue++;
+      console.log(`  SKIP (not a going-out place: ${(p.types || []).slice(0, 4).join(', ') || 'no types'}) ${p.displayName?.text || c.place_id}`);
+      continue;
+    }
+
     const category = categoryFor(p.types);
     const label = `${p.displayName?.text || '(unnamed)'} [${cityKey}/${category}] signal=${c.signal} (s${c.serves} v${c.votes} c${c.checkins})`;
     if (!commit) {
@@ -270,7 +305,7 @@ async function main() {
     console.log(`  ADDED ${label}`);
   }
 
-  console.log(`\n[ML:Demand] ${commit ? 'Inserted' : 'Would insert'} ${inserted}. Skipped: ${outOfArea} out of area, ${gone} gone or unresolvable${rateLimited ? ', stopped early on rate limiting' : ''} (${probed} probed).`);
+  console.log(`\n[ML:Demand] ${commit ? 'Inserted' : 'Would insert'} ${inserted}. Skipped: ${outOfArea} out of area, ${gone} gone or unresolvable, ${notVenue} not a going-out place${rateLimited ? ', stopped early on rate limiting' : ''} (${probed} probed).`);
   if (commit && inserted > 0) {
     console.log('[ML:Demand] Next: admit them through the collector, which prices the run first:');
     console.log('  node scripts/ml/collectWeekly.js --city=philly --skip-attempted');

@@ -10,9 +10,16 @@ const svc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'bestTim
 
 test('a sweep stops calling after fifty minutes and says what it left', () => {
   assert.match(collect, /const RUN_TIME_BUDGET_MS = 50 \* 60 \* 1000;/);
-  assert.match(collect, /if \(budgetHit \|\| Date\.now\(\) - runClockStart > RUN_TIME_BUDGET_MS\) \{/);
+  // `now` is Date.now in production and a simulated clock in
+  // collectRealtimeConcurrency.test.js, which drives this exact check through a
+  // fifty-minute sweep and pins that no call starts after it.
+  assert.match(collect, /const runClockStart = now\(\);/);
+  assert.match(collect, /if \(budgetHit \|\| now\(\) - runClockStart > RUN_TIME_BUDGET_MS\) \{/);
   assert.match(collect, /leftForNextRun\+\+;/);
   assert.match(collect, /venues left for the next run \(time budget\)/);
+  // Calls already in flight when the budget runs out are waited for and counted
+  // before the summary, not dropped under it.
+  assert.match(collect, /await gate\.drain\(\);/);
 });
 
 test('a run that will not end is ended, so the next hour can start', () => {
@@ -74,8 +81,22 @@ test('the live call gives up at twenty seconds; the forecast call keeps thirty',
   assert.match(fc, /\b30000\b/);
 });
 
-test('the pace itself is untouched: one call per second', () => {
-  assert.match(collect, /await sleep\(1000\);/);
+test('the pace itself is untouched: one call STARTED per second', () => {
+  // Since 2026-09-25 the second is measured start to start by the call gate
+  // rather than slept after each call, so a slow answer no longer holds the
+  // queue. The number is the same one two account-wide 403s bought, and every
+  // call starts through the gate; the behaviour (never two starts inside one
+  // second, holds included) is pinned in collectRealtimeConcurrency.test.js.
+  assert.match(collect, /const START_INTERVAL_MS = 1000;/);
+  assert.match(collect, /const gate = createCallGate\(\{ maxInFlight, intervalMs: START_INTERVAL_MS, now, pause \}\);/);
+  assert.match(collect, /gate\.start\(\(\) => callVenue\(venue, \{ obs, weather, obsSpecial, obsHolidayEve \}\)\);/);
+  // Bounded overlap, refused rather than clamped when the flag is out of range.
+  assert.match(collect, /const DEFAULT_MAX_IN_FLIGHT = 8;/);
+  assert.match(collect, /const MAX_IN_FLIGHT_CEILING = 10;/);
+  assert.match(collect, /REFUSED: --max-in-flight must be a whole number from 1 to/);
+  // The backoffs the serial loop slept are holds on new starts now.
+  assert.match(collect, /gate\.holdOff\(60000\);/);
+  assert.strictEqual((collect.match(/gate\.holdOff\(2000\);/g) || []).length, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -108,8 +129,11 @@ test('the refusal names what actually stopped the run', () => {
   // subscription over ten client-side timeouts.
   assert.match(collect, /let abortReason = null;/);
   for (const reason of ['fatal', 'throttled', 'network', 'upstream']) {
-    assert.match(collect, new RegExp(`abortReason = '${reason}';`), `${reason} names itself`);
+    assert.match(collect, new RegExp(`abortRun\\('${reason}'\\);`), `${reason} names itself`);
   }
+  // With calls overlapping, the FIRST breaker names the abort: a call that was
+  // in flight and fails a moment later cannot rename a 403 run as a timeout.
+  assert.match(collect, /function abortRun\(reason\) \{\s*if \(aborted\) return;\s*aborted = true;\s*abortReason = reason;\s*gate\.stop\(\);/);
   assert.match(collect, /\}\[abortReason\] \|\| 'The reason was not recorded/);
   assert.match(collect, /timed out on OUR clock or could not connect/);
 });
@@ -252,7 +276,10 @@ test('a row is stamped with the hour it was observed, not the hour the sweep beg
   // This is a delta model anchored on (venue, day_of_week, hour), so those rows
   // were differenced against the wrong baseline cell, and the dedupe key is
   // built from the same clock.
-  assert.match(collect, /const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz\);/);
+  // Read when the call STARTS (`now()` is Date.now in production), and carried
+  // with the call, so an answer landing in the next hour is still filed under
+  // the hour it was asked in.
+  assert.match(collect, /const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz, now\(\)\);/);
   for (const col of ['day_of_week', 'hour', 'month', 'season', 'observed_date']) {
     assert.ok(collect.includes("['" + col + "', obs."), col + ' reads the row clock');
   }

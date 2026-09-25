@@ -56,6 +56,12 @@ delete process.env.BESTTIME_API_KEY;
 // Every besttime id this run asked about, in order. The whole suite is an
 // assertion about the CONTENTS of this array.
 let CALLED = [];
+// Section 4 makes the stubbed answers slow, so the collector's calls overlap
+// the way BestTime's slow hours make them overlap in production, and counts
+// how many were open at once. Zero delay everywhere else.
+let LIVE_DELAY_MS = 0;
+let OPEN_CALLS = 0;
+let PEAK_OPEN_CALLS = 0;
 
 function stubModule(request, exports) {
   const filename = require.resolve(request);
@@ -71,7 +77,14 @@ stubModule('../scripts/ml/bestTimeService', {
   fetchWeeklyForecast: async () => { throw new Error('the realtime collector must never fetch a weekly forecast'); },
   fetchLiveBusyness: async (venueId) => {
     CALLED.push(venueId);
-    return { forecastedBusyness: 35, liveBusyness: 62, liveAvailable: true, hour: null, venueOpen: true };
+    OPEN_CALLS++;
+    PEAK_OPEN_CALLS = Math.max(PEAK_OPEN_CALLS, OPEN_CALLS);
+    try {
+      if (LIVE_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, LIVE_DELAY_MS));
+      return { forecastedBusyness: 35, liveBusyness: 62, liveAvailable: true, hour: null, venueOpen: true };
+    } finally {
+      OPEN_CALLS--;
+    }
   },
 });
 stubModule('../scripts/ml/eventService', {
@@ -292,4 +305,121 @@ test('a sweep where every venue is shut writes nothing and does NOT refuse', asy
   } finally {
     await pool.query('UPDATE ml_venues SET is_active = true');
   }
+});
+
+// ---------------------------------------------------------------------------
+// 4. Overlapping calls, through the real write path
+//
+// Since 2026-09-25 the sweep lets several calls wait on BestTime at once
+// (collectRealtimeConcurrency.test.js pins the scheduling on a simulated
+// clock). What only a real database can show is that the overlap reaches the
+// write path intact: each venue is written once, through the corpus lock, and
+// the counters the summary prints are the rows the audit reads back.
+// ---------------------------------------------------------------------------
+
+test('overlapping calls write exactly one row per venue, and the summary agrees with the table', async () => {
+  // Twelve more venues with no weekly curve, so the filter calls every one of
+  // them at any hour. Answers take 150 ms, and this suite's sleep stub makes
+  // the start pace instant, so the only thing bounding how many calls are open
+  // at once is the collector's in-flight limit.
+  const extra = [];
+  for (let i = 0; i < 12; i++) {
+    extra.push(await activeVenue(`ChIJoverlapVenue${String(i).padStart(4, '0')}`, `Overlap Bar ${i}`));
+  }
+  const lines = [];
+  const savedLog = console.log;
+  console.log = (...args) => { lines.push(args.join(' ')); };
+  CALLED = [];
+  LIVE_DELAY_MS = 150;
+  PEAK_OPEN_CALLS = 0;
+  try {
+    await freshCollector().run();
+  } finally {
+    console.log = savedLog;
+    LIVE_DELAY_MS = 0;
+  }
+
+  // The calls really did overlap, and never beyond the limit.
+  assert.ok(PEAK_OPEN_CALLS > 1, 'no two calls were ever open at once, so nothing here tested overlap');
+  assert.ok(PEAK_OPEN_CALLS <= collectRealtime.DEFAULT_MAX_IN_FLIGHT,
+    `${PEAK_OPEN_CALLS} calls were open at once`);
+  assert.strictEqual(new Set(CALLED).size, CALLED.length, 'a venue was called twice in one run');
+
+  // Every new venue wrote exactly one row.
+  for (const id of extra) {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = $1 AND collection_mode = 'realtime'`,
+      [id]
+    );
+    assert.strictEqual(r.n, 1, `venue ${id} has ${r.n} realtime rows`);
+  }
+
+  // The summary's count is the count the provenance audit read back.
+  const done = lines.find((l) => /\] Done\. \d+ rows inserted/.test(l));
+  const audit = lines.find((l) => /Provenance audit: \d+ rows written/.test(l));
+  assert.ok(done && audit, 'the summary line or the audit line is missing');
+  const inserted = Number(done.match(/Done\. (\d+) rows inserted/)[1]);
+  const written = Number(audit.match(/Provenance audit: (\d+) rows written/)[1]);
+  assert.strictEqual(inserted, written, 'the tally and the table disagree about what this run wrote');
+  assert.ok(inserted >= extra.length, `${inserted} rows written for ${extra.length} new venues`);
+  assert.ok(lines.some((l) => /Calls in flight at once: peak \d+ of \d+ allowed\./.test(l)));
+});
+
+test('a venue whose clock cannot be read fails the run only after the calls in flight are written', async () => {
+  // A time zone Intl does not know makes getLocalTime throw RangeError. Six
+  // venues ahead of it are still waiting on (stubbed, slow) BestTime when the
+  // sweep reaches it. The run must still fail, as it always has, but only
+  // after those six answers are written: before, the error left the sweep at
+  // once, run() ended the pg pool, and the answers came back to a pool that
+  // was gone.
+  //
+  // The order is pinned by demand: the six are served venues, so they lead
+  // the city, and the broken one is the only venue nobody was shown.
+  await pool.query('UPDATE ml_venues SET is_active = false');
+  const { rows: [user] } = await pool.query(
+    "INSERT INTO users (email, password, name) VALUES ('clock-test@example.invalid', 'x', 'Clock Test') RETURNING id"
+  );
+  const good = [];
+  for (let i = 0; i < 6; i++) {
+    const place = `ChIJclockGoodVenue${i}`;
+    good.push(await activeVenue(place, `Clock Good ${i}`));
+    for (let s = 0; s < 6 - i; s++) {
+      await pool.query(
+        'INSERT INTO served_predictions (user_id, venue_place_id, score) VALUES ($1, $2, 50)', [user.id, place]);
+    }
+  }
+  const { rows: [broken] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, timezone, is_active)
+     VALUES ('ChIJclockBrokenZone', 'bt_ChIJclockBrokenZone', 'Broken Zone Bar', $1, 39.95, -75.16,
+             'bar', 'Gotham/Nowhere', true)
+     RETURNING id`,
+    [CITY]
+  );
+
+  const errors = [];
+  const saved = { log: console.log, error: console.error, warn: console.warn };
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = (...args) => { errors.push(args.map(String).join(' ')); };
+  CALLED = [];
+  LIVE_DELAY_MS = 300;
+  try {
+    await assert.rejects(freshCollector().run(),
+      (err) => err instanceof RangeError && /Gotham\/Nowhere/.test(err.message));
+  } finally {
+    Object.assign(console, saved);
+    LIVE_DELAY_MS = 0;
+    await pool.query('UPDATE ml_venues SET is_active = (id <> $1)', [broken.id]);
+  }
+
+  assert.deepStrictEqual(CALLED, good.map((_, i) => `bt_ChIJclockGoodVenue${i}`),
+    'the six served venues were not the calls in flight, or the broken one was called');
+  for (const id of good) {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = $1 AND collection_mode = 'realtime'`, [id]);
+    assert.strictEqual(r.n, 1, `venue ${id}'s answer was lost when the run failed`);
+  }
+  assert.ok(!errors.some((e) => /after calling end on the pool/.test(e)),
+    `a write reached an ended pool: ${errors.find((e) => /after calling end/.test(e))}`);
 });
