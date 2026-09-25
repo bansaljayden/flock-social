@@ -28,6 +28,11 @@
  *   bill.estimate      false on the second of those, which keeps its total
  *                      and its rows (lib/billShares.js isEstimateBill). Only
  *                      a bill that never had a payer is drawn as an estimate.
+ *   bill.quarantined   true on a bill from before August 27. Every amount,
+ *                      total, settled flag and count on it is null, and the
+ *                      server refuses every change to it, so the card draws
+ *                      its members and no figure, count or action
+ *                      (lib/billShares.js isQuarantinedBill).
  *   bill.totalWithTip  total * (1 + tip/100), or NULL when withheld.
  *   bill.totalAmount   the pre-tip figure, or NULL when withheld.
  *   bill.paidBy        { id, name }. `name` is null when the viewer has
@@ -66,7 +71,7 @@
  */
 import React from 'react';
 import { CardShell, MemberAvatar, formatMoney } from './SystemRow';
-import { isEstimateBill, shellEstimate } from '../../../lib/billShares';
+import { isEstimateBill, isQuarantinedBill, shellEstimate } from '../../../lib/billShares';
 import './cards.css';
 
 // Kept out of the component so the tests can reason about it and so the
@@ -122,6 +127,10 @@ export default function BillCard({
   // bill whose payer has gone is payerless and is not a shell.
   const payerless = bill.hasPayer === false;
   const isShell = isEstimateBill(bill);
+  // A bill from before August 27 (lib/billShares.js isQuarantinedBill): the
+  // server sends names and no figure, flag or count, and refuses every change,
+  // so this card draws no amount, no count and no action for it.
+  const quarantined = isQuarantinedBill(bill);
   const viewerIsPayer = !payerless && same(bill.paidBy?.id, viewerId);
   const roster = members || {};
 
@@ -152,20 +161,24 @@ export default function BillCard({
   // A posted bill whose payer deleted their account keeps its title and its
   // figures. What changes is who it is paid by, and that is the one thing
   // the server no longer has a name for.
-  const subtitle = isShell
-    ? (shellFigure
-      ? 'Nobody has paid yet. These are estimates from the group budget.'
-      : 'Nobody has paid yet, and there is no group number to show.')
-    : (payerless
-      ? 'Paid by someone who has deleted their account'
-      : (bill.paidBy?.name ? `Paid by ${bill.paidBy.name}` : 'Paid by a member'));
+  const subtitle = quarantined
+    ? 'Amounts on bills from before August 27 are no longer shown.'
+    : isShell
+      ? (shellFigure
+        ? 'Nobody has paid yet. These are estimates from the group budget.'
+        : 'Nobody has paid yet, and there is no group number to show.')
+      : (payerless
+        ? 'Paid by someone who has deleted their account'
+        : (bill.paidBy?.name ? `Paid by ${bill.paidBy.name}` : 'Paid by a member'));
 
   // ---------------------------------------------------------------- footer
   // A SHELL HAS NO SETTLED COUNT. Nobody settles a bill nobody has paid, and
   // `shareCount` on a shell is the number of people who have PRE-COMMITTED,
   // not the size of the flock, so "0 of 1 settled" would be two wrong facts in
-  // four words. The shell's footer is its action and nothing else.
-  const footerLeft = isShell
+  // four words. The shell's footer is its action and nothing else. A
+  // quarantined bill has neither: its settled flags and counts are withheld
+  // along with its amounts, and every change to it is refused.
+  const footerLeft = (isShell || quarantined)
     ? null
     : (tally.all
       ? 'All settled up'
@@ -203,7 +216,10 @@ export default function BillCard({
 
   let footerRight = null;
 
-  if (isShell) {
+  if (quarantined) {
+    // No control, whatever the parent hands in. The server refuses a settle,
+    // an undo and a commit on this bill, so a button here could only fail.
+  } else if (isShell) {
     // Committing to a figure nobody can see is not a thing this card will
     // offer. With a number in hand the chip is the commit; without one there
     // is no control at all.
@@ -293,6 +309,7 @@ export default function BillCard({
       ariaLabel={onOpen ? `${title}. Open the bill.` : undefined}
       data-card="bill"
       data-bill-shell={isShell ? 'true' : 'false'}
+      data-bill-quarantined={quarantined ? 'true' : 'false'}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div>

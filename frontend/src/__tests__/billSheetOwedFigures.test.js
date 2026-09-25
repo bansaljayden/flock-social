@@ -32,7 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
+const { render, screen, fireEvent, waitFor, within } = require('@testing-library/react');
 
 jest.mock('../services/api', () => ({
   __esModule: true,
@@ -548,23 +548,76 @@ test('a bill total withheld from a viewer with a hidden share says so without th
   expect(screen.getByLabelText('Open bill split details').textContent).toBe('1/3');
 });
 
-test('a row of a real bill whose figures are withheld reads "not shown", not the budget\'s words', () => {
-  // billing.js withholds a row it cannot vouch for was written from a typed
-  // total (migration 088: an old ghost commit could put the raw budget
-  // minimum into a posted bill) from everyone but its own member, and the
-  // total with it. Fails without the fix: the row read "no group number to
-  // show", which claims to know the row is the budget's.
-  const { container } = mount(bill([
-    share(1, 'Ava', 30, { settled: true, outstanding: 0 }),
-    share(9, 'Jay', 30),
-    share(3, 'Cy', null, { paidAmount: null, outstanding: null, committed: true }),
-  ], { totalAmount: null, totalWithTip: null }));
-  expect(screen.getAllByText('not shown')).toHaveLength(1);
-  expect(screen.getByText('Total · not shown')).toBeTruthy();
-  expect(container.textContent).not.toMatch(/no group number/);
-  expect(container.textContent).not.toMatch(/\$(?!\d)|undefined|NaN|null/);
-  // Jay's own row and Settle Up are untouched.
-  expect(screen.getByRole('button', { name: /Settle Up/ }).textContent).toBe('Settle Up · $30.00');
+// ---------------------------------------------------------------------------
+// 4c2. A quarantined bill carries its members' names and nothing else
+// ---------------------------------------------------------------------------
+describe('a quarantined bill shows who was on it and no figure, count or action', () => {
+  // routes/billing.js quarantines a bill from before August 27 (migration
+  // 089), when an early pre-commit could copy one person's budget answer into
+  // it. GET sends every amount, total, settled flag and count as null, to
+  // everyone, the share's own member included, and refuses to post over it,
+  // settle it or take a settlement back. Jay (the viewer) is on it.
+  const withheld = { paidAmount: null, outstanding: null, committed: null, settled: null };
+  const frozen = (over = {}) => bill([
+    share(1, 'Ava', null, withheld),
+    share(9, 'Jay', null, withheld),
+    share(3, 'Cy', null, withheld),
+  ], {
+    quarantined: true,
+    estimate: false,
+    totalAmount: null,
+    tipPercent: null,
+    totalWithTip: null,
+    splitType: null,
+    fullySettled: null,
+    settledCount: null,
+    shareCount: null,
+    ...over,
+  });
+  const settledBudget = {
+    getSelectedFlock: () => ({ ...FLOCK, budgetEnabled: true }),
+    budgetStatus: { budgetEnabled: true, budgetLocked: true, ceiling: 40, submissionCount: 3, totalMembers: 3, memberCount: 3, isReady: true, userSubmitted: true },
+  };
+
+  test('every row and the total say "not shown", the pill says Bill, and the card and the sheet say why', () => {
+    const { container } = mount(frozen());
+    expect(screen.getAllByText('not shown')).toHaveLength(3);
+    expect(screen.getByText('Total · not shown')).toBeTruthy();
+    expect(screen.getByText('This bill is from before August 27. Its amounts are no longer shown, and it can no longer be settled here.')).toBeTruthy();
+    expect(screen.getByText('Amounts on bills from before August 27 are no longer shown.')).toBeTruthy();
+    // No "0/3": the settled flags are withheld, so there is nothing to count.
+    expect(screen.getByLabelText('Open bill split details').textContent).toBe('Bill');
+    expect(container.querySelector('[data-bill-quarantined="true"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/\$|undefined|NaN|null|Owes|Pre-committed|All settled up|of 3 settled|no group number|Estimated share/);
+  });
+
+  test('nobody is offered a way to settle, mark paid or take a payment back, their own row included', () => {
+    const { container } = mount(frozen(), settledBudget);
+    expect(screen.queryByRole('button', { name: /Settle Up|Settle up/ })).toBeNull();
+    expect(screen.queryByText('Mark as Paid (cash or other)')).toBeNull();
+    expect(screen.queryByText('That was a mistake, I have not paid')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Undo|Commit|Mark as paid/ })).toBeNull();
+    // Nor a Split the Bill that would open a form the server refuses.
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    const card = container.querySelector('[data-card="bill"]');
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  test('the bill form does not open over it, even over a payerless copy, and the bill stays readable', () => {
+    // A payerless shell is the one bill the form opens over. A quarantined
+    // one is refused by POST /api/billing/create, so the form stays shut and
+    // the sheet keeps showing the bill instead.
+    mount(frozen({ hasPayer: false, paidBy: { id: null, name: null } }), { showCreateBill: true });
+    expect(screen.queryByText('Who paid?')).toBeNull();
+    expect(screen.getByText('Total · not shown')).toBeTruthy();
+    expect(screen.getAllByText('not shown')).toHaveLength(3);
+  });
+
+  test('without a budget, the sheet offers no Split the Bill over it either', () => {
+    mount(frozen({ hasPayer: false, paidBy: { id: null, name: null } }));
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByText('Split the bill after the night out')).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

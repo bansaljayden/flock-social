@@ -266,15 +266,16 @@ async function dispatch(text, params = []) {
   if (has('FROM guest_votes gv')) return { rows: [{ voters: 0 }], rowCount: 1 };
 
   // ── bill_splits / bill_split_shares (ghost commit) ──
-  // had_payer (migration 086) rides on the read: a payerless bill somebody
-  // posted, whose payer then deleted their account, is refused like any
-  // other real bill. Every bill in this fixture is a ghost-commit shell.
-  if (has('SELECT id, paid_by, had_payer FROM bill_splits WHERE flock_id = $1')) {
+  // had_payer (migration 086) and quarantined (089) ride on the read: a
+  // payerless bill somebody posted, whose payer then deleted their account,
+  // is refused like any other real bill, and so is a quarantined one. Every
+  // bill in this fixture is a ghost-commit shell made today.
+  if (has('SELECT id, paid_by, had_payer, quarantined FROM bill_splits WHERE flock_id = $1')) {
     const b = bills.find((x) => x.flock_id === Number(params[0]));
-    return { rows: b ? [{ id: b.id, paid_by: b.paid_by, had_payer: b.had_payer }] : [], rowCount: b ? 1 : 0 };
+    return { rows: b ? [{ id: b.id, paid_by: b.paid_by, had_payer: b.had_payer, quarantined: b.quarantined }] : [], rowCount: b ? 1 : 0 };
   }
   if (has('INSERT INTO bill_splits')) {
-    const b = { id: 900 + bills.length, flock_id: Number(params[0]), total_amount: params[1], paid_by: null, had_payer: false };
+    const b = { id: 900 + bills.length, flock_id: Number(params[0]), total_amount: params[1], paid_by: null, had_payer: false, quarantined: false };
     bills.push(b);
     return { rows: [{ id: b.id }], rowCount: 1 };
   }

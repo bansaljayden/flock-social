@@ -39,16 +39,20 @@
 //      it. bill_splits.had_payer (migration 086) tells the two apart.
 //   8. MIGRATION 086 ON ROWS ALREADY THERE marks every bill a payer was
 //      stored on, leaves every shell an estimate, and moves nothing on replay.
-//   9. WHAT THE FIRST GHOST COMMIT WROTE REACHES ITS OWN MEMBER AND NOBODY
-//      ELSE. It put the raw budget minimum, one person's exact answer, into
-//      any bill the flock had. That row, and a credit carried from it, shows
-//      its figures to its own member only (migration 088), with the total
-//      withheld beside it, and is never banked against a split. An estimate
-//      shows the published number, never a figure a row stored.
+//   9. A BILL FROM BEFORE THE BUDGET SETTLED ONCE IS QUARANTINED WHOLE. The
+//      early ghost commit put the raw budget minimum, one person's exact
+//      answer, into any bill the flock had, and the figure travelled: into
+//      another member's share, a settled flag a payer could probe, a banked
+//      payment the rows subtract back to. Such a bill (migration 089) sends
+//      no figure, flag or count to anybody, its own members included, in GET,
+//      a payment link or the data export, refuses every write, and binds
+//      nobody to the plan. An estimate shows the published number, never a
+//      number a row stored.
 //  10. A BILL WHOSE PAYER DELETED THEIR ACCOUNT IS HANDED ON UNDER THE SAME
 //      RULE as a live payer's: refused once a payment is on record.
-//  11. MIGRATION 088 ON ROWS ALREADY THERE trusts only a row nobody committed
-//      on, and moves nothing on replay.
+//  11. MIGRATION 089 ON BILLS ALREADY THERE takes every bill from before the
+//      cut-off in a flock that could have had a budget, and nothing else,
+//      and moves nothing on replay.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -119,6 +123,8 @@ test.before(async () => {
   app.use('/api/billing', require('../routes/billing'));
   app.use('/api/flocks', require('../routes/flocks'));
   app.use('/api/guest', require('../routes/guest').router);
+  // The data export, which lists a person's bill shares (section 9).
+  app.use('/api/users', require('../routes/users'));
   server = await new Promise((resolve) => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -138,10 +144,10 @@ test.after(async () => {
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-async function call(method, url, { token, body } = {}) {
+async function call(method, url, { token, body, headers = {} } = {}) {
   const res = await fetch(base + url, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -725,19 +731,21 @@ test('the had_payer backfill marks every bill a payer was stored on, and nothing
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 9. What the first ghost commit wrote reaches its own member and nobody else
+// 9. A bill from before the budget settled once is quarantined whole
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// From the first version of the ghost commit until 2026-08-13 it upserted a
-// share into whatever bill the flock had, a posted one included, and the
-// amount was flocks.budget_ceiling read raw. Every budget answer rewrote that
-// column with the live MIN, with no threshold, so one answer in, it was that
-// person's exact amount. The statement below is that handler's, verbatim,
-// against a bill somebody posted. Such a row is not posted (migration 088) and
-// shows its figures to its own member only, on a bill with a payer and on one
-// whose payer deleted their account alike. Before 088, GET showed it to the
-// whole table.
+// Until 2026-08-26 the ghost commit wrote the budget number into bills as it
+// then stood: the live minimum of the answers, unbanded, and before 2026-08-12
+// with no threshold, so one answer in, that person's exact amount. It went
+// into whatever bill the flock had, a posted one included, until 2026-08-13.
+// Each test below builds a bill the way the code of that time left it, dates
+// it inside that window, and applies migration 089, which quarantines every
+// bill made before 2026-08-27 (US Eastern) in a flock that could have had a
+// budget. The bill then sends no figure, flag or count to anybody, its own
+// members included, and every route that would read one or carry one forward
+// refuses it.
 
+// That handler's own statement, run against a bill somebody posted.
 const plantFirstGhostShare = (billId, user, amount) => pool.query(
   `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled)
    VALUES ($1, $2, $3, true, false)
@@ -746,11 +754,24 @@ const plantFirstGhostShare = (billId, user, amount) => pool.query(
   [billId, user.id, amount]
 );
 
-// Pat posts $90 over Pat, Ann and Bea after Ann answers the budget with 47.13,
-// the minimum the first ghost commit would have copied. Eve joins after the
-// bill, so she has no row on it, and the first ghost commit gave her one. Ann
-// made the plan, so Pat deleting their account leaves it standing.
-async function oldGhostShareOnPostedBill() {
+// A day inside the window the early ghost commit wrote in.
+const LEGACY_DAY = '2026-08-20T20:00:00Z';
+
+// Applies migration 089 the way a deploy meets the rows already written.
+const quarantineLegacyBills = () => reapplyMigration(/^\d+_bill_quarantine\.sql$/, 'quarantine');
+
+const readBill = async (flockId, viewer) => {
+  const res = await call('GET', `/api/billing/${flockId}`, { token: viewer.token });
+  assert.equal(res.status, 200, res.text);
+  return res;
+};
+
+// Ann made the plan and answered the budget with 47.13, the only answer in,
+// which the early ghost commit copied as it stood. Pat posted $90 over Pat,
+// Ann and Bea. Eve joined after, so she had no row, and the ghost commit gave
+// her one: Ann's answer, as Eve's share. With `eveSettles`, Eve then marked it
+// paid, which /settle allowed while the bill had a payer.
+async function legacyBillWithAnnsAnswer({ eveSettles = false } = {}) {
   const pat = await mkUser('Pat');
   const ann = await mkUser('Ann');
   const bea = await mkUser('Bea');
@@ -762,124 +783,228 @@ async function oldGhostShareOnPostedBill() {
   const eve = await mkUser('Eve');
   await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [flockId, eve.id]);
   await plantFirstGhostShare(billId, eve, 47.13);
+  if (eveSettles) {
+    await pool.query('UPDATE bill_split_shares SET settled = true, settled_at = NOW() WHERE bill_id = $1 AND user_id = $2', [billId, eve.id]);
+  }
+  await pool.query('UPDATE bill_splits SET created_at = $2 WHERE id = $1', [billId, LEGACY_DAY]);
+  await quarantineLegacyBills();
   return { pat, ann, bea, eve, flockId, billId };
 }
 
-const readBill = async (flockId, viewer) => {
-  const res = await call('GET', `/api/billing/${flockId}`, { token: viewer.token });
-  assert.equal(res.status, 200, res.text);
-  return res;
-};
+const shareRowsOf = async (billId) => (await pool.query(
+  'SELECT user_id, amount, paid_amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1 ORDER BY user_id',
+  [billId]
+)).rows;
 
-test('a share the first ghost commit wrote into a posted bill shows its figure to its own member only', async () => {
-  const { pat, ann, bea, eve, flockId } = await oldGhostShareOnPostedBill();
+test('a quarantined bill has no settled flag to probe, and no split to probe it with', async () => {
+  const { pat, ann, bea, eve, flockId, billId } = await legacyBillWithAnnsAnswer({ eveSettles: true });
+  const before = await shareRowsOf(billId);
+
+  // The flag itself: before 089 a row whose figures were hidden still said
+  // whether it was settled, to everybody, and the counts said the same.
+  for (const viewer of [pat, ann, eve]) {
+    const res = await readBill(flockId, viewer);
+    const b = res.body.bill;
+    const eveRow = b.shares.find((s) => s.userId === eve.id);
+    assert.equal(eveRow.settled, null, `${viewer.name} read the settled flag of Eve's row`);
+    for (const s of b.shares) {
+      assert.deepEqual([s.amount, s.paidAmount, s.outstanding, s.settled, s.committed, s.settledAt],
+        [null, null, null, null, null, null], `${viewer.name} read a figure or a flag on ${s.name}'s row`);
+    }
+    assert.deepEqual([b.settledCount, b.shareCount, b.fullySettled], [null, null, null], `${viewer.name} read the counts`);
+    assert.ok(!res.text.includes('47.13'), res.text);
+    assert.equal(b.quarantined, true);
+  }
+
+  // The probe: re-post with Eve in a custom split at a share of the payer's
+  // choosing and read whether her carried payment covers it off her settled
+  // flag, halving the gap each time. Every step is a write, and every write
+  // is refused before it is made.
+  for (const eveShare of [40, 50]) {
+    const r = await call('POST', `/api/billing/${flockId}/create`, {
+      token: pat.token,
+      body: {
+        totalAmount: 150,
+        splitType: 'custom',
+        customShares: [
+          { userId: pat.id, amount: 90 - eveShare },
+          { userId: ann.id, amount: 30 },
+          { userId: bea.id, amount: 30 },
+          { userId: eve.id, amount: eveShare },
+        ],
+      },
+    });
+    assert.equal(r.status, 409, `a probe at ${eveShare} went through: ${r.text}`);
+    assert.equal(r.body.code, 'BILL_QUARANTINED');
+    assert.ok(!r.text.includes('47.13') && !/\$/.test(r.body.error), r.text);
+  }
+  assert.deepEqual(await shareRowsOf(billId), before, 'a refused probe wrote something');
+});
+
+test('on a legacy split that banked a payment, neither half of the subtraction is sent', async () => {
+  // What POST /create left before migration 088: Eve paid on her ghost share
+  // and left the plan, the next edit of the $120 bill banked her 47.13 and
+  // split the other 72.87 three ways, and her kept row went with her account.
+  // The three rows left were written from a typed total, so 088 had to call
+  // them posted, and $120 less three times 24.29 is Ann's answer again.
+  const pat = await mkUser('Pat');
+  const ann = await mkUser('Ann');
+  const bea = await mkUser('Bea');
+  const flockId = await mkFlock(ann, [pat, bea]);
+  assert.equal((await submit(flockId, ann, 47.13)).status, 200);
+  const billId = (await one(
+    `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, had_payer, created_at, updated_at)
+     VALUES ($1, 120, 'equal', $2, 0, true, $3, $3) RETURNING id`,
+    [flockId, pat.id, LEGACY_DAY]
+  )).id;
+  await pool.query(
+    `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, paid_amount, posted) VALUES
+       ($1, $2, 24.29, false, true, 0, true), ($1, $3, 24.29, false, false, 0, true), ($1, $4, 24.29, false, false, 0, true)`,
+    [billId, pat.id, ann.id, bea.id]
+  );
+  await quarantineLegacyBills();
+
   for (const viewer of [pat, ann, bea]) {
     const res = await readBill(flockId, viewer);
-    assert.ok(!res.text.includes('47.13'), `${viewer.name} was shown the minimum: ${res.text}`);
-    const row = res.body.bill.shares.find((s) => s.userId === eve.id);
-    assert.deepEqual([row.amount, row.paidAmount, row.outstanding], [null, null, null]);
-    assert.equal(res.body.bill.totalWithTip, null, 'the total less the rows they can see is the one they cannot');
-    assert.equal(res.body.bill.shares.find((s) => s.userId === bea.id).amount, 30, 'a posted row still reads');
+    const b = res.body.bill;
+    const seen = b.shares.map((s) => s.amount).filter((a) => typeof a === 'number');
+    assert.deepEqual([b.totalAmount, b.totalWithTip, b.tipPercent], [null, null, null], `${viewer.name} got the total`);
+    assert.deepEqual(seen, [], `${viewer.name} got the rows to take from it`);
+    assert.ok(!res.text.includes('47.13') && !res.text.includes('24.29'), res.text);
   }
+});
+
+// Eve's share on the bill below is Ann's only budget answer: a share owner
+// reading their own row is reading another person's amount.
+test('the member holding a ghost share of somebody else\'s answer does not read it on the bill', async () => {
+  const { eve, flockId } = await legacyBillWithAnnsAnswer();
   const own = await readBill(flockId, eve);
-  assert.equal(own.body.bill.shares.find((s) => s.userId === eve.id).amount, 47.13, 'its own member still reads it');
+  assert.equal(own.body.bill.shares.find((s) => s.userId === eve.id).amount, null, 'Eve read Ann\'s answer as her own share');
+  assert.ok(!own.text.includes('47.13'), own.text);
+  assert.equal(own.body.bill.quarantined, true);
 });
 
-test('and once the payer has deleted their account, with the budget open, it still reaches nobody else', async () => {
-  const { pat, ann, bea, eve, flockId } = await oldGhostShareOnPostedBill();
-  await pool.query('DELETE FROM users WHERE id = $1', [pat.id]);
-  assert.equal((await one('SELECT budget_locked FROM flocks WHERE id = $1', [flockId])).budget_locked, false);
-  for (const viewer of [ann, bea]) {
-    const res = await readBill(flockId, viewer);
-    assert.equal(res.body.bill.estimate, false, 'still a posted bill');
-    assert.ok(!res.text.includes('47.13'), `${viewer.name} was shown the minimum: ${res.text}`);
-    assert.equal(res.body.bill.shares.find((s) => s.userId === eve.id).amount, null);
-    assert.equal(res.body.bill.totalWithTip, null);
+test('nor in a payment link, which carries the caller\'s own share', async () => {
+  const { eve, flockId } = await legacyBillWithAnnsAnswer();
+  for (const route of ['payment-links', 'venmo-link']) {
+    const r = await call('GET', `/api/billing/${flockId}/${route}`, { token: eve.token });
+    assert.ok(!r.text.includes('47.13'), `${route} carried Ann's answer: ${r.text}`);
+    assert.equal(r.status, 409, `${route}: ${r.text}`);
+    assert.equal(r.body.code, 'BILL_QUARANTINED');
   }
 });
 
-test('a payment against such a row stays with its member: carried as a credit it is theirs alone, and it is never banked against a split', async () => {
-  const { pat, ann, bea, eve, flockId } = await oldGhostShareOnPostedBill();
-  // Eve marks it paid while the bill has a payer, which /settle allows.
-  assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: eve.token })).status, 200);
+test('nor in their data export, which lists the bill as withheld with no figure or flag, and the payer\'s has no total', async () => {
+  const { pat, eve, flockId } = await legacyBillWithAnnsAnswer();
+  // The export asks for the account password first.
+  const password = 'export-proof-7';
+  await pool.query('UPDATE users SET password = $2 WHERE id = ANY($1::int[])',
+    [[eve.id, pat.id], await require('bcrypt').hash(password, 4)]);
+  const proof = { 'x-export-password': password };
+  const exp = await call('GET', '/api/users/export', { token: eve.token, headers: proof });
+  assert.equal(exp.status, 200, exp.text.slice(0, 300));
+  const mine = exp.body.bill_splits.filter((r) => r.flock_id === flockId);
+  assert.equal(mine.length, 1, 'the bill is still listed');
+  assert.equal(mine[0].your_share, null, 'Eve\'s export carried Ann\'s answer as her share');
+  assert.ok(!exp.text.includes('47.13'), 'the export carried the answer');
+  assert.deepEqual(
+    [mine[0].withheld, mine[0].your_share, mine[0].committed, mine[0].settled, mine[0].settled_at, mine[0].total_amount],
+    [true, null, null, null, null, null]
+  );
 
-  // Dropping her from a split banks her payment against the total the rest
-  // divide, and the refusal that asks for the right sum named the figure.
-  const custom = await call('POST', `/api/billing/${flockId}/create`, {
-    token: pat.token,
-    body: { totalAmount: 120, splitType: 'custom', customShares: [pat, ann, bea].map((u) => ({ userId: u.id, amount: 40 })) },
-  });
-  assert.equal(custom.status, 409, custom.text);
-  assert.equal(custom.body.code, 'PAYMENT_OUTSIDE_SPLIT');
-  assert.ok(!custom.text.includes('47.13'), custom.text);
-
-  // Kept in the split, the payment rides across as her credit and stays hers:
-  // not in the payer's reply, not in anybody else's copy of the event, not on
-  // anybody else's read.
-  emits.length = 0;
-  const kept = await call('POST', `/api/billing/${flockId}/create`, { token: pat.token, body: { totalAmount: 120 } });
-  assert.equal(kept.status, 201, kept.text);
-  assert.ok(!kept.text.includes('47.13'), `the payer was shown her credit: ${kept.text}`);
-  assert.equal(kept.body.bill.shares.find((s) => s.userId === eve.id).paidAmount, null);
-  assert.equal(kept.body.bill.totalWithTip, null);
-  await until(() => emits.filter((e) => e.event === 'bill_created').length === 4);
-  const copies = emits.filter((e) => e.event === 'bill_created');
-  assert.equal(copies.length, 4);
-  for (const e of copies.filter((x) => x.room !== `user:${eve.id}`)) {
-    assert.ok(!JSON.stringify(e.payload).includes('47.13'), `bill_created to ${e.room} carried her credit`);
-  }
-  const hers = copies.find((e) => e.room === `user:${eve.id}`).payload.bill;
-  assert.equal(hers.shares.find((s) => s.userId === eve.id).paidAmount, 47.13, 'her own copy carries it');
-  for (const viewer of [pat, ann, bea]) {
-    const res = await readBill(flockId, viewer);
-    assert.ok(!res.text.includes('47.13'), `${viewer.name} was shown her credit: ${res.text}`);
-  }
-  const mine = (await readBill(flockId, eve)).body.bill.shares.find((s) => s.userId === eve.id);
-  assert.deepEqual([mine.amount, mine.paidAmount, mine.settled], [30, 47.13, true]);
-
-  // Once she has left the plan, the next edit would bank it against the total
-  // everybody else divides, so the edit is refused and nothing moves.
-  await leave(flockId, eve);
-  const rows = async () => (await pool.query(
-    'SELECT user_id, amount, paid_amount, settled, posted FROM bill_split_shares WHERE bill_id = (SELECT id FROM bill_splits WHERE flock_id = $1) ORDER BY user_id',
-    [flockId]
-  )).rows;
-  const before = await rows();
-  const without = await call('POST', `/api/billing/${flockId}/create`, { token: pat.token, body: { totalAmount: 120 } });
-  assert.equal(without.status, 409, without.text);
-  assert.equal(without.body.code, 'PAYMENT_OUTSIDE_SPLIT');
-  assert.ok(!without.text.includes('47.13'));
-  assert.deepEqual(await rows(), before);
+  // The payer's copy has no total from it either.
+  const payerExp = await call('GET', '/api/users/export', { token: pat.token, headers: proof });
+  assert.equal(payerExp.status, 200, payerExp.text.slice(0, 300));
+  const payerRow = payerExp.body.bill_splits.find((r) => r.flock_id === flockId);
+  assert.deepEqual([payerRow.withheld, payerRow.your_share, payerRow.total_amount, payerRow.tip_percent], [true, null, null, null]);
 });
 
-test('an estimate shows the number being published, never the figure an old shell stored', async () => {
+test('every write that would carry a quarantined figure forward is refused, names no figure, and moves nothing', async () => {
+  const { pat, ann, bea, eve, flockId, billId } = await legacyBillWithAnnsAnswer({ eveSettles: true });
+  // The budget settles, so the ghost commit gets as far as the bill.
+  for (const [u, amt] of [[pat, 60], [bea, 70], [eve, 80]]) assert.equal((await submit(flockId, u, amt)).status, 200);
+  assert.equal((await one('SELECT budget_locked FROM flocks WHERE id = $1', [flockId])).budget_locked, true);
+  const before = await shareRowsOf(billId);
+
+  const attempts = [
+    ['re-post', () => call('POST', `/api/billing/${flockId}/create`, { token: pat.token, body: { totalAmount: 90 } })],
+    ['settle', () => call('POST', `/api/billing/${flockId}/settle`, { token: bea.token })],
+    ['unsettle', () => call('POST', `/api/billing/${flockId}/unsettle`, { token: eve.token })],
+    ['ghost commit', () => call('POST', `/api/billing/${flockId}/ghost-commit`, { token: ann.token })],
+  ];
+  for (const [what, go] of attempts) {
+    const r = await go();
+    assert.equal(r.status, 409, `${what}: ${r.text}`);
+    assert.equal(r.body.code, 'BILL_QUARANTINED', what);
+    assert.ok(!r.text.includes('47.13') && !/\$/.test(r.body.error), `${what} named a figure: ${r.text}`);
+    assert.doesNotMatch(r.body.error, /—/);
+  }
+  assert.deepEqual(await shareRowsOf(billId), before);
+  const bill = await one('SELECT total_amount, paid_by, quarantined FROM bill_splits WHERE id = $1', [billId]);
+  assert.deepEqual([Number(bill.total_amount), bill.paid_by, bill.quarantined], [90, pat.id, true]);
+});
+
+test('nobody is held to a quarantined bill: a member who owes on it and the payer can leave, and the plan can be deleted', async () => {
+  // A bill that can no longer be settled would otherwise keep them for good,
+  // and the refusal would be the one place its settled flags still showed.
+  const { pat, ann, bea, flockId } = await legacyBillWithAnnsAnswer();
+  const bea_ = await call('POST', `/api/flocks/${flockId}/leave`, { token: bea.token });
+  assert.equal(bea_.status, 200, `a member who owes on it: ${bea_.text}`);
+  const pat_ = await call('POST', `/api/flocks/${flockId}/leave`, { token: pat.token });
+  assert.equal(pat_.status, 200, `the payer everybody owes: ${pat_.text}`);
+  const del = await call('DELETE', `/api/flocks/${flockId}`, { token: ann.token });
+  assert.equal(del.status, 200, `the plan's creator: ${del.text}`);
+});
+
+test('a bill made since the cut-off, or before it in a flock that never had a budget, is an ordinary bill', async () => {
+  // Made today in a budget flock.
+  const pat = await mkUser('Pat');
+  const ann = await mkUser('Ann');
+  const today = await mkFlock(ann, [pat]);
+  assert.equal((await call('POST', `/api/billing/${today}/create`, { token: pat.token, body: { totalAmount: 60 } })).status, 201);
+  // Made on the legacy day in a flock with no budget.
+  const plain = await mkFlock(ann, [pat], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${plain}/create`, { token: pat.token, body: { totalAmount: 60 } })).status, 201);
+  await pool.query('UPDATE bill_splits SET created_at = $2 WHERE flock_id = $1', [plain, LEGACY_DAY]);
+  await quarantineLegacyBills();
+  for (const flockId of [today, plain]) {
+    const b = (await readBill(flockId, ann)).body.bill;
+    assert.notEqual(b.quarantined, true);
+    assert.equal(b.totalWithTip, 60);
+    assert.deepEqual(b.shares.map((s) => s.amount), [30, 30]);
+    assert.deepEqual(b.shares.map((s) => s.settled), [true, false], 'the flags read as they are');
+  }
+});
+
+test('an estimate shows the number being published now, never a number a shell row stored', async () => {
+  // A shell row keeps the number that was published when its member
+  // committed, and a shell left from before the budget was started over can
+  // hold the old one beside a new number. Every row reads the number published
+  // now, and no total is sent.
   const a = await mkUser('Ava');
   const b = await mkUser('Bea');
   const c = await mkUser('Cal');
   const d = await mkUser('Dot');
   const flockId = await mkFlock(a, [b, c, d]);
-  // The shell the first ghost commit left: the raw minimum in the row, and the
-  // minimum times the head count as its total.
   const shellId = (await one(
-    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent) VALUES ($1, 188.52, 'equal', NULL, 0) RETURNING id",
+    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent) VALUES ($1, 180, 'equal', NULL, 0) RETURNING id",
     [flockId]
   )).id;
-  await plantFirstGhostShare(shellId, a, 47.13);
+  await plantFirstGhostShare(shellId, a, 45);
 
   // Open: no number, so nothing at all.
   let res = await readBill(flockId, b);
   assert.equal(res.body.bill.estimate, true);
   assert.deepEqual([res.body.bill.shares[0].amount, res.body.bill.totalWithTip], [null, null]);
-  assert.ok(!res.text.includes('47.13') && !res.text.includes('188.52'), res.text);
 
-  // Settled at 40: the row reads 40, the published band, and no total is sent.
+  // Settled at 40: the row reads 40, and no total is sent.
   for (const [u, amt] of [[a, 40], [b, 50], [c, 60]]) assert.equal((await submit(flockId, u, amt)).status, 200);
   assert.equal((await submit(flockId, d, 70)).body.ceiling, 40);
   res = await readBill(flockId, b);
   assert.deepEqual(res.body.bill.shares.map((s) => [s.userId, s.amount, s.outstanding]), [[a.id, 40, 40]]);
   assert.deepEqual([res.body.bill.totalAmount, res.body.bill.totalWithTip], [null, null]);
-  assert.ok(!res.text.includes('47.13') && !res.text.includes('188.52'), res.text);
-  // Its own member reads the published number as well: an estimate has no other.
+  assert.ok(!res.text.includes('"amount":45'), res.text);
+  // Its own member reads the number published now as well.
   res = await readBill(flockId, a);
   assert.equal(res.body.bill.shares[0].amount, 40);
 });
@@ -951,48 +1076,61 @@ test('with nothing paid on it, a bill whose payer has gone posts again as a firs
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 11. Migration 088 on the rows that were already there
+// 11. Migration 089 on the bills that were already there
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('the posted backfill trusts only a row nobody committed on, and a second pass moves nothing', async () => {
-  // Every row committed: a bill posted over ghost commitments.
-  const overShell = await postedOverShellThenPayerGone();
-  // The first ghost commit's row among rows nobody committed on.
-  const withGhost = await oldGhostShareOnPostedBill();
-  // Nobody committed at all.
+test('the quarantine takes every bill from before the cut-off in a flock that could have had a budget, and nothing else, and a second pass moves nothing', async () => {
   const ann = await mkUser('Ann');
   const ben = await mkUser('Ben');
-  const plainFlock = await mkFlock(ann, [ben], { budget: false, ghost: false });
-  assert.equal((await call('POST', `/api/billing/${plainFlock}/create`, { token: ann.token, body: { totalAmount: 50 } })).status, 201);
-  const plain = (await one('SELECT id FROM bill_splits WHERE flock_id = $1', [plainFlock])).id;
+  const billIn = async (flockId, createdAt) => (await one(
+    `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, created_at, updated_at)
+     VALUES ($1, 60, 'equal', $2, 0, $3, $3) RETURNING id`,
+    [flockId, ann.id, createdAt]
+  )).id;
+  const budgetFlock = () => mkFlock(ann, [ben]);
+  const plainFlock = () => mkFlock(ann, [ben], { budget: false, ghost: false });
 
-  const bills = [overShell.billId, withGhost.billId, plain];
-  const shareRows = async () => (await pool.query(
-    'SELECT bill_id, user_id, committed, posted FROM bill_split_shares WHERE bill_id = ANY($1::int[]) ORDER BY bill_id, user_id',
-    [bills]
-  )).rows;
+  // Before the cut-off, in a budget flock.
+  const legacy = await billIn(await budgetFlock(), LEGACY_DAY);
+  // One second before it, and at it.
+  const lastSecond = await billIn(await budgetFlock(), '2026-08-27T03:59:59Z');
+  const atCutoff = await billIn(await budgetFlock(), '2026-08-27T04:00:00Z');
+  // Made today.
+  const today = await billIn(await budgetFlock(), new Date().toISOString());
+  // Before the cut-off, in a flock that never had a budget.
+  const noBudget = await billIn(await plainFlock(), LEGACY_DAY);
+  // A budget flock whose answers were all deleted since: a reset, an account
+  // deletion, or the sweep that ran in 001 until 2026-08-26.
+  const sweptFlock = await budgetFlock();
+  await pool.query('INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1, $2, 40, false)', [sweptFlock, ann.id]);
+  await pool.query('DELETE FROM budget_submissions WHERE flock_id = $1', [sweptFlock]);
+  const swept = await billIn(sweptFlock, LEGACY_DAY);
+  // A flock whose flag is NULL, and one whose flag says no but holds an answer.
+  const nullFlock = await budgetFlock();
+  await pool.query('UPDATE flocks SET budget_enabled = NULL WHERE id = $1', [nullFlock]);
+  const nullFlag = await billIn(nullFlock, LEGACY_DAY);
+  const oddFlock = await plainFlock();
+  await pool.query('INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1, $2, 40, false)', [oddFlock, ann.id]);
+  const answerNoFlag = await billIn(oddFlock, LEGACY_DAY);
+  // A bill with no creation time at all.
+  const undated = await billIn(await budgetFlock(), LEGACY_DAY);
+  await pool.query('UPDATE bill_splits SET created_at = NULL WHERE id = $1', [undated]);
+
+  const ids = { legacy, lastSecond, atCutoff, today, noBudget, swept, nullFlag, answerNoFlag, undated };
   // Back to the state before the column existed, then the deploy.
-  await pool.query('UPDATE bill_split_shares SET posted = false WHERE bill_id = ANY($1::int[])', [bills]);
-  await reapplyMigration(/^\d+_bill_share_posted\.sql$/, 'posted');
-  const after = await shareRows();
-  for (const row of after) {
-    assert.equal(row.posted, row.committed !== true, `bill ${row.bill_id} user ${row.user_id}: posted must be exactly "nobody committed"`);
-  }
-  assert.equal(after.find((r) => r.user_id === withGhost.eve.id).posted, false, 'the first ghost commit\'s row');
-  assert.ok(after.filter((r) => r.bill_id === overShell.billId).every((r) => r.posted === false),
-    'a real share of somebody who committed first is not provable, and is not taken on trust');
-
-  // What that costs: on the bill posted over commitments, each member reads
-  // their own row and nobody else's, and no total.
-  const asBea = await readBill(overShell.flockId, overShell.bea);
-  for (const s of asBea.body.bill.shares) {
-    assert.equal(s.amount, s.userId === overShell.bea.id ? 45 : null);
-  }
-  assert.equal(asBea.body.bill.totalWithTip, null);
+  await pool.query('UPDATE bill_splits SET quarantined = false WHERE id = ANY($1::int[])', [Object.values(ids)]);
+  await quarantineLegacyBills();
+  const flags = async () => Object.fromEntries(await Promise.all(Object.entries(ids).map(
+    async ([k, id]) => [k, (await one('SELECT quarantined FROM bill_splits WHERE id = $1', [id])).quarantined]
+  )));
+  assert.deepEqual(await flags(), {
+    legacy: true, lastSecond: true, atCutoff: false, today: false, noBudget: false,
+    swept: true, nullFlag: true, answerNoFlag: true, undated: true,
+  });
 
   // The replay migrationBootSafety runs over every file: nothing moves.
-  const everyRow = async () => (await pool.query('SELECT id, posted FROM bill_split_shares ORDER BY id')).rows;
+  const everyRow = async () => (await pool.query('SELECT id, quarantined, created_at FROM bill_splits ORDER BY id')).rows;
   const before = await everyRow();
-  await reapplyMigration(/^\d+_bill_share_posted\.sql$/, 'posted');
+  await quarantineLegacyBills();
   assert.deepEqual(await everyRow(), before);
 });

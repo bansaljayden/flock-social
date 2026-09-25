@@ -357,17 +357,12 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
     [/FROM user_blocks/, () => ({ rows: [] })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: creatorId }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
-    [/SELECT id, paid_by(, had_payer)? FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],
     // `amount` joined this SELECT so that owesMore can fire at all; before it
     // did, Number(row.amount) was NaN and every settled row survived every
     // increase. The pattern is loose on the column list on purpose - it exists
     // to answer the share lookup, not to pin its SELECT list.
-    //
-    // Every fixture row here is one POST /create wrote, so it reads back
-    // posted (migration 088) unless the fixture says otherwise: the route reads
-    // the column strictly, and a row that does not say true is one whose
-    // figures only its own member may see.
-    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: (existingShares || []).map((r) => ({ posted: true, ...r })) })],
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     // A payer change clears the former payer's artifact flag before the
     // DELETEs read the row; see the credit loop in routes/billing.js.
@@ -646,10 +641,12 @@ test('a bill revised upward un-settles whoever now owes more than they paid', as
   assert.match(shareSelect.sql, /SELECT user_id, amount,/,
     'amount is missing from the share SELECT, so Number(row.amount) is NaN and ' +
     'owesMore can never be true - a settled share survives any increase');
-  // The same trap for `posted` (migration 088), which the fake above defaults
-  // to true: left out of the SELECT, every credit would read as unvouched in
-  // production, hidden from the table and refused as a kept payment.
-  assert.match(shareSelect.sql, /\bposted\b/, 'posted is missing from the share SELECT');
+  // The same trap for `quarantined` (migration 089) on the bill read: the fake
+  // answers it out of a fixture too, so a SELECT that dropped the column would
+  // pass here and let every quarantined bill be rewritten in production.
+  const billSelect = log.find((q) => /SELECT id, paid_by\b.*FROM bill_splits/.test(q.sql));
+  assert.ok(billSelect, 'the existing bill was never read');
+  assert.match(billSelect.sql, /\bquarantined\b/, 'quarantined is missing from the bill SELECT');
 
   // The payer keeps their flag: it records having fronted the money, not a debt.
   assert.strictEqual(res.body.bill.shares.find((sh) => sh.userId === 1).settled, true);
@@ -1228,7 +1225,7 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: 2, had_payer: true }] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: 2, had_payer: true }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 
@@ -1248,7 +1245,7 @@ test('ghost commit cannot write a share into a posted bill whose payer deleted t
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: true }] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: true }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 
@@ -1288,7 +1285,7 @@ test('ghost commit still works against an unclaimed placeholder bill', async () 
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: false }] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null, had_payer: false }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 
@@ -1321,7 +1318,7 @@ test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)',
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '500' }] })],
-    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];

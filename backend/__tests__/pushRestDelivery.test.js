@@ -272,7 +272,7 @@ test('bill_created names the PAYER as fromUserId and fans out with allSettled', 
   on(/FROM user_blocks/, () => ({ rows: [] }));
   on(/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
-  on(/SELECT id, paid_by(, had_payer)? FROM bill_splits/, () => ({ rows: [] }));
+  on(/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [] }));
   on(/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: [] }));
   on(/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] }));
   on(/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 }));

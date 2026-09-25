@@ -485,6 +485,10 @@ async function hasMembershipRow(flockId, userId) {
 // it, the amounts are estimates off the budget ceiling rather than money
 // anybody handed over, and blocking a delete on one would make an abandoned
 // plan undeletable. Only a bill with a real payer holds a real debt.
+//
+// NOR DOES A QUARANTINED BILL (migration 089, routes/billing.js). It can no
+// longer be settled, so counting it would make the plan undeletable for good,
+// and the refusal would be the one place its settled flags still showed.
 async function outstandingBillFor(flockId, db = pool) {
   const { rows } = await db.query(
     `SELECT EXISTS (
@@ -493,6 +497,7 @@ async function outstandingBillFor(flockId, db = pool) {
          JOIN bill_splits bs ON bs.id = bss.bill_id
         WHERE bs.flock_id = $1
           AND bs.paid_by IS NOT NULL
+          AND bs.quarantined IS NOT TRUE
           AND bss.settled IS NOT TRUE
      ) AS owed`,
     [flockId]
@@ -520,6 +525,10 @@ const OUTSTANDING_BILL_MESSAGE =
 // roster and writes shares: a bill cannot be committed against this member
 // between this read and the DELETE below, which a read on the pool could not
 // promise.
+//
+// A quarantined bill binds nobody (migration 089, routes/billing.js): it can
+// no longer be settled, so it would hold its members in the plan for good, and
+// either refusal would be a settled flag the bill withholds from everybody.
 async function memberBoundToBill(flockId, userId, db = pool) {
   const { rows } = await db.query(
     `SELECT
@@ -531,6 +540,7 @@ async function memberBoundToBill(flockId, userId, db = pool) {
             AND bss.user_id = $2
             AND bs.paid_by IS NOT NULL
             AND bs.paid_by <> $2
+            AND bs.quarantined IS NOT TRUE
             AND bss.settled IS NOT TRUE
        ) AS owes,
        EXISTS (
@@ -540,6 +550,7 @@ async function memberBoundToBill(flockId, userId, db = pool) {
           WHERE bs.flock_id = $1
             AND bs.paid_by = $2
             AND bss.user_id <> $2
+            AND bs.quarantined IS NOT TRUE
             AND bss.settled IS NOT TRUE
        ) AS owed`,
     [flockId, userId]

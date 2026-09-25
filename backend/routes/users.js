@@ -2807,11 +2807,21 @@ router.get('/export', async (req, res) => {
       [userId], EXPORT_ROW_CAP
     );
 
+    // A QUARANTINED BILL (migration 089, routes/billing.js) is listed, so the
+    // file still says the caller was on it, and marked `withheld`, with every
+    // figure and flag null. The caller's own share on one can hold somebody
+    // else's budget answer, which an early ghost commit copied into it, and a
+    // copy of your data is not a place for another person's.
     const billShares = await exportRows(
-      `SELECT b.flock_id, s.amount AS your_share, s.committed, s.settled,
-              s.settled_at, (b.paid_by = $1) AS you_paid,
-              CASE WHEN b.paid_by = $1 THEN b.total_amount END AS total_amount,
-              CASE WHEN b.paid_by = $1 THEN b.tip_percent END AS tip_percent,
+      `SELECT b.flock_id,
+              (b.quarantined IS TRUE) AS withheld,
+              CASE WHEN b.quarantined IS TRUE THEN NULL ELSE s.amount END AS your_share,
+              CASE WHEN b.quarantined IS TRUE THEN NULL ELSE s.committed END AS committed,
+              CASE WHEN b.quarantined IS TRUE THEN NULL ELSE s.settled END AS settled,
+              CASE WHEN b.quarantined IS TRUE THEN NULL ELSE s.settled_at END AS settled_at,
+              (b.paid_by = $1) AS you_paid,
+              CASE WHEN b.paid_by = $1 AND b.quarantined IS NOT TRUE THEN b.total_amount END AS total_amount,
+              CASE WHEN b.paid_by = $1 AND b.quarantined IS NOT TRUE THEN b.tip_percent END AS tip_percent,
               b.created_at
          FROM bill_split_shares s
          JOIN bill_splits b ON b.id = s.bill_id
