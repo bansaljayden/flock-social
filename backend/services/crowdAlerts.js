@@ -408,9 +408,11 @@ async function processFlockAlert(flock) {
     // The rule engine (calculateCrowdScore) scores off the timestamp's own
     // getHours()/getDay(), so the venue-local timestamps below are what fix the
     // clock — it never reads this field. Set it anyway so a future swap to the
-    // ML predictor (which needs it for the event window) stays correct. The
-    // zone rides along for the same reason: the predictor prefers it per hour.
+    // ML predictor (which needs it for the event window) stays correct.
     venue.utcOffsetMinutes = utcOffsetMinutes;
+    // The zone IS read: generateHourlyForecast below takes it off the venue to
+    // decide which hours come next on the venue's own clock. The predictor
+    // prefers it per hour too.
     venue.timeZone = venueTimezone;
 
     // Calculate current crowd score on the venue's clock
@@ -428,6 +430,10 @@ async function processFlockAlert(flock) {
     // Generate hourly forecast for next 3 hours, starting on the venue's hour.
     // The peak is taken from the hours still AHEAD — index 0 is the hour the
     // venue is already in, and "about to peak" about right now is not news.
+    // With the venue's zone these are the hours its clock will show: at 1 AM
+    // EST on 2027-03-14 they are 1, 3 and 4 AM, so the peak cannot name a 2 AM
+    // that never happens. Without one they are the next three on the fallback
+    // clock, as before.
     const forecast = generateHourlyForecast(venue, weather, nowClock.hour, 3, nowClock.time);
     const peak = pickPeak(forecast);
 

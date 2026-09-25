@@ -17,7 +17,7 @@ const { specialNightContext } = require('../scripts/ml/specialNights');
 const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone, when the venue shape carries one. See
 // forecastSlots and venueInstant below for what it changes.
-const { validTimeZone, civilTime, instantForWallClock } = require('../utils/venueZone');
+const { validTimeZone, instantForWallClock, serverWallDate, zoneHourSlots } = require('../utils/venueZone');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -1918,16 +1918,8 @@ function venueUtcOffset(venue) {
   return venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
 }
 
-// The Date the feature builder reads for one venue wall-clock hour: server
-// local fields equal to the venue's (the contract above). Null when this
-// process's own clock has no such local time, which only happens inside a
-// daylight-saving gap in the SERVER's zone. Railway runs UTC, which has none;
-// a developer machine in New York does, once a year.
-function serverWallDate(year, month, day, hour) {
-  const ts = new Date(year, month - 1, day, hour, 0, 0, 0);
-  return (ts.getFullYear() === year && ts.getMonth() === month - 1
-    && ts.getDate() === day && ts.getHours() === hour) ? ts : null;
-}
+// serverWallDate (the Date the feature builder reads for one venue wall-clock
+// hour, the contract above) lives in utils/venueZone.js beside the zone walk.
 
 // The real instant a venue wall-clock timestamp stands for: through the zone
 // when the venue has one (the offset in force at THAT hour), through the one
@@ -1957,7 +1949,9 @@ function venueInstant(timestamp, venue, nowMs = Date.now()) {
 // predictHourlyForecast exists for). `instantMs` is the real moment that hour
 // starts at the venue, and it is what the slot's weather and event lookups use.
 //
-// WITH A ZONE, the walk is in real hours through the venue's own clock:
+// WITH A ZONE, the walk goes from each hour's real start to the next one's on
+// the venue's own clock (utils/venueZone.js zoneHourSlots, which the rule
+// engine's strip uses too):
 //   * spring forward (New York, 2027-03-14): 1 AM is followed by 3 AM. There is
 //     no 2 AM on that wall clock, so there is no 2 AM slot.
 //   * fall back (2026-11-01): the clock shows 1 AM twice. The strip shows it
@@ -1967,6 +1961,11 @@ function venueInstant(timestamp, venue, nowMs = Date.now()) {
 //     showings the same number, and every consumer that counts hours from the
 //     first label (crowdEngine's day arithmetic, the per-bar open flags, the
 //     charts) keeps working because no label repeats.
+//   * a clock that moves by half an hour (Lord Howe Island): the step is to
+//     the top of the next hour on the clock, not a fixed 3,600,000 ms. The
+//     fixed step fell on the half hour after either change, so every later
+//     slot was labelled on the hour while its weather and events were read at
+//     half past.
 // `count` is the number of slots returned, so a 24-hour strip across the
 // spring change covers 25 wall-clock hours and one across the autumn change
 // covers 24 wall-clock hours in 25 real ones.
@@ -1981,30 +1980,14 @@ function venueInstant(timestamp, venue, nowMs = Date.now()) {
 // after it under the wrong label.
 // ---------------------------------------------------------------------------
 function forecastSlots(venue, base, count, nowMs = Date.now()) {
-  const slots = [];
-  // Room for the one repeated hour and the odd unrepresentable one; the loop
-  // can never run away whatever the zone data says.
-  const maxSteps = count + 3;
   const zone = venueTimeZone(venue);
   if (zone) {
-    let t = instantForWallClock({
-      year: base.getFullYear(),
-      month: base.getMonth() + 1,
-      day: base.getDate(),
-      hour: base.getHours(),
-    }, zone, nowMs);
-    let lastHour = null;
-    for (let step = 0; t != null && slots.length < count && step < maxSteps; step += 1, t += HOUR_MS) {
-      const c = civilTime(t, zone);
-      if (!c) break;
-      const hourKey = `${c.year}-${c.month}-${c.day}-${c.hour}`;
-      if (hourKey === lastHour) continue; // the second showing of a repeated hour
-      lastHour = hourKey;
-      const ts = serverWallDate(c.year, c.month, c.day, c.hour);
-      if (ts) slots.push({ ts, instantMs: t });
-    }
-    if (slots.length) return slots;
+    const zoned = zoneHourSlots(base, count, zone, nowMs);
+    if (zoned.length) return zoned;
   }
+  const slots = [];
+  // Room for the odd unrepresentable hour; the loop can never run away.
+  const maxSteps = count + 3;
   const utcOff = venueUtcOffset(venue);
   const y = base.getFullYear();
   const m = base.getMonth();

@@ -3,8 +3,9 @@
 // Sources: Google Places + OpenWeatherMap + time patterns
 // ---------------------------------------------------------------------------
 
-// The venue's own clock from its IANA zone, for venueLocalNow. Pure (Intl only).
-const { validTimeZone, clockInZone } = require('../utils/venueZone');
+// The venue's own clock from its IANA zone, for venueLocalNow and the hours of
+// generateHourlyForecast. Pure (Intl only).
+const { validTimeZone, clockInZone, zoneHourSlots } = require('../utils/venueZone');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -883,12 +884,24 @@ function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp)
   const base = baseTimestamp ? new Date(baseTimestamp) : new Date();
   base.setHours(start, 0, 0, 0);
 
-  for (let i = 0; i < hours; i++) {
-    const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
+  // THE VENUE'S OWN HOURS WHEN IT HAS A ZONE (venue.timeZone, the same field
+  // mlPredictor reads). `base + i hours` counts hours on a clock that never
+  // changes, so on 2027-03-14 a strip from 1 AM EST drew 1, 2 and 3 AM and 2 AM
+  // does not exist there: services/crowdAlerts.js takes its next three hours
+  // from this strip, and its peak could name that 2 AM. With the zone the hours
+  // are the ones the venue's clock shows (utils/venueZone.js zoneHourSlots, the
+  // walk the model's strip makes): 1, 3 and 4 AM that night, and the repeated
+  // 1 AM once in the autumn. The label is read off each scored timestamp. A
+  // venue with no usable zone keeps the old walk exactly.
+  const zone = validTimeZone(venue && venue.timeZone);
+  const zoned = zone ? zoneHourSlots(base, hours, zone) : [];
+
+  for (let i = 0; i < (zoned.length || hours); i++) {
+    const ts = zoned.length ? zoned[i].ts : new Date(base.getTime() + i * 60 * 60 * 1000);
 
     const result = calculateCrowdScore(venue, weather, ts);
     forecast.push({
-      hour: formatHour(start + i),
+      hour: formatHour(zoned.length ? ts.getHours() : start + i),
       score: result.score,
       label: result.label,
       // Skew fix (c), 2026-08-19: every hourly entry names the engine that
