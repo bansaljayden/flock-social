@@ -50,6 +50,21 @@ function rankOf(tier) {
     : null;
 }
 
+// TWO PLANS, THREE STORED VALUES (VENUE-PRICING.md section 4). A venue has a
+// free account or Roost. `premium` was a $35 plan that was retired before
+// anything could sell it. It stays a value the tier columns may hold, so no
+// migration rewrites venue_profiles.tier and a comp written with the old word
+// keeps working, and it means Roost: every tier this file resolves is 'free'
+// or ROOST_TIER, never 'premium'. So the gates, the dashboard, the advisor
+// and the Monday digest each see two plans, and none of them has a third case
+// to get wrong. An unknown value is free, exactly as rankOf treats it.
+const ROOST_TIER = 'pro';
+
+function planOf(tier) {
+  const rank = rankOf(tier);
+  return rank !== null && rank > 0 ? ROOST_TIER : 'free';
+}
+
 // THE SAME WALL-WITH-NO-DOOR CHECK the consumer paywall does, and here it is
 // sharper, because this side has no billing integration at all: the only writer
 // of venue_profiles.tier is POST /api/admin/venues/:userId/tier behind
@@ -125,13 +140,16 @@ function noticeWindowOpen(row, now) {
 //      writes both, so they agree; if they ever disagree, the disagreement is a
 //      bug and the fail-closed reading of a bug is the smaller entitlement.
 //
+// The answer is always a plan, 'free' or ROOST_TIER (planOf above), so a
+// stored 'premium' comes out as Roost whichever column holds it.
+//
 // `now` is the app clock rather than NOW() in the query, so this is a pure
 // function a test can walk across a boundary. Both clocks are NTP-synced and a
 // tier expiry is a date, not a microsecond fence.
 function resolveGrantedTier(row, now) {
   // Unknown / null / garbage tier is free, never a bypass.
   const cached = rankOf(row?.tier) === null ? 'free' : row.tier;
-  if (!row || row.grant_tier === null || row.grant_tier === undefined) return cached;
+  if (!row || row.grant_tier === null || row.grant_tier === undefined) return planOf(cached);
   if (!GRANT_LIVE_STATUSES.has(row.grant_status)) return 'free';
   if (row.expires_at !== null && row.expires_at !== undefined) {
     const endsAt = new Date(row.expires_at).getTime();
@@ -140,7 +158,7 @@ function resolveGrantedTier(row, now) {
     if (!(endsAt > (typeof now === 'number' ? now : Date.now()))) return 'free';
   }
   const granted = rankOf(row.grant_tier) === null ? 'free' : row.grant_tier;
-  return rankOf(granted) <= rankOf(cached) ? granted : cached;
+  return planOf(rankOf(granted) <= rankOf(cached) ? granted : cached);
 }
 
 // ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg

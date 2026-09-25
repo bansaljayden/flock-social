@@ -43,22 +43,21 @@ const RECAP_CARD_IDS = ['last_night_verdict', 'readings_vs_estimates', 'listing_
 // from the anomaly slot below so nothing can relocate it.
 const LEAD_CARD_ID = 'last_night_verdict';
 
-// Premium's digest is the events heads-up alone (PRO-VS-PREMIUM.md: Premium is
-// presence, Pro is foresight; the event radar card is the one T0 card on the
-// Premium row). Pro gets the full stack.
-const PREMIUM_CARD_IDS = ['around_you'];
-
 // An email renders only cards that carry something to read: 'locked' cards
 // are dropped (an upsell row in a digest is the dark pattern the product
 // shape bans), and 'refused' cards are dropped too. The dashboard is where a
 // refusal-with-a-path earns its screen; a weekly email restating what Flock
 // cannot say is nagware.
+//
+// The digest is Roost, whole or not at all (VENUE-PRICING.md section 4).
+// 'pro' is Roost's stored name, and a stored 'premium' means Roost too
+// (services/venueEntitlements.js planOf); there is no cut-down email for a
+// lower plan, because there is no lower paid plan.
 function cardsForTier(cards, tier) {
   const list = Array.isArray(cards)
     ? cards.filter((c) => c && Array.isArray(c.facts) && c.status !== 'locked' && c.status !== 'refused')
     : [];
-  if (tier === 'pro') return list;
-  if (tier === 'premium') return list.filter((c) => PREMIUM_CARD_IDS.includes(c.id));
+  if (tier === 'pro' || tier === 'premium') return list;
   return [];
 }
 
@@ -330,7 +329,6 @@ module.exports = {
   cardsForTier,
   factGateFires,
   ADVISOR_FEATURE_NAME,
-  PREMIUM_CARD_IDS,
   HEADS_UP_CARD_IDS,
   RECAP_CARD_IDS,
   LEAD_CARD_ID,

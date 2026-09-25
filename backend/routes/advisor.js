@@ -70,10 +70,11 @@ const router = express.Router();
 // The feature's user-facing name (product decision 2026-08-19). Backend
 // identifiers and the route path stay 'advisor'; owner-visible copy says Roost.
 const FEATURE_NAME = 'Roost';
+// Every route here, /cards included, is Roost, and 'pro' is its stored name
+// (VENUE-PRICING.md section 4: a free venue account and Roost, nothing
+// between). The cards used to sit one rung lower, on a $35 plan retired
+// before it was sold, with around_you as that plan's taste of the product.
 const requirePro = requireVenueTier('pro');
-// The cards' floor. Card 2 (around_you) is 'premium'; the other three are
-// 'pro' and come back status:'locked' below that (ADVISOR-PRODUCT-SHAPE §5).
-const requirePremium = requireVenueTier('premium');
 
 // Layer B seam. The contract consumed here: a fact block
 // { intent, facts: [{ id, value, source, asOf }], refusals: [] }, with
@@ -433,7 +434,7 @@ const { unverifiedReason } = require('../utils/verificationCopy');
 const CARDS = [
   { id: 'last_night_verdict', title: 'Yesterday, against your own numbers', tier: 'pro' },
   { id: 'week_ahead', title: 'Week ahead', tier: 'pro' },
-  { id: 'around_you', title: 'Around you this week', tier: 'premium' },
+  { id: 'around_you', title: 'Around you this week', tier: 'pro' },
   { id: 'listing_read_back', title: 'Your listing, read back', tier: 'pro' },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', tier: 'pro' },
   // The cohort card. Every other card on this list compares the venue to
@@ -447,10 +448,13 @@ const CARDS = [
   { id: 'cohort', title: 'You and venues like you', tier: 'pro' },
 ];
 
-// premium covers premium+pro; pro covers pro only. The rank arithmetic lives
-// in services/venueEntitlements.js; this only needs the two named cases.
+// getVenueTier answers 'free' or 'pro' and nothing else (a stored 'premium'
+// resolves to 'pro', services/venueEntitlements.js planOf), and every card is
+// 'pro', the same floor as the route. So today a venue that reaches the
+// handler is covered for every card. The per-card tier stays so that a card
+// can one day sit on a different plan from the route without new plumbing.
 function tierCovers(tier, required) {
-  return required === 'premium' ? (tier === 'premium' || tier === 'pro') : tier === 'pro';
+  return required === 'free' || tier === 'pro';
 }
 
 function finishedCard(def, facts) {
@@ -477,7 +481,7 @@ function lockedCard(def) {
   };
 }
 
-router.get('/cards', authenticate, requirePremium, async (req, res) => {
+router.get('/cards', authenticate, requirePro, async (req, res) => {
   try {
     if (!advisorFacts || typeof advisorFacts.getVenueContext !== 'function') {
       return res.status(503).json({ error: `${FEATURE_NAME} is not connected to its data yet. Check back soon.` });

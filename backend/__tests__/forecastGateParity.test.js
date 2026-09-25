@@ -335,10 +335,10 @@ function assertNoLeak(lockedPayload, answers, what) {
 // out of one of them.
 const FORECAST_PRODUCERS = /predictHourlyForecast|recommendBestTime|findBestTime|findPeakTime/;
 // Any of these in the same file means somebody made a decision about who may
-// see it. `requirePremium` is the venue-side (B2B) tier check, which is a
+// see it. `requirePro` is the venue-side (B2B) plan check, Roost, which is a
 // different wall in front of the same numbers, and is the right one for
 // routes/venueDashboard.js: an owner is buying data about their own venue.
-const GATES = /gateForecast|forecastAccess|gateDemoCard|requirePremium/;
+const GATES = /gateForecast|forecastAccess|gateDemoCard|requirePro\b/;
 
 // Comments do not count, in either direction. routes/badge.js explains at
 // length why it must never call the three producers, and naming them in prose

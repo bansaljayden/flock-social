@@ -6,16 +6,19 @@
 // money to serve demand a proven claim rather than a claimed one.
 //
 // Pinned here:
-//   1. /intelligence (the demand curve) and /strip (the competitive strip) sit
-//      behind requireVenueTier('premium') — they were open to every venue owner,
-//      free tier included, which is most of what the Insights tier sells.
+//   1. /intelligence (the forecast) and /strip (you against the venues around
+//      you) sit behind requireVenueTier('pro'), which is Roost. They were once
+//      open to every venue owner, free tier included. A stored 'premium', the
+//      retired middle plan's value, is served as Roost (VENUE-PRICING.md
+//      section 4).
 //   2. Both refuse an UNVERIFIED claim, before spending a Google Places call and
 //      before reading the place-id-keyed cache. An unverified claim on someone
 //      else's place id bought a forecast and a competitor list on the shared
 //      Places budget.
-//   3. public-promotions/:placeId gates on the tier held NOW, not merely on
-//      `verified` — upgrade, create promotions, downgrade used to keep the
-//      benefit permanently, because `verified` never expires.
+//   3. public-promotions/:placeId serves a verified author's deals on EVERY
+//      plan, and reads no plan to do it: deals are free, so there is no
+//      downgrade for the public read to follow. The other half of that line,
+//      every free route answering with billing on, is venueNeverGate.test.js.
 //   4. submit-review requires evidence the reviewer was there: the same trust
 //      rule venue_feedback.verified uses (HMAC-signed NFC tap, or accepted
 //      membership in a flock that met at the venue). ON CONFLICT stopped one
@@ -150,7 +153,7 @@ const UNVERIFIED_CTX = { id: 10, google_place_id: 'PLACE_A', verified: false };
 const SOURCE = require('fs').readFileSync(require.resolve('../routes/venueDashboard'), 'utf8');
 
 // ---------------------------------------------------------------------------
-// 1. The demand curve and the strip are paid features
+// 1. The forecast and the strip are Roost
 // ---------------------------------------------------------------------------
 
 for (const path of ['/api/venue-dashboard/intelligence', '/api/venue-dashboard/strip']) {
@@ -160,20 +163,26 @@ for (const path of ['/api/venue-dashboard/intelligence', '/api/venue-dashboard/s
     const res = await call('GET', path);
     assert.strictEqual(res.status, 403);
     assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED');
-    assert.strictEqual(res.body.requiredTier, 'premium');
+    assert.strictEqual(res.body.requiredTier, 'pro');
     // The gate runs before the handler: no profile read, no Google spend.
     assert.strictEqual(ran(/SELECT id, google_place_id, verified/).length, 0, 'the handler ran anyway');
     assert.deepStrictEqual(budgetCharges, [], 'a refused request still charged the Places budget');
   });
 
-  test(`GET ${path} is served on the Insights tier`, async () => {
-    process.env.VENUE_BILLING_ENABLED = 'true';
-    handlers = [tierIs('premium'), ctxIs(VERIFIED_CTX)];
-    const res = await call('GET', path);
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.available, true);
-    assert.ok(budgetCharges.length > 0, 'the paid path was never reached');
-  });
+  // 'pro' is Roost's stored name, and 'premium' is the value the retired
+  // middle plan left behind. Both are Roost, so both are served.
+  for (const tier of ['pro', 'premium']) {
+    test(`GET ${path} is served on Roost (stored as '${tier}')`, async () => {
+      process.env.VENUE_BILLING_ENABLED = 'true';
+      handlers = [tierIs(tier), ctxIs(VERIFIED_CTX)];
+      const res = await call('GET', path);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.available, true);
+      // Past the gate and into the handler. (The first of the two warms the
+      // place-id cache, so the second may answer without a Places call.)
+      assert.ok(ran(/SELECT id, google_place_id, verified/).length > 0, 'the gate refused it before the handler');
+    });
+  }
 
   test(`GET ${path} stays open while the kill switch is off`, async () => {
     handlers = [ctxIs(VERIFIED_CTX)];
@@ -227,64 +236,64 @@ test('both routes check verification before touching the cache', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Serving a paid benefit follows the CURRENT tier
+// 3. Deals are free: the public read serves every verified author, any plan
 // ---------------------------------------------------------------------------
 
 // Emulates the real filter so the assertion is about behaviour, not SQL text:
-// verified author, and (billing off OR tier in the serving set).
-const promoRows = (authors) => [/FROM venue_promotions p/, (params) => {
-  const [, enforce, tiers] = params;
-  return {
-    rows: authors
-      .filter((a) => a.verified && (enforce === false || tiers.includes(a.tier)))
-      .map((a, i) => ({ id: i + 1, title: a.title, description: null, time_slot: null, days: null })),
-  };
-}];
+// a verified author, and nothing about what the author pays. The fake reads
+// only the place id, because that is all the route binds.
+const promoRows = (authors) => [/FROM venue_promotions p/, () => ({
+  rows: authors
+    .filter((a) => a.verified)
+    .map((a, i) => ({ id: i + 1, title: a.title, description: null, time_slot: null, days: null })),
+})];
+const viewCount = [/UPDATE venue_promotions SET views/, () => ({ rows: [] })];
 
-test('public-promotions serves a paying venue', async () => {
-  process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [promoRows([{ verified: true, tier: 'premium', title: 'Half price Tuesdays' }]), [/UPDATE venue_promotions SET views/, () => ({ rows: [] })]];
-  const res = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.promotions.length, 1);
-});
+for (const tier of ['free', 'pro', 'premium']) {
+  test(`public-promotions serves a verified venue's deal on '${tier}', billing on`, async () => {
+    process.env.VENUE_BILLING_ENABLED = 'true';
+    handlers = [promoRows([{ verified: true, tier, title: 'Half price Tuesdays' }]), viewCount];
+    const res = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.promotions.length, 1);
+  });
+}
 
-test('a venue that downgrades stops being promoted', async () => {
-  // The exact permanent-benefit bug: `verified` is forever, so a gate on it
-  // alone let upgrade -> create -> downgrade keep the placement.
+test('public-promotions still refuses an unverified author', async () => {
+  // Free is not the same as open: a claim nobody has confirmed must not speak
+  // as the business on its card.
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [promoRows([{ verified: true, tier: 'free', title: 'Half price Tuesdays' }])];
+  handlers = [promoRows([{ verified: false, tier: 'pro', title: 'Half price Tuesdays' }]), viewCount];
   const res = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body.promotions, []);
   assert.strictEqual(ran(/UPDATE venue_promotions SET views/).length, 0, 'a promotion nobody saw still counted a view');
 });
 
-test('public-promotions gates on tier, not only on verification', async () => {
+test('public-promotions reads the author and never the plan', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
   handlers = [promoRows([])];
   await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
   const q = ran(/FROM venue_promotions p/)[0];
   assert.ok(/vp\.verified = true/.test(q.sql), 'the verification join is gone');
-  assert.ok(/vp\.tier = ANY\(\$3::text\[\]\)/.test(q.sql), 'there is no current-tier filter');
-  // $4 is the live grant-status vocabulary, bound from services/
-  // venueEntitlements.js: the cached column is the lower bound, and the grant
-  // itself decides whether the tier is still alive. See section 3b of
-  // venueTierExpiry.test.js for what that predicate does case by case.
-  assert.ok(/LEFT JOIN venue_subscriptions vs/.test(q.sql), 'the grant is not consulted');
-  // $5 is the moment Roost got a price (Terms 9.6): a venue account from
-  // before it keeps serving its deals until the date its notice named.
-  assert.ok(/LEFT JOIN venue_roost_notices vn/.test(q.sql), 'the notice window is not consulted');
-  assert.deepStrictEqual(q.params, ['PLACE_A', true, ['premium', 'pro'], ['active', 'trialing', 'past_due'],
-    require('../services/venueEntitlements').ROOST_PRICED_FROM]);
+  assert.ok(/ou\.is_banned IS NOT TRUE/.test(q.sql), 'a banned owner\'s deals would be served');
+  // No plan, no grant and no notice window: a deal is free, so a lapsed card
+  // or an ended comp has nothing to take off the venue's card.
+  assert.ok(!/vp\.tier|venue_subscriptions|venue_roost_notices/.test(q.sql), 'the public read consults a plan');
+  assert.deepStrictEqual(q.params, ['PLACE_A']);
+  // And the plan lookup the gates use is never issued for it.
+  assert.strictEqual(ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/).length, 0);
 });
 
-test('the promotions tier filter is inert while the kill switch is off', async () => {
-  // "Flag off => every venue owner acts Pro" has to hold on a public route too.
-  handlers = [promoRows([{ verified: true, tier: 'free', title: 'Half price Tuesdays' }]), [/UPDATE venue_promotions SET views/, () => ({ rows: [] })]];
-  const res = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
-  assert.strictEqual(res.body.promotions.length, 1);
-  assert.strictEqual(ran(/FROM venue_promotions p/)[0].params[1], false);
+test('billing on or off, the public read is the same statement', async () => {
+  handlers = [promoRows([{ verified: true, tier: 'free', title: 'Half price Tuesdays' }]), viewCount];
+  const off = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
+  process.env.VENUE_BILLING_ENABLED = 'true';
+  const on = await call('GET', '/api/venue-dashboard/public-promotions/PLACE_A');
+  assert.deepStrictEqual(on.body.promotions, off.body.promotions);
+  const [first, second] = ran(/FROM venue_promotions p/);
+  assert.strictEqual(first.sql, second.sql);
+  assert.deepStrictEqual(first.params, second.params);
 });
 
 // ---------------------------------------------------------------------------

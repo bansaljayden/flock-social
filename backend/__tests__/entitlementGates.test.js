@@ -600,11 +600,15 @@ test('with billing off the gate is inert and reads no tier at all', async () => 
 
 test('with billing on the tier is enforced in both directions', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
+  // Two plans (VENUE-PRICING.md section 4): free and Roost, stored as 'pro'.
+  // A stored 'premium' is the retired middle plan's word and resolves to
+  // Roost, so it clears the Roost gate like 'pro' does.
   const cases = [
     ['/venue/premium', 'free', 403],
     ['/venue/premium', 'premium', 200],
     ['/venue/premium', 'pro', 200],
-    ['/venue/pro', 'premium', 403],
+    ['/venue/pro', 'free', 403],
+    ['/venue/pro', 'premium', 200],
     ['/venue/pro', 'pro', 200],
     ['/venue/free', 'free', 200],
   ];

@@ -282,17 +282,17 @@ test('pro digest renders all four cards, one anomaly block, recap before heads-u
   assert.ok(html.includes('Stop these emails'));
 });
 
-test('premium digest is the events heads-up only', () => {
+test('a stored premium gets the whole Roost digest, not a cut-down one', () => {
+  // 'premium' is the value the retired middle plan left in the tier columns,
+  // and it is Roost (VENUE-PRICING.md section 4). There is no lower paid plan
+  // for a smaller email to belong to.
   resetWorld();
   const input = { ...RENDER_INPUT_PRO, tier: 'premium' };
   const text = tpl.renderDigestText(input);
+  assert.strictEqual(text, tpl.renderDigestText(RENDER_INPUT_PRO),
+    'the premium email differs from the Roost one');
   assert.ok(text.includes('A listed concert at Franklin Music Hall'));
-  assert.ok(!text.includes('Your highest reading on'),
-    'premium must not receive the owner-numbers recap');
-  assert.ok(!text.includes('projects busiest'),
-    'premium must not receive the forecast card');
-  assert.ok(!text.includes('kitchen takes last orders'),
-    'premium must not receive the intake read-back');
+  assert.ok(text.includes('Your highest reading on'), 'the owner-numbers recap is missing');
   assert.ok(text.includes(input.optOutUrl));
 });
 
@@ -582,21 +582,44 @@ test('the digest is sent as marketing and carries a plain-text alternative part'
   assert.ok(msg.text.includes('Your week at'), 'the text part is the digest, not a placeholder');
 });
 
-test('tier gating: premium venue gets the events-only digest, free venue gets nothing, when billing is enforced', async () => {
+test('plan gating: a Roost venue gets the whole digest, a free venue gets nothing, when billing is enforced', async () => {
+  // The digest is Roost (VENUE-PRICING.md section 4). The first venue holds
+  // the retired middle plan's stored word, 'premium', which is Roost.
   resetWorld();
   process.env.DIGEST_ENABLED = 'true';
   process.env.VENUE_BILLING_ENABLED = 'true';
   venueRows = [
-    eligibleVenueRow({ id: 11, tier: 'premium', business_name: 'Premium Bar' }),
+    eligibleVenueRow({ id: 11, tier: 'premium', business_name: 'Roost Bar' }),
     eligibleVenueRow({ id: 12, tier: 'free', business_name: 'Free Bar' }),
   ];
   const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
   assert.strictEqual(tally.sent, 1);
   assert.strictEqual(sentEmails.length, 1);
   const html = sentEmails[0].html;
-  assert.ok(html.includes('Franklin Music Hall'), 'premium keeps the events heads-up');
-  assert.ok(!html.includes('projects busiest'), 'premium must not get the forecast card');
-  assert.ok(!stripTags(html).includes('74'), 'premium must not get the owner-numbers recap');
+  assert.ok(html.includes('Roost Bar'), 'the email went to the free venue instead');
+  assert.ok(html.includes('Franklin Music Hall'), 'Roost lost the events heads-up');
+  assert.ok(html.includes('projects busiest'), 'Roost lost the forecast card');
+  assert.ok(stripTags(html).includes('74'), 'Roost lost the owner-numbers recap');
+});
+
+test('buildDigestCards builds no card for a free venue', async () => {
+  // The sweep skips a free venue before it gets this far; the builder agrees
+  // on its own, so no path builds a free email out of Roost cards.
+  const calls = [];
+  const facts = {
+    getVenueContext: async () => ({ profile: { google_place_id: 'PLACE_A', verified: true } }),
+    isRefusal: () => false,
+    buildWeekAhead: async () => { calls.push('week'); return []; },
+    buildAroundYou: async () => { calls.push('around'); return []; },
+    buildListingReadBack: async () => { calls.push('listing'); return []; },
+    buildReadingsVsServed: async () => { calls.push('readings'); return []; },
+  };
+  assert.deepStrictEqual(await digest.buildDigestCards(facts, { userId: 1, tier: 'free', now: MONDAY_9AM_ET }), []);
+  assert.deepStrictEqual(calls, [], 'a free venue spent fact-engine work on a card it cannot receive');
+  const roost = await digest.buildDigestCards(facts, { userId: 1, tier: 'pro', now: MONDAY_9AM_ET });
+  assert.ok(roost.some((c) => c.id === 'around_you'), 'Roost is missing the events heads-up');
+  assert.ok(roost.some((c) => c.id === 'week_ahead'), 'Roost is missing the week ahead');
+  assert.ok(digest.DIGEST_CARDS.every((c) => c.tier === 'pro'), 'a digest card is priced below Roost');
 });
 
 test('unverified email, banned owner, unmailable address: all skipped', async () => {
