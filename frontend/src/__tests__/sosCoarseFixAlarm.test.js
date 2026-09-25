@@ -6,8 +6,9 @@
  * tower two kilometres off is exactly the claim that makes somebody stop
  * looking when they arrive. The flock's alarm was still handed six decimal
  * places and "See where they are". The server now sends the radius with the
- * alarm (routes/safety.js, alertFlockMembers), and the alarm screen uses the
- * email's words, over both transports.
+ * alarm (routes/safety.js, alertFlockMembers, which builds the push in
+ * services/sosPushes.js), and the alarm screen uses the email's words, over
+ * both transports.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false sosCoarseFixAlarm
@@ -18,6 +19,9 @@ const { intentFromData } = require('../services/pushNavigation');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 const SAFETY = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'safety.js'), 'utf8').replace(/\r\n/g, '\n');
+// Where the alarm push, the coarse-fix line and the radius phrase are built,
+// for the flock leg and for the push the server sends again (pushHelper).
+const SOS_PUSHES = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'services', 'sosPushes.js'), 'utf8').replace(/\r\n/g, '\n');
 
 // The body of `function name(metres) { ... }`, whitespace folded, so the two
 // copies of the phrase can be compared as code and then run.
@@ -62,21 +66,27 @@ describe('the radius travels', () => {
   });
 
   test('the server sends it, and says "approximate" in the push body too', () => {
-    expect(SAFETY).toMatch(/\.\.\.\(fixMetres !== null \? \{ accuracy: Math\.round\(fixMetres\) \} : \{\}\),/);
-    expect(SAFETY).toMatch(/shared an approximate location, within \$\{accuracyPhrase\(fixMetres\)\}/);
+    // The flock leg hands the fix's radius to the builder, and the builder
+    // sends it and words the body by it.
+    expect(SAFETY).toMatch(/fixMetres: coords \? readAccuracy\(leg\.fixMetres\) : null,/);
+    expect(SOS_PUSHES).toMatch(/\.\.\.\(radius !== null \? \{ accuracy: Math\.round\(radius\) \} : \{\}\),/);
+    expect(SOS_PUSHES).toMatch(/shared an approximate location, within \$\{accuracyPhrase\(radius\)\}/);
   });
 });
 
 describe('the words match the email', () => {
   test('the same threshold as the email', () => {
-    const server = Number((SAFETY.match(/const COARSE_FIX_METRES = (\d+);/) || [])[1]);
+    // The email in routes/safety.js and the alarm push both read it from
+    // services/sosPushes.js.
+    expect(SAFETY).toMatch(/const \{ COARSE_FIX_METRES, accuracyPhrase, alarmPush, allClearPush \} = require\('\.\.\/services\/sosPushes'\);/);
+    const server = Number((SOS_PUSHES.match(/const COARSE_FIX_METRES = (\d+);/) || [])[1]);
     const client = Number((APP.match(/const SOS_COARSE_FIX_METRES = (\d+);/) || [])[1]);
     expect(server).toBe(1000);
     expect(client).toBe(server);
   });
 
   test('the same phrase for a radius, as code and as output', () => {
-    const serverBody = functionBody(SAFETY, 'accuracyPhrase');
+    const serverBody = functionBody(SOS_PUSHES, 'accuracyPhrase');
     const clientBody = functionBody(APP, 'sosAccuracyPhrase');
     expect(fold(clientBody)).toBe(fold(serverBody));
     // eslint-disable-next-line no-new-func

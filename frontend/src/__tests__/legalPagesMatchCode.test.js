@@ -367,9 +367,12 @@ describe('privacy claims that depend on how the code behaves', () => {
     });
 
     test('the location is promised only when the alert has one', () => {
-      // The alarm spreads coordinates in only when there are some, and the
-      // email says so when there are none.
-      expect(safety).toMatch(/\.\.\.\(coords \? \{ latitude: coords\.lat, longitude: coords\.lng \} : \{\}\)/);
+      // The alarm spreads coordinates in only when there are some (its words
+      // and data are built in services/sosPushes.js, which the flock leg in
+      // routes/safety.js calls), and the email says so when there are none.
+      const sosPushes = read('backend', 'services', 'sosPushes.js');
+      expect(safety).toMatch(/alarmPush\(\{[\s\S]{0,200}coords,/);
+      expect(sosPushes).toMatch(/\.\.\.\(coords \? \{ latitude: coords\.lat, longitude: coords\.lng \} : \{\}\)/);
       expect(safety).toMatch(/: '<p style="color:#6b7280">Location was not available\.<\/p>'/);
       for (const [name, src] of [['PrivacyPolicy.js', flat(withoutComments(privacy))], ['TermsOfService.js', flat(withoutComments(terms))], ['SupportPage.js', flat(withoutComments(support.replace(/'\s*\+\s*'/g, '')))], ['llms.txt', flat(llms)], ['marketing-page.js', flat(withoutComments(crawler))]]) {
         // Sharing a location from the Safety screen always has one, so "send

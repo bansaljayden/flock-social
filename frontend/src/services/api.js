@@ -2248,7 +2248,7 @@ export async function deleteTrustedContact(id) {
 // Safety endpoints get double the default leash. The server fans the alert
 // out to trusted contacts before answering, and an SOS is the one request
 // that must not give up early on a weak connection.
-export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation, followUpTo }) {
+export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation, followUpTo, fresh }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   // accuracy is the phone's own radius for the fix, in metres. The server has
   // labelled coarse fixes honestly since round 23 ("treat it as the area to
@@ -2259,10 +2259,18 @@ export async function sendEmergencyAlert({ latitude, longitude, accuracy, includ
   // belongs to, so the server can refuse it once that alert has been stood
   // down. JSON.stringify drops it when it is undefined, which is every
   // deliberate press.
+  // fresh is set only by a deliberate press, never by the chase. After "I'm
+  // OK" the server holds off an unmarked request with a fix for two minutes,
+  // because an older build's untagged chase looks exactly like one; a press
+  // marked fresh waits out only the one minute floor (routes/safety.js,
+  // STOOD_DOWN_CHASE_HOLD_MS). Sent only when true.
   return request('/api/safety/alert', {
     method: 'POST',
     timeout: 30000,
-    body: JSON.stringify({ latitude, longitude, accuracy, includeLocation, timezone, followUpTo }),
+    body: JSON.stringify({
+      latitude, longitude, accuracy, includeLocation, timezone, followUpTo,
+      ...(fresh === true ? { fresh: true } : {}),
+    }),
   });
 }
 

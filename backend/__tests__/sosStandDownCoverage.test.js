@@ -208,11 +208,14 @@ test('an older build\'s untagged follow-up after a stand-down is refused for the
   } finally { mail.restore(); restore(); }
 });
 
-test('the hold after a stand-down is two minutes only for the shape of an older build\'s chase', () => {
-  // The chase runs only after an alert that went out without a location, and
-  // it posts only a fix. Anything else keeps the sixty second floor.
-  const noFix = { latitude: null, longitude: null };
-  const hadFix = { latitude: 40.7, longitude: -74 };
+test('the hold after a stand-down is two minutes only where an older build\'s chase can exist', () => {
+  // The chase runs only after an alert that went out without a location and
+  // reached a contact (it starts on a 200), it posts only a fix, and the
+  // current app marks its own presses. Anything else keeps the sixty second
+  // floor.
+  const noFix = { latitude: null, longitude: null, contacts_alerted: 1 };
+  const noFixNobodyMailed = { latitude: null, longitude: null, contacts_alerted: 0 };
+  const hadFix = { latitude: 40.7, longitude: -74, contacts_alerted: 1 };
   const fix = { lat: 40.7, lng: -74 };
   assert.strictEqual(S.STOOD_DOWN_CHASE_HOLD_MS, 120_000);
   // The app waits up to 30 s for the first answer, chases for 45.5 s, and
@@ -225,6 +228,13 @@ test('the hold after a stand-down is two minutes only for the shape of an older 
   assert.strictEqual(S.standDownHoldMs(null, false, noFix), S.ALERT_FLOOR_MS);
   assert.strictEqual(S.standDownHoldMs(null, undefined, noFix), S.ALERT_FLOOR_MS);
   assert.strictEqual(S.standDownHoldMs(fix, true, hadFix), S.ALERT_FLOOR_MS);
+  // After a 502 no chase started, so there is nothing to hold off.
+  assert.strictEqual(S.standDownHoldMs(fix, true, noFixNobodyMailed), S.ALERT_FLOOR_MS);
+  assert.strictEqual(S.standDownHoldMs(fix, true, { latitude: null, longitude: null }), S.ALERT_FLOOR_MS);
+  // A press the current app marks as fresh is never a chase; only true counts.
+  assert.strictEqual(S.standDownHoldMs(fix, true, noFix, true), S.ALERT_FLOOR_MS);
+  assert.strictEqual(S.standDownHoldMs(fix, true, noFix, 'true'), S.STOOD_DOWN_CHASE_HOLD_MS);
+  assert.strictEqual(S.standDownHoldMs(fix, true, noFix, 1), S.STOOD_DOWN_CHASE_HOLD_MS);
 });
 
 test('a withdrawn alert is never the thing a location follows up', () => {

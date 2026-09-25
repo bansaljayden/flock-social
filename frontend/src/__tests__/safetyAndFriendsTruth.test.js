@@ -35,7 +35,11 @@ test('the flock alarm says whether the trusted contacts were actually reached', 
   // it follows rang, and the fix's radius travels to the alarm screen. The
   // count this test is about is still the fourth argument, from emailsSent.
   expect(safety).toMatch(/async function alertFlockMembers\(io, user, coords, contactsAlerted, alertId = null, leg = \{\}\) \{/);
-  expect(safety).toMatch(/\.\.\.\(typeof contactsAlerted === 'number' \? \{ contactsAlerted \} : \{\}\),/);
+  // The push is built in services/sosPushes.js, which the flock leg hands the
+  // count to, so the server sends it again the same way when it has to.
+  const sosPushes = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'services', 'sosPushes.js'), 'utf8').replace(/\r\n/g, '\n');
+  expect(safety).toMatch(/alarmPush\(\{[\s\S]{0,300}contactsAlerted,/);
+  expect(sosPushes).toMatch(/\.\.\.\(typeof contactsAlerted === 'number' \? \{ contactsAlerted \} : \{\}\),/);
   expect(safety).toMatch(/alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId, flockLeg\)/);
   expect(app).toMatch(/\{safetyAlert\.contactsAlerted === 0/);
   // And the number reaches state from both transports (safety audit

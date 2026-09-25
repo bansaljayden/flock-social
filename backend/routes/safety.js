@@ -58,6 +58,9 @@ const { suppressionReason, EMERGENCY_CATEGORY } = require('../services/emailSupp
 // pushIfOffline, because being in the app is not a reason to stay quiet about
 // somebody pressing SOS on the plan you are both on.
 const { pushAlways } = require('../services/pushHelper');
+// What the alarm and the all-clear say. services/pushHelper.js builds the same
+// pushes from the same place when it has to send one again.
+const { COARSE_FIX_METRES, accuracyPhrase, alarmPush, allClearPush } = require('../services/sosPushes');
 
 // Names are capped shorter than a whole subject line because a subject reads
 // "🚨 Emergency Alert from {name}" and the words that matter are at the front.
@@ -196,8 +199,10 @@ function readCoords(latitude, longitude) {
 // OPTIONAL, AND SILENT WHEN ABSENT. A client that does not send it produces
 // exactly the email it produces today. Nothing here may turn a missing field
 // into a refused alert; see the three things this route is not allowed to do.
-const COARSE_FIX_METRES = 1000;
-
+//
+// COARSE_FIX_METRES, the line past which a fix is an area, and accuracyPhrase,
+// the words for a radius, live in services/sosPushes.js now, because the
+// flock's alarm push says the same thing and is built there.
 function readAccuracy(value) {
   const n = typeof value === 'number' ? value
     : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
@@ -205,18 +210,6 @@ function readAccuracy(value) {
   // sensor rather than a wide fix. Both read as "we were not told".
   if (!Number.isFinite(n) || n <= 0 || n > 100000) return null;
   return n;
-}
-
-// Metres, in the words a person driving somewhere would use. Never more
-// precise than the number deserves: 1,847 m is "about 2 km", because writing
-// it out to the metre is the same false confidence as the six decimal places.
-function accuracyPhrase(metres) {
-  if (metres >= 1000) {
-    const km = metres / 1000;
-    return `about ${km >= 10 ? Math.round(km) : Math.round(km * 10) / 10} km`;
-  }
-  if (metres >= 100) return `about ${Math.round(metres / 100) * 100} m`;
-  return `about ${Math.max(5, Math.round(metres / 5) * 5)} m`;
 }
 
 // ── Get user's trusted contacts ──
@@ -706,19 +699,34 @@ const LOCATION_FOLLOWUP_WINDOW_MS = 60 * 1000;
 // flock alarm with a map, after everybody had been told the person was OK.
 // Two minutes clears the worst case with room for the server's own work.
 //
-// It applies only where such a chase can exist: the withdrawn alert went out
-// with no location (the chase runs only then) and this request brings one (the
-// chase posts only a fix). Everything else keeps the sixty second floor,
-// because every second of this refusal is a second in which somebody who said
-// "I'm OK" and then needs help again is told to wait, and pointed at 911.
+// It applies only where such a chase can exist, and each condition is one the
+// chase itself sets. Everything else keeps the sixty second floor, because
+// every second of this refusal is a second in which somebody who said "I'm OK"
+// and then needs help again is told to wait, and pointed at 911.
+//
+//   * The withdrawn alert went out with no location: the chase runs only then.
+//   * It reached a contact (contacts_alerted > 0): the chase starts only on a
+//     200, and the route answers 200 only when a contact's email was accepted.
+//     After a 502 there is no chase, and the failed claim's time is set back
+//     past the floor on purpose, so the hold used to meet a person who had
+//     just been told to try again right away. The one miss is an alert whose
+//     200 went out while both writes of its count failed (see recordCount),
+//     which is left at the floor.
+//   * This request brings a location: the chase posts only a fix.
+//   * The request is not marked as a fresh press. The app from the build that
+//     tags its chase (followUpTo) marks every deliberate press `fresh: true`,
+//     so its presses are never taken for a chase. A missing marker, or any
+//     value but true, is an older build, and keeps the hold.
 const STOOD_DOWN_CHASE_HOLD_MS = 120 * 1000;
 
 // How long after a withdrawn alert's claim this request is refused. See
-// STOOD_DOWN_CHASE_HOLD_MS for why the two lengths differ.
-function standDownHoldMs(coords, includeLocation, withdrawnAlert) {
+// STOOD_DOWN_CHASE_HOLD_MS for when it is the two minutes and when the floor.
+function standDownHoldMs(coords, includeLocation, withdrawnAlert, freshPress = false) {
+  if (freshPress === true) return ALERT_FLOOR_MS;
   const hadNoLocation = withdrawnAlert.latitude == null && withdrawnAlert.longitude == null;
+  const reachedContacts = (Number(withdrawnAlert.contacts_alerted) || 0) > 0;
   const bringsLocation = coords != null || includeLocation === true;
-  return hadNoLocation && bringsLocation ? STOOD_DOWN_CHASE_HOLD_MS : ALERT_FLOOR_MS;
+  return hadNoLocation && reachedContacts && bringsLocation ? STOOD_DOWN_CHASE_HOLD_MS : ALERT_FLOOR_MS;
 }
 
 const CALL_911 = 'If you are in danger, call 911.';
@@ -996,41 +1004,19 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
 
   if (members.rows.length === 0) return { notified: 0, recipientIds: [] };
 
-  const name = String(user.name || 'Someone you are out with').slice(0, 80);
-  const title = `${name} needs help`;
-  const fixMetres = coords ? readAccuracy(leg.fixMetres) : null;
-  const coarse = fixMetres !== null && fixMetres > COARSE_FIX_METRES;
-  const body = coords
-    ? (coarse
-      ? `They pressed SOS on Flock and shared an approximate location, within ${accuracyPhrase(fixMetres)}. Open the app, then call them.`
-      : 'They pressed SOS on Flock and shared their location. Open the app, then call them.')
-    : 'They pressed SOS on Flock. Open the app, then call them.';
-
-  const payload = {
-    type: 'safety_alert',
-    fromUserId: String(user.id),
-    fromUserName: name,
-    // Sent to the app as numbers, so a client can put a pin on a map without
-    // reparsing a sentence. Absent entirely when nothing was shared, rather
-    // than present and null, so a consumer cannot mistake one for the other.
-    // readCoords hands back { lat, lng }. This read .latitude/.longitude, so
-    // the keys were undefined, the FCM builder dropped them, and every
-    // flockmate's alarm screen said "They did not share their location" and
-    // hid the map, while the push body said the opposite. The unit test
-    // passed the wrong shape in, so it was green. 2026-09-04.
-    ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
-    // The radius in whole metres, when the phone gave one, so the alarm
-    // screen can say "approximate" and "the area" exactly where the email
-    // does. Absent when unknown, like the coordinates.
-    ...(fixMetres !== null ? { accuracy: Math.round(fixMetres) } : {}),
-    // How many trusted contacts the emails actually reached. The flockmate's
-    // alarm screen stated "their trusted contacts have already been emailed"
-    // unconditionally, so when every email failed the only people who knew
-    // were told the adults were handled. A number, not a boolean, because the
-    // screen says something different for none than for some.
-    ...(typeof contactsAlerted === 'number' ? { contactsAlerted } : {}),
+  // The words and the data come from services/sosPushes.js, which pushHelper
+  // also builds from when it has to send this alarm again. What each field is
+  // for, and the bugs each one was, is written there beside it: the
+  // coordinates as numbers and only when shared, the fix's radius so a coarse
+  // one is called an area, and how many contacts the emails reached.
+  const { title, body, data: payload } = alarmPush({
+    senderId: user.id,
+    name: user.name,
+    coords,
+    fixMetres: coords ? readAccuracy(leg.fixMetres) : null,
+    contactsAlerted,
     at: new Date().toISOString(),
-  };
+  });
 
   for (const row of members.rows) {
     // The socket first: somebody with the app open should see this before a
@@ -1137,13 +1123,13 @@ async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds 
     : await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, windowHours]);
   if (members.rows.length === 0) return { notified: 0 };
 
-  const name = String(user.name || 'Someone you are out with').slice(0, 80);
-  const payload = {
-    type: 'safety_alert_cancelled',
-    fromUserId: String(user.id),
-    fromUserName: name,
+  // Built in services/sosPushes.js, like the alarm, so the copy pushHelper
+  // sends again when a phone ended on the wrong push says the same thing.
+  const { title, body, data: payload } = allClearPush({
+    senderId: user.id,
+    name: user.name,
     at: new Date().toISOString(),
-  };
+  });
   for (const row of members.rows) {
     if (io) io.to(`user:${row.user_id}`).emit('safety_alert_cancelled', payload);
   }
@@ -1154,12 +1140,7 @@ async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds 
   // toUserId for the reason the alarm carries one: the app acts on a safety
   // tap only for the account it was sent to.
   const results = await Promise.allSettled(
-    members.rows.map((row) => pushAlways(
-      row.user_id,
-      `${name} says they are OK`,
-      'They withdrew their SOS on Flock. If you already set out or called someone, let them know.',
-      { ...payload, toUserId: String(row.user_id) }
-    ))
+    members.rows.map((row) => pushAlways(row.user_id, title, body, { ...payload, toUserId: String(row.user_id) }))
   );
   const notified = results.filter((r) => r.status === 'fulfilled' && r.value && (r.value.sent || 0) > 0).length;
   console.log(`[Safety] Stand-down from user ${user.id} reached ${notified} of ${members.rows.length} flock members.`);
@@ -1190,6 +1171,11 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     const followUpId = /^[1-9]\d{0,9}$/.test(String(followUpTo ?? '')) && Number(followUpTo) <= 2147483647
       ? Number(followUpTo)
       : null;
+    // A DELIBERATE PRESS SAYS SO. The app that tags its chase marks every press
+    // somebody makes `fresh: true`, which is how it is told apart from an older
+    // build's untagged chase after a stand-down (STOOD_DOWN_CHASE_HOLD_MS).
+    // Only true counts; anything else is an older build, as before.
+    const freshPress = req.body.fresh === true;
 
     // Claim phase: cooldown check, contact read, and the emergency_alerts row
     // are one atomic unit. The row is written with contacts_alerted = 0, which
@@ -1288,11 +1274,12 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         // after "I'm OK" arrives here looking like a fresh press. That fix can
         // come as late as 106 seconds after the alert's claim, well past the
         // sixty second floor this refusal used to stop at (see
-        // STOOD_DOWN_CHASE_HOLD_MS), so a request shaped like that chase is
+        // STOOD_DOWN_CHASE_HOLD_MS), so a request that could be that chase is
         // held for two minutes and anything else for the floor
-        // (standDownHoldMs). No alreadySent, because the contacts no longer
-        // hold that alert, and the app arms its stand-down control off that
-        // flag.
+        // (standDownHoldMs): a press the current app marks as fresh, and any
+        // request after an alert whose chase never started, wait out only the
+        // floor. No alreadySent, because the contacts no longer hold that
+        // alert, and the app arms its stand-down control off that flag.
         //
         // Past the hold a new press is a NEW alert. Everybody it reaches has
         // been told the person is OK, so it is not a duplicate of anything,
@@ -1301,7 +1288,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         // when it is already reached the refusal says so instead of naming a
         // time that the ceiling would then break.
         if (withdrawn) {
-          const holdMs = standDownHoldMs(coords, includeLocation, last);
+          const holdMs = standDownHoldMs(coords, includeLocation, last, freshPress);
           if (ageMs < holdMs) {
             await client.query('ROLLBACK');
             const secsLeft = Math.max(1, Math.ceil((holdMs - ageMs) / 1000));

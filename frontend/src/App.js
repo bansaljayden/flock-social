@@ -13041,11 +13041,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       hapticAlarm();
       const first = geolocationAvailable() ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
       const loc = first.coords;
+      // `fresh` says this is somebody pressing SOS, not the location chase,
+      // so after "I'm OK" the server holds it only for the one minute floor
+      // and not the two minutes it keeps for an older build's untagged chase.
       const data = await sendEmergencyAlert({
         latitude: loc?.latitude,
         longitude: loc?.longitude,
         accuracy: loc?.accuracy,
         includeLocation: !!loc,
+        fresh: true,
       });
       // There is now something to withdraw. Recorded before the toast so a
       // render triggered by the toast already knows. A 200 means at least one
