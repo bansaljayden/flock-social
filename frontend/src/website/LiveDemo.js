@@ -239,8 +239,14 @@ const LOCKED_FORECAST_COPY = 'The hour by hour forecast, the best time to go and
 // THE LIVE LEVEL, THREE VENUES A DAY). A covered card or pin arrives with
 // `crowd_locked` and no score, and must say so: pct(null) is 0, so without this
 // check a covered pin would print "0%" in green, a reading nobody made.
+//
+// The second sentence is the first-week rule as the server applies it
+// (backend/services/entitlements.js, NEW_ACCOUNT_GRACE_DAYS): only an account
+// with a confirmed email, only once per person. The venue limit is lifted, and
+// Birdie gets Pro's daily cap rather than none, so the sentence says "no venue
+// limit" and never "no limits".
 const crowdCovered = (v) => !!v && v.crowd_locked === true;
-const COVERED_COPY = 'Make a free account to see crowd levels. Your first week has no limits.';
+const COVERED_COPY = 'Make a free account to see crowd levels. A new account with a confirmed email has no venue limit for its first week.';
 // Sorting key for the pins: a covered venue has no number to rank on, so it
 // goes after every venue that has one instead of sorting as a quiet 0.
 const pinRank = (v) => (crowdCovered(v) ? -1 : pct(v.score));

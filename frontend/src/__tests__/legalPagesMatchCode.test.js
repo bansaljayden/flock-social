@@ -385,14 +385,23 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(privacy).toMatch(/We run the lookup and don't store those numbers/);
   });
 
-  test('there is no stored friend code, matching what the policy says', () => {
+  test('the friend code is random and stored, which is what the policy says', () => {
+    // Until migration 079 the code was worked out from the account number and
+    // stored nowhere, and this test held the policy to saying so. It is drawn
+    // at random now and kept in users.friend_code, so the policy says that,
+    // and the old sentence must not come back while the column exists.
     const migrations = fs
       .readdirSync(path.join(REPO, 'backend', 'migrations'))
       .filter((f) => f.endsWith('.sql'))
       .map((f) => read('backend', 'migrations', f))
       .join('\n');
-    expect(migrations).not.toMatch(/friend_code/);
-    expect(privacy).toMatch(/worked out from your account number/);
+    expect(migrations).toMatch(/ALTER TABLE users ADD COLUMN IF NOT EXISTS friend_code/);
+    const friends = read('backend', 'routes', 'friends.js');
+    expect(friends).toMatch(/crypto\.randomInt\(FRIEND_CODE_ALPHABET\.length\)/);
+    expect(friends).not.toMatch(/toString\(36\)/);
+    expect(privacy).toMatch(/Your friend code is made at random the first time you ask for it and stored with your account/);
+    expect(privacy).not.toMatch(/worked out from your account number/);
+    expect(privacy).not.toMatch(/no separate code stored anywhere/);
   });
 
   test('PostHog autocapture is off, which is what the policy tells people', () => {

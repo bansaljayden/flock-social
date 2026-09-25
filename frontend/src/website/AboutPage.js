@@ -152,14 +152,15 @@ export default function AboutPage() {
           tonight. For a bar or restaurant, that is the moment every ad channel
           misses: review sites show what people thought after the fact, social ads
           broadcast to people who aren't going out, and busyness charts are
-          read-only. Flock shows a venue the flocks that picked it, its own
-          hour-by-hour demand curve, and lets it write a deal onto its own venue
-          card, which a group reads when it opens that card while it is choosing.
+          read-only. A free venue account shows a venue the flocks that picked it
+          and lets it write a deal onto its own venue card, which a group reads
+          when it opens that card while it is choosing.
         </p>
         <p>
           That's the business: the planning side stays free for you and your
-          friends, and venues are the side built to pay for demand they can see
-          and act on. No venue is being charged today. If you run a venue and
+          friends, and the one paid plan is Roost, for venues, which adds the
+          venue's own hour-by-hour demand curve and the week ahead from the same
+          crowd model. No venue is being charged today. If you run a venue and
           want in early, email{' '}
           <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
         </p>

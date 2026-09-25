@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Icons from '../components/ui/Icons';
+import { lsGet } from '../lib/storage';
 import './GuestInvite.css';
 
 const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
@@ -296,6 +297,34 @@ const REQUEST_TIMEOUT_MS = 15000;
 const NO_REACH = 0; // the request never got an answer at all
 const TOO_SLOW = -1; // our own clock ran out
 
+// ---------------------------------------------------------------------------
+// WHO IS READING, ON THE PREVIEW AND NOWHERE ELSE.
+//
+// GET /api/guest/:token answers a signed-in viewer with the page the in-app
+// plan would show them: nobody they have blocked, or who has blocked them, on
+// the roster, and no host name when the block is with the host
+// (routes/guest.js viewerFrom). It can only do that if it is told who is
+// reading, and this page never said: it talks to the guest routes with bare
+// fetch and none of the app's client, so the filter never applied to anybody.
+//
+// So the preview carries the session the app keeps, read from the same key and
+// sent the same way services/api.js sends it (getToken, `Authorization: Bearer`).
+// Read directly rather than through api.js, which would pull the whole REST
+// client into the chunk this page ships to strangers (see ask() below). Only
+// the preview: none of the guest writes are about an account, and the guest
+// identity is a separate credential that travels in their bodies.
+//
+// It can only ever narrow the page. No token sends no header and gets the
+// stranger's page. An expired, revoked or banned token is read by the server
+// as a stranger's too, never as an error; and should a server ever refuse the
+// header itself (401), the page asks once more without it, so a stale session
+// can never cost a signed-out person the plan.
+const SESSION_KEY = 'flockToken';
+const previewOptions = () => {
+  const session = lsGet(SESSION_KEY);
+  return session ? { headers: { Authorization: `Bearer ${session}` } } : undefined;
+};
+
 async function ask(url, options) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -526,8 +555,19 @@ export default function GuestInvite() {
     if (opts.showLoading) setPhase('loading');
     const fail = (next) => { if (!opts.quiet && current()) setPhase(next); };
     const url = `${API}/api/guest/${encodeURIComponent(token)}`;
+    // The signed-in viewer, if there is one (previewOptions above). Read per
+    // load, so a sign-in or sign-out in another tab is honoured by the next
+    // refresh.
+    let viewer = previewOptions();
 
-    let r = await ask(url);
+    let r = await ask(url, viewer);
+    // A session the server will not take at all is a stranger's page, not a
+    // dead end: asked once more with nothing attached, and the retry below
+    // stays without it.
+    if (r.status === 401 && viewer && current()) {
+      viewer = undefined;
+      r = await ask(url);
+    }
     // ONE RETRY, AND ONLY FOR OUR OWN CLOCK. Measured against production from a
     // cold service on 2026-08-26, the first request after the backend has been
     // idle takes about 23 seconds; the numbers are written out in
@@ -541,7 +581,7 @@ export default function GuestInvite() {
     // is retried at all.
     // Superseded while the first attempt was out: do not spend a second
     // request warming a container for an answer nothing will read.
-    if (r.status === TOO_SLOW && current()) r = await ask(url);
+    if (r.status === TOO_SLOW && current()) r = await ask(url, viewer);
 
     if (r.status === 404) { fail('gone'); return; }
     if (r.status === 400) { fail('badlink'); return; }
@@ -687,7 +727,10 @@ export default function GuestInvite() {
   const topVotes = venues.reduce((m, v) => Math.max(m, v.votes), 0);
   const rsvpStatus = pendingRsvp || (guest && guest.status) || null;
   const answered = !!(guest && guest.guestToken);
-  const canVote = answered && !closed;
+  // A vote is for somebody who is going: the server counts a guest's vote only
+  // while their answer is in, and refuses one from a guest who is out
+  // (routes/guest.js, NOT_IN), the way a member who declined cannot vote.
+  const canVote = answered && !closed && rsvpStatus === 'in';
   const savingRsvp = busy && busy.kind === 'rsvp' ? busy.key : null;
 
   const say = (where, text) => setFeedback({ where, kind: 'note', text });
@@ -1042,6 +1085,18 @@ export default function GuestInvite() {
     if (r.status === 403) {
       startOver();
       complain('rsvp', 'Your RSVP is not on this plan anymore. Answer again, then vote.');
+      return;
+    }
+    if (r.status === 409 && body.code === 'NOT_IN') {
+      // The server's row says out, whatever this page thought (an answer
+      // changed on another device). Its word is taken, as the budget's NOT_IN
+      // is: the venue rows stop being buttons and the RSVP section reads the
+      // same fact.
+      const next = { ...guest, status: 'out' };
+      setGuest(next);
+      writeStore(storageKey, next);
+      setPendingRsvp(null);
+      complain('vote', "Tap I'm in first. The vote only counts people who are going.");
       return;
     }
     if (r.status === 409) {
@@ -1924,14 +1979,20 @@ export default function GuestInvite() {
                 ? 'How the votes landed.'
                 : canVote
                   ? 'Pick one. You can change it.'
-                  : guestsFull
-                    ? 'The guest list on this plan is full, so voting here is closed.'
-                    : 'Answer above first, then you can vote.'}
+                  : answered
+                    ? "The vote only counts people who are going. Tap I'm in above if that changes."
+                    : guestsFull
+                      ? 'The guest list on this plan is full, so voting here is closed.'
+                      : 'Answer above first, then you can vote.'}
             </p>
             <ul className="gi-venues">
               {venues.map((v) => {
                 const pct = topVotes > 0 ? Math.round((v.votes / topVotes) * 100) : 0;
-                const mine = !!(guest && guest.vote === v.venue_name);
+                // Only while it counts. A guest who is out keeps the pick they
+                // made (it counts again if they come back in), but the tally
+                // beside it leaves them out, so the row does not say it is
+                // theirs.
+                const mine = rsvpStatus === 'in' && !!(guest && guest.vote === v.venue_name);
                 const chosen = settled && !!(flock && flock.chosenVenue === v.venue_name);
                 const inner = (
                   <>
@@ -1953,9 +2014,9 @@ export default function GuestInvite() {
                   </>
                 );
 
-                // Not answered yet, or the plan is closed: a row, not a button.
-                // A control whose only job is to reject you is worse than no
-                // control at all.
+                // Not answered yet, answered out, or the plan is closed: a row,
+                // not a button. A control whose only job is to reject you is
+                // worse than no control at all.
                 if (!canVote) {
                   return <li key={v.venue_name}><div className="gi-venue">{inner}</div></li>;
                 }
