@@ -129,10 +129,22 @@ const DIGEST_FORM = /^sha256:/i;
 // any row ever uses it, so `ir_beam_count: "abc"` bound as $9::integer would be
 // a 22P02 and a 500 instead of the 400 validation already decided on.
 //
+// TWO DELIVERIES OF ONE READING AT ONCE. The duplicate check reads the snapshot
+// the statement started with, so two deliveries of the same reading that start
+// before either commits both find nothing. On the live figure the guard's row
+// lock settles it; on backfill nothing did, and both inserted, until migration
+// 082 made (sensor_device_id, recorded_at) the table's unique key. The insert
+// now yields to that key (ON CONFLICT DO NOTHING waits for the other delivery
+// to commit and then stores nothing), and `raced` reports that the way `dup`
+// reports a re-delivery, so the handler gives both the same duplicate answer.
+// `raced` restates the insert's own gate: an insert that was allowed to run and
+// returned no row can only have met the key.
+//
 // Every parameter keeps ONE type through the statement ($4, $6 and $7 are each
-// used twice, with the same cast both times): __tests__/sqlParameterTypes.test.js
-// prepares this against a migrated Postgres, and a parameter deduced two ways
-// is refused outright (42P08) with any input at all.
+// used more than once, with the same cast every time):
+// __tests__/sqlParameterTypes.test.js prepares this against a migrated
+// Postgres, and a parameter deduced two ways is refused outright (42P08) with
+// any input at all.
 const INGEST_SQL = `
   WITH device AS (
     SELECT id, device_id, venue_place_id, is_active
@@ -174,10 +186,18 @@ const INGEST_SQL = `
       FROM writer w
      WHERE NOT EXISTS (SELECT 1 FROM dup)
        AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM touch))
+    ON CONFLICT (sensor_device_id, recorded_at) DO NOTHING
     RETURNING recorded_at
+  ),
+  raced AS (
+    SELECT COALESCE($6::timestamptz, NOW()) AS recorded_at
+      FROM writer
+     WHERE NOT EXISTS (SELECT 1 FROM dup)
+       AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM touch))
+       AND NOT EXISTS (SELECT 1 FROM ins)
   )
   SELECT d.id, d.device_id, d.venue_place_id, d.is_active,
-         (SELECT recorded_at FROM dup) AS duplicate_of,
+         COALESCE((SELECT recorded_at FROM dup), (SELECT recorded_at FROM raced)) AS duplicate_of,
          (SELECT recorded_at FROM ins) AS recorded_at
     FROM device d`;
 
@@ -432,7 +452,10 @@ router.post('/data',
       // case the check exists to serve (a push that succeeded server-side but
       // timed out on the device, retried from its buffer) would turn into a
       // back-off loop. Client-stamped timestamps make (device, recorded_at) a
-      // natural key; server-stamped rows need no check, NOW() differs.
+      // natural key, and since migration 082 the table's unique key, so two
+      // deliveries of one reading racing each other are settled by the
+      // database and the second is answered as a duplicate like any other;
+      // server-stamped rows need no check, NOW() differs.
       // Replaying the same stamp is useless to an attacker for the same reason:
       // no write happens either way.
       //

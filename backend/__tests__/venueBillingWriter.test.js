@@ -24,8 +24,26 @@ const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
 
 const subs = {};
+// Every read, in order: the id, the status Stripe answered with, and the
+// request options the caller passed. The answer is copied at the moment of the
+// call, the way a real read returns what Stripe held when it was asked, so a
+// test can change the subscription while a read is out and the read still
+// answers with the old state.
+const reads = [];
+// Runs after each read has taken its answer, so a test can change the
+// subscription between two reads of it.
+let afterRead = null;
 function FakeStripe() {
-  return { subscriptions: { retrieve: async (id) => subs[id] } };
+  return {
+    subscriptions: {
+      retrieve: async (id, params, options) => {
+        const answer = subs[id] ? JSON.parse(JSON.stringify(subs[id])) : subs[id];
+        reads.push({ id, status: answer ? answer.status : null, options: options || null });
+        if (afterRead) afterRead(id);
+        return answer;
+      },
+    },
+  };
 }
 require.cache[require.resolve('stripe')] = { id: require.resolve('stripe'), filename: require.resolve('stripe'), loaded: true, exports: FakeStripe };
 
@@ -35,6 +53,30 @@ let testPool;
 let dataDir;
 const appPool = require('../config/database');
 const realQuery = appPool.query;
+const realConnect = appPool.connect;
+
+// A test may hold the grant write, the one statement services/venueBilling.js
+// sends (it starts `WITH old AS`), to open the window between a sync's Stripe
+// read and its write. Whichever way the writer reaches the database, a pooled
+// query or a checked-out client, the write stops here until it is released.
+let holdWrite = null;
+async function maybeHold(text) {
+  if (holdWrite && /^\s*WITH old AS/.test(String(text))) {
+    const h = holdWrite;
+    holdWrite = null;
+    h.reached();
+    await h.released;
+  }
+}
+function armWriteHold() {
+  let reached;
+  let release;
+  const writeReached = new Promise((r) => { reached = r; });
+  const released = new Promise((r) => { release = r; });
+  holdWrite = { reached, released };
+  return { writeReached, release };
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const ENV = {
   VENUE_BILLING_ENABLED: 'true',
@@ -56,11 +98,21 @@ test.before(async () => {
   testPool = new Pool({ connectionString: `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_venuebilling_test` });
   const { migrate } = require('../db/migrate');
   await migrate(testPool);
-  appPool.query = (text, params) => testPool.query(text, params);
+  appPool.query = async (text, params) => { await maybeHold(text); return testPool.query(text, params); };
+  // A client of its own per checkout, wrapping the real one rather than
+  // patching it, because the pool hands the same client object out again.
+  appPool.connect = async () => {
+    const client = await testPool.connect();
+    return {
+      query: async (text, params) => { await maybeHold(text); return client.query(text, params); },
+      release: (err) => client.release(err),
+    };
+  };
 });
 
 test.after(async () => {
   appPool.query = realQuery;
+  appPool.connect = realConnect;
   for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await testPool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
@@ -191,4 +243,119 @@ test('a live subscription on a price this server does not recognise keeps Roost 
   sub('sub_x1', id, 'canceled', { items: { data: [{ price: { id: 'price_not_configured' } }] } });
   await venueBilling.syncVenueSubscription('sub_x1');
   assert.strictEqual((await state(id)).served, 'free');
+});
+
+// ---------------------------------------------------------------------------
+// ONE SYNC PER VENUE AT A TIME. Two syncs for one venue used to overlap: A read
+// the subscription while it was active, Stripe cancelled it, B read the
+// cancellation and revoked Roost, and then A wrote its older active snapshot.
+// SYNC_SQL lets a subscription overwrite its own row, so that restored Roost
+// through the old period end plus grace, and no later event was coming to
+// correct it. A scripted pool cannot show that a lock blocks anything, so these
+// run on the real one.
+// ---------------------------------------------------------------------------
+
+// The venue sync lock as pg_locks shows it: the two-int form stores the
+// namespace in classid and the account id in objid, with objsubid 2.
+async function venueLock(userId) {
+  const r = await testPool.query(
+    `SELECT granted FROM pg_locks
+      WHERE locktype = 'advisory' AND classid = $1::oid AND objid = $2::oid AND objsubid = 2`,
+    [venueBilling.__test.SYNC_LOCK_NAMESPACE, userId]
+  );
+  return { held: r.rows.filter((x) => x.granted).length, waiting: r.rows.filter((x) => !x.granted).length };
+}
+
+test('a sync that read the subscription active and writes late cannot restore Roost after a later sync revoked it', async () => {
+  const id = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_race', id, 'active'));
+  assert.strictEqual((await state(id)).served, 'pro');
+
+  // Sync A reads the subscription while it is live, and its write is held.
+  const hold = armWriteHold();
+  const a = venueBilling.syncVenueSubscription('sub_race');
+  await hold.writeReached;
+  const lockWhileAWrites = await venueLock(id);
+
+  // Stripe cancels it, and sync B starts for the cancellation.
+  sub('sub_race', id, 'canceled');
+  const readsBeforeB = reads.length;
+  const b = venueBilling.syncVenueSubscription('sub_race');
+  await sleep(300);
+  const readsByBWhileAHeld = reads.slice(readsBeforeB).map((r) => r.status);
+  const lockWhileBWaits = await venueLock(id);
+
+  hold.release();
+  await Promise.all([a, b]);
+  const s = await state(id);
+  assert.strictEqual(s.grant.status, 'canceled', 'the late write of an older active read restored a cancelled subscription');
+  assert.strictEqual(s.cached, 'free');
+  assert.strictEqual(s.served, 'free');
+  assert.deepStrictEqual(s.audit.map((r) => r.reason.split(':')[0]), ['tier free -> pro', 'tier pro -> free']);
+
+  // How: A held the venue's lock from before its Stripe read until its write
+  // committed, and B read Stripe under that lock only after A let it go.
+  assert.deepStrictEqual(lockWhileAWrites, { held: 1, waiting: 0 }, 'A reached its write without holding the venue lock');
+  assert.deepStrictEqual(lockWhileBWaits, { held: 1, waiting: 1 }, 'B did not wait for the venue lock');
+  assert.deepStrictEqual(readsByBWhileAHeld, ['canceled'], 'B read Stripe under the lock while A still held the venue');
+  assert.strictEqual(reads[reads.length - 1].status, 'canceled', 'the last read is the one written last');
+  assert.deepStrictEqual(await venueLock(id), { held: 0, waiting: 0 }, 'the lock ends with the transaction');
+});
+
+test('syncs for different venues do not wait on each other', async () => {
+  const x = await venue({ verified: true });
+  const y = await venue({ verified: true });
+  sub('sub_vx', x, 'active');
+  sub('sub_vy', y, 'active');
+  const hold = armWriteHold();
+  const slow = venueBilling.syncVenueSubscription('sub_vx');
+  await hold.writeReached;
+  const fast = await venueBilling.syncVenueSubscription('sub_vy');
+  assert.strictEqual(fast.tier, 'pro', 'one venue\'s sync waited on another\'s');
+  assert.strictEqual((await state(y)).served, 'pro');
+  hold.release();
+  assert.strictEqual((await slow).tier, 'pro');
+  assert.strictEqual((await state(x)).served, 'pro');
+});
+
+test('the Stripe read under the lock is bounded inside the pool statement timeout, with no retry in place', async () => {
+  const id = await venue({ verified: true });
+  const before = reads.length;
+  await venueBilling.syncVenueSubscription(sub('sub_bound', id, 'trialing'));
+  const mine = reads.slice(before);
+  assert.strictEqual(mine.length, 2, 'one read to find the venue, one under its lock');
+  const locked = mine[1].options;
+  assert.ok(locked, 'the locked read passed no options, so it would inherit three attempts of fifteen seconds');
+  assert.strictEqual(locked.maxNetworkRetries, 0, 'a retry under the lock multiplies how long every other sync waits');
+  assert.ok(Number.isFinite(locked.timeout) && locked.timeout > 0, `timeout ${locked.timeout}`);
+  // A sync waits for the lock inside one statement, which the pool cancels at
+  // its statement_timeout (0 switches the cap off, for one-shot scripts). The
+  // lock is held for one bounded read, so a sync queued behind two others
+  // still gets it in time.
+  const poolTimeout = appPool.options.statement_timeout;
+  assert.ok(Number.isInteger(poolTimeout), 'the pool no longer sets a statement timeout');
+  assert.ok(poolTimeout === 0 || 2 * locked.timeout < poolTimeout,
+    `two reads of ${locked.timeout}ms do not fit inside the pool's ${poolTimeout}ms statement timeout`);
+});
+
+test('a subscription that names another venue on the second read is refused, not written under the first venue\'s lock', async () => {
+  const x = await venue({ verified: true });
+  const y = await venue({ verified: true });
+  sub('sub_moved', x, 'active');
+  afterRead = (readId) => {
+    if (readId !== 'sub_moved') return;
+    subs.sub_moved.metadata.flock_venue_user_id = String(y);
+    afterRead = null;
+  };
+  try {
+    await assert.rejects(venueBilling.syncVenueSubscription('sub_moved'), /sub_moved/);
+  } finally {
+    afterRead = null;
+  }
+  const grants = await testPool.query('SELECT user_id FROM venue_subscriptions WHERE user_id = ANY($1::int[])', [[x, y]]);
+  assert.deepStrictEqual(grants.rows, [], 'nothing is written from a read the lock did not cover');
+  // Stripe's retry then starts again from the venue the subscription names now.
+  await venueBilling.syncVenueSubscription('sub_moved');
+  assert.strictEqual((await state(y)).served, 'pro');
+  assert.strictEqual((await testPool.query('SELECT 1 FROM venue_subscriptions WHERE user_id = $1', [x])).rows.length, 0);
 });

@@ -31,13 +31,18 @@ let devices = [];
 let readings = [];
 let venueProfiles = [];
 let queryLog = [];
+// The readings the NEXT ingest's snapshot can see, for a delivery that raced
+// another: used once, then back to the whole table.
+let nextSnapshot = null;
 
 pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
 
   if (INGEST_STATEMENT.test(flat)) {
-    return Promise.resolve(runIngest({ devices, readings }, params));
+    const snapshot = nextSnapshot;
+    nextSnapshot = null;
+    return Promise.resolve(runIngest({ devices, readings, snapshot }, params));
   }
 
   // Owner gate on the fleet-health read.
@@ -429,6 +434,26 @@ test('a push that succeeded but timed out on the Pi is retried without double co
   assert.strictEqual(second.status, 201);
   assert.strictEqual(second.body.duplicate, true);
   assert.strictEqual(readings.length, 1);
+});
+
+test('two deliveries of one reading that both passed the duplicate check are settled by the unique key, and the second is a duplicate', async () => {
+  // The second delivery started before the first committed, so its duplicate
+  // check read the table as it was before the first insert. The key the
+  // insert yields to (migration 082) is checked against what is committed.
+  // sensorIngestStatement.test.js runs this race on a real Postgres.
+  reset();
+  const takenAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const first = await call('/api/sensors/data', {
+    apiKey: HASHED_KEY, body: reading({ recorded_at: takenAt }),
+  });
+  nextSnapshot = [];
+  const second = await call('/api/sensors/data', {
+    apiKey: HASHED_KEY, body: reading({ recorded_at: takenAt }),
+  });
+  assert.strictEqual(first.status, 201);
+  assert.strictEqual(second.status, 201);
+  assert.deepStrictEqual(second.body, { success: true, recorded_at: takenAt, duplicate: true });
+  assert.strictEqual(readings.length, 1, 'one reading delivered twice at once was counted twice');
 });
 
 test('a stolen key cannot append live rows without limit: the guard is the same statement as the write, so two concurrent pushes cannot both pass it', async () => {

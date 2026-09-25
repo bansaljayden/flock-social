@@ -144,6 +144,7 @@ const NOT_CONNECTED = {
     revenueThisMonthCents: null,
     revenueParts: { stripeNetCents: null, appStoreNetCents: null },
     revenueMissing: ['stripe', 'app_store'],
+    appStoreFrom: 'current_pro_accounts',
     costsThisMonthCents: 20844,
     costsMissing: [],
     netThisMonthCents: null,
@@ -235,6 +236,7 @@ const CONNECTED = {
     revenueThisMonthCents: 94407,
     revenueParts: { stripeNetCents: 94128, appStoreNetCents: 279 },
     revenueMissing: [],
+    appStoreFrom: 'current_pro_accounts',
     costsThisMonthCents: 20844,
     costsMissing: [],
     netThisMonthCents: 73563,
@@ -372,6 +374,16 @@ describe('everything connected: the numbers, each with its source', () => {
     expect(screen.getByText('Sandbox')).toBeInTheDocument();
     expect(screen.getByText(/The project-wide figures need a RevenueCat API v2 secret key/)).toBeInTheDocument();
     expect(screen.getAllByText('Key cannot read this').length).toBeGreaterThan(0);
+  });
+
+  test('the App Store part is labelled as current Pro accounts only, never as the whole month', async () => {
+    // It is read from the accounts that are Pro now, so a subscriber who paid
+    // through Apple this month and then deleted their account is not in it.
+    await renderHub(CONNECTED);
+    const revenueBlock = screen.getByText('Revenue this month').parentElement;
+    expect(revenueBlock.textContent).toMatch(/plus App Store charges after Apple's 30%\. The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it\./);
+    expect(hubRow('App Store charged this month').textContent).toMatch(/Counted from current Pro accounts only: a subscriber who deleted their account is not in it\./);
+    expect(hubRow('App Store recurring revenue').textContent).toMatch(/Counted from current Pro accounts only/);
   });
 
   test('collected this month, disputes and promotion codes', async () => {
@@ -513,6 +525,52 @@ describe('a partial read empties the figures it would shrink', () => {
     expect(hubRow('Break-even, Flock Pro').textContent).toMatch(/Paying now: not known, waiting on every Pro account in RevenueCat\./);
     expect(hubRow('Break-even, Roost').textContent).toMatch(/Paying now: 0\./);
     expect(screen.getByText(/1 could not be read\..*These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it\./)).toBeInTheDocument();
+  });
+
+  test('a live subscription with no price empties the totals it would shrink, and each figure names why', async () => {
+    const rcSubs = CONNECTED.revenue.revenuecat.subscribers;
+    await renderHub({
+      ...CONNECTED,
+      revenue: {
+        ...CONNECTED.revenue,
+        stripe: {
+          ...CONNECTED.revenue.stripe,
+          subscriptions: { ...CONNECTED.revenue.stripe.subscriptions, roost: summary({ live: 1, notPriced: 1 }) },
+        },
+        revenuecat: {
+          ...CONNECTED.revenue.revenuecat,
+          subscribers: {
+            ...rcSubs,
+            stores: { ...rcSubs.stores, app_store: { ...rcSubs.stores.app_store, unpriced: 1, unpricedThisMonth: 1, mrrCents: 0, monthChargedCents: 0 } },
+          },
+        },
+      },
+      net: {
+        ...CONNECTED.net,
+        revenueThisMonthCents: 94128,
+        revenueParts: { stripeNetCents: 94128, appStoreNetCents: null },
+        revenueMissing: ['app_store_unpriced'],
+        netThisMonthCents: 73284,
+        netMissing: ['app_store_unpriced'],
+        recurringNetCents: null,
+        recurringMissing: ['stripe_unpriced', 'app_store_unpriced'],
+        netBurnCents: null,
+        netBurnMissing: ['stripe_unpriced', 'app_store_unpriced'],
+      },
+    });
+    // Revenue and net carry Stripe alone, with the reason beside them.
+    const revenueBlock = screen.getByText('Revenue this month').parentElement;
+    expect(within(revenueBlock).getByText('$941.28')).toBeInTheDocument();
+    expect(revenueBlock.textContent).toMatch(/Stripe, after refunds, disputes and fees\. The App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat\./);
+    expect(within(hubRow('Net this month')).getByText('+$732.84')).toBeInTheDocument();
+    // Recurring revenue waits for a price in both stores, and says so.
+    const netBurn = hubRow('Burn after recurring revenue');
+    expect(within(netBurn).getByText('Needs a price for every Stripe subscription and a price for every App Store subscription')).toBeInTheDocument();
+    expect(netBurn.textContent).toMatch(/Some live Stripe subscriptions carry a price or a discount this read could not work out in dollars; the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat\./);
+    // And the rows below say which subscriptions.
+    expect(hubRow('App Store recurring revenue').textContent).toMatch(/1 subscription carries no dollar price in RevenueCat and is left out, so the recurring total at the top waits for it\./);
+    expect(hubRow('App Store charged this month').textContent).toMatch(/1 of these charges has no dollar price in RevenueCat, so the revenue at the top leaves the App Store out\./);
+    expect(within(hubRow('Not priced')).getByText('1')).toBeInTheDocument();
   });
 
   test('a bill in another currency that names a code line says the code line still counts', async () => {

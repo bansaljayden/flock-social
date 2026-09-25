@@ -1195,6 +1195,92 @@ test('a null App Store amount is unpriced, not a purchase that cost nothing', as
   assert.strictEqual(r.body.revenue.revenuecat.subscribers.appStorePrices.flock_pro_monthly, undefined);
 });
 
+test('an App Store subscription with no price keeps the App Store out of the totals it would shrink, and names the gap', async () => {
+  // The tally counted it and left it out of every sum, and completeness only
+  // asked whether each account answered, so the revenue and recurring totals
+  // went out with a zero in them and no word that one was missing.
+  seedStripe();
+  seedRevenueCat({ v2: 'refuse' });
+  rc.subscribers[5].subscriber.subscriptions.flock_pro_monthly.price = { amount: null, currency: 'USD' };
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const sub = r.body.revenue.revenuecat.subscribers;
+  assert.strictEqual(sub.complete, true, 'every Pro account answered; it is the price that is missing');
+  assert.strictEqual(sub.stores.app_store.unpriced, 1);
+  assert.strictEqual(sub.stores.app_store.unpricedThisMonth, 1, 'bought this month, so this month\'s money is short by it');
+  const n = r.body.net;
+  assert.strictEqual(n.revenueParts.appStoreNetCents, null, 'an App Store sum missing one of its charges is not the App Store revenue');
+  assert.deepStrictEqual(n.revenueMissing, ['app_store_unpriced']);
+  assert.strictEqual(n.revenueThisMonthCents, r.body.revenue.stripe.balance.netCents, 'the headline is Stripe alone, and says so');
+  assert.deepStrictEqual(n.netMissing, ['app_store_unpriced']);
+  assert.strictEqual(n.recurringNetCents, null, 'recurring revenue with a paying subscriber left out would read short');
+  assert.deepStrictEqual(n.recurringMissing, ['app_store_unpriced']);
+  assert.strictEqual(n.netBurnCents, null);
+  assert.deepStrictEqual(n.netBurnMissing, ['app_store_unpriced']);
+  assert.strictEqual(n.breakEven.payingPro, 2, 'a count of subscribers is not short: the unpriced one is still counted as paying');
+});
+
+test('an unpriced App Store subscription last charged before this month leaves the month whole but not the recurring total', async () => {
+  seedStripe();
+  seedRevenueCat({ v2: 'refuse' });
+  const s = rc.subscribers[5].subscriber.subscriptions.flock_pro_monthly;
+  s.price = { amount: 3.99, currency: 'EUR' }; // no dollar price is a missing price here: nothing converts currencies
+  s.purchase_date = new Date(MONTH.startUnix * 1000 - 5 * 86400000).toISOString();
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const app = r.body.revenue.revenuecat.subscribers.stores.app_store;
+  assert.strictEqual(app.unpriced, 1);
+  assert.strictEqual(app.unpricedThisMonth, 0);
+  const n = r.body.net;
+  assert.deepStrictEqual(n.revenueMissing, [], 'nothing charged this month went unpriced');
+  assert.strictEqual(n.revenueParts.appStoreNetCents, 0);
+  assert.strictEqual(n.recurringNetCents, null);
+  assert.deepStrictEqual(n.recurringMissing, ['app_store_unpriced']);
+});
+
+test('a Stripe subscription whose price or discount cannot be worked out withholds recurring revenue, not the month\'s money', async () => {
+  seedStripe();
+  seedRevenueCat({ v2: 'refuse' });
+  // A discount Stripe returned as a bare id: nothing says what it takes off.
+  stripeState.subscriptions.active.push({
+    id: 'sub_unreadable', status: 'active',
+    items: { data: [{ price: { id: 'price_pro_m', unit_amount: 399, currency: 'usd', recurring: { interval: 'month', interval_count: 1 } }, quantity: 1 }] },
+    metadata: { app_user_id: '21' },
+    discounts: ['di_only_an_id'],
+  });
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.body.revenue.stripe.subscriptions.pro.notPriced, 1);
+  const n = r.body.net;
+  assert.strictEqual(n.recurringNetCents, null, 'recurring revenue that leaves a live subscription out would read short');
+  assert.deepStrictEqual(n.recurringMissing, ['stripe_unpriced']);
+  assert.strictEqual(n.netBurnCents, null);
+  assert.deepStrictEqual(n.netBurnMissing, ['stripe_unpriced']);
+  assert.deepStrictEqual(n.revenueMissing, [], 'this month\'s money is read from the balance, which a price cannot shorten');
+  assert.strictEqual(n.revenueThisMonthCents, r.body.revenue.stripe.balance.netCents + Math.round(399 * 0.7));
+});
+
+test('the App Store part says it counts current Pro accounts only, and still says so when none is left to ask about', async () => {
+  // Account 5 bought Pro in the App Store this month and then deleted itself,
+  // so no account in the database is Pro. The per-account read asks nobody
+  // and is complete over nobody; the figure it gives is not the month's App
+  // Store revenue, and the payload says what it is.
+  seedStripe();
+  seedRevenueCat({ v2: 'ok' });
+  handlers = hubHandlers({ premiumIds: [] });
+  const r = await req('GET', '/api/admin/money');
+  const sub = r.body.revenue.revenuecat.subscribers;
+  assert.strictEqual(sub.checked, 0);
+  assert.ok(!rcCalls.some((u) => u.includes('/v1/subscribers/')), 'there is no Pro account left to ask about');
+  const n = r.body.net;
+  assert.strictEqual(n.appStoreFrom, 'current_pro_accounts');
+  assert.strictEqual(n.revenueParts.appStoreNetCents, 0);
+  assert.strictEqual(n.revenueThisMonthCents, r.body.revenue.stripe.balance.netCents);
+  // RevenueCat's project figure does count the deleted account, and every
+  // store with it, so it stays a cross-check beside the total, not part of it.
+  assert.strictEqual(r.body.revenue.revenuecat.overview.monthRevenueUsd, 3.99);
+});
+
 test('a key that can see more than one RevenueCat project is not allowed to pick one', async () => {
   seedRevenueCat({ v2: 'ok' });
   rc.projects = [{ id: 'proj1', name: 'Flock' }, { id: 'proj2', name: 'Something else' }];

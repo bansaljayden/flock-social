@@ -26,12 +26,21 @@ function intervalToMs(text) {
   return Number(m[1]) * { millisecond: 1, second: 1000, minute: 60000, hour: 3600000 }[m[2]];
 }
 
+const sameReading = (r, deviceId, at) => r.sensor_device_id === deviceId
+  && r.recorded_at instanceof Date && at instanceof Date && r.recorded_at.getTime() === at.getTime();
+
 /**
  * Run INGEST_SQL against `store` ({ devices, readings }, read at call time so a
  * suite may reassign its arrays between tests). Parameters in INGEST_SQL order:
  *   $1 digest, $2 legacy key, $3 may write, $4 claimed device_id, $5 client
  *   stamped, $6 recorded_at, $7 affects the live figure, $8 guard interval,
  *   $9-$11 the reading.
+ *
+ * `store.snapshot`, when a suite sets it, is the readings this statement's
+ * snapshot can see, for modelling two deliveries that raced: the duplicate
+ * check reads the snapshot, while the unique key on (sensor_device_id,
+ * recorded_at), migration 082, is checked against every row committed, as
+ * Postgres checks an ON CONFLICT arbiter.
  */
 function runIngest(store, params) {
   const [digest, legacy, mayWrite, claim, clientSupplied, recordedAt, affectsLive, gap, ir, thermal, noise] = params;
@@ -46,11 +55,11 @@ function runIngest(store, params) {
     && (claim === null || claim === undefined || device.device_id === claim)
     ? device : null;
 
-  // dup: the replay check, only for client-stamped readings.
+  // dup: the replay check, only for client-stamped readings, read from the
+  // statement's snapshot.
+  const visible = Array.isArray(store.snapshot) ? store.snapshot : store.readings;
   const dup = writer && clientSupplied
-    ? store.readings.find(
-      (r) => r.sensor_device_id === writer.device_id && r.recorded_at.getTime() === recordedAt.getTime()
-    )
+    ? visible.find((r) => sameReading(r, writer.device_id, recordedAt))
     : undefined;
 
   // touch: ungated for a re-delivery and for old backfill, guarded otherwise.
@@ -64,19 +73,29 @@ function runIngest(store, params) {
     }
   }
 
-  // ins: never for a duplicate, and on the live figure only once touched.
+  // ins: never for a duplicate, and on the live figure only once touched. ON
+  // CONFLICT DO NOTHING on the unique key: a row already committed for this
+  // device and instant, whether or not the snapshot saw it, means nothing is
+  // stored. raced: an insert that was allowed to run and stored nothing is
+  // reported as a duplicate of the stamp it carried.
   let inserted = null;
+  let raced = null;
   if (writer && !dup && (!affectsLive || touched)) {
-    const row = {
-      venue_place_id: writer.venue_place_id,
-      ir_beam_count: ir,
-      thermal_headcount: thermal,
-      noise_db: noise,
-      sensor_device_id: writer.device_id,
-      recorded_at: recordedAt || new Date(),
-    };
-    store.readings.push(row);
-    inserted = row.recorded_at;
+    const at = recordedAt || new Date();
+    if (store.readings.some((r) => sameReading(r, writer.device_id, at))) {
+      raced = at;
+    } else {
+      const row = {
+        venue_place_id: writer.venue_place_id,
+        ir_beam_count: ir,
+        thermal_headcount: thermal,
+        noise_db: noise,
+        sensor_device_id: writer.device_id,
+        recorded_at: at,
+      };
+      store.readings.push(row);
+      inserted = row.recorded_at;
+    }
   }
 
   return {
@@ -85,7 +104,7 @@ function runIngest(store, params) {
       device_id: device.device_id,
       venue_place_id: device.venue_place_id,
       is_active: device.is_active,
-      duplicate_of: dup ? dup.recorded_at : null,
+      duplicate_of: dup ? dup.recorded_at : raced,
       recorded_at: inserted,
     }],
     rowCount: 1,

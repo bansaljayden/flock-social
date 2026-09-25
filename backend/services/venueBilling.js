@@ -393,8 +393,15 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //   granted  upserts the grant, EXCEPT when the row already belongs to a
 //            different subscription that is still live and this one is dead:
 //            the deleted event of an old subscription arriving after a new one
-//            started must not revoke the new one. Every event re-reads Stripe,
-//            so the same subscription always writes its current state.
+//            started must not revoke the new one. The same subscription always
+//            overwrites its own row, which is only safe because of how the
+//            caller orders the writes. Re-reading Stripe on every event does
+//            not order them by itself: two syncs that overlapped could read
+//            active and then cancelled and commit in the other order, and the
+//            older active read restored Roost through the old period end plus
+//            grace. syncVenueSubscription therefore runs one sync per venue at
+//            a time, with its Stripe read inside the lock and this statement
+//            on the same transaction, so the last write is the latest read.
 //   upd      moves the cache only when it changes, only when the grant was
 //            written, and never to a paid tier for an unverified profile.
 //   audit    one tier_changed row per actual change, none per renewal.
@@ -450,11 +457,56 @@ const SYNC_SQL = `WITH old AS (
          (SELECT COUNT(*) FROM granted)::int AS written,
          (SELECT old.verified FROM old) AS verified`;
 
+// ONE SYNC PER VENUE AT A TIME, AND THE LAST ONE READS LAST. Every caller (the
+// webhook, once per subscription event, and the confirm route after the
+// redirect back) re-reads the subscription and writes what it says, and at the
+// end of a checkout several of them arrive for one venue in the same second.
+// Re-reading alone did not order them. Sync A could read the subscription while
+// it was active, Stripe could cancel it, sync B could read the cancellation and
+// revoke Roost, and then A committed its older active read, which SYNC_SQL
+// accepts because it is the same subscription. Roost was back until the old
+// period end plus the grace, and no later event was coming to correct it. The
+// Pro path closed the same hole the same way (routes/revenuecat.js
+// syncPremiumFromRevenueCat): the Stripe read happens inside a transaction that
+// holds a per-venue advisory lock, and the write is on that transaction, so a
+// second sync for the venue waits for the first to commit and then reads Stripe
+// itself.
+//
+// READ, LOCK, READ AGAIN. The lock is keyed on the venue's account, because
+// venue_subscriptions holds one row per account and the order that matters is
+// the order of every write to that row, whichever subscription it comes from. A
+// lock on the subscription id would order two syncs of one subscription and
+// nothing else: an old subscription's stale active read could still commit
+// after a new subscription's write, point the row back at the old one, and let
+// the old one's deleted event revoke a venue that is paying. The account is
+// only known from the subscription's metadata, so the first read finds it,
+// outside the lock, and decides nothing else. Everything written comes from the
+// second read, taken under the lock. A subscription whose second read names a
+// different account (its metadata edited in the dashboard between the two) is
+// refused rather than written under a lock that does not cover it: the throw
+// is a 500, and Stripe's retry starts again from the account it names then.
+//
+// HOW LONG THE LOCK IS HELD, AGAINST THE POOL'S STATEMENT TIMEOUT. A sync that
+// has to wait does its waiting inside its pg_advisory_xact_lock statement, and
+// the pool cancels any statement at 15 seconds (config/database.js). The holder
+// keeps the lock for one Stripe read and one short statement, so the read under
+// the lock is bounded: LOCKED_READ allows it five seconds and no retry in
+// place, where the client's default is fifteen seconds tried three times. A
+// sync queued behind two others still gets the lock inside the timeout. A
+// longer queue is only possible while Stripe itself is slow, and then the
+// waiter's statement is cancelled and thrown like any Stripe failure: the
+// webhook answers 500, Stripe delivers the event again later, and nothing was
+// written from a stale read. Syncs for different venues do not wait on each
+// other. The two-int lock form keys on the exact account id, as the Pro sync
+// and routes/feedback.js do, in a namespace of its own.
+const SYNC_LOCK_NAMESPACE = 81437;
+const LOCKED_READ = { timeout: 5000, maxNetworkRetries: 0 };
+
 // Re-reads the subscription from Stripe and writes what it says. Events arrive
 // out of order and can be replayed, so the event body is never the source:
-// whatever Stripe says NOW is written, and writing it twice changes nothing.
-// Throws on a Stripe or database failure, so the webhook answers 500 and
-// Stripe retries.
+// whatever Stripe says under the venue's lock is written, and writing it twice
+// changes nothing. Throws on a Stripe or database failure, so the webhook
+// answers 500 and Stripe retries.
 //
 // A LIVE SUBSCRIPTION ON A PRICE THIS SERVER DOES NOT RECOGNISE IS NOT A
 // CANCELLATION. It used to be written as tier free with expires_at now, so a
@@ -476,29 +528,47 @@ const SYNC_SQL = `WITH old AS (
 // A DEAD subscription on an unknown price is still written, because revoking
 // is what a dead subscription means whatever it was on.
 async function syncVenueSubscription(subscriptionId) {
-  const sub = await stripe().subscriptions.retrieve(subscriptionId);
-  if (!isVenueObject(sub)) return { ignored: 'not_venue' };
-  const userId = venueUserIdFrom(sub.metadata);
+  // Whose venue this is, and nothing else: see READ, LOCK, READ AGAIN.
+  const first = await stripe().subscriptions.retrieve(subscriptionId);
+  if (!isVenueObject(first)) return { ignored: 'not_venue' };
+  const userId = venueUserIdFrom(first.metadata);
   if (!userId) return { ignored: 'no_account' };
-  let g = grantFromSubscription(sub);
-  if (!g.priceOk && KEEP_STATUSES.has(sub.status)) {
-    console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
-    g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1::int, $2::int)', [SYNC_LOCK_NAMESPACE, userId]);
+    const sub = await stripe().subscriptions.retrieve(subscriptionId, {}, LOCKED_READ);
+    const owner = isVenueObject(sub) ? venueUserIdFrom(sub.metadata) : null;
+    if (owner !== userId) {
+      throw new Error(`Roost subscription ${subscriptionId} named venue user ${userId} and then ${owner ? `venue user ${owner}` : 'no venue account'} on the read under the lock. Nothing was written; Stripe's retry reads it again.`);
+    }
+    let g = grantFromSubscription(sub);
+    if (!g.priceOk && KEEP_STATUSES.has(sub.status)) {
+      console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
+      g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
+    }
+    if (!g.priceOk) {
+      console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
+    }
+    const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
+    const r = await client.query(SYNC_SQL, [
+      userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
+      g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier,
+    ]);
+    await client.query('COMMIT');
+    const row = r.rows[0] || {};
+    if (!row.profiles) return { ignored: 'no_venue_profile' };
+    if (g.live && row.verified !== true) {
+      console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
+    }
+    return { userId, tier: g.live ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
-  if (!g.priceOk) {
-    console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
-  }
-  const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
-  const r = await pool.query(SYNC_SQL, [
-    userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
-    g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier,
-  ]);
-  const row = r.rows[0] || {};
-  if (!row.profiles) return { ignored: 'no_venue_profile' };
-  if (g.live && row.verified !== true) {
-    console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
-  }
-  return { userId, tier: g.live ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
 }
 
 // The Stripe webhook's venue branch. Only called for objects that carry
@@ -547,5 +617,5 @@ module.exports = {
   legacyRoostPrices,
   TRIAL_DAYS,
   ROOST_TIER,
-  __test: { SYNC_SQL, venueUserIdFrom, GRACE_MS, STRIPE_MIN_TRIAL_MS },
+  __test: { SYNC_SQL, venueUserIdFrom, GRACE_MS, STRIPE_MIN_TRIAL_MS, SYNC_LOCK_NAMESPACE, LOCKED_READ },
 };
