@@ -19,6 +19,7 @@
  *   cd frontend && CI=true npx react-scripts test --watchAll=false sosFollowUpChase
  */
 import { createSosFollowUp } from '../services/sosFollowUp';
+import { sendEmergencyAlert } from '../services/api';
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -203,5 +204,68 @@ describe('the chase itself', () => {
     p.land(0);
     await flush();
     await expect(chase.settled()).resolves.toBeUndefined();
+  });
+});
+
+/*
+ * A DELIBERATE PRESS SAYS SO, AND THE CHASE NEVER DOES.
+ *
+ * After "Tell them I'm OK" the server holds off an unmarked request that
+ * carries a fix for two minutes, because an older build's untagged chase looks
+ * exactly like one (backend routes/safety.js, STOOD_DOWN_CHASE_HOLD_MS). This
+ * build marks every press `fresh: true`, so somebody who said they were OK and
+ * then needs help again waits out only the one minute floor, and the chase,
+ * which names the alert it follows, must never carry the mark.
+ */
+describe('a deliberate press is marked fresh, and the chase never is', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+
+  function jsonRes(body, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (h) => (String(h).toLowerCase() === 'content-type' ? 'application/json; charset=utf-8' : null) },
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    };
+  }
+
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
+  it('the chase sends the fix and the alert it follows, and no mark', async () => {
+    const p = phone();
+    const send = jest.fn(async () => ({ contactsAlerted: 1 }));
+    const chase = createSosFollowUp(p.getPosition, send);
+    chase.start(42, handlers());
+    p.land(0);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    const sent = send.mock.calls[0][0];
+    expect(sent.followUpTo).toBe(42);
+    expect('fresh' in sent).toBe(false);
+  });
+
+  it('the press in App.js marks itself fresh', () => {
+    const start = APP.indexOf('const handleEmergencyAlert = useCallback(');
+    expect(start).toBeGreaterThan(-1);
+    const press = APP.slice(start, APP.indexOf('const handleStandDown = useCallback(', start));
+    expect(press).toMatch(/await sendEmergencyAlert\(\{[^}]*includeLocation: !!loc,\s*fresh: true,\s*\}\)/);
+  });
+
+  it('the request carries fresh: true only when the caller said exactly true', async () => {
+    global.fetch.mockResolvedValue(jsonRes({ success: true, alertId: 1 }));
+    await sendEmergencyAlert({ latitude: 1, longitude: 2, includeLocation: true, fresh: true });
+    await sendEmergencyAlert({ latitude: 1, longitude: 2, includeLocation: true, followUpTo: 9 });
+    await sendEmergencyAlert({ latitude: 1, longitude: 2, includeLocation: true, fresh: 'yes' });
+    const bodies = global.fetch.mock.calls.map(([, opts]) => JSON.parse(opts.body));
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0].fresh).toBe(true);
+    expect('fresh' in bodies[1]).toBe(false);
+    expect(bodies[1].followUpTo).toBe(9);
+    expect('fresh' in bodies[2]).toBe(false);
   });
 });

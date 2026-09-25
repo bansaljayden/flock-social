@@ -632,6 +632,14 @@ async function settleLate(userId, atDeadline, late) {
 //              goes to them and not to the devices that already have it
 //   inFlight / settled   how many sends were still out at the deadline, and a
 //              promise of the tally once they have answered
+//
+// `opts.onAccepted(deviceId)`, when given, is called the moment the provider
+// accepts one device's copy, whether that is inside the deadline or after it.
+// The answer above comes only once every device has answered, so it cannot
+// say which copy reached which device first; services/pushHelper.js needs
+// exactly that for an SOS, whose alarm and all-clear share one slot on each
+// device. It is told before the answer resolves, and a throw from it is
+// logged and never touches the send.
 async function sendToUserDevices(userId, perToken, opts = {}) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
@@ -660,6 +668,16 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     const attended = result.rows.length - rows.length;
     if (rows.length === 0) return { sent: 0, failed: 0, attended };
 
+    const onAccepted = typeof opts.onAccepted === 'function' ? opts.onAccepted : null;
+    const tellAccepted = (deviceId) => {
+      if (!onAccepted) return;
+      try {
+        onAccepted(deviceId);
+      } catch (err) {
+        console.error('[Firebase] onAccepted failed:', err.message);
+      }
+    };
+
     // Round 7: this was a sequential await per token, inside route handlers
     // that already await once per recipient. A confirmed flock of twenty
     // members held the HTTP response open for twenty round trips to Google.
@@ -667,7 +685,19 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
       rows.map((row) =>
         Promise.resolve()
           .then(() => perToken(row))
-          .then((res) => ({ id: row.id, ...res }))
+          .then((res) => {
+            // Accepted now, or, for a send still out at the deadline, when it
+            // lands. This reaction is attached before settleLate attaches its
+            // own to the same promise, so it always runs first.
+            if (res && res.success) tellAccepted(row.id);
+            else if (res && res.late) {
+              Promise.resolve(res.late).then(
+                (fin) => { if (fin && fin.success) tellAccepted(row.id); },
+                () => {}
+              );
+            }
+            return { id: row.id, ...res };
+          })
           .catch(() => ({ id: row.id, success: false, stale: false }))
       )
     );
