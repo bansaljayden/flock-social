@@ -22,7 +22,10 @@ test('error bubbles never go back to the model as its own words', () => {
 });
 
 test('the meter is seeded on boot and closes the box at zero', () => {
-  expect(app).toMatch(/const refreshEntitlements = useCallback\(\(\) => \{\s*getEntitlements\(\)\.then\(\(data\) => \{\s*setEntitlements\(data\);[\s\S]*?setAiRemaining\(data\.birdie\.remaining\);/);
+  // Every snapshot read goes through applyEntitlements (it drops an answer
+  // older than the last applied), and that is where the meter is seeded.
+  expect(app).toMatch(/const applyEntitlements = useCallback\(\(seq, data\) => \{[\s\S]*?setEntitlements\(data\);[\s\S]*?setAiRemaining\(data\.birdie\.remaining\);/);
+  expect(app).toMatch(/const refreshEntitlements = useCallback\(\(\) => \{\s*const seq = \+\+entitlementsSentRef\.current;\s*getEntitlements\(\)\.then\(\(data\) => applyEntitlements\(seq, data\)\)/);
   expect(app).toMatch(/const outOfChirps = !!entitlements\?\.paywallEnabled && !isPro && aiRemaining === 0\n\s+&& \(!aiResetsAt \|\| Date\.now\(\) < Date\.parse\(aiResetsAt\)\);/);
   expect(app).toMatch(/const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;/);
   expect(app).toMatch(/if \(outOfChirpsRef\.current\) return;/);
