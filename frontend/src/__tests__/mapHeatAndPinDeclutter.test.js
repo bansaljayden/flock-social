@@ -226,15 +226,22 @@ describe('pin size and anchor', () => {
     expect(MAP).not.toContain('[data-zoom-tier="lo"] .mlb-marker-inner');
     expect(MAP).not.toContain('transition: transform 0.18s ease');
     // The curve: full size by 14.5, PIN_SCALE_MIN at 12 and below.
-    expect(mapCode).toContain('const PIN_SCALE_MIN = 0.62;');
+    expect(mapCode).toContain('const PIN_SCALE_MIN = 0.74;');
     expect(mapCode).toContain('const PIN_SCALE_FROM = 12;');
     expect(mapCode).toContain('const PIN_SCALE_TO = 14.5;');
   });
 
   it('scales about the point pinned to the coordinate', () => {
     expect(MAP).toContain("inner.style.transformOrigin = roundPin ? 'center center' : 'bottom center';");
-    // The builder still draws full size; scale is a transform.
-    expect(MAP).toContain('const size = isActive ? 54 : 44;');
+    // The builder still draws full size; scale is a transform. One pair of
+    // sizes serves the photo, the marker box and the active swap, and the
+    // overlap test measures against the same body.
+    const mapCode = codeOnly(MAP);
+    expect(mapCode).toContain('const PIN_PX = 48;');
+    expect(mapCode).toContain('const PIN_ACTIVE_PX = 58;');
+    expect(mapCode).toContain('const PIN_OVERLAP_PX = PIN_PX + 2;');
+    expect((mapCode.match(/const size = isActive \? PIN_ACTIVE_PX : PIN_PX;/g) || []).length).toBe(3);
+    expect(mapCode).not.toContain('isActive ? 54 : 44');
   });
 
   it('the label and the owner chip sit outside the box MapLibre anchors', () => {
