@@ -73,9 +73,13 @@
 // is VOIDED as soon as a file sorting after A drops that table or that column,
 // the heal leaves it alone, and startup logs which file voided which line so
 // the stale `@requires` can be deleted from the source.
+//
+// AND A FEW STATEMENTS RUN ON EVERY BOOT, after the files. A file's schema
+// survives a restore and its backfill does not; see "Every boot" below.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
+const { REQUARANTINE_SQL } = require('./billQuarantine');
 
 // Fixed app-wide key for pg_advisory_lock — serializes migration runs across
 // replicas / rolling deploys so two boots can't race the same file.
@@ -683,6 +687,53 @@ async function reapplyMigration(client, file, info, reqs) {
   await client.query('UPDATE schema_migrations SET applied_at = NOW() WHERE name = $1', [file]);
 }
 
+// ---------------------------------------------------------------------------
+// Every boot, after the files.
+// ---------------------------------------------------------------------------
+// A migration runs once, and a backfill writes its answer into rows. A restore
+// brings the rows back from the dump, and the runbook (BACKUP-AND-VERIFICATION.md,
+// "Bringing Flock back from nothing") builds the schema with this runner on an
+// EMPTY database first, where every backfill matches nothing and is recorded as
+// done. The dump then loads rows written before the migration existed, and
+// nothing runs a file this runner believes is done. For 089 that was a privacy
+// leak rather than a stale column: every bill from before August 27 in a dump
+// taken before 089 lands with bill_splits.quarantined false, and GET hands one
+// person's budget answer to the rest of the plan.
+//
+// So these statements run after the files on EVERY boot, inside the same
+// advisory lock and timeouts, and server.js awaits them before listen(). Each
+// one only ever moves a row one way and only touches a row it changes, so a
+// second run changes nothing and a healthy database takes no row lock at all;
+// each has an index that holds only the rows it would change (090 for the
+// quarantine), so it reads nothing when there is nothing to do, however large
+// the table grows; and it is one statement in autocommit, so a request another
+// instance serves mid-deploy sees every row it changes before or after, never
+// half of them.
+//
+// A step that throws fails the boot, unlike a heal. Serving with the fact
+// missing is the leak the step exists to close, and the next boot tries again.
+const EVERY_BOOT = [
+  {
+    name: '089 bill quarantine',
+    sql: REQUARANTINE_SQL,
+    moved: (n) => `put ${n} bill(s) from before August 27 back in quarantine. They arrived without the flag, ` +
+      'which is what a restore from a dump taken before migration 089 does.',
+  },
+];
+
+async function runEveryBootSteps(client) {
+  for (const step of EVERY_BOOT) {
+    let res;
+    try {
+      res = await client.query(step.sql);
+    } catch (e) {
+      console.error(`[migrate] FAILED every-boot step ${step.name}: ${e.message}`);
+      throw e;
+    }
+    if (res.rowCount > 0) console.warn(`[migrate] ${step.name}: ${step.moved(res.rowCount)}`);
+  }
+}
+
 async function runMigrations(client) {
   await client.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -771,6 +822,8 @@ async function runMigrations(client) {
     }
     console.log(`[migrate] applied ${file}`);
   }
+
+  await runEveryBootSteps(client);
 }
 
 module.exports = {

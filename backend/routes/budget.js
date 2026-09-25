@@ -1124,10 +1124,18 @@ async function settleAfterPopulationChange(io, flockId) {
 // before that column which the migration could not prove were ever posted: a
 // share that is settled, carries a credit, or was never a commitment is a
 // record of real money, and its bill stays.
+//
+// Except on a quarantined shell (migration 089), which goes whatever its rows
+// hold. Which of its rows are settled is withheld from everybody, and a reset
+// that kept the shell over a settled row and deleted it otherwise would have
+// told the creator exactly that, by whether the bill was still there. Its rows
+// can never be settled, changed or read again, so deleting them takes nothing
+// anybody could still use.
 const RESET_SHELL_SQL = `DELETE FROM bill_splits b
    WHERE b.flock_id = $1 AND b.paid_by IS NULL
      AND NOT EXISTS (SELECT 1 FROM bill_split_shares s
                       WHERE s.bill_id = b.id
+                        AND b.quarantined IS NOT TRUE
                         AND (s.committed IS NOT TRUE OR s.settled IS TRUE OR COALESCE(s.paid_amount, 0) <> 0))
      AND b.had_payer IS NOT TRUE`;
 router.post('/:flockId/reset',
