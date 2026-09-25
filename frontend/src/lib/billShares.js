@@ -44,8 +44,20 @@ export const owedOn = (s) => {
  * GET /api/billing/:flockId tells the two apart with `estimate`, which is false
  * on that bill. A body without the field is read the old way, as an estimate:
  * an older server, and the stand-in the chat draws before a shell exists.
+ *
+ * A quarantined bill is never drawn as an estimate either (see isQuarantinedBill).
  */
-export const isEstimateBill = (bill) => !!bill && bill.hasPayer === false && bill.estimate !== false;
+export const isEstimateBill = (bill) => !!bill && bill.hasPayer === false && bill.estimate !== false
+  && bill.quarantined !== true;
+
+/**
+ * Whether a bill is QUARANTINED: one from before August 27, when an early
+ * version of the pre-commit could copy one person's budget answer into it.
+ * The server sends its members' names and no amount, total, flag or count, and
+ * refuses every change to it, so it is drawn as a bill whose amounts are no
+ * longer shown, with nothing to settle, commit or edit.
+ */
+export const isQuarantinedBill = (bill) => !!bill && bill.quarantined === true;
 
 /**
  * The one figure an estimate (see isEstimateBill) honestly stands for: a

@@ -4,6 +4,15 @@
 -- figure a ghost commit copied out of the budget never reaches anyone but the
 -- member it was written for.
 --
+-- RETIRED BY 089. Hiding rows one at a time left three ways back to the number
+-- (the settled flag of a hidden row, the subtraction across rows this file had
+-- to call posted, and the share's own member holding somebody else's answer).
+-- 089 quarantines every bill that could hold such a figure, whole, and nothing
+-- reads or writes `posted` any more: rows written since carry the default and
+-- mean nothing by it. The column stays until no deployed code names it, and a
+-- later migration can drop it then. Everything below describes what this file
+-- did when it ran.
+--
 -- ASCII only, like 065 and 082: the embedded server the boot-safety suite runs
 -- is WIN1252.
 --

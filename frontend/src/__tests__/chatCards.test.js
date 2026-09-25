@@ -47,7 +47,7 @@ import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import SystemRow, { formatMoney, CardShell, MemberAvatar } from '../components/chat/cards/SystemRow';
 import NudgeRow from '../components/chat/cards/NudgeRow';
 import BillCard, { billTally } from '../components/chat/cards/BillCard';
-import { isEstimateBill, shellEstimate } from '../lib/billShares';
+import { isEstimateBill, isQuarantinedBill, shellEstimate } from '../lib/billShares';
 import PollCard from '../components/chat/cards/PollCard';
 import VenueCardRow from '../components/chat/cards/VenueCardRow';
 import LocationCard, { remainingLabel, distanceLabel } from '../components/chat/cards/LocationCard';
@@ -681,6 +681,67 @@ describe('BillCard, a posted bill whose payer deleted their account', () => {
   });
 });
 
+describe('BillCard, a quarantined bill from before August 27', () => {
+  // routes/billing.js quarantines a bill from before August 27 (migration
+  // 089), when an early pre-commit could copy one person's budget answer into
+  // it. GET sends its members' names and every amount, total, settled flag
+  // and count as null, to everyone, the share's own member included, and
+  // refuses every change to it. So the card draws the names and a sentence,
+  // and no figure, count or action, whatever the parent hands in.
+  const frozen = (over = {}) => ({
+    id: 7,
+    flockId: 3,
+    quarantined: true,
+    hasPayer: true,
+    estimate: false,
+    totalAmount: null,
+    tipPercent: null,
+    totalWithTip: null,
+    splitType: null,
+    paidBy: { id: 1, name: 'Maya' },
+    fullySettled: null,
+    settledCount: null,
+    shareCount: null,
+    shares: [1, 2, 3].map((userId) => ({
+      userId,
+      name: ['Maya', 'Ben', 'Ava'][userId - 1],
+      amount: null,
+      paidAmount: null,
+      outstanding: null,
+      committed: null,
+      settled: null,
+      settledAt: null,
+    })),
+    ...over,
+  });
+
+  test('its members and one sentence, and not a figure, a count or a badge', () => {
+    const { container } = render(
+      <BillCard bill={frozen()} viewerId={3} estimatedShare={40} onSettle={() => {}} onUndo={() => {}} onCommit={() => {}} />
+    );
+    expect(container.querySelector('[data-bill-quarantined="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-bill-shell="false"]')).not.toBeNull();
+    expect(screen.getByText('Bill')).toBeTruthy();
+    expect(screen.getByText('Amounts on bills from before August 27 are no longer shown.')).toBeTruthy();
+    // The date in the sentence is the only digit on the card.
+    expect(textOf(container).replace('August 27', 'August')).not.toMatch(/\d|\$|settled|Waiting on|Paid|Pre-committed|Estimated share/);
+    // An avatar carries its badge in its name ("Maya, settled"), so a badge
+    // drawn off a withheld flag would show here.
+    expect(screen.getAllByRole('img').map((el) => el.getAttribute('aria-label'))).toEqual(['Maya', 'Ben', 'Ava']);
+  });
+
+  test('nothing to settle, undo or commit, for the payer, a member or a payerless copy', () => {
+    for (const [bill, viewerId] of [[frozen(), 3], [frozen(), 1], [frozen({ hasPayer: false, paidBy: { id: null, name: null } }), 3]]) {
+      const { container, unmount } = render(
+        <BillCard bill={bill} viewerId={viewerId} estimatedShare={40} onSettle={() => {}} onUndo={() => {}} onCommit={() => {}} />
+      );
+      expect(container.querySelectorAll('button').length).toBe(0);
+      expect(textOf(container)).not.toMatch(/Settle up|Mark as paid|Undo|Commit|Nobody has paid yet|deleted their account/);
+      unmount();
+    }
+  });
+});
+
 describe('isEstimateBill and shellEstimate', () => {
   test('only a payerless bill nobody posted is an estimate', () => {
     expect(isEstimateBill({ hasPayer: false })).toBe(true);
@@ -689,6 +750,18 @@ describe('isEstimateBill and shellEstimate', () => {
     expect(isEstimateBill({ hasPayer: true, estimate: false })).toBe(false);
     expect(isEstimateBill({})).toBe(false);
     expect(isEstimateBill(null)).toBe(false);
+  });
+
+  test('a quarantined bill is never an estimate and has no per-person figure', () => {
+    // A quarantined shell is payerless and nobody posted it, so without the
+    // flag it would read as an estimate and offer a Commit the server refuses.
+    expect(isEstimateBill({ hasPayer: false, quarantined: true })).toBe(false);
+    expect(isEstimateBill({ hasPayer: false, estimate: true, quarantined: true })).toBe(false);
+    expect(isQuarantinedBill({ hasPayer: false, quarantined: true })).toBe(true);
+    expect(isQuarantinedBill({ hasPayer: true, quarantined: false })).toBe(false);
+    expect(isQuarantinedBill({ hasPayer: true })).toBe(false);
+    expect(isQuarantinedBill(null)).toBe(false);
+    expect(shellEstimate({ hasPayer: false, quarantined: true, shares: [{ userId: 3, amount: 45 }] }, 3, 40)).toBeNull();
   });
 
   test('a posted bill has no per-person estimate, whatever the budget says', () => {

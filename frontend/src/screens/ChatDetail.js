@@ -189,7 +189,7 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
-import { isEstimateBill, owedOn, shellEstimate } from '../lib/billShares';
+import { isEstimateBill, isQuarantinedBill, owedOn, shellEstimate } from '../lib/billShares';
 import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
@@ -571,12 +571,11 @@ const tallyOf = (r) => (r && Number.isFinite(Number(r.shareCount))
  * the shares they can see is that share. The budget's words would be wrong
  * there, so it has its own, and they name nobody and no direction.
  *
- * And a real bill's ROW can arrive with its figures withheld: one the server
- * cannot vouch for was written from a typed total (migration 088; an old
- * ghost commit could put the raw budget minimum into a posted bill) goes to
- * its own member only. On a real bill that row gets the same plain words as
- * the total, `withheldWords`, because the budget's would claim to know what
- * it is.
+ * And a quarantined bill (migration 089: one from before August 27, when an
+ * early pre-commit could copy one person's budget answer into it) arrives
+ * with every row's figures withheld, from everyone, its own member included.
+ * Those rows get the same plain words as the total, `withheldWords`, because
+ * the budget's would claim to know what they are.
  */
 const HIDDEN_FIGURE = 'no group number to show';
 const HIDDEN_TOTAL = 'not shown';
@@ -1328,7 +1327,14 @@ export default function ChatDetail({
     // is to post the bill with who paid. What the sheet and the pill SAY is
     // billSplitIsEstimate's, below. Reading every payerless bill as an
     // estimate printed "~$40 each" off the budget over a $180 dinner.
-    const billSplitIsShell = !!billSplit && billSplit.hasPayer === false;
+    //
+    // A QUARANTINED bill (from before August 27, lib/billShares.js
+    // isQuarantinedBill) is neither. The server sends its members' names and
+    // no amount, total, settled flag or count, and refuses to post over it,
+    // settle it or take a settlement back, so the form does not open over it
+    // and nothing below offers any of those.
+    const billSplitQuarantined = isQuarantinedBill(billSplit);
+    const billSplitIsShell = !!billSplit && billSplit.hasPayer === false && !billSplitQuarantined;
     const billSplitIsEstimate = billSplitIsShell && isEstimateBill(billSplit);
     /* The viewer's own figure before a bill exists, for the card's shell
        state. It is the settled budget ceiling, which is the same number
@@ -1354,7 +1360,9 @@ export default function ChatDetail({
     const billPillMoney = billSplitIsEstimate
       ? (shellFigure != null ? `~$${shellFigure.toFixed(2)} each` : null)
       : (typeof billSplit?.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)}` : null);
-    const billPillCount = !billSplitIsEstimate && billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
+    // No count on a quarantined bill either: its settled flags are withheld,
+    // so "0/3" would be a claim about three rows nobody can see.
+    const billPillCount = !billSplitIsEstimate && !billSplitQuarantined && billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
     const billPillLabel = billBar.all && !billSplitIsEstimate
       ? (billPillMoney ? `${billPillMoney} · settled` : 'Settled')
       : ([billPillMoney, billPillCount].filter(Boolean).join(' · ') || 'Bill');
@@ -2295,8 +2303,9 @@ export default function ChatDetail({
         }
         // Payerless and estimate are two questions; see billSplitIsEstimate.
         // A commit belongs on an estimate only, and nothing pays or settles
-        // on either payerless state.
-        const payerless = bill.hasPayer === false;
+        // on either payerless state, or on a quarantined bill, which the
+        // server refuses to settle or take a settlement back on.
+        const settlesNothing = bill.hasPayer === false || isQuarantinedBill(bill);
         const myShare = (bill.shares || []).find((s) => String(s.userId) === String(authUser?.id)) || null;
         return (
           <BillCard
@@ -2306,13 +2315,13 @@ export default function ChatDetail({
             estimatedShare={estimatedShare}
             onOpen={() => setShowChatPool(true)}
             onCommit={isEstimateBill(bill) ? commitEstimatedShare : undefined}
-            onSettle={!payerless && myShare && !myShare.settled ? startSettleUp : undefined}
+            onSettle={!settlesNothing && myShare && !myShare.settled ? startSettleUp : undefined}
             /* Hidden for the payer and for a share settled by carried credit,
                rather than shown and refused: the server answers 409 on both
                and a control that exists only to be rejected is a dead one.
                Hidden on a payerless bill too: POST /settle refuses one, so a
                payment taken back there could never be marked paid again. */
-            onUndo={!payerless && myShare && myShare.settled && !coveredByCredit(myShare)
+            onUndo={!settlesNothing && myShare && myShare.settled && !coveredByCredit(myShare)
               && String(bill.paidBy?.id ?? '') !== String(authUser?.id ?? '')
               ? undoMySettle
               : undefined}
@@ -3732,7 +3741,9 @@ export default function ChatDetail({
                         </p>
                       </div>
                     )}
-                    {isConfirmedOrComplete && (
+                    {/* Not over a quarantined bill: the server refuses to
+                        post over it, so the form would only fail. */}
+                    {isConfirmedOrComplete && !billSplitQuarantined && (
                       <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                     )}
                   </div>
@@ -3902,13 +3913,16 @@ export default function ChatDetail({
                       {/* "Nobody has paid yet" is the estimate's sentence
                           only. Over a posted bill whose payer has gone it was
                           false twice: somebody paid for the dinner, and rows
-                          under it can be marked paid. */}
+                          under it can be marked paid. A quarantined bill
+                          carries no figure at all, so it says why. */}
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
-                        {billSplitIsEstimate
-                          ? 'Nobody has paid yet. These are estimates from the group budget. Whoever pays can post the real bill.'
-                          : (billSplit.hasPayer === false
-                            ? 'Paid by someone who has deleted their account. There is nobody left to pay here.'
-                            : `Paid by ${billSplit.paidBy?.name || 'a member'}`)}
+                        {billSplitQuarantined
+                          ? 'This bill is from before August 27. Its amounts are no longer shown, and it can no longer be settled here.'
+                          : billSplitIsEstimate
+                            ? 'Nobody has paid yet. These are estimates from the group budget. Whoever pays can post the real bill.'
+                            : (billSplit.hasPayer === false
+                              ? 'Paid by someone who has deleted their account. There is nobody left to pay here.'
+                              : `Paid by ${billSplit.paidBy?.name || 'a member'}`)}
                       </p>
                       <div style={{ borderTop: '1px solid var(--divider)', paddingTop: '8px' }}>
                         {(billSplit.shares || []).map(s => (
@@ -3949,7 +3963,7 @@ export default function ChatDetail({
                       </div>
                     </div>
                     {/* Settle Up button for current user if they owe */}
-                    {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                    {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       /* startSettleUp, declared once above and called by the
                           bill card in the stream as well, so the two copies of
                           this bill cannot behave differently.
@@ -3969,7 +3983,7 @@ export default function ChatDetail({
                         Settle Up{settleUpFigure(billSplit, authUser?.id)}
                       </button>
                     )}
-                    {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                    {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
                           const settled = await settleShare(selectedFlockId);

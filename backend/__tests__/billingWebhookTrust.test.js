@@ -916,7 +916,7 @@ test('a client-supplied premium claim changes nothing a billing route does', asy
     [/FROM user_blocks/, () => ({ rows: [], rowCount: 0 })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }], rowCount: 1 })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 5 }], rowCount: 1 })],
-    [/SELECT id, paid_by(, had_payer)? FROM bill_splits/, () => ({ rows: [], rowCount: 0 })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [], rowCount: 0 })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 99 }], rowCount: 1 })],
   ];
   const res = await fetch(`${base}/api/billing/5/create`, {

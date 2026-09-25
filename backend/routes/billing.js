@@ -194,27 +194,38 @@ function outstandingOn(amount, paidAmount, settled) {
 // every row and `shares` does not, so a hidden row was already countable.
 // GET /:flockId applies the identical rule, because a leak that survives one
 // refresh is not closed.
-//
-// FIGURES NOBODY CAN VOUCH FOR (migration 088). The first versions of the ghost
-// commit wrote the budget's number into any bill the flock had, a posted one
-// included, while that number was still the live, unbanded minimum with no
-// threshold in front of it: one person's exact answer. Such a row can sit on a
-// real bill as an amount, or ride into a later version of it as a credit.
-// bill_split_shares.posted is true only on a row this route wrote from a total
-// somebody typed, carrying no credit from a row that is not posted. Every other
-// row keeps its figures for its own member: the rest of the table gets the row,
-// its name and its flags, and null for its amount, credit and outstanding. It
-// hides a row like a block does, so the total goes with it, for the reason
-// above. `posted` is read strictly: a row that does not say true is not shown.
 // ---------------------------------------------------------------------------
 const NOBODY = new Set();
 
-// Whose eyes a share's figures are for. Its own member always; anyone else
-// only on a posted row. See "Figures nobody can vouch for" above.
-function shareReadableBy(posted, shareUserId, viewerId) {
-  if (posted === true) return true;
-  return viewerId != null && shareUserId != null && Number(shareUserId) === Number(viewerId);
-}
+// ---------------------------------------------------------------------------
+// BILLS FROM BEFORE THE BUDGET SETTLED ONCE (migration 089)
+//
+// Until 2026-08-26 the ghost commit wrote the group budget number into bills as
+// it then stood: the live minimum of the answers, unbanded, and before
+// 2026-08-12 with no threshold, so one answer in it was that person's exact
+// amount. It went into whatever bill the flock had, a posted one included,
+// until 2026-08-13. A figure written that way does not stay in its row: it can
+// be another member's share amount (one person's only answer, as somebody
+// else's share), a credit carried onto a later row, a payment banked against a
+// later split and so the difference between the total and the rows anybody can
+// see, or the settled flag a payer can probe with custom splits. Row-by-row
+// hiding (migration 088) kept finding one more of those.
+//
+// So a bill that existed while that ran, in a flock that could have had a
+// budget, is quarantined whole (bill_splits.quarantined): GET sends its members'
+// names and nothing else, no amount, credit, total, flag or count, to anybody,
+// the share's own member included, and every route that would read one of its
+// figures or carry one forward refuses it with QUARANTINED below, which names
+// no figure. A bill made since carries only figures somebody typed and the
+// published, banded budget number, which is why nothing finer than this is
+// needed for it. `quarantined` is read as a flag the migration set: a bill row
+// that does not say true is an ordinary bill.
+// ---------------------------------------------------------------------------
+const QUARANTINED = {
+  error: 'Bills from before August 27 can no longer be changed or settled in Flock, and their amounts are no longer shown.',
+  code: 'BILL_QUARANTINED',
+};
+const isQuarantined = (billRow) => !!billRow && billRow.quarantined === true;
 
 // One query for the whole member set, not one per recipient: {id -> Set(ids
 // invisible to them)}, both directions of every block.
@@ -235,25 +246,16 @@ async function invisibilityMap(userIds) {
   return map;
 }
 
-// One recipient's copy of a bill: blocked members' rows dropped, rows that are
-// not posted stripped of their figures for anyone but their own member, and
-// the total withheld whenever either happened. `posted` itself never goes on
-// the wire; the client reads a withheld figure as null like any other.
-function billFor(bill, invisible, viewerId) {
-  const hiddenIds = invisible || NOBODY;
+function billFor(bill, invisible) {
+  if (!invisible || invisible.size === 0) return bill;
   const allShares = bill.shares || [];
-  const kept = allShares.filter((s) => !hiddenIds.has(s.userId));
-  let hidesAShare = kept.length !== allShares.length;
-  const shares = kept.map(({ posted, ...share }) => {
-    if (shareReadableBy(posted, share.userId, viewerId)) return share;
-    hidesAShare = true;
-    return { ...share, amount: null, paidAmount: null, outstanding: null };
-  });
+  const shares = allShares.filter((s) => !invisible.has(s.userId));
+  const hidesAShare = shares.length !== allShares.length;
   return {
     ...bill,
     // See the note above: with a share hidden, the total is its difference.
     ...(hidesAShare ? { totalAmount: null, totalWithTip: null } : {}),
-    paidBy: hiddenIds.has(bill.paidBy?.id)
+    paidBy: invisible.has(bill.paidBy?.id)
       ? { id: bill.paidBy.id, name: null }
       : bill.paidBy,
     shares,
@@ -290,7 +292,7 @@ async function emitBillCreated(io, flockId, bill) {
   for (const id of ids) {
     io.to(`user:${id}`).emit('bill_created', {
       flockId,
-      bill: billFor(bill, blocks.get(id) || NOBODY, id),
+      bill: billFor(bill, blocks.get(id) || NOBODY),
     });
   }
   return ids;
@@ -412,10 +414,6 @@ router.post('/:flockId/create',
       // 061) and this map is what feeds it. The reading rule is in the loop
       // that fills it.
       const existingPaidCents = new Map();
-      // Whose carried credit comes from a row that is not posted (migration
-      // 088). The new row that carries it stays unposted, so its figures go to
-      // its own member only. Filled beside existingPaidCents.
-      const creditNotPosted = new Set();
       // Cents that people who are no longer on this split have already handed
       // over. Filled under the flock lock below; spent by the credit block that
       // sits just above the UPSERT, which is where the reasoning lives.
@@ -627,9 +625,16 @@ router.post('/:flockId/create',
         // tells a bill whose payer deleted their account from a shell; the
         // payments rule below reads it.
         const existingBill = await client.query(
-          'SELECT id, paid_by, had_payer FROM bill_splits WHERE flock_id = $1',
+          'SELECT id, paid_by, had_payer, quarantined FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
+        // A quarantined bill (migration 089) is never rewritten: every credit,
+        // banked payment and settled flag a rewrite reads could be carrying a
+        // budget answer the early ghost commit copied in, and the new rows would
+        // hand it on. First, before anything about who may edit it.
+        if (isQuarantined(existingBill.rows[0])) {
+          return refuse(409, QUARANTINED);
+        }
         if (existingBill.rows.length === 0 && payerId !== userId && userId !== flockCreatorId) {
           // Round 6: creating the FIRST bill with someone else as payer let any
           // member assign visible debts in another member's name. Only the
@@ -703,10 +708,7 @@ router.post('/:flockId/create',
             // paid, told nothing, and the payer $75 short with no record of it.
             // money.test.js pins the SELECT list because the fake hands back
             // whatever the fixture holds whether or not the SQL asked for it.
-            // `posted` (migration 088) is load-bearing the same way: it decides
-            // whether a credit carried from this row may be shown to anyone
-            // but its member, and whether the row may be kept as a payment.
-            'SELECT user_id, amount, paid_amount, committed, settled, settled_at, posted FROM bill_split_shares WHERE bill_id = $1',
+            'SELECT user_id, amount, paid_amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
             [existingBill.rows[0].id]
           );
           // A HANDOFF CANNOT CARRY MONEY THAT WAS PAID TO THE PERSON HANDING
@@ -824,21 +826,6 @@ router.post('/:flockId/create',
               // asked to cover. If the row does not already read as "paid this
               // much, nothing outstanding" it is restated below so that it
               // does; the reason is with the credit block.
-              //
-              // NOT A ROW THIS ROUTE CANNOT VOUCH FOR (migration 088). Banking
-              // a payment takes it off the total the rest divide, so it can be
-              // read back out of any one share by whoever knows the total, and
-              // the person posting knows it because they typed it. A row that
-              // is not posted may be one the first ghost commit wrote, holding
-              // somebody's exact budget answer (see "Figures nobody can vouch
-              // for"). Its payment stays on a share of its own member's or
-              // stays where it is; it is never spread across everybody else's.
-              if (paidCents > 0 && row.posted !== true) {
-                return refuse(409, {
-                  error: 'Someone who is not in this split has already paid toward this bill, and that payment has to stay with their own share. Include them in the split, or leave the bill as it is.',
-                  code: 'PAYMENT_OUTSIDE_SPLIT',
-                });
-              }
               if (paidCents > 0) {
                 retainedPaidCents += paidCents;
                 if (!rowSettled || paidCents !== amountCents) {
@@ -849,9 +836,6 @@ router.post('/:flockId/create',
             }
             if (rowSettled) existingSettled.set(row.user_id, row.settled_at || new Date());
             if (paidCents > 0) existingPaidCents.set(row.user_id, paidCents);
-            // A credit is only as vouched for as the row it came from, so the
-            // new row that carries it is posted only if this one was.
-            if (paidCents > 0 && row.posted !== true) creditNotPosted.add(row.user_id);
           }
         }
 
@@ -1065,15 +1049,10 @@ router.post('/:flockId/create',
           share.committed = wasCommitted;
           share.paidAmount = carriedCents / 100;
           share.outstanding = share.settled ? 0 : (newCents - carriedCents) / 100;
-          // Posted (migration 088): this route divided the amount from a total
-          // somebody typed. Unless the credit it carries came from a row that
-          // was not posted, in which case the row is no more vouched for than
-          // that one, and keeps its figures for its own member.
-          share.posted = !(carriedCents > 0 && creditNotPosted.has(share.userId));
           await client.query(
-            `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at, paid_amount, posted)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [billId, share.userId, share.amount, wasCommitted, share.settled, settledAt, share.paidAmount, share.posted]
+            `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at, paid_amount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [billId, share.userId, share.amount, wasCommitted, share.settled, settledAt, share.paidAmount]
           );
         }
 
@@ -1113,9 +1092,6 @@ router.post('/:flockId/create',
           outstanding: s.outstanding,
           settled: !!s.settled,
           committed: !!s.committed,
-          // Read by billFor to decide whose eyes these figures are for, and
-          // stripped by it: it never goes on the wire.
-          posted: s.posted === true,
         };
       });
 
@@ -1157,6 +1133,9 @@ router.post('/:flockId/create',
         // And never an estimate, for the same reason: this route just stored
         // a payer. Same shape as GET /:flockId.
         estimate: false,
+        // Nor quarantined: a quarantined bill is refused before anything is
+        // written (migration 089).
+        quarantined: false,
         paidBy: { id: payerId, name: payer?.name || 'Unknown' },
         fullySettled: shareCount > 0 && settledCount === shareCount,
         settledCount,
@@ -1173,7 +1152,7 @@ router.post('/:flockId/create',
       // blocked member's name once and then have it vanish on the next GET.
       // `bill` itself stays whole for the fan-out below, which needs the full
       // set to build each member's own view.
-      res.status(201).json({ bill: billFor(bill, invisibleToCreator, userId) });
+      res.status(201).json({ bill: billFor(bill, invisibleToCreator) });
 
       const io = req.app.get('io');
       // Per-member fan-out, membership re-read at emit time, and one payload
@@ -1300,6 +1279,47 @@ router.get('/:flockId',
       // posted stays an estimate, the side on which the budget rule holds.
       const hasPayer = bill.paid_by !== null && bill.paid_by !== undefined;
       const estimate = !hasPayer && bill.had_payer !== true;
+      const visibleRows = sharesResult.rows.filter((s) => !invisible.has(s.user_id));
+      const payerShown = { id: bill.paid_by, name: invisible.has(bill.paid_by) ? null : bill.payer_name };
+
+      // A QUARANTINED BILL (migration 089; see "Bills from before the budget
+      // settled once" above) goes out as who is on it and nothing more. No
+      // amount, credit or outstanding on any row, the share's own member's
+      // included, since their row may hold somebody else's answer; no settled
+      // flag, which a payer could once probe; no total, tip or split, which
+      // subtract back to a banked payment; and no counts, which are made of
+      // the settled flags. The client draws it as a bill whose amounts are no
+      // longer shown, with nothing to settle.
+      if (isQuarantined(bill)) {
+        return res.json({
+          bill: {
+            id: bill.id,
+            flockId: bill.flock_id,
+            quarantined: true,
+            totalAmount: null,
+            tipPercent: null,
+            totalWithTip: null,
+            splitType: null,
+            hasPayer,
+            estimate,
+            paidBy: payerShown,
+            fullySettled: null,
+            settledCount: null,
+            shareCount: null,
+            shares: visibleRows.map((s) => ({
+              userId: s.user_id,
+              name: s.name,
+              amount: null,
+              paidAmount: null,
+              outstanding: null,
+              committed: null,
+              settled: null,
+              settledAt: null,
+            })),
+            createdAt: bill.created_at,
+          },
+        });
+      }
 
       // A shell's numbers ARE the budget ceiling: ghost-commit writes the
       // banded ceiling into every share and ceiling * memberCount into the
@@ -1313,46 +1333,36 @@ router.get('/:flockId',
       // shell left from before one) shows no estimate at all.
       //
       // AND WHAT IT SHOWS IS THE NUMBER BEING PUBLISHED, NOT THE ONE A ROW
-      // STORED. A stored figure is only as good as the day it was written, and
-      // the first ghost commits copied the cached column while it was still the
-      // live, unbanded minimum with no threshold in front of it (migration
-      // 088), so an old shell can hold one person's exact answer in every row
-      // and that answer times the head count in its total. Every row of an
-      // estimate reads the published number, and the total, which no screen
-      // draws for an estimate, is not sent.
+      // STORED. A row keeps whatever number was published when its member
+      // committed, and a shell left from before a reset of the budget can
+      // still hold the old one beside a new number. Every row of an estimate
+      // reads the number published now, and the total, the number times a
+      // head count that no screen draws for an estimate, is not sent. (A shell
+      // from before the budget settled once holds worse than an old number,
+      // and is quarantined above.)
       //
       // Only estimates are gated this way. A bill somebody rang up holds what
       // they actually spent, which is not a budget submission and is not the
       // ceiling's to withhold, and that stays true after its payer deletes
       // their account. Gating every payerless bill blanked that dinner's
       // total and every share whenever the budget was open, reset or never
-      // on at all. What a posted bill withholds is row by row, below.
+      // on at all.
       let published = null;
       if (estimate) {
         published = await shownCeiling((q, p) => pool.query(q, p), flockId);
       }
-      // A POSTED BILL, ROW BY ROW (migration 088; see "Figures nobody can
-      // vouch for" above). A row this route did not write from a typed total,
-      // or that carries a credit from one, keeps its figures for its own
-      // member, on a bill with a payer and on one whose payer has gone alike.
-      const readable = (s) => shareReadableBy(s.posted, s.user_id, userId);
-      const visibleRows = sharesResult.rows.filter((s) => !invisible.has(s.user_id));
       // The block rule on the total (see "Blocks on the bill" above): with a
       // share hidden from this viewer the total is that share's difference,
-      // so it is withheld rather than shrunk. A row whose figures are withheld
-      // hides its share just the same.
-      const hidesAShare = visibleRows.length !== sharesResult.rows.length
-        || (!estimate && visibleRows.some((s) => !readable(s)));
+      // so it is withheld rather than shrunk.
+      const hidesAShare = visibleRows.length !== sharesResult.rows.length;
       const showTotals = !estimate && !hidesAShare;
-      const WITHHELD = { amount: null, paidAmount: null, outstanding: null };
       const figuresOf = (s) => {
         if (estimate) {
-          if (published == null) return WITHHELD;
+          if (published == null) return { amount: null, paidAmount: null, outstanding: null };
           // No credit on an estimate: only /create writes paid_amount, and a
           // bill it wrote is not an estimate.
           return { amount: published, paidAmount: 0, outstanding: outstandingOn(published, 0, s.settled) };
         }
-        if (!readable(s)) return WITHHELD;
         return {
           amount: parseFloat(s.amount),
           // The credit carried from earlier versions of this bill and what is
@@ -1380,10 +1390,9 @@ router.get('/:flockId',
           // clients ignore it and read every payerless bill as an estimate,
           // as they always did.
           estimate,
-          paidBy: {
-            id: bill.paid_by,
-            name: invisible.has(bill.paid_by) ? null : bill.payer_name,
-          },
+          // See the quarantine branch above; this bill is not one.
+          quarantined: false,
+          paidBy: payerShown,
           // Settled-ness over EVERY share, before the visibility filter below.
           // The client used to decide "All settled up" from the shares it could
           // see, and a viewer who has blocked a member sees one fewer row, so
@@ -1490,10 +1499,13 @@ router.post('/:flockId/settle',
       try {
         await client.query('BEGIN');
         await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        // Nor on a quarantined bill (migration 089): its settled flags are
+        // withheld from everybody, and a settle would be one more figure
+        // moving on a bill whose figures may not move.
         updateResult = await client.query(
           `UPDATE bill_split_shares SET settled = true, settled_at = NOW()
            WHERE bill_id = $1 AND user_id = $2 AND settled IS NOT TRUE
-             AND EXISTS (SELECT 1 FROM bill_splits WHERE id = $1 AND paid_by IS NOT NULL)
+             AND EXISTS (SELECT 1 FROM bill_splits WHERE id = $1 AND paid_by IS NOT NULL AND quarantined IS NOT TRUE)
            RETURNING *`,
           [billId, userId]
         );
@@ -1509,7 +1521,7 @@ router.post('/:flockId/settle',
         // Only reached on the path where nothing was written, so the ordinary
         // settle is still two queries.
         const existing = await pool.query(
-          `SELECT bss.settled, bs.paid_by
+          `SELECT bss.settled, bs.paid_by, bs.quarantined
              FROM bill_split_shares bss
              JOIN bill_splits bs ON bs.id = bss.bill_id
             WHERE bss.bill_id = $1 AND bss.user_id = $2`,
@@ -1517,6 +1529,11 @@ router.post('/:flockId/settle',
         );
         if (existing.rows.length === 0) {
           return res.status(404).json({ error: 'No share found for you on this bill' });
+        }
+        // First, so the answer says nothing about the flag it is withholding:
+        // not "already settled", not "nobody to pay".
+        if (isQuarantined(existing.rows[0])) {
+          return res.status(409).json(QUARANTINED);
         }
         if (existing.rows[0].paid_by == null) {
           // The way out of both no-payer states is the same, so the message
@@ -1612,17 +1629,10 @@ router.post('/:flockId/settle',
           // credited to it from an earlier version of the bill, which is the
           // figure the payer has to look for in their payment app. The row
           // came back from RETURNING * already marked settled, so the
-          // outstanding is asked for as it stood before the UPDATE.
-          //
-          // Only a posted row's figure (migration 088). The payer is not this
-          // row's member, and a row that is not posted may hold a figure the
-          // first ghost commit copied out of the budget; its figures go to its
-          // own member and nobody else, a notification included. The push then
-          // names who says they paid without an amount.
+          // outstanding is asked for as it stood before the UPDATE. (A
+          // quarantined bill never gets here: the UPDATE above refuses it.)
           const settledRow = updateResult.rows[0] || {};
-          const amount = settledRow.posted === true
-            ? outstandingOn(settledRow.amount, settledRow.paid_amount, false)
-            : Number.NaN;
+          const amount = outstandingOn(settledRow.amount, settledRow.paid_amount, false);
           // Nobody is told they paid themselves back, and a bill with no
           // recorded payer has nobody to tell.
           if (payerId && Number(payerId) !== Number(userId)) {
@@ -1732,12 +1742,18 @@ router.post('/:flockId/unsettle',
           return res.status(403).json({ error: 'You are not a member of this flock' });
         }
         const billResult = await client.query(
-          'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
+          'SELECT id, paid_by, quarantined FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
         if (billResult.rows.length === 0) {
           await client.query('ROLLBACK');
           return res.status(404).json({ error: 'No bill found for this flock' });
+        }
+        // A quarantined bill's flags do not move either way (migration 089),
+        // and the refusal comes before anything that would say what they are.
+        if (isQuarantined(billResult.rows[0])) {
+          await client.query('ROLLBACK');
+          return res.status(409).json(QUARANTINED);
         }
         billId = billResult.rows[0].id;
         payerId = billResult.rows[0].paid_by;
@@ -1950,9 +1966,17 @@ router.post('/:flockId/ghost-commit',
         // Create or find placeholder bill
         let billId;
         const existingBill = await client.query(
-          'SELECT id, paid_by, had_payer FROM bill_splits WHERE flock_id = $1',
+          'SELECT id, paid_by, had_payer, quarantined FROM bill_splits WHERE flock_id = $1',
           [flockId]
         );
+
+        // A quarantined bill takes no new commitment (migration 089): even a
+        // shell from then holds figures that are never shown again, and a
+        // commitment is one more row on it.
+        if (isQuarantined(existingBill.rows[0])) {
+          await client.query('ROLLBACK');
+          return res.status(409).json(QUARANTINED);
+        }
 
         if (existingBill.rows.length > 0) {
           // A ghost commit is a pre-commitment made BEFORE anyone has paid, so
@@ -2081,7 +2105,7 @@ router.get('/:flockId/venmo-link',
 
       // Get the bill
       const billResult = await pool.query(
-        `SELECT bs.id, bs.paid_by, bs.flock_id, f.name AS flock_name
+        `SELECT bs.id, bs.paid_by, bs.flock_id, f.name AS flock_name, bs.quarantined
          FROM bill_splits bs
          JOIN flocks f ON f.id = bs.flock_id
          WHERE bs.flock_id = $1`,
@@ -2091,6 +2115,9 @@ router.get('/:flockId/venmo-link',
         return res.status(404).json({ error: 'No bill found for this flock' });
       }
       const bill = billResult.rows[0];
+      // The link carries the caller's own share, and on a quarantined bill
+      // (migration 089) that row can hold somebody else's budget answer.
+      if (isQuarantined(bill)) return res.status(409).json(QUARANTINED);
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
       if (noPayerRefusal(res, bill.paid_by)) return;
 
@@ -2186,7 +2213,7 @@ router.get('/:flockId/payment-links',
 
       // Get the bill
       const billResult = await pool.query(
-        `SELECT bs.id, bs.paid_by, bs.flock_id, f.name AS flock_name
+        `SELECT bs.id, bs.paid_by, bs.flock_id, f.name AS flock_name, bs.quarantined
          FROM bill_splits bs
          JOIN flocks f ON f.id = bs.flock_id
          WHERE bs.flock_id = $1`,
@@ -2196,6 +2223,9 @@ router.get('/:flockId/payment-links',
         return res.status(404).json({ error: 'No bill found for this flock' });
       }
       const bill = billResult.rows[0];
+      // The link carries the caller's own share, and on a quarantined bill
+      // (migration 089) that row can hold somebody else's budget answer.
+      if (isQuarantined(bill)) return res.status(409).json(QUARANTINED);
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
       if (noPayerRefusal(res, bill.paid_by)) return;
 

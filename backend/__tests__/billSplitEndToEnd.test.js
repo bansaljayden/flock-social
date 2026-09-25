@@ -391,7 +391,7 @@ test('a settled flag on a payerless shell is not carried onto the real bill', as
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     // The shell: a bill row exists and nobody has claimed it.
-    [/SELECT id, paid_by(, had_payer)? FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: null }] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: null }] })],
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({
       rows: [
         { user_id: 2, committed: true, settled: true, settled_at: 'earlier' }, // Ben settled the estimate
@@ -421,9 +421,7 @@ test('a settled flag on a payerless shell is not carried onto the real bill', as
 // 3. Settling twice
 // ═══════════════════════════════════════════════════════════════════════════
 
-// `posted` is the settled row's migration 088 flag, as RETURNING * hands it
-// back: true for a row POST /create wrote, which is every row here but one.
-function scriptSettle({ updated, posted = true }) {
+function scriptSettle({ updated }) {
   handlers = [
     // The settle now serialises against POST /:flockId/create on the flock row,
     // because one statement was not enough: /create reads the shares, then
@@ -432,7 +430,7 @@ function scriptSettle({ updated, posted = true }) {
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
-    [/UPDATE bill_split_shares SET settled = true/, () => ({ rows: updated ? [{ id: 1, amount: '12.50', posted }] : [] })],
+    [/UPDATE bill_split_shares SET settled = true/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
     [/SELECT bss\.settled, bs\.paid_by/, () => ({ rows: [{ settled: true, paid_by: 2 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
     // The tally over every row, after the write; both rows settled here, so
@@ -526,7 +524,7 @@ function scriptUnsettle({ paidBy = 2, updated = true, existing = { settled: true
     // between was committed, acknowledged, pushed - and then erased.
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
-    [/SELECT id, paid_by FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: paidBy }] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: paidBy }] })],
     [/UPDATE bill_split_shares SET settled = false/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
     [/SELECT settled, .*FROM bill_split_shares/, () => ({ rows: existing ? [existing] : [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
@@ -647,12 +645,10 @@ function scriptCreate(members, { existingBill = null, existingShares = [] } = {}
     [/SELECT u\.id, u\.name FROM flock_members fm/, () => ({ rows: members })],
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
-    [/SELECT id, paid_by(, had_payer)? FROM bill_splits WHERE flock_id/, () => ({ rows: existingBill ? [existingBill] : [] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits WHERE flock_id/, () => ({ rows: existingBill ? [existingBill] : [] })],
     // Only read when a bill is already on the table. Loose on the column list
-    // on purpose: money.test.js is where the SELECT itself is pinned. Every
-    // fixture row is one POST /create wrote, so it reads back posted
-    // (migration 088) unless the fixture says otherwise.
-    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares.map((r) => ({ posted: true, ...r })) })],
+    // on purpose: money.test.js is where the SELECT itself is pinned.
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     // A payer change clears the former payer's artifact flag before the
     // DELETEs read the row; see the credit loop in routes/billing.js.
@@ -760,27 +756,24 @@ test('what a member who left already paid comes off the total, so the sheet stil
   assert.strictEqual(cents, 12000, `the bill's rows come to ${cents} cents against a $120 total`);
 });
 
-test('a payment on a row that is not posted is never banked against the split', async () => {
-  // Migration 088. Banking a payment takes it off the total the rest divide,
-  // so any one share hands it back to whoever knows the total, and the person
-  // posting typed it. On a row POST /create did not write from a typed total
-  // it may be the raw budget minimum the first ghost commit copied in, so the
-  // edit is refused, the refusal names no figure, and nothing is written.
+test('a quarantined bill is never rewritten, and its shares are not even read', async () => {
+  // Migration 089. Every credit, banked payment and settled flag a rewrite
+  // reads could carry a budget answer an early ghost commit copied in, so
+  // the refusal comes straight after the bill row, names no figure, and
+  // nothing is written.
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
   scriptCreate([{ id: 1, name: 'Ava' }, { id: 3, name: 'Carol' }], {
-    existingBill: { id: 7, paid_by: 1 },
+    existingBill: { id: 7, paid_by: 1, quarantined: true },
     existingShares: [
-      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '25.00' },
-      { user_id: 2, committed: true, settled: true, settled_at: new Date(), amount: '47.13', posted: false },
-      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '25.00' },
+      { user_id: 2, committed: true, settled: true, settled_at: new Date(), amount: '47.13' },
     ],
   });
   const res = await call('POST', '/api/billing/42/create', { totalAmount: 120, tipPercent: 0 });
   assert.strictEqual(res.status, 409, res.text);
-  assert.strictEqual(res.body.code, 'PAYMENT_OUTSIDE_SPLIT');
-  assert.ok(!res.text.includes('47.13'), res.text);
-  assert.ok(!log.some((q) => /INSERT INTO bill_split_shares|DELETE FROM bill_split_shares|INSERT INTO bill_splits/.test(q.sql)),
-    'a refused edit wrote something');
+  assert.strictEqual(res.body.code, 'BILL_QUARANTINED');
+  assert.ok(!/\$|47\.13/.test(res.body.error), res.text);
+  assert.ok(!log.some((q) => /FROM bill_split_shares/.test(q.sql)), 'the shares were read');
+  assert.ok(!log.some((q) => /INSERT INTO|DELETE FROM|UPDATE bill_split/.test(q.sql)), 'a refused edit wrote something');
   assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)));
 });
 
@@ -822,9 +815,9 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
     })],
     [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
       rows: [
-        { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now', posted: true },
-        { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null, posted: true },
-        { user_id: 3, name: 'Cy', amount: '20.00', paid_amount: '50.00', committed: false, settled: true, settled_at: 'then', posted: true },
+        { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now' },
+        { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null },
+        { user_id: 3, name: 'Cy', amount: '20.00', paid_amount: '50.00', committed: false, settled: true, settled_at: 'then' },
       ],
     })],
     noBlocks,
@@ -841,46 +834,46 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
   assert.strictEqual(res.body.bill.fullySettled, false);
 });
 
-test('GET /:flockId keeps a row that is not posted to its own member, and the total with it', async () => {
-  // Migration 088. A row POST /create did not write from a typed total may be
-  // one the first ghost commit wrote: the raw budget minimum, one person's
-  // exact answer. Its figures go to its own member; to everybody else the row
-  // is there with no figures, and so is the bill with no total, because the
-  // total less the rows they can see is the row they cannot. A row that does
-  // not say posted: true is read as not posted.
+test('GET /:flockId sends a quarantined bill as who is on it and nothing more, to every member alike', async () => {
+  // Migration 089. The figures a quarantined bill holds may be a budget answer
+  // an early ghost commit copied in, on any row, the viewer's own included, so
+  // no amount, credit, total, tip, split, flag or count goes out, and the
+  // budget's gate is not even asked. Names and the payer are not figures.
   const shares = [
-    { user_id: 1, name: 'Ava', amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now', posted: true },
-    { user_id: 2, name: 'Ben', amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null, posted: true },
-    { user_id: 3, name: 'Cy', amount: '47.13', paid_amount: '0.00', committed: true, settled: false, settled_at: null },
+    { user_id: 1, name: 'Ava', amount: '30.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now' },
+    { user_id: 2, name: 'Ben', amount: '30.00', paid_amount: '0.00', committed: false, settled: false, settled_at: null },
+    { user_id: 3, name: 'Cy', amount: '47.13', paid_amount: '0.00', committed: true, settled: true, settled_at: 'then' },
   ];
-  const script = () => [
-    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
-    [/SELECT bs\.\*, u\.name AS payer_name/, () => ({
-      rows: [{
-        id: 7, flock_id: 42, total_amount: '60.00', tip_percent: '0.0',
-        split_type: 'equal', paid_by: 1, had_payer: true, payer_name: 'Ava', created_at: 'now',
-      }],
-    })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({ rows: shares })],
-    noBlocks,
-  ];
-  for (const viewer of [1, 2]) {
-    CURRENT_USER = { id: viewer, name: viewer === 1 ? 'Ava' : 'Ben', role: 'user' };
-    handlers = script();
+  for (const viewer of [1, 2, 3]) {
+    CURRENT_USER = { id: viewer, name: ['Ava', 'Ben', 'Cy'][viewer - 1], role: 'user' };
+    handlers = [
+      [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
+      [/SELECT bs\.\*, u\.name AS payer_name/, () => ({
+        rows: [{
+          id: 7, flock_id: 42, total_amount: '107.13', tip_percent: '15.0', split_type: 'custom',
+          paid_by: 1, had_payer: true, quarantined: true, payer_name: 'Ava', created_at: '2026-08-20',
+        }],
+      })],
+      [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({ rows: shares })],
+      noBlocks,
+    ];
     const res = await call('GET', '/api/billing/42');
     assert.strictEqual(res.status, 200, res.text);
-    const cy = res.body.bill.shares.find((s) => s.userId === 3);
-    assert.deepStrictEqual([cy.amount, cy.paidAmount, cy.outstanding], [null, null, null]);
-    assert.strictEqual(cy.committed, true, 'the row is still described');
-    assert.deepStrictEqual([res.body.bill.totalAmount, res.body.bill.totalWithTip], [null, null]);
-    assert.ok(!res.text.includes('47.13'), res.text);
-    assert.strictEqual(res.body.bill.shares.find((s) => s.userId === 2).amount, 30);
+    const b = res.body.bill;
+    assert.strictEqual(b.quarantined, true);
+    assert.deepStrictEqual(
+      [b.totalAmount, b.totalWithTip, b.tipPercent, b.splitType, b.fullySettled, b.settledCount, b.shareCount],
+      [null, null, null, null, null, null, null]
+    );
+    assert.deepStrictEqual(b.shares.map((s) => s.name), ['Ava', 'Ben', 'Cy']);
+    for (const s of b.shares) {
+      assert.deepStrictEqual([s.amount, s.paidAmount, s.outstanding, s.committed, s.settled, s.settledAt],
+        [null, null, null, null, null, null], `viewer ${viewer} read ${s.name}'s row`);
+    }
+    assert.deepStrictEqual(b.paidBy, { id: 1, name: 'Ava' });
+    assert.ok(!/47\.13|107\.13|"settled":true/.test(res.text), res.text);
+    assert.ok(!log.some((q) => /AS shown/.test(q.sql)), 'the budget was asked about a quarantined bill');
   }
-  CURRENT_USER = { id: 3, name: 'Cy', role: 'user' };
-  handlers = script();
-  const own = await call('GET', '/api/billing/42');
-  assert.strictEqual(own.body.bill.shares.find((s) => s.userId === 3).amount, 47.13, 'its own member reads it');
-  assert.strictEqual(own.body.bill.totalWithTip, 60, 'nothing is hidden from its own member');
 });
 
 test('the 201 body and the bill_created payload carry the three tallies GET carries', async () => {
@@ -993,18 +986,22 @@ test('the paid-back notification reports a claim and names who made it', async (
   assert.ok(/\$12\.50/.test(paid.body), 'and the figure they have to check against is in it');
 });
 
-test('the paid-back notification carries no figure from a row that is not posted', async () => {
-  // Migration 088. The payer is not that row's member, and a row POST /create
-  // did not write from a typed total may hold the raw budget minimum the first
-  // ghost commit copied into it. The claim still reaches them, without it.
-  scriptSettle({ updated: true, posted: false });
-  await call('POST', '/api/billing/42/settle');
+test('a settle on a quarantined bill is refused before anything says whether the share was settled, and nobody is told', async () => {
+  // Migration 089. The UPDATE's own condition refuses a quarantined bill, and
+  // the answer to that no-op is the quarantine, not "already settled", which
+  // would be the very flag the bill withholds.
+  scriptSettle({ updated: false });
+  handlers = handlers.map(([re, fn]) => (String(re) === String(/SELECT bss\.settled, bs\.paid_by/)
+    ? [re, () => ({ rows: [{ settled: true, paid_by: 2, quarantined: true }] })]
+    : [re, fn]));
+  const res = await call('POST', '/api/billing/42/settle');
   await drain();
-
-  const paid = pushCalls.find((p) => p.data.type === 'bill_settled');
-  assert.ok(paid, 'the payer still hears that somebody says they paid');
-  assert.match(paid.body, /says they paid you for /i);
-  assert.ok(!/\$/.test(paid.body), `a figure went to the payer: ${paid.body}`);
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'BILL_QUARANTINED');
+  assert.ok(!('alreadySettled' in res.body), res.text);
+  assert.strictEqual(pushCalls.filter((p) => p.data.type === 'bill_settled').length, 0);
+  const update = log.find((q) => /UPDATE bill_split_shares SET settled = true/.test(q.sql));
+  assert.match(update.sql, /quarantined IS NOT TRUE/, 'the UPDATE itself refuses a quarantined bill');
 });
 
 test('the settle-up refusals point at the way out instead of stopping dead', async () => {
@@ -1169,7 +1166,7 @@ test('unsettle reads membership and the payer under the lock, on the writing con
   const begin = first(/^BEGIN/);
   const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
   const member = first(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/);
-  const bill = first(/SELECT id, paid_by FROM bill_splits/);
+  const bill = first(/SELECT id, paid_by\b.*FROM bill_splits/);
   const update = first(/UPDATE bill_split_shares SET settled = false/);
   assert.ok(begin >= 0 && begin < lock, 'the lock is taken inside the transaction');
   assert.ok(lock < member, 'membership is read after the lock');
@@ -1219,7 +1216,7 @@ test('ghost-commit reads membership, mode, threshold and count after the lock', 
       () => ({ rows: [{ budget_ceiling: 30, budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM/, () => ({ rows: [{ n: 3 }] })],
     [/SELECT COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
-    [/SELECT id, paid_by, had_payer FROM bill_splits/, () => ({ rows: [] })],
+    [/SELECT id, paid_by\b.*FROM bill_splits/, () => ({ rows: [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7, paid_by: null }] })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] })],

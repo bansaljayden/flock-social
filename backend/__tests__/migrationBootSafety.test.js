@@ -1227,7 +1227,9 @@ test('087 gives each reply 083 gave out to the owner who could have written it, 
 // table: the column gone, the shares as they stood, then the chain. The replay
 // records 088 again and must move nothing, including rows written after 088
 // by the rules that set the column directly, and a database that has lost the
-// column heals on the next boot.
+// column heals on the next boot. (089 retired the column: nothing reads or
+// writes it now, and this section pins what 088 itself does, since it stays
+// in the chain until a later file drops the column.)
 
 const SHARE_POSTED_088 = '088_bill_share_posted.sql';
 
@@ -1304,6 +1306,82 @@ test('088 posts only the shares nobody committed on, once, and a lost column hea
   for (const r of await rows()) assert.equal(r.posted, r.committed !== true);
 
   await pool.query(`DELETE FROM users WHERE email LIKE '%088@example.com'`);
+});
+
+// ---------------------------------------------------------------------------
+// 12. 089, AND THE BILLS FROM BEFORE THE BUDGET SETTLED ONCE.
+// ---------------------------------------------------------------------------
+//
+// 089 adds bill_splits.quarantined and sets it on every bill made before
+// 2026-08-27 04:00 UTC in a flock that could have had a budget: the flag is
+// not false, or an answer is on record. This is the deploy on a populated
+// table. The replay records 089 again and must move nothing, because the
+// cut-off is a constant and a bill made since is never older than it, and a
+// database that has lost the column heals on the next boot.
+
+const QUARANTINE_089 = '089_bill_quarantine.sql';
+
+test('089 quarantines exactly the bills from before the cut-off in a flock that could have had a budget, once, and a lost column heals', async () => {
+  await pool.query('ALTER TABLE bill_splits DROP COLUMN IF EXISTS quarantined');
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [QUARANTINE_089]);
+
+  const owner = await insertUser('owner089@example.com', 'Owner 089');
+  const flock = async (name, budgetEnabled) => (await pool.query(
+    'INSERT INTO flocks (name, creator_id, budget_enabled) VALUES ($1, $2, $3) RETURNING id',
+    [name, owner, budgetEnabled]
+  )).rows[0].id;
+  const bill = async (flockId, createdAt) => (await pool.query(
+    "INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, created_at) VALUES ($1, 90, 'equal', $2, 0, $3) RETURNING id",
+    [flockId, owner, createdAt]
+  )).rows[0].id;
+  const LEGACY = '2026-08-20T20:00:00Z';
+  const ids = {
+    legacy: await bill(await flock('Legacy 089', true), LEGACY),
+    lastSecond: await bill(await flock('Edge 089', true), '2026-08-27T03:59:59Z'),
+    atCutoff: await bill(await flock('Cutoff 089', true), '2026-08-27T04:00:00Z'),
+    noBudget: await bill(await flock('Plain 089', false), LEGACY),
+    nullFlag: await bill(await flock('Null 089', null), LEGACY),
+  };
+  const answered = await flock('Answered 089', false);
+  await pool.query('INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1, $2, 40, false)', [answered, owner]);
+  ids.answerOnRecord = await bill(answered, LEGACY);
+  const flags = async () => Object.fromEntries(await Promise.all(Object.entries(ids).map(
+    async ([k, id]) => [k, (await pool.query('SELECT quarantined FROM bill_splits WHERE id = $1', [id])).rows[0].quarantined]
+  )));
+
+  await migrate(pool); // the deploy: must not throw
+
+  assert.deepEqual(await flags(), {
+    legacy: true, lastSecond: true, atCutoff: false, noBudget: false, nullFlag: true, answerOnRecord: true,
+  });
+  const { rows: [col] } = await pool.query(
+    `SELECT attnotnull, pg_get_expr(d.adbin, d.adrelid) AS def
+       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = 'bill_splits'::regclass AND a.attname = 'quarantined'`
+  );
+  assert.deepEqual([col.attnotnull, col.def], [true, 'false'], 'a new bill must start outside the quarantine');
+
+  // A bill made after 089, in a budget flock, and then the replay.
+  ids.later = await bill(await flock('Later 089', true), new Date().toISOString());
+  const everyRow = async () => (await pool.query(
+    'SELECT id, quarantined FROM bill_splits WHERE id = ANY($1::int[]) ORDER BY id', [Object.values(ids)]
+  )).rows;
+  const before = await everyRow();
+  assert.equal(before.find((r) => r.id === ids.later).quarantined, false);
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [QUARANTINE_089]);
+  await migrate(pool);
+  assert.deepEqual(await everyRow(), before, 'a second pass of 089 moved a row');
+  assert.equal(await migrationRowCount(QUARANTINE_089), 1);
+
+  // And @requires: a database that loses the column heals on the next boot,
+  // with the same bills in quarantine.
+  await pool.query('ALTER TABLE bill_splits DROP COLUMN quarantined');
+  await migrate(pool);
+  assert.ok(await columnExists('bill_splits', 'quarantined'), 'the column was not restored');
+  assert.equal(await migrationRowCount(QUARANTINE_089), 1);
+  assert.deepEqual(await everyRow(), before);
+
+  await pool.query(`DELETE FROM users WHERE email LIKE '%089@example.com'`);
 });
 
 test('every migration file declares post-conditions the runner can actually parse', async () => {

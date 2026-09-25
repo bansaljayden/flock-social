@@ -59,7 +59,9 @@ test('the bill form opens over a payerless shell, which is the state it is for',
   // form on `!billSplit` therefore shut it permanently at the first commit, and
   // ghost mode defaults on for any budget flock, so whoever actually paid had
   // nowhere in the app to post the bill the sheet was asking them for.
-  expect(chat).toMatch(/const billSplitIsShell = !!billSplit && billSplit\.hasPayer === false;/);
+  // A quarantined bill (migration 089) is the one payerless bill it does not
+  // open over: the server refuses to post over it.
+  expect(chat).toMatch(/const billSplitIsShell = !!billSplit && billSplit\.hasPayer === false && !billSplitQuarantined;/);
   expect(chat).toMatch(/\{showCreateBill && \(!billSplit \|\| billSplitIsShell\) && \(/);
   // `!moneyError &&` leads it now: null also means "the read failed", and that
   // form rewrites a live bill through ON CONFLICT DO UPDATE, so it must not be
