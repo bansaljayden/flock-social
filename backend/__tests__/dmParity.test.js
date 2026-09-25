@@ -13,8 +13,11 @@ test('both DM reaction routes tell both sides live, as the socket path does', ()
   assert.match(add, /io\.to\(`user:\$\{counterpart\}`\)\.emit\('dm_reaction_added', payload\);/);
   assert.match(add, /io\.to\(`user:\$\{req\.user\.id\}`\)\.emit\('dm_reaction_added', payload\);/);
   const del = src.slice(src.indexOf("router.delete('/dm/messages/:id/react/:emoji'"), src.indexOf("router.get('/dm/:userId/venue-votes'"));
-  assert.match(del, /let counterpart = null;/);
-  assert.match(del, /emit\('dm_reaction_removed', payload\)/);
+  // The counterpart is derived from the message row, for a caller who is one
+  // of its two parties; anybody else has been answered 404 before this line.
+  assert.match(del, /const counterpart = dm\.rows\[0\]\.sender_id === req\.user\.id \? dm\.rows\[0\]\.receiver_id : dm\.rows\[0\]\.sender_id;/);
+  assert.match(del, /io\.to\(`user:\$\{counterpart\}`\)\.emit\('dm_reaction_removed', payload\);/);
+  assert.match(del, /io\.to\(`user:\$\{req\.user\.id\}`\)\.emit\('dm_reaction_removed', payload\);/);
 });
 
 test('opening a DM resyncs the app badge, as opening a flock chat does', () => {

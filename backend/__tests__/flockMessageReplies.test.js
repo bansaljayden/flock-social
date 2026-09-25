@@ -147,7 +147,7 @@ const emitTo = (io, userId) => flockEmits(io).find((e) => e.room === `user:${use
 
 test('a reply stores reply_to_id on the flock message', async () => {
   const { socket } = connect();
-  scriptFlockSend({ replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo' } });
+  scriptFlockSend({ replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
 
   await fire(socket, 'send_message', { flockId: 3, message_text: 'yes', reply_to_id: 400 });
 
@@ -187,7 +187,7 @@ test('a reply to a message in ANOTHER flock is refused, and nothing is stored', 
 
 test('the reply lookup is scoped by flock_id, not by id alone', async () => {
   const { socket } = connect();
-  scriptFlockSend({ replyRow: { id: 400, message_text: 'x', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo' } });
+  scriptFlockSend({ replyRow: { id: 400, message_text: 'x', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
 
   await fire(socket, 'send_message', { flockId: 3, message_text: 'ok', reply_to_id: 400 });
 
@@ -216,11 +216,13 @@ test('a reply target that is not an id at all says so instead of vanishing', asy
 
 test('the quote carries four display fields and never the sender id', async () => {
   const { io, socket } = connect();
-  scriptFlockSend({ replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo' } });
+  scriptFlockSend({ replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
 
   await fire(socket, 'send_message', { flockId: 3, message_text: 'yes', reply_to_id: 400 });
 
-  const echo = socket.emitted.find((e) => e.event === 'new_message');
+  // The echo goes to the sender's whole account (user:1), not this socket
+  // alone, so it is read off the io emits with the members' copies.
+  const echo = emitTo(io, 1);
   assert.ok(echo, 'the sender gets their own echo');
   assert.deepStrictEqual(echo.payload.reply_to, {
     id: 400, message_text: 'pizza?', message_type: 'text', sender_name: 'Bo',
@@ -231,12 +233,12 @@ test('the quote carries four display fields and never the sender id', async () =
 });
 
 test('message_type rides along so a reply to a photo is not a blank quote', async () => {
-  const { socket } = connect();
-  scriptFlockSend({ replyRow: { id: 401, message_text: '', message_type: 'image', sender_id: QUOTED_SENDER, sender_name: 'Bo' } });
+  const { io, socket } = connect();
+  scriptFlockSend({ replyRow: { id: 401, message_text: '', message_type: 'image', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
 
   await fire(socket, 'send_message', { flockId: 3, message_text: 'nice', reply_to_id: 401 });
 
-  const echo = socket.emitted.find((e) => e.event === 'new_message');
+  const echo = emitTo(io, 1);
   assert.strictEqual(echo.payload.reply_to.message_type, 'image');
 });
 
@@ -247,7 +249,7 @@ test('message_type rides along so a reply to a photo is not a blank quote', asyn
 test('a member who blocked the quoted author gets the reply WITHOUT the quote', async () => {
   const { io, socket } = connect();
   scriptFlockSend({
-    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo' },
+    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false },
     // Ava (the sender, id 1) has blocked nobody, so everyone receives.
     // Member 3 and Bo are mutually invisible, which is what
     // getInvisibleUserIds(Bo) returns.
@@ -272,7 +274,7 @@ test('a member who blocked the quoted author gets the reply WITHOUT the quote', 
 test('the "who cannot see the quoted author" question is asked once, not per member', async () => {
   const { socket } = connect();
   scriptFlockSend({
-    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo' },
+    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false },
     blocks: { 1: [], [QUOTED_SENDER]: [3] },
   });
 
@@ -306,6 +308,119 @@ test('a quote whose author was deleted asks no block question and still delivers
   assert.strictEqual(wrote('messages').length, 1, `refused: ${errors(socket).join(' | ')}`);
   assert.strictEqual(blockQueries().length, 1, 'nobody to ask about');
   assert.ok(emitTo(io, 2).payload.reply_to, 'the quote still rides');
+});
+
+test('a reply quoting a BANNED member reaches every member with the quote cut out', async () => {
+  // The history read drops this quote for every viewer, because every
+  // viewer's invisible set carries every banned account. The fan-out asked
+  // only the quoted author's OWN set, which names the people they have a block
+  // with, so a banned member's sentence went to the whole room live and
+  // vanished on reload. Nobody here has a block with Bo; the ban alone decides.
+  const { io, socket } = connect();
+  scriptFlockSend({
+    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: true },
+    blocks: { 1: [], [QUOTED_SENDER]: [] },
+  });
+
+  await fire(socket, 'send_message', { flockId: 3, message_text: 'yes', reply_to_id: 400 });
+
+  assert.strictEqual(wrote('messages').length, 1, `refused: ${errors(socket).join(' | ')}`);
+  for (const member of [2, 3]) {
+    const copy = emitTo(io, member);
+    assert.ok(copy, `member ${member} still receives the reply itself`);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(copy.payload, 'reply_to'), false,
+      `member ${member} received a banned member's words, quoted`);
+    assert.strictEqual(copy.payload.message_text, 'yes');
+  }
+  // THE SENDER IS NOT EXEMPT. reply_to_id is a number the client sends, and
+  // the lookup above does not ask about bans, so a member who knew a banned
+  // author's message id could reply to it and read the words back out of
+  // their own echo. The history read withholds them from the sender too.
+  const own = emitTo(io, 1);
+  assert.ok(own, 'the sender still gets their echo');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(own.payload, 'reply_to'), false,
+    "the sender's echo carried a banned member's words");
+  // The ban answers the whole question: the quoted author's block list is not
+  // read, only the sender's.
+  assert.deepStrictEqual(blockQueries().map((c) => c.params[0]), [1]);
+});
+
+test("a sender with a block against the quoted author gets their echo without the quote", async () => {
+  // Either direction reads the same: getInvisibleUserIds(Bo) names the sender.
+  const { io, socket } = connect();
+  scriptFlockSend({
+    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false },
+    blocks: { 1: [QUOTED_SENDER], [QUOTED_SENDER]: [1] },
+  });
+
+  await fire(socket, 'send_message', { flockId: 3, message_text: 'yes', reply_to_id: 400 });
+
+  assert.strictEqual(wrote('messages').length, 1, `refused: ${errors(socket).join(' | ')}`);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(emitTo(io, 1).payload, 'reply_to'), false,
+    'the sender read the words of somebody they are blocked with, through their own echo');
+  assert.ok(emitTo(io, 2).payload.reply_to, 'a member with no block still sees the quote');
+});
+
+test("an account that left the plan while its send was screened is echoed on the sending socket only", async () => {
+  // The membership check at the top runs before the image screen, which can
+  // take seconds. It is asked again beside the quote question, just before the
+  // echo, and here the second answer is "gone".
+  const { io, socket } = connect();
+  scriptFlockSend();
+  let asked = 0;
+  routes = routes.filter(([re]) => !re.test('FROM flock_members WHERE flock_id = $1 AND user_id = $2'));
+  routes.unshift([/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => {
+    asked += 1;
+    return asked === 1 ? [{ id: 10 }] : [];
+  }]);
+
+  await fire(socket, 'send_message', { flockId: 3, message_text: 'yes' });
+
+  assert.strictEqual(asked, 2, 'the membership is asked again before the echo');
+  assert.strictEqual(emitTo(io, 1), undefined, "the departed account's other devices got the row");
+  assert.ok(socket.emitted.some((e) => e.event === 'new_message' && e.payload.id === 501),
+    'the socket that sent it, which already holds the bubble, still settles it');
+  assert.ok(emitTo(io, 2), 'the members still get the message, which is stored');
+});
+
+test('the reply lookup reads the quoted author\'s ban in the same statement', async () => {
+  const { socket } = connect();
+  scriptFlockSend({ replyRow: { id: 400, message_text: 'x', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false } });
+
+  await fire(socket, 'send_message', { flockId: 3, message_text: 'ok', reply_to_id: 400 });
+
+  const lookup = calls.find((c) => /m\.sender_id, u\.name AS sender_name/.test(c.sql));
+  assert.ok(lookup, 'the lookup must happen');
+  assert.match(lookup.sql, /u\.is_banned IS TRUE AS sender_banned/,
+    'without the column replyCopies withholds every quote, and with a looser read it would leak one');
+});
+
+test('a quote question that cannot be answered costs the live delivery, never the saved message', async () => {
+  // replyCopies used to be asked outside the fan-out's try, so a failed block
+  // read here answered "Failed to send message" about a row that was already
+  // stored, and a client that retried it posted it twice. It is asked inside
+  // the fan-out now, where the REST twin asks it.
+  const { io, socket } = connect();
+  scriptFlockSend({
+    replyRow: { id: 400, message_text: 'pizza?', message_type: 'text', sender_id: QUOTED_SENDER, sender_name: 'Bo', sender_banned: false },
+  });
+  routes = routes.filter(([re]) => !re.test('FROM user_blocks'));
+  routes.push([/FROM user_blocks/, (p) => {
+    if (Number(p[0]) === QUOTED_SENDER) throw new Error('user_blocks unreadable');
+    return [];
+  }]);
+
+  await fire(socket, 'send_message', { flockId: 3, message_text: 'yes', reply_to_id: 400 });
+
+  assert.strictEqual(wrote('messages').length, 1, 'the message is stored');
+  assert.deepStrictEqual(flockEmits(io), [], 'nobody receives a copy whose quote could not be decided');
+  assert.deepStrictEqual(errors(socket), ['Message saved, but live delivery is delayed.']);
+  const own = socket.emitted.find((e) => e.event === 'new_message' && e.payload.id === 501);
+  assert.ok(own, 'the sender keeps their own saved message');
+  // Nobody includes the sender: a quote whose audience was never decided is
+  // withheld from their echo too, as the history read would withhold it.
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(own.payload, 'reply_to'), false);
+  assert.strictEqual(own.payload.reply_to_id, 400);
 });
 
 // ---------------------------------------------------------------------------

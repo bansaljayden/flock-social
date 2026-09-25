@@ -15,7 +15,8 @@
 //      counted, so an unsent message cannot leak through any read this file
 //      serves, previews and full-size photos included.
 //   4. The fan-outs carry exactly ids, and the DM one goes to exactly the
-//      two participants.
+//      two participants, or to the sender alone when the pair is blocked or
+//      the counterpart banned. The tombstone lands either way.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -34,6 +35,12 @@ const TOKEN = signUserToken(ME);
 
 let updates = [];
 let updateResult = { rows: [], rowCount: 0 };
+// The DM unsend's audience question, answered per test: isBlockedBetween on
+// the pair, then counterpartyIsBanned on the receiver alone.
+let blockedPair = false;
+let bannedIds = [];
+let audienceUnreadable = false;
+let audienceAsks = [];
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) {
@@ -42,6 +49,15 @@ pool.query = async (text, params = []) => {
   if (sql.startsWith('UPDATE messages SET sender_deleted_at') || sql.startsWith('UPDATE direct_messages SET sender_deleted_at')) {
     updates.push({ sql, params });
     return updateResult;
+  }
+  if (sql.startsWith('SELECT 1 FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = $2)')) {
+    audienceAsks.push(['block', ...params]);
+    if (audienceUnreadable) throw new Error('user_blocks unreadable');
+    return blockedPair ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+  if (sql === 'SELECT 1 FROM users WHERE id = $1 AND is_banned IS TRUE') {
+    audienceAsks.push(['ban', ...params]);
+    return bannedIds.includes(Number(params[0])) ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   return { rows: [], rowCount: 0 };
 };
@@ -78,6 +94,12 @@ function del(urlPath) {
 
 test.before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
 test.after(() => new Promise((resolve) => server.close(resolve)));
+test.beforeEach(() => {
+  blockedPair = false;
+  bannedIds = [];
+  audienceUnreadable = false;
+  audienceAsks = [];
+});
 
 test('the sender unsends, and the predicate is the authorization', async () => {
   updates = []; emits.length = 0;
@@ -118,6 +140,49 @@ test('the DM unsend goes to exactly the two participants', async () => {
     assert.strictEqual(e.event, 'dm_message_unsent');
     assert.deepStrictEqual(e.payload, { messageId: 77, senderId: 5 });
   }
+  // The audience is asked about THIS pair, the receiver taken from the row the
+  // UPDATE returned rather than from anything the caller sent.
+  assert.deepStrictEqual(audienceAsks, [['block', 5, 8], ['ban', 8]]);
+});
+
+// A block does not stop a sender retracting their own words, so the tombstone
+// is written regardless. What it ends is one of them reaching the other's
+// screen: the counterpart copy used to go out unconditionally, so a blocked
+// sender could push one event per message ever sent into the blocker's open
+// socket. The flock twin already skipped them (emitToFlockExcludingBlocked).
+test('a blocked pair: the tombstone lands and only the sender\'s own devices hear it', async () => {
+  updates = []; emits.length = 0;
+  blockedPair = true;
+  updateResult = { rows: [{ id: 77, receiver_id: 8 }], rowCount: 1 };
+  const res = await del('/api/dm/messages/77');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(updates.length, 1, 'the unsend itself is never refused');
+  assert.deepStrictEqual(emits.map((e) => e.room), ['user:5'],
+    'nothing reaches the other side of a block, in either direction');
+  assert.deepStrictEqual(emits[0].payload, { messageId: 77, senderId: 5 });
+});
+
+test('a banned counterpart is not told either, the same audience as the flock twin', async () => {
+  updates = []; emits.length = 0;
+  bannedIds = [8];
+  updateResult = { rows: [{ id: 77, receiver_id: 8 }], rowCount: 1 };
+  const res = await del('/api/dm/messages/77');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(updates.length, 1);
+  assert.deepStrictEqual(emits.map((e) => e.room), ['user:5']);
+});
+
+test('an audience that cannot be read fails closed and never costs the unsend', async () => {
+  // The tombstone is already written when this is asked. A 500 here would
+  // tell the client the unsend failed, and its retry would then get a 404 for
+  // a message that is gone: two wrong answers about one thing that worked.
+  updates = []; emits.length = 0;
+  audienceUnreadable = true;
+  updateResult = { rows: [{ id: 77, receiver_id: 8 }], rowCount: 1 };
+  const res = await del('/api/dm/messages/77');
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { success: true });
+  assert.deepStrictEqual(emits.map((e) => e.room), ['user:5'], 'when in doubt the counterpart hears nothing');
 });
 
 // ---------------------------------------------------------------------------

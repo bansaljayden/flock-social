@@ -27,6 +27,17 @@ const { attachDmStatus, attachFlockStatus, flockRoster } = require('../utils/mes
 // defined next to the socket twin that shares them.
 const {
   emitToFlockExcludingBlocked,
+  // Who may see a reply's quote, the rule the socket send_message fan-out
+  // applies. The send route below fans out one row to many members too, so it
+  // takes the same function rather than a second copy of the rule.
+  replyCopies,
+  // A copy with its quote cut out: what the sender is answered with when the
+  // quote's audience could not be decided.
+  quoteWithheld,
+  // The sender's own name for a send, validated the way the socket twin
+  // validates it and echoed only on the sender's copies. See readClientId.
+  readClientId,
+  ownEcho,
   CHAT_IMAGE_MAX_BYTES,
   sanitizeStoredImage,
   IMAGE_TOO_LARGE_MESSAGE,
@@ -171,10 +182,11 @@ async function verifyFlockMember(flockId, userId) {
 
 // "IS THIS ONE COUNTERPARTY BANNED?" — a pair question, asked as a pair.
 //
-// The two DM routes that need it (the read receipt and the thread read) have
+// Every DM route that needs it (the read receipt, the thread read, the
+// reaction, the venue-vote and pinned-venue reads, and the unsend fan-out) has
 // already run isBlockedBetween one line earlier, which is a single indexed
 // lookup on the pair. The only fact left to establish is whether this one
-// counterparty is banned, and both of them used to establish it with
+// counterparty is banned, and the first two used to establish it with
 // getInvisibleUserIds: a three-leg UNION whose third leg is EVERY banned
 // account in the product, whose other two legs re-ask the block question that
 // was just answered, all shipped to Node so one id could be scanned for. The
@@ -430,8 +442,20 @@ router.post('/flocks/:id/pins',
       try {
         await client.query('BEGIN');
         await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        // LIVE PINS ONLY. A pin whose message was unsent or taken down is
+        // dropped by every read (readFlockPinRows), so nobody can see it to
+        // unpin it, and counting it here left a flock stuck at "Only 3" with
+        // two pins on screen and no way to clear the third. Unsend and the
+        // moderator hide now delete the row as well; this is what keeps a
+        // row left over from before that, or from a delete that failed, from
+        // holding a seat.
         const existing = await client.query(
-          'SELECT COUNT(*)::int AS n FROM pinned_messages WHERE flock_id = $1',
+          `SELECT COUNT(*)::int AS n FROM pinned_messages
+            WHERE flock_id = $1
+              AND EXISTS (SELECT 1 FROM messages m
+                           WHERE m.id = pinned_messages.message_id
+                             AND m.is_hidden IS NOT TRUE
+                             AND m.sender_deleted_at IS NULL)`,
           [flockId]
         );
         if (existing.rows[0].n >= MAX_PINS) {
@@ -800,6 +824,9 @@ router.post('/flocks/:id/messages',
       // moderateImage), and the same sentence, so the two transports refuse the
       // same photo identically.
       if (tooLarge) return res.status(400).json({ error: IMAGE_TOO_LARGE_MESSAGE });
+      // Echo matching only, dropped rather than refused when it is not a
+      // short safe token, exactly as the socket twin reads it.
+      const clientId = readClientId(req.body.client_id);
 
       const flockId = req.params.id;
 
@@ -905,19 +932,56 @@ router.post('/flocks/:id/messages',
       // and a failure drops the QUOTE rather than the message: the row is
       // stored and reply_to_id is on it either way, and a decoration on the
       // payload must never turn a saved message into a 500.
+      //
+      // sender_id and sender_banned are read for the fan-out below, which has
+      // to know whose words the quote carries and whether that account is
+      // banned, and are kept off the quote itself: the socket twin and the
+      // history read both ship these four fields, and a fifth here would make
+      // a live reply and a reloaded one different objects.
+      let quotedRow = null;
       if (safeReplyId) {
         try {
           const quoted = await pool.query(
-            `SELECT m.id, m.message_text, m.message_type, u.name AS sender_name
+            `SELECT m.id, m.message_text, m.message_type, m.sender_id, u.name AS sender_name,
+                    u.is_banned IS TRUE AS sender_banned
                FROM messages m
                LEFT JOIN users u ON u.id = m.sender_id
               WHERE m.id = $1`,
             [safeReplyId]
           );
-          if (quoted.rows[0]) message.reply_to = quoted.rows[0];
+          const q = quoted.rows[0];
+          if (q) {
+            message.reply_to = {
+              id: q.id,
+              message_text: q.message_text,
+              message_type: q.message_type,
+              sender_name: q.sender_name,
+            };
+            quotedRow = { sender_id: q.sender_id, sender_banned: q.sender_banned };
+          }
         } catch (quoteErr) {
           console.error('Flock reply hydrate error:', quoteErr.message);
         }
+      }
+
+      // WHO MAY SEE THE QUOTE, decided BEFORE the answer, because the sender
+      // is one of the people it is decided for. copyFor (replyCopies, the
+      // socket twin's rule) cuts the quote out of the copy for anybody who
+      // cannot see the quoted author: a block either way, or a ban on the
+      // author. The sender is not exempt. reply_to_id is a number the client
+      // sends, and the scope check above asks only that the message is in
+      // this flock and still up, so it can name a banned author's message or
+      // one across a block from the sender. The history read withholds that
+      // quote from the sender (the hydrate filters by their invisible set),
+      // and this answer used to hand it straight back, which made a reply a
+      // way to read those words. A question that cannot be answered withholds
+      // the quote from the sender too, and costs the live delivery below the
+      // way it always has; the row is stored either way.
+      let copyFor = null;
+      try {
+        copyFor = await replyCopies(message, quotedRow);
+      } catch (audienceErr) {
+        console.error('Flock reply audience error:', audienceErr.message);
       }
 
       // The send echo carries 'sent' and only the SENDER's copy does. The row
@@ -925,7 +989,8 @@ router.post('/flocks/:id/messages',
       // would be a receipt about a message that is not theirs — harmless to
       // draw (StatusLine only ever renders under the viewer's own last
       // message) and wrong to send, so it is not sent.
-      res.status(201).json({ message: { ...message, status: 'sent' } });
+      const senderCopy = ownEcho(copyFor ? copyFor(req.user.id) : quoteWithheld(message), clientId, { status: 'sent' });
+      res.status(201).json({ message: senderCopy });
 
       // Offline push, mirroring the socket send_message path in
       // sockets/handlers.js. The socket client falls back to THIS endpoint when
@@ -938,14 +1003,44 @@ router.post('/flocks/:id/messages',
       // hiccup can never turn a stored message into a 500.
       try {
         const io = req.app.get('io');
-        if (io) {
+        // `copyFor` null is a quote whose audience could not be decided (see
+        // above): nobody gets this row live and nobody is pushed, and every
+        // member, the sender's other devices included, reads it from history,
+        // which drops the quote per viewer. Delivering it blind would be the
+        // leak copyFor exists to close.
+        if (io && copyFor) {
           const flockInfo = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
           const flockName = flockInfo.rows[0]?.name || 'Flock';
-          const members = await pool.query(
-            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-            [flockId, req.user.id]
-          );
+          // STILL A MEMBER? Asked beside the roster: the membership check up
+          // top ran before the image screen, which can take seconds, and an
+          // account that left the plan in that time must not have the row
+          // delivered to its other devices below.
+          const [members, stillMember] = await Promise.all([
+            pool.query(
+              "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+              [flockId, req.user.id]
+            ),
+            verifyFlockMember(flockId, req.user.id),
+          ]);
           const invisible = new Set(await getInvisibleUserIds(req.user.id));
+          // `invisible` is the SENDER's set: it decides who receives this row
+          // at all and says nothing about the person a reply quotes. copyFor
+          // answers that second question with the socket twin's rule: a member
+          // who cannot see the quoted sender (a block either way, or a ban on
+          // the quoted account, which hides it from everyone) gets the reply
+          // with the quote cut out, which is what the history read above shows
+          // them on reload. This route used to hand every member the quote, so
+          // a member who had blocked the quoted person got that person's words
+          // live whenever the sender's socket happened to be down.
+          //
+          // THE SENDER'S OTHER DEVICES. The member list above leaves the sender
+          // out, and the HTTP response reaches only the device that posted,
+          // which is the one whose socket was down. The account's other phones
+          // and tabs were told nothing, and the app dropped an own message it
+          // had no bubble for. Same room and the same copy as the socket
+          // twin's echo. The posting device dedupes it against its bubble by
+          // client id. Not for an account that has left the plan meanwhile.
+          if (stillMember) io.to(`user:${req.user.id}`).emit('new_message', senderCopy);
           // An image-only message makes this the empty string, which is correct
           // and deliberate rather than an oversight. services/firebaseService.js
           // normalizeBody() turns an empty body into "Shared something in the
@@ -976,7 +1071,7 @@ router.post('/flocks/:id/messages',
                 // per-member block filter, and the same row shape. The client
                 // dedupes on message id, so a sender whose socket comes back
                 // mid-request cannot end up with two bubbles.
-                io.to(`user:${m.user_id}`).emit('new_message', message);
+                io.to(`user:${m.user_id}`).emit('new_message', copyFor(m.user_id));
                 // senderId and messageId: see the socket twin.
                 return pushIfOfflineDebounced(io, m.user_id,
                   `${req.user.name} in ${flockName}`,
@@ -1135,6 +1230,23 @@ router.delete('/flocks/:id/messages/:messageId',
         [req.params.messageId, flockId, req.user.id]
       );
       if (result.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+      // THE PIN GOES WITH THE WORDS (migration 068). Every pin read drops an
+      // unsent message, so its pin row sat on unseen: nobody could see it to
+      // unpin it, it held one of the three seats, and nobody was told the bar
+      // had changed. The row is retired with the message and the list goes
+      // out again. A separate statement, and a failure here costs the cleanup
+      // and never the unsend, which is already written: the pin count and
+      // every read ignore a pin whose message is gone either way.
+      let unpinned = false;
+      try {
+        const pin = await pool.query(
+          'DELETE FROM pinned_messages WHERE flock_id = $1 AND message_id = $2 RETURNING message_id',
+          [flockId, result.rows[0].id]
+        );
+        unpinned = pin.rows.length > 0;
+      } catch (pinErr) {
+        console.error('Unsend unpin error:', pinErr.message);
+      }
       const io = req.app.get('io');
       if (io) {
         emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_message_unsent', {
@@ -1143,6 +1255,7 @@ router.delete('/flocks/:id/messages/:messageId',
         io.to(`user:${req.user.id}`).emit('flock_message_unsent', { flockId, messageId: result.rows[0].id });
       }
       res.json({ success: true });
+      if (unpinned) broadcastPins(req, flockId);
     } catch (err) {
       console.error('Unsend flock message error:', err);
       res.status(500).json({ error: 'Server error' });
@@ -1168,7 +1281,30 @@ router.delete('/dm/messages/:id',
       const io = req.app.get('io');
       if (io) {
         const payload = { messageId: result.rows[0].id, senderId: req.user.id };
-        io.to(`user:${result.rows[0].receiver_id}`).emit('dm_message_unsent', payload);
+        const receiverId = result.rows[0].receiver_id;
+        // THE TOMBSTONE ALWAYS LANDS; THE EVENT DOES NOT ALWAYS TRAVEL. A block
+        // does not take a sender's words back out of their hands, so the
+        // UPDATE above runs whatever the pair's state. What a block does end is
+        // one of them reaching the other's screen, and this emit used to go to
+        // the counterpart unconditionally: a blocked sender could push an event
+        // into the blocker's open socket for every message they had ever sent
+        // them. This is the audience emitToFlockExcludingBlocked gives the flock
+        // twin above: nobody blocked in either direction, and no banned account.
+        // Nothing is lost by skipping it, because every read of this row
+        // already filters the tombstone.
+        //
+        // Asked before the response and caught here, so a failed lookup costs
+        // the counterpart's live removal and nothing else. It must not turn an
+        // unsend that is already written into a 500 the client would retry
+        // into a 404.
+        let counterpartHears = false;
+        try {
+          counterpartHears = !(await isBlockedBetween(req.user.id, receiverId))
+            && !(await counterpartyIsBanned(req.user.id, receiverId));
+        } catch (audienceErr) {
+          console.error('DM unsend audience check failed:', audienceErr.message);
+        }
+        if (counterpartHears) io.to(`user:${receiverId}`).emit('dm_message_unsent', payload);
         io.to(`user:${req.user.id}`).emit('dm_message_unsent', payload);
       }
       res.json({ success: true });
@@ -1371,7 +1507,11 @@ router.post('/messages/:id/react',
       );
 
       if (result.rows.length === 0) {
-        return res.status(400).json({ error: 'Already reacted with this emoji' });
+        // The same account reacting from a second device loses this race to
+        // its first, and the reaction it asked for IS stored. The code lets the
+        // app tell that apart from a refusal, keep the pill it drew, and not
+        // roll back to a state without a reaction the server kept.
+        return res.status(400).json({ error: 'Already reacted with this emoji', code: 'ALREADY_REACTED' });
       }
 
       // Notify flock members in real-time — block-aware fan-out, a room
@@ -1756,6 +1896,8 @@ router.post('/dm/:userId',
       // Same free-before-billed ordering as the flock twin above, and the same
       // ceiling the socket's send_dm enforces.
       if (tooLarge) return res.status(400).json({ error: IMAGE_TOO_LARGE_MESSAGE });
+      // Echo matching only; see the flock twin above and readClientId.
+      const clientId = readClientId(req.body.client_id);
 
       const receiverId = parseInt(req.params.userId);
       if (receiverId === req.user.id) {
@@ -1889,8 +2031,10 @@ router.post('/dm/:userId',
       invalidateDmRelationshipCache(req.user.id, receiverId);
 
       // Same rule as the flock twin: the send echo carries 'sent', the
-      // recipient's copy carries no status at all.
-      res.status(201).json({ message: { ...message, status: 'sent' } });
+      // recipient's copy carries no status at all. The client id rides on the
+      // sender's copies only, never on the one the recipient gets.
+      const senderCopy = ownEcho(message, clientId, { status: 'sent' });
+      res.status(201).json({ message: senderCopy });
 
       // Offline push, mirroring the socket send_dm path in sockets/handlers.js.
       // This route is the socket client's fallback when disconnected, so without
@@ -1917,7 +2061,7 @@ router.post('/dm/:userId',
           // account is several devices, and the one that posted this over
           // REST is the one whose socket is down, so the others are the ones
           // that need telling. The client dedupes on id.
-          io.to(`user:${req.user.id}`).emit('new_dm', { ...message, status: 'sent' });
+          io.to(`user:${req.user.id}`).emit('new_dm', senderCopy);
           // The emit above went out over the recipient's open connection, so
           // the bytes reached a device: that is "Delivered", and it is the
           // only claim a live socket may support. The dm_delivered receipt
@@ -1974,10 +2118,22 @@ router.post('/dm/messages/:id/react',
       );
       if (dm.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
       if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) {
-        return res.status(403).json({ error: 'Not authorized' });
+        // 404, not 403, and the same body as an id that was never issued.
+        // DM ids are serial, and a 403 here confirmed "message 91824 exists,
+        // between two other people" for every id an outsider cared to try.
+        // The flock twin above and the DM photo route already answer this way.
+        return res.status(404).json({ error: 'Message not found' });
       }
       const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
       if (await isBlockedBetween(req.user.id, counterpart)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+      // A banned counterpart ends the conversation the way a block does: the
+      // thread read hands back nothing for this pair, and every DM write door
+      // that asks hasDmRelationship is told no. This one asked only about
+      // blocks, so a reaction still landed in a banned account's thread. Same
+      // pair question and same refusal as the read receipt above.
+      if (await counterpartyIsBanned(req.user.id, counterpart)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
 
@@ -2010,14 +2166,23 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
     if (rejectInvalid(req, res)) return;
     const dmId = parseInt(req.params.id);
     const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
-    // Blocks end ALL interaction with the shared conversation, removals included.
+    // ONE ANSWER FOR "NOT YOURS": the 404 an id that was never issued gets,
+    // byte for byte, and before anything else is asked. The block check below
+    // used to run for anybody, reading the message's SENDER as the caller's
+    // counterpart when the caller was neither party, so an outsider with a
+    // block against someone got a 403 for every DM that person had ever sent
+    // and a 404 for everything else: a walk over the serial DM ids that
+    // picked out one person's messages. The add route above has answered a
+    // non-participant this way since it was closed; nobody outside the pair
+    // has a reaction here to remove.
+    const notFound = () => res.status(404).json({ error: 'Reaction not found' });
     const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
-    let counterpart = null;
-    if (dm.rows.length > 0) {
-      counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
-      if (await isBlockedBetween(req.user.id, counterpart)) {
-        return res.status(403).json({ error: 'You can no longer interact with this user.' });
-      }
+    if (dm.rows.length === 0) return notFound();
+    if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) return notFound();
+    const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+    // Blocks end ALL interaction with the shared conversation, removals included.
+    if (await isBlockedBetween(req.user.id, counterpart)) {
+      return res.status(403).json({ error: 'You can no longer interact with this user.' });
     }
     const result = await pool.query(
       'DELETE FROM dm_emoji_reactions WHERE dm_id = $1 AND user_id = $2 AND emoji = $3 RETURNING *',
@@ -2025,10 +2190,25 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Reaction not found' });
     // Mirror of the add route above: the removal reaches both sides live.
+    //
+    // THE REMOVAL IS CLEANUP; TELLING THE OTHER SIDE IS CONTACT. Taking your
+    // own reaction back stays allowed whatever the pair's state short of a
+    // block (the row is yours), but the event names you and lands in the
+    // counterpart's open socket, and a banned account is not reachable on any
+    // other DM door: the add route above refuses one, the thread read hands it
+    // nothing. So the counterpart hears it only when they are not banned.
+    // Asked only after a row really went, and a lookup that fails reads as
+    // banned, so the answer is never an event that should not have gone.
     const io = req.app.get('io');
     if (io) {
+      let counterpartHears = false;
+      try {
+        counterpartHears = !(await counterpartyIsBanned(req.user.id, counterpart));
+      } catch (audienceErr) {
+        console.error('DM reaction removal audience check failed:', audienceErr.message);
+      }
       const payload = { dmId, emoji, userId: req.user.id, userName: req.user.name };
-      if (counterpart != null) io.to(`user:${counterpart}`).emit('dm_reaction_removed', payload);
+      if (counterpartHears) io.to(`user:${counterpart}`).emit('dm_reaction_removed', payload);
       io.to(`user:${req.user.id}`).emit('dm_reaction_removed', payload);
     }
     res.json({ message: 'Reaction removed' });
@@ -2042,11 +2222,20 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
 router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID')], async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
+    const otherUserId = parseInt(req.params.userId);
     // Mutual invisibility covers shared DM metadata reads, not just messages.
-    if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+    if (await isBlockedBetween(req.user.id, otherUserId)) {
       return res.status(403).json({ error: 'You can no longer interact with this user.' });
     }
-    const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+    // And so does a ban. The thread read refuses a banned counterpart and the
+    // vote write beside this route does too (hasDmRelationship answers no),
+    // but this read stopped at blocks, so the tally could still name the
+    // banned account among its voters. Same pair query as the thread read,
+    // and the same answer this route gives a block.
+    if (await counterpartyIsBanned(req.user.id, otherUserId)) {
+      return res.status(403).json({ error: 'You can no longer interact with this user.' });
+    }
+    const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
     const result = await pool.query(
       `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
        FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
@@ -2213,11 +2402,18 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
 router.get('/dm/:userId/pinned-venue', [param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID')], async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
+    const otherUserId = parseInt(req.params.userId);
     // Mutual invisibility covers shared DM metadata reads, not just messages.
-    if (await isBlockedBetween(req.user.id, parseInt(req.params.userId))) {
+    if (await isBlockedBetween(req.user.id, otherUserId)) {
       return res.status(403).json({ error: 'You can no longer interact with this user.' });
     }
-    const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
+    // A banned counterpart too, for the reason the venue-votes read gives:
+    // the pin and unpin writes refuse one through hasDmRelationship, and this
+    // read could still serve a pin the banned account set, under their name.
+    if (await counterpartyIsBanned(req.user.id, otherUserId)) {
+      return res.status(403).json({ error: 'You can no longer interact with this user.' });
+    }
+    const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
     const result = await pool.query(
       `SELECT venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by, u.name AS pinned_by_name
        FROM dm_pinned_venues pv LEFT JOIN users u ON u.id = pv.pinned_by
@@ -2366,3 +2562,8 @@ router.delete('/dm/:userId/pinned-venue',
 );
 
 module.exports = router;
+// The pin list's per-member fan-out, for the one writer outside this file:
+// routes/admin.js, when a moderator's takedown retires a pinned message.
+// Attached to the router rather than moved, so every reader of the pin rules
+// still finds them next to the pin routes.
+module.exports.broadcastPins = broadcastPins;

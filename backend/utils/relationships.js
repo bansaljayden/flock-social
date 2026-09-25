@@ -26,11 +26,20 @@ async function hasDmRelationship(userId, otherId) {
   const b = Number(otherId);
   if (!Number.isInteger(a) || !Number.isInteger(b) || a === b) return false;
   // A BANNED ACCOUNT HAS NO DM RELATIONSHIP (UGC-loop audit, 2026-09-05).
-  // Every DM door on both transports asks this question, so answering "no"
-  // for a banned counterpart closes the thread the way a block does: send,
-  // react, vote, pin, typing and live location all stop, with no new query
-  // on any of them. The clause is repeated on both halves so the statement's
-  // shape, and the prefix the test fakes key on, stays what it was.
+  // Answering "no" for a banned counterpart closes the thread the way a block
+  // does on every door that asks this question: send, vote and pin on both
+  // transports, unpin (a REST door only), and the socket's reaction, typing
+  // and live location. The REST reaction, the REST reads (the thread, its
+  // opened receipt, the vote tally and the pin) and the unsend fan-out ask
+  // routes/messages.js's counterpartyIsBanned instead: the same answer for a
+  // pair that already shares the message or thread in question, at one
+  // indexed row. Removing your own reaction is split in two. The removal
+  // asks neither, on either transport, on purpose: it is cleanup of your own
+  // row. Telling the other person about it is contact, so that event goes out
+  // only when a row was really removed and the counterpart is not banned
+  // (counterpartyIsBanned on the REST route, this function on the socket).
+  // The clause is repeated on both halves so the statement's shape, and the
+  // prefix the test fakes key on, stays what it was.
   const r = await pool.query(
     `SELECT 1 WHERE EXISTS (
        SELECT 1 FROM friendships

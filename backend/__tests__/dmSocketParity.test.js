@@ -254,6 +254,8 @@ test('a normal emoji still goes through', async () => {
   routes = [
     [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
     [/FROM user_blocks/, []],
+    // hasDmRelationship: the pair is related and the counterpart is not banned.
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
     [/INSERT INTO dm_emoji_reactions/, []],
   ];
 
@@ -263,6 +265,30 @@ test('a normal emoji still goes through', async () => {
   assert.strictEqual(insert.length, 1);
   assert.deepStrictEqual(insert[0].params, [5, 1, '🔥'], 'the id is coerced, the emoji is passed through');
   assert.ok(socket.emitted.some((e) => e.target === 'user:7' && e.event === 'dm_reaction_added'));
+});
+
+test('dm_react refuses a banned counterpart, as POST /api/dm/messages/:id/react does', async () => {
+  // The REST twin answers a banned counterpart 403 and writes nothing; this
+  // handler asked only about blocks, so the same reaction landed in a banned
+  // account's thread over the socket. hasDmRelationship answers no for a
+  // banned counterpart, which is modelled here as the relationship read
+  // coming back empty while the block read says the pair is clear.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 7, receiver_id: 1 }]],
+    [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, []],
+    [/INSERT INTO dm_emoji_reactions/, []],
+  ];
+
+  await fire(socket, 'dm_react', { dmId: 5, emoji: '🔥' });
+
+  const asked = calls.find((c) => /SELECT 1 WHERE EXISTS/.test(c.sql));
+  assert.ok(asked, 'the relationship question was not asked');
+  assert.deepStrictEqual(asked.params, [1, 7], 'asked about the counterpart the message row names');
+  assert.strictEqual(wrote('dm_emoji_reactions').length, 0, 'a reaction row was written into a banned account\'s thread');
+  assert.ok(!socket.emitted.some((e) => e.event === 'dm_reaction_added'), 'the counterpart was told');
+  assert.ok(!io.emitted.some((e) => e.event === 'dm_reaction_added'), 'the reactor\'s devices were told it landed');
 });
 
 // ---------------------------------------------------------------------------
@@ -481,6 +507,7 @@ test('dm_react echoes to every device of the reactor, not just the one that tapp
   routes = [
     [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
     [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]], // hasDmRelationship
     [/INSERT INTO dm_emoji_reactions/, []],
   ];
 
@@ -506,7 +533,10 @@ test('dm_remove_react takes the reaction off every device of the person who remo
   routes = [
     [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
     [/FROM user_blocks/, []],
-    [/DELETE FROM dm_emoji_reactions/, []],
+    // A row really went: a removal that removes nothing announces nothing
+    // (see the tests after this one).
+    [/DELETE FROM dm_emoji_reactions/, [{ dm_id: 5 }]],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]], // hasDmRelationship: not banned
   ];
 
   await fire(socket, 'dm_remove_react', { dmId: 5, emoji: '🔥' });
@@ -517,6 +547,47 @@ test('dm_remove_react takes the reaction off every device of the person who remo
   assert.strictEqual(echo.room, 'user:1');
   assert.deepStrictEqual(echo.payload, { dmId: 5, emoji: '🔥', userId: 1 });
   assert.ok(!socket.emitted.some((e) => e.target === 'self'));
+});
+
+test('a removal that removed nothing announces nothing to anybody', async () => {
+  // It used to emit on every attempt, row or no row, so a participant could
+  // push an event naming themselves into the other person's socket as often
+  // as the dm_react budget allowed. The REST twin answers 404 and says nothing.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
+    [/FROM user_blocks/, []],
+    [/DELETE FROM dm_emoji_reactions/, []],
+  ];
+
+  await fire(socket, 'dm_remove_react', { dmId: 5, emoji: '🔥' });
+
+  assert.ok(!socket.emitted.some((e) => e.event === 'dm_reaction_removed'), 'the counterpart was told of nothing');
+  assert.ok(!io.emitted.some((e) => e.event === 'dm_reaction_removed'), 'and so were your own devices');
+  assert.strictEqual(calls.filter((c) => /SELECT 1 WHERE EXISTS/.test(c.sql)).length, 0,
+    'nobody is asked about when there is nothing to say');
+});
+
+test('taking your reaction back from a banned account\'s DM works and tells only your own devices', async () => {
+  // The removal is cleanup of your own row and stays allowed. The event is
+  // contact, and a banned counterpart gets none: hasDmRelationship answers no
+  // for a ban, which for the two people a message sits between is all it can
+  // answer no for.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
+    [/FROM user_blocks/, []],
+    [/DELETE FROM dm_emoji_reactions/, [{ dm_id: 5 }]],
+    [/SELECT 1 WHERE EXISTS/, []], // the counterpart is banned
+  ];
+
+  await fire(socket, 'dm_remove_react', { dmId: 5, emoji: '🔥' });
+
+  assert.strictEqual(calls.filter((c) => /DELETE FROM dm_emoji_reactions/.test(c.sql)).length, 1,
+    'the reaction is still taken back');
+  assert.ok(!socket.emitted.some((e) => e.event === 'dm_reaction_removed'), 'the banned account was told');
+  const echo = io.emitted.find((e) => e.event === 'dm_reaction_removed');
+  assert.ok(echo && echo.room === 'user:1', "the remover's own devices still clear it");
 });
 
 test('dm_new_vote reaches the voter\'s other devices, and the two payloads stay different', async () => {

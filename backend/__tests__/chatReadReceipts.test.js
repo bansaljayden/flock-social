@@ -623,9 +623,14 @@ test('a flock send echo says "sent" and delivers to the members who are connecte
   assert.strictEqual(res.body.message.status, 'sent');
   await settle();
 
-  const fanout = emits.filter((e) => e.event === 'new_message');
+  // The members' copies carry no receipt. The sender's own account gets one
+  // copy of its own, for its other devices, and that one is the 'sent' echo.
+  const fanout = emits.filter((e) => e.event === 'new_message' && e.room !== 'user:1');
   assert.deepStrictEqual(fanout.map((e) => e.room).sort(), ['user:2', 'user:3']);
   for (const e of fanout) assert.strictEqual(e.payload.status, undefined);
+  const own = emits.filter((e) => e.event === 'new_message' && e.room === 'user:1');
+  assert.strictEqual(own.length, 1);
+  assert.strictEqual(own[0].payload.status, 'sent');
 
   const read = emits.filter((e) => e.event === 'flock_read');
   assert.strictEqual(read.length, 1);
