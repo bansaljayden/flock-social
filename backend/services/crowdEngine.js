@@ -3,6 +3,9 @@
 // Sources: Google Places + OpenWeatherMap + time patterns
 // ---------------------------------------------------------------------------
 
+// The venue's own clock from its IANA zone, for venueLocalNow. Pure (Intl only).
+const { validTimeZone, clockInZone } = require('../utils/venueZone');
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -1351,6 +1354,51 @@ function dayOffsetForIndex(startHour, i) {
   return Math.floor((startHour + i) / 24);
 }
 
+// "7 PM" -> 19, and null for anything that is not an hour label. The strict
+// twin of parseHourLabel below, which answers 12 for a label it cannot read.
+function strictHourLabel(label) {
+  if (typeof label !== 'string') return null;
+  const m = label.match(/^(\d{1,2})\s*(AM|PM)$/i);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  if (h < 1 || h > 12) return null;
+  const pm = m[2].toUpperCase() === 'PM';
+  if (h === 12) return pm ? 12 : 0;
+  return pm ? h + 12 : h;
+}
+
+// WHICH HOUR, AND WHICH DAY, EACH STRIP ENTRY IS, read off the entries' own
+// labels.
+//
+// dayOffsetForIndex assumes entry i is the start hour plus i. That holds for
+// every strip except one crossing a spring-forward change: the venue's wall
+// clock has no 2 AM that night, so mlPredictor.forecastSlots emits no 2 AM
+// entry, and every entry after it is one hour later than its index says. (The
+// autumn change keeps the sequence unbroken: the repeated hour is shown once.)
+// Each label is read off the timestamp that was scored, so the labels are the
+// truth: the hour is parsed from the label, and the day moves on where the
+// hour goes backwards, 11 PM to 12 AM.
+//
+// A strip whose labels do not all parse as "H AM" / "H PM" gets the index
+// arithmetic instead, counted from `fallbackStartHour` when the caller knows
+// the hour it asked the strip to start at, else from the first label, which is
+// exactly what every caller computed before this existed.
+function stripClock(hourlyForecast, fallbackStartHour) {
+  const list = Array.isArray(hourlyForecast) ? hourlyForecast : [];
+  const hours = list.map((e) => strictHourLabel(e && e.hour));
+  if (list.length && hours.every((h) => h != null)) {
+    let day = 0;
+    return hours.map((hour, i) => {
+      if (i > 0 && hour < hours[i - 1]) day += 1;
+      return { hour, dayOffset: day };
+    });
+  }
+  const start = Number.isInteger(fallbackStartHour)
+    ? (((fallbackStartHour % 24) + 24) % 24)
+    : parseHourLabel(list[0] && list[0].hour);
+  return list.map((_, i) => ({ hour: (start + i) % 24, dayOffset: dayOffsetForIndex(start, i) }));
+}
+
 // 1 AM after a 9 PM start is the same night out, not tomorrow. Bars and clubs
 // are the core case here, and calling their quiet stretch "Tomorrow 2 AM" reads
 // as a different evening. Same convention the model's astronomy features use:
@@ -1398,6 +1446,10 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
   if (!hourlyForecast || !hourlyForecast.length) return nothing;
 
   const startHour = parseHourLabel(hourlyForecast[0].hour);
+  // Each entry's hour and day, off its label (stripClock), so a strip across a
+  // spring-forward night, which has no 2 AM entry, still knows which hour and
+  // which day every entry after the gap is.
+  const clock = stripClock(hourlyForecast);
   // The venue's weekday, when the caller knows it. Without it every hour is
   // tested against one generic window, which is how a Monday-closed venue got
   // told to come at 7 PM tonight.
@@ -1414,7 +1466,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     nowHour = ((Math.trunc(options.currentHour) % 24) + 24) % 24;
     nowIdx = -1;
     for (let i = 0; i < hourlyForecast.length; i++) {
-      if ((startHour + i) % 24 === nowHour) { nowIdx = i; break; }
+      if (clock[i].hour === nowHour) { nowIdx = i; break; }
     }
   }
 
@@ -1424,7 +1476,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     ? options.currentScore
     : hourlyForecast[Math.max(0, nowIdx)].score;
 
-  const nowDay = dayOffsetForIndex(startHour, Math.max(0, nowIdx));
+  const nowDay = clock[Math.max(0, nowIdx)].dayOffset;
   const openNow = isOpen != null ? isOpen : openAt(nowHour, 0);
 
   const nowEntry = hourlyForecast[Math.max(0, nowIdx)];
@@ -1432,7 +1484,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
   const ahead = [];
   for (let i = nowIdx + 1; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
-    const calendarOffset = dayOffsetForIndex(startHour, i) - nowDay;
+    const calendarOffset = clock[i].dayOffset - nowDay;
     if (!openAt(h, calendarOffset)) continue;
     ahead.push({
       index: i,
@@ -1561,10 +1613,26 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, o
 // one comparison and it means this function cannot report a clock it does not
 // have, whatever a future caller hands it. Callers already handle null by
 // falling back to the clock they do have.
+//
+// THE ZONE, WHEN THE VENUE HAS ONE (2026-09-25). `timeZone` is Google's IANA
+// name for the venue (utils/venueZone.js). The offset is a snapshot from when
+// the payload was fetched, and payloads are cached: a Place Details entry for
+// ten minutes, a public demo card for twenty, a search result on a phone for as
+// long as the list stays open. Read across the venue's own clock change, the
+// snapshot is an hour wrong for as long as that copy lives. The zone is right
+// at any instant, so it wins when it is usable, and the offset stays the
+// fallback for a venue with none. The result also says which offset was in
+// force, so a payload publishing the clock can publish the offset that made it.
 const MIN_UTC_OFFSET_MINUTES = -720;  // UTC-12:00
 const MAX_UTC_OFFSET_MINUTES = 840;   // UTC+14:00
 
-function venueLocalNow(utcOffsetMinutes, now) {
+function venueLocalNow(utcOffsetMinutes, now, timeZone) {
+  const zone = timeZone != null ? validTimeZone(timeZone) : null;
+  if (zone) {
+    const at = now ? new Date(now) : new Date();
+    const clock = Number.isNaN(at.getTime()) ? null : clockInZone(at.getTime(), zone);
+    if (clock) return clock;
+  }
   if (utcOffsetMinutes == null) return null;
   const offset = Number(utcOffsetMinutes);
   if (!Number.isFinite(offset)) return null;
@@ -1573,7 +1641,7 @@ function venueLocalNow(utcOffsetMinutes, now) {
   if (Number.isNaN(base.getTime())) return null;
   const shifted = new Date(base.getTime() + offset * 60000);
   if (Number.isNaN(shifted.getTime())) return null;
-  return { hour: shifted.getUTCHours(), day: shifted.getUTCDay() };
+  return { hour: shifted.getUTCHours(), day: shifted.getUTCDay(), utcOffsetMinutes: offset };
 }
 
 // Days to add to a date on weekday `fromDay` to reach the NEAREST date whose
@@ -1625,13 +1693,15 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
 
   const types = venue?.types || [];
   const startHour = parseHourLabel(hourlyForecast[0].hour);
+  // Each entry's day off its label, as in recommendBestTime (stripClock).
+  const clock = stripClock(hourlyForecast);
   const startDay = options.startDay != null
     ? ((Math.trunc(options.startDay) % 7) + 7) % 7
     : null;
   const openAt = (h, i) => isOpenAt(
     venue,
     h,
-    startDay != null ? startDay + dayOffsetForIndex(startHour, i) : null
+    startDay != null ? startDay + clock[i].dayOffset : null
   );
 
   // The candidate set first, THEN the axis over it. Closed hours carry no
@@ -1680,7 +1750,7 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
   // two conventions for the same night.
   const startLabel = withDayPrefix(
     hourlyForecast[maxIndex].hour,
-    sameNightOffset(startHour, parseHourLabel(hourlyForecast[maxIndex].hour), dayOffsetForIndex(startHour, maxIndex))
+    sameNightOffset(startHour, parseHourLabel(hourlyForecast[maxIndex].hour), clock[maxIndex].dayOffset)
   );
   let text;
   if (endIndex > maxIndex) {
@@ -2021,8 +2091,14 @@ module.exports = {
   ML_BASELINE_AXIS_VERIFIED,
   // Round 13: venue-local wall clock from Google's utcOffsetMinutes. The
   // server runs UTC and the visitor may be three time zones from the venue;
-  // neither clock is the one the doors run on.
+  // neither clock is the one the doors run on. Since 2026-09-25 it prefers the
+  // venue's IANA zone when the caller has one (third argument).
   venueLocalNow,
+  // Each strip entry's hour and day off its own label, for any caller that
+  // walks a strip bar by bar (the per-bar open flags in routes/crowd.js and
+  // routes/publicCrowd.js). A spring-forward strip has no 2 AM entry, so
+  // "start hour plus index" is an hour off for every entry after it.
+  stripClock,
   // Round 26: the range that makes an offset an offset, exported so
   // routes/crowd.js bounds the body field against ONE definition rather than a
   // second copy of the same two numbers.

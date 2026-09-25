@@ -14,7 +14,9 @@ const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget')
 // Outage detection for the public venue badge. See utils/placesHealth.js.
 const { recordPlacesResult } = require('../utils/placesHealth');
 const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
-const { weekdayOffset } = require('../services/crowdEngine');
+const { weekdayOffset, venueLocalNow } = require('../services/crowdEngine');
+// The venue's IANA zone off the Places payload (utils/venueZone.js).
+const { placeTimeZone } = require('../utils/venueZone');
 
 const router = express.Router();
 
@@ -249,8 +251,20 @@ function priceLevelToNum(priceLevel) {
 // would fix all three, but every option is a new dependency. If the badge ever
 // carries more than a pill, store the IANA zone on venue_profiles at claim
 // time and format with Intl.DateTimeFormat instead.
-function venueLocalTime(lat, lng, now = new Date()) {
-  const offsetHours = Math.max(-12, Math.min(14, Math.round((Number(lng) || 0) / 15)));
+//
+// 2026-09-25: Google now hands over the IANA zone itself. `timeZone` is a Place
+// Details Pro field, and the badge's mask was already billed at Enterprise for
+// rating, review count, price and hours, so asking for it costs nothing. When
+// the payload carries one, the venue's wall clock comes from the zone (all
+// three limits above gone, daylight saving included) and the longitude
+// estimate is only the fallback for a payload without it.
+function venueLocalTime(lat, lng, now = new Date(), timeZone = null) {
+  // The offset in force at the venue right now, from its zone when there is
+  // one, else the longitude estimate.
+  const zoned = timeZone ? venueLocalNow(null, now, timeZone) : null;
+  const offsetHours = zoned && Number.isFinite(zoned.utcOffsetMinutes)
+    ? zoned.utcOffsetMinutes / 60
+    : Math.max(-12, Math.min(14, Math.round((Number(lng) || 0) / 15)));
   const wallMs = now.getTime() + offsetHours * 3600 * 1000;
   const asIfUtc = new Date(wallMs);
   const localHour = asIfUtc.getUTCHours();
@@ -367,7 +381,9 @@ router.get('/:placeId.svg',
           // Round 10: rating/userRatingCount/priceLevel are all consumed by the
           // ML feature vector AND the rule fallback. Dropping them made the
           // public badge disagree with the in-app number for the same venue.
-          'X-Goog-FieldMask': 'id,displayName,types,location,rating,userRatingCount,priceLevel,currentOpeningHours',
+          // timeZone: Place Details Pro, free on this Enterprise mask; it is
+          // the venue's clock (venueLocalTime) and its event window.
+          'X-Goog-FieldMask': 'id,displayName,types,location,rating,userRatingCount,priceLevel,currentOpeningHours,timeZone',
         },
         signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
       });
@@ -384,6 +400,9 @@ router.get('/:placeId.svg',
         user_ratings_total: p.userRatingCount ?? 0,
         price_level: priceLevelToNum(p.priceLevel),
         isOpen: p.currentOpeningHours?.openNow ?? null,
+        // Null when Google sent none. With it, predictBusyness reads the event
+        // window at the venue's real instant; without it, as before.
+        timeZone: placeTimeZone(p),
       };
 
       let svg;
@@ -403,7 +422,7 @@ router.get('/:placeId.svg',
           ? await getWeather(venue.location.latitude, venue.location.longitude, ANON).catch(() => null)
           : null;
         const { scoreTime } = venueLocalTime(
-          venue.location?.latitude, venue.location?.longitude
+          venue.location?.latitude, venue.location?.longitude, new Date(), venue.timeZone
         );
         const pred = await mlPredictor.predictBusyness(venue, weather, scoreTime, ANON);
         const [dot, text] = LABEL_COLORS[pred.label] || ['#2d5a87', `${pred.label} right now`];

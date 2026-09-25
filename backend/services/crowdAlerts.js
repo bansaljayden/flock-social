@@ -57,8 +57,12 @@ function offsetMinutesForZone(timeZone, at) {
 // clock at `instant`, using the venue offset. Mirrors the routes/crowd.js
 // pattern (venueLocalNow + weekdayOffset). Returns `instant` unchanged when we
 // have no offset — i.e. the documented server-clock fallback.
-function venueWallClock(instant, utcOffsetMinutes) {
-  const clock = venueLocalNow(utcOffsetMinutes, instant);
+//
+// `timeZone` (optional, the ml_venues zone name) wins over the offset when it
+// is usable: it reads the wall clock AT `instant`, so an event on the far side
+// of the venue's clock change gets that side's hour.
+function venueWallClock(instant, utcOffsetMinutes, timeZone) {
+  const clock = venueLocalNow(utcOffsetMinutes, instant, timeZone);
   if (!clock) return { time: instant, hour: instant.getHours(), local: false };
   const t = new Date(instant);
   t.setDate(t.getDate() + weekdayOffset(t.getDay(), clock.day));
@@ -404,17 +408,21 @@ async function processFlockAlert(flock) {
     // The rule engine (calculateCrowdScore) scores off the timestamp's own
     // getHours()/getDay(), so the venue-local timestamps below are what fix the
     // clock — it never reads this field. Set it anyway so a future swap to the
-    // ML predictor (which needs it for the event window) stays correct.
+    // ML predictor (which needs it for the event window) stays correct. The
+    // zone rides along for the same reason: the predictor prefers it per hour.
     venue.utcOffsetMinutes = utcOffsetMinutes;
+    venue.timeZone = venueTimezone;
 
     // Calculate current crowd score on the venue's clock
-    const nowClock = venueWallClock(now, utcOffsetMinutes);
+    const nowClock = venueWallClock(now, utcOffsetMinutes, venueTimezone);
     const currentScore = calculateCrowdScore(venue, weather, nowClock.time);
 
-    // Calculate score at event time on the venue's clock. The offset can drift
-    // across a DST boundary between now and the event, but the event is <3h out,
-    // so re-deriving at the event instant is not worth the second Intl call.
-    const eventClock = venueWallClock(new Date(flock.event_time), utcOffsetMinutes);
+    // Calculate score at event time on the venue's clock, read through the
+    // venue's zone AT the event instant. This used to reuse the offset from
+    // `now` on the grounds that the event is under three hours out, which is
+    // exactly the window a 2 AM clock change falls inside on the one night a
+    // year it matters; the zone makes the second offset free to get right.
+    const eventClock = venueWallClock(new Date(flock.event_time), utcOffsetMinutes, venueTimezone);
     const eventScore = calculateCrowdScore(venue, weather, eventClock.time);
 
     // Generate hourly forecast for next 3 hours, starting on the venue's hour.

@@ -52,7 +52,7 @@
 // under this mask varies with the hour it was asked at:
 //
 //   immutable per venue   id, displayName, formattedAddress, location, types,
-//                         utcOffsetMinutes, googleMapsUri, nationalPhoneNumber,
+//                         timeZone, googleMapsUri, nationalPhoneNumber,
 //                         websiteUri, photos (the refs, not the bytes)
 //   slow moving           rating, userRatingCount, priceLevel — the model
 //                         inputs. A venue's star average and review count move
@@ -64,7 +64,11 @@
 //                         the boolean. `.openNow` is the single field Google
 //                         computes at request time, so it is the only thing in
 //                         the payload that can be wrong by the age of a cache
-//                         entry.
+//                         entry. utcOffsetMinutes is the other, twice a year: it
+//                         is the offset in force when Google answered, so an
+//                         entry fetched before a venue's clock change is an hour
+//                         off after it. The venue clock reads timeZone first
+//                         (crowdEngine.venueLocalNow) for exactly that reason.
 //
 // So the payload is keyed on place id and nothing else, and the hour stays on
 // the prediction cache that needs it. The practical consequence is the one the
@@ -146,10 +150,18 @@ const { recordPlacesResult } = require('../utils/placesHealth');
 // riders on a mask that already reaches Enterprise. THE RULE FOR THE NEXT EDIT
 // is venueSearch's: adding a field costs nothing only while the mask already
 // contains something of an equal or higher tier.
+//
+// `timeZone` (added 2026-09-25) is one of those free riders: Place Details Pro,
+// the same tier as utcOffsetMinutes (Google's data-fields table lists both under
+// Place Details Pro, Text Search Pro and Nearby Search Pro). It is the venue's
+// IANA zone, and it is what lets the crowd forecast read the offset in force at
+// each hour instead of the one in force when this payload was fetched; see
+// utils/venueZone.js. An entry cached before a deploy has no zone and the
+// forecast keeps the fixed offset for it, exactly as before.
 const PLACE_DETAILS_FIELD_MASK = [
   'id', 'displayName', 'formattedAddress', 'nationalPhoneNumber', 'websiteUri',
   'rating', 'userRatingCount', 'priceLevel', 'photos', 'currentOpeningHours',
-  'types', 'location', 'googleMapsUri', 'utcOffsetMinutes',
+  'types', 'location', 'googleMapsUri', 'utcOffsetMinutes', 'timeZone',
 ].join(',');
 
 // See the TTL argument in the header. Bounded by `currentOpeningHours.openNow`,

@@ -21,7 +21,9 @@ const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 // Free outage detection. This is the file whose console.error below ran for five days in September with nobody counting it. See utils/placesHealth.js.
 const { recordPlacesResult } = require('../utils/placesHealth');
 const { paywallEnabled } = require('../services/entitlements');
-const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset } = require('../services/crowdEngine');
+const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
+// The venue's IANA zone off a Places payload (utils/venueZone.js).
+const { placeTimeZone } = require('../utils/venueZone');
 // The one place that decides whether a confidence integer may be called a
 // measured accuracy, defined in routes/crowd.js and imported rather than
 // re-derived — the same argument the forecast gate above records for
@@ -286,10 +288,11 @@ function toVenueShape(p, localDay) {
   let openHour = null, closeHour = null, closeMinute = 0;
   const periods = p.currentOpeningHours?.periods;
   const hoursByDay = buildHoursByDay(periods);
+  const timeZone = placeTimeZone(p);
   if (hoursByDay) {
     // The venue's own day beats the visitor's: a place in LA is still on
     // Friday's hours while a visitor in London has rolled over to Saturday.
-    const venueDay = venueLocalNow(p.utcOffsetMinutes)?.day;
+    const venueDay = venueLocalNow(p.utcOffsetMinutes, undefined, timeZone)?.day;
     const today = venueDay != null ? venueDay : (localDay != null ? localDay : new Date().getDay());
     // Scalars stay for anything still reading a single window; hoursByDay is
     // what actually decides open/closed now.
@@ -320,6 +323,11 @@ function toVenueShape(p, localDay) {
     // the event window was left on the wrong (server) instant because the shape
     // dropped this. Carry it through so both halves use the venue's real time.
     utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+    // The venue's IANA zone (PLACE_FIELDS asks for it). With it the demo's
+    // clock and every forecast hour use the offset in force at that hour, so
+    // the card stays right across the venue's own clock change; without it,
+    // the offset above, as before.
+    timeZone,
   };
 }
 
@@ -370,7 +378,11 @@ async function warmDemoPhotos(rows, req) {
   }
 }
 
-const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.utcOffsetMinutes,places.location,places.photos';
+// places.timeZone (2026-09-25): Pro in both Text Search and Place Details, the
+// tier places.utcOffsetMinutes is already bought at, on a mask billed at
+// Enterprise for rating, review count, price and hours. It adds nothing to
+// either call's price. See utils/venueZone.js for what it is for.
+const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.utcOffsetMinutes,places.timeZone,places.location,places.photos';
 
 // The full venue card: current score + best time + peak + 12h forecast.
 //
@@ -390,6 +402,7 @@ async function buildCard(v, weather, clock, preScored, place) {
   const scored = preScored || await mlPredictor.predictBusyness(v, weather, clock.time, ANON);
   const fullDay = await mlPredictor.predictHourlyForecast(v, weather, clock.localHour, 24, clock.time, ANON);
   const hourly = fullDay.slice(0, 12);
+  const barClock = stripClock(hourly, clock.localHour);
   // Peak is read off the 12 hours the chart draws, so the rush it names is a
   // bar you can see. Scanning all 24 made a Wednesday card report Thursday
   // evening as the peak. Indexes still line up with fullDay for the best-time
@@ -459,7 +472,11 @@ async function buildCard(v, weather, clock, preScored, place) {
     // `open` per hour so closed hours can't be drawn as a crowd. A shut venue
     // has no crowd, whatever the model thinks the hour looks like.
     hourly: hourly.map((h, i) => {
-      const abs = clock.localHour + i; // the forecast runs forward from now
+      // This bar's hour and day off its own label (crowdEngine.stripClock):
+      // the forecast runs forward from now, but a strip across a
+      // spring-forward night has no 2 AM bar, so "now plus i" would be an
+      // hour early for every bar after it.
+      const at = barClock[i];
       return {
         hour: h.hour,
         label: h.label,
@@ -474,7 +491,7 @@ async function buildCard(v, weather, clock, preScored, place) {
         // live crowd just because the posted window says it should be.
         open: (i === 0 && v.isOpen != null)
           ? v.isOpen
-          : isOpenAt(v, abs % 24, clock.localDay + Math.floor(abs / 24)),
+          : isOpenAt(v, at.hour, clock.localDay + at.dayOffset),
       };
     }),
     as_of: Date.now(),
@@ -704,7 +721,10 @@ function clientNow(req) {
 // one. When Google tells us the venue's UTC offset we use the venue's own
 // clock, so "a time in the future" is true at the door.
 function venueClock(place, fallback) {
-  const local = venueLocalNow(place?.utcOffsetMinutes);
+  // The zone first when Google sent one: the area search caches for twenty
+  // minutes, so an offset fetched just before the venue's clock change would
+  // otherwise score the next card an hour off.
+  const local = venueLocalNow(place?.utcOffsetMinutes, undefined, placeTimeZone(place));
   return local ? clockFor(local.hour, local.day) : fallback;
 }
 

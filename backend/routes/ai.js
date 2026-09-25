@@ -49,6 +49,8 @@ const { allowPlacesSearch } = require('../utils/placesBudget');
 // Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
 const { recordPlacesResult } = require('../utils/placesHealth');
 const { upstreamSignal } = require('../utils/upstream');
+// The venue's IANA zone off a Places payload (utils/venueZone.js).
+const { placeTimeZone } = require('../utils/venueZone');
 const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 const {
   checkUserRateLimit,
@@ -800,8 +802,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         headers: {
           'X-Goog-Api-Key': PLACES_API_KEY,
           // Round 15: utcOffsetMinutes so Birdie scores on the venue's clock
-          // (see below), same field mask intent as routes/crowd.js.
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
+          // (see below), same field mask intent as routes/crowd.js. timeZone
+          // (2026-09-25) for the same reason the card asks for it: the offset
+          // in force at each hour of the forecast. Place Details Pro, like the
+          // offset, on a mask already billed at Enterprise, so it costs nothing.
+          'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes,timeZone',
         },
       });
       const p = await resp.json();
@@ -818,7 +823,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const now = new Date();
       let localHour = Number.isInteger(opts.localHour) ? opts.localHour : now.getHours();
       let localDay = Number.isInteger(opts.localDay) ? opts.localDay : now.getDay();
-      const venueClock = venueLocalNow(p.utcOffsetMinutes, now);
+      const timeZone = placeTimeZone(p);
+      const venueClock = venueLocalNow(p.utcOffsetMinutes, now, timeZone);
       if (venueClock) {
         localHour = venueClock.hour;
         localDay = venueClock.day;
@@ -854,6 +860,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // predictBusyness reads this for the Ticketmaster event window
         // (trueEventInstant); null -> the old caller-clock fallback.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+        // The zone, preferred over the offset wherever it is usable, so the
+        // 24-hour strip below stays right across the venue's own clock change.
+        timeZone,
       };
 
       const lat = venue.location?.latitude;

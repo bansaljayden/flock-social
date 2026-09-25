@@ -23,6 +23,8 @@ const { isPlaceIdShaped } = require('../utils/places');
 // actually be made, so a cache hit or a ride on somebody else's in-flight fetch
 // costs the ledger nothing.
 const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
+// Google's `timeZone` off a Places payload, validated. See utils/venueZone.js.
+const { placeTimeZone } = require('../utils/venueZone');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -688,7 +690,8 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
   // displayed hours must use the same day the score does, or the two disagree by
   // a day. Mirrors publicCrowd.toVenueShape. Falls back to the caller's day, then
   // the server's, when Google gives us no offset.
-  const venueDay = crowdEngine.venueLocalNow(p.utcOffsetMinutes)?.day;
+  const timeZone = placeTimeZone(p);
+  const venueDay = crowdEngine.venueLocalNow(p.utcOffsetMinutes, undefined, timeZone)?.day;
   const today = venueDay != null ? venueDay : (clientDay != null ? clientDay : new Date().getDay()); // 0=Sun
   // The map, today's windows and the scalars, from the one construction
   // routes/ai.js also reads, so Birdie and this card agree about when a venue
@@ -717,6 +720,13 @@ async function fetchVenueFromGoogle(placeId, clientDay) {
     // the venue-clock rewrite was meant to kill. Google omits it for some
     // places, so it stays nullable and callers fall back to the caller's clock.
     utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+    // The venue's IANA zone (placeDetailsCache asks for it; Pro, a free rider
+    // on this Enterprise mask). With it, the venue clock and every forecast
+    // slot's instant use the offset in force at that hour, which is what keeps
+    // the strip right across the venue's own clock change. Null for a payload
+    // cached before the field was asked for, and everything downstream then
+    // uses utcOffsetMinutes exactly as before.
+    timeZone,
   };
 }
 
@@ -880,7 +890,11 @@ router.get('/:placeId',
       // The client's own hour stays the fallback for the overwhelmingly common
       // case where Google gives us no offset, and for the far more common case
       // where the venue is local anyway and the two are identical.
-      const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+      //
+      // The venue's zone first when Google sent one, because the offset in a
+      // cached payload is an hour wrong for up to ten minutes after the venue's
+      // own clock change (crowdEngine.venueLocalNow).
+      const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now, venue.timeZone);
       if (venueClock) {
         localHour = venueClock.hour;
         localDay = venueClock.day;
@@ -943,6 +957,8 @@ router.get('/:placeId',
         mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id }),
       ]);
       const hourly = fullDay.slice(0, 12);
+      // Each bar's hour and day, for the per-bar open flags below.
+      const barClock = crowdEngine.stripClock(hourly, localHour);
       // Peak comes off the same 12 hours the forecast meter draws, so it names
       // a rush the user can see rather than tomorrow evening.
       const peakResult = findPeakTime(hourly, venue, { startDay: localDay });
@@ -1119,7 +1135,10 @@ router.get('/:placeId',
         // open/closed answer so no client has to guess.
         hoursToday: venue.hoursToday || [],
         hourly: hourly.map((h, i) => {
-          const abs = localHour + i;
+          // This bar's hour and day, off its own label: a strip across a
+          // spring-forward night has no 2 AM bar, so "localHour + i" would be
+          // an hour early for every bar after it (crowdEngine.stripClock).
+          const at = barClock[i];
           // `baselineScore` is a SERVE-PATH field: crowdEngine ranks the hours
           // on it (see HOUR_ORDERING_MIN_GAP) and no client has any business
           // re-deriving an ordering from it, which is exactly what publishing
@@ -1133,7 +1152,7 @@ router.get('/:placeId',
             // not be drawn as a live crowd.
             open: (i === 0 && venue.isOpen != null)
               ? venue.isOpen
-              : crowdEngine.isOpenAt(venue, abs % 24, localDay + Math.floor(abs / 24)),
+              : crowdEngine.isOpenAt(venue, at.hour, localDay + at.dayOffset),
           };
         }),
         // Which hourly entry the best-time sentence names (see bestTimeFields).
@@ -1197,10 +1216,12 @@ router.get('/:placeId',
         // field keeps its old behaviour, and one that reads it is correct
         // whichever order the two deploys land in. `local` is false when
         // Google gave us no offset and we fell back to the caller's clock.
+        // The offset is the one that produced hour and day: the zone's offset
+        // right now when the venue has a zone, Google's otherwise.
         venueClock: {
           hour: localHour,
           day: localDay,
-          utcOffsetMinutes: venueClock ? Number(venue.utcOffsetMinutes) : null,
+          utcOffsetMinutes: venueClock ? venueClock.utcOffsetMinutes : null,
           local: !!venueClock,
         },
       };
@@ -1878,8 +1899,9 @@ router.get('/:placeId/alternatives',
       //     reporters could move the card and leave this list untouched.
       // Same three lines as the card, so there is one rule about which clock a
       // venue is scored on. Google omits the offset for some places; those fall
-      // back to the caller's clock exactly as before.
-      const venueClock = crowdEngine.venueLocalNow(target.utcOffsetMinutes, now);
+      // back to the caller's clock exactly as before. The zone first, as on the
+      // card.
+      const venueClock = crowdEngine.venueLocalNow(target.utcOffsetMinutes, now, target.timeZone);
       if (venueClock) {
         localHour = venueClock.hour;
         localDay = venueClock.day;
@@ -1984,7 +2006,10 @@ router.get('/:placeId/alternatives',
             headers: {
               'Content-Type': 'application/json',
               'X-Goog-Api-Key': API_KEY,
-              'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
+              // places.timeZone: Text Search Pro, the tier utcOffsetMinutes is
+              // already bought at, on a mask billed at Enterprise for rating and
+              // hours. Free, like the offset beside it.
+              'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes,places.timeZone',
             },
             body: JSON.stringify({
               textQuery: primaryType,
@@ -2043,6 +2068,8 @@ router.get('/:placeId/alternatives',
           // the Ticketmaster event window (trueEventInstant). The searchText
           // field mask requests it, so pass it through instead of dropping it.
           utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+          // And the zone, which predictBusyness prefers when it is there.
+          timeZone: placeTimeZone(p),
         }));
 
       // Round 14: "Less crowded nearby" was scored by a different engine than
