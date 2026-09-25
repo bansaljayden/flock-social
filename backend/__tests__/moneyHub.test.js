@@ -52,6 +52,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'money-hub-test-secret';
 // Fake, and assembled at runtime so nothing here looks like a real key.
 const STRIPE_KEY = ['sk', 'test', `moneyhub${'0'.repeat(20)}`].join('_');
 const RC_KEY = 'rc_secret_moneyhub_fake_key_000';
+const RC_V2_KEY = 'rc_v2_secret_moneyhub_fake_000';
 const BT_KEY = ['pri', 'feedface'.repeat(4)].join('_');
 const BT_PUBLIC_KEY = ['pub', 'decafbad'.repeat(4)].join('_');
 
@@ -180,7 +181,11 @@ global.fetch = async (url, init) => {
   if (!u.startsWith('https://api.revenuecat.com/')) return realFetch(url, init);
   rcCalls.push(u);
   const auth = init && init.headers && init.headers.Authorization;
-  if (auth !== `Bearer ${RC_KEY}`) return json({ message: 'bad key' }, 401);
+  // RevenueCat keeps its two APIs' keys apart: v1 routes take the v1 key, and
+  // API v2 answers a v1 key with 403, the refusal production showed.
+  if (u.includes('/v1/') && auth !== `Bearer ${RC_KEY}`) return json({ message: 'bad key' }, 401);
+  if (u.includes('/v2/') && auth === `Bearer ${RC_KEY}`) return json({ message: 'v1 key' }, 403);
+  if (u.includes('/v2/') && auth !== `Bearer ${RC_V2_KEY}`) return json({ message: 'bad key' }, 401);
   if (u.includes('/v1/subscribers/')) {
     const id = decodeURIComponent(u.split('/v1/subscribers/')[1]);
     if (rc.failIds.has(id)) return json({ message: 'upstream' }, 500);
@@ -275,6 +280,7 @@ const ENV_KEYS = [
   'STRIPE_SECRET_KEY', 'REVENUECAT_SECRET_API_KEY', 'STRIPE_PRICE_PRO_MONTHLY', 'STRIPE_PRICE_PRO_YEARLY',
   'STRIPE_PRICE_ROOST_MONTHLY', 'STRIPE_PRICE_ROOST_YEARLY', 'STRIPE_PRICE_ROOST_FOUNDING',
   'STRIPE_PRICE_ROOST_LEGACY', 'PAYWALL_ENABLED', 'VENUE_BILLING_ENABLED', 'REVENUECAT_PROJECT_ID',
+  'REVENUECAT_V2_SECRET_API_KEY',
   'BESTTIME_API_KEY',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -336,6 +342,7 @@ function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accura
 function clearVendors() {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.REVENUECAT_SECRET_API_KEY;
+  delete process.env.REVENUECAT_V2_SECRET_API_KEY;
   delete process.env.REVENUECAT_PROJECT_ID;
   delete process.env.BESTTIME_API_KEY;
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
@@ -405,6 +412,8 @@ function seedStripe() {
 // account 14 is the web subscriber, account 7 is a sandbox tester.
 function seedRevenueCat({ v2 = 'refuse' } = {}) {
   process.env.REVENUECAT_SECRET_API_KEY = RC_KEY;
+  if (v2 === 'unset') delete process.env.REVENUECAT_V2_SECRET_API_KEY;
+  else process.env.REVENUECAT_V2_SECRET_API_KEY = RC_V2_KEY;
   rc.v2 = v2;
   rc.subscribers = {
     5: { subscriber: { subscriptions: { flock_pro_monthly: { store: 'app_store', is_sandbox: false, period_type: 'normal', purchase_date: THIS_MONTH_ISO, expires_date: FUTURE_ISO, price: { amount: 3.99, currency: 'USD' } } } } },
@@ -651,6 +660,37 @@ test('RevenueCat: a key without v2 access says so, and the App Store split still
   assert.strictEqual(app.verdict, 'match', 'the last App Store charge matches the stated $3.99');
 });
 
+test('RevenueCat: with no v2 key the project figures are not asked for, and each Pro account is still read with the v1 key', async () => {
+  seedStripe();
+  seedRevenueCat({ v2: 'unset' });
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const rcv = r.body.revenue.revenuecat;
+  assert.strictEqual(rcv.status, 'ok');
+  assert.strictEqual(rcv.overview.status, 'not_connected');
+  assert.match(rcv.overview.reason, /REVENUECAT_V2_SECRET_API_KEY is not set/);
+  assert.match(rcv.overview.reason, /REVENUECAT_SECRET_API_KEY stays the v1 key/);
+  assert.ok(!rcCalls.some((u) => u.includes('/v2/')), 'nothing is sent to API v2 without a v2 key');
+  assert.strictEqual(rcv.subscribers.status, 'ok');
+  assert.strictEqual(rcv.subscribers.checked, 3);
+  assert.strictEqual(r.body.pricing.offering.status, 'not_connected');
+  assert.match(r.body.pricing.offering.reason, /REVENUECAT_V2_SECRET_API_KEY/);
+});
+
+test('RevenueCat: each API gets its own key, so the v2 figures load and the v1 reads keep the entitlement key', async () => {
+  seedStripe();
+  seedRevenueCat({ v2: 'ok' });
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const rcv = r.body.revenue.revenuecat;
+  assert.strictEqual(rcv.overview.status, 'ok');
+  assert.strictEqual(rcv.overview.monthRevenueUsd, 3.99);
+  assert.strictEqual(rcv.subscribers.status, 'ok');
+  assert.ok(rcCalls.some((u) => u.includes('/v2/projects/proj1/metrics/overview')));
+  assert.ok(rcCalls.some((u) => u.includes('/v1/subscribers/')));
+  assert.ok(!r.text.includes(RC_KEY) && !r.text.includes(RC_V2_KEY), 'neither key reaches the client');
+});
+
 test('RevenueCat v2: the overview, this month, and a package pointed at the wrong length', async () => {
   seedStripe();
   seedRevenueCat({ v2: 'ok' });
@@ -697,6 +737,7 @@ test('a refused Stripe key is a named error with no numbers and no key in it', a
   assert.strictEqual(r.body.revenue.stripe.subscriptions, undefined);
   assert.ok(!r.text.includes(STRIPE_KEY), 'the key must never reach the client');
   assert.ok(!r.text.includes(RC_KEY));
+  assert.ok(!r.text.includes(RC_V2_KEY));
 });
 
 test('vendor reads are cached, and a refresh inside a minute does not reach Stripe again', async () => {
