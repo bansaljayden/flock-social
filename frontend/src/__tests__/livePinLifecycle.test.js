@@ -13,7 +13,10 @@
  * stop for every way a share ends) is pinned in the backend suites. This file
  * pins the app half: lib/livePins.js's three rules, the handlers that use
  * them, the staleness beat, and the share's auto-stop, which is lifted out of
- * App.js and run.
+ * App.js and run. So are the two position listeners, which drop a position
+ * from somebody blocked, and the stop, which ends this device's share and no
+ * one else's pin. The auto-stop ends a share when its plan LEAVES confirmed,
+ * never because a plan still being decided is not confirmed yet.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -29,6 +32,58 @@ const {
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
 const pin = (flockId, receivedAt = 1000, extra = {}) => ({ lat: 1, lng: 2, name: 'Sam', flockId, receivedAt, timestamp: receivedAt, ...extra });
+
+/**
+ * The index just past the brace that closes the one at `open`, skipping
+ * strings and comments, so a lifted body can hold either.
+ */
+function closeOf(source, open) {
+  let i = open;
+  let depth = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === '/' && next === '/') { i = source.indexOf('\n', i); if (i === -1) break; continue; }
+    if (ch === '/' && next === '*') { const end = source.indexOf('*/', i + 2); i = end === -1 ? source.length : end + 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') { depth -= 1; if (depth === 0) return i + 1; }
+    i += 1;
+  }
+  throw new Error('closeOf: unbalanced source');
+}
+
+/** The arrow function a socket subscription is handed, by the line that subscribes. */
+function liftListener(opener) {
+  const at = app.indexOf(opener);
+  if (at === -1) throw new Error(`listener not found: ${opener}`);
+  const start = at + opener.length;
+  return app.slice(start, closeOf(app, app.indexOf('{', app.indexOf('=>', start))));
+}
+
+/** The function a `const <name> = useCallback(...)` wraps, as source. */
+function liftCallbackFn(name) {
+  const marker = `  const ${name} = useCallback(`;
+  const at = app.indexOf(marker);
+  if (at === -1) throw new Error(`callback not found: ${name}`);
+  const start = at + marker.length;
+  return app.slice(start, closeOf(app, app.indexOf('{', app.indexOf('=>', start))));
+}
+
+/** Run lifted source against named stand-ins for what it closes over. */
+function runLifted(src, scope) {
+  // eslint-disable-next-line no-new-func
+  return new Function(...Object.keys(scope), src)(...Object.values(scope));
+}
 
 describe('lib/livePins: the three ways a pin comes off', () => {
   test('one person, scoped to the plan they left, and every plan when blocked', () => {
@@ -116,6 +171,67 @@ describe('App.js drops the pin on every event that ends it', () => {
   test('the sender and the receiver read one interval', () => {
     expect(app).toMatch(/if \(loc\) emitLocation\(sharingLocationForFlock, loc\.lat, loc\.lng, myTravelRef\.current\);\s*\}, LOCATION_EMIT_MS\);/);
   });
+
+  test('a position already on its way when a block landed is dropped, flock and DM alike', () => {
+    // The server stops sending at the block, but a position it read the
+    // roster for just before can arrive just after. The flock pin came back
+    // until the staleness sweep; the DM pin has no sweep and stayed.
+    const blockedIdsRef = { current: new Set(['9']) };
+    const state = { pins: {}, dm: null };
+    const flockListener = runLifted(`return ${liftListener('const unsubLocation = onLocationUpdate(')};`, {
+      blockedIdsRef,
+      setFlockMemberLocations: (fn) => { state.pins = fn(state.pins); },
+    });
+    flockListener({ userId: 9, lat: 1, lng: 2, name: 'Cy', flockId: 4, timestamp: 5 });
+    expect(state.pins).toEqual({});
+    flockListener({ userId: 8, lat: 1, lng: 2, name: 'Sam', flockId: 4, timestamp: 5 });
+    expect(Object.keys(state.pins)).toEqual(['8']);
+
+    const dmListener = runLifted(`return ${liftListener('const unsubLoc = onDmLocationUpdate(')};`, {
+      isOpenDm: () => true,
+      blockedIdsRef,
+      setDmMemberLocation: (v) => { state.dm = v; },
+    });
+    dmListener({ userId: 9, lat: 1, lng: 2, name: 'Cy', timestamp: 5 });
+    expect(state.dm).toBeNull();
+    dmListener({ userId: 8, lat: 1, lng: 2, name: 'Sam', timestamp: 5 });
+    expect(state.dm).toEqual({ lat: 1, lng: 2, name: 'Sam', timestamp: 5 });
+  });
+});
+
+describe("stopping this device's share leaves everyone else's pin", () => {
+  function stopWith({ sharing = 4, chatOnScreen = null } = {}) {
+    const calls = [];
+    const myTravelRef = { current: { intent: 'omw' } };
+    const stop = runLifted(`return ${liftCallbackFn('stopLocationSharing')};`, {
+      sharingLocationForFlock: sharing,
+      socketStopSharing: (id) => calls.push(['stop sent', id]),
+      setMyTravel: (v) => calls.push(['travel', v]),
+      myTravelRef,
+      prevFlockIdRef: { current: chatOnScreen },
+      leaveFlock: (id) => calls.push(['left room', id]),
+      setSharingLocationForFlock: (v) => calls.push(['sharing', v]),
+      // Other people's pins. The stop used to replace this whole map with {},
+      // so every plan's live pins blinked out until their next send.
+      setFlockMemberLocations: () => calls.push(['pin map replaced']),
+    });
+    stop();
+    return { calls, myTravelRef };
+  }
+
+  test('the stop goes out and this device forgets its own share, and nothing else', () => {
+    const { calls, myTravelRef } = stopWith();
+    expect(calls).toEqual([['stop sent', 4], ['travel', null], ['left room', 4], ['sharing', null]]);
+    expect(myTravelRef.current).toBeNull();
+  });
+
+  test('with that chat on screen the room is kept, and still no pin is touched', () => {
+    expect(stopWith({ chatOnScreen: 4 }).calls).toEqual([['stop sent', 4], ['travel', null], ['sharing', null]]);
+  });
+
+  test('nothing sharing, nothing sent', () => {
+    expect(stopWith({ sharing: null }).calls).toEqual([]);
+  });
 });
 
 describe('the share stops for a plan that is over or no longer this person\'s', () => {
@@ -170,6 +286,49 @@ describe('the share stops for a plan that is over or no longer this person\'s', 
     h.step([{ id: 4, status: 'confirmed' }], 4);
     h.step([{ id: 4, status: 'confirmed', name: 'renamed' }], 4);
     expect(h.state.stops).toBe(0);
+  });
+
+  test('a share started while the plan is still being decided survives every update', () => {
+    // The chat offers a share wherever somebody else is in the flock, so it
+    // can start at 'voting' (the client's word for the server's 'planning').
+    // A chat message, a roster refresh and a return from the background are
+    // each a new flocks array, and the first of them used to stop the share
+    // because 'voting' is not 'confirmed'.
+    const h = harness();
+    h.step([{ id: 4, status: 'voting' }], 4);
+    h.step([{ id: 4, status: 'voting', messages: [{ id: 1 }] }], 4);
+    h.step([{ id: 4, status: 'voting', members: [{ id: 2 }] }], 4);
+    expect(h.state.stops).toBe(0);
+    // Locked in while it runs: it keeps going.
+    h.step([{ id: 4, status: 'confirmed' }], 4);
+    h.step([{ id: 4, status: 'confirmed', name: 'renamed' }], 4);
+    expect(h.state.stops).toBe(0);
+  });
+
+  test('leaving confirmed is what stops it, whatever it started as', () => {
+    const lockedFirst = harness();
+    lockedFirst.step([{ id: 4, status: 'confirmed' }], 4);
+    lockedFirst.step([{ id: 4, status: 'voting' }], 4);
+    expect(lockedFirst.state.stops).toBe(1);
+    const votingFirst = harness();
+    votingFirst.step([{ id: 4, status: 'voting' }], 4);
+    votingFirst.step([{ id: 4, status: 'confirmed' }], 4);
+    votingFirst.step([{ id: 4, status: 'voting' }], 4);
+    expect(votingFirst.state.stops).toBe(1);
+  });
+
+  test('a plan still being decided that is called off, finished or gone still stops it', () => {
+    for (const next of [[{ id: 4, status: 'cancelled' }], [{ id: 4, status: 'completed' }], []]) {
+      const h = harness();
+      h.step([{ id: 4, status: 'voting' }], 4);
+      h.step(next, 4);
+      expect({ next, stops: h.state.stops }).toEqual({ next, stops: 1 });
+    }
+    // A plan that arrived with no status at all was still on the list.
+    const bare = harness();
+    bare.step([{ id: 4 }], 4);
+    bare.step([], 4);
+    expect(bare.state.stops).toBe(1);
   });
 
   test('and no share starts in a plan that is over, with the reason said', () => {

@@ -130,9 +130,11 @@ test('a pin stores the row and answers with the whole list', async () => {
   assert.strictEqual(res.status, 201, res.text);
   // The WHOLE list, not the one row: the server is the only thing that knows
   // what this reader is allowed to see, so a client splicing one row into a
-  // list it already had would be guessing.
+  // list it already had would be guessing. The sender's id rides so a
+  // client can take a blocked person's pins down with them, including a pin
+  // of a message it never loaded.
   assert.deepStrictEqual(res.body.pins, [{
-    id: 5, messageId: 5, text: 'Venmo @maya', messageType: 'text', senderName: 'Maya', pinnedBy: 2,
+    id: 5, messageId: 5, text: 'Venmo @maya', messageType: 'text', senderId: 2, senderName: 'Maya', pinnedBy: 2,
   }]);
 });
 
