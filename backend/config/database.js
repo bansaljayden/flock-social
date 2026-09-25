@@ -37,6 +37,19 @@ const pool = new Pool({
   ssl: sslConfig,
   max: 20,
   idleTimeoutMillis: 30000,
+  // Two connections are kept open however long they sit idle. Opening one
+  // costs 50 ms to 1.5 s against this database, and the sensor posts every
+  // ~30.5 s, just past the 30 s idle close above, so without a floor nearly
+  // every post paid for a fresh connection (167 of 401 in one measured night).
+  min: 2,
+  // A held connection can sit silent for hours overnight; TCP keepalive stops
+  // a proxy or NAT between here and Postgres from forgetting it.
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+  // The floor must not keep a one-shot script (scripts/ml/*, backfills, tests)
+  // alive after its work is done: idle pooled connections no longer hold the
+  // process open. The server stays up on its own listener either way.
+  allowExitOnIdle: true,
   // Waiting for a free pooled connection. 2s was too aggressive: under a burst
   // that briefly saturates all 20 slots, a request that would have been served
   // in 2.5s instead threw "timeout exceeded when trying to connect" out of

@@ -47,11 +47,20 @@ function mapEventType(classification) {
 // question and wrote the answer into the same columns.
 const NEARBY_KM = 2;
 const EVENT_MAX_DURATION_H = 3;
+// Discovery's default page, and what every per-venue query has always asked for.
+const TM_PAGE_SIZE = 20;
 
 // Fetch nearby events from Ticketmaster Discovery API
 // Docs: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 // Env: TICKETMASTER_API_KEY
-async function fetchTicketmasterEvents(lat, lon, radiusKm = NEARBY_KM, at = new Date()) {
+//
+// Returns { events, total } or null. `total` is Discovery's own count of
+// matching events (page.totalElements), which is how a caller learns whether
+// `events` is everything or only the first page: the realtime collector shares
+// one query between neighbouring venues and may only do that with a complete
+// list. fetchTicketmasterEvents below is the per-venue form every other caller
+// uses, and it is byte for byte the request this function makes by default.
+async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Date(), size = TM_PAGE_SIZE) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   // No key is a provider that cannot answer, never an empty answer.
   if (!apiKey) return null;
@@ -73,7 +82,7 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = NEARBY_KM, at = new 
       latlong: `${lat},${lon}`,
       radius: radiusKm,
       unit: 'km',
-      size: 20,
+      size,
       sort: 'date,asc',
       startDateTime: startDt,
       endDateTime: endDt,
@@ -87,19 +96,29 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = NEARBY_KM, at = new 
 
     const data = await response.json();
     const events = data._embedded?.events || [];
+    const total = Number.isInteger(data.page?.totalElements) ? data.page.totalElements : null;
 
-    return events.map(e => ({
-      name: e.name,
-      type: mapEventType(e.classifications?.[0]),
-      lat: parseFloat(e._embedded?.venues?.[0]?.location?.latitude || 0),
-      lon: parseFloat(e._embedded?.venues?.[0]?.location?.longitude || 0),
-      startTime: e.dates?.start?.dateTime || null,
-      size: parseInt(e._embedded?.venues?.[0]?.generalInfo?.capacity || 0, 10) || null,
-    }));
+    return {
+      events: events.map(e => ({
+        name: e.name,
+        type: mapEventType(e.classifications?.[0]),
+        lat: parseFloat(e._embedded?.venues?.[0]?.location?.latitude || 0),
+        lon: parseFloat(e._embedded?.venues?.[0]?.location?.longitude || 0),
+        startTime: e.dates?.start?.dateTime || null,
+        size: parseInt(e._embedded?.venues?.[0]?.generalInfo?.capacity || 0, 10) || null,
+      })),
+      total,
+    };
   } catch (err) {
     console.error('[ML:Events] Ticketmaster error:', err.message);
     return null;
   }
+}
+
+// The per-venue query: the events, or null when Ticketmaster could not answer.
+async function fetchTicketmasterEvents(lat, lon, radiusKm = NEARBY_KM, at = new Date()) {
+  const page = await fetchTicketmasterPage(lat, lon, radiusKm, at);
+  return page ? page.events : null;
 }
 
 // Fetch nearby events from SeatGeek API
@@ -160,7 +179,18 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = NEARBY_KM, at = ne
     fetchTicketmasterEvents(venueLat, venueLon, radiusKm, at),
     fetchSeatGeekEvents(venueLat, venueLon, radiusKm),
   ]);
+  return nearestEventFromAnswers(tmEvents, sgEvents, venueLat, venueLon, at);
+}
 
+// One venue's answer from what the providers returned for it: an array per
+// provider that answered, null per provider that could not. Everything that
+// makes the answer this venue's own (its distance to each event, the 2 km and
+// time-window filters, the nearest one, the provenance and its reason) happens
+// here, against the venue's own coordinates and clock. Split out of
+// getNearestEvent so the realtime collector, which shares one Ticketmaster
+// query between neighbouring venues, reaches each venue's answer through this
+// same code rather than through a second copy of it.
+function nearestEventFromAnswers(tmEvents, sgEvents, venueLat, venueLon, at = new Date()) {
   // Provenance travels with the answer (2026-09-01, migration 045's rule
   // applied at the source). A fetcher returns NULL when it could not answer
   // (no key, HTTP failure, timeout) and an ARRAY when it answered, empty
@@ -264,4 +294,7 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = NEARBY_KM, at = ne
   };
 }
 
-module.exports = { getNearestEvent, fetchTicketmasterEvents, fetchSeatGeekEvents, distanceKm };
+module.exports = {
+  getNearestEvent, fetchTicketmasterEvents, fetchTicketmasterPage, fetchSeatGeekEvents,
+  nearestEventFromAnswers, distanceKm, NEARBY_KM, TM_PAGE_SIZE,
+};

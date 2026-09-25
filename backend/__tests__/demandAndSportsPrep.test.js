@@ -54,6 +54,26 @@ test('the demand script keeps the corpus PA by geometry, not trust', () => {
   assert.match(DEMAND, /lehigh: \{ lat: 40\.6023/);
 });
 
+test('a going-out place is judged by its own types: bars, clubs, stages and taprooms pass, garages do not', () => {
+  // The script runs on require, so the filter is evaluated from its source.
+  const tableAt = DEMAND.indexOf('const TYPE_TO_CATEGORY = [');
+  const table = DEMAND.slice(tableAt, DEMAND.indexOf('];', tableAt) + 2);
+  const fnAt = DEMAND.indexOf('function isGoingOutPlace');
+  const block = DEMAND.slice(DEMAND.indexOf('const GOING_OUT_EXTRA'), DEMAND.indexOf('\n}', fnAt) + 2);
+  const isGoingOutPlace = new Function(`${table}\n${block}\nreturn isGoingOutPlace;`)();
+  for (const t of ['bar', 'pub', 'night_club', 'brewery', 'wine_bar', 'hookah_bar', 'irish_pub', 'beer_garden', 'lounge',
+    'taproom', 'winery', 'distillery', 'dance_club', 'performing_arts_theater', 'opera_house', 'live_music_venue',
+    'concert_hall', 'italian_restaurant']) {
+    assert.strictEqual(isGoingOutPlace([t, 'point_of_interest', 'establishment']), true, t);
+  }
+  for (const types of [['car_repair', 'point_of_interest'], ['real_estate_agency'], ['airport'], ['street_address'],
+    ['point_of_interest', 'establishment'], []]) {
+    assert.strictEqual(isGoingOutPlace(types), false, types.join(',') || 'no types');
+  }
+  assert.strictEqual(isGoingOutPlace(['corporate_office', 'cafe']), false, 'an office that lists a cafe is an office');
+  assert.strictEqual(isGoingOutPlace(['corporate_office', 'cocktail_bar']), true, 'a bar in an office building is a bar');
+});
+
 test('a Places 429 is rate limiting, never a dead venue', () => {
   assert.match(DEMAND, /response\.status === 429/, 'the retry ladder keys on 429 specifically');
   assert.match(DEMAND, /rateLimited: true/, 'exhausted retries surface as rate limiting');
