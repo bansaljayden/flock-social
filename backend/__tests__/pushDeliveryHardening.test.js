@@ -156,7 +156,7 @@ test('a data value that is not a scalar never ships as [object Object]', () => {
 });
 
 test('control characters never reach a lock screen', () => {
-  const msg = firebaseService.buildFcmMessage('tok', 'A B', 'lineone\nline two', {});
+  const msg = firebaseService.buildFcmMessage('tok', 'A\u0000B', 'line\u0007one\nline two', {});
   assert.strictEqual(msg.notification.title, 'A B');
   assert.strictEqual(msg.notification.body, 'line one line two');
 });
@@ -355,7 +355,7 @@ const { buildAlertMessage, pickPeak, hasEnoughData } = crowdAlerts.__testables;
 function score(n, label) { return { score: n, label }; }
 
 test('no crowd alert copy contains an em dash', () => {
-  // SLOP-AUDIT rule 1, and this string went to a lock screen.
+  // DESIGN-STANDARD rule 1, and this string went to a lock screen.
   const cases = [
     buildAlertMessage({ venueName: 'The Pearl', currentScore: score(30, 'Not Busy'), eventScore: score(90, 'Very Busy'), peak: null }),
     buildAlertMessage({ venueName: 'The Pearl', currentScore: score(30, 'Not Busy'), eventScore: score(60, 'Moderate'), peak: null }),

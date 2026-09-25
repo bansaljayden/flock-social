@@ -111,6 +111,23 @@ test('the push carries the actor, which is what makes pushHelper block-check it'
     'the type is what exempts this from quiet hours in pushHelper');
 });
 
+test('each push copy names the account it was sent to', async (t) => {
+  if (!alertFlockMembers) return t.skip('no seam');
+  // A notification outlives the session that received it, and the app draws
+  // this alarm straight from the payload. The app opens it only for the
+  // account named here, so every copy carries its own recipient, not a shared
+  // one and not the sender.
+  reset();
+  memberRows = [{ user_id: 2 }, { user_id: 3 }];
+  await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 });
+  assert.strictEqual(pushes.length, 2);
+  for (const p of pushes) {
+    assert.strictEqual(p.data.toUserId, String(p.userId), 'a copy must name the account it was pushed to');
+    assert.strictEqual(p.data.fromUserId, '1');
+    assert.strictEqual(p.data.latitude, 40.6);
+  }
+});
+
 test('location travels only when it was shared, and is absent rather than null', async (t) => {
   if (!alertFlockMembers) return t.skip('no seam');
   reset();
@@ -180,6 +197,9 @@ test('a stand-down reaches each member with the OK, over socket and push', async
   for (const x of pushes) {
     assert.strictEqual(x.data.type, 'safety_alert_cancelled');
     assert.match(x.title, /Ava says they are OK/);
+    // Same recipient rule as the alarm: the app acts on a safety tap only for
+    // the account the copy names.
+    assert.strictEqual(x.data.toUserId, String(x.userId));
   }
 });
 

@@ -48,7 +48,9 @@ test('reached means a device took the push', () => {
 });
 
 test('the map pin keys are spent first in the push data budget', () => {
-  assert.match(read('services/firebaseService.js'), /const DATA_PRIORITY = \['type', 'flockId', 'senderId', 'fromUserId', 'latitude', 'longitude'\];/);
+  // toUserId with them: the app opens a tapped alarm only for the account the
+  // copy names, so it is as load-bearing as the pin.
+  assert.match(read('services/firebaseService.js'), /const DATA_PRIORITY = \['type', 'flockId', 'senderId', 'fromUserId', 'latitude', 'longitude', 'toUserId'\];/);
 });
 
 test('a banned sender still rings the flock for an SOS and its stand-down', () => {
