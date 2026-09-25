@@ -7394,14 +7394,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPaywallTrigger(trigger);
   }, []);
   const isPro = !!entitlements?.isPremium;
-  const refreshEntitlements = useCallback(() => {
-    getEntitlements().then((data) => {
-      setEntitlements(data);
-      // The boot fetch never seeded the meter, so the "chirps left" line was
-      // hidden until the first reply of every session.
-      if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
-    }).catch(() => {});
+  // Two readers ask for this snapshot and their answers can come back out of
+  // order: a read sent on resume, before a purchase's webhook lands, can arrive
+  // after the upgrade poll's newer "you're Pro" and flip the app back to free
+  // with the poll already stopped. Answers are numbered as they are sent, and
+  // one older than the last applied is dropped.
+  const entitlementsSentRef = useRef(0);
+  const entitlementsAppliedRef = useRef(0);
+  const applyEntitlements = useCallback((seq, data) => {
+    if (seq < entitlementsAppliedRef.current) return;
+    entitlementsAppliedRef.current = seq;
+    setEntitlements(data);
+    // The boot fetch never seeded the meter, so the "chirps left" line was
+    // hidden until the first reply of every session.
+    if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
   }, []);
+  const refreshEntitlements = useCallback(() => {
+    const seq = ++entitlementsSentRef.current;
+    getEntitlements().then((data) => applyEntitlements(seq, data)).catch(() => {});
+  }, [applyEntitlements]);
   // A purchase only becomes premium once RevenueCat's webhook reaches our
   // backend, which can land after the app asks. One request could lose that
   // race and leave a paying user locked out, so retry on a short, finite
@@ -7416,19 +7427,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       upgradePollRef.current = setTimeout(check, delays[attempt]);
     };
     const check = () => {
+      const seq = ++entitlementsSentRef.current;
       getEntitlements()
         .then((data) => {
-          setEntitlements(data);
-          // The meter used to be null until a reply landed, so the "chirps left"
-          // line vanished on every restart though this answer already knows it.
-          if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
+          applyEntitlements(seq, data);
+          // Keeps asking on its own answer even when a newer one was applied
+          // first: the poll stops only on a Pro answer it read itself.
           if (!data?.isPremium) again();
         })
         .catch(() => again());
     };
     clearTimeout(upgradePollRef.current);
     check();
-  }, []);
+  }, [applyEntitlements]);
   useEffect(() => () => clearTimeout(upgradePollRef.current), []);
   // Back from a web checkout or the billing portal (PRO_RETURN, read at the
   // bottom of this file). A purchase confirms, then waits up to ~30s for Pro

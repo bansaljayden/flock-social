@@ -119,6 +119,16 @@ describe('Pro bought somewhere else', () => {
     expect(effect).toMatch(/window\.removeEventListener\('focus', onForeground\);/);
   });
 
+  test('an older answer never overwrites a newer one', () => {
+    // A resume read sent before the webhook lands can arrive after the upgrade
+    // poll's Pro answer; applying it would flip a paying user back to free.
+    expect(app).toMatch(/const applyEntitlements = useCallback\(\(seq, data\) => \{\n\s+if \(seq < entitlementsAppliedRef\.current\) return;/);
+    expect(app).toMatch(/const seq = \+\+entitlementsSentRef\.current;\n\s+getEntitlements\(\)\.then\(\(data\) => applyEntitlements\(seq, data\)\)/);
+    expect(app).toMatch(/applyEntitlements\(seq, data\);\n[\s\S]{0,200}if \(!data\?\.isPremium\) again\(\);/);
+    // Both readers go through it; nothing else sets the snapshot from a fetch.
+    expect((app.match(/setEntitlements\(data\)/g) || []).length).toBe(1);
+  });
+
   test('a Pro answer is what lifts the Birdie cap', () => {
     expect(app).toContain('const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0');
   });
