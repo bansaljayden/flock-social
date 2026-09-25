@@ -679,6 +679,27 @@ test('the cohort key has no knobs, and the cohort itself no longer has one eithe
     'support is bucket equality, not a distance test');
 });
 
+test('a reading counts only for its author, while they are the verified, unbanned owner of the place', async () => {
+  // The join was on the place alone, so after verification moved to another
+  // account the previous one's readings were counted under the new owner, and
+  // a banned owner who was still verified kept moving other venues' median.
+  // The semantics run against a real Postgres in venueCurrentOwner.test.js;
+  // this pins the statement the fakes above are standing in for.
+  scriptCohort({ night: NIGHT, peers: PEERS_OK });
+  queryLog = [];
+  await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+
+  const agg = queryLog.find((q) => /WITH reporters AS/.test(q.sql));
+  assert.match(agg.sql, /JOIN venue_profiles vp ON vp\.user_id = r\.venue_user_id AND vp\.google_place_id = r\.google_place_id AND vp\.verified = true/);
+  assert.match(agg.sql, /JOIN users ou ON ou\.id = vp\.user_id AND ou\.is_banned IS NOT TRUE/);
+
+  // And "your own" reading is the asking ACCOUNT's, not the place's.
+  const own = queryLog.find((q) => /AS night, EXTRACT\(HOUR/.test(q.sql));
+  assert.match(own.sql, /r\.venue_user_id = \$5/);
+  assert.match(own.sql, /ou\.is_banned IS NOT TRUE/);
+  assert.strictEqual(own.params[4], ASKING_OWNER);
+});
+
 // ═══ FINDING A: THE SUPPORT GATE WAS INVERTED ═══════════════════════════════
 //
 // The gate that shipped refused the distributions where the published number

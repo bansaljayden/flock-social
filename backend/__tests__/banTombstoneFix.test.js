@@ -255,6 +255,8 @@ function handle(text, params = []) {
   if (has('SELECT id FROM flocks') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
+  // A venue owner's review replies are erased with the account (migration 083).
+  if (has('UPDATE venue_reviews')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM users WHERE id = $1')) {
     const existed = Boolean(USERS[params[0]]);
     if (existed) { deletedUserIds.push(params[0]); delete USERS[params[0]]; }

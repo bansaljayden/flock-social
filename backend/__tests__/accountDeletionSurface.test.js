@@ -166,7 +166,52 @@ const DE_ATTRIBUTED = {
     'the admin who last wrote a company bill on the expense list (migration 080). The bill is ' +
     "the company's record and stays; emptied, the row names no one and holds nothing about " +
     'the person, so the delete-account and privacy pages have nothing to add',
+  'venue_reviews.venue_reply_user_id':
+    "who wrote a venue's reply to a review (migration 083). The review is the reviewer's and " +
+    'stays with them. Emptied, the reply has no author, and a reply is published only while ' +
+    "its author is the place's verified owner, so it is never shown again, including under " +
+    "whoever holds the place next. deleteAccount erases the reply's words first, in the same " +
+    'transaction, as it deletes messages; the SET NULL is what holds for any other way a user ' +
+    'row goes. The privacy page lists replies among what a deleted venue account takes with it',
 };
+
+test("a venue owner's deletion empties the author of their replies and keeps the reviewer's review", async () => {
+  // The registry above says what SET NULL means for venue_reviews; this is
+  // that sentence run against the real catalog. The review belongs to the
+  // person who wrote it, so it stays; the reply loses its author, which is
+  // what takes it off every card (routes/venueDashboard.js
+  // REPLY_BY_CURRENT_OWNER publishes a reply only for its author).
+  const owner = (await pool.query(
+    "INSERT INTO users (email, password, name) VALUES ('replier@example.com', 'x', 'Replier') RETURNING id"
+  )).rows[0].id;
+  const reviewer = (await pool.query(
+    "INSERT INTO users (email, password, name) VALUES ('reviewer83@example.com', 'x', 'Reviewer') RETURNING id"
+  )).rows[0].id;
+  await pool.query(
+    "INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'The Replying Bar', 'ChIJdeletionReply0001', true)",
+    [owner]
+  );
+  const reviewId = (await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at, venue_reply_user_id)
+     VALUES ('ChIJdeletionReply0001', $1, 4, 'Good night', 'Thanks for coming', NOW(), $2) RETURNING id`,
+    [reviewer, owner]
+  )).rows[0].id;
+
+  await pool.query('DELETE FROM users WHERE id = $1', [owner]);
+
+  const { rows } = await pool.query(
+    'SELECT user_id, text, venue_reply, venue_reply_user_id FROM venue_reviews WHERE id = $1', [reviewId]
+  );
+  assert.equal(rows.length, 1, "the reviewer's review went with the venue owner's account");
+  assert.equal(rows[0].user_id, reviewer);
+  assert.equal(rows[0].text, 'Good night');
+  assert.equal(rows[0].venue_reply_user_id, null, 'the reply still names a deleted account');
+  // A raw delete of the user row: the catalog empties the author and leaves the
+  // words. deleteAccount does not rely on that; it erases the words first (the
+  // route test further down).
+  assert.equal(rows[0].venue_reply, 'Thanks for coming');
+  await pool.query('DELETE FROM users WHERE id = $1', [reviewer]);
+});
 
 test('the rows that survive a deletion de-attributed are exactly the ones we decided on', async () => {
   const actual = (await foreignKeysToUsers())
@@ -570,6 +615,9 @@ let unmodelled;
 let proCustomer = null;
 let roostCustomer = null;
 let rowDeleted = false;
+// The statements that erase a venue owner's review replies, in order with the
+// user delete, so a test can see the erase lands inside the transaction first.
+let deletionOrder = [];
 
 function stubQuery(text) {
   const q = String(text);
@@ -580,6 +628,7 @@ function stubQuery(text) {
   // a SELECT-first dispatcher answers the delete with a user row and every
   // rollback case silently passes as a success.
   if (has('DELETE FROM users WHERE id = $1')) {
+    deletionOrder.push('users');
     if (failTransaction) throw new Error('simulated write failure');
     rowDeleted = true;
     return { rows: [{ id: DELETER }], rowCount: 1 };
@@ -617,6 +666,10 @@ function stubQuery(text) {
   }
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
+  if (has('UPDATE venue_reviews')) {
+    deletionOrder.push(q.replace(/\s+/g, ' ').trim());
+    return { rows: [], rowCount: 0 };
+  }
   if (has('banned_identities')) return { rows: [], rowCount: 0 };
   // A revoke drops the device rows too (2026-09-04).
   if (has('DELETE FROM device_tokens')) return { rows: [], rowCount: 0 };
@@ -677,6 +730,7 @@ async function deleteAccountAs(opts = {}) {
   proCustomer = opts.proCustomer || null;
   roostCustomer = opts.roostCustomer || null;
   rowDeleted = false;
+  deletionOrder = [];
   // getInvisibleUserIds is the UNCACHED variant, so blockedBoth is read fresh
   // on every call and there is nothing to invalidate.
   usersRouter.__testing.proofFailures.clearAll();
@@ -732,6 +786,15 @@ test('a member who blocked the deleter is not sent a payload naming them', async
   const rooms = emitted.filter((e) => e.event === 'flock_deleted').map((e) => e.room);
   assert.ok(!rooms.includes('user:22'), 'the socket payload carries deletedBy, so it is block-gated');
   assert.ok(rooms.includes('user:21'));
+});
+
+test("a venue owner's replies to reviews are erased in the deletion's transaction, before the account row", async () => {
+  const res = await deleteAccountAs();
+  assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
+  assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+  assert.equal(deletionOrder.length, 2, 'the reply erase ran once, then the account delete');
+  assert.match(deletionOrder[0], /SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL WHERE venue_reply_user_id = \$1/);
+  assert.equal(deletionOrder[1], 'users');
 });
 
 test('a deletion that rolls back tells nobody their plan is off', async () => {

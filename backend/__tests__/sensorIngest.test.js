@@ -45,9 +45,13 @@ pool.query = (sql, params = []) => {
     return Promise.resolve(runIngest({ devices, readings, snapshot }, params));
   }
 
-  // Owner gate on the fleet-health read.
+  // Owner gate on the fleet-health read. The verified clause is honoured only
+  // when the statement carries it, so dropping it from the route shows up as a
+  // failing test rather than as a fake that supplies the check itself.
   if (/SELECT 1 FROM venue_profiles WHERE user_id = \$1 AND google_place_id = \$2/.test(flat)) {
-    const hit = venueProfiles.find((v) => v.user_id === params[0] && v.google_place_id === params[1]);
+    const needsVerified = /AND verified = true/.test(flat);
+    const hit = venueProfiles.find((v) => v.user_id === params[0] && v.google_place_id === params[1]
+      && (!needsVerified || v.verified === true));
     return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
   }
 
@@ -149,9 +153,9 @@ function reset() {
     { id: 3, device_id: 'sensor_dead', venue_place_id: VENUE, is_active: false,
       api_key: digestOf('retired-key'), last_seen_at: null },
   ];
-  // User 1 is the authenticated caller (see the authenticate stub) and owns
-  // VENUE. Nobody owns OTHER_VENUE.
-  venueProfiles = [{ user_id: 1, google_place_id: VENUE }];
+  // User 1 is the authenticated caller (see the authenticate stub) and is the
+  // verified owner of VENUE. Nobody owns OTHER_VENUE.
+  venueProfiles = [{ user_id: 1, google_place_id: VENUE, verified: true }];
 }
 
 const reading = (extra = {}) => ({
@@ -566,6 +570,22 @@ test('fleet health is owner scoped: a user cannot enumerate hardware at a venue 
   const res = await call(`/api/sensors/${OTHER_VENUE}/status`, { method: 'GET' });
   assert.strictEqual(res.status, 403);
   assert.strictEqual(res.body.devices, undefined);
+});
+
+test('an unverified claim on the venue is not its owner, and learns nothing about its hardware', async () => {
+  // The partial unique index allows one VERIFIED claim per place and any
+  // number of unverified ones, so an unverified claim can sit on a venue whose
+  // real owner is verified. That claim used to read the device ids, when each
+  // unit last reported and whether it is online.
+  reset();
+  venueProfiles = [{ user_id: 1, google_place_id: VENUE, verified: false }];
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.body.devices, undefined);
+  assert.ok(!/sensor_001|last_seen_at/.test(res.raw), res.raw);
+  assert.ok(!queryLog.some((q) => /FROM sensor_devices/.test(q.sql)), 'the device read ran behind a refused gate');
+  const gate = queryLog.find((q) => /FROM venue_profiles/.test(q.sql));
+  assert.match(gate.sql, /AND verified = true/);
 });
 
 test('no API key in either form ever leaves through the status route', async () => {

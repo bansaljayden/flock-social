@@ -654,20 +654,30 @@ async function buildCohortStanding(ctx, { now = new Date() } = {}) {
  * and the hour its highest reading landed on. Its own data, so no floor
  * applies; the completed-day condition is guard 2, which closes the window
  * before anything about it is published.
+ *
+ * "Its own" is the asking ACCOUNT's readings, while it is the place's
+ * verified, unbanned owner. Keyed on the place alone, a new owner was shown
+ * the previous account's reading as "your own highest reading".
  */
-async function ownLatestNight(placeId, tz, today) {
+async function ownLatestNight(placeId, ownerId, tz, today) {
   const { rows } = await pool.query(
-    `SELECT (created_at AT TIME ZONE $2)::date AS night,
-            EXTRACT(HOUR FROM (created_at AT TIME ZONE $2))::int AS hour,
-            busy_percent::int AS reading
-       FROM venue_owner_reports
-      WHERE google_place_id = $1
-        AND retracted = false
-        AND created_at >= NOW() - ($4::text || ' days')::interval
-        AND (created_at AT TIME ZONE $2)::date < $3::date
-      ORDER BY 1 DESC, busy_percent DESC
+    `SELECT (r.created_at AT TIME ZONE $2)::date AS night,
+            EXTRACT(HOUR FROM (r.created_at AT TIME ZONE $2))::int AS hour,
+            r.busy_percent::int AS reading
+       FROM venue_owner_reports r
+       JOIN venue_profiles vp
+         ON vp.user_id = r.venue_user_id
+        AND vp.google_place_id = r.google_place_id
+        AND vp.verified = true
+       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+      WHERE r.google_place_id = $1
+        AND r.venue_user_id = $5
+        AND r.retracted = false
+        AND r.created_at >= NOW() - ($4::text || ' days')::interval
+        AND (r.created_at AT TIME ZONE $2)::date < $3::date
+      ORDER BY 1 DESC, r.busy_percent DESC
       LIMIT 1`,
-    [placeId, tz, today, String(OWN_READING_LOOKBACK_DAYS)]
+    [placeId, tz, today, String(OWN_READING_LOOKBACK_DAYS), ownerId == null ? null : Number(ownerId)]
   );
   const r = rows[0];
   if (!r) return null;
@@ -700,6 +710,12 @@ async function ownLatestNight(placeId, tz, today) {
  * The reporting venues must be claimed and verified, and the timezone used is
  * the asking venue's own. Every venue in one CITIES key shares a wall clock, so
  * one tz for the whole cohort is correct rather than convenient.
+ *
+ * A reading counts only when its AUTHOR is the place's current verified owner
+ * and is not banned. The join used to be on the place alone, so after
+ * verification moved, the previous account's readings were counted under the
+ * new owner, and a banned owner who was still verified kept moving other
+ * venues' median.
  */
 async function cohortNightAggregate({ city, category, askingOwnerId, tz, night, band }) {
   const { rows } = await pool.query(
@@ -707,7 +723,11 @@ async function cohortNightAggregate({ city, category, askingOwnerId, tz, night, 
        SELECT vp.user_id AS owner, MAX(r.busy_percent)::numeric AS peak
          FROM venue_owner_reports r
          JOIN ml_venues v ON v.google_place_id = r.google_place_id
-         JOIN venue_profiles vp ON vp.google_place_id = r.google_place_id AND vp.verified = true
+         JOIN venue_profiles vp
+           ON vp.user_id = r.venue_user_id
+          AND vp.google_place_id = r.google_place_id
+          AND vp.verified = true
+         JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
         WHERE v.city = $1
           AND v.venue_category = $2
           AND vp.user_id IS NOT NULL
@@ -813,7 +833,7 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
   if (!key) return [refuseNoMembership()];
 
   const today = localDateStr(tz, now);
-  const own = await ownLatestNight(placeId, tz, today);
+  const own = await ownLatestNight(placeId, ctx.profile.user_id, tz, today);
   if (!own) {
     return [facts.makeRefusal({
       id: 'refuse_no_reading_of_your_own',

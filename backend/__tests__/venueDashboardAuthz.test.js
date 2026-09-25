@@ -28,6 +28,11 @@
 //      server-side from the caller's profile; client-supplied place ids in the
 //      query string are ignored, and the WHERE clause carries the caller's own
 //      place id only.
+//   4b. The reviews tab reads a reply back only to the account that wrote it,
+//      and only while that account is the verified owner: an unverified
+//      co-claim on the same place reads no reply, and a verified owner does
+//      not read a previous owner's. The reply write records its author from
+//      the session.
 //   5. Intelligence / strip: the Google fetch is for the caller's own linked
 //      place regardless of what the query string claims; a plain user gets
 //      available:false without spending the shared Places budget.
@@ -234,6 +239,9 @@ function dispatch(rawSql, params = []) {
         venue_replied_at: r.venue_replied_at,
         created_at: r.created_at,
         user_id: r.user_id,
+        // Who wrote the reply (migration 083), answered only because the
+        // statement asks for it by name.
+        ...(/vr\.venue_reply_user_id/.test(sql) ? { venue_reply_user_id: r.venue_reply_user_id ?? null } : {}),
         name: 'Reviewer',
         reply_needs_review: r.venue_reply !== null && r.venue_replied_at === null,
       }));
@@ -251,6 +259,8 @@ function dispatch(rawSql, params = []) {
     if (!row) return { rows: [] };
     row.venue_reply = params[0];
     row.venue_replied_at = new Date();
+    const author = pidx(sql, /venue_reply_user_id = \$(\d+)/);
+    if (author !== null) row.venue_reply_user_id = params[author];
     return { rows: [{ ...row }] };
   }
 
@@ -527,6 +537,64 @@ test('a plain user probing the owner reviews tab gets nothing and no query runs'
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body, { reviews: [], stats: null });
   assert.strictEqual(ran(/FROM venue_reviews/).length, 0);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 4b. Whose reply the reviews tab reads back (migration 083)
+// ───────────────────────────────────────────────────────────────────────────
+
+// The partial unique index allows one verified claim per place and any number
+// of unverified ones, so a second account can hold an unverified claim on
+// PLACE_A while A is its verified owner.
+const CO_CLAIM = { id: 4, name: 'Dee', role: 'venue_owner' };
+function repliedReviews() {
+  REVIEWS.push(
+    // A's live reply, and A's retired one (the review was edited after it).
+    { id: 704, google_place_id: 'PLACE_A', user_id: 9, rating: 4, text: 'good', is_hidden: false, venue_reply: 'Thanks from A', venue_replied_at: '2026-08-05T20:00:00.000Z', venue_reply_user_id: 1, created_at: '2026-08-04T20:00:00.000Z' },
+    { id: 705, google_place_id: 'PLACE_A', user_id: 9, rating: 2, text: 'edited', is_hidden: false, venue_reply: 'Retired words from A', venue_replied_at: null, venue_reply_user_id: 1, created_at: '2026-08-06T20:00:00.000Z' },
+    // A reply written by the account that held PLACE_A before A did.
+    { id: 706, google_place_id: 'PLACE_A', user_id: 9, rating: 3, text: 'fine', is_hidden: false, venue_reply: 'Words from the previous owner', venue_replied_at: '2026-08-07T20:00:00.000Z', venue_reply_user_id: 99, created_at: '2026-08-06T21:00:00.000Z' },
+  );
+}
+
+test('an unverified co-claim reads the reviews and none of the business\'s replies, retired ones included', async () => {
+  repliedReviews();
+  PROFILES.push({ user_id: 4, id: 44, google_place_id: 'PLACE_A', verified: false, tier: 'free' });
+  CURRENT_USER = CO_CLAIM;
+  const res = await call('GET', '/api/venue-dashboard/reviews');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.reviews.map((r) => r.id).sort(), [702, 704, 705, 706],
+    'the reviews themselves are public and stay listed');
+  for (const r of res.body.reviews) {
+    assert.strictEqual(r.venue_reply, null, `review ${r.id} handed a reply to an unverified claim`);
+    assert.strictEqual(r.venue_replied_at, null);
+    assert.strictEqual(r.reply_needs_review, false);
+  }
+  assert.ok(!res.text.includes('Retired words from A'), 'the retired reply the public card withholds reached a co-claim');
+  assert.ok(!res.text.includes('venue_reply_user_id'), 'the author column is read by the route, never sent');
+});
+
+test('the verified owner reads their own replies, the retired one included, and not a previous owner\'s', async () => {
+  repliedReviews();
+  const res = await call('GET', '/api/venue-dashboard/reviews');
+  assert.strictEqual(res.status, 200, res.text);
+  const byId = Object.fromEntries(res.body.reviews.map((r) => [r.id, r]));
+  assert.strictEqual(byId[704].venue_reply, 'Thanks from A');
+  assert.strictEqual(byId[704].reply_needs_review, false);
+  assert.strictEqual(byId[705].venue_reply, 'Retired words from A', 'the owner keeps their own retired reply to reuse');
+  assert.strictEqual(byId[705].reply_needs_review, true);
+  assert.strictEqual(byId[706].venue_reply, null, "a previous owner's words were read back as this owner's reply");
+  assert.strictEqual(byId[706].venue_replied_at, null);
+  assert.ok(!res.text.includes('venue_reply_user_id'));
+});
+
+test('the reply write records who wrote it, from the session and nothing else', async () => {
+  const res = await call('POST', '/api/venue-dashboard/reviews/702/reply', { reply: 'Thanks for coming', venue_reply_user_id: 2, venueReplyUserId: 2 });
+  assert.strictEqual(res.status, 200, res.text);
+  const upd = ran(/^UPDATE venue_reviews (?:vr )?SET venue_reply/)[0];
+  assert.match(upd.sql, /venue_reply_user_id = \$4/);
+  assert.strictEqual(upd.params[3], 1, 'the author is req.user.id, not anything the body said');
+  assert.strictEqual(review(702).venue_reply_user_id, 1);
 });
 
 // ───────────────────────────────────────────────────────────────────────────

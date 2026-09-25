@@ -660,13 +660,16 @@ router.get('/:placeId/status',
       const { placeId } = req.params;
 
       // venue_profiles.user_id is UNIQUE (migration 001), so this is one row at
-      // most and it is the caller's own claim on this place_id.
+      // most and it is the caller's own claim on this place_id. It has to be a
+      // VERIFIED claim: the partial unique index lets an unverified second claim
+      // sit on a place somebody else has verified, and that claimant must not
+      // learn which hardware the venue runs or whether it is online.
       const owns = await pool.query(
-        'SELECT 1 FROM venue_profiles WHERE user_id = $1 AND google_place_id = $2 LIMIT 1',
+        'SELECT 1 FROM venue_profiles WHERE user_id = $1 AND google_place_id = $2 AND verified = true LIMIT 1',
         [req.user.id, placeId]
       );
       if (owns.rows.length === 0) {
-        return res.status(403).json({ error: 'This is not your venue' });
+        return res.status(403).json({ error: 'Sensor status is for the verified owner of this venue.' });
       }
 
       // api_key is never selected here, in either form. The digest is a

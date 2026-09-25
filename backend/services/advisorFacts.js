@@ -1409,20 +1409,29 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
 // append-only serve log); they are quoted as "what we served to people who
 // looked", never as a measurement of the room, and days with no serves simply
 // have no row rather than an invented zero.
+//
+// "Your own numbers" means the readings THIS account posted, and only while it
+// is the place's verified, unbanned owner. Keyed on the place alone, the card
+// read a previous owner's slider posts back to the next one as theirs.
 async function buildReadingsVsServed(ctx) {
   const p = ctx.profile;
   const tz = ctx.mlVenue?.timezone || 'UTC';
   const out = [];
 
   const readings = await pool.query(
-    `SELECT (created_at AT TIME ZONE $2)::date AS day,
-            MAX(busy_percent)::int AS peak_reading,
+    `SELECT (r.created_at AT TIME ZONE $2)::date AS day,
+            MAX(r.busy_percent)::int AS peak_reading,
             COUNT(*)::int AS readings
-       FROM venue_owner_reports
-      WHERE google_place_id = $1 AND retracted = false
-        AND created_at >= NOW() - INTERVAL '7 days'
+       FROM venue_owner_reports r
+       JOIN venue_profiles vp
+         ON vp.user_id = r.venue_user_id
+        AND vp.google_place_id = r.google_place_id
+        AND vp.verified = true
+       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+      WHERE r.google_place_id = $1 AND r.venue_user_id = $3 AND r.retracted = false
+        AND r.created_at >= NOW() - INTERVAL '7 days'
       GROUP BY 1 ORDER BY 1 DESC`,
-    [p.google_place_id, tz]
+    [p.google_place_id, tz, p.user_id]
   );
   for (const r of readings.rows) {
     const date = toDateStr(r.day);

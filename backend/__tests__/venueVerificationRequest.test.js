@@ -402,6 +402,40 @@ test('no copy string breaks design rule 1 or promises a turnaround nobody enforc
   }
 });
 
+test('the forecast sentence is served only behind the Roost gate, and the live number card gets its own pair', () => {
+  // "Forecasts turn on once that clears" is true for a venue that holds Roost
+  // (every venue while billing is off) and false for a verified free venue
+  // once billing is on, which verifies and still gets no forecast. So it may
+  // only be served where requirePro has already refused a free venue. GET
+  // /busy-now is free on every plan and used to serve it on the live-number
+  // card a free venue sees.
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8').replace(/\r\n/g, '\n');
+  const routes = dash.split(/\n(?=router\.(?:get|post|put|delete)\()/).slice(1);
+  let served = 0;
+  for (const block of routes) {
+    if (!/unverifiedReason\(/.test(block)) continue;
+    served += 1;
+    const decl = block.slice(0, block.indexOf('\n'));
+    assert.match(decl, /requirePro/, `${decl} serves the forecast sentence to every plan`);
+  }
+  assert.strictEqual(served, 3, 'the forecast, the strip and the weekly summary each explain an unverified claim');
+  const busyNow = routes.find((b) => b.startsWith("router.get('/busy-now'"));
+  assert.ok(busyNow, 'GET /busy-now not found');
+  assert.match(busyNow, /reason: liveNumberRefusal\(ctx\)/);
+  assert.doesNotMatch(busyNow, /unverifiedReason\(/);
+
+  const advisor = fs.readFileSync(path.join(__dirname, '..', 'routes', 'advisor.js'), 'utf8');
+  const advisorRoutes = advisor.match(/^router\.(?:get|post|put|delete)\([^\n]*/gm) || [];
+  assert.ok(advisorRoutes.length >= 4);
+  for (const decl of advisorRoutes) {
+    assert.match(decl, /requirePro/, `${decl} is an advisor route outside the Roost gate`);
+  }
+  // And the live-number pair promises nothing a plan decides.
+  for (const s of [copy.LIVE_NUMBER_NOT_REQUESTED, copy.LIVE_NUMBER_PENDING]) {
+    assert.doesNotMatch(s, /forecast|Roost/i);
+  }
+});
+
 test('the route copy stays consistent with the module (grep, not trust)', () => {
   // The three dashboard surfaces and the Roost chat all read
   // utils/verificationCopy.js; the sentence that pointed at nothing must not
