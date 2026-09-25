@@ -20,7 +20,11 @@
 //     reported, and the collector's rows beside them;
 //   * the model: the version serving, the share within one crowd band with its
 //     window and n, the goal and the gap, and under the minimum sample the
-//     words "not enough observations yet" and no percentage at all.
+//     words "not enough observations yet" and no percentage at all;
+//   * the operator's own steps: done and to do in the server's words, the
+//     database's network and its timed round trip (words and no number when
+//     it was not timed), the fix as a command, and the steps the server
+//     cannot see marked Check yourself with a link out and no claim.
 //
 // It also pins every price backend/services/statedPrices.js lists against the
 // file that states it. The backend suite does the same, but a push that only
@@ -186,6 +190,36 @@ const MODEL = {
   cache: { ttlSeconds: 3600 },
 };
 
+// The operator's own steps, as the server words them: the database on the
+// public proxy with a timed round trip and its fix, the v2 key and the expense
+// list done, the webhook to do, error reporting optional and not set, and the
+// five steps the server cannot see, which carry no state at all.
+const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST=postgres.railway.internal --set PGPORT=5432';
+const RC_LINK = { href: 'https://app.revenuecat.com/', text: 'RevenueCat' };
+const CHECK_YOURSELF = [
+  { id: 'paid_apps_agreement', label: 'Paid Apps Agreement', words: 'Apple sells no in-app purchase until the Account Holder signs it, in App Store Connect under Business, then Agreements.', link: { href: 'https://appstoreconnect.apple.com/', text: 'App Store Connect' } },
+  { id: 'small_business_program', label: 'App Store Small Business Program', words: "Enrolling takes Apple's cut from 30% to 15%. The App Store break-even on this page assumes 30%, because the server cannot see whether the account is enrolled. Once it is, each App Store subscriber covers more of the burn. Apple asks for the Paid Apps Agreement first.", link: { href: 'https://developer.apple.com/app-store/small-business-program/', text: 'Small Business Program' } },
+  { id: 'subscription_review_screenshot', label: 'Review screenshot on each subscription', words: 'Each subscription needs a screenshot under Review Information before Apple will review it. Without one, App Store Connect shows it as Missing Metadata. Open the app, then Monetization, then Subscriptions.', link: { href: 'https://appstoreconnect.apple.com/apps', text: 'App Store Connect apps' } },
+  { id: 'apple_organization_account', label: 'Apple developer account under the company', words: "Moving the developer account to the company's organization account is a request to Apple Developer Support. Apple verifies the company through its D-U-N-S Number.", link: { href: 'https://developer.apple.com/contact/', text: 'Apple Developer Support' } },
+  { id: 'besttime_admissions', label: 'BestTime new-venue admissions this month', words: "BestTime's key endpoint does not report them, so the server cannot count them. BestTime's settings page shows how many are left this month.", link: { href: 'https://besttime.app/settings', text: 'BestTime settings' } },
+].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));
+const OWNER_ACTIONS = {
+  items: [
+    {
+      id: 'database_private_network', label: "Database on Railway's private network", checkedBy: 'server', state: 'todo', optional: false, network: 'public', via: 'PGHOST', link: null,
+      words: "PGHOST names no railway.internal address, so every query travels through Railway's public proxy. The fix is one command, and Railway redeploys the service when its variables change.",
+      fix: PRIVATE_NETWORK_FIX,
+      roundTrip: { status: 'ok', ms: 142.37, asOf: '2026-09-25T13:26:30.000Z', cached: true, cachedAgeSeconds: 30 },
+    },
+    { id: 'revenuecat_project_figures', label: 'RevenueCat project figures', checkedBy: 'server', state: 'done', optional: false, fix: null, link: RC_LINK, lastRead: 'answered', words: "REVENUECAT_V2_SECRET_API_KEY is set, so the hub reads RevenueCat's project-wide figures and the offering with it." },
+    { id: 'revenuecat_webhook', label: 'RevenueCat webhook', checkedBy: 'server', state: 'todo', optional: false, fix: null, link: RC_LINK, words: "REVENUECAT_WEBHOOK_SECRET is not set to a usable value, 16 characters or more, so the server refuses every webhook RevenueCat sends. Set a long random one on the server (openssl rand -hex 32 makes one), and put the same value in the Authorization header of RevenueCat's webhook, under Integrations, then Webhooks. The server cannot see RevenueCat's side." },
+    { id: 'expense_list', label: 'Company expense list', checkedBy: 'server', state: 'done', optional: false, fix: null, link: null, words: 'The expense list has bills on it, so the costs on this page count them.' },
+    { id: 'error_reporting', label: 'Error reporting', checkedBy: 'server', state: 'todo', optional: true, fix: null, link: null, words: 'SENTRY_DSN is not set. Server errors still reach the Railway logs, but nothing collects them or sends an alert. Setting it needs no code change.' },
+    ...CHECK_YOURSELF,
+  ],
+  counts: { todo: 2, optionalTodo: 1, done: 2, unknown: 0, checkYourself: 5 },
+};
+
 const BASE = {
   generatedAt: '2026-09-25T13:27:00.000Z',
   month: { label: 'September 2026', startYmd: '2026-09-01', todayYmd: '2026-09-25', daysInMonth: 30, dayOfMonth: 25, tz: 'America/New_York' },
@@ -195,6 +229,7 @@ const BASE = {
   crowdData: CROWD_DATA,
   model: MODEL,
   health: HEALTH,
+  ownerActions: OWNER_ACTIONS,
 };
 
 const NOT_CONNECTED = {
@@ -845,6 +880,139 @@ describe('the model: which one is serving, and its served forecasts against the 
     expect(row.textContent).toMatch(/this server has no model_metadata\.json to read a version from\./);
     expect(within(hubRow('Gap to goal')).getByText('Met')).toBeInTheDocument();
     expect(hubRow('Gap to goal').textContent).not.toMatch(/−|-1\.2/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ONLY YOU CAN DO THESE. The server checks the operator's steps it can see
+// and sends each as done, to do or not read, in its own words; the ones it
+// cannot see arrive with no state. The card must draw both states with their
+// fix and round trip, must mark every unseen step Check yourself and claim
+// nothing about it, and must link out only over https.
+// ---------------------------------------------------------------------------
+describe('only you can do these: the operator\'s own steps', () => {
+  const stepsCard = () => screen.getByRole('heading', { name: 'Only you can do these' }).parentElement;
+  const withSteps = (over) => ({ ...CONNECTED, ownerActions: { ...OWNER_ACTIONS, ...over } });
+  const replaceSteps = (changes) => OWNER_ACTIONS.items.map((s) => (changes[s.id] ? { ...s, ...changes[s.id] } : s));
+  const DB = "Database on Railway's private network";
+
+  test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the month', async () => {
+    await renderHub(CONNECTED);
+    const card = stepsCard();
+    // Second on the page, straight after the month's figures.
+    expect(card.previousSibling.textContent).toMatch(/^September 2026/);
+    expect(within(card).getByText('Checked by the server')).toBeInTheDocument();
+    expect(within(card).getByText('2 to do, 1 optional step not done, 2 done.')).toBeInTheDocument();
+
+    const db = hubRow(DB);
+    expect(within(db).getByText('To do')).toBeInTheDocument();
+    expect(within(db).getByText('Public proxy')).toBeInTheDocument();
+    expect(db.textContent).toMatch(/PGHOST names no railway\.internal address, so every query travels through Railway's public proxy\./);
+    expect(within(db).getByText(/^One SELECT 1 round trip took 142 ms, timed at .+\.$/)).toBeInTheDocument();
+    // The fix, word for word, as one block to copy.
+    const fix = within(db).getByText(PRIVATE_NETWORK_FIX);
+    expect(fix.tagName).toBe('CODE');
+
+    const rc = hubRow('RevenueCat project figures');
+    expect(within(rc).getByText('Done')).toBeInTheDocument();
+    expect(within(rc).queryByText('Refused')).toBeNull();
+    const webhook = hubRow('RevenueCat webhook');
+    expect(within(webhook).getByText('To do')).toBeInTheDocument();
+    expect(webhook.textContent).toMatch(/The server cannot see RevenueCat's side\./);
+    expect(within(webhook).getByRole('link', { name: 'Open RevenueCat' })).toHaveAttribute('href', 'https://app.revenuecat.com/');
+    expect(within(hubRow('Company expense list')).getByText('Done')).toBeInTheDocument();
+    const sentry = hubRow('Error reporting');
+    expect(within(sentry).getByText('To do')).toBeInTheDocument();
+    expect(within(sentry).getByText('Optional')).toBeInTheDocument();
+    // Only the database step has a round trip and a command.
+    expect(within(card).getAllByText(/round trip took/)).toHaveLength(1);
+    expect(card.querySelectorAll('code')).toHaveLength(1);
+    // Plain sentences, the card's own words included.
+    expect(card.textContent).not.toMatch(/—/);
+  });
+
+  test('every step done: the private network with no command, a round trip not timed is words and no number, a refused key and an unread list say so', async () => {
+    await renderHub(withSteps({
+      items: replaceSteps({
+        database_private_network: {
+          state: 'done', network: 'private', fix: null,
+          words: "PGHOST names a railway.internal address, so every query stays on Railway's private network.",
+          roundTrip: { status: 'error', reason: 'The database did not answer SELECT 1, so there is no round trip to show.', cached: false, cachedAgeSeconds: 0 },
+        },
+        revenuecat_project_figures: { lastRead: 'refused', words: 'REVENUECAT_V2_SECRET_API_KEY is set, and RevenueCat refused it on the last read. It must be a secret key for API v2 with read access to charts and metrics and to project configuration.' },
+        revenuecat_webhook: { state: 'done', words: "REVENUECAT_WEBHOOK_SECRET is set on the server. RevenueCat's webhook, under Integrations, then Webhooks, must send the same value as its Authorization header, with or without Bearer in front. The server cannot see RevenueCat's side, so that half is yours to check." },
+        expense_list: { state: 'unknown', words: 'The expense list could not be read, so this step cannot be checked right now.' },
+        error_reporting: { state: 'done', words: 'SENTRY_DSN is set, so server errors are collected in Sentry.' },
+        // Anything but https is never drawn as a link.
+        besttime_admissions: { link: { href: 'http://besttime.app/settings', text: 'BestTime settings' } },
+      }),
+      counts: { todo: 0, optionalTodo: 0, done: 4, unknown: 1, checkYourself: 5 },
+    }));
+    const card = stepsCard();
+    expect(within(card).getByText('1 not read, 4 done.')).toBeInTheDocument();
+
+    const db = hubRow(DB);
+    expect(within(db).getByText('Done')).toBeInTheDocument();
+    expect(within(db).getByText('Private network')).toBeInTheDocument();
+    expect(within(db).queryByText('Public proxy')).toBeNull();
+    expect(within(db).getByText('The database did not answer SELECT 1, so there is no round trip to show.')).toBeInTheDocument();
+    expect(db.textContent).not.toMatch(/\d\s?ms\b/);
+    expect(db.querySelector('code')).toBeNull();
+    expect(within(card).queryByText(PRIVATE_NETWORK_FIX)).toBeNull();
+
+    const rc = hubRow('RevenueCat project figures');
+    expect(within(rc).getByText('Done')).toBeInTheDocument();
+    expect(within(rc).getByText('Refused')).toBeInTheDocument();
+    expect(rc.textContent).toMatch(/RevenueCat refused it on the last read\./);
+    expect(within(hubRow('RevenueCat webhook')).getByText('Done')).toBeInTheDocument();
+    const list = hubRow('Company expense list');
+    expect(within(list).getByText('Not read')).toBeInTheDocument();
+    expect(within(list).queryByText('Done')).toBeNull();
+    expect(within(list).queryByText('To do')).toBeNull();
+    const sentry = hubRow('Error reporting');
+    expect(within(sentry).getByText('Done')).toBeInTheDocument();
+    expect(within(sentry).getByText('Optional')).toBeInTheDocument();
+    const besttime = hubRow('BestTime new-venue admissions this month');
+    expect(within(besttime).queryByRole('link')).toBeNull();
+  });
+
+  test('all done reads as all done', async () => {
+    await renderHub(withSteps({ counts: { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 } }));
+    expect(within(stepsCard()).getByText('All 5 done.')).toBeInTheDocument();
+  });
+
+  test('the five steps the server cannot see say Check yourself, claim nothing, and each links out', async () => {
+    await renderHub(CONNECTED);
+    const card = stepsCard();
+    expect(within(card).getByText('The server cannot see these')).toBeInTheDocument();
+    expect(within(card).getAllByText('Check yourself')).toHaveLength(5);
+    const expected = [
+      ['Paid Apps Agreement', 'https://appstoreconnect.apple.com/', 'Open App Store Connect'],
+      ['App Store Small Business Program', 'https://developer.apple.com/app-store/small-business-program/', 'Open Small Business Program'],
+      ['Review screenshot on each subscription', 'https://appstoreconnect.apple.com/apps', 'Open App Store Connect apps'],
+      ['Apple developer account under the company', 'https://developer.apple.com/contact/', 'Open Apple Developer Support'],
+      ['BestTime new-venue admissions this month', 'https://besttime.app/settings', 'Open BestTime settings'],
+    ];
+    for (const [label, href, name] of expected) {
+      const row = hubRow(label);
+      expect(within(row).getByText('Check yourself')).toBeInTheDocument();
+      for (const claim of ['Done', 'To do', 'Not read']) expect(within(row).queryByText(claim)).toBeNull();
+      const link = within(row).getByRole('link', { name });
+      expect(link).toHaveAttribute('href', href);
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    expect(hubRow('Paid Apps Agreement').textContent).toMatch(/Apple sells no in-app purchase until the Account Holder signs it/);
+    expect(hubRow('App Store Small Business Program').textContent).toMatch(/Enrolling takes Apple's cut from 30% to 15%\. The App Store break-even on this page assumes 30%/);
+    expect(hubRow('BestTime new-venue admissions this month').textContent).toMatch(/key endpoint does not report them/);
+  });
+
+  test('a server from before this block draws no card, not an empty one', async () => {
+    const { ownerActions, ...older } = CONNECTED;
+    expect(ownerActions).toBeDefined();
+    await renderHub(older);
+    expect(screen.queryByRole('heading', { name: 'Only you can do these' })).toBeNull();
+    expect(screen.queryByText('Check yourself')).toBeNull();
   });
 });
 

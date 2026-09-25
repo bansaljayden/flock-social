@@ -128,7 +128,8 @@ function ReconciledLineForm({ line, onSaved, colors }) {
 //
 // Every figure comes from GET /api/admin/money (backend/services/moneyHub.js),
 // which reads Stripe, RevenueCat, BestTime's key endpoint, the cost model, the
-// expense list, the served forecasts and the collector's own rows. Nothing
+// expense list, the served forecasts and the collector's own rows, and checks
+// the steps only the operator can take where the server can see them. Nothing
 // here does arithmetic beyond formatting, for the reason the Costs tab gives:
 // the sums belong next to the sources they read, where they cannot drift from
 // them.
@@ -167,6 +168,10 @@ const hubStyle = {
   input: { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0, width: '100%', boxSizing: 'border-box' },
   fieldLabel: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)', flex: '1 1 130px', minWidth: 0 },
   textButton: { border: 'none', background: 'transparent', padding: '4px 0', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
+  // A command to paste. One tap selects all of it, and it wraps rather than
+  // scrolling sideways on a narrow phone.
+  command: { display: 'block', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 'var(--t-meta)', color: 'var(--text-primary)', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0 2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all' },
+  link: { display: 'inline-block', marginTop: '4px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', textUnderlineOffset: '2px' },
 };
 
 const HUB_TONE = {
@@ -215,7 +220,9 @@ function hubDay(ymd) {
   return date.toLocaleDateString('en-US', opts);
 }
 
-function HubRow({ label, value, note, tone, tag, navy }) {
+// children go under the note, inside the row, for what a row carries beyond a
+// sentence (a command to run, a link out).
+function HubRow({ label, value, note, tone, tag, navy, children }) {
   return (
     <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
@@ -226,6 +233,7 @@ function HubRow({ label, value, note, tone, tag, navy }) {
         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: HUB_TONE[tone] || navy, whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
       </div>
       {note && <p style={hubStyle.note}>{note}</p>}
+      {children}
     </div>
   );
 }
@@ -398,6 +406,111 @@ function HubSummary({ h, colors, loading, onRefresh }) {
       </div>
       <p style={hubStyle.foot}>
         Read at {hubTime(h.generatedAt)}. Stripe and RevenueCat answers are held for {Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60)} minutes{cachedAge !== null ? `, and this one is ${cachedAge} seconds old` : ''}.
+      </p>
+    </div>
+  );
+}
+
+// ONLY YOU CAN DO THESE: the steps the code cannot take for itself
+// (backend/services/moneyHub.js, ONLY YOU CAN DO THESE). The server checks the
+// ones it can see and sends each as done, to do or not read, in its own
+// words, with the fix as a command where there is one. The ones it cannot see
+// arrive with no state, and this card marks them Check yourself rather than
+// guessing. No step carries a variable's value, only whether it is set, and
+// the database step names its network, private or public, never its host.
+const HUB_STEP_STATE = {
+  done: { text: 'Done', tone: 'good' },
+  todo: { text: 'To do', tone: 'warn' },
+  unknown: { text: 'Not read', tone: 'muted' },
+};
+const HUB_CHECK_YOURSELF = { text: 'Check yourself', tone: 'muted' };
+const HUB_NETWORK_TAG = {
+  private: { tone: 'good', text: 'Private network' },
+  public: { tone: 'warn', text: 'Public proxy' },
+};
+
+// Only an https link is drawn. The hrefs are the server's own constants, and
+// this keeps anything else from becoming a link on an admin screen.
+const hubHttps = (href) => (typeof href === 'string' && /^https:\/\/\S+$/.test(href) ? href : null);
+
+// A round trip to the precision it deserves: hundredths under a millisecond,
+// tenths under ten, whole milliseconds above.
+function hubMs(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1) return `${ms.toFixed(2)} ms`;
+  if (ms < 10) return `${ms.toFixed(1)} ms`;
+  return `${Math.round(ms).toLocaleString('en-US')} ms`;
+}
+
+function hubStepSummary(counts) {
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  const c = counts || {};
+  const todo = n(c.todo);
+  const optional = n(c.optionalTodo);
+  const unknown = n(c.unknown);
+  const done = n(c.done);
+  if (todo === 0 && optional === 0 && unknown === 0) return `All ${hubCount(done)} done.`;
+  const parts = [];
+  if (todo > 0) parts.push(`${hubCount(todo)} to do`);
+  if (optional > 0) parts.push(`${hubPlural(optional, 'optional step', 'optional steps')} not done`);
+  if (unknown > 0) parts.push(`${hubCount(unknown)} not read`);
+  if (done > 0) parts.push(`${hubCount(done)} done`);
+  return `${parts.join(', ')}.`;
+}
+
+function HubOwnerStep({ step, navy }) {
+  const checked = step.checkedBy === 'server';
+  const state = checked ? (HUB_STEP_STATE[step.state] || HUB_STEP_STATE.unknown) : HUB_CHECK_YOURSELF;
+  let tag = null;
+  if (checked && HUB_NETWORK_TAG[step.network]) tag = HUB_NETWORK_TAG[step.network];
+  else if (checked && step.lastRead === 'refused') tag = { tone: 'bad', text: 'Refused' };
+  else if (step.optional) tag = { tone: 'muted', text: 'Optional' };
+  const rt = checked ? step.roundTrip : null;
+  const ms = rt && rt.status === 'ok' ? hubMs(rt.ms) : null;
+  const at = rt ? hubTime(rt.asOf) : null;
+  const href = step.link ? hubHttps(step.link.href) : null;
+  return (
+    <HubRow navy={navy} label={step.label} tag={tag} value={state.text} tone={state.tone} note={step.words}>
+      {rt && (ms
+        ? <p style={hubStyle.note}>One SELECT 1 round trip took {ms}{at ? `, timed at ${at}` : ''}.</p>
+        : <p style={hubStyle.note}>{rt.reason || 'The round trip was not timed, so there is no time to show.'}</p>)}
+      {step.fix && <code style={hubStyle.command}>{step.fix}</code>}
+      {href && (
+        <a className="hit44" href={href} target="_blank" rel="noopener noreferrer" style={hubStyle.link}>
+          Open {step.link.text || href}
+        </a>
+      )}
+    </HubRow>
+  );
+}
+
+function HubOwnerActions({ h, colors }) {
+  const oa = h.ownerActions;
+  // A server from before this block sends none of it: no card, not an empty one.
+  if (!oa || !Array.isArray(oa.items)) return null;
+  const navy = colors.navy;
+  const checked = oa.items.filter((s) => s.checkedBy === 'server');
+  const yours = oa.items.filter((s) => s.checkedBy !== 'server');
+  const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Only you can do these</h3>
+      <p style={hubStyle.sub}>Steps the code cannot take for itself. The server checks the ones it can see each time this page is read. The rest are marked Check yourself, with a link to where each one is done.</p>
+      {checked.length > 0 && (
+        <>
+          <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>Checked by the server</p>
+          <p style={{ ...hubStyle.note, margin: '0 0 4px' }}>{hubStepSummary(oa.counts)}</p>
+          {checked.map((s) => <HubOwnerStep key={s.id} step={s} navy={navy} />)}
+        </>
+      )}
+      {yours.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>The server cannot see these</p>
+          {yours.map((s) => <HubOwnerStep key={s.id} step={s} navy={navy} />)}
+        </>
+      )}
+      <p style={hubStyle.foot}>
+        Checked at {hubTime(h.generatedAt)}. No check sends a variable&apos;s value, only whether it is set, and the database is named by its network, never by its host. The round trip is held for {holdMinutes} minutes, like the Stripe and RevenueCat answers.
       </p>
     </div>
   );
@@ -1347,6 +1460,7 @@ function MoneyHub({ colors }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
+      <HubOwnerActions h={data} colors={colors} />
       <HubRevenue h={data} colors={colors} />
       <HubCosts h={data} colors={colors} />
       <HubExpenses h={data} colors={colors} onChanged={() => load(false)} />
