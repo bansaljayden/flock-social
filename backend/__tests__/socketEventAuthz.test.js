@@ -603,6 +603,9 @@ test('vote_venue: a plan cancelled between the closure check and the write recor
     // write reads it back. The write itself carries the status rule, so the
     // fixture answers it with nothing written.
     [/SELECT status FROM flocks WHERE id = \$1/, () => [{ status: reads++ === 0 ? 'planning' : 'cancelled' }]],
+    // The plan's row, locked after flockvote: and before any vote row
+    // (routes/venues.js VOTE_PLAN_LOCK_SQL). A cancel does not remove it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE/, [{ id: 4102 }]],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, [], 0],
   ], calls);
@@ -648,6 +651,7 @@ test('vote_venue: a write that lands nothing on a plan the re-read still calls o
     // statement's NOT IN cannot read as open). Nothing explains it, so the
     // transaction is rolled back and the caller is asked to try again.
     [/SELECT status FROM flocks WHERE id = \$1/, [{ status: 'planning' }]],
+    [/SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE/, [{ id: 4103 }]],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, [], 0],
   ], calls);

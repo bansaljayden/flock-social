@@ -2211,6 +2211,19 @@ const retractedIdsIn = (rows, drop) => {
 // no, and the loaded-row check beside every caller still applies.
 const saidByAny = (senderId, senders) => senderId != null && senders.has(String(senderId));
 
+// A live row minus its quote when the quoted words are somebody's who is
+// blocked. The server decides what a quote may show when it builds the row, so
+// a reply built a moment before a block can land a moment after it, and it put
+// the blocked person's words back into a chat the block had just cleared: any
+// plan but the open one, which is the only one re-read after a block, and a DM
+// thread emptied and left open for the person who was blocked, where your own
+// echo still lands. By the author id the quote carries (saidByAny); a quote
+// from a server that does not send it is left as it came. Same row back when
+// nothing changes.
+const withoutBlockedQuote = (row, blocked) => (row && row.reply_to && saidByAny(row.reply_to.senderId, blocked)
+  ? { ...row, reply_to: null }
+  : row);
+
 // Those rows gone, and every quote of them emptied, the way a takedown or an
 // unsend clears them live. A block also empties every quote of the blocked
 // person's words, loaded or not, because a read that left before the block was
@@ -2300,7 +2313,12 @@ const mapDmRow = (m, myId) => ({
   image_url: m.image_url,
   thumb_url: m.thumb_url || null,
   reactions: m.reactions || [],
-  reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
+  // `senderId` is the quoted author's, as on mapFlockRow's quote, so a block
+  // can empty a quote of their words (withoutBlockedQuote). Null from a server
+  // that does not send it.
+  reply_to: m.reply_to
+    ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name, senderId: m.reply_to.sender_id != null ? m.reply_to.sender_id : null }
+    : null,
   // THE RECEIPT (migration 065), carried through verbatim and never invented.
   //
   // backend/utils/messageStatus.js attaches this to the viewer's OWN rows only
@@ -10220,8 +10238,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // sends the sender's copy to their whole user room on both
             // transports now, and this used to be dropped on the grounds that
             // only the sending socket was ever echoed, so a laptop open on the
-            // chat never showed what its owner said from their phone.
-            updated.push(mapFlockRow(msg, authUser?.id));
+            // chat never showed what its owner said from their phone. Minus a
+            // quote of somebody blocked since the server built it
+            // (withoutBlockedQuote).
+            updated.push(withoutBlockedQuote(mapFlockRow(msg, authUser?.id), blockedIdsRef.current));
           } else {
             // `status` off the echo and never a literal. The server puts
             // 'sent' on the SENDER's copy alone and omits it entirely on the
@@ -10246,8 +10266,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (retractionsRef.current.log.some(e => e.kind === 'flock' && String(e.messageId) === String(msg.id))) return;
       // The history read's own mapper, so a live row and a reloaded one are
       // the same object: the quote a reply carries and the kind a plan event
-      // carries both arrive with it.
-      const mapped = mapFlockRow(msg, authUser?.id);
+      // carries both arrive with it. The sender check above is not the whole
+      // of a block: a reply from somebody else can quote the person just
+      // blocked, and that quote goes (withoutBlockedQuote).
+      const mapped = withoutBlockedQuote(mapFlockRow(msg, authUser?.id), blockedIdsRef.current);
       // Unread rides the append: the badge is server truth on every list
       // load and this is the live half between loads. catchUpTargetRef is
       // written every render, so it is current here without this callback
@@ -11488,6 +11510,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const savedId = data?.message?.id;
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
+          // ITS ROW IS ALREADY HERE: a history read that landed while this
+          // send was in flight brought it in, and a read never settles a
+          // photo's bubble (sendLandedAs), so the bubble is still up beside
+          // it. Given that id, it became a second row under one id, the photo
+          // drawn twice and two rows on one React key, until the next read.
+          // The row is the server's copy, so the bubble goes, which is what
+          // the echo does in the same case.
+          if (isServerId(savedId) && (f.messages || []).some(m => m.id === savedId)) {
+            return { ...f, messages: (f.messages || []).filter(m => m.id !== tempId) };
+          }
           // The REST twin echoes the same `status: 'sent'` on the sender's
           // copy, so the bubble picks up the first rung of the ladder on this
           // transport too. Read off the body rather than assumed: this branch
@@ -11538,9 +11570,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      allowed to see, and both write it straight onto the flock. A failure
      shows the server's own sentence: the ceiling refusal ("Only 3 messages
      can be pinned. Unpin one first.") is the one a person is most likely to
-     meet and the only one they can act on. */
+     meet and the only one they can act on.
+
+     Minus any pin of somebody blocked, the live listener's rule
+     (onFlockPinsChanged): the list was cut from the block set as it stood
+     when the server answered, and a block that lands before the answer does
+     would otherwise get back the pin it just took off the bar. */
   const applyPins = useCallback((flockId, pins) => {
-    setFlocks(prev => prev.map(f => (f.id === flockId ? { ...f, pins } : f)));
+    const kept = (Array.isArray(pins) ? pins : []).filter(p => !saidByAny(p && p.senderId, blockedIdsRef.current));
+    setFlocks(prev => prev.map(f => (f.id === flockId ? { ...f, pins: kept } : f)));
   }, []);
 
   const pinMessage = useCallback(async (flockId, messageId) => {
@@ -11652,6 +11690,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             id: quoting.id,
             text: quoting.text,
             sender: quoting.sender,
+            // The author's id, as a quote from the server carries it, so a
+            // block that lands while this is still sending (or after it
+            // failed) clears the quote even when the original is not loaded.
+            senderId: quoting.senderId,
             message_type: quoting.message_type || 'text',
           },
         }
@@ -13479,6 +13521,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // DM Detail Screen - Inline JSX to prevent focus loss on input
   const selectedDm = directMessages.find(d => d.userId === selectedDmId);
 
+  // THE NEWEST READ OF THE CONVERSATION LIST, by number: historyReadSeqRef's
+  // rule, for the list. A list read decides which threads the list holds, and
+  // two of them can answer in either order, so an older answer landing last
+  // took away a thread the newer one had just brought in. The read your own message from another
+  // device starts, for a thread this device did not hold, is the usual newer
+  // one, racing a reconnect's read that left before the message was stored. An
+  // answer a later read has overtaken changes nothing, its failure included,
+  // and the loading flag is put down by the newest read alone.
+  const dmListReadSeqRef = useRef(0);
+
   // Load DM conversations from backend (filter out deleted ones). Named so the
   // Messages error card retries the read the screen already ran.
   // Read through a ref, not closed over. The loader's dependency list is
@@ -13491,10 +13543,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const deletedDmUserIdsRef = useRef(deletedDmUserIds);
   deletedDmUserIdsRef.current = deletedDmUserIds;
   const loadDmConversations = useCallback(() => {
+    // This read's place in line (dmListReadSeqRef, above).
+    const turn = dmListReadSeqRef.current + 1;
+    dmListReadSeqRef.current = turn;
+    const overtaken = () => dmListReadSeqRef.current !== turn;
     setDmsLoading(true);
     setDmsError('');
     return getDMConversations()
       .then(data => {
+        if (overtaken()) return;
         const hidden = deletedDmUserIdsRef.current;
         // Merge, not replace, exactly as loadFlocks does. This runs on every
         // reconnect and every return from background, and a wholesale replace
@@ -13533,8 +13590,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       // The list already on screen is left alone, exactly as loadFlocks leaves
       // its own. The empty state is what has to be suppressed, not the data.
-      .catch((err) => setDmsError(err?.message || 'Your messages are not loading right now.'))
-      .finally(() => setDmsLoading(false));
+      // Overtaken, the later read owns the error line and the loading flag.
+      .catch((err) => { if (!overtaken()) setDmsError(err?.message || 'Your messages are not loading right now.'); })
+      .finally(() => { if (!overtaken()) setDmsLoading(false); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE OTHER HALF OF RECOVERY, and the half the 2026-08-27 deploy blip
@@ -13712,10 +13770,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ? { ...d, messages: [...d.messages, { ...optimistic, afterId: newestServerId(d.messages) }], lastMessage: messagePreview(optimistic), lastMessageIsYou: true }
       : d));
 
-    // In id order once the bubble has one: see orderByServerId.
-    const settle = (patch) => setDirectMessages(prev => prev.map(d => d.userId === userId
-      ? { ...d, messages: orderByServerId(d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m))) }
-      : d));
+    // In id order once the bubble has one: see orderByServerId. Unless the
+    // row that id names is already in the thread, brought in by a history
+    // read while this send was in flight: then the bubble goes rather than
+    // become a second row under one id (the flock twin's REST branch says why).
+    const settle = (patch) => setDirectMessages(prev => prev.map(d => {
+      if (d.userId !== userId) return d;
+      if (isServerId(patch.id) && d.messages.some(m => m.id === patch.id)) {
+        return { ...d, messages: d.messages.filter(m => m.id !== tempId) };
+      }
+      return { ...d, messages: orderByServerId(d.messages.map(m => (m.id === tempId ? { ...m, ...patch } : m))) };
+    }));
 
     // The emit's own return value decides, not just the connected check before
     // it. socketSendDm() answers false when the socket went down between the
@@ -13963,7 +14028,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           markDmRead(msg.id).catch(() => {});
         }, 1500);
       }
-      const mapped = {
+      // Minus a quote of somebody blocked since the server built this row
+      // (withoutBlockedQuote). Your own echo is exempt from the sender check
+      // above, and a thread left open for the person who was blocked would
+      // show that quote under the notice that the conversation is closed.
+      const mapped = withoutBlockedQuote({
         id: msg.id,
         sender: isYou ? 'You' : (msg.sender_name || 'Unknown'),
         senderId: msg.sender_id,
@@ -13975,16 +14044,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         image_url: msg.image_url,
         thumb_url: msg.thumb_url || null,
         reactions: msg.reactions || [],
-        // The server's reply row is { id, message_text, sender_name }; the
-        // bubble reads .text and .sender. Stored raw, a reply delivered live
-        // quoted a blank line under a blank name until the next reload
-        // remapped it from history. Normalised to the shape the UI reads, and
-        // an empty text here now honestly means the quoted message was a photo.
+        // The server's reply row is { id, message_text, sender_id,
+        // sender_name }; the bubble reads .text and .sender. Stored raw, a
+        // reply delivered live quoted a blank line under a blank name until
+        // the next reload remapped it from history. Normalised to the shape
+        // the UI reads (mapDmRow's), and an empty text here now honestly means
+        // the quoted message was a photo.
         reply_to: msg.reply_to
           ? {
               id: msg.reply_to.id,
               text: msg.reply_to.text || msg.reply_to.message_text || '',
               sender: msg.reply_to.sender || msg.reply_to.sender_name || '',
+              senderId: msg.reply_to.sender_id != null ? msg.reply_to.sender_id : null,
             }
           : null,
         // The receipt, on the sender's own echo only. The server puts
@@ -13992,7 +14063,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // nothing else, so an incoming DM arrives here with none, which is
         // right: a receipt belongs to whoever sent the message.
         status: msg.status || null,
-      };
+      }, blockedIdsRef.current);
       const previewText = messagePreview(mapped);
       // Own echo = the server's acknowledgement that the socket send was
       // persisted. Cancel its failure timer here, outside the state updater,

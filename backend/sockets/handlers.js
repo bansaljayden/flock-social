@@ -16,10 +16,12 @@ const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload'
 // and this app stores every chat photo inline and re-serves it to somebody else.
 const { stripDataUrlMetadata } = require('../utils/imageMetadata');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
-const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
+const {
+  isBlockedBetween, isBlockedOrBannedBetween, isBlockedBetweenCached, getInvisibleUserIds,
+} = require('../utils/blocks');
 // The vote tally is routes/venues.js's, not a copy of it. See the note at
 // vote_venue below.
-const { collectVoteRows, tailorVotes, votingClosedReason } = require('../routes/venues');
+const { collectVoteRows, tailorVotes, votingClosedReason, VOTE_PLAN_LOCK_SQL } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const { SYSTEM_KINDS, writeSystemMessage } = require('../utils/systemMessages');
 const {
@@ -549,13 +551,15 @@ function takePinHolders(flockId, sharerId) {
 // dropped. Marks are values of one counter that only rises, so a mark is
 // never reused; an old one is pruned once no tick could still be holding it,
 // and a pruned mark reads as 0, which only ever drops a tick, never keeps one.
+//
+// A DM share has the same race and the same answer, under `d:<sharer>:<peer>`
+// (markDmShareEnded, read by dm_share_location).
 const shareEndMarks = new Map(); // key -> { seq, at }
 let shareEndSeq = 0;
 const SHARE_END_MARKS_MAX = 5000;
 const SHARE_END_MARK_TTL_MS = 10 * 60 * 1000;
 
-function markShareEnded(flockId, sharerId) {
-  const key = sharerId == null ? `f:${flockId}` : `s:${flockId}:${sharerId}`;
+function setShareEndMark(key) {
   const now = Date.now();
   shareEndSeq += 1;
   shareEndMarks.set(key, { seq: shareEndSeq, at: now });
@@ -566,10 +570,26 @@ function markShareEnded(flockId, sharerId) {
   }
 }
 
+function markShareEnded(flockId, sharerId) {
+  setShareEndMark(sharerId == null ? `f:${flockId}` : `s:${flockId}:${sharerId}`);
+}
+
 function shareEndMark(flockId, sharerId) {
   const plan = shareEndMarks.get(`f:${flockId}`);
   const own = shareEndMarks.get(`s:${flockId}:${sharerId}`);
   return `${plan ? plan.seq : 0}/${own ? own.seq : 0}`;
+}
+
+// One person's DM share with one peer. Written by dm_stop_sharing_location
+// once the pair has passed its block and relationship checks, so a key only
+// ever names a pair that could share.
+function markDmShareEnded(sharerId, receiverId) {
+  setShareEndMark(`d:${sharerId}:${receiverId}`);
+}
+
+function dmShareEndMark(sharerId, receiverId) {
+  const own = shareEndMarks.get(`d:${sharerId}:${receiverId}`);
+  return own ? own.seq : 0;
 }
 
 // Test seam: rate limiting and the share count are process-global state, so
@@ -874,39 +894,57 @@ async function announceToRoomExcludingBlocked(socket, room, event, payload) {
   broadcastExcluding(socket.to(room), invisible, event, payload);
 }
 
-// Block-aware alternative to a flock-room broadcast: emits to each accepted
-// member individually, skipping anyone blocked either way with the actor.
-// Room broadcasts leaked typing/vote identity across blocks (round 4).
+// WHO A BLOCK-AWARE FAN-OUT ABOUT `actorId` REACHES, read into memory: the
+// plan's accepted members other than the actor (and its invitees, with
+// opts.includeInvited) and the actor's block and ban set, in the reads and the
+// order emitToFlockExcludingBlocked has always made them.
 //
-// opts.db is the client of a caller that is inside a transaction holding a
-// lock (the leave and the two plan deletes in routes/flocks.js hold the
-// plan's row FOR UPDATE while they announce). Its reads then run on that
-// connection: checking a second one out of the 20-slot pool while the first
-// is held is the shape utils/blocks.js warns turns a slow moment into pool
-// exhaustion. Everyone else reads on the pool, as before.
-async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload, opts = {}) {
+// opts.db is the client of a caller inside a transaction that holds the plan's
+// row FOR UPDATE (the leave and the two plan deletes in routes/flocks.js).
+// Its reads then run on that connection: checking a second one out of the
+// 20-slot pool while the first is held is the shape utils/blocks.js warns
+// turns a slow moment into pool exhaustion. Those callers read the audience
+// here BEFORE the write that removes the roster, and announce from it only
+// AFTER their COMMIT, so nobody is told about a leave or a delete that did not
+// happen. A read that fails on such a connection has aborted its transaction
+// in Postgres, whatever the JavaScript catches, so the caller decides what
+// that means for its write; this never swallows it.
+async function readFlockAudience(flockId, actorId, opts = {}) {
   const db = opts.db || pool;
   const members = await db.query(
     "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
     [flockId, actorId]
   );
-  const rows = [...members.rows];
+  let invited = [];
   if (opts.includeInvited) {
     // A person holding an invite card hears a time or venue change, and a
     // deletion, the same as a member; until now every fan-out went to accepted
     // rows only, so the card kept the old time and Accept on a deleted plan
     // answered "Flock not found" with the card still there (lifecycle audit,
     // 2026-09-05).
-    const invited = await db.query(
+    const rows = await db.query(
       "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id != $2",
       [flockId, actorId]
     );
-    rows.push(...invited.rows);
+    invited = rows.rows.map((m) => m.user_id);
   }
-  const invisible = new Set(await getInvisibleUserIds(actorId, db));
-  for (const m of rows) {
-    if (invisible.has(m.user_id)) continue;
-    io.to(`user:${m.user_id}`).emit(event, payload);
+  const invisible = await getInvisibleUserIds(actorId, db);
+  return { members: members.rows.map((m) => m.user_id), invited, invisible };
+}
+
+// Block-aware alternative to a flock-room broadcast: emits to each accepted
+// member individually, skipping anyone blocked either way with the actor.
+// Room broadcasts leaked typing/vote identity across blocks (round 4).
+//
+// opts.audience is one readFlockAudience already made, for a caller that read
+// it before its write and announces after its COMMIT; everyone else has it
+// read here, on opts.db or the pool (see readFlockAudience).
+async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload, opts = {}) {
+  const audience = opts.audience || await readFlockAudience(flockId, actorId, opts);
+  const invisible = new Set(audience.invisible);
+  for (const id of [...audience.members, ...(audience.invited || [])]) {
+    if (invisible.has(id)) continue;
+    io.to(`user:${id}`).emit(event, payload);
   }
 }
 
@@ -979,11 +1017,11 @@ function quoteWithheld(message) {
 // holds it (the disconnect asks once for every flock). null means the lookup
 // failed, and then only the holders are told: the roster half cannot be
 // filtered, and the holders are the people with a pin to clear. opts.roster
-// false skips the roster half for a caller who is no longer a member. opts.db
-// is the client of a caller inside a transaction (the leave route announces
-// the stop while it holds the plan's row FOR UPDATE, before the membership
-// row goes), so the roster half is read on that connection instead of a
-// second one from the pool; see emitToFlockExcludingBlocked for why.
+// false skips the roster half for a caller who is no longer a member.
+// opts.audience is a readFlockAudience the caller already made (the leave
+// route reads it on its own transaction before the membership row goes, and
+// announces after the COMMIT), and the roster half is then taken from it with
+// no read at all.
 //
 // Addressed to each `user:{id}`, never to `flock:{id}`: that room holds only
 // the sockets on that chat screen, so a member on the Map tab received every
@@ -998,19 +1036,23 @@ async function announceFlockShareEnded(io, sharerId, rawFlockId, opts = {}) {
   // rather than posting the position after this stop (markShareEnded).
   markShareEnded(flockId, sharerId);
   const told = new Set(takePinHolders(flockId, sharerId));
-  if (opts.roster !== false && opts.invisible !== null) {
+  if (opts.audience) {
+    const invisible = new Set(opts.audience.invisible);
+    for (const id of opts.audience.members) {
+      if (!invisible.has(id)) told.add(id);
+    }
+  } else if (opts.roster !== false && opts.invisible !== null) {
     try {
       // Same two independent reads update_location makes, in one concurrent
       // round trip (latency audit, 2026-09-12): until this lands a map is
       // claiming somebody is somewhere they left. Uncached for the reasons
       // written out above update_location's pair of reads.
-      const db = opts.db || pool;
       const [members, invisibleIds] = await Promise.all([
-        db.query(
+        pool.query(
           "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
           [flockId, sharerId]
         ),
-        Array.isArray(opts.invisible) ? opts.invisible : getInvisibleUserIds(sharerId, db),
+        Array.isArray(opts.invisible) ? opts.invisible : getInvisibleUserIds(sharerId),
       ]);
       const invisible = new Set(invisibleIds);
       for (const m of members.rows) {
@@ -2181,6 +2223,10 @@ function registerHandlers(io, socket) {
           "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
           [String(flockId), String(user.id)]
         );
+        // Then the plan's row, before the old vote row goes, so a plan delete
+        // and this switch queue rather than deadlock (routes/venues.js
+        // VOTE_PLAN_LOCK_SQL, the same statement the REST vote takes).
+        await voteClient.query(VOTE_PLAN_LOCK_SQL, [flockId]);
         await voteClient.query(
           'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
           [flockId, user.id, venue_name]
@@ -2844,8 +2890,10 @@ function registerHandlers(io, socket) {
       let replyRow = null;
       if (reply_to_id !== undefined && reply_to_id !== null && replyToId === null) return;
       if (replyToId) {
+        // sender_id, the quoted author's, rides on the quote as it does on the
+        // REST twin and the history read (routes/messages.js says why).
         const replyResult = await pool.query(
-          `SELECT dm.id, dm.message_text, u.name AS sender_name
+          `SELECT dm.id, dm.message_text, dm.sender_id, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = $1
              AND COALESCE(dm.is_hidden, false) = false
@@ -2880,6 +2928,19 @@ function registerHandlers(io, socket) {
             if (thumbVerdict.allowed) dmSafeThumb = sanitizeStoredImage(rawThumb);
           } catch { /* no thumbnail */ }
         }
+      }
+
+      // THE PAIR IS ASKED AGAIN AFTER THE SCREEN. The block and relationship
+      // checks above ran before moderateImage, which can take seconds, and a
+      // recipient who blocked the sender in that time, or a ban on either
+      // account, used to change nothing: the row was stored and new_dm went to
+      // the person who had just blocked them. A ban disconnects the banned
+      // account's sockets, but a handler already running carries on. Only an
+      // image send waits long enough for this to matter, so only it asks;
+      // POST /api/dm/:userId asks the same question at the same point.
+      if (dmImageCheck && await isBlockedOrBannedBetween(user.id, receiverId)) {
+        socket.emit('error', { message: 'You can no longer message this user.' });
+        return;
       }
 
       // Persist to database
@@ -3309,6 +3370,8 @@ function registerHandlers(io, socket) {
     const receiverId = asId(data?.receiverId);
     const { lat, lng } = data || {};
     if (receiverId === null || !isLatLng(lat, lng)) return;
+    // Where this share stood when the position arrived; see the stop below.
+    const endMark = dmShareEndMark(user.id, receiverId);
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
     // THE SOCKET MAY HAVE GONE WHILE THOSE TWO WERE AWAITED (adversarial
@@ -3320,6 +3383,15 @@ function registerHandlers(io, socket) {
     // live, so the peer never got the stop and kept a pin on their map. A
     // dead socket registers nothing.
     if (socket.disconnected) return;
+    // AND A STOP MAY HAVE GONE OUT WHILE THEY WERE AWAITED. Both reads go to
+    // the database on a cache miss, so a stop sent after this position could
+    // finish its own reads first, withdraw the share and tell the peer, and
+    // this position then resumed, registered the share again and put the pin
+    // back on a map that had just cleared it, with the sharer's app sending
+    // nothing more that would take it off. The flock tick's race and the
+    // flock tick's answer (markShareEnded): the stop marks the pair, and a
+    // position that sees the mark move while it read is not sent.
+    if (dmShareEndMark(user.id, receiverId) !== endMark) return;
     // Every position tick arrives as this event; the count moves on the first.
     if (!dmSharingWith.has(receiverId)) {
       dmSharingWith.add(receiverId);
@@ -3336,6 +3408,11 @@ function registerHandlers(io, socket) {
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
+    // Marked before the share is withdrawn and the stop goes out, and in the
+    // same synchronous run as both, so a position of this pair still reading
+    // is dropped (dm_share_location). After the two checks, so a mark only
+    // ever names a pair that passed them.
+    markDmShareEnded(user.id, receiverId);
     // Withdraw only what this socket added, and stay quiet while another
     // socket of this account is still feeding the pin. A stop from a socket
     // that never shared (the client reconnected and tapped stop before its
@@ -3773,12 +3850,20 @@ module.exports = {
   readClientId,
   ownEcho,
   // The end of a flock location share, for the ways a share ends outside this
-  // file: routes/flocks.js calls the first when a sharing member leaves (before
-  // the membership row that lets the roster find them is deleted), and the
-  // second once a plan is deleted. Both read the same record of who was handed
-  // each pin, which lives here with the fan-out that writes it.
+  // file: routes/flocks.js calls the first once a sharing member's leave has
+  // committed (from the audience it read before the membership row went), and
+  // the second once a plan is deleted. Both read the same record of who was
+  // handed each pin, which lives here with the fan-out that writes it.
   announceFlockShareEnded,
   announceFlockSharesEnded,
+  // The mark alone, for the leave route: set once its membership DELETE has
+  // run and before that DELETE commits, so a tick already reading its roster
+  // is dropped; the stop itself goes out after the COMMIT.
+  markShareEnded,
+  // A block-aware audience read once, for the leave and the two plan deletes
+  // in routes/flocks.js, which read it under their row lock and announce from
+  // it after their COMMIT.
+  readFlockAudience,
   // Round 16: exported so routes/ stops reaching for `io.to('flock:'+id)`.
   //
   // Round 18: the migration this note asked for is DONE. It used to read

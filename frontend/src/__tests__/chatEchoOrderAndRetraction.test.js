@@ -44,6 +44,21 @@
  *      older one survived every keepOlder merge. The author id reaches those.
  *   13. Your own DM from another device, into a thread this device did not
  *      have, made an inbox row named after you.
+ *   14. A photo sent over REST whose row a history read brought in while the
+ *      send was in flight: the answer gave the bubble that row's id, so the
+ *      thread held two rows under one id. The bubble goes instead, flock and
+ *      DM.
+ *   15. A live row built before a block and landing after it kept its quote
+ *      of the blocked person: a reply by somebody else in any plan but the
+ *      open one, and your own echo in a DM thread emptied for the person who
+ *      was blocked. The quote goes by its author id, which the DM quote now
+ *      carries too.
+ *   16. Two reads of the DM list answering out of order: the older answer
+ *      replaced the list last and took away the thread the newer one brought
+ *      in. An overtaken read changes nothing, and the newest puts the loading
+ *      flag down.
+ *   17. A pin or unpin answer cut before a block and landing after it put the
+ *      blocked person's pin back on the bar. It is filtered like the live copy.
  *
  * App.js cannot be imported (it is the whole app), so its pure helpers are
  * lifted out by name and run, the way chatSurface.test.js and
@@ -159,10 +174,10 @@ function liftCallback(source, name) {
 const HELPERS = [
   'SERVER_ID_MAX', 'isServerId', 'sameSend', 'newClientId', 'echoMatches', 'newestServerId',
   'sendLandedAs', 'landedSends', 'orderByServerId', 'retractedSince', 'retractedIdsIn',
-  'saidByAny', 'dropRetracted', 'dropRetractedPins', 'noteRetraction', 'mergeHistory',
-  'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'messagePreview',
+  'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction', 'mergeHistory',
+  'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'mapDmRow', 'messagePreview',
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
-  'writeFailedFlockMessages', 'TYPING_REFRESH_MS', 'TYPING_EXPIRE_MS',
+  'writeFailedFlockMessages', 'TYPING_REFRESH_MS', 'TYPING_EXPIRE_MS', 'NOT_CONNECTED_HINT',
 ];
 const H = (() => {
   const chunk = HELPERS.map((n) => extractDeclaration(appSource, n)).join('\n');
@@ -292,7 +307,8 @@ describe('an echo settles the bubble that sent it, not the one that looks like i
 // The two live handlers, lifted and run. Each closes over refs and setters
 // inside FlockAppInner; these are stand-ins with the same names.
 // ---------------------------------------------------------------------------
-function flockEcho({ flocks, pending = [] }) {
+// `blocked` is who this device has blocked by the time the row lands.
+function flockEcho({ flocks, pending = [], blocked = [] }) {
   const state = { flocks, storeRemoved: [], timersCleared: [] };
   const pendingEchoRef = { current: new Map(pending) };
   const handler = runLifted(`return ${liftListener(appSource, 'const unsub = onNewMessage(')};`, {
@@ -303,8 +319,9 @@ function flockEcho({ flocks, pending = [] }) {
     removeFailedFlockMessage: (flockId, id) => state.storeRemoved.push([flockId, id]),
     setFlocks: setterOn(state, 'flocks'),
     mapFlockRow: H.mapFlockRow,
+    withoutBlockedQuote: H.withoutBlockedQuote,
     orderByServerId: H.orderByServerId,
-    blockedIdsRef: { current: new Set() },
+    blockedIdsRef: { current: new Set(blocked.map(String)) },
     retractionsRef: { current: { seq: 0, log: [] } },
     catchUpTargetRef: { current: {} },
     clearTimeout: (t) => state.timersCleared.push(t),
@@ -312,12 +329,13 @@ function flockEcho({ flocks, pending = [] }) {
   return { state, pendingEchoRef, handler };
 }
 
-function dmEcho({ threads, pending = [] }) {
+function dmEcho({ threads, pending = [], blocked = [] }) {
   const state = { threads, listReads: 0, timersCleared: [] };
   const dmEchoRef = { current: new Map(pending) };
   const handler = runLifted(`return ${liftListener(appSource, 'const unsub = onNewDm(')};`, {
     authUser: { id: ME },
-    blockedIdsRef: { current: new Set() },
+    blockedIdsRef: { current: new Set(blocked.map(String)) },
+    withoutBlockedQuote: H.withoutBlockedQuote,
     retractionsRef: { current: { seq: 0, log: [] } },
     catchUpTargetRef: { current: {} },
     setDmNotConnected: () => {},
@@ -351,7 +369,8 @@ describe("an own message with no bubble is this account's other device, and it i
     // comment saying the server echoed only to the sending socket, which the
     // server no longer does.
     const handler = between(appSource, 'const unsub = onNewMessage((msg) => {', '// ── RECEIPTS ARRIVING');
-    expect(handler).toMatch(/if \(at === -1\) \{[\s\S]*?updated\.push\(mapFlockRow\(msg, authUser\?\.id\)\);/);
+    // Through the history mapper, minus a quote of somebody blocked (15).
+    expect(handler).toMatch(/if \(at === -1\) \{[\s\S]*?updated\.push\(withoutBlockedQuote\(mapFlockRow\(msg, authUser\?\.id\), blockedIdsRef\.current\)\);/);
     expect(handler).not.toMatch(/if \(staleIdx === -1\) return prev;/);
     const run = flockEcho({ flocks: [{ id: 7, messages: [row(20, 'earlier')] }] });
     run.handler(flockWire(21, { message_text: 'from my phone' }));
@@ -1074,5 +1093,345 @@ describe('the wire', () => {
     // not this message's reactions.
     global.fetch = jest.fn(() => Promise.resolve(jsonRes({ messages: [{ id: 39, reactions }] })));
     await expect(api.getFlockMessageReactions(7, 40)).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 14. A photo sent over REST whose row a history read already brought in
+// ---------------------------------------------------------------------------
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const PHOTO = 'data:image/jpeg;base64,PHOTO';
+const PHOTO_THUMB = 'data:image/jpeg;base64,THUMB';
+
+// The two send paths, lifted and run with the socket down, so each send goes
+// over REST and waits for a test to answer it: sends[n] is the nth POST's
+// { resolve, reject }.
+function liftedFlockTransmit(flocks) {
+  const state = { flocks, toasts: [], failedStored: [] };
+  const sends = [];
+  const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
+    useCallback: (fn) => fn,
+    makeChatThumb: async () => PHOTO_THUMB,
+    newClientId: H.newClientId,
+    newestServerId: H.newestServerId,
+    flocksRef: { get current() { return state.flocks; } },
+    addMessageToFlock: (flockId, msg) => {
+      state.flocks = state.flocks.map((f) => (f.id === flockId ? { ...f, messages: [...(f.messages || []), msg] } : f));
+    },
+    authUser: { id: ME },
+    profilePicRef: { current: null },
+    getSocket: () => null,
+    socketSendMessage: () => { throw new Error('the socket is down, so nothing goes on it'); },
+    trackFlockMessageSent: () => {},
+    pendingEchoRef: { current: new Map() },
+    setFlocks: setterOn(state, 'flocks'),
+    persistFailedFlockMessage: (flockId, msg) => state.failedStored.push([flockId, msg.id]),
+    apiSendMessage: () => new Promise((resolve, reject) => { sends.push({ resolve, reject }); }),
+    isServerId: H.isServerId,
+    orderByServerId: H.orderByServerId,
+    showToast: (message) => state.toasts.push(message),
+  });
+  return { state, sends, transmit };
+}
+
+function liftedDmTransmit(threads) {
+  const state = { threads, toasts: [], notConnected: {} };
+  const sends = [];
+  const transmit = runLifted(`${liftCallback(appSource, 'transmitDm')}\nreturn transmitDm;`, {
+    useCallback: (fn) => fn,
+    makeChatThumb: async () => PHOTO_THUMB,
+    newClientId: H.newClientId,
+    authUser: { id: ME },
+    setDirectMessages: setterOn(state, 'threads'),
+    newestServerId: H.newestServerId,
+    messagePreview: H.messagePreview,
+    orderByServerId: H.orderByServerId,
+    isServerId: H.isServerId,
+    getSocket: () => null,
+    socketSendDm: () => { throw new Error('the socket is down, so nothing goes on it'); },
+    trackDmSent: () => {},
+    dmEchoRef: { current: new Map() },
+    apiSendDM: () => new Promise((resolve, reject) => { sends.push({ resolve, reject }); }),
+    setDmNotConnected: setterOn(state, 'notConnected'),
+    NOT_CONNECTED_HINT: H.NOT_CONNECTED_HINT,
+    showToast: (message) => state.toasts.push(message),
+  });
+  return { state, sends, transmit };
+}
+
+// A DM row as GET /api/dm/:userId sends it, through the app's own mapper.
+const dmHistoryRow = (id, text, { senderId = ME, type = 'text', thumb = null } = {}) => H.mapDmRow({
+  id, sender_id: senderId, receiver_id: senderId === ME ? 5 : ME, sender_name: senderId === ME ? 'Ava' : 'Bo',
+  message_text: text, message_type: type, created_at: AT, ...(thumb ? { thumb_url: thumb } : {}),
+}, ME);
+
+describe('a photo sent over REST whose row a history read already brought in', () => {
+  test('the answer takes the bubble down instead of giving it the id of the row beside it', async () => {
+    const run = liftedFlockTransmit([{ id: 7, messages: [row(20, 'before')] }]);
+    const done = run.transmit(7, '', { image_url: PHOTO });
+    await flush();
+    expect(run.sends).toHaveLength(1);
+    const bubbleId = run.state.flocks[0].messages.find((m) => m.pending).id;
+    // A read lands while the POST is out (a reconnect's catch-up, a way back
+    // into the chat). It carries the photo's row and, rightly, leaves the
+    // bubble up: no stored row settles a photo (10).
+    const landed = row(21, '', { type: 'image', thumb: PHOTO_THUMB });
+    run.state.flocks = [{ ...run.state.flocks[0], messages: H.mergeHistory(run.state.flocks[0].messages, [row(20, 'before'), landed]) }];
+    expect(run.state.flocks[0].messages.map((m) => m.id)).toEqual([20, 21, bubbleId]);
+    run.sends[0].resolve({ message: { id: 21, created_at: AT, status: 'sent' } });
+    await done;
+    // One row under id 21, the server's, where there used to be two.
+    expect(run.state.flocks[0].messages.map((m) => m.id)).toEqual([20, 21]);
+    expect(run.state.flocks[0].messages[1]).toBe(landed);
+  });
+
+  test('with no row here yet, the answer still gives the bubble its id', async () => {
+    const run = liftedFlockTransmit([{ id: 7, messages: [row(20, 'before')] }]);
+    const done = run.transmit(7, '', { image_url: PHOTO });
+    await flush();
+    run.sends[0].resolve({ message: { id: 21, created_at: AT, status: 'sent' } });
+    await done;
+    const settled = run.state.flocks[0].messages[1];
+    expect(run.state.flocks[0].messages).toHaveLength(2);
+    expect([settled.id, settled.pending, settled.status, settled.sentAt, settled.image]).toEqual([21, false, 'sent', AT, PHOTO]);
+  });
+
+  test('an echo that settled the bubble first is left as it is', async () => {
+    const run = liftedFlockTransmit([{ id: 7, messages: [row(20, 'before')] }]);
+    const done = run.transmit(7, '', { image_url: PHOTO });
+    await flush();
+    // The socket came back in time to hear the account echo, which settled
+    // the bubble in place under the row's id.
+    const f = run.state.flocks[0];
+    run.state.flocks = [{ ...f, messages: f.messages.map((m) => (m.pending ? { ...m, id: 21, pending: false, status: 'sent' } : m)) }];
+    run.sends[0].resolve({ message: { id: 21, created_at: AT, status: 'sent' } });
+    await done;
+    expect(run.state.flocks[0].messages.map((m) => [m.id, m.image || null])).toEqual([[20, null], [21, PHOTO]]);
+  });
+
+  test('the DM twin: the answer takes the bubble down when the thread already holds its row', async () => {
+    const run = liftedDmTransmit([{ userId: 5, name: 'Bo', messages: [dmHistoryRow(20, 'before', { senderId: 5 })], unread: 0 }]);
+    await run.transmit(5, { text: '', message_type: 'image', image_url: PHOTO });
+    expect(run.sends).toHaveLength(1);
+    const bubbleId = run.state.threads[0].messages.find((m) => m.pending).id;
+    const landed = dmHistoryRow(21, '', { type: 'image', thumb: PHOTO_THUMB });
+    const thread = run.state.threads[0];
+    run.state.threads = [{ ...thread, messages: H.mergeHistory(thread.messages, [dmHistoryRow(20, 'before', { senderId: 5 }), landed]) }];
+    expect(run.state.threads[0].messages.map((m) => m.id)).toEqual([20, 21, bubbleId]);
+    run.sends[0].resolve({ message: { id: 21, created_at: AT, status: 'sent' } });
+    await flush();
+    expect(run.state.threads[0].messages.map((m) => m.id)).toEqual([20, 21]);
+    expect(run.state.threads[0].messages[1]).toBe(landed);
+  });
+
+  test('the DM twin with no row here yet still gives the bubble its id', async () => {
+    const run = liftedDmTransmit([{ userId: 5, name: 'Bo', messages: [dmHistoryRow(20, 'before', { senderId: 5 })], unread: 0 }]);
+    await run.transmit(5, { text: '', message_type: 'image', image_url: PHOTO });
+    run.sends[0].resolve({ message: { id: 21, created_at: AT, status: 'sent' } });
+    await flush();
+    const settled = run.state.threads[0].messages[1];
+    expect(run.state.threads[0].messages).toHaveLength(2);
+    expect([settled.id, settled.pending, settled.status, settled.sentAt, settled.image_url]).toEqual([21, false, 'sent', AT, PHOTO]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 15. A live row built before a block keeps no quote of the blocked person
+// ---------------------------------------------------------------------------
+describe('a live row built before a block does not bring back a quote of the blocked person', () => {
+  // Cy (9) is blocked by the time these rows land. Bo (2) is not.
+  const quoteOf = (id, text, senderId, name) => ({ id, message_text: text, message_type: 'text', sender_id: senderId, sender_name: name });
+
+  test("somebody else's reply quoting them lands, without the quote, in a plan nobody re-read", () => {
+    const run = flockEcho({ flocks: [{ id: 7, messages: [row(20, 'earlier', { senderId: 2 })] }], blocked: [9] });
+    run.handler(flockWire(30, { sender_id: 2, sender_name: 'Bo', message_text: 'still on?', reply_to: quoteOf(3, 'door code 4411', 9, 'Cy') }));
+    const landed = run.state.flocks[0].messages.find((m) => m.id === 30);
+    expect(landed.text).toBe('still on?');
+    expect(landed.reply_to).toBeNull();
+  });
+
+  test('a quote of anybody else stays, and so does one from a server that sends no author', () => {
+    const run = flockEcho({ flocks: [{ id: 7, messages: [] }], blocked: [9] });
+    run.handler(flockWire(31, { sender_id: 2, sender_name: 'Bo', message_text: 'yes', reply_to: quoteOf(4, 'meet at 9', 2, 'Bo') }));
+    const noAuthor = { id: 5, message_text: 'x', message_type: 'text', sender_name: 'Cy' };
+    run.handler(flockWire(32, { sender_id: 2, sender_name: 'Bo', message_text: 'hm', reply_to: noAuthor }));
+    const [kept, legacy] = run.state.flocks[0].messages;
+    expect(kept.reply_to).toEqual({ id: 4, text: 'meet at 9', sender: 'Bo', senderId: 2, message_type: 'text' });
+    expect(legacy.reply_to.id).toBe(5);
+  });
+
+  test('your own message from another device, quoting them, lands without the quote', () => {
+    const run = flockEcho({ flocks: [{ id: 7, messages: [] }], blocked: [9] });
+    run.handler(flockWire(33, { message_text: 'from my phone', reply_to: quoteOf(3, 'door code 4411', 9, 'Cy') }));
+    const [own] = run.state.flocks[0].messages;
+    expect([own.id, own.sender, own.text, own.reply_to]).toEqual([33, 'You', 'from my phone', null]);
+  });
+
+  test('with nobody blocked the quote arrives whole', () => {
+    const run = flockEcho({ flocks: [{ id: 7, messages: [] }] });
+    run.handler(flockWire(34, { sender_id: 2, sender_name: 'Bo', message_text: 'still on?', reply_to: quoteOf(3, 'door code 4411', 9, 'Cy') }));
+    expect(run.state.flocks[0].messages[0].reply_to).toEqual({ id: 3, text: 'door code 4411', sender: 'Cy', senderId: 9, message_type: 'text' });
+  });
+
+  test('a DM quote carries its author, reloaded and live alike', () => {
+    const quote = { id: 40, message_text: 'meet me', sender_id: 5, sender_name: 'Bo' };
+    const reloaded = H.mapDmRow({ id: 41, sender_id: ME, receiver_id: 5, message_text: 'ok', created_at: AT, reply_to: quote }, ME);
+    expect(reloaded.reply_to).toEqual({ id: 40, text: 'meet me', sender: 'Bo', senderId: 5 });
+    const noAuthor = { id: 40, message_text: 'meet me', sender_name: 'Bo' };
+    expect(H.mapDmRow({ id: 42, sender_id: ME, receiver_id: 5, message_text: 'ok', created_at: AT, reply_to: noAuthor }, ME).reply_to.senderId).toBeNull();
+    const run = dmEcho({ threads: [{ userId: 5, name: 'Bo', messages: [], unread: 0 }] });
+    run.handler(dmWire(43, { message_text: 'ok', reply_to: quote }));
+    expect(run.state.threads[0].messages[0].reply_to).toEqual(reloaded.reply_to);
+  });
+
+  test('your own DM echo, in a thread emptied for the person who was blocked, lands without their words', () => {
+    // Bo (5) blocked this account, so the thread was emptied and left open
+    // under the notice that it is closed. Your own reply to Bo, sent from
+    // another device a moment before, is exempt from the sender check.
+    const run = dmEcho({ threads: [{ userId: 5, name: 'Bo', messages: [], unread: 0 }], blocked: [5] });
+    run.handler(dmWire(44, { message_text: 'on my way', reply_to: { id: 40, message_text: 'where are you', sender_id: 5, sender_name: 'Bo' } }));
+    const [own] = run.state.threads[0].messages;
+    expect([own.id, own.text, own.reply_to]).toEqual([44, 'on my way', null]);
+    // A quote of your own words is not theirs, and stays.
+    run.handler(dmWire(45, { message_text: 'as I said', reply_to: { id: 39, message_text: 'running late', sender_id: ME, sender_name: 'Ava' } }));
+    expect(run.state.threads[0].messages[1].reply_to).toEqual({ id: 39, text: 'running late', sender: 'Ava', senderId: ME });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 16. Two reads of the DM list answering out of order
+// ---------------------------------------------------------------------------
+describe('two reads of the DM list answering out of order', () => {
+  const conv = (userId, name, over = {}) => ({
+    userId, name, image: null, lastMessage: 'hi', lastMessageTime: AT, lastMessageIsYou: false, unread: 0, ...over,
+  });
+
+  // loadDmConversations, lifted and run, with each request left open until a
+  // test answers it: reads[n] is the nth read's { resolve, reject }.
+  function liftedDmListLoader(threads = []) {
+    const state = { threads, loading: [], error: null, deleted: [] };
+    const reads = [];
+    const load = runLifted(`${liftCallback(appSource, 'loadDmConversations')}\nreturn loadDmConversations;`, {
+      useCallback: (fn) => fn,
+      dmListReadSeqRef: { current: 0 },
+      setDmsLoading: (value) => state.loading.push(value),
+      setDmsError: (message) => { state.error = message; },
+      getDMConversations: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+      deletedDmUserIdsRef: { current: [] },
+      setDeletedDmUserIds: setterOn(state, 'deleted'),
+      setDirectMessages: setterOn(state, 'threads'),
+    });
+    return { state, reads, load };
+  }
+
+  test('an older answer landing last does not take away the thread the newer one brought in', async () => {
+    const run = liftedDmListLoader([{ ...conv(5, 'Bo'), messages: [] }]);
+    // A reconnect's read leaves first, before your message from another
+    // device is stored. That message's echo, for a thread this device does
+    // not hold, starts the second.
+    const reconnectRead = run.load();
+    const echoRead = run.load();
+    run.reads[1].resolve({ conversations: [conv(8, 'Di', { lastMessageIsYou: true }), conv(5, 'Bo')] });
+    await echoRead;
+    expect(run.state.threads.map((d) => d.userId)).toEqual([8, 5]);
+    run.reads[0].resolve({ conversations: [conv(5, 'Bo')] });
+    await reconnectRead;
+    expect(run.state.threads.map((d) => d.userId)).toEqual([8, 5]);
+  });
+
+  test('the loading flag stays up until the newest read answers, then comes down once', async () => {
+    const run = liftedDmListLoader([]);
+    const first = run.load();
+    const second = run.load();
+    run.reads[0].resolve({ conversations: [conv(5, 'Bo')] });
+    await first;
+    expect(run.state.loading).toEqual([true, true]);
+    expect(run.state.threads).toEqual([]);
+    run.reads[1].resolve({ conversations: [conv(5, 'Bo'), conv(8, 'Di')] });
+    await second;
+    expect(run.state.loading).toEqual([true, true, false]);
+    expect(run.state.threads.map((d) => d.userId)).toEqual([5, 8]);
+  });
+
+  test("an overtaken read's failure says nothing, and the newest read's failure still does", async () => {
+    const run = liftedDmListLoader([]);
+    const first = run.load();
+    const second = run.load();
+    run.reads[1].resolve({ conversations: [conv(5, 'Bo')] });
+    await second;
+    run.reads[0].reject(new Error('The request timed out.'));
+    await first;
+    expect(run.state.error).toBe('');
+    expect(run.state.loading).toEqual([true, true, false]);
+    const third = run.load();
+    run.reads[2].reject(new Error('The request timed out.'));
+    await third;
+    expect(run.state.error).toBe('The request timed out.');
+    expect(run.state.loading[run.state.loading.length - 1]).toBe(false);
+    // The list on screen is left as the last good answer had it.
+    expect(run.state.threads.map((d) => d.userId)).toEqual([5]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 17. A pin or unpin answer cut before a block
+// ---------------------------------------------------------------------------
+describe('a pin or unpin answer cut before a block does not put their pin back', () => {
+  // applyPins and the two taps that call it, lifted and run. Each answer
+  // waits for a test to give it: answers[n] resolves the nth request.
+  function liftedPins(flocks) {
+    const state = { flocks, toasts: [] };
+    const blockedIdsRef = { current: new Set() };
+    const answers = [];
+    const applyPins = runLifted(`${liftCallback(appSource, 'applyPins')}\nreturn applyPins;`, {
+      useCallback: (fn) => fn,
+      setFlocks: setterOn(state, 'flocks'),
+      saidByAny: H.saidByAny,
+      blockedIdsRef,
+    });
+    const answer = () => new Promise((resolve) => { answers.push(resolve); });
+    const scope = {
+      useCallback: (fn) => fn,
+      applyPins,
+      showToast: (message) => state.toasts.push(message),
+      apiPinFlockMessage: answer,
+      apiUnpinFlockMessage: answer,
+    };
+    return {
+      state,
+      blockedIdsRef,
+      answers,
+      pinMessage: runLifted(`${liftCallback(appSource, 'pinMessage')}\nreturn pinMessage;`, scope),
+      unpinMessage: runLifted(`${liftCallback(appSource, 'unpinMessage')}\nreturn unpinMessage;`, scope),
+    };
+  }
+  // A pin as the route's pinPayload shapes it.
+  const pinOf = (id, senderId) => ({ id, messageId: id, text: `line ${id}`, messageType: 'text', senderId, senderName: 'x', pinnedBy: ME });
+
+  test('a block that lands while a pin is on its way keeps their pin off the bar', async () => {
+    const run = liftedPins([{ id: 7, pins: [] }]);
+    const pending = run.pinMessage(7, 4);
+    run.blockedIdsRef.current.add('9');
+    run.answers[0]([pinOf(3, 9), pinOf(4, 2)]);
+    await pending;
+    expect(run.state.flocks[0].pins.map((p) => p.id)).toEqual([4]);
+    expect(run.state.toasts).toEqual([]);
+  });
+
+  test('and while an unpin is', async () => {
+    const run = liftedPins([{ id: 7, pins: [pinOf(4, 2), pinOf(6, 2)] }]);
+    const pending = run.unpinMessage(7, 6);
+    run.blockedIdsRef.current.add('9');
+    run.answers[0]([pinOf(3, 9), pinOf(4, 2)]);
+    await pending;
+    expect(run.state.flocks[0].pins.map((p) => p.id)).toEqual([4]);
+  });
+
+  test('with nobody blocked the list is the server\'s, whole and in its order', async () => {
+    const run = liftedPins([{ id: 7, pins: [] }, { id: 8, pins: [pinOf(9, 2)] }]);
+    const pending = run.pinMessage(7, 4);
+    run.answers[0]([pinOf(3, 9), pinOf(4, 2)]);
+    await pending;
+    expect(run.state.flocks.map((f) => f.pins.map((p) => p.id))).toEqual([[3, 4], [9]]);
   });
 });

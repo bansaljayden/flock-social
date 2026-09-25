@@ -13,8 +13,14 @@
 //
 // Each stop now marks the share before its first await (markShareEnded in
 // sockets/handlers.js), and a tick whose mark moved while it read is dropped.
-// The leave route also repeats the stop from memory once the membership row
-// is gone, for a tick that started between the first stop and the commit.
+// The leave route marks the share once its membership DELETE has run and
+// before it commits, and announces the stop after the COMMIT, which marks it
+// again and takes back whatever a tick posted in between.
+//
+// A DM share had the same race: a position still waiting on its block and
+// relationship reads resumed after a later stop had finished, registered the
+// share again and put the pin back. The DM stop marks the pair
+// (markDmShareEnded) and the position is dropped when its mark moved.
 //
 // No database and no real Socket.io. The tick's roster read is held open on a
 // promise the test releases, which is the race made deterministic.
@@ -196,14 +202,102 @@ test("another sharer's stop does not drop this sharer's position", async () => {
   assert.deepStrictEqual(positions(io).map((e) => e.room).sort(), ['user:2', 'user:3']);
 });
 
-test('the leave route repeats the stop from memory once the membership row is gone', () => {
-  // A tick that STARTED between the first stop (sent while the row still
-  // stood, so the roster could be read) and the commit passed the membership
-  // check and posted. Every later position is refused, so nothing would take
-  // that one back unless the stop is repeated after the commit.
+test('the leave route marks the share before its DELETE commits and announces the stop after it', () => {
+  // The mark, set once the membership DELETE has run and before it commits,
+  // drops a tick that saw the membership and is still reading. The stop after
+  // the COMMIT marks the share again and takes back whatever a tick posted
+  // between the two (it passed the membership check and recorded its
+  // audience), and every tick after the COMMIT is refused at that check.
+  // Nothing goes out inside the transaction: a leave that then failed had
+  // already told the plan the person was gone and ended their share.
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'flocks.js'), 'utf8').replace(/\r\n/g, '\n');
-  const commit = src.indexOf("await leaveClient.query('COMMIT');");
-  assert.ok(commit > 0, 'the leave transaction is where this test expects it');
-  const after = src.slice(commit, commit + 2500);
-  assert.match(after, /if \(io && wasAccepted\) await announceFlockShareEnded\(io, req\.user\.id, flockId, \{ roster: false \}\);/);
+  const start = src.indexOf("router.post('/:id/leave'");
+  const leave = src.slice(start, src.indexOf('\nrouter.', start + 1));
+  const begin = leave.indexOf("await leaveClient.query('BEGIN');");
+  const del = leave.indexOf('DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1');
+  const mark = leave.indexOf('markShareEnded(parseInt(flockId, 10), req.user.id)');
+  const commit = leave.indexOf("await leaveClient.query('COMMIT');");
+  const stop = leave.indexOf('await announceFlockShareEnded(io, req.user.id, flockId, audience ? { audience } : {});');
+  assert.ok(start > 0 && begin > 0 && del > 0 && mark > 0 && commit > 0 && stop > 0,
+    'the leave transaction is where this test expects it');
+  assert.ok(begin < del && del < mark && mark < commit, 'marked after the DELETE and before the COMMIT');
+  assert.ok(commit < stop, 'the stop goes out after the COMMIT');
+  assert.doesNotMatch(leave.slice(begin, commit), /announceFlockShareEnded\(|emitToFlockExcludingBlocked\(/,
+    'nothing is announced inside the transaction');
+});
+
+// ── The DM share ────────────────────────────────────────────────────────────
+
+// The DM handlers answer through socket.to, so this socket's broadcasts land
+// in io.emitted beside the server's. The block and relationship checks are
+// cached per pair in utils/, so each test uses peers no other test uses.
+function dmConnect() {
+  const { io, socket } = connect();
+  socket.to = (room) => {
+    const op = { except() { return op; }, emit(event, payload) { io.emitted.push({ room, event, payload }); } };
+    return op;
+  };
+  return { io, socket };
+}
+const dmPositions = (io) => io.emitted.filter((e) => e.event === 'dm_location_update');
+const dmStops = (io) => io.emitted.filter((e) => e.event === 'dm_member_stopped_sharing');
+const RELATED = [{ related: 1 }];
+
+// The first relationship read (the position's) is held on `gate`; every later
+// one (the stop's) answers at once, which is a cache miss finishing out of
+// order.
+function scriptDm(gate) {
+  let reads = 0;
+  routes = [
+    [/FROM user_blocks/, () => []],
+    [/FROM friendships/, () => {
+      reads += 1;
+      return reads === 1 && gate ? gate.then(() => RELATED) : RELATED;
+    }],
+  ];
+}
+
+test('a DM position still authorizing when the sharer stops is never sent, and registers nothing', async () => {
+  const PEER = 701;
+  const { io, socket } = dmConnect();
+  const gate = held();
+  scriptDm(gate.promise);
+
+  const position = fire(socket, 'dm_share_location', { receiverId: PEER, lat: 40.1, lng: -75.2 });
+  await turn(); // the position is now waiting on its relationship read
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: PEER });
+  assert.deepStrictEqual(dmStops(io).map((e) => e.room), [`user:${PEER}`], 'the stop went out');
+
+  gate.release();
+  await position;
+  assert.deepStrictEqual(dmPositions(io), [], 'the position was sent after the stop had cleared the pin');
+  // Nor did it register the share. A registered one would be withdrawn, and
+  // the peer told again, when the connection drops.
+  io.emitted.length = 0;
+  await fire(socket, 'disconnect');
+  assert.deepStrictEqual(dmStops(io), [], 'the share was registered after its stop');
+});
+
+test('a DM position that arrives after a stop is sent as usual', async () => {
+  // The mark is read when a position ARRIVES, so a stop in the past is no
+  // reason to drop a share that started again.
+  const PEER = 702;
+  const { io, socket } = dmConnect();
+  scriptDm(null);
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: PEER });
+  io.emitted.length = 0;
+  await fire(socket, 'dm_share_location', { receiverId: PEER, lat: 40.1, lng: -75.2 });
+  assert.deepStrictEqual(dmPositions(io).map((e) => e.room), [`user:${PEER}`]);
+});
+
+test('a stop to one DM peer does not drop a position on its way to another', async () => {
+  const { io, socket } = dmConnect();
+  const gate = held();
+  scriptDm(gate.promise);
+  const position = fire(socket, 'dm_share_location', { receiverId: 703, lat: 40.1, lng: -75.2 });
+  await turn();
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: 704 });
+  gate.release();
+  await position;
+  assert.deepStrictEqual(dmPositions(io).map((e) => e.room), ['user:703']);
 });

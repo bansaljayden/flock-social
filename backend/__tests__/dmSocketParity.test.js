@@ -221,6 +221,32 @@ test('a valid string reply id is coerced before it reaches the query', async () 
   assert.strictEqual(wrote('direct_messages')[0].params[6], 12, 'and the stored reply id is the integer');
 });
 
+test("a socket reply's quote names its author, as the REST twin's and the history read's do", async () => {
+  // A client that learns of a block takes that person's words out of a quote
+  // by this id, including a quote on a row that reached it live after the
+  // block: your own echo, landing in a thread emptied for the person who was
+  // blocked, is the case with nothing else to catch it.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  const quote = { id: 12, message_text: 'earlier', sender_id: 7, sender_name: 'Bo' };
+  routes = [
+    [/FROM user_blocks/, []],
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
+    [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
+    [/FROM direct_messages dm JOIN users/, [quote]],
+    [/INSERT INTO direct_messages/, [{ id: 99, sender_id: 1, receiver_id: 7 }]],
+  ];
+
+  await fire(socket, 'send_dm', { receiverId: 7, message_text: 'hi', reply_to_id: 12 });
+
+  const lookup = calls.find((c) => /FROM direct_messages dm JOIN users/.test(c.sql));
+  assert.match(lookup.sql, /^SELECT dm\.id, dm\.message_text, dm\.sender_id, u\.name AS sender_name /,
+    'the lookup reads the quoted author, in the flock quote\'s column order');
+  const toReceiver = socket.emitted.find((e) => e.event === 'new_dm' && e.target === 'user:7');
+  assert.deepStrictEqual(toReceiver.payload.reply_to, quote);
+  const echo = io.emitted.find((e) => e.event === 'new_dm' && e.room === 'user:1');
+  assert.deepStrictEqual(echo.payload.reply_to, quote, "the sender's own echo carries the same quote");
+});
+
 // ---------------------------------------------------------------------------
 // 2. dm_react — emoji shape
 // ---------------------------------------------------------------------------
@@ -1034,6 +1060,9 @@ test('vote_venue tallies group by venue_name alone, so one venue is one row', as
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
     [/SELECT status FROM flocks WHERE id = \$1/, [{ status: 'planning' }]],
     [/pg_advisory_xact_lock/, []],
+    // The plan's row, locked after flockvote: and before any vote row
+    // (routes/venues.js VOTE_PLAN_LOCK_SQL).
+    [/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/, [{ id: 42 }]],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, []],
     [/FROM venue_votes vv/, []],

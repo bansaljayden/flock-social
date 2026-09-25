@@ -237,7 +237,14 @@ function scriptDmThread(corpus, { blockedPair = false, bannedCounterpart = false
       .filter((m) => wanted.has(m.id))
       .filter((m) => !(filtersHidden && m.is_hidden))
       .filter((m) => (m.sender_id === me && m.receiver_id === other) || (m.sender_id === other && m.receiver_id === me))
-      .map((m) => ({ id: m.id, message_text: m.message_text, sender_name: `User${m.sender_id}` }));
+      // The quoted author's id only when the statement selects it, so a test
+      // reading it off the answer reads the route's column list, not this one.
+      .map((m) => ({
+        id: m.id,
+        message_text: m.message_text,
+        ...(/^SELECT dm\.id, dm\.message_text, dm\.sender_id, /.test(sql) ? { sender_id: m.sender_id } : {}),
+        sender_name: `User${m.sender_id}`,
+      }));
     return { rows, rowCount: rows.length };
   });
 
@@ -553,6 +560,10 @@ test('DM thread: a hidden message is gone, and a reply POINTING at it carries no
     'the takedown leaked back out through the reply preview');
   const okQuote = res.body.messages.find((m) => m.id === 16);
   assert.strictEqual(okQuote.reply_to.message_text, 'd2', 'visible reply targets still hydrate');
+  // With the quoted author's id, as the flock quote and both DM send paths
+  // carry it: a client that learns of a block takes that person's words out
+  // of a quote by it.
+  assert.strictEqual(okQuote.reply_to.sender_id, 1, "the quote names whose words it carries");
 
   const reactionsQ = log.find((q) => /FROM dm_emoji_reactions/.test(q.sql));
   assert.ok(!(reactionsQ.params[0] || []).map(Number).includes(11),
