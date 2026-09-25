@@ -396,6 +396,19 @@
    inside .pp-doc and are already held to the measure by it. */
 .pp > section { max-width: var(--pp-measure); }
 
+/* ...and centre that column. The flat pages held every block to the measure
+   but never centred it, so on a wide display the whole page sat against the
+   left edge with most of the window empty (seen on /pro at 1920px).
+   Symmetric padding rather than auto margins: the back link is inline-block
+   and would not move with margins, and padding keeps the link, the header,
+   the sections and the footer on one shared left edge. On a phone the max()
+   falls back to the old gutter. The Privacy Policy centres through
+   .pp-shell and is left alone. */
+.pp:not(:has(.pp-shell)) {
+  padding-left: max(clamp(20px, 5vw, 40px), calc((100% - var(--pp-measure)) / 2));
+  padding-right: max(clamp(20px, 5vw, 40px), calc((100% - var(--pp-measure)) / 2));
+}
+
 /* ---------- document body ---------- */
 
 /* Trailing space so the final short sections (Changes, Contact) can still
