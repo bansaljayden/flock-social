@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
@@ -828,11 +829,48 @@ router.get('/suggestions', async (req, res) => {
   }
 });
 
-// GET /api/friends/my-code - Get current user's friend code
+// ---------------------------------------------------------------------------
+// FRIEND CODES ARE ISSUED, NOT DERIVED (migration 079).
+// ---------------------------------------------------------------------------
+// A code used to be 'FLOCK-' plus the user id in base36, so every account's
+// code could be worked out and add-by-code was the user directory walked with
+// a different spelling. Now it is 'FLOCK-' plus eight characters drawn from an
+// alphabet with no look-alikes (no 0/O, no 1/I/L), stored in users.friend_code
+// and issued the first time its owner asks. 31^8 is about 8.5 x 10^11 codes,
+// against a probe budget of 60 a day.
+const FRIEND_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const FRIEND_CODE_LENGTH = 8;
+
+function newFriendCode() {
+  let body = '';
+  // randomInt, not a byte modulo 31: 256 is not a multiple of 31, and the
+  // remainder would make the first eight letters likelier than the rest.
+  for (let i = 0; i < FRIEND_CODE_LENGTH; i++) body += FRIEND_CODE_ALPHABET[crypto.randomInt(FRIEND_CODE_ALPHABET.length)];
+  return 'FLOCK-' + body;
+}
+
+// GET /api/friends/my-code - the caller's friend code, issued on first ask.
 router.get('/my-code', async (req, res) => {
   try {
-    // Generate a deterministic, short friend code from user ID
-    const code = 'FLOCK-' + req.user.id.toString(36).toUpperCase().padStart(4, '0');
+    const held = await pool.query('SELECT friend_code FROM users WHERE id = $1', [req.user.id]);
+    let code = held.rows[0]?.friend_code || null;
+    // COALESCE keeps a code another request issued between the read and the
+    // write, so two tabs opening Add Friends at once agree on one code. A
+    // draw that collides with somebody else's code (23505 on the unique
+    // index) is simply drawn again.
+    for (let attempt = 0; !code && attempt < 5; attempt++) {
+      try {
+        const issued = await pool.query(
+          'UPDATE users SET friend_code = COALESCE(friend_code, $2) WHERE id = $1 RETURNING friend_code',
+          [req.user.id, newFriendCode()]
+        );
+        code = issued.rows[0]?.friend_code || null;
+        if (!issued.rows.length) break;
+      } catch (err) {
+        if (err?.code !== '23505') throw err;
+      }
+    }
+    if (!code) return res.status(500).json({ error: 'Failed to get friend code' });
     res.json({ code, userId: req.user.id, name: req.user.name });
   } catch (err) {
     console.error('Friend code error:', err);
@@ -842,8 +880,8 @@ router.get('/my-code', async (req, res) => {
 
 // POST /api/friends/add-by-code - Add friend by their friend code
 router.post('/add-by-code',
-  // Bounded: a code is 'FLOCK-' plus a base36 id, so anything long is not a
-  // typo, it is someone feeding a megabyte to a regex and a toUpperCase().
+  // Bounded: a code is 'FLOCK-' plus eight characters, so anything long is not
+  // a typo, it is someone feeding a megabyte to a regex and a toUpperCase().
   //
   // Shape first (round 20): `{"code": ["FLOCK-1"]}` satisfies isLength — the
   // array is stringified before the rule sees it — and stays an array, so
@@ -858,32 +896,30 @@ router.post('/add-by-code',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { code } = req.body;
-      // Parse code: FLOCK-XXXX -> base36 user ID
-      const match = code.toUpperCase().match(/^FLOCK-([A-Z0-9]+)$/);
-      if (!match) {
+      const code = req.body.code.toUpperCase();
+      if (!/^FLOCK-[A-Z0-9]+$/.test(code)) {
         return res.status(400).json({ error: 'Invalid friend code format' });
       }
 
-      const targetUserId = parseInt(match[1], 36);
-      if (targetUserId === req.user.id) {
-        return res.status(400).json({ error: "That's your own code!" });
-      }
-
       // The single "no such code" response. Budget exhaustion answers with this
-      // too — see the note on POST /request. Friend codes are just base36 user
-      // ids, so the code space IS the id space and walking it is trivial.
+      // too — see the note on POST /request.
       const miss = () => res.status(404).json({ error: 'No user found with this code' });
 
-      // 'FLOCK-ZZZZZZZZZZ' parses to a number far past Postgres's INTEGER
-      // range, which used to surface as a 500 (and a 500 vs a 404 is a signal).
-      if (!Number.isSafeInteger(targetUserId) || targetUserId < 1 || targetUserId > MAX_USER_ID) {
-        return miss();
+      // The directory read comes FIRST here, unlike POST /request, because a
+      // code no longer contains the id: users.friend_code is the only way from
+      // a code to a person (migration 079). The banned row still folds into the
+      // single miss, and a code that names nobody still costs a probe below, so
+      // guessing codes is metered exactly as walking ids is on /request.
+      const userCheck = await pool.query('SELECT id, name, is_banned FROM users WHERE friend_code = $1', [code]);
+      const target = userCheck.rows[0] || null;
+      if (target && target.id === req.user.id) {
+        return res.status(400).json({ error: "That's your own code!" });
       }
+      const targetUserId = target ? target.id : null;
 
-      // Same order as POST /request: own-relationship lookup, then budget, then
-      // the directory read, with one indistinguishable answer for all misses.
-      const existing = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, targetUserId]);
+      const existing = target
+        ? await pool.query(PAIR_LOOKUP_SQL, [req.user.id, targetUserId])
+        : { rows: [] };
 
       // An existing row is not charged, because it is not a probe, with one
       // exception: reviving a DECLINED row is a fresh request to somebody who
@@ -891,12 +927,9 @@ router.post('/add-by-code',
       const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined');
       const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
 
-      // Same statement, same single miss, and the banned row folded into it.
-      // See NOT_BANNED_SQL. A friend code is a base36 user id, so this door is
-      // the id space walked with a different spelling and has to answer
-      // identically to POST /request.
-      const userCheck = await pool.query('SELECT id, name, is_banned FROM users WHERE id = $1', [targetUserId]);
-      if (!withinBudget || userCheck.rows.length === 0 || userCheck.rows[0].is_banned) {
+      // Same single miss for no code, a banned account and a spent budget. See
+      // NOT_BANNED_SQL.
+      if (!withinBudget || !target || target.is_banned) {
         return miss();
       }
 
@@ -906,12 +939,20 @@ router.post('/add-by-code',
         return miss();
       }
 
+      // THE OTHER ACCOUNT, AS EVERY SUCCESS BELOW DESCRIBES IT: an id and a
+      // name. The directory row also carries is_banned, which the miss above
+      // needed and nobody on the other end of a friend code does. It went out
+      // verbatim on every one of these responses, a moderation field about
+      // another person, always false by this point and still not the
+      // caller's to read. The app reads `user.id` alone.
+      const who = { id: target.id, name: target.name };
+
       const io = req.app.get('io');
 
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
         if (row.status === 'accepted') {
-          return res.json({ message: `Already friends with ${userCheck.rows[0].name}`, status: 'accepted', user: userCheck.rows[0] });
+          return res.json({ message: `Already friends with ${who.name}`, status: 'accepted', user: who });
         }
         // Every write below carries the status it was decided on, and every
         // race answers with the state the row actually reached. Same rules as
@@ -919,7 +960,7 @@ router.post('/add-by-code',
         // two different front doors, and they must not drift apart.
         if (row.status === 'pending' && row.requester_id === targetUserId) {
           if (!await acceptPending(row.id)) {
-            return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+            return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
           }
           if (await severedByFreshBlock(req.user.id, targetUserId)) {
             return res.status(403).json({ error: 'You can no longer connect with this user.' });
@@ -928,17 +969,17 @@ router.post('/add-by-code',
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
             .catch((e) => console.error('Friend accepted push error:', e.message));
-          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
+          return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
         }
         if (row.status === 'pending') {
-          return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
+          return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
         }
         if (!await reRequestDeclined(row.id, req.user.id, targetUserId)) {
-          return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+          return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
         }
         if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
         // Same sentence as a pending row; see POST /request.
-        return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
+        return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
       }
 
       // Conflict-tolerant insert, post-write block verify, and the crossed-pair
@@ -951,7 +992,7 @@ router.post('/add-by-code',
         [req.user.id, targetUserId]
       );
       if (inserted.rows.length === 0) {
-        return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
+        return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
       }
 
       if (await severedByFreshBlock(req.user.id, targetUserId)) {
@@ -962,7 +1003,7 @@ router.post('/add-by-code',
       const seen = after.rows[0];
       if (seen && seen.status === 'accepted') {
         await collapseToOneFriendship(req.user.id, targetUserId);
-        return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
+        return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
       }
       if (seen && seen.status === 'pending' && seen.requester_id === targetUserId) {
         if (await acceptPending(seen.id)) {
@@ -970,9 +1011,9 @@ router.post('/add-by-code',
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
             .catch((e) => console.error('Friend accepted push error:', e.message));
-          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
+          return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
         }
-        return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
+        return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
       }
 
       if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
@@ -989,7 +1030,7 @@ router.post('/add-by-code',
         `${req.user.name} wants to be friends`,
         { type: 'friend_request', fromUserId: String(req.user.id) }
       ).catch((e) => console.error('Friend request push error:', e.message));
-      res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
+      res.json({ message: `Friend request sent to ${who.name}`, status: 'pending', user: who });
     } catch (err) {
       console.error('Add by code error:', err);
       res.status(500).json({ error: 'Failed to add friend by code' });
@@ -1175,9 +1216,21 @@ router.get('/status/:userId', async (req, res) => {
     if (!Number.isInteger(userId) || userId <= 0 || userId > MAX_USER_ID) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
+    // A BLOCK EITHER WAY IS NO RELATIONSHIP AT ALL, and so is a ban: the same
+    // { status: 'none' } an id with no row gets, with no requester_id beside
+    // it. The block route deletes a pair's friendship rows but keeps a
+    // declined one, so a blocked pair could still read "declined" (or, masked,
+    // "pending") and whose request it was, from the one read in this file
+    // that never asked utils/blocks.js. The ban half keeps the rule this
+    // file's header sets: a ban reaches every place a block does.
+    if (await isBlockedBetween(req.user.id, userId)) {
+      return res.json({ status: 'none' });
+    }
     const result = await pool.query(
-      `SELECT status, requester_id FROM friendships
-       WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+      `SELECT f.status, f.requester_id FROM friendships f
+         JOIN users u ON u.id = $2
+       WHERE ((f.requester_id = $1 AND f.addressee_id = $2) OR (f.requester_id = $2 AND f.addressee_id = $1))
+         AND ${NOT_BANNED_SQL}`,
       [req.user.id, userId]
     );
     if (result.rows.length === 0) {
@@ -1212,4 +1265,4 @@ module.exports.__budgetLimits = () => ({
   phoneLookup: phoneLookupBudget.limits,
 });
 
-module.exports.__test = { maskedStatus };
+module.exports.__test = { maskedStatus, newFriendCode };

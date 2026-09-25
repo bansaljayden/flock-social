@@ -145,6 +145,72 @@ test('deleting the account and signing up again on the same address does not bri
   assert.ok(again.body.token);
 });
 
+test('moving the account off the address it proved spends that address, so a delete and re-signup gets no second week', async () => {
+  // THE HOLE THIS PINS. PUT /api/users/profile un-verifies a row that changes
+  // its address (verified_email NULL, email_verified FALSE), and the deletion
+  // records only the address a row still proves. Confirm, take the week, move
+  // to any other address, delete, sign up on the first address again: nothing
+  // had recorded it, so the week came back every time.
+  const first = await signup('pat.moves@example.com');
+  assert.strictEqual(first.status, 201, first.text);
+  const oldId = first.body.user.id;
+  await verify(oldId);
+  const before = (await identityRows()).length;
+
+  const moved = await call('PUT', '/api/users/profile', {
+    token: first.body.token,
+    body: { email: 'pat.elsewhere@example.com', current_password: PASSWORD },
+  });
+  assert.strictEqual(moved.status, 200, moved.text);
+  assert.strictEqual(moved.body.emailVerificationRequired, true);
+  const rows = await identityRows();
+  assert.strictEqual(rows.length, before + 1, 'the proved address was given up and nothing recorded it');
+  assert.strictEqual(rows[rows.length - 1].oauth_hash, null);
+  for (const v of Object.values(rows[rows.length - 1])) {
+    assert.ok(!String(v).includes('@'), 'plaintext address in grace_spent_identities');
+  }
+
+  const del = await call('DELETE', '/api/users/me', { token: first.body.token, body: { password: PASSWORD } });
+  assert.strictEqual(del.status, 200, del.text);
+
+  const again = await signup('pat.moves@example.com');
+  assert.strictEqual(again.status, 201, again.text);
+  await verify(again.body.user.id);
+  const state = await graceOf(again.body.user.id);
+  assert.strictEqual(state.inGrace, false, 'the week came back after a move, a delete and a re-signup');
+  const { rows: [u] } = await pool.query('SELECT grace_forfeited FROM users WHERE id = $1', [again.body.user.id]);
+  assert.strictEqual(u.grace_forfeited, true);
+});
+
+test('an edit that gives up no proved address records nothing', async () => {
+  // An unconfirmed account moving off an address it only TYPED: nothing is
+  // recorded, and the address's real owner still gets the week.
+  const typed = await signup('typed.only@example.com');
+  assert.strictEqual(typed.status, 201, typed.text);
+  const before = (await identityRows()).length;
+  const moved = await call('PUT', '/api/users/profile', {
+    token: typed.body.token,
+    body: { email: 'typed.elsewhere@example.com', current_password: PASSWORD },
+  });
+  assert.strictEqual(moved.status, 200, moved.text);
+  assert.strictEqual((await identityRows()).length, before, 'an address the row never proved was recorded');
+  const owner = await signup('typed.only@example.com');
+  assert.strictEqual(owner.status, 201, owner.text);
+  await verify(owner.body.user.id);
+  assert.strictEqual((await graceOf(owner.body.user.id)).inGrace, true);
+
+  // A confirmed account editing its name keeps its address and records nothing.
+  const named = await signup('renames.only@example.com');
+  await verify(named.body.user.id);
+  const renamed = await call('PUT', '/api/users/profile', {
+    token: named.body.token,
+    body: { name: 'Pat Renamed', email: 'renames.only@example.com', current_password: PASSWORD },
+  });
+  assert.strictEqual(renamed.status, 200, renamed.text);
+  assert.strictEqual((await identityRows()).length, before);
+  assert.strictEqual((await graceOf(named.body.user.id)).inGrace, true, 'a name edit cost the account its week');
+});
+
 test('an Apple or Google identity that had an account forfeits the week under any address', async () => {
   const users = require('../routes/users');
   assert.strictEqual(await users.recordGraceSpentIdentity({

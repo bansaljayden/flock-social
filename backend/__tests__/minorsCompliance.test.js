@@ -215,12 +215,15 @@ async function withGoogle(profile, fn) {
 
 // Calendar-safe DOB strings relative to the real clock. dobYearsAgo(13) is the
 // 13th birthday TODAY (age 13, allowed); dobYearsAgo(13, 1) is a child whose
-// 13th birthday is tomorrow (age 12, refused).
+// 13th birthday is tomorrow (age 12, refused). "Today" is the UTC date, which
+// is the day utils/age.js measures from: built from the local date instead,
+// these two sat a day off the boundary for the hours each evening when the
+// local date and the UTC date differ.
 function dobYearsAgo(years, plusDays = 0) {
   const t = new Date();
-  const d = new Date(t.getFullYear() - years, t.getMonth(), t.getDate() + plusDays);
+  const d = new Date(Date.UTC(t.getUTCFullYear() - years, t.getUTCMonth(), t.getUTCDate() + plusDays));
   const p = (n, w) => String(n).padStart(w, '0');
-  return `${p(d.getFullYear(), 4)}-${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}`;
+  return `${p(d.getUTCFullYear(), 4)}-${p(d.getUTCMonth() + 1, 2)}-${p(d.getUTCDate(), 2)}`;
 }
 
 const ADULT_DOB = '2000-01-01';

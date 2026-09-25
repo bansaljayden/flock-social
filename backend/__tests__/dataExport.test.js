@@ -71,6 +71,7 @@ function reset() {
       apple_refresh_token: null, terms_accepted_at: '2026-01-01T00:00:00Z',
       date_of_birth: '2008-05-01', reliability_score: '92.50',
       total_plans_joined: 4, total_plans_attended: 3,
+      friend_code: 'FLOCK-BQ7KX9MZ',
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-01T00:00:00Z',
     },
     2: { // Apple account, no password — holds a live Apple credential
@@ -279,6 +280,10 @@ test('a password account exports its own data as a named, uncached JSON file', a
   assert.deepStrictEqual(b.profile.interests, ['hiking', 'live music']);
   assert.strictEqual(b.profile.sign_in_method, 'password');
   assert.strictEqual(b.profile.date_of_birth, '2008-05-01');
+  // users.friend_code (migration 079) is the handle other people add this
+  // account by. Exported like every other users column that is not a named
+  // omission; accountDeletionSurface.test.js holds the column list to that.
+  assert.strictEqual(b.profile.friend_code, 'FLOCK-BQ7KX9MZ');
 
   assert.deepStrictEqual(b.settings, { theme: 'dark' });
   assert.strictEqual(b.availability.status, 'down');

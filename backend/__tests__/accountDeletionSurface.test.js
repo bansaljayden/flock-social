@@ -162,6 +162,10 @@ const DE_ATTRIBUTED = {
     'timestamp, and nothing that names a person',
   'venue_subscriptions.granted_by':
     'the admin who comped a venue tier',
+  'business_expenses.updated_by':
+    'the admin who last wrote a company bill on the expense list (migration 080). The bill is ' +
+    "the company's record and stays; emptied, the row names no one and holds nothing about " +
+    'the person, so the delete-account and privacy pages have nothing to add',
 };
 
 test('the rows that survive a deletion de-attributed are exactly the ones we decided on', async () => {
@@ -449,9 +453,13 @@ test('a plan whose night has been and gone does not push, whatever its status sa
 test('preparing the notification can never block the deletion itself', () => {
   // Apple 5.1.1(v): deletion stays reachable. The read that feeds the fan-out
   // is outside the transaction and inside its own catch, so a failure there
-  // costs a notification and not an account.
-  const readAt = USERS_ROUTE.indexOf('could not read the flocks this cancels');
-  const connectAt = USERS_ROUTE.indexOf('const client = await pool.connect();');
+  // costs a notification and not an account. Searched from the top of
+  // deleteAccount: PUT /profile opens a transaction of its own earlier in the
+  // file, when an address a row proved is given up.
+  const deleteAt = USERS_ROUTE.indexOf('async function deleteAccount(');
+  assert.ok(deleteAt > 0, 'routes/users.js no longer has the deleteAccount this test is anchored on');
+  const readAt = USERS_ROUTE.indexOf('could not read the flocks this cancels', deleteAt);
+  const connectAt = USERS_ROUTE.indexOf('const client = await pool.connect();', deleteAt);
   assert.ok(readAt > 0 && connectAt > readAt,
     'the cancellation read belongs before the transaction, in a catch of its own');
 
@@ -557,6 +565,11 @@ let emitted;
 let blockedBoth;
 let failTransaction;
 let unmodelled;
+// The Stripe customers the account holds, Pro (users) and Roost
+// (venue_profiles), and whether the row was actually deleted.
+let proCustomer = null;
+let roostCustomer = null;
+let rowDeleted = false;
 
 function stubQuery(text) {
   const q = String(text);
@@ -568,8 +581,16 @@ function stubQuery(text) {
   // rollback case silently passes as a success.
   if (has('DELETE FROM users WHERE id = $1')) {
     if (failTransaction) throw new Error('simulated write failure');
+    rowDeleted = true;
     return { rows: [{ id: DELETER }], rowCount: 1 };
   }
+  // Also before the generic SELECT, which would answer it with a user row that
+  // has no stripe_customer_id at all.
+  if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) {
+    return { rows: [{ stripe_customer_id: proCustomer }], rowCount: 1 };
+  }
+  if (has('UPDATE users SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
+  if (has('UPDATE venue_profiles SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('FROM users WHERE id = $1')) {
     return { rows: [{
       id: DELETER, email: 'deleter@example.com', name: 'Robin', phone: null,
@@ -589,13 +610,23 @@ function stubQuery(text) {
     return { rows: blockedBoth.map((id) => ({ id })), rowCount: blockedBoth.length };
   }
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };
+  // The transaction's first statement locks every plan the deletion will
+  // touch (routes/users.js, ACCOUNT_FLOCK_LOCKS_SQL); here, the plans it owns.
+  if (has('SELECT id FROM flocks') && has('FOR UPDATE')) {
+    return { rows: OWNED.map((f) => ({ id: f.id })), rowCount: OWNED.length };
+  }
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   if (has('banned_identities')) return { rows: [], rowCount: 0 };
   // A revoke drops the device rows too (2026-09-04).
   if (has('DELETE FROM device_tokens')) return { rows: [], rowCount: 0 };
-  // Whether the account holds a Roost customer to cancel first; this one does not.
-  if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) return { rows: [], rowCount: 0 };
+  // Whether the account holds a Roost customer to cancel first; by default it
+  // does not.
+  if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) {
+    return roostCustomer
+      ? { rows: [{ stripe_customer_id: roostCustomer }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
+  }
   // Every deletion records the identity it proved for the first-week rule
   // (migration 076), after the COMMIT and best-effort.
   if (has('INSERT INTO grace_spent_identities')) return { rows: [], rowCount: 1 };
@@ -643,6 +674,9 @@ async function deleteAccountAs(opts = {}) {
   blockedBoth = opts.blocked || [];
   failTransaction = Boolean(opts.failTransaction);
   pushConfigured = opts.pushConfigured !== false;
+  proCustomer = opts.proCustomer || null;
+  roostCustomer = opts.roostCustomer || null;
+  rowDeleted = false;
   // getInvisibleUserIds is the UNCACHED variant, so blockedBoth is read fresh
   // on every call and there is nothing to invalidate.
   usersRouter.__testing.proofFailures.clearAll();
@@ -712,4 +746,75 @@ test('with push unconfigured the deletion still completes and still emits', asyn
   assert.equal(res.status, 200);
   assert.equal(emitted.filter((e) => e.event === 'flock_deleted').length, 3);
   assert.deepEqual(pushed, []);
+});
+
+// ---------------------------------------------------------------------------
+// A STRIPE CUSTOMER ON FILE THAT WAS NOT CANCELLED KEEPS THE ACCOUNT.
+//
+// services/proBilling.js closeCustomer answers false, without throwing, when
+// STRIPE_SECRET_KEY is missing or too short, and the route deleted the account
+// on that false: the customer id went with the row and Stripe went on charging
+// a card for an account that no longer existed. The Roost half ignored its
+// false return outright. Both are refusals now; the ordinary path (nothing on
+// file, or a Stripe that confirms the cancellation) is unchanged.
+// ---------------------------------------------------------------------------
+const billing = require('../services/proBilling');
+
+function withStripe(fn) {
+  const stripePath = require.resolve('stripe');
+  const savedEntry = require.cache[stripePath];
+  const savedKey = process.env.STRIPE_SECRET_KEY;
+  const deleted = [];
+  require.cache[stripePath] = {
+    id: stripePath, filename: stripePath, loaded: true,
+    exports: function FakeStripe() {
+      return { customers: { del: async (id) => { deleted.push(id); return { id, deleted: true }; } } };
+    },
+  };
+  process.env.STRIPE_SECRET_KEY = ['sk', 'test', 'd'.repeat(24)].join('_');
+  billing.__test.resetStripe();
+  return Promise.resolve(fn(deleted)).finally(() => {
+    if (savedEntry) require.cache[stripePath] = savedEntry; else delete require.cache[stripePath];
+    if (savedKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = savedKey;
+    billing.__test.resetStripe();
+  });
+}
+
+test('a Pro web customer that Stripe cannot cancel (no key) keeps the account and says so', async () => {
+  const savedKey = process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_SECRET_KEY;
+  billing.__test.resetStripe();
+  try {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.match(res.body.error, /couldn't cancel your Flock Pro web subscription/);
+    assert.equal(rowDeleted, false, 'the account was deleted while Stripe went on billing it');
+    assert.deepEqual(emitted, [], 'a refused deletion tells nobody their plan is off');
+  } finally {
+    if (savedKey !== undefined) process.env.STRIPE_SECRET_KEY = savedKey;
+  }
+});
+
+test('a Roost customer that Stripe cannot cancel (no key) keeps the account and says so', async () => {
+  const savedKey = process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_SECRET_KEY;
+  billing.__test.resetStripe();
+  try {
+    const res = await deleteAccountAs({ roostCustomer: 'cus_ROOST_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.match(res.body.error, /couldn't cancel your Roost subscription/);
+    assert.equal(rowDeleted, false);
+  } finally {
+    if (savedKey !== undefined) process.env.STRIPE_SECRET_KEY = savedKey;
+  }
+});
+
+test('customers Stripe confirms as cancelled are forgotten and the deletion goes through', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE', roostCustomer: 'cus_ROOST_ON_FILE' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(deletedAtStripe, ['cus_PRO_ON_FILE', 'cus_ROOST_ON_FILE']);
+    assert.equal(rowDeleted, true);
+    assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+  });
 });

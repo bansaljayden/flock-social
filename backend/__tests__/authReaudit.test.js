@@ -240,6 +240,9 @@ function freshDb() {
     verifications: [],
     resets: [],
     resetRequests: [],
+    // grace_spent_identities rows (migration 076): written by PUT /profile
+    // when a row moves off an address it proved.
+    graceSpent: [],
     nextUserId: 1,
     nextVerificationId: 1,
     nextResetId: 1,
@@ -463,6 +466,14 @@ async function handle(text, params = []) {
     return { rows: db.identityTombstoned ? [{ ok: 1 }] : [] };
   }
   if (sql.startsWith('DELETE FROM banned_identities')) return { rows: [], rowCount: 0 };
+
+  // ---- grace_spent_identities (migration 076) ------------------------------
+  // An email change off a PROVED address records that address, in the same
+  // transaction as the move (routes/users.js PUT /profile).
+  if (sql.startsWith('INSERT INTO grace_spent_identities')) {
+    db.graceSpent.push({ email_hash: params[0], oauth_hash: params[1] });
+    return { rows: [], rowCount: 1 };
+  }
 
   // ---- deletion transaction (not exercised here, kept so nothing 500s) -----
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [], rowCount: 0 };
@@ -915,6 +926,11 @@ test('changing the email un-verifies the row and forgets what it had proved', as
   assert.strictEqual(userById(7).verified_email, null);
   assert.strictEqual(body.emailVerificationRequired, true, 'the client has to be told, or the next 403 is a mystery');
   assert.strictEqual(body.user.email_verified, false);
+  // What the row forgot is not lost: the address it proved is recorded as
+  // having had its first week (migration 076), since a deletion after this
+  // point can no longer read it off the row.
+  assert.strictEqual(db.graceSpent.length, 1);
+  assert.match(db.graceSpent[0].email_hash, /^[0-9a-f]{64}$/);
 });
 
 test('an edit that does not move the address leaves the verification alone', async () => {

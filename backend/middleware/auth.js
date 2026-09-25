@@ -280,17 +280,30 @@ function requireVerified(req, res, next) {
 
 // Express middleware factory: verify JWT from Authorization header.
 //
-// `allowBanned` exists for exactly one route — DELETE /api/users/me — because a
-// banned user must still be able to erase their own account (Apple 5.1.1(v) /
-// GDPR / Google Play). It used to be a URL-matching carve-out inside this
-// middleware, which was a hole: the regex was unanchored and ran against
-// req.originalUrl (query string included), so `DELETE /api/flocks/42?x=/users/me`
-// matched and skipped the ban check entirely. A banned harasser could delete a
-// flock and CASCADE away every message in it — the exact evidence a moderator
-// was reviewing — plus deletes on blocks, safety contacts, friends, calendar,
-// venue promotions and reactions. There is no URL matching here any more: the
-// one route that needs the exemption opts in explicitly by mounting this
-// variant, so nothing else can ever reach it.
+// `allowBanned` is for the few capabilities an account KEEPS after a ban,
+// because refusing them causes harm out of all proportion to the offence. Four
+// routes mount it, and each one is on purpose:
+//   DELETE /api/users/me        a banned user must still be able to erase their
+//                               own account (Apple 5.1.1(v) / GDPR / Google Play)
+//   GET  /api/safety/contacts   the list the SOS sheet renders
+//   POST /api/safety/alert      raising an SOS
+//   POST /api/safety/alert/cancel  standing a false alarm down
+// A ban is a judgement about behaviour in a group chat, not a finding that
+// somebody's night is safe, so the SOS path survives it (routes/safety.js).
+// Adding or editing a trusted contact and /share-location do NOT: those point
+// an account at an address that has never heard from Flock. The list is pinned
+// by __tests__/authLifecycleAttack.test.js (A3) and the SOS half by
+// __tests__/safetyFlow.test.js; a new mount needs the same argument made first.
+//
+// It used to be a URL-matching carve-out inside this middleware, which was a
+// hole: the regex was unanchored and ran against req.originalUrl (query string
+// included), so `DELETE /api/flocks/42?x=/users/me` matched and skipped the ban
+// check entirely. A banned harasser could delete a flock and CASCADE away every
+// message in it — the exact evidence a moderator was reviewing — plus deletes
+// on blocks, safety contacts, friends, calendar, venue promotions and
+// reactions. There is no URL matching here any more: a route that needs the
+// exemption opts in explicitly by mounting this variant, so no other route can
+// ever reach it.
 function makeAuthenticate({ allowBanned = false } = {}) {
   return async function authenticateRequest(req, res, next) {
     try {
@@ -323,7 +336,8 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       }
 
       // Banned-user enforcement (A6): a ban locks the account out on the next
-      // request, everywhere except the opted-in account-deletion route.
+      // request, everywhere except the routes that opted in above (account
+      // deletion and the SOS path).
       if (result.rows[0].is_banned && !allowBanned) {
         return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
       }
@@ -351,7 +365,8 @@ function makeAuthenticate({ allowBanned = false } = {}) {
 }
 
 const authenticate = makeAuthenticate();
-// Opt-in variant for DELETE /api/users/me only (see makeAuthenticate above).
+// Opt-in variant for DELETE /api/users/me and the three SOS routes in
+// routes/safety.js (see makeAuthenticate above for why each one keeps it).
 const authenticateAllowBanned = makeAuthenticate({ allowBanned: true });
 
 // Socket.io middleware: verify JWT from handshake auth

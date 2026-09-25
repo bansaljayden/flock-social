@@ -410,6 +410,24 @@ pool.query = async (text, params = []) => {
   return { rows: [], rowCount: 0 };
 };
 
+// The two mail budgets are CLAIMED in a transaction on a checked-out client
+// (routes/auth.js claimResetRequest and claimVerificationSend). Their
+// statements go to the dispatcher above, looked up at call time, so the
+// unrecognised-SQL guard still sees every one of them; BEGIN, COMMIT,
+// ROLLBACK and the advisory lock are no-ops here, because this file is not
+// about concurrency (__tests__/checkThenActRaces.test.js is).
+const realConnect = pool.connect;
+pool.connect = async () => ({
+  query: (text, params) => {
+    const sql = String(text);
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK)\b/i.test(sql) || sql.includes('pg_advisory_xact_lock')) {
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
+    return pool.query(text, params);
+  },
+  release() {},
+});
+
 // The guard that makes a green test mean something. A statement the dispatcher
 // did not recognise silently returned zero rows, which is how a fixture makes a
 // route look safe when it is not — so it fails the test that provoked it. And a
@@ -471,7 +489,7 @@ test.before(() => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; resolve(); });
 }));
 test.after(() => new Promise((resolve) => server.close(resolve)));
-test.after(() => { pool.query = realQuery; pool.end().catch(() => {}); });
+test.after(() => { pool.query = realQuery; pool.connect = realConnect; pool.end().catch(() => {}); });
 
 const call = (method, path, body, token) => fetch(base + path, {
   method,
@@ -646,10 +664,11 @@ test('A2 — header-splitting variants cannot make two readers disagree', async 
 });
 
 // Attack: `authenticateAllowBanned` is the one middleware that waives a check.
-// Confirm it waives EXACTLY one, that it is mounted on exactly one route, and
-// that the waiver cannot be reached from any other URL — the shape of the hole
-// this variant replaced (an unanchored regex over req.originalUrl, which
-// `DELETE /api/flocks/42?x=/users/me` satisfied).
+// Confirm it waives EXACTLY one, that it is mounted on exactly the four routes
+// listed at the foot of this test, and that the waiver cannot be reached from
+// any other URL — the shape of the hole this variant replaced (an unanchored
+// regex over req.originalUrl, which `DELETE /api/flocks/42?x=/users/me`
+// satisfied).
 test('A3 — the banned-user exemption waives the ban check and nothing else', async () => {
   reset();
   const { authenticateAllowBanned } = authMod;

@@ -25,6 +25,12 @@ const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/;
 
 // { y, m, d } with m 1-12, or null. Rejects dates that do not exist
 // (2013-02-30), which `new Date` would have rolled forward into March.
+//
+// A Date passed as a DATE OF BIRTH is read with the LOCAL getters, and that is
+// right rather than an oversight: node-postgres turns a DATE column into a
+// Date at local midnight (pg-types builds it with `new Date(y, m, d)`), so the
+// local fields are the calendar date that was stored, in any zone. "Today" is
+// a different kind of value, an instant, and is read by todayParts below.
 function calendarParts(value) {
   if (value instanceof Date) {
     if (isNaN(value.getTime())) return null;
@@ -44,14 +50,29 @@ function calendarParts(value) {
   return { y, m: mo, d };
 }
 
+// TODAY IS THE UTC CALENDAR DATE OF `now`. It was read with the local getters,
+// so the same instant was a different "today" on a server whose TZ differs:
+// at 21:00 in New York it is already tomorrow in UTC, and a child whose 13th
+// birthday is tomorrow was 12 there and 13 on Railway, which runs UTC. The age
+// gate is the server's decision alone (routes/auth.js), so it must not move
+// with an environment variable. UTC is the zone production has always used,
+// so on Railway nothing changes. A 'YYYY-MM-DD' string is already a calendar
+// date and is read as one.
+function todayParts(now) {
+  if (typeof now === 'string') return calendarParts(now);
+  const t = now instanceof Date ? now : new Date(now);
+  if (isNaN(t.getTime())) return null;
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+}
+
 // Whole years between `dob` and `now`, or null when there is no usable date of
-// birth. Both arguments are read as calendar dates, so the result does not
-// depend on the server's timezone.
+// birth. The date of birth is a calendar date and today is the UTC date of
+// `now`, so the result does not depend on the server's timezone.
 function ageFromDob(dob, now = new Date()) {
   if (!dob) return null;
   const b = calendarParts(dob);
   if (!b) return null;
-  const ref = calendarParts(now instanceof Date || typeof now === 'string' ? now : new Date(now));
+  const ref = todayParts(now);
   if (!ref) return null;
   let age = ref.y - b.y;
   if (ref.m < b.m || (ref.m === b.m && ref.d < b.d)) age -= 1;

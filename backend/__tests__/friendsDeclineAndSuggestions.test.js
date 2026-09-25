@@ -43,8 +43,9 @@ test('a decline is masked on every read the requester can make, and a revive is 
   assert.match(src, /friendshipMap\[f\.friend_id\] = maskedStatus\(f, req\.user\.id\);/);
   // Both revive responses say what a pending row says.
   // The two fresh-request sites keep "sent to <name>"; neither revive site
-  // may, or the requester learns which one they were.
-  assert.strictEqual((src.match(/Friend request sent to \$\{userCheck\.rows\[0\]\.name\}/g) || []).length, 2);
+  // may, or the requester learns which one they were. add-by-code names the
+  // other account through `who`, its { id, name } view of the directory row.
+  assert.strictEqual((src.match(/Friend request sent to \$\{(userCheck\.rows\[0\]|who)\.name\}/g) || []).length, 2);
   let at = 0;
   let revives = 0;
   while ((at = src.indexOf('reRequestDeclined(row.id', at)) !== -1) {

@@ -376,14 +376,15 @@ function verifierMatches(verifier, storedHash) {
 // Issue a link. Any older unused link for the account is retired in the same
 // breath, so at most ONE live link exists per account: a token sitting in an
 // old email (or in a mailbox the account has since moved away from) stops
-// working the moment a new one is requested.
-async function issueVerification(user, ip) {
+// working the moment a new one is requested. `db` is the pool, or the client
+// of the transaction that claimed the send (claimVerificationSend).
+async function issueVerification(user, ip, db = pool) {
   const { selector, verifierHash, token } = mintVerificationToken();
-  await pool.query(
+  await db.query(
     'UPDATE email_verifications SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
     [user.id]
   );
-  await pool.query(
+  await db.query(
     // `$6::int * INTERVAL '1 hour'` rather than make_interval(hours => $6):
     // the explicit cast leaves Postgres nothing to infer, and the TTL still
     // comes off the DATABASE clock, which is the clock the expiry guard in
@@ -400,6 +401,11 @@ async function sendVerification(user, ip) {
     return { sent: false, skipped: true, reason: 'unreachable-address' };
   }
   const token = await issueVerification(user, ip);
+  return mailVerificationLink(user, token);
+}
+
+// The mail half of sendVerification, for a link already issued.
+async function mailVerificationLink(user, token) {
   const link = verificationLink(token);
   const result = await sendVerificationEmail({
     to: user.email,
@@ -489,8 +495,8 @@ async function mailBudgetRetryMs(table, keyColumn, key, ip, legs) {
   }
 }
 
-async function verificationSendBudget(userId, ip) {
-  const { rows } = await pool.query(
+async function verificationSendBudget(userId, ip, db = pool) {
+  const { rows } = await db.query(
     `SELECT
        COUNT(*) FILTER (WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour')::int AS account_hour,
        COUNT(*) FILTER (WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 day')::int  AS account_day,
@@ -507,6 +513,69 @@ async function verificationSendBudget(userId, ip) {
     accountLast: row.account_last ? new Date(row.account_last).getTime() : 0,
     ipHour: Number(row.ip_hour) || 0,
   };
+}
+
+// Which legs of the resend budget a reading has used up, and whether the
+// sixty-second gap is still running. One function, so the claim below and the
+// refusal message in the route cannot disagree about what "refused" means.
+function verificationBudgetLegs(budget, now = Date.now()) {
+  const tooSoon = Boolean(budget.accountLast && now - budget.accountLast < RESEND_MIN_GAP_MS);
+  const legs = [
+    { scope: 'account', interval: '1 hour', count: budget.accountHour, limit: RESEND_MAX_PER_HOUR_ACCOUNT,
+      exhausted: budget.accountHour >= RESEND_MAX_PER_HOUR_ACCOUNT },
+    { scope: 'account', interval: '1 day', count: budget.accountDay, limit: RESEND_MAX_PER_DAY_ACCOUNT,
+      exhausted: budget.accountDay >= RESEND_MAX_PER_DAY_ACCOUNT },
+    { scope: 'ip', interval: '1 hour', count: budget.ipHour, limit: RESEND_MAX_PER_HOUR_IP,
+      exhausted: budget.ipHour >= RESEND_MAX_PER_HOUR_IP },
+  ];
+  return { tooSoon, legs, capped: legs.some((l) => l.exhausted) };
+}
+
+// ---------------------------------------------------------------------------
+// A MAIL BUDGET IS CLAIMED, NOT READ AND THEN WRITTEN.
+//
+// Both budgets used to read their counts, await, and only then write the row
+// those counts are made of, so every request of a parallel burst read the same
+// counts and every one was sent: the sixty-second gap and the hourly and daily
+// caps held only against requests that arrived one at a time. Forgot-password
+// is unauthenticated, so that was a way to bury any mailbox in reset mail; the
+// resend route did the same to the address on an unconfirmed account.
+//
+// A conditional INSERT (insert only WHERE the count is under the cap) narrows
+// that and does not close it: under Postgres's READ COMMITTED two such
+// statements running together each count the other's row as absent, and both
+// insert. So the count and the write happen in one transaction that first
+// takes an advisory lock on the key being budgeted, the account (or address)
+// first and the IP second, every claim in that order, so two claims can queue
+// behind each other but never wait on each other in a cycle. A claim that
+// arrives while another holds the key reads the counts after it has
+// committed. The mail goes out only when the claim did, and after the COMMIT,
+// so no lock is held while a provider is being called.
+//
+// Signup's own send is not claimed this way: a new account has no sends to
+// count, so the only leg it checks is the loose per-IP one, which server.js's
+// /api/auth limiter already holds to a handful of requests a minute.
+async function claimVerificationSend(user, ip) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('verify-budget:' || $1::text))", [String(user.id)]);
+    if (ip) await client.query("SELECT pg_advisory_xact_lock(hashtext('verify-budget-ip:' || $1::text))", [String(ip)]);
+    const budget = await verificationSendBudget(user.id, ip, client);
+    const { tooSoon, capped } = verificationBudgetLegs(budget);
+    if (tooSoon || capped) {
+      await client.query('ROLLBACK');
+      return { claimed: false, budget };
+    }
+    const token = await issueVerification(user, ip, client);
+    await client.query('COMMIT');
+    return { claimed: true, token, budget };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Consume a link. Every failure returns the same shape and the caller maps all
@@ -643,8 +712,8 @@ function resetBucketKey(email) {
     : crypto.createHash('sha256').update(`reset:${canonical}`).digest('hex');
 }
 
-async function resetRequestBudget(emailKey, ip) {
-  const { rows } = await pool.query(
+async function resetRequestBudget(emailKey, ip, db = pool) {
+  const { rows } = await db.query(
     `SELECT
        COUNT(*) FILTER (WHERE email_key = $1 AND created_at > NOW() - INTERVAL '1 hour')::int AS email_hour,
        COUNT(*) FILTER (WHERE email_key = $1 AND created_at > NOW() - INTERVAL '1 day')::int  AS email_day,
@@ -673,11 +742,39 @@ function resetBudgetExhausted(budget) {
 
 // Recorded for every request that gets past the budget, whether or not an
 // account was found. That is what makes the budget say nothing about existence.
-async function recordResetRequest(emailKey, ip) {
-  await pool.query(
+async function recordResetRequest(emailKey, ip, db = pool) {
+  await db.query(
     'INSERT INTO password_reset_requests (email_key, request_ip) VALUES ($1, $2)',
     [emailKey, ip || null]
   );
+}
+
+// The reset budget's claim: the counts are read and the ledger row written in
+// one transaction, under an advisory lock on the address key and then on the
+// IP, for the reasons given above claimVerificationSend. A burst for one
+// address now gets exactly what the budget allows, the rest are refused with
+// the ordinary 429, and the ledger still counts identically whether or not an
+// account exists, so the refusal still says nothing about the mailbox.
+async function claimResetRequest(emailKey, ip) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('reset-budget:' || $1::text))", [emailKey]);
+    if (ip) await client.query("SELECT pg_advisory_xact_lock(hashtext('reset-budget-ip:' || $1::text))", [String(ip)]);
+    const budget = await resetRequestBudget(emailKey, ip, client);
+    if (resetBudgetExhausted(budget)) {
+      await client.query('ROLLBACK');
+      return { claimed: false, budget };
+    }
+    await recordResetRequest(emailKey, ip, client);
+    await client.query('COMMIT');
+    return { claimed: true, budget };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // The janitor. Unlike email_verifications, this table takes a row for every
@@ -1076,6 +1173,39 @@ function recordLoginFailure(key, now = Date.now()) {
 
 function clearLoginFailures(key) {
   loginFailures.delete(key);
+}
+
+// RESERVED BEFORE THE FIRST AWAIT, NOT RECORDED AFTER THE LAST ONE. /login used
+// to read the lock, then await the user lookup and the bcrypt compare, and only
+// then record the failure. Every request of a parallel burst therefore read the
+// same unlocked counter, so a hundred guesses fired together were a hundred
+// guesses checked against the password, whatever LOGIN_FAIL_LIMIT said. The
+// attempt now takes its slot in the same synchronous step as the check, so the
+// request after the limit finds the address locked however many are in flight.
+//
+// The count is attempts in flight plus failures, so the sequential behaviour is
+// what it was: ten wrong passwords, and the eleventh attempt is refused. A
+// success clears the counter as it always did. A failure is already counted;
+// settleLoginFailure counts it again only if a concurrent success cleared the
+// slot it reserved, so a burst cannot be wiped out by the real owner signing
+// in halfway through it. A request that fails on OUR side (a database error)
+// hands its slot back, so an outage does not lock people out of their own
+// accounts.
+function reserveLoginAttempt(key, now = Date.now()) {
+  const lockedMs = loginLockedFor(key, now);
+  if (lockedMs > 0) return { lockedMs, slot: null };
+  recordLoginFailure(key, now);
+  return { lockedMs: 0, slot: loginFailures.get(key) || null };
+}
+
+function settleLoginFailure(key, slot, now = Date.now()) {
+  if (!slot || loginFailures.get(key) !== slot) recordLoginFailure(key, now);
+}
+
+function releaseLoginAttempt(key, slot) {
+  if (!slot || loginFailures.get(key) !== slot) return;
+  if (slot.count <= 1) loginFailures.delete(key);
+  else slot.count -= 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -2332,18 +2462,13 @@ router.post('/resend-verification', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'This account has no email address we can send to.' });
     }
 
-    const budget = await verificationSendBudget(user.id, req.ip);
-    const tooSoon = budget.accountLast && Date.now() - budget.accountLast < RESEND_MIN_GAP_MS;
-    const legs = [
-      { scope: 'account', interval: '1 hour', count: budget.accountHour, limit: RESEND_MAX_PER_HOUR_ACCOUNT,
-        exhausted: budget.accountHour >= RESEND_MAX_PER_HOUR_ACCOUNT },
-      { scope: 'account', interval: '1 day', count: budget.accountDay, limit: RESEND_MAX_PER_DAY_ACCOUNT,
-        exhausted: budget.accountDay >= RESEND_MAX_PER_DAY_ACCOUNT },
-      { scope: 'ip', interval: '1 hour', count: budget.ipHour, limit: RESEND_MAX_PER_HOUR_IP,
-        exhausted: budget.ipHour >= RESEND_MAX_PER_HOUR_IP },
-    ];
-    const capped = legs.some((l) => l.exhausted);
-    if (tooSoon || capped) {
+    // Claimed, not read and then written: see claimVerificationSend. The link
+    // is issued inside the claim, so a refused request issues nothing and the
+    // last link sent keeps working.
+    const claim = await claimVerificationSend(user, req.ip);
+    if (!claim.claimed) {
+      const { budget } = claim;
+      const { tooSoon, legs, capped } = verificationBudgetLegs(budget);
       console.warn(`[auth] verification resend throttled for user ${user.id} from ${req.ip}`);
       // "We just sent one" is only true of the sixty-second gap. The other
       // three legs are hours and a whole day long, and the person reading this
@@ -2359,7 +2484,7 @@ router.post('/resend-verification', authenticate, async (req, res) => {
         : `We just sent one. Check your inbox, then try again ${waitPhrase(ms)}.`));
     }
 
-    const sendResult = await sendVerification(user, req.ip);
+    const sendResult = await mailVerificationLink(user, claim.token);
     res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true, mailRefused: sendResult.refused === true });
   } catch (err) {
     console.error('Resend verification error:', err);
@@ -2413,8 +2538,13 @@ router.post('/forgot-password', [
     // for the rest of the hour. That is inherent to per-address limiting, the
     // window is short, and the alternative (no per-address cap) is a mail
     // cannon pointed at any address an attacker chooses.
-    const budget = await resetRequestBudget(emailKey, req.ip);
-    if (resetBudgetExhausted(budget)) {
+    //
+    // Claimed, not read and then written (claimResetRequest): the counts were
+    // read, then awaited, then written, so a parallel burst all read the same
+    // counts and every request of it mailed the address.
+    const claim = await claimResetRequest(emailKey, req.ip);
+    if (!claim.claimed) {
+      const { budget } = claim;
       console.warn(`[auth] password reset throttled from ${req.ip}`);
       // Three per hour, six per DAY, twenty per hour per address. "A few
       // minutes" described none of those, and this is account recovery: a
@@ -2445,7 +2575,6 @@ router.post('/forgot-password', [
         ? `That is several reset requests for this address already. You can ask for another ${waitPhrase(ms)}. Any link already sent still works.`
         : `A reset link was requested for this address a moment ago. Check your inbox and your spam folder, then try again ${waitPhrase(ms)}.`));
     }
-    await recordResetRequest(emailKey, req.ip);
     maybePurgeResetRequests();
 
     // Canonical lookup (round 15), the same one signup and the OAuth claims
@@ -2583,6 +2712,9 @@ router.post('/reset-password', [
 
 // POST /api/auth/login
 router.post('/login', loginValidation, async (req, res) => {
+  // Outside the try so the catch can hand a reserved attempt back.
+  let throttleKey = null;
+  let loginSlot = null;
   try {
     // TYPE before CONTENT — see rejectNonStringFields. An array email would
     // reach canonicalEmail (which answers '' for a non-string, bucketing every
@@ -2598,9 +2730,13 @@ router.post('/login', loginValidation, async (req, res) => {
     const { email, password } = req.body;
 
     // Per-account throttle (round 15) — checked BEFORE the lookup so a locked
-    // account costs an attacker a database round trip of nothing.
-    const throttleKey = canonicalEmail(email);
-    const lockedMs = loginLockedFor(throttleKey);
+    // account costs an attacker a database round trip of nothing, and the
+    // attempt is RESERVED in the same step (see reserveLoginAttempt), before
+    // anything below awaits.
+    throttleKey = canonicalEmail(email);
+    const reservation = reserveLoginAttempt(throttleKey);
+    const lockedMs = reservation.lockedMs;
+    loginSlot = reservation.slot;
     if (lockedMs > 0) {
       console.warn(`Login throttled for ${throttleKey} from ${req.ip} at ${new Date().toISOString()}`);
       // loginLockedFor has always RETURNED the milliseconds left and this line
@@ -2640,13 +2776,17 @@ router.post('/login', loginValidation, async (req, res) => {
     // one against a real hash of the same cost factor.
     const validPassword = await bcrypt.compare(password, user?.password || DUMMY_PASSWORD_HASH);
     if (!user || !user.password || !validPassword) {
-      recordLoginFailure(throttleKey);
+      // Already counted by the reservation above; counted again only if a
+      // concurrent success cleared that slot.
+      settleLoginFailure(throttleKey, loginSlot);
+      loginSlot = null;
       const why = !user ? 'unknown email' : !user.password ? 'oauth account' : 'bad password';
       console.warn(`Failed login attempt (${why}) for ${maskAddress(email)} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     clearLoginFailures(throttleKey);
+    loginSlot = null;
 
     if (!(await enforceDobOnLogin(user, req, res))) return;
 
@@ -2664,6 +2804,8 @@ router.post('/login', loginValidation, async (req, res) => {
     safeUser.sign_in_method = user.oauth_provider || 'password';
     res.json({ token, user: safeUser });
   } catch (err) {
+    // Our failure, not a wrong password: the reserved attempt is handed back.
+    if (throttleKey !== null && loginSlot) releaseLoginAttempt(throttleKey, loginSlot);
     console.error('Login error:', err);
     res.status(500).json({ error: 'Login failed' });
   }
@@ -3768,6 +3910,9 @@ module.exports.__testing = {
   loginLockedFor,
   recordLoginFailure,
   clearLoginFailures,
+  reserveLoginAttempt,
+  settleLoginFailure,
+  releaseLoginAttempt,
   LOGIN_FAIL_LIMIT,
   // Round 16
   mintVerificationToken,

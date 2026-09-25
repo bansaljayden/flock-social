@@ -1,11 +1,13 @@
 // Run: node --test  (from backend/). Proves the server-side age-gate boundary.
-// Dates are constructed with LOCAL numeric components + a fixed `now` so the
+// Dates of birth are constructed with LOCAL numeric components, the shape a
+// DATE column arrives in from node-postgres. `now` is a fixed INSTANT, because
+// "today" is the UTC date of the instant (utils/age.js todayParts), so the
 // results are deterministic regardless of timezone or the real clock.
 const test = require('node:test');
 const assert = require('node:assert');
 const { ageFromDob, MIN_AGE } = require('../utils/age');
 
-const NOW = new Date(2026, 5, 16); // local: June 16, 2026
+const NOW = new Date(Date.UTC(2026, 5, 16, 12)); // noon UTC, June 16, 2026
 
 test('clearly under 13 -> below MIN_AGE', () => {
   assert.ok(ageFromDob(new Date(2015, 0, 1), NOW) < MIN_AGE); // 11

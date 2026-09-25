@@ -250,6 +250,9 @@ function handle(text, params = []) {
 
   // deletion transaction
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };
+  // Its first statement locks every plan it will touch (routes/users.js,
+  // ACCOUNT_FLOCK_LOCKS_SQL). This fixture owns no plans.
+  if (has('SELECT id FROM flocks') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM users WHERE id = $1')) {
