@@ -477,24 +477,41 @@ test('concurrent callers during model load all get the loaded model', async () =
 // Railway runs UTC, which has no transitions, so this is a developer-machine
 // and future-deployment bug rather than a live one — but it is provable, so it
 // is proved. Run in a child process because the offending arithmetic depends on
-// the process TZ, which Node reads once. (The VENUE's own clock change is a
-// different defect, and that one is live: every slot's real instant uses the
-// one offset held for the venue. See the note above labelFor in
-// services/mlPredictor.js.)
+// the process TZ, which Node reads once.
+//
+// WHAT THE STRIP DOES AT A CLOCK CHANGE, DECIDED 2026-09-25. The strip walks
+// WALL-CLOCK hours: the skipped spring-forward hour is not emitted, and the
+// repeated fall-back hour is emitted ONCE. This file used to pin the repeated
+// hour twice (12, 1, 1, 2, 3), which was the elapsed-time walk labelling each
+// step honestly; it now pins 12, 1, 2, 3, 4, one bar per hour on the wall
+// clock, which is how a person reads that night and the only sequence every
+// consumer that counts hours from the first label can read. The label is still
+// read off the timestamp that was scored, so the two cannot disagree.
+//
+// The venue below has no zone and no offset, so its clock IS the server's, and
+// these cases are the server's own transitions. The VENUE's own clock change,
+// which is the live one on Railway, is pinned with instants in
+// __tests__/venueDaylightSaving.test.js; the last two cases here show the same
+// labels coming out of a venue zone on a UTC host.
 // ---------------------------------------------------------------------------
 
 const { execFileSync } = require('child_process');
 
-function forecastHoursInTz(tz, isoLocalMidnight) {
+// One child per process TZ, running every scenario it is handed.
+function forecastHoursInTz(tz, scenarios) {
   const script = `
     const ml = require(${JSON.stringify(path.join(__dirname, '..', 'services', 'mlPredictor'))});
     (async () => {
-      const base = new Date(${JSON.stringify(isoLocalMidnight)});
-      const venue = { place_id: null, types: ['bar'], rating: 4.1, price_level: 2,
-        user_ratings_total: 100, location: { latitude: 40.71, longitude: -74.0 } };
-      const f = await ml.predictHourlyForecast(venue, null, 0, 5, base);
+      const out = [];
+      for (const s of ${JSON.stringify(scenarios)}) {
+        const base = new Date(s.base);
+        const venue = Object.assign({ place_id: null, types: ['bar'], rating: 4.1, price_level: 2,
+          user_ratings_total: 100, location: { latitude: 40.71, longitude: -74.0 } }, s.venue || {});
+        const f = await ml.predictHourlyForecast(venue, null, 0, 5, base);
+        out.push(f.map(e => e.hour));
+      }
       // Marker: the module logs to stdout on load, so the payload is fenced.
-      process.stdout.write('<<<' + JSON.stringify(f.map(e => e.hour)) + '>>>');
+      process.stdout.write('<<<' + JSON.stringify(out) + '>>>');
     })();
   `;
   const out = execFileSync(process.execPath, ['-e', script], {
@@ -507,24 +524,30 @@ function forecastHoursInTz(tz, isoLocalMidnight) {
 }
 
 test('forecast hour labels follow the wall clock across a DST transition', () => {
-  // 2026-11-01, America/New_York: 1 AM happens twice. Five hourly steps from
-  // local midnight land on 12, 1, 1, 2, 3 — not 12, 1, 2, 3, 4.
-  assert.deepEqual(
-    forecastHoursInTz('America/New_York', '2026-11-01T04:00:00Z'),
-    ['12 AM', '1 AM', '1 AM', '2 AM', '3 AM'],
-    'fall back: the repeated hour must be labelled as it was scored');
-
-  // 2026-03-08, America/New_York: 2 AM does not exist. Five steps land on
-  // 12, 1, 3, 4, 5 — not 12, 1, 2, 3, 4.
-  assert.deepEqual(
-    forecastHoursInTz('America/New_York', '2026-03-08T05:00:00Z'),
-    ['12 AM', '1 AM', '3 AM', '4 AM', '5 AM'],
+  const [fallBack, springForward] = forecastHoursInTz('America/New_York', [
+    // 2026-11-01, America/New_York: 1 AM happens twice. The strip shows it once.
+    { base: '2026-11-01T04:00:00Z' },
+    // 2026-03-08, America/New_York: 2 AM does not exist.
+    { base: '2026-03-08T05:00:00Z' },
+  ]);
+  assert.deepEqual(fallBack, ['12 AM', '1 AM', '2 AM', '3 AM', '4 AM'],
+    'fall back: the repeated hour is one bar, labelled as it was scored, and 2 AM follows it');
+  assert.deepEqual(springForward, ['12 AM', '1 AM', '3 AM', '4 AM', '5 AM'],
     'spring forward: the skipped hour must not be labelled at all');
 
-  // And on a zone with no transitions nothing changes.
-  assert.deepEqual(
-    forecastHoursInTz('UTC', '2026-11-01T00:00:00Z'),
-    ['12 AM', '1 AM', '2 AM', '3 AM', '4 AM']);
+  const [utc, zonedFall, zonedSpring] = forecastHoursInTz('UTC', [
+    // A zone with no transitions: nothing changes.
+    { base: '2026-11-01T00:00:00Z' },
+    // The same two nights on Railway's clock, for a venue that carries its
+    // own zone. On a UTC host `base` is the venue's wall clock at midnight.
+    { base: '2026-11-01T00:00:00Z', venue: { timeZone: 'America/New_York', utcOffsetMinutes: -240 } },
+    { base: '2027-03-14T00:00:00Z', venue: { timeZone: 'America/New_York', utcOffsetMinutes: -300 } },
+  ]);
+  assert.deepEqual(utc, ['12 AM', '1 AM', '2 AM', '3 AM', '4 AM']);
+  assert.deepEqual(zonedFall, ['12 AM', '1 AM', '2 AM', '3 AM', '4 AM'],
+    'the venue zone shows its repeated hour once, the same way');
+  assert.deepEqual(zonedSpring, ['12 AM', '1 AM', '3 AM', '4 AM', '5 AM'],
+    'and skips the hour its wall clock never shows');
 });
 
 // ---------------------------------------------------------------------------

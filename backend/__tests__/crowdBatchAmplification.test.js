@@ -433,7 +433,11 @@ test('a real batch request still receives event enrichment', async () => {
 
 test('predictBusyness forwards the caller identity down to the event fetch', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8');
-  assert.match(src, /async function predictBusyness\(venue, weather, timestamp, options = \{\}\)/,
+  // The options bag stays the FOURTH parameter. What may follow it is the
+  // strip's own internal argument (the slot instant it already resolved, so a
+  // slot's weather and event window are read at one moment); it never displaces
+  // the options the routes pass.
+  assert.match(src, /async function predictBusyness\(venue, weather, timestamp, options = \{\}(, \w+)?\)/,
     'predictBusyness must accept the options bag the routes pass');
   // The trailing argument is the anonymous marker (money audit round 4), which
   // must not be allowed to displace the identity: this pins that userId is
@@ -451,7 +455,8 @@ test('predictBusyness forwards the caller identity down to the event fetch', () 
   // (2026-08-19): each slot is scored with the reading nearest its own hour.
   // What this line pins is unchanged and is the whole point — `options`, and
   // therefore the caller identity, still reaches every one of the 24 calls.
-  assert.match(src, /const result = await predictBusyness\(venue, slotWeather, ts, options\);/,
+  // (The slot's instant rides after it since the 2026-09-25 clock-change fix.)
+  assert.match(src, /const result = await predictBusyness\(venue, slotWeather, ts, options(, [\w.]+)?\);/,
     'the 24-hour forecast is the biggest event fan-out in the app and must be charged too');
 });
 

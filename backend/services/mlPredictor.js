@@ -15,6 +15,9 @@ const weatherService = require('./weatherService');
 const { isHoliday, isSchoolBreak } = require('../scripts/ml/config');
 const { specialNightContext } = require('../scripts/ml/specialNights');
 const { upstreamSignal } = require('../utils/upstream');
+// The venue's IANA zone, when the venue shape carries one. See
+// forecastSlots and venueInstant below for what it changes.
+const { validTimeZone, civilTime, instantForWallClock } = require('../utils/venueZone');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -1883,12 +1886,136 @@ function estimateTmAttendance(event) {
 // (getTimezoneOffset is west-positive, utcOffsetMinutes east-positive).
 // Without an offset we keep the old behavior — wrong-window events are still
 // better than none, and most callers with real venues do have the offset.
+//
+// ONE OFFSET IS ONLY RIGHT UNTIL THE VENUE'S NEXT CLOCK CHANGE. Google's
+// utcOffsetMinutes is the offset in force when the payload was fetched, so on
+// Saturday 2026-10-31 a New York venue carries -240 and every Sunday hour after
+// 2 AM, when New York is at -300, came out an hour early. When the venue also
+// carries its IANA zone (`timeZone`, see utils/venueZone.js), venueInstant
+// below reads the offset in force at the hour being asked about instead, and
+// this function is the fallback for a venue with no zone.
 function trueEventInstant(timestamp, utcOffsetMinutes) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   if (Number.isNaN(ts.getTime())) return ts;
   const off = Number(utcOffsetMinutes);
   if (utcOffsetMinutes == null || Number.isNaN(off)) return ts;
   return new Date(ts.getTime() - (ts.getTimezoneOffset() + off) * 60 * 1000);
+}
+
+// The venue's IANA zone, or null. Read under a guard because a venue object is
+// whatever its caller built, and a zone is an improvement, never a reason for
+// a prediction to fail.
+function venueTimeZone(venue) {
+  try {
+    return validTimeZone(venue && venue.timeZone);
+  } catch {
+    return null;
+  }
+}
+
+// The one offset Google gave, under the three spellings callers have used.
+function venueUtcOffset(venue) {
+  return venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
+}
+
+// The Date the feature builder reads for one venue wall-clock hour: server
+// local fields equal to the venue's (the contract above). Null when this
+// process's own clock has no such local time, which only happens inside a
+// daylight-saving gap in the SERVER's zone. Railway runs UTC, which has none;
+// a developer machine in New York does, once a year.
+function serverWallDate(year, month, day, hour) {
+  const ts = new Date(year, month - 1, day, hour, 0, 0, 0);
+  return (ts.getFullYear() === year && ts.getMonth() === month - 1
+    && ts.getDate() === day && ts.getHours() === hour) ? ts : null;
+}
+
+// The real instant a venue wall-clock timestamp stands for: through the zone
+// when the venue has one (the offset in force at THAT hour), through the one
+// offset it carries otherwise. `nowMs` settles the one hour a year the wall
+// clock shows twice; see utils/venueZone.js instantForWallClock.
+function venueInstant(timestamp, venue, nowMs = Date.now()) {
+  const ts = timestamp ? new Date(timestamp) : new Date();
+  const zone = venueTimeZone(venue);
+  if (zone && !Number.isNaN(ts.getTime())) {
+    const t = instantForWallClock({
+      year: ts.getFullYear(),
+      month: ts.getMonth() + 1,
+      day: ts.getDate(),
+      hour: ts.getHours(),
+      minute: ts.getMinutes(),
+    }, zone, nowMs);
+    if (t != null) return new Date(t + ts.getSeconds() * 1000 + ts.getMilliseconds());
+  }
+  return trueEventInstant(ts, venueUtcOffset(venue));
+}
+
+// ---------------------------------------------------------------------------
+// THE STRIP'S HOURS: WHICH WALL-CLOCK HOURS, AND THE INSTANT EACH STANDS FOR.
+//
+// Each slot is { ts, instantMs }. `ts` is what gets scored and labelled (one
+// timestamp for both, which is the rule the label note in
+// predictHourlyForecast exists for). `instantMs` is the real moment that hour
+// starts at the venue, and it is what the slot's weather and event lookups use.
+//
+// WITH A ZONE, the walk is in real hours through the venue's own clock:
+//   * spring forward (New York, 2027-03-14): 1 AM is followed by 3 AM. There is
+//     no 2 AM on that wall clock, so there is no 2 AM slot.
+//   * fall back (2026-11-01): the clock shows 1 AM twice. The strip shows it
+//     ONCE, at its first showing (or at the second when the strip starts
+//     during it), and the next slot is 2 AM. A person reads that night as
+//     having one 1 AM, the model scores a wall-clock hour and would give both
+//     showings the same number, and every consumer that counts hours from the
+//     first label (crowdEngine's day arithmetic, the per-bar open flags, the
+//     charts) keeps working because no label repeats.
+// `count` is the number of slots returned, so a 24-hour strip across the
+// spring change covers 25 wall-clock hours and one across the autumn change
+// covers 24 wall-clock hours in 25 real ones.
+//
+// WITHOUT A ZONE, the venue's clock is the one offset it carries (or the
+// server's own clock when it carries none), which has no changes to walk, and
+// the slots are consecutive wall-clock hours exactly as before. On a UTC host
+// that is the old `base + i hours` walk, timestamp for timestamp.
+//
+// Either way a wall-clock hour this process cannot represent (a DST gap in the
+// SERVER's zone, never on Railway) is skipped rather than scored as the hour
+// after it under the wrong label.
+// ---------------------------------------------------------------------------
+function forecastSlots(venue, base, count, nowMs = Date.now()) {
+  const slots = [];
+  // Room for the one repeated hour and the odd unrepresentable one; the loop
+  // can never run away whatever the zone data says.
+  const maxSteps = count + 3;
+  const zone = venueTimeZone(venue);
+  if (zone) {
+    let t = instantForWallClock({
+      year: base.getFullYear(),
+      month: base.getMonth() + 1,
+      day: base.getDate(),
+      hour: base.getHours(),
+    }, zone, nowMs);
+    let lastHour = null;
+    for (let step = 0; t != null && slots.length < count && step < maxSteps; step += 1, t += HOUR_MS) {
+      const c = civilTime(t, zone);
+      if (!c) break;
+      const hourKey = `${c.year}-${c.month}-${c.day}-${c.hour}`;
+      if (hourKey === lastHour) continue; // the second showing of a repeated hour
+      lastHour = hourKey;
+      const ts = serverWallDate(c.year, c.month, c.day, c.hour);
+      if (ts) slots.push({ ts, instantMs: t });
+    }
+    if (slots.length) return slots;
+  }
+  const utcOff = venueUtcOffset(venue);
+  const y = base.getFullYear();
+  const m = base.getMonth();
+  const d = base.getDate();
+  const h = base.getHours();
+  for (let i = 0; slots.length < count && i < maxSteps; i += 1) {
+    const wall = new Date(Date.UTC(y, m, d, h + i));
+    const ts = serverWallDate(wall.getUTCFullYear(), wall.getUTCMonth() + 1, wall.getUTCDate(), wall.getUTCHours());
+    if (ts) slots.push({ ts, instantMs: trueEventInstant(ts, utcOff).getTime() });
+  }
+  return slots;
 }
 
 // A venue's coordinate: the first candidate that is a finite number, else null.
@@ -3362,7 +3489,11 @@ function applyScoreQuantileMap(score) {
 // wants to discount the score can, on evidence it can see. Measure the cost
 // first, then charge it.
 
-async function predictBusyness(venue, weather, timestamp, options = {}) {
+// `slotInstantMs` is internal: predictHourlyForecast passes the real instant it
+// already resolved for the slot (forecastSlots), so a slot's event window and
+// its weather are read at the SAME moment. Every other caller leaves it out and
+// the instant is resolved here from the timestamp and the venue's clock.
+async function predictBusyness(venue, weather, timestamp, options = {}, slotInstantMs) {
   await init();
   const userId = options && options.userId != null ? options.userId : undefined;
   // `anonymous` marks a caller with no account behind it that is reachable from
@@ -3407,9 +3538,11 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     const ts = timestamp ? new Date(timestamp) : new Date();
 
     // Event lookup needs a REAL instant (UTC query window), not the venue
-    // wall clock the feature builder consumes — see trueEventInstant.
-    const eventInstant = trueEventInstant(ts,
-      venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null);
+    // wall clock the feature builder consumes — see trueEventInstant, and
+    // venueInstant for the venue whose zone gives the offset at THIS hour.
+    const eventInstant = Number.isFinite(slotInstantMs)
+      ? new Date(slotInstantMs)
+      : venueInstant(ts, venue);
 
     // This request's own baseline miss reason; see getBaseline.
     const baselineMiss = {};
@@ -3849,7 +3982,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
 
   // THE LABEL IS READ OFF THE TIMESTAMP THAT WAS ACTUALLY SCORED.
   //
-  // Round 17: `ts` advances by i * 3,600,000 ms — a fixed amount of ELAPSED
+  // Round 17: `ts` advanced by i * 3,600,000 ms — a fixed amount of ELAPSED
   // TIME — while the label was `(start + i) % 24`, a count of WALL-CLOCK hours.
   // Those agree only when no clock change falls between them. Across a DST
   // transition they diverge by an hour: on the fall-back night the entry
@@ -3859,21 +3992,21 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // the label has to follow it, not a parallel count that can drift from it.
   // (That drift needs a transition in the SERVER's zone. Railway runs UTC, which
   // has none, so there `ts` walks the venue's hours one at a time and the label
-  // and every feature read the same hour.)
+  // and every feature read the same hour.) The timestamps now come from
+  // forecastSlots, which walks wall-clock hours, and the rule stands unchanged.
   //
-  // WHAT THAT DOES NOT COVER, AND IS LIVE IN PRODUCTION: the VENUE's own clock
-  // change. utcOffsetMinutes is the offset Google says is in force at the venue
-  // now, and it is the only one this process holds for a venue, so every slot's
-  // real instant below (trueEventInstant, used for the weather match and the
-  // Ticketmaster window) is computed with it. On the night a venue changes its
-  // clocks, each slot after the change is labelled and scored as one hour and
-  // matched to the weather and events of the hour beside it, and the strip
-  // still draws a spring-forward hour that does not exist and the repeated
-  // fall-back hour once. Fixing that needs the offset in force at each hour,
-  // which needs the venue's zone rules: the Places `timeZone` field (an IANA
-  // name) carried into the venue shape and used per slot. Nothing fetches it
-  // yet, so the error stands at one hour, on the hours after a venue's own
-  // change, two nights a year.
+  // THE VENUE'S OWN CLOCK CHANGE (fixed 2026-09-25, before the 2026-11-01
+  // change). utcOffsetMinutes is the offset Google says is in force at the
+  // venue now, and it used to be the only one this process held, so every
+  // slot's real instant (the weather match and the Ticketmaster window) came
+  // from it: on the night a venue changed its clocks, each slot after the
+  // change was matched to the weather and events of the hour beside it, and
+  // the strip drew a spring-forward hour that does not exist. The venue shape
+  // now carries Google's `timeZone` (an IANA name), and forecastSlots walks the
+  // venue's own wall clock through it: the skipped hour is not emitted, the
+  // repeated hour is emitted once, and each slot's instant is the real start of
+  // that hour at the door. A venue with no zone keeps the one offset, as before.
+  // The label is still read off the scored timestamp, slot by slot.
   const labelFor = (d) => {
     const h = d.getHours();
     const period = h >= 12 ? 'PM' : 'AM';
@@ -3886,16 +4019,15 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // The slot instant handed to weatherForSlot is the REAL instant — `ts` below
   // is the venue wall clock encoded in server time (see trueEventInstant), and
   // matching a fake instant against the vendor's real-UTC entries would fetch
-  // the wrong hour's weather by exactly the venue's offset. Real under the one
-  // offset held for the venue; see the note above labelFor for the night that
-  // offset changes.
+  // the wrong hour's weather by exactly the venue's offset. Each slot's instant
+  // comes from forecastSlots, through the venue's zone when it has one, so it
+  // stays real on the night the venue changes its clocks.
   //
   // Both coordinates or no forecast, and 0 counts (venueCoordinate). The old
   // `lat || lng` test fetched a forecast for longitude 0 when only the latitude
   // was known.
   const wxLat = venueCoordinate(venue.location?.latitude, venue.latitude, venue.lat);
   const wxLng = venueCoordinate(venue.location?.longitude, venue.longitude, venue.lng);
-  const utcOff = venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
   const hourlyWx = hasCoordinates(wxLat, wxLng)
     ? await weatherService.getHourlyForecast(wxLat, wxLng, {
       userId: options && options.userId,
@@ -3905,6 +4037,8 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     })
     : null;
   const nowMs = Date.now();
+  // The wall-clock hours this strip shows and the instant each one starts at.
+  const slots = forecastSlots(venue, base, hours, nowMs);
 
   // ONE EVENT CALL FOR THE WHOLE STRIP, seeded before the loop. Each hour below
   // asks getNearbyEvents for itself, and their upstream windows overlap by three
@@ -3912,8 +4046,11 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // times. With the card's own lookup that is 25 calls for one venue against a
   // daily budget of 1500, which is sixty cold cards a day for the entire product.
   //
-  // The event instant is the venue's true one, the same conversion the loop uses
-  // for weather, so the seeded slots are the slots the loop will ask for. A
+  // The event instants are the slots' own, the same ones the loop uses for
+  // weather, so the seeded slots are the slots the loop will ask for. The range
+  // runs from the first slot to the last rather than for `hours` hours: across
+  // an autumn clock change the slots span one real hour more than there are
+  // slots, and a range of `hours` would have left the last one unseeded. A
   // failure seeds nothing and the loop behaves exactly as it does today.
   //
   // WRAPPED, because this is an optimisation and an optimisation may never be
@@ -3922,13 +4059,17 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   // exception escaped the per-hour try/catch below and took the whole forecast
   // with it, which is a worse outcome than the 25 calls this exists to avoid.
   try {
-    await prefetchEventRange(
-      wxLat, wxLng,
-      trueEventInstant(base, utcOff).getTime(),
-      hours,
-      options && options.userId,
-      options
-    );
+    if (slots.length) {
+      const firstMs = slots[0].instantMs;
+      const lastMs = slots[slots.length - 1].instantMs;
+      await prefetchEventRange(
+        wxLat, wxLng,
+        firstMs,
+        Math.floor(lastMs / HOUR_MS) - Math.floor(firstMs / HOUR_MS) + 1,
+        options && options.userId,
+        options
+      );
+    }
   } catch { /* seed nothing; every hour below asks for itself, as before */ }
 
   // ONE BASELINE QUERY FOR THE WHOLE STRIP, for the same reason the event
@@ -3973,11 +4114,13 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     await primeVenueCurve(basePlaceId, options && options.userId);
   } catch { /* prime nothing; the loop queries per hour, as before */ }
 
-  for (let i = 0; i < hours; i++) {
-    const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
-    const slotWeather = weatherForSlot(hourlyWx, trueEventInstant(ts, utcOff).getTime(), weather, nowMs);
+  for (const slot of slots) {
+    // One timestamp for the label and the score, one instant for the weather
+    // and the event window, both from forecastSlots.
+    const ts = slot.ts;
+    const slotWeather = weatherForSlot(hourlyWx, slot.instantMs, weather, nowMs);
     try {
-      const result = await predictBusyness(venue, slotWeather, ts, options);
+      const result = await predictBusyness(venue, slotWeather, ts, options, slot.instantMs);
       // predictionMethod per entry (skew fix c): without it a strip silently
       // mixed ML hours and rule-engine hours — a baseline exists at 19:00 but
       // not at 03:00 — and no client could tell which bars were which.
@@ -4095,6 +4238,12 @@ module.exports = {
     groupWeatherCode,
     baselineFromPopularTimes,
     trueEventInstant,
+    // The venue-clock pieces, for __tests__/venueDaylightSaving.test.js: which
+    // wall-clock hours a strip shows and the instant each stands for, and the
+    // instant a single timestamp's event window is read at.
+    forecastSlots,
+    venueInstant,
+    venueTimeZone,
     // The coordinate read, for __tests__/crowdPublishedParity.test.js: a 0 is
     // a coordinate and only a missing or non-finite value is not.
     venueCoordinate,

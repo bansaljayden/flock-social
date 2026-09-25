@@ -581,6 +581,11 @@ function venueForScoring(ctx, now = new Date()) {
     types: Array.isArray(m.google_types) ? m.google_types : [],
     location: { latitude: Number(m.latitude), longitude: Number(m.longitude) },
     utcOffsetMinutes: tzOffsetMinutes(m.timezone, now),
+    // The zone itself, not only today's offset from it. The week-ahead card
+    // scores seven days out, and a day past the venue's next clock change needs
+    // the offset in force THAT day for its event window; mlPredictor reads it
+    // per hour (venueInstant) and falls back to the offset above without it.
+    timeZone: typeof m.timezone === 'string' && m.timezone ? m.timezone : null,
   };
 }
 

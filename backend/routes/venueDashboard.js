@@ -1597,6 +1597,10 @@ const mlPredictor = require('../services/mlPredictor');
 // Round 15: the owner dashboard scored on Railway's UTC clock. venueLocalNow +
 // weekdayOffset move scoring onto the venue's wall clock, same as routes/crowd.js.
 const crowdEngine = require('../services/crowdEngine');
+// The venue's IANA zone off a Places payload (utils/venueZone.js). The week
+// view scores six evenings ahead, and an evening past the venue's next clock
+// change needs the offset in force THAT evening, not today's.
+const { placeTimeZone } = require('../utils/venueZone');
 // Round 9: these Places fetches bypassed the shared paid-call budget that
 // venueSearch and crowd.js are both charged against.
 const {
@@ -1742,8 +1746,10 @@ async function fetchVenueBasics(placeId, userId) {
       'X-Goog-Api-Key': GOOGLE_KEY,
       // Round 15: utcOffsetMinutes drives the venue-clock scoring below and the
       // event window in predictBusyness (trueEventInstant). Dropping it reverts
-      // both to the server clock — mirrors the crowd.js field mask.
-      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
+      // both to the server clock — mirrors the crowd.js field mask. timeZone
+      // (Place Details Pro, the offset's own tier, so free on this Enterprise
+      // mask) gives each forecast hour the offset in force at that hour.
+      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes,timeZone',
     },
     signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
   });
@@ -1772,6 +1778,8 @@ async function fetchVenueBasics(placeId, userId) {
     // Nullable: Google omits it for some places, and callers fall back to the
     // server clock when it is null.
     utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+    // The venue's IANA zone, or null; preferred over the offset wherever set.
+    timeZone: placeTimeZone(p),
   };
 }
 
@@ -1834,7 +1842,7 @@ router.get('/intelligence', requirePro, async (req, res) => {
     // on the venue's own weekday (nearest match) so the holiday / special-night
     // features and the 6-day outlook walk the venue's calendar, not the
     // server's. Falls back to the server clock when Google gives us no offset.
-    const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+    const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now, venue.timeZone);
     const localHour = venueClock ? venueClock.hour : now.getHours();
     const localDay = venueClock ? venueClock.day : now.getDay();
     const venueBase = new Date(now);
@@ -1965,7 +1973,9 @@ router.get('/strip', requirePro, async (req, res) => {
         // wall clock (see scoreOne) instead of the server's.
         // Round 20: userRatingCount, because the model's `review_count` feature
         // was reading 0 for every competitor. See the shaping below.
-        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.userRatingCount,places.currentOpeningHours,places.utcOffsetMinutes',
+        // places.timeZone: Nearby Search Pro, the tier of utcOffsetMinutes, so
+        // free on this Enterprise mask; same reason as the owner's own lookup.
+        'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.userRatingCount,places.currentOpeningHours,places.utcOffsetMinutes,places.timeZone',
       },
       body: JSON.stringify({
         includedTypes: wanted.length ? wanted : ['bar'],
@@ -2018,8 +2028,8 @@ router.get('/strip', requirePro, async (req, res) => {
       // they share a zone in practice, but reading the offset per venue keeps
       // this correct regardless, and lets trueEventInstant land the event
       // window on the real instant. Server clock is the fallback when Google
-      // gave us no offset.
-      const clock = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now);
+      // gave us no offset. The zone first, when Google sent one.
+      const clock = crowdEngine.venueLocalNow(v.utcOffsetMinutes, now, v.timeZone);
       const localHour = clock ? clock.hour : now.getHours();
       const localDay = clock ? clock.day : now.getDay();
       const base = new Date(now);
@@ -2080,6 +2090,7 @@ router.get('/strip', requirePro, async (req, res) => {
         isOpen: p.currentOpeningHours?.openNow ?? null,
         // Scored on the competitor's own clock in scoreOne; null -> server clock.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
+        timeZone: placeTimeZone(p),
       }));
 
     const you = await scoreOne(me);
