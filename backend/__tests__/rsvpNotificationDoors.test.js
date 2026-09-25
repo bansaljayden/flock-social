@@ -276,6 +276,9 @@ function scriptGuestRsvp() {
   // the INSERT path, which is the one that pushes.
   on(/SELECT COUNT\(\*\)::int AS n FROM guest_rsvps/, () => ({ rows: [{ n: 0 }], rowCount: 1 }));
   on(/pg_advisory_xact_lock/, () => ({ rows: [], rowCount: 1 }));
+  // The plan's row, locked after guest_rsvp: and before the insert
+  // (routes/guest.js): the plan is open, so it answers the row.
+  on(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/, () => ({ rows: [{ id: 42 }], rowCount: 1 }));
   on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [], rowCount: 0 }));
   // The same-name guard asked inside the insert transaction (nameInUse): no
   // visible row answers under this name yet, so the insert proceeds.

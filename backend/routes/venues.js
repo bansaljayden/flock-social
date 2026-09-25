@@ -110,7 +110,9 @@ async function votingClosedReason(flockId, db = pool) {
 // conflicts only with the FOR UPDATE the deletes, joins, bills and budget
 // settles take. A plan deleted while this waits returns no row, and the write
 // that follows then writes nothing, which each vote writer already answers as
-// a plan that is gone. Shared with sockets/handlers.js vote_venue.
+// a plan that is gone. Shared with sockets/handlers.js vote_venue, and with the
+// guest link's vote (routes/guest.js), whose switch deletes a guest's old
+// vote row the same way, after its own guest_vote: lock.
 const VOTE_PLAN_LOCK_SQL = `SELECT id FROM flocks WHERE id = $1 FOR KEY SHARE`;
 
 // Every tally in this file comes from here so the REST responses, the socket

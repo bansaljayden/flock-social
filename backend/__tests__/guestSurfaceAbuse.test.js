@@ -319,6 +319,32 @@ test('a guest CHANGING their vote still writes and still announces', async () =>
   assert.ok(emits.some((e) => e.event === 'new_vote'), 'members learn about a real change');
 });
 
+test('a guest\'s switched vote takes guest_vote:, then the plan\'s row, before it touches a vote row', async () => {
+  // A plan delete locks the plan's row and then cascades through its guest
+  // votes. A switch that deleted the old vote first and reached the plan's row
+  // only through the new vote's foreign key held what the delete needed next
+  // while waiting on what the delete held: a deadlock that could fail the
+  // host's delete. planFlowLocks.test.js runs that interleaving on a real
+  // Postgres; this pins the order of the statements, the one the member votes
+  // take (routes/venues.js VOTE_PLAN_LOCK_SQL).
+  scriptVote({ currentVotes: 1, currentVenue: 'Somewhere Else' });
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/vote`, {
+    guestToken: GUEST_TOKEN, venueName: 'The Bar',
+  });
+
+  assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = at(/^BEGIN/);
+  const lock = at(/pg_advisory_xact_lock\(hashtext\('guest_vote:' \|\| \$1::text\)\)/);
+  const plan = at(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  const cleared = at(/^DELETE FROM guest_votes/);
+  const written = at(/^INSERT INTO guest_votes/);
+  assert.ok(begin > -1 && begin < lock && lock < plan && plan < cleared && cleared < written,
+    'guest_vote:, the plan\'s row, then the old vote cleared, then the new one written');
+  assert.deepStrictEqual(log[plan].params, [42], 'the plan the link resolves to');
+});
+
 test('a guest holding more than one vote is repaired, not treated as a no-op', async () => {
   // Found by mutating the fix, not by reading it. "Has this guest already voted
   // for this venue" is the WRONG question — the delete-then-insert below exists
@@ -717,6 +743,31 @@ test('a planning flock is still a live write surface', async () => {
 
   const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Alice', status: 'in' });
   assert.strictEqual(res.status, 201);
+});
+
+test('a new guest RSVP takes guest_rsvp:, then the plan\'s row, before it writes', async () => {
+  // The insert used to reach the plan's row only through the new row's
+  // foreign key, so a plan deleted while it waited there left the key
+  // pointing at nothing and the guest got a 500. planFlowLocks.test.js runs
+  // that interleaving on a real Postgres; this pins the order of the
+  // statements, the one the vote takes.
+  on(/FROM flock_invite_links/, () => ({ rows: [link({ status: 'planning' })] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM guest_rsvps/, () => ({ rows: [{ n: 0 }] }));
+  on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [] }));
+  on(/INSERT INTO guest_rsvps/, () => ({ rows: [{ id: 5, guest_token: GUEST_TOKEN, is_hidden: false }] }));
+  scriptAnnounce();
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Alice', status: 'in' });
+  assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = at(/^BEGIN/);
+  const lock = at(/pg_advisory_xact_lock\(hashtext\('guest_rsvp:' \|\| \$1::text\)\)/);
+  const plan = at(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  const counted = at(/^SELECT COUNT\(\*\)::int AS n FROM guest_rsvps/);
+  const written = at(/^INSERT INTO guest_rsvps/);
+  assert.ok(begin > -1 && begin < lock && lock < plan && plan < counted && counted < written,
+    'guest_rsvp:, the plan\'s row, then the cap count, then the insert');
+  assert.deepStrictEqual(log[plan].params, [42], 'the plan the link resolves to');
 });
 
 // ===========================================================================
