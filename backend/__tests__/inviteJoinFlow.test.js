@@ -666,13 +666,16 @@ test('a member who answered the link by name before signing in has that guest ro
   // The already-in answer used to return before the transaction that hides
   // the guest row, so the roster listed them twice and "going" was one too
   // high for good (guest and DM audit, 2026-09-05). The hide and the vote
-  // promotion run on the pool for this branch, and the removal is announced
-  // after the response the way the new-member path announces it.
+  // carry run in one transaction for this branch too, and the removal is
+  // announced after the response the way the new-member path announces it.
   scriptViewer();
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
     () => ({ rows: [{ status: 'accepted' }] }));
   on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [{ id: 77 }], rowCount: 1 }));
+  // The guest's pick, and whether it is newer than any vote the account holds.
+  on(/FROM guest_votes gv WHERE gv\.flock_id = \$1 AND gv\.guest_rsvp_id = ANY\(\$3::int\[\]\)/,
+    () => ({ rows: [{ venue_name: 'The Bar', newest: true }] }));
   on(/INSERT INTO venue_votes/, () => ({ rows: [{ venue_name: 'The Bar' }], rowCount: 1 }));
   scriptAnnounce();
 
@@ -685,8 +688,93 @@ test('a member who answered the link by name before signing in has that guest ro
   assert.deepStrictEqual(hid[0].params, [42, uuid]);
   const promoted = ran(/INSERT INTO venue_votes/);
   assert.strictEqual(promoted.length, 1, 'and the guest vote comes with them');
-  assert.deepStrictEqual(promoted[0].params, [42, VIEWER.id, 77]);
+  assert.deepStrictEqual(promoted[0].params, [42, VIEWER.id, 'The Bar']);
   assert.strictEqual(ran(/INSERT INTO flock_members/).length, 0, 'no second membership');
+  // One transaction: the hide, the vote and the clearing of any other vote
+  // land together or not at all.
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = at(/^BEGIN/);
+  const commit = at(/^COMMIT/);
+  assert.ok(begin > -1 && begin < at(/UPDATE guest_rsvps SET is_hidden = TRUE/)
+    && at(/INSERT INTO venue_votes/) < commit, 'the hide and the carried vote commit together');
+});
+
+// ── ONE PERSON, ONE VOTE, ON BOTH JOIN PATHS ────────────────────────────────
+//
+// The guest vote used to be copied with INSERT ... ON CONFLICT DO NOTHING, and
+// the conflict key is (flock_id, user_id, venue_name), so a member who already
+// held a vote for a different venue came out of the join holding two. It is
+// the one-vote rule now: the newer of the two picks is the vote, under the
+// flockvote: lock the member vote routes hold.
+
+function scriptCarry({ newest }) {
+  on(/FROM guest_votes gv WHERE gv\.flock_id = \$1 AND gv\.guest_rsvp_id = ANY\(\$3::int\[\]\)/,
+    () => ({ rows: [{ venue_name: 'The Bar', newest }] }));
+  on(/INSERT INTO venue_votes/, () => ({ rows: [{ venue_name: 'The Bar' }], rowCount: 1 }));
+  on(/DELETE FROM venue_votes/, () => ({ rows: [], rowCount: 1 }));
+  // broadcastGuestVote's tally and roster reads.
+  on(/MIN\(venue_id\) FILTER/, () => ({ rows: [{ venue_name: 'The Bar', venue_id: null, member_count: 1, voter_rows: [] }] }));
+  on(/AS guest_count/, () => ({ rows: [] }));
+}
+
+test('a newer guest pick replaces the member\'s other vote, never sits beside it', async () => {
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
+    () => ({ rows: [{ status: 'accepted' }] }));
+  on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [{ id: 77 }], rowCount: 1 }));
+  scriptCarry({ newest: true });
+  scriptAnnounce();
+
+  const res = await join(VIEWER, { body: { guestToken: '11111111-2222-4333-8444-555555555555' } });
+  assert.strictEqual(res.status, 200, res.text);
+  const lock = log.findIndex((q) => /pg_advisory_xact_lock\(hashtext\('flockvote:' \|\| \$1::text \|\| ':' \|\| \$2::text\)\)/.test(q.sql));
+  assert.ok(lock > -1, 'the member vote routes\' own lock is taken');
+  assert.deepStrictEqual(log[lock].params, ['42', String(VIEWER.id)]);
+  const ins = log.findIndex((q) => /INSERT INTO venue_votes/.test(q.sql));
+  const del = log.findIndex((q) => /^DELETE FROM venue_votes WHERE flock_id = \$1 AND user_id = \$2 AND venue_name <> \$3$/.test(q.sql));
+  assert.ok(lock < ins && ins < del, 'lock, then the pick is written, then every other venue is cleared');
+  assert.deepStrictEqual(log[del].params, [42, VIEWER.id, 'The Bar']);
+  assert.match(log[ins].sql, /WHERE EXISTS \(SELECT 1 FROM flocks WHERE id = \$1::int AND status NOT IN \('completed', 'cancelled'\)\)/,
+    'written only while the plan is open, like every vote write');
+  assert.doesNotMatch(log[ins].sql, /ON CONFLICT DO NOTHING/, 'the copy that left two votes is gone');
+});
+
+test('an older guest pick does not overwrite a vote the member cast since, and the tally still moves', async () => {
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
+    () => ({ rows: [{ status: 'accepted' }] }));
+  on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [{ id: 77 }], rowCount: 1 }));
+  scriptCarry({ newest: false });
+  scriptAnnounce();
+
+  const res = await join(VIEWER, { body: { guestToken: '11111111-2222-4333-8444-555555555555' } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(ran(/INSERT INTO venue_votes/).length, 0, 'the member\'s newer vote stands');
+  assert.strictEqual(ran(/DELETE FROM venue_votes/).length, 0, 'and is not cleared');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(emits.some((e) => e.event === 'new_vote' && Array.isArray(e.payload.votes)),
+    'the guest vote left the guest tally, so members get the re-tallied new_vote');
+});
+
+test('a new member\'s carried vote follows the same rule inside the join transaction', async () => {
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [{ id: 77 }], rowCount: 1 }));
+  scriptCarry({ newest: true });
+  scriptAnnounce();
+
+  const res = await join(VIEWER, { body: { guestToken: '11111111-2222-4333-8444-555555555555' } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.joined, true);
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const commit = at(/^COMMIT/);
+  assert.ok(at(/INSERT INTO flock_members/) < at(/flockvote:/) && at(/DELETE FROM venue_votes/) < commit,
+    'membership, then the vote under its lock, then one COMMIT');
 });
 
 test('a member re-tapping the link with no guest identity is still the one indexed read', async () => {

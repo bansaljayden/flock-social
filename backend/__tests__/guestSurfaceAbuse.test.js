@@ -160,7 +160,9 @@ function scriptEdit(row = {}) {
 // The world a guest votes in.
 function scriptVote({ currentVotes = 0, currentVenue = null, countRows = null } = {}) {
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SELECT id FROM guest_rsvps WHERE guest_token/, (params) => ({ rows: [{ id: guestIdFor(params[0]) }] }));
+  // The vote reads the answer with the identity: only a guest who is 'in'
+  // may vote (routes/guest.js, NOT_IN). These guests are going.
+  on(/SELECT id, status FROM guest_rsvps WHERE guest_token/, (params) => ({ rows: [{ id: guestIdFor(params[0]), status: 'in' }] }));
   on(/AS same\b/, () => (countRows
     ? { rows: countRows }
     : { rows: [{ n: currentVotes, same: currentVenue === 'The Bar' ? 1 : 0 }] }));
@@ -350,6 +352,56 @@ test('a guest who has never voted still writes and still announces', async () =>
   assert.ok(emits.some((e) => e.event === 'new_vote'));
 });
 
+test('a guest who said out cannot vote, and the refusal says why in the budget route\'s code', async () => {
+  // A guest who is not coming used to vote and be counted on both tallies,
+  // so the people staying home could pick where the people going went. A
+  // member who declines cannot vote at all; the guest half now matches.
+  on(/SELECT id, status FROM guest_rsvps WHERE guest_token/, (params) => ({ rows: [{ id: guestIdFor(params[0]), status: 'out' }] }));
+  scriptVote({ currentVotes: 0 });
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/vote`, {
+    guestToken: GUEST_TOKEN, venueName: 'The Bar',
+  });
+
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.code, 'NOT_IN');
+  assert.match(res.body.error, /only counts people who are going/);
+  assert.strictEqual(ran(/INSERT INTO guest_votes/).length, 0, 'nothing is written');
+  assert.strictEqual(ran(/DELETE FROM guest_votes/).length, 0);
+  assert.strictEqual(poolCheckouts, 0, 'and no transaction is opened');
+  assert.strictEqual(emits.filter((e) => e.event === 'new_vote').length, 0, 'and nobody is told');
+  assert.strictEqual(guest.guestActionLog.size, 0, 'a refusal on the answer costs no allowance');
+});
+
+test('a guest with a vote who changes their answer moves the members\' standings, live', async () => {
+  // Both tallies count a guest vote only while the answer is in, so the flip
+  // is a tally change, and the members hear it as one (the re-tallied
+  // new_vote) instead of keeping a leader the link already stopped showing.
+  on(/UPDATE guest_rsvps SET name/, () => ({ rows: [{ id: 7, guest_token: GUEST_TOKEN, voted_venue: 'The Bar' }], rowCount: 1 }));
+  scriptEdit();
+  on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [] }));
+  on(/MIN\(venue_id\) FILTER/, () => ({ rows: [{ venue_name: 'The Bar', venue_id: null, member_count: 1, voter_rows: [] }] }));
+  on(/AS guest_count/, () => ({ rows: [] }));
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Bob', status: 'out', guestToken: GUEST_TOKEN });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const upd = ran(/UPDATE guest_rsvps SET name/)[0];
+  assert.match(upd.sql, /AS voted_venue$/, 'the write says whether there is a vote to re-tally, in the same statement');
+  const votes = emits.filter((e) => e.event === 'new_vote');
+  assert.ok(votes.length > 0 && votes.every((e) => Array.isArray(e.payload.votes)),
+    'every member gets the tailored tally, not a bare venue name');
+});
+
+test('a guest who renames without changing their answer does not re-tally anyone', async () => {
+  on(/UPDATE guest_rsvps SET name/, () => ({ rows: [{ id: 7, guest_token: GUEST_TOKEN, voted_venue: 'The Bar' }], rowCount: 1 }));
+  scriptEdit();
+  on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [] }));
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Bobby', status: 'in', guestToken: GUEST_TOKEN });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(emits.filter((e) => e.event === 'new_vote').length, 0);
+});
+
 test('one guest identity cannot fan out to the flock without limit', async () => {
   // Alternating in/out is "changed" every single time, so the existing
   // unchanged-answer guard never fires. Unauthenticated, and the general
@@ -514,7 +566,7 @@ test('the per-guest budget is only ever keyed on an identity the database confir
   // caller-supplied token BEFORE the lookup would let anyone fill the map with
   // invented UUIDs — the same unbounded-key problem the IP maps have.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SELECT id FROM guest_rsvps WHERE guest_token/, () => ({ rows: [] })); // no such guest
+  on(/SELECT id, status FROM guest_rsvps WHERE guest_token/, () => ({ rows: [] })); // no such guest
 
   for (let i = 0; i < 25; i++) {
     const res = await call('POST', `/api/guest/${LINK_TOKEN}/vote`, {

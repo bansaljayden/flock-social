@@ -343,6 +343,14 @@ async function dispatch(text, params = []) {
       .map((m) => ({ user_id: m.user_id }));
     return { rows, rowCount: rows.length };
   }
+  // The invitees' half of a flock_deleted fan-out (emitToFlockExcludingBlocked
+  // with includeInvited), which only runs when a test hands the app an io.
+  if (has("SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id != $2")) {
+    const me = Number(params[1]);
+    const rows = rowsOf(params[0]).filter((m) => m.status === 'invited' && m.user_id !== me)
+      .map((m) => ({ user_id: m.user_id }));
+    return { rows, rowCount: rows.length };
+  }
   if (has("SELECT COUNT(*) AS cnt FROM flock_members WHERE flock_id = $1 AND status = 'accepted'")) {
     return { rows: [{ cnt: String(acceptedCount(params[0])) }], rowCount: 1 };
   }
@@ -366,7 +374,9 @@ async function dispatch(text, params = []) {
 
   // ── guests / votes / budget ──
   if (has('FROM guest_rsvps')) return { rows: [], rowCount: 0 };
-  if (has('FROM venue_votes WHERE flock_id = $1')) return { rows: [{ voters: 0 }], rowCount: 1 };
+  // The momentum voter count joins the roster now (only accepted, unbanned
+  // members' votes count, as on the venue tally), so it reads venue_votes vv.
+  if (has('FROM venue_votes WHERE flock_id = $1') || has('AS voters FROM venue_votes vv')) return { rows: [{ voters: 0 }], rowCount: 1 };
   if (has('FROM guest_votes gv')) return { rows: [{ voters: 0 }], rowCount: 1 };
   if (has('FROM budget_submissions')) {
     return { rows: [{ submissions: 0, n: 0, sub_count: 0, skip_count: 0 }], rowCount: 1 };
@@ -1491,6 +1501,140 @@ test('leave: only the creator\'s departure deletes, and it cascades', async () =
   assert.ok(!flocks.has(10));
   assert.deepStrictEqual(links.filter((l) => l.flock_id === 10), []);
   assert.deepStrictEqual(msgRows.filter((m) => m.flock_id === 10), []);
+  assertQueriesUnderstood();
+});
+
+// ── 11a. A live location share, and the ways a membership ends ─────────────
+//
+// The app takes a flock pin off a map ONLY on member_stopped_sharing. After a
+// member's row is gone, their own stop and every later position are refused at
+// the membership check, so a leave or a delete that says nothing leaves the
+// last position on every map in the plan. sockets/handlers.js records who each
+// pin was handed to; these drive a real update_location through a stub socket
+// against this same fixture, then the route, and read what the route emitted.
+const socketHandlers = require('../sockets/handlers');
+
+// Everything the routes touch on io, recorded, with the number of statements
+// the fixture had run at the moment of each emit, so a test can prove an emit
+// happened BEFORE a given write.
+function recordingIo(emitted) {
+  return {
+    to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload, at: queries.length }) }),
+    in: () => ({ socketsLeave() {} }),
+    socketsLeave() {},
+  };
+}
+
+// One update_location tick from `userId` in `flockId`, through the real handler.
+function shareLocation(io, userId, flockId) {
+  const handlers = new Map();
+  const socket = {
+    id: `share-${userId}-${flockId}`,
+    user: { ...USERS[userId] },
+    rooms: new Set(),
+    handshake: null,
+    on(event, handler) { handlers.set(event, handler); },
+    join() {}, leave() {}, emit() {},
+    to() { return { except() { return this; }, emit() {} }; },
+    disconnect() {},
+  };
+  socketHandlers.registerHandlers(io, socket);
+  return handlers.get('update_location')({ flockId, lat: 40.7128, lng: -73.9352 });
+}
+
+const stopsIn = (emitted) => emitted.filter((e) => e.event === 'member_stopped_sharing');
+
+test('leave: a member sharing their location takes the pin off every map, before their row goes', async () => {
+  socketHandlers.__resetRateLimiters();
+  const emitted = [];
+  app.set('io', recordingIo(emitted));
+  try {
+    await shareLocation(app.get('io'), 6, 10); // Erin shares; Alice and Bob get the pin
+    assert.deepStrictEqual(emitted.filter((e) => e.event === 'location_update').map((e) => e.room).sort(),
+      ['user:1', 'user:2'], 'fixture precondition: the pin reached the other two accepted members');
+    emitted.length = 0;
+
+    const res = await call('POST', '/api/flocks/10/leave', 'erin');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(memberOf(10, 6), undefined, 'the leave itself still happens');
+
+    const stops = stopsIn(emitted);
+    assert.deepStrictEqual(stops.map((e) => e.room).sort(), ['user:1', 'user:2'],
+      'the members kept the leaver\'s last position on their maps');
+    for (const s of stops) assert.deepStrictEqual(s.payload, { userId: 6, flockId: 10 });
+
+    // Before the DELETE: after it the roster no longer reaches the people the
+    // pin reached, and the leaver's own stop is refused.
+    const del = queries.findIndex((q) => q.sql.includes('DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2'));
+    assert.ok(del >= 0, 'the membership delete ran');
+    for (const s of stops) assert.ok(s.at <= del, 'the stop went out after the row was already gone');
+  } finally {
+    app.set('io', undefined);
+  }
+  assertQueriesUnderstood();
+});
+
+test('leave: a member who blocked the sharer mid-share is still told, though flock_member_left skips them', async () => {
+  socketHandlers.__resetRateLimiters();
+  const emitted = [];
+  app.set('io', recordingIo(emitted));
+  try {
+    await shareLocation(app.get('io'), 6, 10);
+    blocks = [[2, 6]]; // Bob blocks Erin while she is sharing
+    emitted.length = 0;
+
+    const res = await call('POST', '/api/flocks/10/leave', 'erin');
+    assert.strictEqual(res.status, 200);
+
+    assert.deepStrictEqual(emitted.filter((e) => e.event === 'flock_member_left').map((e) => e.room),
+      ['user:1'], 'the name-bearing departure still obeys the block');
+    assert.deepStrictEqual(stopsIn(emitted).map((e) => e.room).sort(), ['user:1', 'user:2'],
+      'Bob held the pin, so Bob has to be told it is gone');
+  } finally {
+    app.set('io', undefined);
+  }
+  assertQueriesUnderstood();
+});
+
+test('delete: deleting the plan takes every live pin in it off every map', async () => {
+  socketHandlers.__resetRateLimiters();
+  const emitted = [];
+  app.set('io', recordingIo(emitted));
+  try {
+    await shareLocation(app.get('io'), 2, 10); // Bob's pin: Alice and Erin
+    await shareLocation(app.get('io'), 6, 10); // Erin's pin: Alice and Bob
+    emitted.length = 0;
+
+    const res = await call('DELETE', '/api/flocks/10', 'alice');
+    assert.strictEqual(res.status, 200);
+
+    const told = stopsIn(emitted).map((e) => `${e.payload.userId}->${e.room}`).sort();
+    assert.deepStrictEqual(told, ['2->user:1', '2->user:6', '6->user:1', '6->user:2'],
+      'a deleted plan left its sharers\' last positions on the maps they were shown on');
+    for (const s of stopsIn(emitted)) assert.strictEqual(s.payload.flockId, 10);
+  } finally {
+    app.set('io', undefined);
+  }
+  assertQueriesUnderstood();
+});
+
+test('leave: the creator\'s leave deletes the plan and takes the live pins with it', async () => {
+  socketHandlers.__resetRateLimiters();
+  const emitted = [];
+  app.set('io', recordingIo(emitted));
+  try {
+    await shareLocation(app.get('io'), 2, 10); // Bob's pin: Alice and Erin
+    emitted.length = 0;
+
+    const res = await call('POST', '/api/flocks/10/leave', 'alice');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).deleted, true);
+
+    assert.deepStrictEqual(stopsIn(emitted).map((e) => `${e.payload.userId}->${e.room}`).sort(),
+      ['2->user:1', '2->user:6']);
+  } finally {
+    app.set('io', undefined);
+  }
   assertQueriesUnderstood();
 });
 

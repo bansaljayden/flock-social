@@ -135,11 +135,14 @@ async function collectVoteRows(flockId) {
   // Round 13: this counted guest votes WITHOUT the is_hidden join that
   // routes/guest.js applies, so a guest whose RSVP a moderator took down still
   // moved the member-facing tally. A takedown has to remove them everywhere.
+  // And only while the answer is 'in', the guest half of the rule the member
+  // tally above applies to accepted members: a guest who said out is not
+  // going, and routes/guest.js refuses their vote for the same reason.
   const guestTally = pool.query(
     `SELECT gv.venue_name, COUNT(*)::int AS guest_count
      FROM guest_votes gv
      JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-     WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
+     WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false AND gr.status = 'in'
      GROUP BY gv.venue_name`,
     [flockId]
   ).catch((err) => {
@@ -454,10 +457,55 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
       return res.status(closed === 'Flock not found' ? 404 : 409).json({ error: closed });
     }
 
-    const removed = await pool.query(
-      'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 RETURNING venue_name',
-      [flockId, req.user.id]
-    );
+    // THE POST'S TWIN, UNDER THE POST'S LOCK. The check above runs on the pool,
+    // so a plan completed or cancelled between it and the delete still lost
+    // the vote, which is the rewrite of the record the closing time exists to
+    // stop; and the delete took no lock at all, so it could interleave with a
+    // vote from the same person's other device halfway through its
+    // delete-then-insert. Now it holds the same flockvote: lock the POST and
+    // the socket vote hold, and the status is read inside the statement, so
+    // the write decides for itself: it removes nothing from a plan that is
+    // over. What an empty delete means is read back on this client afterwards,
+    // the way the POST reads its empty write, so a burst of refused un-votes
+    // cannot hold every pooled connection while each waits for one more.
+    const client = await pool.connect();
+    let removed;
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
+        [String(flockId), String(req.user.id)]
+      );
+      removed = await client.query(
+        `DELETE FROM venue_votes
+          WHERE flock_id = $1::int AND user_id = $2::int
+            AND EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
+          RETURNING venue_name`,
+        [flockId, req.user.id]
+      );
+      await client.query('COMMIT');
+      if (removed.rows.length === 0) {
+        // Nothing to take back, or a plan that closed under the request (or
+        // whose status cannot be read as open, which the write treats as not
+        // open, exactly as the POST's does). Only the first is a 200.
+        const closedNow = await votingClosedReason(flockId, client);
+        if (closedNow) {
+          return res.status(closedNow === 'Flock not found' ? 404 : 409).json({ error: closedNow });
+        }
+        const held = await client.query(
+          'SELECT 1 FROM venue_votes WHERE flock_id = $1 AND user_id = $2 LIMIT 1',
+          [flockId, req.user.id]
+        );
+        if (held.rows.length > 0) {
+          return res.status(409).json({ error: 'The plan changed while your vote was being taken back. Try again.' });
+        }
+      }
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
 
     const rows = await collectVoteRows(flockId);
     // Nothing removed means nothing changed, so peers get no event.

@@ -1,17 +1,26 @@
 const express = require('express');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { rejectIfProfane } = require('../utils/moderation');
-const { guestEntryId } = require('../utils/guestRsvp');
+// carryGuestVote is the one-vote rule for a guest who becomes a member; the
+// join route below uses it on both of its paths, and routes/flocks.js on the
+// in-app accept.
+const { guestEntryId, carryGuestVote } = require('../utils/guestRsvp');
 // Shape before content — see validators/shape.js. This router is the only
 // UNAUTHENTICATED write surface in the app and every value it takes is
 // re-broadcast to the flock, so it is the one that could least afford the hole.
 const { scalarOnly, freeText } = require('../validators/shape');
 const { broadcastGuestRsvp, emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
 // The ONE authenticated route in this file (POST /:token/join). Everything else
-// here is deliberately unauthenticated; that route is deliberately not.
-const { authenticate, requireVerified } = require('../middleware/auth');
+// here is deliberately unauthenticated; that route is deliberately not. The
+// token helpers are for the preview's OPTIONAL viewer (see viewerFrom), which
+// checks a bearer token by the handshake's own rules rather than a copy.
+const {
+  authenticate, requireVerified, TOKEN_ALGORITHMS, issuedTokenVersion, currentTokenVersion,
+} = require('../middleware/auth');
+const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
 // The member-facing venue tally has one implementation and it lives with the
 // member vote routes — see broadcastGuestVote there for why a guest vote is
 // announced through it rather than emitted from here.
@@ -47,6 +56,10 @@ const router = express.Router();
 //   phone numbers, user ids, photos or surnames. The group's BANDED budget
 //   number crosses only to a guest who has answered the plan, through
 //   POST /:token/me, on the terms a member reads it.
+// - The preview (GET /:token) reads a bearer token when one is sent, and only
+//   to show LESS: a signed-in viewer does not see anyone they have a block
+//   with, the way the in-app roster hides them (see viewerFrom and rosterFor).
+//   It never requires one and never shows a signed-in viewer more.
 // - ONE route here is authenticated: POST /:token/join. Holding the link is
 //   how you find the flock; holding an ACCOUNT is how you get into its chat.
 //   There is deliberately no unauthenticated write to messages anywhere in
@@ -387,9 +400,12 @@ async function nameInUse(run, flockId, name) {
 // so the surface never tells a holder whether the link is expired, revoked, or
 // was never real.
 async function resolveLink(token) {
+  // creator_id is read for the preview's host line, which a signed-in viewer
+  // with a block against the host does not get (GET /:token). It is never put
+  // on a response: every route here builds its payload field by field.
   const r = await pool.query(
     `SELECT il.flock_id, f.name, f.event_time, f.venue_name,
-            f.status, u.name AS host_name,
+            f.status, f.creator_id, u.name AS host_name,
             f.budget_enabled, f.budget_context, f.budget_locked,
             f.reconfirm_opened_at
      FROM flock_invite_links il
@@ -402,29 +418,25 @@ async function resolveLink(token) {
   return r.rows[0] || null;
 }
 
-// Member + guest vote tallies for a flock, grouped by venue name. No voter
-// identities are exposed on the guest surface, only counts.
+// The member + guest vote tally this surface shows, grouped by venue name. No
+// voter identities are exposed on the guest surface, only counts.
 // Round 9: a hidden (taken-down) guest RSVP contributes nothing anywhere, votes
 // included, so a moderator action fully removes them from the public surface.
-async function guestTallies(flockId) {
-  const r = await pool.query(
-    `SELECT venue_name, SUM(c)::int AS votes FROM (
-       SELECT venue_name, COUNT(*) AS c FROM venue_votes WHERE flock_id = $1 GROUP BY venue_name
-       UNION ALL
-       SELECT gv.venue_name, COUNT(*) AS c FROM guest_votes gv
-       JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-       WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
-       GROUP BY gv.venue_name
-     ) t GROUP BY venue_name ORDER BY votes DESC LIMIT 12`,
-    [flockId]
-  );
-  return r.rows;
-}
-
+//
 // The same weighting members see (routes/venues.js): guest votes for a venue
 // count for at most the number of member votes cast on the whole flock. Without
 // it the guest page ranked by raw sums, so on a link-driven plan the venue
 // leading the guest page was not the venue leading the group's.
+//
+// AND THE SAME VOTERS. The member-facing tally (collectVoteRows) counts a vote
+// only while its author is an accepted member who is not banned, and a guest
+// vote only while the RSVP behind it is a visible 'in'. This page counted every
+// venue_votes row, a departed or banned member's included, and a guest who had
+// since said out, so the link and the app could name different leaders for
+// one plan. Both statements carry the member rule, the cap is counted over the
+// same rows the tally counts, and a tie breaks toward the venue the members
+// picked, as tailorVotes breaks it. An unweighted copy of this tally that
+// nothing called is gone, so this page has one tally and it is this one.
 async function guestTalliesWeighted(flockId) {
   const [rows, membersCast] = await Promise.all([
     pool.query(
@@ -432,22 +444,35 @@ async function guestTalliesWeighted(flockId) {
               SUM(CASE WHEN src = 'member' THEN c ELSE 0 END)::int AS member_votes,
               SUM(CASE WHEN src = 'guest' THEN c ELSE 0 END)::int AS guest_votes
          FROM (
-           SELECT venue_name, COUNT(*) AS c, 'member' AS src FROM venue_votes WHERE flock_id = $1 GROUP BY venue_name
+           SELECT vv.venue_name, COUNT(*) AS c, 'member' AS src FROM venue_votes vv
+             JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id AND fm.status = 'accepted'
+             JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
+            WHERE vv.flock_id = $1
+            GROUP BY vv.venue_name
            UNION ALL
            SELECT gv.venue_name, COUNT(*) AS c, 'guest' AS src FROM guest_votes gv
              JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-            WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
+            WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false AND gr.status = 'in'
             GROUP BY gv.venue_name
          ) t GROUP BY venue_name`,
       [flockId]
     ),
-    pool.query('SELECT COUNT(*)::int AS n FROM venue_votes WHERE flock_id = $1', [flockId]),
+    pool.query(
+      `SELECT COUNT(*)::int AS n FROM venue_votes vv
+         JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id AND fm.status = 'accepted'
+         JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
+        WHERE vv.flock_id = $1`,
+      [flockId]
+    ),
   ]);
   const cap = Math.max(membersCast.rows[0]?.n || 0, 1);
   return rows.rows
-    .map((v) => ({ venue_name: v.venue_name, votes: v.member_votes + Math.min(v.guest_votes, cap) }))
-    .sort((a, b) => b.votes - a.votes)
-    .slice(0, 12);
+    .map((v) => ({ venue_name: v.venue_name, votes: v.member_votes + Math.min(v.guest_votes, cap), members: v.member_votes }))
+    .sort((a, b) => (b.votes - a.votes) || (b.members - a.members))
+    .slice(0, 12)
+    // The wire shape stays { venue_name, votes }: the member count was only
+    // carried for the tie-break.
+    .map(({ venue_name, votes }) => ({ venue_name, votes }));
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +520,29 @@ function firstNameOnly(name) {
   return String(name || '').trim().split(/\s+/)[0].slice(0, 24);
 }
 
-async function rosterFor(flockId, openedAt = null) {
+// WHO THE ROSTER LEAVES OUT, which the in-app roster already leaves out
+// (GET /api/flocks/:id filters its members by the caller's invisible set):
+//
+//   - A BANNED ACCOUNT, for every viewer. Every viewer's invisible set in the
+//     app carries every banned account, so a ban had taken the name off every
+//     member's screen and left it on this page, the one surface with no
+//     sign-in at all.
+//   - For a SIGNED-IN viewer (see viewerFrom), everyone blocked in either
+//     direction with them: `hiddenIds` is getInvisibleUserIds for that viewer.
+//
+// A stranger holding the link is nobody in particular, so there is no block to
+// apply to them, and the page keeps doing its job for them: first names and
+// answers, which is what the link was shared to show. Somebody with a block
+// who opens the link signed out sees that same stranger's page; nothing here
+// can tell them apart from anybody else who was forwarded it.
+//
+// The counts (`going`, `full`, the night-of totals) are not filtered, exactly
+// as the in-app counts are not: a head count is not identity, and two people
+// looking at one plan must not read two different sizes for it.
+//
+// In the SQL, before the LIMIT, like the takedown filter on the guest half, so
+// a filtered row can never leave the page one short of the cap.
+async function rosterFor(flockId, openedAt = null, hiddenIds = []) {
   const [members, guests] = await Promise.all([
     // flock_members.status is invited | accepted | declined (CHECK constraint,
     // migration 000). accepted IS the yes on this product: every capability and
@@ -506,9 +553,11 @@ async function rosterFor(flockId, openedAt = null) {
        FROM flock_members fm
        JOIN users u ON u.id = fm.user_id
        WHERE fm.flock_id = $1
+         AND u.is_banned IS NOT TRUE
+         AND NOT (fm.user_id = ANY($3::int[]))
        ORDER BY CASE fm.status WHEN 'accepted' THEN 0 WHEN 'invited' THEN 1 ELSE 2 END, fm.id
        LIMIT $2`,
-      [flockId, ROSTER_LIMIT]
+      [flockId, ROSTER_LIMIT, Array.isArray(hiddenIds) ? hiddenIds : []]
     ),
     pool.query(
       `SELECT name, status, reconfirmed_at
@@ -664,6 +713,28 @@ async function guestBudgetSummary(link) {
   };
 }
 
+// WHO IS LOOKING, WHEN THEY SAY SO. GET /:token is public and stays public:
+// the link is the credential. A client that sends its bearer token along is
+// saying who is reading, and the answer only ever NARROWS the page (the
+// roster and host line below), so a missing, expired, revoked or banned
+// token reads as a stranger's view and never as an error. The checks are the
+// ones middleware/auth.js makes, through its own helpers: the signature on
+// the pinned algorithms, a row that still exists, the current token version,
+// and no ban. Returns the viewer's id, or null.
+async function viewerFrom(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null;
+  try {
+    const decoded = jwt.verify(header.slice('Bearer '.length), process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+    const found = await pool.query('SELECT id, is_banned, token_version FROM users WHERE id = $1', [decoded.userId]);
+    const row = found.rows[0];
+    if (!row || row.is_banned || issuedTokenVersion(decoded) !== currentTokenVersion(row)) return null;
+    return row.id;
+  } catch (_) {
+    return null;
+  }
+}
+
 // GET /api/guest/:token — the public plan preview
 router.get('/:token',
   param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
@@ -675,6 +746,16 @@ router.get('/:token',
       const link = await resolveLink(req.params.token);
       if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
 
+      // A signed-in viewer gets the page the in-app plan would show them: no
+      // row for anyone blocked either way, and no host name when the block is
+      // with the host (the in-app rule for creator_name, which is blocks only).
+      // A failed lookup here fails the request rather than falling back to
+      // the unfiltered page. Nobody signed in pays for any of it.
+      const viewerId = await viewerFrom(req);
+      const [hiddenIds, hostBlocked] = viewerId
+        ? await Promise.all([getInvisibleUserIds(viewerId), isBlockedBetween(viewerId, link.creator_id)])
+        : [[], false];
+
       const [tallies, going, people, budget, reconfirm] = await Promise.all([
         guestTalliesWeighted(link.flock_id),
         pool.query(
@@ -684,7 +765,7 @@ router.get('/:token',
              (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1)::int AS guest_rows`,
           [link.flock_id]
         ),
-        rosterFor(link.flock_id, link.reconfirm_opened_at || null),
+        rosterFor(link.flock_id, link.reconfirm_opened_at || null, hiddenIds),
         guestBudgetSummary(link),
         // Only asked once a window has been opened; a plan that has never
         // had one costs nothing here.
@@ -701,8 +782,11 @@ router.get('/:token',
           status: link.status,
         },
         // First name only — the host invited these people, but the page is
-        // reachable by anyone with the link, so keep it minimal.
-        host: firstNameOnly(link.host_name),
+        // reachable by anyone with the link, so keep it minimal. Empty for a
+        // signed-in viewer with a block against the host, which the page
+        // already draws as "You're invited" (it treats an empty host as no
+        // name to say).
+        host: hostBlocked ? '' : firstNameOnly(link.host_name),
         going: going.rows[0].members + going.rows[0].guests,
         // Whether POST /:token/join can still admit a NEW account, asked here
         // so the page does not send a stranger through a whole signup that
@@ -873,12 +957,22 @@ router.post('/:token/rsvp',
           `UPDATE guest_rsvps SET name = $1, status = $2::text, updated_at = NOW(),
                   reconfirmed_at = CASE WHEN $2::text = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END
            WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
-           RETURNING id, guest_token`,
+           RETURNING id, guest_token,
+                     (SELECT gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = guest_rsvps.id
+                       ORDER BY gv.created_at DESC LIMIT 1) AS voted_venue`,
           [name, status, guestToken, link.flock_id]
         );
         if (upd.rows.length) {
           if (changed) {
             await announceGuestRsvp(req, link, { guestId: upd.rows[0].id, name, status, isNew: false });
+          }
+          // A guest's vote counts only while they are in (both tallies read
+          // gr.status = 'in'), so a guest with a vote who changes their answer
+          // moves the standings. The members hear it the way they hear a guest
+          // vote, with the re-tallied new_vote, rather than keeping a leader
+          // the link has already stopped showing. Never throws.
+          if (prior && prior.status !== status && upd.rows[0].voted_venue) {
+            await broadcastGuestVote(req.app.get('io'), link.flock_id, upd.rows[0].voted_venue);
           }
           // "Everyone has answered" is a comparison against the population,
           // and an 'in' guest saying out shrinks it: three members may have
@@ -1043,12 +1137,25 @@ router.post('/:token/vote',
       const { guestToken, venueName } = req.body;
 
       const guest = await pool.query(
-        `SELECT id FROM guest_rsvps
+        `SELECT id, status FROM guest_rsvps
          WHERE guest_token = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false`,
         [guestToken, link.flock_id]
       );
       if (!guest.rows.length) return res.status(403).json({ error: 'RSVP first, then vote' });
       const guestId = guest.rows[0].id;
+      // A VOTE IS FOR SOMEBODY WHO IS GOING. A member who declines cannot vote
+      // (routes/venues.js reads accepted members only), and a guest who said
+      // out used to vote anyway and be counted on both tallies, so the people
+      // not coming could pick where the people coming went. Both tallies now
+      // count a guest's vote only while their answer is 'in', and this refuses
+      // the write in the budget route's words and code, so the page can say
+      // why rather than report a vote that counts for nothing.
+      if (guest.rows[0].status !== 'in') {
+        return res.status(409).json({
+          code: 'NOT_IN',
+          error: "Say you're in first. The vote only counts people who are going.",
+        });
+      }
 
       // Round 23: budget the identity, now that the database has confirmed it
       // and named it. Before the confirmation the key would be a caller-invented
@@ -1155,7 +1262,7 @@ router.post('/:token/vote',
 
       const venues = await guestTalliesWeighted(link.flock_id);
 
-      // The GUEST gets counts only (guestTallies) — no voter identities ever
+      // The GUEST gets counts only (guestTalliesWeighted) — no voter identities ever
       // cross onto the public link surface. The MEMBERS get the same `new_vote`
       // payload a member vote produces, fanned out to their personal rooms, so
       // a guest answering the link reaches them wherever they are in the app
@@ -1698,15 +1805,23 @@ router.post('/:token/join',
         // answers by name, then taps "Sign in and join". The join answered
         // joined: false here, before the transaction that retires the guest
         // row, so the roster listed them twice and "going" was one too high
-        // for good. Same best-effort hide and vote promotion the new-member
-        // path runs, on the pool because there is no membership to commit
-        // beside it; a stale or garbage token matches nothing and changes
-        // nothing. Announced after the response exactly as that path does.
+        // for good. The same hide and the same vote carry the new-member path
+        // runs, and in ONE transaction the way that path runs them: the hide
+        // and the vote used to be two autocommits on the pool, so a failure
+        // between them retired the guest row and dropped its vote, and the
+        // vote copy took no flockvote: lock (see carryGuestVote for the rule
+        // it follows now). Still best effort: a stale or garbage token matches
+        // nothing, and any failure rolls both back and leaves the re-tap a
+        // plain "you are already in". Announced after the response exactly
+        // as the new-member path announces it.
         let hiddenGuestId = null;
-        let promotedVenue = null;
+        let carriedVote = null;
         if (guestUuid) {
+          let retireClient = null;
           try {
-            const hid = await pool.query(
+            retireClient = await pool.connect();
+            await retireClient.query('BEGIN');
+            const hid = await retireClient.query(
               `UPDATE guest_rsvps SET is_hidden = TRUE
                 WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
                 RETURNING id`,
@@ -1714,17 +1829,18 @@ router.post('/:token/join',
             );
             hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
             if (hiddenGuestId) {
-              const promoted = await pool.query(
-                `INSERT INTO venue_votes (flock_id, user_id, venue_name)
-                 SELECT $1, $2, gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = $3
-                 ON CONFLICT DO NOTHING
-                 RETURNING venue_name`,
-                [link.flock_id, req.user.id, hiddenGuestId]
+              carriedVote = await carryGuestVote(
+                (q, p) => retireClient.query(q, p), link.flock_id, req.user.id, [hiddenGuestId]
               );
-              promotedVenue = promoted.rows.length ? promoted.rows[0].venue_name : null;
             }
+            await retireClient.query('COMMIT');
           } catch (hideErr) {
+            if (retireClient) await retireClient.query('ROLLBACK').catch(() => {});
+            hiddenGuestId = null;
+            carriedVote = null;
             console.error('Guest row retire for an existing member failed:', hideErr.message);
+          } finally {
+            if (retireClient) retireClient.release();
           }
         }
         res.json({ flockId: link.flock_id, flockName: link.name, joined: false });
@@ -1737,8 +1853,13 @@ router.post('/:token/join',
                 contentId: hiddenGuestId,
                 flockId: link.flock_id,
               });
-              if (promotedVenue) {
-                await emitToFlockMembers(io, link.flock_id, 'new_vote', { flockId: link.flock_id, venueName: promotedVenue });
+              // The tally moved whether the vote came across or the member's
+              // own newer vote stood: the guest vote left the guest ledger
+              // either way. The same tailored new_vote the new-member path
+              // sends, rather than a bare venue name every client had to
+              // refetch the tally for.
+              if (carriedVote) {
+                await broadcastGuestVote(io, link.flock_id, carriedVote.venueName);
               }
             }
           } catch (emitErr) {
@@ -1831,16 +1952,14 @@ router.post('/:token/join',
             // from every tally (both read paths filter on is_hidden), so a
             // guest who voted for a bar and then made an account watched that
             // bar lose a vote at the moment they joined, with nothing said.
-            // ON CONFLICT DO NOTHING: they may already hold a member vote.
+            // As ONE vote: the copy used to be ON CONFLICT DO NOTHING, which
+            // left a member who already held a vote for another venue holding
+            // two. carryGuestVote keeps the newer pick, under the flockvote:
+            // lock, in this transaction.
             if (res.locals.hiddenGuestId) {
-              const promoted = await client.query(
-                `INSERT INTO venue_votes (flock_id, user_id, venue_name)
-                 SELECT $1, $2, gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = $3
-                 ON CONFLICT DO NOTHING
-                 RETURNING venue_name`,
-                [link.flock_id, req.user.id, res.locals.hiddenGuestId]
+              res.locals.carriedVote = await carryGuestVote(
+                (q, p) => client.query(q, p), link.flock_id, req.user.id, [res.locals.hiddenGuestId]
               );
-              res.locals.promotedVenue = promoted.rows.length ? promoted.rows[0].venue_name : null;
             }
           }
           await client.query('COMMIT');
@@ -1890,11 +2009,12 @@ router.post('/:token/join',
               flockId: link.flock_id,
             });
           }
-          // The vote moved from the guest ledger to the member one inside the
-          // transaction above, so open clients have to re-tally or they keep
-          // showing a guest vote the server has already retired.
-          if (res.locals.promotedVenue) {
-            await broadcastGuestVote(io, link.flock_id, res.locals.promotedVenue);
+          // The vote left the guest ledger inside the transaction above, into
+          // the member one or, when the member's own newer vote stood, nowhere,
+          // so open clients have to re-tally either way or they keep showing a
+          // guest vote the server has already retired.
+          if (res.locals.carriedVote) {
+            await broadcastGuestVote(io, link.flock_id, res.locals.carriedVote.venueName);
           }
           await emitToFlockExcludingBlocked(io, link.flock_id, req.user.id, 'flock_invite_responded', {
             flockId: link.flock_id,

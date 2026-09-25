@@ -141,6 +141,22 @@ function flockSweepEnabled() {
  * Leave, which deletes the plan for everyone. `event_time IS NOT NULL`
  * matters as much: a confirmed plan with no time on it has no night to be past,
  * and guessing one from created_at would close plans nobody has been to yet.
+ *
+ * THAT CLAUSE IS ASKED TWICE, and the second asking is what makes the
+ * idempotence true under overlap. The inner select picks the batch from its
+ * own snapshot, and a row the outer UPDATE then waits on is re-checked against
+ * the OUTER predicate only; `id IN (...)` on its own re-checks nothing. So two
+ * passes overlapping (a kickoff landing on a tick, a slow batch, a second
+ * instance) could both pick one confirmed plan: the first completed it, the
+ * second waited on the row lock, found `id` still in its stale list, and its
+ * CASE, now reading 'completed', wrote 'cancelled' over a night that happened.
+ * A host moving the time out in the same window was closed the same way. Now
+ * the inner select takes its rows FOR UPDATE SKIP LOCKED, so a pass never
+ * waits on a row another pass or a host edit is holding, and the outer UPDATE
+ * repeats the status and time predicates, so a row that changed before the
+ * lock is left alone. The same shape reconfirmSweep.js uses for the same
+ * reason; __tests__/planFlowRaces.test.js drives both overlaps on a real
+ * database.
  */
 async function runFlockCompletionSweep(io) {
   if (!flockSweepEnabled()) return 0;
@@ -161,7 +177,11 @@ async function runFlockCompletionSweep(io) {
                AND event_time < (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $1::int)
              ORDER BY event_time
              LIMIT $2::int
+             FOR UPDATE SKIP LOCKED
           )
+            AND status IN ('planning', 'confirmed')
+            AND event_time IS NOT NULL
+            AND event_time < (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $1::int)
           RETURNING id, status`,
         [hours, SWEEP_BATCH_SIZE]
       );
