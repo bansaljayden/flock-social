@@ -72,9 +72,13 @@
  *      socket came back, its read brought the row in, the request's answer
  *      was lost, and the failure path toasted, failed and stored it anyway.
  *      And through the timer, when the read's merge had not rendered yet by
- *      the time the timer fired. A read now takes the sends it settles out of
- *      waiting the moment it lands (sendsReadSettles), both transports wait
- *      in the same place, and a failure path fails only a send still waiting.
+ *      the time the timer fired. Then the opposite, from deciding early: a
+ *      read that matched a look-alike sent from another device was taken for
+ *      this send's delivery, and the send was left sending with no way to
+ *      fail. A failure path now queues an update that fails the bubble only
+ *      if the newest state still shows it sending, and the toast and the copy
+ *      in the reload store follow what that update decided, as the render
+ *      commits (settleSendFailures).
  *
  * App.js cannot be imported (it is the whole app), so its pure helpers are
  * lifted out by name and run, the way chatSurface.test.js and
@@ -189,7 +193,7 @@ function liftCallback(source, name) {
 
 const HELPERS = [
   'SERVER_ID_MAX', 'isServerId', 'sameSend', 'newClientId', 'echoMatches', 'newestServerId',
-  'sendLandedAs', 'landedSends', 'sendsReadSettles', 'orderByServerId', 'retractedSince', 'retractedIdsIn',
+  'sendLandedAs', 'landedSends', 'orderByServerId', 'retractedSince', 'retractedIdsIn',
   'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction', 'mergeHistory',
   'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'mapDmRow', 'messagePreview',
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
@@ -509,11 +513,6 @@ function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }]) {
     isServerId: H.isServerId,
     landedSends: H.landedSends,
     writeFailedFlockMessages: H.writeFailedFlockMessages,
-    // Nothing is waiting on an answer in these; 18 and 20 run the sends.
-    sendsReadSettles: H.sendsReadSettles,
-    dropRetracted: H.dropRetracted,
-    pendingEchoRef: { current: new Map() },
-    clearTimeout: () => {},
     setFlockAtTop: () => {},
     retractedIdsIn: H.retractedIdsIn,
     dropRetractedPins: H.dropRetractedPins,
@@ -1146,6 +1145,7 @@ function liftedFlockTransmit(flocks) {
     socketSendMessage: () => { throw new Error('the socket is down, so nothing goes on it'); },
     trackFlockMessageSent: () => {},
     pendingEchoRef: { current: new Map() },
+    sendFailuresRef: { current: new Map() },
     setFlocks: setterOn(state, 'flocks'),
     persistFailedFlockMessage: (flockId, msg) => state.failedStored.push([flockId, msg.id]),
     apiSendMessage: () => new Promise((resolve, reject) => { sends.push({ resolve, reject }); }),
@@ -1461,6 +1461,17 @@ describe('a pin or unpin answer cut before a block does not put their pin back',
   });
 });
 
+// settleSendFailures, lifted: what runs as each render commits and carries out
+// what a send's failure update decided, the toast and the copy in the reload
+// store, or nothing at all (App.js, sendFailuresRef). 18 and 20 call it on
+// every commit, as the app's layout effect does.
+function liftedSettleSendFailures(sendFailuresRef) {
+  return runLifted(`${liftCallback(appSource, 'settleSendFailures')}\nreturn settleSendFailures;`, {
+    useCallback: (fn) => fn,
+    sendFailuresRef,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 18. A socket send that landed, lost its echo, and was brought in by a read
 // ---------------------------------------------------------------------------
@@ -1468,13 +1479,18 @@ describe('a send delivered while its echo was lost never comes back as a failed 
   // The send path and the history read, lifted and run over ONE state, so the
   // read settles the bubble the send drew. The socket is up and takes the
   // send; its echo is what never arrives. The failure timer is held so a test
-  // can fire it: timers[n] is the nth timer's { fn, ms }. The reload store is
-  // the real one, in jsdom's localStorage.
+  // can fire it: timers[n] is the nth timer's { fn, ms }. Every update here
+  // renders and commits at once, and settleSendFailures runs on each commit
+  // as it does in the app. The reload store is the real one, in jsdom's
+  // localStorage.
   function liftedSocketSendAndRead(flocks) {
     const state = { flocks, errors: [], acks: [], toasts: [] };
     const timers = [];
     const reads = [];
     const pendingEchoRef = { current: new Map() };
+    const sendFailuresRef = { current: new Map() };
+    const settle = liftedSettleSendFailures(sendFailuresRef);
+    const commit = (next) => { setterOn(state, 'flocks')(next); settle(state.flocks); };
     const flocksRef = { get current() { return state.flocks; } };
     const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
       useCallback: (fn) => fn,
@@ -1491,8 +1507,9 @@ describe('a send delivered while its echo was lost never comes back as a failed 
       socketSendMessage: () => true,
       trackFlockMessageSent: () => {},
       pendingEchoRef,
+      sendFailuresRef,
       setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-      setFlocks: setterOn(state, 'flocks'),
+      setFlocks: commit,
       persistFailedFlockMessage: H.persistFailedFlockMessage,
       apiSendMessage: () => { throw new Error('the socket took this send, so REST is never asked'); },
       isServerId: H.isServerId,
@@ -1515,15 +1532,10 @@ describe('a send delivered while its echo was lost never comes back as a failed 
       isServerId: H.isServerId,
       landedSends: H.landedSends,
       writeFailedFlockMessages: H.writeFailedFlockMessages,
-      // The send's own waiting entry, so the read can take it out (20).
-      sendsReadSettles: H.sendsReadSettles,
-      dropRetracted: H.dropRetracted,
-      pendingEchoRef,
-      clearTimeout: () => {},
       setFlockAtTop: () => {},
       retractedIdsIn: H.retractedIdsIn,
       dropRetractedPins: H.dropRetractedPins,
-      setFlocks: setterOn(state, 'flocks'),
+      setFlocks: commit,
       mergeHistory: H.mergeHistory,
       sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
     });
@@ -1696,27 +1708,41 @@ describe('a DM list read from before a block does not put the blocked person bac
 });
 
 // ---------------------------------------------------------------------------
-// 20. A read settles the sends it brings in when it lands, on both transports
+// 20. A send's failure is decided by the newest state, on both transports
 // ---------------------------------------------------------------------------
-describe('a send a read has delivered is settled when the read lands, whatever the transport', () => {
+describe("a send's failure is decided by the newest state, whatever the transport", () => {
   // The send path, the history read and the live echo, lifted and run over
   // ONE state the way React holds it: `rendered` is what the last render
-  // committed and all that flocksRef can see, and setFlocks only queues an
-  // update for the next render(). The failure timer is held (timers[n]), each
-  // request waits for a test to answer it (posts[n]), and the reload store is
-  // the real one, in jsdom's localStorage.
+  // committed and all that flocksRef can see, setFlocks only queues an update
+  // for the next render(), and each render() ends with settleSendFailures, as
+  // the app's layout effect does on every commit. The failure timer is held
+  // (timers[n]) and fireDue() fires every one still set; each request waits
+  // for a test to answer it (posts[n]); the reload store is the real one, in
+  // jsdom's localStorage.
   function liftedSendReadAndEcho({ socketUp }) {
     const state = { rendered: [{ id: 7, messages: [row(20, 'before')], pins: [] }], queue: [], toasts: [], cleared: [] };
     const timers = [];
+    const fired = new Set();
     const reads = [];
     const posts = [];
     const pendingEchoRef = { current: new Map() };
+    const sendFailuresRef = { current: new Map() };
+    const settle = liftedSettleSendFailures(sendFailuresRef);
     const flocksRef = { get current() { return state.rendered; } };
     const setFlocks = (next) => { state.queue.push(next); };
     const render = () => {
       for (const next of state.queue.splice(0)) state.rendered = typeof next === 'function' ? next(state.rendered) : next;
+      settle(state.rendered);
     };
     const clearTimeout = (t) => state.cleared.push(t);
+    const fireDue = () => {
+      timers.forEach((t, i) => {
+        const id = `timer-${i + 1}`;
+        if (state.cleared.includes(id) || fired.has(id)) return;
+        fired.add(id);
+        t.fn();
+      });
+    };
     const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
       useCallback: (fn) => fn,
       makeChatThumb: async () => PHOTO_THUMB,
@@ -1730,6 +1756,7 @@ describe('a send a read has delivered is settled when the read lands, whatever t
       socketSendMessage: () => socketUp,
       trackFlockMessageSent: () => {},
       pendingEchoRef,
+      sendFailuresRef,
       setTimeout: (fn, ms) => { timers.push({ fn, ms }); return `timer-${timers.length}`; },
       setFlocks,
       persistFailedFlockMessage: H.persistFailedFlockMessage,
@@ -1754,10 +1781,6 @@ describe('a send a read has delivered is settled when the read lands, whatever t
       isServerId: H.isServerId,
       landedSends: H.landedSends,
       writeFailedFlockMessages: H.writeFailedFlockMessages,
-      sendsReadSettles: H.sendsReadSettles,
-      dropRetracted: H.dropRetracted,
-      pendingEchoRef,
-      clearTimeout,
       setFlockAtTop: () => {},
       retractedIdsIn: H.retractedIdsIn,
       dropRetractedPins: H.dropRetractedPins,
@@ -1788,12 +1811,17 @@ describe('a send a read has delivered is settled when the read lands, whatever t
       await done;
     };
     const ids = () => state.rendered[0].messages.map((m) => m.id);
-    return { state, timers, posts, pendingEchoRef, transmit, readWith, echo, render, ids };
+    const bubbleOf = (id) => state.rendered[0].messages.find((m) => m.id === id);
+    return { state, timers, posts, transmit, readWith, echo, render, fireDue, ids, bubbleOf };
   }
 
   const delivered = [srv(20, 'before'), srv(21, 'on my way')];
   // What api.js rejects with when a request's answer never comes.
-  const lostAnswer = () => Object.assign(new Error('That took too long. Check your signal and try again.'), { isTimeout: true });
+  const TOOK_TOO_LONG = 'That took too long. Check your signal and try again.';
+  const lostAnswer = () => Object.assign(new Error(TOOK_TOO_LONG), { isTimeout: true });
+  // The same account saying "ok" from another device: the server echoes it to
+  // this device too, under that device's own client id.
+  const okFromAnotherDevice = () => flockWire(21, { message_text: 'ok', client_id: 'cAnotherDevice', status: 'sent' });
 
   beforeEach(() => localStorage.clear());
   afterAll(() => localStorage.clear());
@@ -1814,7 +1842,6 @@ describe('a send a read has delivered is settled when the read lands, whatever t
     run.render();
     expect(run.state.toasts).toEqual([]);
     expect(H.readFailedFlockMessages(7)).toEqual([]);
-    expect(run.pendingEchoRef.current.size).toBe(0);
     // The chat opened again: one delivered row and no copy offering a retry.
     await run.readWith(delivered);
     run.render();
@@ -1866,14 +1893,58 @@ describe('a send a read has delivered is settled when the read lands, whatever t
     run.posts[0].reject(lostAnswer());
     await sending;
     run.render();
-    expect(run.state.toasts).toEqual(['That took too long. Check your signal and try again.']);
-    const bubble = run.state.rendered[0].messages.find((m) => m.id === bubbleId);
+    expect(run.state.toasts).toEqual([TOOK_TOO_LONG]);
+    const bubble = run.bubbleOf(bubbleId);
     expect([bubble.pending, bubble.failed]).toEqual([false, true]);
     expect(H.readFailedFlockMessages(7).map((m) => m.id)).toEqual([bubbleId]);
-    expect(run.pendingEchoRef.current.size).toBe(0);
   });
 
-  test('over the socket: the read clears the echo timer as it lands, before its merge renders', async () => {
+  test('over HTTP, a look-alike from another device that the read matched instead leaves this send to fail out loud', async () => {
+    const run = liftedSendReadAndEcho({ socketUp: false });
+    const sending = run.transmit(7, 'ok');
+    run.render();
+    await flush();
+    const bubbleId = run.state.rendered[0].messages[1].id;
+    // The socket comes back, and the same account says "ok" from another
+    // device. Its echo is queued as row 21, not rendered yet.
+    run.echo(okFromAnotherDevice());
+    // The catch-up read lands before that render, row 21 in it, and to the
+    // last render that row looks like this send's.
+    await run.readWith([srv(20, 'before'), srv(21, 'ok')]);
+    run.render();
+    // It is not: row 21 is the other device's, so this send is still sending.
+    expect(run.ids()).toEqual([20, 21, bubbleId]);
+    expect(run.bubbleOf(bubbleId).pending).toBe(true);
+    // Then the request fails. This send did fail, and it says so.
+    run.posts[0].reject(lostAnswer());
+    await sending;
+    run.render();
+    const bubble = run.bubbleOf(bubbleId);
+    expect([bubble.pending, bubble.failed]).toEqual([false, true]);
+    expect(run.state.toasts).toEqual([TOOK_TOO_LONG]);
+    expect(H.readFailedFlockMessages(7).map((m) => [m.id, m.text])).toEqual([[bubbleId, 'ok']]);
+  });
+
+  test('over the socket, the same look-alike never leaves a send without a way to fail', async () => {
+    const run = liftedSendReadAndEcho({ socketUp: true });
+    await run.transmit(7, 'ok');
+    run.render();
+    const bubbleId = run.state.rendered[0].messages[1].id;
+    // This send's echo is lost. The other device's "ok" is queued as row 21,
+    // and the catch-up read lands before it renders.
+    run.echo(okFromAnotherDevice());
+    await run.readWith([srv(20, 'before'), srv(21, 'ok')]);
+    run.render();
+    expect(run.bubbleOf(bubbleId).pending).toBe(true);
+    // The eight seconds run out: the timer is still there, and it fails the send.
+    run.fireDue();
+    run.render();
+    const bubble = run.bubbleOf(bubbleId);
+    expect([bubble.pending, bubble.failed]).toEqual([false, true]);
+    expect(H.readFailedFlockMessages(7).map((m) => [m.id, m.text])).toEqual([[bubbleId, 'ok']]);
+  });
+
+  test('over the socket, a timer that fires before the read has rendered fails nothing', async () => {
     const run = liftedSendReadAndEcho({ socketUp: true });
     await run.transmit(7, 'on my way');
     run.render();
@@ -1883,34 +1954,16 @@ describe('a send a read has delivered is settled when the read lands, whatever t
     // the last render still shows the bubble sending.
     await run.readWith(delivered);
     expect(run.ids()).toEqual([20, bubbleId]);
-    // Its timer is already cleared and the send is no longer waiting.
-    expect(run.state.cleared).toEqual(['timer-1']);
-    expect(run.pendingEchoRef.current.size).toBe(0);
-    // The eight seconds run out before that render. A cleared timer never
-    // fires; run anyway, it finds nothing waiting and stores nothing.
-    run.timers[0].fn();
+    // The eight seconds run out before that render. The failure update is
+    // queued behind the read's, finds the bubble gone, and nothing is stored.
+    run.fireDue();
     run.render();
     expect(H.readFailedFlockMessages(7)).toEqual([]);
     expect(run.ids()).toEqual([20, 21]);
+    expect(run.state.rendered[0].messages.filter((m) => m.failed || m.pending)).toEqual([]);
     // The next read brings nothing back.
     await run.readWith(delivered);
     run.render();
     expect(run.ids()).toEqual([20, 21]);
-  });
-
-  test('two look-alike sends: a row either could be is left to their failure paths, not guessed', () => {
-    const a = bubble(1700000000301, 'ok', { clientId: 'cA', afterId: 20 });
-    const b = bubble(1700000000302, 'ok', { clientId: 'cB', afterId: 20 });
-    const rows = [row(20, 'before'), row(21, 'ok')];
-    // One "ok" row, two sends that look like it: the last render cannot say
-    // whose it is, since an echo that arrived since may already have taken it.
-    expect(H.sendsReadSettles([row(20, 'before'), a, b], rows, [20])).toEqual([]);
-    // One send, one row: settled.
-    expect(H.sendsReadSettles([row(20, 'before'), a], rows, [20])).toEqual([a]);
-    // A failed bubble is not waiting on anything, and a photo is never settled by looks.
-    const failed = bubble(1700000000303, 'ok', { clientId: 'cF', afterId: 20, failed: true });
-    expect(H.sendsReadSettles([row(20, 'before'), failed], rows, [20])).toEqual([]);
-    const photo = bubble(1700000000304, '', { clientId: 'cP', afterId: 20, type: 'image', image: 'data:image/jpeg;base64,P' });
-    expect(H.sendsReadSettles([row(20, 'before'), photo], [row(20, 'before'), row(21, '', { type: 'image', thumb: PHOTO_THUMB })], [20])).toEqual([]);
   });
 });

@@ -2150,23 +2150,6 @@ const landedSends = (bubbles, history, heldIds) => {
   return landed;
 };
 
-// THE SENDS STILL WAITING ON AN ANSWER THAT A HISTORY READ HAS SETTLED: the
-// sending bubbles among `shown` whose own row is in `rows`, by the rule
-// mergeHistory applies (landedSends). loadFlockMessages asks this the moment a
-// read lands, before its merge renders, and takes those sends out of waiting,
-// so neither the echo timer nor a failed request can store a delivered message
-// as failed on the strength of a render that has not happened yet. A row that
-// could just as well be another unsettled bubble's is left out: this is read
-// off the last render, and a look-alike whose echo arrived since may be about
-// to take that row, so that pair keeps its own failure paths.
-const sendsReadSettles = (shown, rows, heldIds) => {
-  const held = new Set(heldIds || []);
-  const unsettled = (shown || []).filter((m) => m.pending || m.failed);
-  const contested = (b) => (rows || []).some((r) => isServerId(r.id) && !held.has(r.id) && sendLandedAs(b, r)
-    && unsettled.some((o) => o !== b && sendLandedAs(o, r)));
-  return [...landedSends(unsettled, rows, heldIds)].filter((b) => b.pending && !contested(b));
-};
-
 // THE ON-SCREEN ORDER IS THE SERVER'S ORDER, once two rows both have ids. The
 // server emits a message when it finishes with it, and two overlapping sends
 // finish in either order (a photo waits on its screening, a line of text does
@@ -7213,9 +7196,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Chat — use refs for input values to avoid full re-renders on every keystroke
   const [chatInputHasText, setChatInputHasText] = useState(false);
   const chatInputRef = useRef('');
-  // Optimistic flock messages awaiting their server echo: tempId -> {flockId, text, timer}.
-  // A send over HTTP waits here too, with timer null, until its request answers.
+  // Optimistic flock messages awaiting their server echo: tempId -> {flockId, text, timer}
   const pendingEchoRef = useRef(new Map());
+  // A SEND FAILS ON THE STATE'S WORD, NOT ON A GUESS FROM THE LAST RENDER.
+  // Both ways a flock send gives up, its echo timer and a failed request,
+  // queue an update that marks the bubble failed only if, in the newest
+  // state, it is still there and still sending, and leave what a failure
+  // costs (the toast, the copy in the reload store) here under its temp id.
+  // settleSendFailures runs as each render commits and acts on what that
+  // update decided: failed, and the toast and the copy happen; gone or
+  // settled, because a read or an echo delivered it first, and they never do;
+  // still sending, and the update has not rendered yet. Decided any earlier,
+  // from the last render or from whether a read had claimed the send, it was
+  // a guess, and a wrong guess either way cost something: a delivered message
+  // stored as failed came back as a copy whose retry posted it twice, and a
+  // failed one taken for delivered was left sending with nothing to end it.
+  const sendFailuresRef = useRef(new Map());
+  const settleSendFailures = useCallback((list) => {
+    for (const [tempId, owed] of sendFailuresRef.current) {
+      const bubble = ((list.find(f => f.id === owed.flockId) || {}).messages || []).find(m => m.id === tempId);
+      if (bubble && bubble.pending) continue;
+      sendFailuresRef.current.delete(tempId);
+      if (bubble && bubble.failed) owed.report();
+    }
+  }, []);
+  // A layout effect, so nothing runs between the commit and this: a history
+  // read landing in that gap would rewrite the reload store before the copy
+  // was in it, and the copy would then outlive the bubble the read took down.
+  React.useLayoutEffect(() => {
+    if (sendFailuresRef.current.size > 0) settleSendFailures(flocks);
+  }, [flocks, settleSendFailures]);
   const setChatInput = useCallback((val) => {
     chatInputRef.current = val;
     setChatInputHasText(!!val);
@@ -9726,20 +9736,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // comes back as a ghost failure. Another member's identical line is
         // not yours landing, and neither is an older one of yours.
         const stored = readFailedFlockMessages(flockId);
-        const shown = (flocksRef.current.find(f => f.id === flockId) || {}).messages || [];
-        const onScreen = shown.filter(m => !m.pending && !m.failed && isServerId(m.id)).map(m => m.id);
+        const onScreen = ((flocksRef.current.find(f => f.id === flockId) || {}).messages || [])
+          .filter(m => !m.pending && !m.failed && isServerId(m.id)).map(m => m.id);
         const landed = landedSends(stored, msgs, onScreen);
         const failed = stored.filter(fm => !landed.has(fm));
         writeFailedFlockMessages(flockId, failed);
-        // A SEND THIS READ HAS SETTLED STOPS WAITING NOW, not when the merge
-        // below renders. Its echo timer is cleared and its entry goes, so the
-        // timer cannot fire into a render that still shows the bubble and store
-        // a delivered message as failed, and a request still out for it treats a
-        // lost answer as the delivery it was (transmitFlockMessage).
-        for (const b of sendsReadSettles(shown, dropRetracted(msgs, drop), onScreen)) {
-          const waiting = pendingEchoRef.current.get(b.id);
-          if (waiting) { clearTimeout(waiting.timer); pendingEchoRef.current.delete(b.id); }
-        }
         // A read that does NOT keep older rows truncates the list back to this
         // page, so whatever was paged in before is gone and the pages exist
         // again. Nothing cleared the exhausted flag, so one walk to the top of a
@@ -11609,21 +11610,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const timer = setTimeout(() => {
         if (!pendingEchoRef.current.has(tempId)) return;
         pendingEchoRef.current.delete(tempId);
-        // DELIVERED, IF THE BUBBLE IS GONE. The drop that lost the echo is
-        // usually followed by a history read (the reconnect catch-up, or the
-        // chat opened again), and that read brought this send's own row in and
-        // took the bubble down in its place (mergeHistory). Failed and stored
-        // anyway, the delivered message came back on the next read as a second
-        // copy offering a retry that would post it twice, because a row already
-        // on screen never settles a stored failure (landedSends). Only a bubble
-        // still on screen and still sending has anything to fail.
-        const held = (flocksRef.current.find(f => f.id === flockId) || {}).messages || [];
-        if (!held.some(m => m.id === tempId && m.pending)) return;
+        // FAILED ONLY IF THE NEWEST STATE STILL SHOWS IT SENDING
+        // (sendFailuresRef). The drop that lost the echo is usually followed by
+        // a history read, the reconnect catch-up or the chat opened again, and
+        // that read can bring this send's own row in and take the bubble down,
+        // before this fires or after, rendered yet or not. The update below
+        // runs after any read queued ahead of it, and the copy for the reload
+        // store is written only if the bubble really did fail.
+        sendFailuresRef.current.set(tempId, {
+          flockId,
+          report: () => persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true }),
+        });
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId && m.pending ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
         // 8s suits a sentence; a 700KB photo on venue wifi can still be
         // honestly uploading at 8s, and marking it failed mid-flight is how a
         // retry tap makes duplicates. The late-echo reclaim self-heals either
@@ -11631,16 +11632,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }, image ? 30000 : 8000);
       pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, clientId, timer });
     } else {
-      // WAITING ON ITS ANSWER THE WAY A SOCKET SEND WAITS ON ITS ECHO, with no
-      // timer: the request's own deadline is this send's. Whatever accounts
-      // for the send while the request is out takes the entry away: a history
-      // read that brings its row in (loadFlockMessages), or this account's echo
-      // of it on a socket that came back. A lost answer after that is not a
-      // failure (the catch below).
-      pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, clientId, timer: null });
       try {
         const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined, client_id: clientId, reply_to_id: replyToId || undefined });
-        pendingEchoRef.current.delete(tempId);
         // The REST route returns the stored row, so this is where the bubble
         // stops being a temp id — without it, reacting to or reporting the
         // photo you just sent addressed a row number the server has never
@@ -11677,25 +11670,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           return { ...f, messages: orderByServerId((f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), status: data?.message?.status || null, pending: false } : m))) };
         }));
       } catch (err) {
-        // DELIVERED ALREADY, IF SOMETHING ACCOUNTED FOR IT WHILE THE REQUEST
-        // WAS OUT. The socket came back, its catch-up read brought this send's
-        // own row in and took the bubble down, and then the answer to the
-        // request was lost. Toasted, failed and stored anyway, the delivered
-        // message came back on the next read as a copy offering a retry that
-        // would post it twice. The echo timer's rule: only a send still waiting,
-        // whose bubble is still on screen and still sending, has failed.
-        const waiting = pendingEchoRef.current.delete(tempId);
-        const held = (flocksRef.current.find(f => f.id === flockId) || {}).messages || [];
-        if (!waiting || !held.some(m => m.id === tempId && m.pending)) return;
-        // The server words a moderation refusal ("that image can't be sent")
-        // and api.js words the network cases. Silence here is what made a
-        // rejected photo look like it had gone through.
-        showToast(err?.message || "That didn't send. Tap it to retry.", 'error');
+        // FAILED ONLY IF THE NEWEST STATE STILL SHOWS IT SENDING, the echo
+        // timer's rule (sendFailuresRef). The socket can come back while the
+        // request is out, and its catch-up read, or this account's own echo of
+        // the send, brings the row in and settles the bubble before the answer
+        // to the request is lost. Toasted, failed and stored anyway, the
+        // delivered message came back on the next read as a copy whose retry
+        // posted it twice. And a look-alike sent from another device can be
+        // the row that read settled instead, which leaves this bubble sending:
+        // then it does fail, here, and says so.
+        sendFailuresRef.current.set(tempId, {
+          flockId,
+          report: () => {
+            // The server words a moderation refusal ("that image can't be sent")
+            // and api.js words the network cases. Silence here is what made a
+            // rejected photo look like it had gone through.
+            showToast(err?.message || "That didn't send. Tap it to retry.", 'error');
+            persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
+          },
+        });
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId && m.pending ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
       }
     }
   }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
