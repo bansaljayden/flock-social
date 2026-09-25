@@ -290,8 +290,12 @@ const UNCHECKABLE_RETRIED = RINGS_THROUGH_THE_NIGHT;
 //      sent, or, when nothing in memory still holds it, a push built from
 //      emergency_alerts and users; an all-clear carries the time of the
 //      stand-down that withdrew the alert, so the app can tell the alarm it
-//      called off from a newer one. A correction that reaches a device takes
-//      that device off any retry of the same push still queued for it.
+//      called off from a newer one, and an all-clear older than that
+//      stand-down is not the right one. A correction that reaches a device
+//      takes that device off any retry of the same push still queued for it,
+//      and never off a newer all-clear's. A correction, and anything it
+//      queues, keeps the attempts and expiry of the queued retry whose device
+//      it corrects, so no chain of them outlives that retry.
 //
 // A check that cannot read Postgres does not give up at once: it tries again a
 // few times first. The same step catches a rule 1 or rule 3 read that failed
@@ -403,22 +407,31 @@ const SOS_CLEAR_SOURCE_SQL = `SELECT u.name,
     WHERE a.id = $1 AND a.user_id = $2`;
 
 // Queued retries a device no longer needs: the same SOS push, to the same
-// device, from the same sender (and, for an alarm, of the same alert). A row
-// owed to no other device goes; one owed to others as well is narrowed. A row
-// that names no devices (every device on the account) is left alone.
+// device, from the same sender. For an alarm that is one of the same alert
+// ($5); for an all-clear, one stamped no later than this one ($6, both in the
+// form toISOString writes, so the strings order as the times do). A newer
+// all-clear calls off an alert an older one does not, so an older all-clear
+// never takes a newer one's retry, and a queued one whose time cannot be read
+// is kept. A row owed to no other device goes; one owed to others as well is
+// narrowed. A row that names no devices (every device on the account) is left
+// alone.
 const SOS_QUEUED_COPIES_DELETE_SQL = `DELETE FROM push_outbox
     WHERE user_id = $1
       AND token_ids <@ $2::int[]
       AND data->>'type' = $3::text
       AND data->>'fromUserId' = $4::text
-      AND ($5::text IS NULL OR data->>'alertId' = $5::text)`;
+      AND ($5::text IS NULL OR data->>'alertId' = $5::text)
+      AND ($6::text IS NULL OR (data->>'at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+                                AND data->>'at' <= $6::text))`;
 const SOS_QUEUED_COPIES_NARROW_SQL = `UPDATE push_outbox
       SET token_ids = ARRAY(SELECT t FROM unnest(token_ids) AS t WHERE t <> ALL($2::int[]))
     WHERE user_id = $1
       AND token_ids && $2::int[]
       AND data->>'type' = $3::text
       AND data->>'fromUserId' = $4::text
-      AND ($5::text IS NULL OR data->>'alertId' = $5::text)`;
+      AND ($5::text IS NULL OR data->>'alertId' = $5::text)
+      AND ($6::text IS NULL OR (data->>'at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+                                AND data->>'at' <= $6::text))`;
 
 // Rule 4's register: one slot per person and sender, holding the SOS pushes
 // still on their way to that person, what each of their devices accepted
@@ -553,8 +566,11 @@ function clearCopyFor(slot, truth) {
 // Returns `accepted(deviceId)` and `uncertain(deviceId)`, which record, the
 // moment each happens, a device taking a copy and a send to a device failing
 // in a way that does not say whether the copy arrived; and `answered()`,
-// which records the push's answer.
-function holdSosSlot(kind, userId, title, body, data, resend) {
+// which records the push's answer. `budget` is the retry budget of the queued
+// row the push was released from, when it was one (see retryBudget): each
+// device it reaches carries it, and so does every correction sent to that
+// device after it.
+function holdSosSlot(kind, userId, title, body, data, resend, budget = null) {
   const none = { accepted: () => {}, uncertain: () => {}, answered: () => {} };
   const key = sosSlotKey(userId, data);
   if (!key) return none;
@@ -568,6 +584,10 @@ function holdSosSlot(kind, userId, title, body, data, resend) {
     sosSlots.set(key, slot);
   }
   const alertId = kind === 'alarm' ? alertIdOf(data) : null;
+  // An all-clear is told apart by the stand-down it carries (its `at`, that
+  // stand-down's withdrawn_at): an older one does not call off an alert
+  // withdrawn after it, so it does not count as the right one (checkSosSlot).
+  const stoodDownMs = kind === 'clear' ? Date.parse(data && data.at) : NaN;
   if (kind === 'alarm') rememberAlarmCopy(alertId, title, body, data);
   if (kind === 'clear') slot.clear = { title, body, data };
   const token = {};
@@ -576,7 +596,7 @@ function holdSosSlot(kind, userId, title, body, data, resend) {
     const id = Number(deviceId);
     if (!Number.isInteger(id) || id <= 0) return null;
     sosAcceptOrder += 1;
-    slot.devices.set(id, { kind, alertId, order: sosAcceptOrder, uncertain: unsure });
+    slot.devices.set(id, { kind, alertId, stoodDownMs, order: sosAcceptOrder, uncertain: unsure, budget });
     return id;
   };
   return {
@@ -606,23 +626,30 @@ function holdSosSlot(kind, userId, title, body, data, resend) {
   };
 }
 
-// Drops `deviceIds` from queued retries of the same SOS push (same sender, same
-// kind, and for an alarm the same alert). Best effort: a row it misses is at
-// worst the same push ringing twice.
+// Drops `deviceIds` from queued retries this push makes needless: the same
+// sender and kind, and for an alarm the same alert, for an all-clear one no
+// newer than this (SOS_QUEUED_COPIES_DELETE_SQL). Best effort: a row it misses
+// is at worst the same push ringing twice.
 async function forgetQueuedSosCopies(userId, data, deviceIds) {
   const type = data && data.type ? String(data.type) : '';
   const sender = actorFrom(data);
   const ids = (deviceIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
   if (!sender || ids.length === 0) return;
   let alertId = null;
+  let upTo = null;
   if (type === 'safety_alert') {
     alertId = alertIdOf(data);
     // An alarm that names no alert cannot be told apart from the others.
     if (alertId === null) return;
-  } else if (type !== 'safety_alert_cancelled') {
+  } else if (type === 'safety_alert_cancelled') {
+    // An all-clear that does not say which stand-down it is cannot be shown
+    // to be as new as any queued one.
+    upTo = stoodDownIso(Date.parse(data && data.at));
+    if (upTo === null) return;
+  } else {
     return;
   }
-  const params = [userId, ids, type, String(sender), alertId === null ? null : String(alertId)];
+  const params = [userId, ids, type, String(sender), alertId === null ? null : String(alertId), upTo];
   await pool.query(SOS_QUEUED_COPIES_DELETE_SQL, params);
   await pool.query(SOS_QUEUED_COPIES_NARROW_SQL, params);
 }
@@ -666,9 +693,14 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
   // kind alone was spent by the first stand-down, and a device that took a
   // withdrawn alarm after a second stand-down was left on it.
   const target = `${truth.standing ? 'alarm' : 'clear'}|${truth.alertId}`;
+  // An all-clear is right only if it is the stand-down that withdrew the
+  // alert the truth names, or a later one: an older all-clear leaves that
+  // alert's alarm open in the app, which closes only what an all-clear's time
+  // covers. With the truth's time unread, any all-clear is taken, as before.
   const agrees = (last) => !last.uncertain && (truth.standing
     ? last.kind === 'alarm' && last.alertId === truth.alertId
-    : last.kind === 'clear');
+    : last.kind === 'clear'
+      && (!Number.isFinite(truth.withdrawnMs) || last.stoodDownMs >= truth.withdrawnMs));
   const disagree = [];
   for (const [deviceId, last] of slot.devices) if (!agrees(last)) disagree.push(deviceId);
   if (disagree.length === 0) return dropSosSlot(key, slot);
@@ -709,12 +741,46 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
   if (!right) return dropSosSlot(key, slot);
   for (const deviceId of wrong) slot.resent.add(`${deviceId}|${target}`);
   slot.resends += 1;
+  // A correction to a device a queued retry reached keeps that retry's budget
+  // (the tightest, when there are several), so a correction that fails and is
+  // queued in its turn cannot start the count again.
+  const budget = tightestBudget(wrong.map((deviceId) => slot.devices.get(deviceId)));
   // Through deliverSos, so it is registered in this slot and its own answer
   // is checked the same way; `again` puts it under rules 1 and 3, and
   // `onlyIds` keeps it off every device that already shows the right push.
   await deliverSos(truth.standing ? 'alarm' : 'clear', recipient, right.title, right.body, right.data,
-    { again: true, resend: true, onlyIds: wrong });
+    { again: true, resend: true, onlyIds: wrong, ...(budget ? { budget } : {}) });
   return undefined;
+}
+
+// THE RETRY BUDGET A PUSH INHERITS. A queued retry is released with its row's
+// attempts (already counting this release) and absolute expiry. When its send
+// fails without saying whether the copy arrived, rule 4 corrects the device,
+// and if that correction fails too, it is queued for a retry of its own. Queued
+// with a fresh count and a fresh thirty minutes, it replaced the row it came
+// from, and every sweep did the same again in a new slot, so the ceilings
+// never bound and a device the provider kept refusing was retried forever.
+// So a push sent because of a queued row carries that row's budget, and what
+// it queues starts from there: no chain of corrections outlives the retry it
+// began with. Null when that budget is spent.
+function retryBudget(opts) {
+  const inherited = opts && opts.budget;
+  if (!inherited) return { attempts: 0, expiresAt: new Date(Date.now() + RETRY_TTL_MS) };
+  const attempts = Number(inherited.attempts) || 0;
+  const expiresAt = new Date(inherited.expiresAt);
+  if (attempts >= RETRY_MAX_ATTEMPTS || !(expiresAt.getTime() > Date.now())) return null;
+  return { attempts, expiresAt };
+}
+
+// The budget a correction to these devices inherits: the most attempts spent
+// and the soonest expiry among them. Null when none came from a queued row.
+function tightestBudget(entries) {
+  const budgets = entries.filter((last) => last && last.budget).map((last) => last.budget);
+  if (budgets.length === 0) return null;
+  return {
+    attempts: Math.max(...budgets.map((b) => Number(b.attempts) || 0)),
+    expiresAt: new Date(Math.min(...budgets.map((b) => new Date(b.expiresAt).getTime()))),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1346,8 +1412,10 @@ function stopOutboxSweep() {
 
 // `tokenIds` names the devices the row is still owed to (migration 085,
 // push_outbox.token_ids). Null, the default, is every device the account has
-// when the row is released, which is what every row meant before.
-async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt, tokenIds = null) {
+// when the row is released, which is what every row meant before. `attempts`
+// is where the row's count starts: 0, or the budget a correction inherited
+// from the queued row it came from (retryBudget).
+async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt, tokenIds = null, attempts = 0) {
   try {
     if (reason === 'quiet') {
       // ONE held row per conversation. Every debounce window through the
@@ -1404,8 +1472,8 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
       if (merged && merged.rowCount > 0) return true;
     }
     await pool.query(
-      `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at, token_ids)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::int[])`,
+      `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at, token_ids, attempts)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::int[], $9::smallint)`,
       [
         userId,
         reason,
@@ -1415,6 +1483,7 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
         nextAttemptAt,
         expiresAt,
         Array.isArray(tokenIds) && tokenIds.length > 0 ? tokenIds : null,
+        Math.max(0, Math.min(Number(attempts) || 0, 32767)),
       ]
     );
     startOutboxSweep();
@@ -1542,7 +1611,7 @@ async function deliver(userId, title, body, data, opts = {}) {
 // has landed. The send itself is deliverOnce's, unchanged; the caller is
 // released on the same deadline as every other push.
 async function deliverSos(kind, userId, title, body, data, opts = {}) {
-  const slot = holdSosSlot(kind, userId, title, body, data, opts.resend === true);
+  const slot = holdSosSlot(kind, userId, title, body, data, opts.resend === true, opts.budget || null);
   let result;
   try {
     result = await deliverOnce(userId, title, body, data,
@@ -1579,11 +1648,14 @@ async function deliverOnce(userId, title, body, data, opts = {}) {
     // so it is queued and the sweep asks again (it keeps an uncheckable row
     // for its backoff) rather than the alarm being dropped for good.
     let queued = false;
-    if (!opts.fromOutbox && UNCHECKABLE_RETRIED.has(type)) {
+    // A push sent because of a queued row queues within that row's budget.
+    const budget = retryBudget(opts);
+    if (!opts.fromOutbox && UNCHECKABLE_RETRIED.has(type) && budget) {
       queued = await enqueue(
         userId, title, body, data, 'retry',
-        new Date(Date.now() + 60 * 1000), new Date(Date.now() + RETRY_TTL_MS),
-        Array.isArray(opts.onlyIds) ? opts.onlyIds : null
+        new Date(Date.now() + 60 * 1000), budget.expiresAt,
+        Array.isArray(opts.onlyIds) ? opts.onlyIds : null,
+        budget.attempts
       );
     }
     const out = skip(userId, data, OUTCOME.UNCHECKABLE);
@@ -1714,7 +1786,10 @@ async function afterSend(userId, title, body, data, type, opts, tally) {
     // the lock screen a minute after "says they are OK".
     const targets = retryTargets(tally, sent);
     const withdrawnAlarm = targets !== undefined && type === 'safety_alert' && (await alarmStoodDown(data));
-    if (targets !== undefined && !withdrawnAlarm) {
+    // A correction of a device a queued retry reached keeps that retry's
+    // budget, and one whose budget is spent queues nothing (retryBudget).
+    const budget = targets !== undefined && !withdrawnAlarm ? retryBudget(opts) : null;
+    if (budget) {
       // One queued copy of an SOS push per device. A send that fails on a
       // device rule 4 is correcting, and a correction that fails there too,
       // each queue one, and both would ring a minute later.
@@ -1724,8 +1799,9 @@ async function afterSend(userId, title, body, data, type, opts, tally) {
       }
       await enqueue(
         userId, title, body, data, 'retry',
-        new Date(Date.now() + 60 * 1000), new Date(Date.now() + RETRY_TTL_MS),
-        targets
+        new Date(Date.now() + 60 * 1000), budget.expiresAt,
+        targets,
+        budget.attempts
       );
     }
   }
@@ -1852,8 +1928,14 @@ async function sweepPushOutbox() {
         repaired && repaired.title ? repaired.title : row.title,
         repaired ? repaired.body : row.body,
         repaired ? repaired.data : data,
-        // A row that names its devices goes to those and no others.
-        Array.isArray(row.token_ids) ? { fromOutbox: true, onlyIds: row.token_ids } : { fromOutbox: true }
+        // A row that names its devices goes to those and no others. Its budget
+        // (the attempts this claim counted, and its expiry) goes with the
+        // send, so a correction of it cannot queue past them (retryBudget).
+        {
+          fromOutbox: true,
+          ...(Array.isArray(row.token_ids) ? { onlyIds: row.token_ids } : {}),
+          budget: { attempts: Number(row.attempts) || 0, expiresAt: row.expires_at },
+        }
       );
     } catch (err) {
       console.error('[Push] outbox delivery threw:', err.message);
