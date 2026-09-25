@@ -970,13 +970,13 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // told about an emergency the person has already said is over.
   //
   // That settles who is TOLD, not what their phone shows last. The pushes
-  // below go out after this write, with no lock held, and a stand-down can
-  // land while they are on their way. services/pushHelper.js closes that: it
-  // sends no alarm for an alert already stood down (checked just before the
-  // send, and again before any retry), and when an alarm was already at the
-  // provider as the all-clear went out, it sends that person the all-clear
-  // again once the alarm has landed, so the all-clear is what stays on the
-  // lock screen.
+  // below go out after this write, with no lock held, and a stand-down, or a
+  // new alert after one, can land while they are on their way.
+  // services/pushHelper.js closes that: it sends no alarm for an alert already
+  // stood down (checked just before the send, and again before any retry), and
+  // once the last SOS push on its way to a person has landed, it checks that
+  // push against this table and sends the right one again if they disagree:
+  // the newest alarm that still stands, or the all-clear when none does.
   const audience = members.rows.map((row) => Number(row.user_id));
   if (alertId) {
     const recorded = await pool.query(
@@ -1057,8 +1057,9 @@ async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = nu
   // an alarm that reaches a phone after "I'm OK" puts "needs help" back over
   // it. services/pushHelper.js therefore drops the alarm of an alert that has
   // been stood down, whether it had not reached the provider yet, was waiting
-  // in the outbox for a retry, or failed at the provider after the stand-down,
-  // and it strips this id before anything goes to a device.
+  // in the outbox for a retry, or failed at the provider after the stand-down;
+  // it knows which alarm to send again when a stale all-clear lands on it; and
+  // it strips this id before anything goes to a device.
   const results = await Promise.allSettled(
     members.rows.map((row) => pushAlways(row.user_id, title, body, {
       ...payload,
