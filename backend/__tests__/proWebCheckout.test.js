@@ -217,6 +217,31 @@ test('the paywall being off keeps checkout off even with every key set', () => {
   assert.ok(c.missing.includes('PAYWALL_ENABLED'));
 });
 
+test('the review list opens web checkout for the listed account only', async () => {
+  // With the paywall off for everyone, an account on the review list can buy
+  // on flockcorp.com/pro, which is how the path to the app is proven live
+  // before launch. The signed-out offer keeps the global answer.
+  setEnv({ ...ON, PAYWALL_ENABLED: undefined, PAYWALL_PREVIEW_USER_IDS: String(ME.id) });
+  assert.strictEqual(billing.webCheckout().ready, false, 'the review list opened checkout for everyone');
+  assert.strictEqual(billing.webCheckout(ME.id).ready, true);
+  assert.strictEqual(billing.webCheckout(ME.id + 1).ready, false);
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT is_premium')) return { rows: [{ is_premium: false }] };
+    return null;
+  });
+  try {
+    const status = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(status.status, 200);
+    assert.strictEqual(status.body.checkoutAvailable, true, 'the listed account was not offered checkout');
+    setEnv({ PAYWALL_PREVIEW_USER_IDS: String(ME.id + 1) });
+    const other = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(other.body.checkoutAvailable, false, 'an account off the list was offered checkout');
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.code, 'CHECKOUT_OFF');
+  } finally { restore(); }
+});
+
 test('without the RevenueCat secret checkout is off: a web sale could never reach is_premium', () => {
   setEnv({ ...ON, REVENUECAT_SECRET_API_KEY: undefined });
   const c = billing.webCheckout();
