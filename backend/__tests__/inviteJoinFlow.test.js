@@ -351,8 +351,8 @@ test('joining with the guest identity the page carried through signup retires it
 
   const hide = ran(/UPDATE guest_rsvps SET is_hidden = TRUE/)[0];
   assert.ok(hide, 'the guest row is retired');
-  assert.deepStrictEqual(hide.params, [42, uuid],
-    'scoped to this flock and the UUID that proves the row is theirs');
+  assert.deepStrictEqual(hide.params, [42, uuid, VIEWER.id],
+    'scoped to this flock, the UUID the device holds, and the account whose name the row must carry');
   assert.match(hide.sql, /COALESCE\(is_hidden, false\) = false/,
     'an already-hidden row (a moderator takedown) is left exactly as the moderator put it');
   // Inside the same transaction as the membership, not after it.
@@ -685,7 +685,7 @@ test('a member who answered the link by name before signing in has that guest ro
   assert.deepStrictEqual(res.body, { flockId: 42, flockName: 'Dinner', joined: false });
   const hid = ran(/UPDATE guest_rsvps SET is_hidden = TRUE/);
   assert.strictEqual(hid.length, 1, 'the guest row must be retired for an existing member too');
-  assert.deepStrictEqual(hid[0].params, [42, uuid]);
+  assert.deepStrictEqual(hid[0].params, [42, uuid, VIEWER.id]);
   const promoted = ran(/INSERT INTO venue_votes/);
   assert.strictEqual(promoted.length, 1, 'and the guest vote comes with them');
   assert.deepStrictEqual(promoted[0].params, [42, VIEWER.id, 'The Bar']);
@@ -773,8 +773,16 @@ test('a new member\'s carried vote follows the same rule inside the join transac
   assert.strictEqual(res.body.joined, true);
   const at = (re) => log.findIndex((q) => re.test(q.sql));
   const commit = at(/^COMMIT/);
-  assert.ok(at(/INSERT INTO flock_members/) < at(/flockvote:/) && at(/DELETE FROM venue_votes/) < commit,
-    'membership, then the vote under its lock, then one COMMIT');
+  // The flockvote: lock is the FIRST thing the transaction takes, before the
+  // plan's row: a vote holds that lock and then needs the row's key share,
+  // so taking the row first and the lock later (inside the carry) was a
+  // deadlock with a vote from the same person landing at the same moment.
+  assert.ok(at(/^BEGIN/) < at(/flockvote:/) && at(/flockvote:/) < at(/FOR UPDATE/),
+    'the vote routes\' lock, then the plan\'s row');
+  assert.ok(at(/FOR UPDATE/) < at(/INSERT INTO flock_members/)
+    && at(/INSERT INTO flock_members/) < at(/INSERT INTO venue_votes/)
+    && at(/DELETE FROM venue_votes/) < commit,
+    'then the membership, then the vote, then one COMMIT');
 });
 
 test('a member re-tapping the link with no guest identity is still the one indexed read', async () => {

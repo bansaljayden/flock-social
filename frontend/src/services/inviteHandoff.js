@@ -122,11 +122,24 @@ export function rememberInvite(token, extra = {}) {
 // nothing.
 //
 // ONLY THE ONES THAT ARE THIS PERSON'S. A handset gets borrowed, and an answer
-// somebody else gave on this browser would, if presented, retire THEIR row and
-// hand their vote to this account. So an identity is carried only when the
-// name it answered under begins with the signed-in person's first name, the
-// part of a name the roster shows. A nickname misses and changes nothing: the
-// row stays where it was, which is the state before this existed.
+// somebody else gave on this browser would, if presented, retire THEIR row, take
+// their budget answer out of the total and hand their vote to this account.
+// This used to carry every identity whose name began with the signed-in
+// person's first name, so one Sam's answer went with a different Sam's
+// account. Nothing on this device says which of two people called Sam typed
+// "Sam", so an identity is carried only when the name it answered under IS
+// the account's whole name (trimmed, case-folded, spaces collapsed, the way
+// the server compares guest names), and only when that name is more than one
+// word. Anything else stays where it was, which is the state before this
+// existed: that person may be counted twice, and nobody else's answer is
+// taken. The server applies the same rule to what it is sent
+// (backend/utils/guestRsvp.js RETIRE_ON_INVITE_ACCEPT_SQL, which also says
+// why a marker naming the account signed in when the answer was typed would
+// not be proof of who typed it).
+//
+// The invite page's own "Join" is a different hand-off: it passes the one
+// identity that page showed as theirs (website/GuestInvite.js stashInvite),
+// and the server checks that one against the account's name there.
 //
 // `linkToken` narrows it to the identity kept for one link (the app opening
 // /i/<token>). Read failures return what was read so far, never a throw: this
@@ -135,12 +148,13 @@ export function rememberInvite(token, extra = {}) {
 const GUEST_KEY_PREFIX = 'flock_guest_';
 const MAX_CARRIED_GUEST_TOKENS = 20;
 
-const firstNameOf = (name) => String(name || '').trim().toLowerCase().split(/\s+/)[0] || '';
+const wholeName = (name) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 export function storedGuestTokens({ name, linkToken } = {}) {
-  const first = firstNameOf(name);
+  const account = wholeName(name);
   const out = [];
-  if (!first) return out;
+  // No name, or a first name alone: nothing here can say which person it is.
+  if (!account || !account.includes(' ')) return out;
   try {
     const keys = [];
     for (let i = 0; i < window.localStorage.length; i += 1) {
@@ -153,7 +167,7 @@ export function storedGuestTokens({ name, linkToken } = {}) {
       let entry = null;
       try { entry = JSON.parse(window.localStorage.getItem(key) || 'null'); } catch { entry = null; }
       if (!entry || typeof entry !== 'object' || !looksLikeGuestToken(entry.guestToken)) continue;
-      if (firstNameOf(entry.name) !== first) continue;
+      if (wholeName(entry.name) !== account) continue;
       const token = entry.guestToken.toLowerCase();
       if (!out.includes(token)) out.push(token);
     }

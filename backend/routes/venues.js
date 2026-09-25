@@ -465,11 +465,19 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
     // delete-then-insert. Now it holds the same flockvote: lock the POST and
     // the socket vote hold, and the status is read inside the statement, so
     // the write decides for itself: it removes nothing from a plan that is
-    // over. What an empty delete means is read back on this client afterwards,
-    // the way the POST reads its empty write, so a burst of refused un-votes
-    // cannot hold every pooled connection while each waits for one more.
+    // over. What an empty delete means is read on this client, the way the
+    // POST reads its empty write, so a burst of refused un-votes cannot hold
+    // every pooled connection while each waits for one more.
+    //
+    // AND IT IS READ BEFORE THE COMMIT, while the lock is still held. It was
+    // read after it, and the COMMIT is what releases flockvote:, so a vote
+    // from the same person's other device could land in between: the empty
+    // delete then found that new vote, answered 409 "try again", and the
+    // retry deleted a vote the person had just cast. Under the lock nothing
+    // can be written for this person between the delete and the reads.
     const client = await pool.connect();
     let removed;
+    let refusal = null;
     try {
       await client.query('BEGIN');
       await client.query(
@@ -483,28 +491,34 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
           RETURNING venue_name`,
         [flockId, req.user.id]
       );
-      await client.query('COMMIT');
       if (removed.rows.length === 0) {
         // Nothing to take back, or a plan that closed under the request (or
         // whose status cannot be read as open, which the write treats as not
         // open, exactly as the POST's does). Only the first is a 200.
         const closedNow = await votingClosedReason(flockId, client);
         if (closedNow) {
-          return res.status(closedNow === 'Flock not found' ? 404 : 409).json({ error: closedNow });
-        }
-        const held = await client.query(
-          'SELECT 1 FROM venue_votes WHERE flock_id = $1 AND user_id = $2 LIMIT 1',
-          [flockId, req.user.id]
-        );
-        if (held.rows.length > 0) {
-          return res.status(409).json({ error: 'The plan changed while your vote was being taken back. Try again.' });
+          refusal = { status: closedNow === 'Flock not found' ? 404 : 409, error: closedNow };
+        } else {
+          const held = await client.query(
+            'SELECT 1 FROM venue_votes WHERE flock_id = $1 AND user_id = $2 LIMIT 1',
+            [flockId, req.user.id]
+          );
+          if (held.rows.length > 0) {
+            refusal = { status: 409, error: 'The plan changed while your vote was being taken back. Try again.' };
+          }
         }
       }
+      // An empty delete wrote nothing, so a refusal and a quiet 200 end the
+      // transaction the same way.
+      await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();
+    }
+    if (refusal) {
+      return res.status(refusal.status).json({ error: refusal.error });
     }
 
     const rows = await collectVoteRows(flockId);

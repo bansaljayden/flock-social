@@ -99,6 +99,10 @@ const SUITE_SLOTS = {
   planFlowRaces: 28,             // new in 2026-09-25; overlapping completion
                                  // sweeps, the guest-to-member vote carry and
                                  // the two venue tallies, on real row locks.
+  planFlowLocks: 29,             // new in 2026-09-25; whose guest row a join
+                                 // may retire, the join/vote lock order, the
+                                 // plan closing mid-join, fan-outs under the
+                                 // row lock and the un-vote's reads.
   sensorIngestStatement: 31,     // new in 2026-09-25; the one-statement sensor
                                  // ingest run against a real, migrated schema.
                                  // 31 is the last slot below 49152; the gap is

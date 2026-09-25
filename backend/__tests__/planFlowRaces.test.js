@@ -324,7 +324,9 @@ test('a plan that is over takes no carried vote and keeps the one it had', async
   await guestVote(flockId, g, 'New Place', 1);
 
   const out = await carry(flockId, sam, [g.id]);
-  assert.deepStrictEqual(out, { venueName: 'New Place', moved: false });
+  // `closed` is what tells a join to take its hide back with it: a row hidden
+  // while its vote could not be copied would drop that vote from the record.
+  assert.deepStrictEqual(out, { venueName: 'New Place', moved: false, closed: true });
   assert.deepStrictEqual(await votesOf(flockId, sam), ['Old Place']);
 });
 
@@ -397,9 +399,11 @@ test('accepting the in-app invite retires this plan\'s guest row, carries its vo
   const flockId = await mkFlock(host);
   const otherFlock = await mkFlock(host);
   await addMember(flockId, uma, 'invited');
-  const here = await guestRow(flockId, 'Uma');
+  // Answered under the account's whole name: the only answer this door may
+  // take as hers (utils/guestRsvp.js; planFlowLocks.test.js runs the rest).
+  const here = await guestRow(flockId, 'Uma Nine');
   await guestVote(flockId, here, 'Kome', 1);
-  const elsewhere = await guestRow(otherFlock, 'Uma');
+  const elsewhere = await guestRow(otherFlock, 'Uma Nine');
 
   const res = await call('POST', `/api/flocks/${flockId}/join`, {
     token: uma.token,
@@ -423,7 +427,9 @@ test('an accept the server refuses retires nothing', async () => {
   const vic = await mkUser('Vic Ten');
   const flockId = await mkFlock(host, { status: 'cancelled' });
   await addMember(flockId, vic, 'invited');
-  const g = await guestRow(flockId, 'Vic');
+  // Under the account's whole name, so the only thing refusing it is the
+  // closed plan.
+  const g = await guestRow(flockId, 'Vic Ten');
 
   const res = await call('POST', `/api/flocks/${flockId}/join`, { token: vic.token, body: { guestTokens: [g.guest_token] } });
   assert.strictEqual(res.status, 409, JSON.stringify(res.body));

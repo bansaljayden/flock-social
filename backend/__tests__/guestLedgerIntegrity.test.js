@@ -23,7 +23,15 @@ test('the same name cannot answer twice on one plan, and the refusal says what t
 });
 
 test('a guest who becomes a member disappears from every open client, not only the database', () => {
-  assert.match(src, /UPDATE guest_rsvps SET is_hidden = TRUE\s+WHERE flock_id = \$1 AND guest_token = \$2 AND COALESCE\(is_hidden, false\) = false\s+RETURNING id/);
+  // One statement for both join paths, kept beside the rule for whose row it
+  // may retire (utils/guestRsvp.js). The name and plan checks it carries are
+  // run against a real database in planFlowLocks.test.js.
+  const { RETIRE_ON_LINK_JOIN_SQL } = require('../utils/guestRsvp');
+  const hide = RETIRE_ON_LINK_JOIN_SQL.replace(/\s+/g, ' ').trim();
+  assert.match(hide, /^UPDATE guest_rsvps SET is_hidden = TRUE WHERE flock_id = \$1 AND guest_token = \$2 AND COALESCE\(is_hidden, false\) = false /);
+  assert.match(hide, / RETURNING id$/);
+  assert.strictEqual((src.match(/[cC]lient\.query\(RETIRE_ON_LINK_JOIN_SQL, \[link\.flock_id, guestUuid, req\.user\.id\]\)/g) || []).length, 2,
+    'the new-member path and the already-in path retire through the same statement');
   assert.match(src, /res\.locals\.hiddenGuestId = hid\.rows\.length \? hid\.rows\[0\]\.id : null;/);
   const emit = src.slice(src.indexOf("if (res.locals.hiddenGuestId != null) {"), src.indexOf("'flock_invite_responded'"));
   assert.match(emit, /emitToFlockMembers\(io, link\.flock_id, 'content_removed', \{\s*contentType: 'guest_rsvp',\s*contentId: res\.locals\.hiddenGuestId,\s*flockId: link\.flock_id,/);

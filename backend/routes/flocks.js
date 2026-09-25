@@ -18,7 +18,9 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // it once for a whole id set now, with the same bidirectional predicate written
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds } = require('../utils/blocks');
-const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts, carryGuestVote } = require('../utils/guestRsvp');
+const {
+  GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts, carryGuestVote, lockVoteSlot, RETIRE_ON_INVITE_ACCEPT_SQL,
+} = require('../utils/guestRsvp');
 // The member-facing venue tally's own fan-out, for the vote an accepted invite
 // carries across from a retired guest row (POST /:id/join).
 const { broadcastGuestVote } = require('./venues');
@@ -1873,12 +1875,14 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
         // `deletedBy` is the deleter's NAME, so this needs the same block-aware
         // fan-out as every other actor-naming event. AWAITED, and deliberately
         // before the DELETE below: the helper reads flock_members to find its
-        // recipients, and the delete CASCADEs those rows away. Its reads go
-        // through the pool, outside this transaction, which is fine because
-        // nothing has changed yet at this point.
+        // recipients, and the delete CASCADEs those rows away. Its reads run
+        // on this transaction's connection, which still sees every row: on
+        // the pool they took a second connection while this one held the
+        // plan's row lock, the shape that runs the pool dry under load
+        // (utils/blocks.js; the leave route below does the same).
         await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
           flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-        }, { includeInvited: true }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+        }, { includeInvited: true, db: client }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
       }
       const removed = await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       // Same two-statement window as PUT: the ownership check read a row that
@@ -2232,11 +2236,14 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     // :token/join already retires the row it is handed; this is the same
     // retirement for the other door. The client does not know which of its
     // guest identities belongs to this plan (the link page is never told a
-    // flock id), so it sends the few it holds and the UPDATE below matches
-    // only this plan's rows: a UUID proves a row is theirs and one from any
-    // other plan matches nothing. Shape-checked rather than validated, like
-    // the link door's: an unusable value means "retire nothing", never a
-    // failed accept.
+    // flock id), so it sends the ones it holds under this account's whole
+    // name and the UPDATE below matches only this plan's rows. A UUID proves
+    // only that this DEVICE answered, not who did, so the UPDATE also checks
+    // the name on the row against this account's, itself, whatever an older
+    // client sends (RETIRE_ON_INVITE_ACCEPT_SQL; utils/guestRsvp.js has the
+    // rule and why a first name is not enough on this door). Shape-checked
+    // rather than validated, like the link door's: an unusable value means
+    // "retire nothing", never a failed accept.
     const guestTokens = carriedGuestTokens(req.body);
     let retiredGuestIds = [];
     let carriedVote = null;
@@ -2245,6 +2252,15 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     let result;
     try {
       await joinClient.query('BEGIN');
+      // An accept that may carry a vote takes the vote routes' flockvote:
+      // lock BEFORE the plan's row, the order every vote writer uses. Taken
+      // after it (inside carryGuestVote, as it was), a vote from this person's
+      // phone landing at the same moment held the lock this needed while
+      // waiting on the row this held, and one of the two failed with a
+      // deadlock (utils/guestRsvp.js lockVoteSlot).
+      if (guestTokens.length > 0) {
+        await lockVoteSlot((q, p) => joinClient.query(q, p), flockId, req.user.id);
+      }
       await joinClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
       // The lifecycle check above ran on the pool, before this lock, so a
       // cancel landing between it and the UPDATE below still admitted the
@@ -2272,16 +2288,18 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
       // every read filters them). The vote on the row comes across as one
       // vote, under the flockvote: lock (utils/guestRsvp.js carryGuestVote).
       if (guestTokens.length > 0) {
-        const hid = await joinClient.query(
-          `UPDATE guest_rsvps SET is_hidden = TRUE
-            WHERE flock_id = $1 AND guest_token = ANY($2::uuid[]) AND COALESCE(is_hidden, false) = false
-              AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
-            RETURNING id`,
-          [flockId, guestTokens, req.user.id]
-        );
+        const hid = await joinClient.query(RETIRE_ON_INVITE_ACCEPT_SQL, [flockId, guestTokens, req.user.id]);
         retiredGuestIds = (hid.rows || []).map((r) => r.id);
         if (retiredGuestIds.length > 0) {
           carriedVote = await carryGuestVote((q, p) => joinClient.query(q, p), flockId, req.user.id, retiredGuestIds);
+          // Under the row lock the status read above cannot change, so the
+          // carry is never refused for a closed plan here; if it ever is, the
+          // accept is the 409 a closed plan gets rather than a hidden row
+          // whose vote was not copied.
+          if (carriedVote && carriedVote.closed) {
+            await joinClient.query('ROLLBACK');
+            return res.status(409).json({ error: 'This plan is no longer open', code: 'FLOCK_CLOSED' });
+          }
         }
       }
       await joinClient.query('COMMIT');
@@ -3356,11 +3374,13 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         }
         // Notify all members before deleting. Block-aware (`deletedBy` is a
         // name) and awaited: the fan-out reads flock_members, which the DELETE
-        // below cascades away, so the read has to finish first.
+        // below cascades away, so the read has to finish first. On this
+        // connection, not a second one from the pool while this holds the
+        // row lock (see DELETE /:id).
         if (io) {
           await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
             flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-          }, { includeInvited: true }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+          }, { includeInvited: true, db: client }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
         }
         // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
         await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
@@ -3436,8 +3456,17 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       // Per-member fan-out, not the `flock:{id}` room: a member sitting anywhere
       // else in the app was never in that room and missed the count change. The
       // DELETE is below, so the leaver still holds their accepted row and the
-      // roster read reaches the same set the room held. Guarded so a fan-out
-      // failure cannot 500 a leave that is about to succeed.
+      // roster read reaches the same set the room held. Guarded so a thrown
+      // fan-out error is logged rather than turned into a 500.
+      //
+      // BOTH FAN-OUTS READ ON THIS CONNECTION ({ db: leaveClient }). They read
+      // the roster and the block list, and on the pool that meant a second
+      // connection checked out while this one held the plan's row lock until
+      // the COMMIT: twenty leaves at once, each waiting for a connection held
+      // by another, and the pool is dry (utils/blocks.js describes the shape).
+      // The cost is that a read failing on this connection fails the leave's
+      // transaction with it, and a connection that cannot answer a roster
+      // read could not have run the DELETE below either.
       if (io && wasAccepted) {
         // Block-aware, because this payload carries the leaver's NAME. Per-member
         // fan-out reaches a blocker wherever they are in the app, where the old
@@ -3445,7 +3474,7 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         // open, so delivering it unfiltered would widen what a block leaks.
         await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_member_left', {
           flockId: parseInt(flockId), userId: req.user.id, userName: req.user.name,
-        }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
+        }, { db: leaveClient }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
         // A LEAVER WHO WAS SHARING THEIR LOCATION TAKES THE PIN WITH THEM.
         // Every other member's app drops a pin only on member_stopped_sharing,
         // and after the DELETE below the leaver's own stop and every later
@@ -3457,8 +3486,10 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         // announceFlockShareEnded). A leaver who was not sharing costs the
         // roster and block reads and a stop that no app holds a pin for,
         // told to the people who are hearing flock_member_left anyway. Never
-        // throws.
-        await announceFlockShareEnded(io, req.user.id, flockId);
+        // throws. Its mark (markShareEnded) is set before its first await, so
+        // it is still set before the DELETE below commits and a tick that is
+        // mid-read is dropped rather than posted after the stop.
+        await announceFlockShareEnded(io, req.user.id, flockId, { db: leaveClient });
       }
       left = await leaveClient.query(
         `WITH gone AS (

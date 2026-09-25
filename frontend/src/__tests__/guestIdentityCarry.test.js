@@ -30,39 +30,55 @@ const keep = (linkToken, entry) => window.localStorage.setItem(`flock_guest_${li
 describe('storedGuestTokens: the identities on this device that are this person\'s', () => {
   beforeEach(() => { window.localStorage.clear(); });
 
-  test('carries the identities answered under this person\'s first name, from any link', () => {
-    keep('LinkOne12345', { guestToken: A, name: 'Sam', status: 'in' });
-    keep('LinkTwo12345', { guestToken: B, name: 'sam r', status: 'out' });
+  test('carries the identities answered under this person\'s whole name, from any link', () => {
+    keep('LinkOne12345', { guestToken: A, name: 'Sam Rivera', status: 'in' });
+    // Case, surrounding space and doubled spaces are one name, as on the server.
+    keep('LinkTwo12345', { guestToken: B, name: '  sam   RIVERA ', status: 'out' });
     expect(storedGuestTokens({ name: 'Sam Rivera' }).sort()).toEqual([A, B].sort());
   });
 
+  test('never an answer that only shares a first name: another Sam on this browser could have given it', () => {
+    // The shared-browser case: one Sam answered the link, a different Sam
+    // accepts in the app. Presented, the first Sam's row would be retired,
+    // their budget answer dropped from the total and their vote handed over.
+    keep('LinkOne12345', { guestToken: A, name: 'Sam', status: 'in' });
+    keep('LinkTwo12345', { guestToken: B, name: 'sam r', status: 'in' });
+    keep('LinkThree123', { guestToken: C, name: 'Sam Smith', status: 'in' });
+    expect(storedGuestTokens({ name: 'Sam Jones' })).toEqual([]);
+    expect(storedGuestTokens({ name: 'Sam Rivera' })).toEqual([]);
+  });
+
   test('never somebody else\'s answer on a borrowed handset', () => {
-    // Presented, it would retire THEIR row and hand their vote to this account.
-    keep('LinkOne12345', { guestToken: A, name: 'Maya', status: 'in' });
-    keep('LinkTwo12345', { guestToken: B, name: 'Sam', status: 'in' });
+    keep('LinkOne12345', { guestToken: A, name: 'Maya Chen', status: 'in' });
+    keep('LinkTwo12345', { guestToken: B, name: 'Sam Rivera', status: 'in' });
     expect(storedGuestTokens({ name: 'Sam Rivera' })).toEqual([B]);
   });
 
-  test('no name, no identities: nothing is guessed', () => {
+  test('an account whose name is one word carries nothing, since the name cannot say which person it is', () => {
     keep('LinkOne12345', { guestToken: A, name: 'Sam', status: 'in' });
+    expect(storedGuestTokens({ name: 'Sam' })).toEqual([]);
+  });
+
+  test('no name, no identities: nothing is guessed', () => {
+    keep('LinkOne12345', { guestToken: A, name: 'Sam Rivera', status: 'in' });
     expect(storedGuestTokens({})).toEqual([]);
     expect(storedGuestTokens({ name: '   ' })).toEqual([]);
   });
 
   test('narrows to one link\'s identity when asked', () => {
-    keep('LinkOne12345', { guestToken: A, name: 'Sam', status: 'in' });
-    keep('LinkTwo12345', { guestToken: B, name: 'Sam', status: 'in' });
-    expect(storedGuestTokens({ name: 'Sam', linkToken: 'LinkTwo12345' })).toEqual([B]);
+    keep('LinkOne12345', { guestToken: A, name: 'Sam Rivera', status: 'in' });
+    keep('LinkTwo12345', { guestToken: B, name: 'Sam Rivera', status: 'in' });
+    expect(storedGuestTokens({ name: 'Sam Rivera', linkToken: 'LinkTwo12345' })).toEqual([B]);
   });
 
   test('shapeless or corrupt entries are skipped, spellings are one identity, and other keys are ignored', () => {
     window.localStorage.setItem('flock_guest_Broken12345', '{not json');
-    keep('NoToken12345', { name: 'Sam', status: 'in' });
-    keep('BadToken1234', { guestToken: 'not-a-uuid', name: 'Sam' });
-    keep('Upper1234567', { guestToken: C.toUpperCase(), name: 'Sam' });
-    keep('Lower1234567', { guestToken: C, name: 'Sam' });
+    keep('NoToken12345', { name: 'Sam Rivera', status: 'in' });
+    keep('BadToken1234', { guestToken: 'not-a-uuid', name: 'Sam Rivera' });
+    keep('Upper1234567', { guestToken: C.toUpperCase(), name: 'Sam Rivera' });
+    keep('Lower1234567', { guestToken: C, name: 'Sam Rivera' });
     window.localStorage.setItem('flock_pending_invite', JSON.stringify({ token: 'x', guestToken: A }));
-    expect(storedGuestTokens({ name: 'Sam' })).toEqual([C]);
+    expect(storedGuestTokens({ name: 'Sam Rivera' })).toEqual([C]);
   });
 });
 
