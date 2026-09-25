@@ -1286,14 +1286,40 @@ test('a mis-shaped date of birth never reaches a DATE column', async () => {
   assert.deepStrictEqual(db.users, []);
 });
 
-test('a date-shaped string is stored verbatim, trimmed', async () => {
+test('a date-shaped string is accepted trimmed, and creation stores 31 December of its year', async () => {
+  // Creation asks for a birth year and judges 31 December of it (utils/age.js
+  // yearEndDob), so the stored date is that one, never the day in the body.
   reset();
   const res = await withGoogle(
     { sub: 'g-11', email: 'dob@gmail.com', email_verified: true, name: 'Dob' },
     () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: ' 2001-02-03 ' })
   );
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(db.users[0].date_of_birth, '2001-02-03');
+  assert.strictEqual(db.users[0].date_of_birth, '2001-12-31');
+});
+
+test('every creation door writes the judged year-end, not the full date it was sent', async () => {
+  // The INSERT runs through the executing fake, so this is the parameter the
+  // route really bound to date_of_birth on each path.
+  reset();
+  const signup = await post('/api/auth/signup', {
+    email: 'year-a@example.com', password: 'Password1', name: 'Year A', date_of_birth: '2004-03-09',
+  });
+  assert.strictEqual(signup.status, 201, await signup.text());
+  const google = await withGoogle(
+    { sub: 'g-year', email: 'year-b@gmail.com', email_verified: true, name: 'Year B' },
+    () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: '2004-03-09' })
+  );
+  assert.strictEqual(google.status, 200, await google.text());
+  const apple = await post('/api/auth/apple', {
+    identityToken: appleIdentityToken({ sub: 'a-year', email: 'year-c@icloud.com', email_verified: true }),
+    date_of_birth: '2004-03-09',
+  });
+  assert.strictEqual(apple.status, 200, await apple.text());
+  assert.deepStrictEqual(
+    ['year-a@example.com', 'year-b@gmail.com', 'year-c@icloud.com'].map((e) => findUserByEmail(e).date_of_birth),
+    ['2004-12-31', '2004-12-31', '2004-12-31']
+  );
 });
 
 test('an under-13 date of birth is still refused after the shape check', async () => {

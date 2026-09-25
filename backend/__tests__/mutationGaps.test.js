@@ -698,15 +698,21 @@ test('the send budgets are still small enough to be budgets', () => {
 // the ROUTE, so `<` could become `<=` and the app would refuse the exact
 // audience floor the product is built around. There is no error a 13-year-old
 // could report that would tell anyone why.
+//
+// Creation judges the birth YEAR, as 31 December of it (utils/age.js
+// yearEndDob), so "exactly MIN_AGE" is the youngest year whose own 31 December
+// is MIN_AGE years back. Every day of that year is exactly MIN_AGE today, and
+// every day of the year after is one short, including 1 January, which the
+// full date in the body would have let through.
 // ---------------------------------------------------------------------------
 
-test('someone who is exactly MIN_AGE today can sign up; a day younger cannot', async () => {
-  const { MIN_AGE } = require('../utils/age');
-  const today = new Date();
-  const dob = (years, dayOffset = 0) => {
-    const d = new Date(today.getFullYear() - years, today.getMonth(), today.getDate() + dayOffset);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
+test('the youngest birth year that is exactly MIN_AGE today can sign up; the next year cannot, whatever the day', async () => {
+  const { MIN_AGE, ageFromDob } = require('../utils/age');
+  // This year minus MIN_AGE turns MIN_AGE on 31 December; until that day the
+  // youngest year that already has is the one before it.
+  let year = new Date().getUTCFullYear() - MIN_AGE;
+  if (ageFromDob(`${year}-12-31`) < MIN_AGE) year -= 1;
+  assert.strictEqual(ageFromDob(`${year}-12-31`), MIN_AGE, 'sanity: exactly the floor, not over it');
   const attempt = (date_of_birth) => {
     log = [];
     handlers = [
@@ -729,14 +735,14 @@ test('someone who is exactly MIN_AGE today can sign up; a day younger cannot', a
     });
   };
 
-  // Their MIN_AGE-th birthday is today.
-  const onTheDay = await attempt(dob(MIN_AGE));
-  assert.strictEqual(onTheDay.status, 201, `a ${MIN_AGE}-year-old must be able to sign up: ${onTheDay.text}`);
+  // The youngest year that is exactly the floor.
+  const onTheFloor = await attempt(`${year}-12-31`);
+  assert.strictEqual(onTheFloor.status, 201, `a ${MIN_AGE}-year-old must be able to sign up: ${onTheFloor.text}`);
   assert.strictEqual(ran('INSERT INTO users').length, 1);
 
-  // One day short of it.
-  const dayEarly = await attempt(dob(MIN_AGE, 1));
-  assert.strictEqual(dayEarly.status, 403, 'a day under the floor is still under the floor');
+  // The next year, on its first day: a year under the floor is still under it.
+  const yearEarly = await attempt(`${year + 1}-01-01`);
+  assert.strictEqual(yearEarly.status, 403, 'a year under the floor is still under the floor');
   assert.strictEqual(ran('INSERT INTO users').length, 0, 'and no row is created for them');
 });
 
