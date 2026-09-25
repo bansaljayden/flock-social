@@ -6,8 +6,12 @@ const pool = require('../config/database');
 const { rejectIfProfane } = require('../utils/moderation');
 // carryGuestVote is the one-vote rule for a guest who becomes a member; the
 // join route below uses it on both of its paths, and routes/flocks.js on the
-// in-app accept.
-const { guestEntryId, carryGuestVote } = require('../utils/guestRsvp');
+// in-app accept. RETIRE_ON_LINK_JOIN_SQL is which guest row that join may
+// retire (whose name it has to carry), and lockVoteSlot the lock it takes
+// first; utils/guestRsvp.js has why for both.
+const {
+  guestEntryId, carryGuestVote, lockVoteSlot, RETIRE_ON_LINK_JOIN_SQL,
+} = require('../utils/guestRsvp');
 // Shape before content — see validators/shape.js. This router is the only
 // UNAUTHENTICATED write surface in the app and every value it takes is
 // re-broadcast to the flock, so it is the one that could least afford the hole.
@@ -1814,6 +1818,15 @@ router.post('/:token/join',
         // nothing, and any failure rolls both back and leaves the re-tap a
         // plain "you are already in". Announced after the response exactly
         // as the new-member path announces it.
+        //
+        // THE PLAN'S STATE IS DECIDED IN HERE, NOT BY flockIsOver ABOVE. That
+        // check read the link on the pool before this transaction, and this
+        // path takes no row lock, so a plan completed or cancelled in between
+        // had the guest row hidden while carryGuestVote, which reads the
+        // status itself, refused to copy its vote: the vote left the tally of
+        // a plan that was already a record. The hide now carries the
+        // open-plan test in its own statement, and a carry refused because
+        // the plan closed after the hide takes the hide back with it.
         let hiddenGuestId = null;
         let carriedVote = null;
         if (guestUuid) {
@@ -1821,19 +1834,23 @@ router.post('/:token/join',
           try {
             retireClient = await pool.connect();
             await retireClient.query('BEGIN');
-            const hid = await retireClient.query(
-              `UPDATE guest_rsvps SET is_hidden = TRUE
-                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
-                RETURNING id`,
-              [link.flock_id, guestUuid]
-            );
+            // The vote routes' lock first, the order every vote writer takes
+            // (utils/guestRsvp.js lockVoteSlot).
+            await lockVoteSlot((q, p) => retireClient.query(q, p), link.flock_id, req.user.id);
+            const hid = await retireClient.query(RETIRE_ON_LINK_JOIN_SQL, [link.flock_id, guestUuid, req.user.id]);
             hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
             if (hiddenGuestId) {
               carriedVote = await carryGuestVote(
                 (q, p) => retireClient.query(q, p), link.flock_id, req.user.id, [hiddenGuestId]
               );
             }
-            await retireClient.query('COMMIT');
+            if (carriedVote && carriedVote.closed) {
+              await retireClient.query('ROLLBACK');
+              hiddenGuestId = null;
+              carriedVote = null;
+            } else {
+              await retireClient.query('COMMIT');
+            }
           } catch (hideErr) {
             if (retireClient) await retireClient.query('ROLLBACK').catch(() => {});
             hiddenGuestId = null;
@@ -1877,9 +1894,19 @@ router.post('/:token/join',
       const client = await pool.connect();
       let joined = false;
       let overCap = false;
+      let planOver = false;
       try {
         await client.query('BEGIN');
-        // The flock row lock first, the same one POST /api/billing/:flockId/
+        // A join that may carry a guest vote takes the vote routes' flockvote:
+        // lock before anything else, the order every vote writer takes it in.
+        // It used to reach that lock inside carryGuestVote, after the row lock
+        // below, while a vote from this person's phone held the lock and
+        // waited on the row: a deadlock, and one of the two failed
+        // (utils/guestRsvp.js lockVoteSlot).
+        if (guestUuid) {
+          await lockVoteSlot((q, p) => client.query(q, p), link.flock_id, req.user.id);
+        }
+        // The flock row lock next, the same one POST /api/billing/:flockId/
         // create holds while it reads the accepted roster and commits a bill
         // divided across it. The advisory lock below serialises this route
         // against itself and nothing in billing takes it, so the INSERT under
@@ -1887,15 +1914,29 @@ router.post('/:token/join',
         // bill would land split across everybody but the person who had just
         // walked in through the link. Under the row lock a link join either
         // commits before billing reads, and is counted, or waits until billing
-        // commits, and the bill was created against the roster it read. Row
-        // lock then advisory lock; no transaction anywhere takes the two in
-        // the other order, so the pair cannot deadlock.
+        // commits, and the bill was created against the roster it read. The
+        // order is flockvote:, then the row, then flock_join:, and no
+        // transaction anywhere takes any two of them the other way round.
         await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [link.flock_id]);
-        await client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(link.flock_id)]);
+        // flockIsOver read the link on the pool before this transaction, so a
+        // cancel landing in between still seated a new member on a plan that
+        // had just closed, and hid their guest row while carryGuestVote, which
+        // reads the status itself, refused to copy its vote. A cancel is an
+        // UPDATE on the row just locked, so what this reads is what the join
+        // commits against, the rule POST /api/flocks/:id/join follows.
+        const locked = await client.query('SELECT status FROM flocks WHERE id = $1', [link.flock_id]);
+        if (TERMINAL_FLOCK_STATUSES.has(String((locked.rows[0] && locked.rows[0].status) || ''))) {
+          planOver = true;
+          await client.query('ROLLBACK');
+        }
+
+        if (!planOver) {
+          await client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(link.flock_id)]);
+        }
 
         // An already-invited account is not new weight on the flock: the host
         // put them there. Only a link walk-up is capped.
-        if (!wasInvited) {
+        if (!planOver && !wasInvited) {
           const count = await client.query(
             "SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
             [link.flock_id]
@@ -1906,7 +1947,7 @@ router.post('/:token/join',
           }
         }
 
-        if (!overCap) {
+        if (!planOver && !overCap) {
           // The EXISTS clause is the last line of the unverified-account gate,
           // written where the membership is actually minted. requireVerified
           // above and the middleware deny list both already refuse this
@@ -1933,19 +1974,17 @@ router.post('/:token/join',
           // name sat in the roster twice, on every member's app and on the
           // invite page every other invitee opens. The page stashes the guest
           // identity's UUID through signup (services/inviteHandoff.js) and
-          // presents it here; the UUID proves the row is theirs, so hide it in
-          // the same transaction the membership commits in. HIDE, not delete:
-          // hidden rows keep their cap slot by the ledger's own rule, and
-          // every read already filters is_hidden. A stale or garbage token
+          // presents it here, and it is hidden in the same transaction the
+          // membership commits in. The UUID proves only that the device
+          // answered, so the statement also checks that the name on the row
+          // fits this account's (RETIRE_ON_LINK_JOIN_SQL, where the rule and
+          // its reasons live). HIDE, not delete: hidden rows keep their cap
+          // slot by the ledger's own rule, and every read already filters
+          // is_hidden. A stale or garbage token, or somebody else's answer,
           // matches nothing and must never fail the join, which is why this is
           // a best-effort UPDATE and not a validator refusal.
           if (guestUuid) {
-            const hid = await client.query(
-              `UPDATE guest_rsvps SET is_hidden = TRUE
-                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
-                RETURNING id`,
-              [link.flock_id, guestUuid]
-            );
+            const hid = await client.query(RETIRE_ON_LINK_JOIN_SQL, [link.flock_id, guestUuid, req.user.id]);
             // Remembered for the fan-out after the response (see below).
             res.locals.hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
             // THE VOTE COMES WITH THEM. Hiding the guest row drops its vote
@@ -1960,15 +1999,30 @@ router.post('/:token/join',
               res.locals.carriedVote = await carryGuestVote(
                 (q, p) => client.query(q, p), link.flock_id, req.user.id, [res.locals.hiddenGuestId]
               );
+              // Under the row lock the status read above cannot change, so
+              // this is not expected; if the carry is ever refused because
+              // the plan is over, the join is the 409 a closed plan gets
+              // rather than a hidden row whose vote was not copied.
+              if (res.locals.carriedVote && res.locals.carriedVote.closed) {
+                planOver = true;
+                res.locals.hiddenGuestId = null;
+                res.locals.carriedVote = null;
+                await client.query('ROLLBACK');
+              }
             }
           }
-          await client.query('COMMIT');
+          if (!planOver) await client.query('COMMIT');
         }
       } catch (txErr) {
         await client.query('ROLLBACK').catch(() => {});
         throw txErr;
       } finally {
         client.release();
+      }
+
+      if (planOver) {
+        // The same answer flockIsOver gives at the top of this route.
+        return res.status(409).json({ error: 'This plan is over. Ask them to start a new one.' });
       }
 
       if (overCap) {

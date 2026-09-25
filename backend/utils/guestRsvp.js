@@ -83,6 +83,104 @@ function combineRsvpCounts(members = [], guests = []) {
 }
 
 // ---------------------------------------------------------------------------
+// WHICH GUEST ROW A JOIN MAY RETIRE, AND WHOSE.
+//
+// A guest identity is a UUID the invite page keeps in the browser that
+// answered (`flock_guest_<link token>`), so holding one proves only that this
+// device answered. A shared laptop holds other people's answers too, and the
+// joins retired whatever rows they were handed. The app chose which
+// identities to send by first name, so one Sam answered the link, a different
+// Sam accepted the invite in the app on the same browser, and the first Sam's
+// answer left the roster, their budget number left the total and their venue
+// vote became the second Sam's.
+//
+// So the name on the row has to be the joining account's name, checked inside
+// the UPDATE that retires it. Names are compared the way the guest ledger
+// compares them everywhere else (normalizeGuestName in routes/guest.js):
+// trimmed, case-folded, whitespace runs collapsed. How close the match has to
+// be depends on the door:
+//
+//   AN INVITE ACCEPTED IN THE APP (POST /api/flocks/:id/join) sends the
+//   identities the device holds for any link, and the person was shown none
+//   of them. The device cannot tell which of two people called Sam typed
+//   "Sam", so the row must carry the account's whole name, and that name must
+//   be more than one word: the answer itself has to say which Sam it is. A
+//   first name alone leaves the row where it is. That person stays counted
+//   twice, which is the state before any door retired rows, and no one else's
+//   answer is taken.
+//
+//   THE LINK'S OWN JOIN (POST /api/guest/:token/join) is handed one identity:
+//   the one the page for that link showed as theirs when they tapped Join, or
+//   that the app kept for the link it was opened on. The page asks for a first
+//   name (its placeholder is "Maya"), so demanding the whole name here would
+//   stop the retirement for nearly every guest who makes an account, which is
+//   the conversion this door exists for. The name has to FIT instead: the
+//   account's first name, optionally followed by the start of the rest of it.
+//   "Sam", "Sam R" and "Sam Rivera" fit Sam Rivera; "Maya", "Sam S", "Sam
+//   Smith" and "Samantha" do not. A row that is plainly somebody else's is
+//   refused. A bare "Sam" handed over by a different Sam is not, and cannot be
+//   told apart without asking: the page offered that answer as theirs, and the
+//   page already lets whoever holds the device change it, vote with it and
+//   read its budget answer.
+//
+// A marker stored beside the identity, naming the account that was signed in
+// when the answer was typed, would have let the app carry first-name answers.
+// It is not used. The invite page never shows that a session is live, so the
+// marker would bind whoever typed to whoever last signed in on that browser,
+// which is the shared-device case itself, and a value in the browser is not
+// something this server can check.
+//
+// Both statements also retire nothing on a plan that is over, and nothing for
+// somebody who is not an accepted member once the join has landed, so a
+// refused join retires nothing. $1 flock, $2 the presented token(s), $3 the
+// joining account.
+// ---------------------------------------------------------------------------
+const RETIRE_ON_INVITE_ACCEPT_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
+  WHERE flock_id = $1 AND guest_token = ANY($2::uuid[]) AND COALESCE(is_hidden, false) = false
+    AND EXISTS (SELECT 1 FROM flocks f WHERE f.id = $1 AND f.status NOT IN ('completed', 'cancelled'))
+    AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
+    AND EXISTS (SELECT 1 FROM users u
+                 CROSS JOIN LATERAL (SELECT lower(regexp_replace(btrim(guest_rsvps.name), '\\s+', ' ', 'g')) AS said,
+                                            lower(regexp_replace(btrim(u.name), '\\s+', ' ', 'g')) AS account) n
+                 WHERE u.id = $3 AND strpos(n.account, ' ') > 0 AND n.said = n.account)
+  RETURNING id`;
+
+const RETIRE_ON_LINK_JOIN_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
+  WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
+    AND EXISTS (SELECT 1 FROM flocks f WHERE f.id = $1 AND f.status NOT IN ('completed', 'cancelled'))
+    AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
+    AND EXISTS (SELECT 1 FROM users u
+                 CROSS JOIN LATERAL (SELECT lower(regexp_replace(btrim(guest_rsvps.name), '\\s+', ' ', 'g')) AS said,
+                                            lower(regexp_replace(btrim(u.name), '\\s+', ' ', 'g')) AS account) n
+                 WHERE u.id = $3 AND n.said <> ''
+                   AND (n.said = n.account
+                        OR left(n.account, length(n.said) + 1) = n.said || ' '
+                        OR (strpos(n.said, ' ') > 0 AND left(n.account, length(n.said)) = n.said)))
+  RETURNING id`;
+
+// ---------------------------------------------------------------------------
+// THE FLOCKVOTE LOCK COMES FIRST.
+//
+// The member vote routes (routes/venues.js, vote_venue in sockets/handlers.js)
+// take this lock and then INSERT into venue_votes, and that INSERT's foreign
+// key takes FOR KEY SHARE on the plan's flocks row. The in-app accept and the
+// link join for a new member locked that row FOR UPDATE first and reached this
+// lock only later, inside carryGuestVote, so a vote and a join for the same
+// person at the same moment each held what the other needed next, and
+// Postgres broke the cycle by failing one of them (40P01). Every transaction
+// that may carry a vote now takes this lock first: before the plan's row, and
+// in the link join for somebody already in, before the guest row it hides.
+// Advisory transaction locks nest, so carryGuestVote taking it again inside
+// the same transaction costs nothing.
+// ---------------------------------------------------------------------------
+function lockVoteSlot(run, flockId, userId) {
+  return run(
+    "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
+    [String(flockId), String(userId)]
+  );
+}
+
+// ---------------------------------------------------------------------------
 // A GUEST WHO BECOMES A MEMBER BRINGS ONE VOTE, NOT A SECOND ONE.
 //
 // Hiding a guest row takes its vote off both tallies (every read filters
@@ -116,18 +214,18 @@ function combineRsvpCounts(members = [], guests = []) {
 // take, so a vote from the app landing at the same moment cannot leave this
 // person holding two. Written only while the plan is open, the way every vote
 // write is. Returns null when the retired rows held no vote, or
-// { venueName, moved }: moved is false when the member's own vote stood (newer,
-// or the plan closed), and either way the guest tally changed, which the
-// caller announces.
+// { venueName, moved }: moved is false when the member's own newer vote stood,
+// and either way the guest tally changed, which the caller announces. When the
+// write was refused because the plan is over it also carries `closed: true`,
+// and the caller rolls the retirement back: a row hidden while its vote could
+// not be copied would take that vote off the tally of a plan that is already
+// a record.
 async function carryGuestVote(run, flockId, userId, guestRsvpIds) {
   const ids = (Array.isArray(guestRsvpIds) ? guestRsvpIds : [guestRsvpIds])
     .map(Number)
     .filter((n) => Number.isInteger(n) && n > 0);
   if (ids.length === 0) return null;
-  await run(
-    "SELECT pg_advisory_xact_lock(hashtext('flockvote:' || $1::text || ':' || $2::text))",
-    [String(flockId), String(userId)]
-  );
+  await lockVoteSlot(run, flockId, userId);
   const pick = await run(
     `SELECT gv.venue_name,
             NOT EXISTS (
@@ -156,7 +254,11 @@ async function carryGuestVote(run, flockId, userId, guestRsvpIds) {
      RETURNING venue_name`,
     [flockId, userId, row.venue_name]
   );
-  if (!written || !written.rows || written.rows.length === 0) return { venueName: row.venue_name, moved: false };
+  // The ON CONFLICT arm always answers, so an empty RETURNING is the status
+  // test refusing: the plan is completed, cancelled or gone.
+  if (!written || !written.rows || written.rows.length === 0) {
+    return { venueName: row.venue_name, moved: false, closed: true };
+  }
   await run(
     'DELETE FROM venue_votes WHERE flock_id = $1 AND user_id = $2 AND venue_name <> $3',
     [flockId, userId, row.venue_name]
@@ -171,4 +273,7 @@ module.exports = {
   toGuestEntry,
   combineRsvpCounts,
   carryGuestVote,
+  lockVoteSlot,
+  RETIRE_ON_INVITE_ACCEPT_SQL,
+  RETIRE_ON_LINK_JOIN_SQL,
 };
