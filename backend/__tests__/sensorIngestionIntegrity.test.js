@@ -27,60 +27,21 @@ process.env.JWT_SECRET = 'sensor-integrity-test-secret';
 
 const pool = require('../config/database');
 
-// --- Fake database (same model as sensorIngest.test.js: stateful, so the
-// flood guard and dedupe are actually enforced, not scripted) ---------------
+// --- Fake database (the same model sensorIngest.test.js uses, kept in
+// helpers/sensorStoreModel.js: stateful, so the flood guard and dedupe are
+// actually enforced, not scripted) -------------------------------------------
+const { INGEST_STATEMENT, runIngest } = require('./helpers/sensorStoreModel');
 
 let devices = [];
 let readings = [];
 let queryLog = [];
 
-function intervalToMs(text) {
-  const m = /^(\d+(?:\.\d+)?)\s*(millisecond|second|minute|hour)s?$/.exec(String(text).trim());
-  if (!m) throw new Error(`fake db cannot parse interval ${text}`);
-  return Number(m[1]) * { millisecond: 1, second: 1000, minute: 60000, hour: 3600000 }[m[2]];
-}
-
 pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
 
-  if (/SELECT id, device_id, venue_place_id, is_active FROM sensor_devices/.test(flat)) {
-    const row = devices.find((d) => d.api_key === params[0] || d.api_key === params[1]);
-    return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
-  }
-  if (/^UPDATE sensor_devices SET last_seen_at = NOW\(\) WHERE id = \$1$/.test(flat)) {
-    const device = devices.find((d) => d.id === params[0]);
-    if (device) device.last_seen_at = Date.now();
-    return Promise.resolve({ rows: [], rowCount: device ? 1 : 0 });
-  }
-  if (/UPDATE sensor_devices SET last_seen_at/.test(flat)) {
-    const device = devices.find((d) => d.id === params[0]);
-    const gapMs = intervalToMs(params[1]);
-    if (!device) return Promise.resolve({ rows: [], rowCount: 0 });
-    if (device.last_seen_at !== null && Date.now() - device.last_seen_at < gapMs) {
-      return Promise.resolve({ rows: [], rowCount: 0 });
-    }
-    device.last_seen_at = Date.now();
-    return Promise.resolve({ rows: [{ id: device.id }], rowCount: 1 });
-  }
-  if (/SELECT recorded_at FROM venue_sensor_data/.test(flat)) {
-    const [deviceId, at] = params;
-    const hit = readings.find(
-      (r) => r.sensor_device_id === deviceId && r.recorded_at.getTime() === at.getTime()
-    );
-    return Promise.resolve({ rows: hit ? [{ recorded_at: hit.recorded_at }] : [], rowCount: hit ? 1 : 0 });
-  }
-  if (/INSERT INTO venue_sensor_data/.test(flat)) {
-    const row = {
-      venue_place_id: params[0],
-      ir_beam_count: params[1],
-      thermal_headcount: params[2],
-      noise_db: params[3],
-      sensor_device_id: params[4],
-      recorded_at: params[5] || new Date(),
-    };
-    readings.push(row);
-    return Promise.resolve({ rows: [{ recorded_at: row.recorded_at }], rowCount: 1 });
+  if (INGEST_STATEMENT.test(flat)) {
+    return Promise.resolve(runIngest({ devices, readings }, params));
   }
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };

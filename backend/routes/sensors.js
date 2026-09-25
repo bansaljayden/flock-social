@@ -93,8 +93,121 @@ const MAX_API_KEY_LENGTH = 512;
 // worth refusing.
 const DIGEST_FORM = /^sha256:/i;
 
+// ---------------------------------------------------------------------------
+// THE WHOLE INGEST IS ONE STATEMENT, because every statement is a network
+// round trip and the database is not on this machine.
+//
+// A push used to cost four sequential round trips on its common path: the key
+// lookup, the duplicate check, the flood guard, the insert. Production reaches
+// Postgres through Railway's public TCP proxy, and the Railway HTTP, DNS and
+// network-flow logs for 2026-09-25 01:00-04:15 UTC show what four of them
+// cost. Of 401 pushes, 209 finished inside 200 ms. 106 took 500-700 ms on a
+// connection that was already open, which is four round trips of roughly 130
+// ms each; the one such connection read out of the flow log reports 64 ms of
+// latency where the fast ones report 3-8. 77 took 1.4-1.7 s, and 76 of those
+// had to open that kind of connection first. The query half of every one of
+// those costs is paid per round trip, so the round trips are what this
+// statement removes. The rules are all still here and still decided by the
+// database: the key lookup, the duplicate check before the flood guard, the
+// guard's single atomic UPDATE, the unthrottled touch for old backfill, and an
+// insert that happens only when all of them say so.
+//
+// WHAT MAY WRITE is decided in two halves and both are needed. Everything that
+// depends only on the request (validation, dry_run, the timestamp rules, the
+// type of a claimed device_id) is settled in JS before the statement runs and
+// arrives as $3. Everything that depends on WHICH device the key belongs to
+// (is it active, is the claimed device_id its own) is decided in the statement
+// itself, in `writer`, because the handler only learns the device from this
+// same round trip. A new refusal added to the handler must therefore be folded
+// into `filing` below, or into `writer` if it needs the device row: the
+// handler REPORTS refusals after the statement returns, in the order it always
+// has, so a refusal that exists only in the reporting would answer 4xx for a
+// row that was already stored.
+//
+// Parameters that are not going to be written are sent as NULL, never as what
+// the caller sent. A typed parameter is parsed when it is bound, whether or not
+// any row ever uses it, so `ir_beam_count: "abc"` bound as $9::integer would be
+// a 22P02 and a 500 instead of the 400 validation already decided on.
+//
+// Every parameter keeps ONE type through the statement ($4, $6 and $7 are each
+// used twice, with the same cast both times): __tests__/sqlParameterTypes.test.js
+// prepares this against a migrated Postgres, and a parameter deduced two ways
+// is refused outright (42P08) with any input at all.
+const INGEST_SQL = `
+  WITH device AS (
+    SELECT id, device_id, venue_place_id, is_active
+      FROM sensor_devices
+     WHERE api_key = $1 OR api_key = $2
+     LIMIT 1
+  ),
+  writer AS (
+    SELECT id, device_id, venue_place_id
+      FROM device
+     WHERE is_active
+       AND $3::boolean
+       AND ($4::varchar IS NULL OR device_id = $4::varchar)
+  ),
+  dup AS (
+    SELECT v.recorded_at
+      FROM venue_sensor_data v, writer w
+     WHERE $5::boolean
+       AND v.sensor_device_id = w.device_id
+       AND v.recorded_at = $6::timestamptz
+     LIMIT 1
+  ),
+  touch AS (
+    UPDATE sensor_devices s
+       SET last_seen_at = NOW()
+      FROM writer w
+     WHERE s.id = w.id
+       AND (EXISTS (SELECT 1 FROM dup)
+            OR NOT $7::boolean
+            OR s.last_seen_at IS NULL
+            OR s.last_seen_at <= NOW() - $8::interval)
+    RETURNING s.id
+  ),
+  ins AS (
+    INSERT INTO venue_sensor_data
+      (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at)
+    SELECT w.venue_place_id, $9::integer, $10::integer, $11::numeric, w.device_id,
+           COALESCE($6::timestamptz, NOW())
+      FROM writer w
+     WHERE NOT EXISTS (SELECT 1 FROM dup)
+       AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM touch))
+    RETURNING recorded_at
+  )
+  SELECT d.id, d.device_id, d.venue_place_id, d.is_active,
+         (SELECT recorded_at FROM dup) AS duplicate_of,
+         (SELECT recorded_at FROM ins) AS recorded_at
+    FROM device d`;
+
+// What the statement is told when this request must not write: nothing but the
+// key. The guard interval is still a real interval so $8 always binds cleanly.
+const NO_FILING = null;
+
+function ingestParams(digest, legacy, filing) {
+  const gap = `${MIN_LIVE_GAP_SECONDS} seconds`;
+  if (!filing) return [digest, legacy, false, null, false, null, false, gap, null, null, null];
+  return [
+    digest, legacy, true,
+    filing.claimedDeviceId,
+    filing.clientSupplied,
+    filing.recordedAt,
+    filing.affectsLiveFigure,
+    gap,
+    filing.irBeamCount,
+    filing.thermalHeadcount,
+    filing.noiseDb,
+  ];
+}
+
 /**
- * Look up a sensor device by presented API key.
+ * Look up a sensor device by presented API key, and, when the handler passes a
+ * `filing`, file that reading in the same statement (see INGEST_SQL above).
+ * Resolves to the device row, or null for a key that matches nothing. With a
+ * filing the row also carries `duplicate_of` (the stored stamp, when this was a
+ * re-delivery) and `recorded_at` (the stamp of the row just written); both are
+ * null when nothing was written.
  *
  * Keys may be stored either as the raw key (legacy rows) or as
  * `sha256:<hex>` of the key. The hashed form is preferred: a database dump
@@ -121,19 +234,35 @@ const DIGEST_FORM = /^sha256:/i;
  * `sha256:` + 64 lowercase hex; if one somehow did, it must be rotated rather
  * than allowed to be its own stored verifier.
  */
-async function findDeviceByApiKey(apiKey) {
+async function findDeviceByApiKey(apiKey, filing = NO_FILING) {
   const digest = 'sha256:' + crypto.createHash('sha256').update(apiKey, 'utf8').digest('hex');
   // Same parameter twice when the legacy branch is withdrawn, so the statement
   // keeps one shape and one plan — a bad key still costs what a good one costs.
   const legacy = DIGEST_FORM.test(apiKey) ? digest : apiKey;
-  const result = await pool.query(
-    `SELECT id, device_id, venue_place_id, is_active
-       FROM sensor_devices
-      WHERE api_key = $1 OR api_key = $2
-      LIMIT 1`,
-    [digest, legacy]
-  );
+  const result = await pool.query(INGEST_SQL, ingestParams(digest, legacy, filing));
   return result.rows[0] || null;
+}
+
+// The live broadcast, run AFTER the response has been written. It is not part
+// of storing the reading and nothing the device does depends on it, so it must
+// neither delay the answer nor be able to change it: a throw here used to land
+// in the handler's catch and answer 500 for a reading that was already stored,
+// which the device then retried as a failure. Its own try/catch, and a log line
+// that says the reading is safe.
+function broadcastReading(req, device, body, recordedAt) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    io.to(`venue:${device.venue_place_id}`).emit('venue_sensor_update', {
+      venue_place_id: device.venue_place_id,
+      ir_beam_count: body.ir_beam_count,
+      thermal_headcount: body.thermal_headcount,
+      noise_db: body.noise_db,
+      recorded_at: recordedAt,
+    });
+  } catch (err) {
+    console.error('Sensor broadcast failed after the reading was stored:', err.message);
+  }
 }
 
 /**
@@ -234,9 +363,87 @@ router.post('/data',
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
+      // Everything below that can refuse this request WITHOUT knowing which
+      // device the key belongs to is settled here, before the one statement
+      // runs, so the statement knows whether it may write (see INGEST_SQL).
+      // None of it is REPORTED yet: the order in which refusals are answered
+      // is unchanged and starts after the statement, with authentication.
+      const errors = validationResult(req);
+      const claimedDeviceId = req.body.device_id;
+
+      // An installer's self test proves the key and the network work without
+      // writing a fabricated "0 people" row into the venue's live occupancy
+      // figure (and, the day an exporter reads this table, the model's
+      // training data). The key, the activation and the device_id are still
+      // checked, so this still answers the only question the installer is
+      // asking.
+      //
+      // Round 21: every truthy spelling isBoolean() admits, not just the JSON
+      // boolean. The validator passes the STRINGS 'true' and '1' (and the
+      // number 1) as readily as `true`, and a curl-driven install check sends
+      // exactly those — `-d '{"dry_run":"true"}'`. Under a bare `=== true`
+      // each of them validated cleanly and then read as "not a dry run", so
+      // the self test wrote the fabricated zero row this branch exists to keep
+      // out. Same bug as the `["true"]` array case fixed in round 20, one
+      // coercion earlier.
+      const dryRun = req.body.dry_run === true || req.body.dry_run === 'true'
+        || req.body.dry_run === 1 || req.body.dry_run === '1';
+
+      const nowMs = Date.now();
+      // Only a body that passed validation is resolved: this is the
+      // time-forgery guard and it is only ever handed a settled shape.
+      const stamp = errors.isEmpty() ? resolveRecordedAt(req.body.recorded_at, nowMs) : null;
+
+      // Two DIFFERENT questions about the same timestamp, and conflating them
+      // is what left the live figure writable (see MIN_LIVE_GAP_SECONDS):
+      //   isBackfill        — do subscribers hear about it? (60 seconds)
+      //   affectsLiveFigure — will GET /:placeId/current serve it? (15 minutes)
+      // A server-stamped row is always both.
+      let filing = NO_FILING;
+      if (errors.isEmpty() && !dryRun && stamp.ok
+          // A device_id that is present but not a string can never be this
+          // device's own, so it is refused below and must not write.
+          && (!claimedDeviceId || typeof claimedDeviceId === 'string')) {
+        const { recordedAt, clientSupplied } = stamp;
+        filing = {
+          claimedDeviceId: claimedDeviceId || null,
+          clientSupplied,
+          recordedAt,
+          isBackfill: clientSupplied && recordedAt.getTime() < nowMs - BACKFILL_THRESHOLD_MS,
+          affectsLiveFigure: !clientSupplied
+            || recordedAt.getTime() > nowMs - CURRENT_READING_MAX_AGE_MS,
+          irBeamCount: req.body.ir_beam_count,
+          thermalHeadcount: req.body.thermal_headcount,
+          noiseDb: req.body.noise_db,
+        };
+      }
+
       // Authenticate before reporting validation errors, so an unauthenticated
       // caller cannot use this endpoint to probe what shape a reading takes.
-      const device = await findDeviceByApiKey(apiKey);
+      //
+      // Idempotency, the flood guard and the write all happen inside this one
+      // call when `filing` allows them; INGEST_SQL carries each rule where it
+      // now lives. The duplicate check still runs BEFORE the flood guard, and
+      // the ORDER is still load-bearing: the guard covers the whole 15-minute
+      // live window, and a row we already hold is not new data. It cannot move
+      // the live figure, the hourly SUM or the training set, because nothing is
+      // written for it. Charging it against the rate limit would answer an
+      // honest retry 429, and a device reads 429 as "try later", so the one
+      // case the check exists to serve (a push that succeeded server-side but
+      // timed out on the device, retried from its buffer) would turn into a
+      // back-off loop. Client-stamped timestamps make (device, recorded_at) a
+      // natural key; server-stamped rows need no check, NOW() differs.
+      // Replaying the same stamp is useless to an attacker for the same reason:
+      // no write happens either way.
+      //
+      // The guard is atomic because the WHERE clause, the touch and the insert
+      // are the same statement, so two concurrent pushes cannot both pass it.
+      // Genuinely old backfill is touched and written without the guard:
+      // delivering old readings still proves the device is alive, and
+      // throttling a buffer drain would stall it. A re-delivery touches too,
+      // ungated, since there is no flood to guard against when nothing is
+      // stored.
+      const device = await findDeviceByApiKey(apiKey, filing);
       if (!device) return res.status(401).json({ error: 'Invalid API key' });
       // 403, not 401: the caller authenticated fine, it is just not allowed to
       // report. The device reads both as "I am misconfigured", backs off to one
@@ -244,7 +451,6 @@ router.post('/data',
       // goes quiet instead of hammering, and re-activating one loses nothing.
       if (!device.is_active) return res.status(403).json({ error: 'Device deactivated' });
 
-      const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
       if (req.body.device_id && req.body.device_id !== device.device_id) {
@@ -257,129 +463,47 @@ router.post('/data',
         return res.status(403).json({ error: 'device_id does not match this API key' });
       }
 
-      // An installer's self test proves the key and the network work without
-      // writing a fabricated "0 people" row into the venue's live occupancy
-      // figure (and, the day an exporter reads this table, the model's
-      // training data). Everything above has already run, so this still
-      // answers the only question the installer is asking.
-      //
-      // Round 21: every truthy spelling isBoolean() admits, not just the JSON
-      // boolean. The validator passes the STRINGS 'true' and '1' (and the
-      // number 1) as readily as `true`, and a curl-driven install check sends
-      // exactly those — `-d '{"dry_run":"true"}'`. Under a bare `=== true`
-      // each of them validated cleanly and then read as "not a dry run", so
-      // the self test wrote the fabricated zero row this branch exists to keep
-      // out. Same bug as the `["true"]` array case fixed in round 20, one
-      // coercion earlier.
-      const dryRun = req.body.dry_run === true || req.body.dry_run === 'true'
-        || req.body.dry_run === 1 || req.body.dry_run === '1';
       if (dryRun) {
         return res.status(200).json({ success: true, dry_run: true, device_id: device.device_id });
       }
 
-      const nowMs = Date.now();
-      const stamp = resolveRecordedAt(req.body.recorded_at, nowMs);
       if (!stamp.ok) return res.status(400).json({ error: stamp.reason });
-      const { recordedAt, clientSupplied } = stamp;
 
-      // Idempotency, and it runs BEFORE the flood guard rather than after it.
-      //
-      // A push that succeeded server-side but timed out on the device gets
-      // retried from the buffer; without this the entry count is silently
-      // doubled. Client-stamped timestamps make (device, recorded_at) a natural
-      // key. Server-stamped rows need no check — NOW() differs.
-      //
-      // The ORDER is load-bearing now that the guard below covers the whole
-      // 15-minute live window. A row we already hold is not new data: it cannot
-      // move the live figure, the hourly SUM or the training set, because
-      // nothing is written for it. Charging it against the rate limit would
-      // answer an honest retry 429, and a device reads 429 as "try later" —
-      // so the one case this block exists to serve would have turned into a
-      // back-off loop. Replaying the same stamp is also useless to an attacker
-      // for exactly the same reason: no write happens either way.
-      if (clientSupplied) {
-        const dup = await pool.query(
-          `SELECT recorded_at FROM venue_sensor_data
-            WHERE sensor_device_id = $1 AND recorded_at = $2
-            LIMIT 1`,
-          [device.device_id, recordedAt]
-        );
-        if (dup.rows.length > 0) {
-          // Re-delivering a reading still proves the device is alive. Ungated:
-          // there is no flood to guard against when nothing is stored, and a
-          // caller spamming duplicates only makes the guard below stricter for
-          // itself.
-          await pool.query('UPDATE sensor_devices SET last_seen_at = NOW() WHERE id = $1', [device.id]);
-          return res.status(201).json({ success: true, recorded_at: dup.rows[0].recorded_at, duplicate: true });
-        }
+      // Every refusal above wrote nothing: each one is also a reason `filing`
+      // stayed empty or `writer` matched no row. From here on the statement had
+      // permission to write and says what it did.
+      if (device.duplicate_of) {
+        return res.status(201).json({ success: true, recorded_at: device.duplicate_of, duplicate: true });
       }
 
-      // Two DIFFERENT questions about the same timestamp, and conflating them
-      // is what left the live figure writable (see MIN_LIVE_GAP_SECONDS):
-      //   isBackfill        — do subscribers hear about it? (60 seconds)
-      //   affectsLiveFigure — will GET /:placeId/current serve it? (15 minutes)
-      // A server-stamped row is always both.
-      const isBackfill = clientSupplied && recordedAt.getTime() < nowMs - BACKFILL_THRESHOLD_MS;
-      const affectsLiveFigure = !clientSupplied
-        || recordedAt.getTime() > nowMs - CURRENT_READING_MAX_AGE_MS;
-
-      if (!affectsLiveFigure) {
-        // Genuinely old backfill. Delivering old readings still proves the
-        // device is alive, and throttling a buffer drain would stall it.
-        await pool.query('UPDATE sensor_devices SET last_seen_at = NOW() WHERE id = $1', [device.id]);
-      } else {
-        // Flood guard on anything the app would show as current. Atomic: the
-        // WHERE clause and the write are the same statement, so two concurrent
-        // pushes cannot both pass it.
-        const touch = await pool.query(
-          `UPDATE sensor_devices
-              SET last_seen_at = NOW()
-            WHERE id = $1
-              AND (last_seen_at IS NULL OR last_seen_at <= NOW() - $2::interval)
-            RETURNING id`,
-          [device.id, `${MIN_LIVE_GAP_SECONDS} seconds`]
-        );
-        if (touch.rowCount === 0) {
-          // Say HOW LONG, in the header and in the body. Without it the device
-          // had to guess, and it guessed with its network backoff, which
-          // escalates to fifteen minutes. See the RATE_LIMIT_STATUS branch in
-          // flock-sensor/main.py. The note above this constant claims a
-          // throttled drain costs "about a minute of extra drain"; that is only
-          // true if the device waits the gap this endpoint is actually
-          // enforcing, so the endpoint has to tell it.
-          res.set('Retry-After', String(MIN_LIVE_GAP_SECONDS));
-          return res.status(429).json({
-            error: 'Readings are arriving too fast for this device',
-            retry_after_seconds: MIN_LIVE_GAP_SECONDS,
-          });
+      if (!device.recorded_at) {
+        // Nothing was written and it was not a duplicate, which only the flood
+        // guard can cause, and only on a row the app would show as current.
+        if (!filing.affectsLiveFigure) {
+          throw new Error('sensor ingest wrote nothing for an unthrottled reading');
         }
-      }
-
-      const { ir_beam_count, thermal_headcount, noise_db } = req.body;
-      const insert = await pool.query(
-        `INSERT INTO venue_sensor_data
-          (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
-         RETURNING recorded_at`,
-        [device.venue_place_id, ir_beam_count, thermal_headcount, noise_db, device.device_id, recordedAt]
-      );
-      const recorded_at = insert.rows[0].recorded_at;
-
-      // Only a live reading is "what is happening now". Pushing a two-hour-old
-      // backfilled row to subscribers would redraw the venue card with stale
-      // occupancy.
-      const io = req.app.get('io');
-      if (io && !isBackfill) {
-        io.to(`venue:${device.venue_place_id}`).emit('venue_sensor_update', {
-          venue_place_id: device.venue_place_id,
-          ir_beam_count,
-          thermal_headcount,
-          noise_db,
-          recorded_at,
+        // Say HOW LONG, in the header and in the body. Without it the device
+        // had to guess, and it guessed with its network backoff, which
+        // escalates to fifteen minutes. See the RATE_LIMIT_STATUS branch in
+        // flock-sensor/main.py. The note above MIN_LIVE_GAP_SECONDS claims a
+        // throttled drain costs "about a minute of extra drain"; that is only
+        // true if the device waits the gap this endpoint is actually
+        // enforcing, so the endpoint has to tell it.
+        res.set('Retry-After', String(MIN_LIVE_GAP_SECONDS));
+        return res.status(429).json({
+          error: 'Readings are arriving too fast for this device',
+          retry_after_seconds: MIN_LIVE_GAP_SECONDS,
         });
       }
 
-      res.status(201).json({ success: true, recorded_at });
+      // The reading is stored and committed; answer now.
+      res.status(201).json({ success: true, recorded_at: device.recorded_at });
+
+      // Only a live reading is "what is happening now". Pushing a two-hour-old
+      // backfilled row to subscribers would redraw the venue card with stale
+      // occupancy. After the response, and unable to change it: see
+      // broadcastReading.
+      if (!filing.isBackfill) broadcastReading(req, device, req.body, device.recorded_at);
     } catch (err) {
       console.error('Sensor data ingest error:', err);
       res.status(500).json({ error: 'Failed to ingest sensor data' });

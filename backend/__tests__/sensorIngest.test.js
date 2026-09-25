@@ -21,45 +21,23 @@ const pool = require('../config/database');
 // --- Fake database --------------------------------------------------------
 // Modelled, not scripted: the flood guard and the duplicate check are only
 // meaningful if the store actually enforces them, so the fake keeps real state.
+// The ingest is one statement now (routes/sensors.js INGEST_SQL), and what it
+// does is modelled once, in helpers/sensorStoreModel.js, for this suite and
+// sensorIngestionIntegrity.test.js alike. sensorIngestStatement.test.js runs
+// the real statement against a real Postgres.
+const { INGEST_STATEMENT, runIngest } = require('./helpers/sensorStoreModel');
 
 let devices = [];
 let readings = [];
 let venueProfiles = [];
 let queryLog = [];
 
-function intervalToMs(text) {
-  const m = /^(\d+(?:\.\d+)?)\s*(millisecond|second|minute|hour)s?$/.exec(String(text).trim());
-  if (!m) throw new Error(`fake db cannot parse interval ${text}`);
-  const n = Number(m[1]);
-  return n * { millisecond: 1, second: 1000, minute: 60000, hour: 3600000 }[m[2]];
-}
-
 pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
 
-  if (/SELECT id, device_id, venue_place_id, is_active FROM sensor_devices/.test(flat)) {
-    const row = devices.find((d) => d.api_key === params[0] || d.api_key === params[1]);
-    return Promise.resolve({ rows: row ? [row] : [], rowCount: row ? 1 : 0 });
-  }
-
-  // Backfill: an unconditional liveness touch, no rate guard.
-  if (/^UPDATE sensor_devices SET last_seen_at = NOW\(\) WHERE id = \$1$/.test(flat)) {
-    const device = devices.find((d) => d.id === params[0]);
-    if (device) device.last_seen_at = Date.now();
-    return Promise.resolve({ rows: [], rowCount: device ? 1 : 0 });
-  }
-
-  // Live: the guarded, atomic form.
-  if (/UPDATE sensor_devices SET last_seen_at/.test(flat)) {
-    const device = devices.find((d) => d.id === params[0]);
-    const gapMs = intervalToMs(params[1]);
-    if (!device) return Promise.resolve({ rows: [], rowCount: 0 });
-    if (device.last_seen_at !== null && Date.now() - device.last_seen_at < gapMs) {
-      return Promise.resolve({ rows: [], rowCount: 0 });
-    }
-    device.last_seen_at = Date.now();
-    return Promise.resolve({ rows: [{ id: device.id }], rowCount: 1 });
+  if (INGEST_STATEMENT.test(flat)) {
+    return Promise.resolve(runIngest({ devices, readings }, params));
   }
 
   // Owner gate on the fleet-health read.
@@ -85,27 +63,6 @@ pool.query = (sql, params = []) => {
         online: d.last_seen_at !== null && Date.now() - d.last_seen_at < windowMinutes * 60000,
       }));
     return Promise.resolve({ rows, rowCount: rows.length });
-  }
-
-  if (/SELECT recorded_at FROM venue_sensor_data/.test(flat)) {
-    const [deviceId, at] = params;
-    const hit = readings.find(
-      (r) => r.sensor_device_id === deviceId && r.recorded_at.getTime() === at.getTime()
-    );
-    return Promise.resolve({ rows: hit ? [{ recorded_at: hit.recorded_at }] : [], rowCount: hit ? 1 : 0 });
-  }
-
-  if (/INSERT INTO venue_sensor_data/.test(flat)) {
-    const row = {
-      venue_place_id: params[0],
-      ir_beam_count: params[1],
-      thermal_headcount: params[2],
-      noise_db: params[3],
-      sensor_device_id: params[4],
-      recorded_at: params[5] || new Date(),
-    };
-    readings.push(row);
-    return Promise.resolve({ rows: [{ recorded_at: row.recorded_at }], rowCount: 1 });
   }
 
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
@@ -224,7 +181,9 @@ test('both key forms are tried in one indexed lookup, so guessing a key costs th
   await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading() });
   const lookups = queryLog.filter((q) => /FROM sensor_devices WHERE api_key/.test(q.sql));
   assert.strictEqual(lookups.length, 1);
-  assert.deepStrictEqual(lookups[0].params, [digestOf(HASHED_KEY), HASHED_KEY]);
+  // The lookup is the head of the one ingest statement, so the reading's own
+  // parameters follow; the two key candidates are still $1 and $2.
+  assert.deepStrictEqual(lookups[0].params.slice(0, 2), [digestOf(HASHED_KEY), HASHED_KEY]);
 });
 
 test('no key is a 401 and never reaches the database', async () => {
@@ -480,9 +439,16 @@ test('a stolen key cannot append live rows without limit: the guard is the same 
   assert.strictEqual(second.status, 429);
   assert.strictEqual(readings.length, 1);
 
-  const guards = queryLog.filter((q) => /UPDATE sensor_devices SET last_seen_at/.test(q.sql));
-  for (const g of guards) {
-    assert.match(g.sql, /WHERE id = \$1 AND \(last_seen_at IS NULL OR last_seen_at <= NOW\(\) - \$2::interval\)/);
+  // One statement per push, and it carries the guard and the write together:
+  // the insert is conditional on the guarded touch inside that statement, so
+  // there is no gap between the two for a second push to pass through. The
+  // race itself is run against a real Postgres in sensorIngestStatement.test.js.
+  assert.strictEqual(queryLog.length, 2, 'each push must be exactly one statement');
+  for (const q of queryLog) {
+    assert.match(q.sql, /UPDATE sensor_devices s SET last_seen_at = NOW\(\)/);
+    assert.match(q.sql, /s\.last_seen_at IS NULL OR s\.last_seen_at <= NOW\(\) - \$8::interval/);
+    assert.match(q.sql, /INSERT INTO venue_sensor_data/);
+    assert.match(q.sql, /EXISTS \(SELECT 1 FROM touch\)/);
   }
 });
 
@@ -599,6 +565,28 @@ test('a live reading is broadcast to the venue room', async () => {
   assert.strictEqual(emits.length, 1);
   assert.strictEqual(emits[0].room, `venue:${VENUE}`);
   assert.strictEqual(emits[0].event, 'venue_sensor_update');
+});
+
+test('a broadcast that throws after the reading is stored cannot turn the answer into a 500', async () => {
+  // The broadcast runs after the response now. Before, a throw from the socket
+  // layer reached the handler's catch and answered 500 for a reading that was
+  // already in the table, and the Pi retried a success as a failure.
+  reset();
+  const realTo = io.to;
+  const realError = console.error;
+  const logged = [];
+  io.to = () => ({ emit() { throw new Error('socket layer down'); } });
+  console.error = (...args) => logged.push(args.join(' '));
+  try {
+    const res = await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading() });
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(readings.length, 1);
+  } finally {
+    io.to = realTo;
+    console.error = realError;
+  }
+  assert.ok(logged.some((l) => /broadcast failed after the reading was stored/.test(l)), logged.join('\n'));
 });
 
 test('a backfilled reading is not broadcast, so a two hour old count never redraws the venue card as if it were now', async () => {
