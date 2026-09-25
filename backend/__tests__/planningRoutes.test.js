@@ -36,8 +36,8 @@
 // the row filter — is handled explicitly and is not an authorization boundary.
 //
 // BASELINE. At the time of writing `node --test` stands at 1 failure, in
-// __tests__/authFieldBounds.test.js against routes/auth.js, which another agent
-// holds. Nothing in this file touches it.
+// __tests__/authFieldBounds.test.js against routes/auth.js, which is unrelated:
+// nothing in this file touches it.
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');

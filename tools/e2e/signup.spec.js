@@ -511,8 +511,8 @@ test('the profile has no Username field, because there is no column behind one',
   await openEditProfile(page);
   // The field was a dead control: it prefilled with the email's local part,
   // took whatever you typed, sent none of it to the server, and reset itself on
-  // save. There is no username column in the schema (backend project documentation
-  // says so), so an editable field for it could only ever lie about persisting.
+  // save. There is no username column in the schema (no migration
+  // adds one), so an editable field for it could only ever lie about persisting.
   // A field that cannot keep what you type is worse than no field, so it is
   // gone rather than pretending.
   await expect(page.getByLabel(/username/i)).toHaveCount(0);

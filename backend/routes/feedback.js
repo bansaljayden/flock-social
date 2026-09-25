@@ -503,7 +503,7 @@ router.post('/',
         // So the loose check leaked nothing and moved no number. That is an
         // argument for tightening it, not against: its safety rested entirely
         // on a column having no consumers yet, and flock_id exists precisely so
-        // that consumer can be written. project documentation records that this codebase
+        // that consumer can be written. The migration history shows this codebase
         // has already shipped the same shape of mistake three times — route
         // code widening a value set while the constraint behind it did not
         // follow. A write whose safety depends on nobody ever selecting a

@@ -53,7 +53,7 @@
 //     rebuild it. Since the alarm speaks once per UTC day, the cost of a reset
 //     is at most a delayed alert, never a missed outage that is still ongoing.
 //   * It divides by the instance count. At numReplicas: 1 that is exact; the
-//     root project documentation explains why a second instance needs Redis first.
+//     deployment notes say why a second instance needs Redis first.
 //   * Every mutation here is synchronous, and Node runs one turn at a time, so
 //     two concurrent requests cannot interleave inside the counter.
 //

@@ -35,28 +35,48 @@ test('a date of birth is read as a calendar date, not as a UTC instant', () => {
   // was invisible; a TZ variable is all it takes to move the age gate.
   for (const tz of ['America/Los_Angeles', 'UTC', 'Asia/Tokyo', 'Pacific/Kiritimati']) {
     inTimezone(tz, () => {
-      assert.strictEqual(ageFromDob('2013-06-16', new Date(2026, 5, 15)), 12, `${tz}: the day before the 13th birthday`);
-      assert.strictEqual(ageFromDob('2013-06-16', new Date(2026, 5, 16)), 13, `${tz}: the 13th birthday itself`);
-      assert.strictEqual(ageFromDob('2013-06-16', new Date(2026, 5, 17)), 13, `${tz}: the day after`);
+      assert.strictEqual(ageFromDob('2013-06-16', new Date('2026-06-15T12:00:00Z')), 12, `${tz}: the day before the 13th birthday`);
+      assert.strictEqual(ageFromDob('2013-06-16', new Date('2026-06-16T12:00:00Z')), 13, `${tz}: the 13th birthday itself`);
+      assert.strictEqual(ageFromDob('2013-06-16', new Date('2026-06-17T12:00:00Z')), 13, `${tz}: the day after`);
     });
   }
 });
 
 test('the under-13 boundary is the same in every timezone', () => {
   const results = ['America/Los_Angeles', 'UTC', 'Asia/Tokyo'].map((tz) =>
-    inTimezone(tz, () => ageFromDob('2013-06-16', new Date(2026, 5, 15)) >= MIN_AGE));
+    inTimezone(tz, () => ageFromDob('2013-06-16', new Date('2026-06-15T12:00:00Z')) >= MIN_AGE));
   assert.deepStrictEqual(results, [false, false, false], 'the same person must be let in, or not, everywhere');
 });
 
+test('today is the UTC date of the instant, so one instant is one age in every timezone', () => {
+  // "Today" was read with the local getters. Half an hour after UTC midnight
+  // it is still the 15th in Los Angeles, so a child whose 13th birthday is the
+  // 16th was 12 on a Los Angeles server and 13 on Railway at the same instant;
+  // half an hour before UTC midnight it is already the 16th in Tokyo and the
+  // same child was 13 a day early. Each pair below is one instant.
+  const zones = ['America/Los_Angeles', 'UTC', 'Asia/Tokyo', 'Pacific/Kiritimati'];
+  const agesAt = (iso) => zones.map((tz) => inTimezone(tz, () => ageFromDob('2013-06-16', new Date(iso))));
+  assert.deepStrictEqual(agesAt('2026-06-16T00:30:00Z'), [13, 13, 13, 13], 'just after UTC midnight on the birthday');
+  assert.deepStrictEqual(agesAt('2026-06-15T23:30:00Z'), [12, 12, 12, 12], 'just before it');
+  // A DATE column arrives from node-postgres as LOCAL midnight in whatever zone
+  // the process runs in, and is still the calendar date that was stored.
+  for (const tz of zones) {
+    inTimezone(tz, () => {
+      assert.strictEqual(ageFromDob(new Date(2013, 5, 16), new Date('2026-06-16T12:00:00Z')), 13, `${tz}: DATE-column shape`);
+      assert.strictEqual(ageFromDob(new Date(2013, 5, 17), new Date('2026-06-16T12:00:00Z')), 12, `${tz}: DATE-column shape, a day short`);
+    });
+  }
+});
+
 test('a full ISO timestamp is accepted and its time part ignored', () => {
-  const NOW = new Date(2026, 5, 16);
+  const NOW = new Date(Date.UTC(2026, 5, 16, 12));
   assert.strictEqual(ageFromDob('2013-06-16T23:59:59.999Z', NOW), 13);
   assert.strictEqual(ageFromDob('2013-06-16 00:00:00', NOW), 13);
   assert.strictEqual(ageFromDob('  2013-06-16  ', NOW), 13);
 });
 
 test('a Date object still works, which is how the existing gate tests call it', () => {
-  const NOW = new Date(2026, 5, 16);
+  const NOW = new Date(Date.UTC(2026, 5, 16, 12));
   assert.strictEqual(ageFromDob(new Date(2013, 5, 16), NOW), 13);
   assert.strictEqual(ageFromDob(new Date(2013, 5, 17), NOW), 12);
   assert.strictEqual(ageFromDob(new Date('nonsense'), NOW), null);
@@ -67,7 +87,7 @@ test('a shape that a DATE column would reject is null here, not an age', () => {
   // used to parse with `new Date`, clear the gate, and then reach pg — which
   // is a 500 on signing up, the exact class routes/auth.js has fixed twice.
   // Every caller treats null as "no usable date of birth" and answers 400/403.
-  const NOW = new Date(2026, 5, 16);
+  const NOW = new Date(Date.UTC(2026, 5, 16, 12));
   for (const junk of ['2000', '2000-W01-1', '2000-001', '01/01/2000', 'yesterday', 'not-a-date',
     946684800000, ['2000-01-01'], { y: 2000 }, true, null, undefined, '']) {
     assert.strictEqual(ageFromDob(junk, NOW), null, `${JSON.stringify(junk)} must not produce an age`);
@@ -75,7 +95,7 @@ test('a shape that a DATE column would reject is null here, not an age', () => {
 });
 
 test('a date that does not exist is refused instead of rolling forward', () => {
-  const NOW = new Date(2026, 5, 16);
+  const NOW = new Date(Date.UTC(2026, 5, 16, 12));
   assert.strictEqual(ageFromDob('2013-02-30', NOW), null);
   assert.strictEqual(ageFromDob('2013-04-31', NOW), null);
   assert.strictEqual(ageFromDob('2013-13-01', NOW), null);

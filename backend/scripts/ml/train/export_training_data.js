@@ -445,7 +445,7 @@ function escapeCsv(val) {
 //              through to 'unknown', because 'unknown' is the weight-1.0 pool.
 //
 // HANDOFF — prepare_features.py MUST change before a 'user_report' row can
-// train, and this file may not make that change (another agent owns the file):
+// train, and this file does not make that change (it belongs to the Python pipeline):
 //   1. LABEL_SOURCE_VALUES must gain 'user_report', and derive_label_provenance
 //      must recognise it, or enforce_label_contract raises on the first row.
 //   2. The sample-weight ladder must gain a tier for it. Today the ladder is

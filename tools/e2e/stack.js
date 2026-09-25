@@ -44,7 +44,7 @@
 // this harness ran in America/New_York and every robot reported plans four
 // hours late, which read as the worst defect of the day until the venue agent
 // checked what zone Railway actually runs in. The harness's job is to match
-// production, not to demonstrate a fragility project documentation already documents.
+// production, not to demonstrate a fragility that is already documented.
 process.env.TZ = 'UTC';
 
 const path = require('path');

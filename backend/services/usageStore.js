@@ -34,7 +34,7 @@
 //
 // WHAT THIS DOES NOT DO.
 //   * It does not make two instances agree. The app is pinned to one replica
-//     (root project documentation, "exactly one server"); a second would enforce from its
+//     (exactly one server); a second would enforce from its
 //     own memory and the two would overwrite each other's rows.
 //   * A deploy overlap (the new process has hydrated, the old one serves for a
 //     few more seconds) can lose the old process's last increments. That error

@@ -16,8 +16,8 @@
 // (America/New_York), not UTC's, for the same reason every date in this
 // pipeline is venue-local: at 11 PM Eastern, UTC is already tomorrow.
 //
-// In-memory caches, single-instance by deployment (see the replica warning
-// in project documentation): today's games for 15 minutes, the arena set for 12 hours.
+// In-memory caches, single-instance by deployment (the app is pinned to
+// one replica): today's games for 15 minutes, the arena set for 12 hours.
 // Every failure path returns null. The crowd card owes nothing to this
 // garnish, and a database blip must cost the line, never the card.
 // ---------------------------------------------------------------------------

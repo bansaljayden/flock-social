@@ -165,8 +165,11 @@ function dispatch(sql, params) {
 pool.query = (sql, params) => dispatch(sql, params);
 pool.connect = async () => ({
   query: (sql, params) => {
-    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) {
-      log.push({ sql: String(sql).trim(), params: [] });
+    // The mail budgets are claimed under an advisory lock inside a
+    // transaction (routes/auth.js claimResetRequest, claimVerificationSend).
+    // Logged like BEGIN, answered with nothing: no concurrency here.
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql) || String(sql).includes('pg_advisory_xact_lock')) {
+      log.push({ sql: String(sql).trim(), params: params || [] });
       return Promise.resolve({ rows: [] });
     }
     return dispatch(sql, params);
