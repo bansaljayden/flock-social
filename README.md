@@ -33,16 +33,22 @@ product invariant (see below, including what it does not cover).
 | Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below). A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
-| Venues | Venue dashboard: profile, promotions, events, reviews with owner reply, incoming-flocks demand feed. Tier is enforced server-side; nobody has been charged |
+| Venues | Venue dashboard on two plans. Free: profile, deals, events, reviews with owner reply, the incoming-flocks demand feed and the live busyness report. Roost: the venue's own forecast, the strip against nearby venues, the weekly summary, and Roost's cards and answers. The plan gate is server-side and switched off, and no venue has been charged |
 | Social | Friends (codes + search), DMs, post-hangout feedback |
 | Accounts | Email + Google + Sign in with Apple (iOS only), DOB age gate at 13, email verification, disposable-domain blocking |
 
-**Not built yet**, so nothing in this repo or on the site sells it: Stripe or
-venue billing of any kind (tier enforcement is real, charging is not),
-promoted placement in vote lists, slow-night push offers, paywall funnel
-analytics, and any story UI. Stories are a settled decision (2026-08-14): the
-backend routes exist and are tested, no story surface will ship, and the
-client has zero callers by design.
+**Built and switched off:** billing. Roost, the venue plan, is sold through
+Stripe checkout on flockcorp.com, and Flock Pro, the optional consumer
+subscription, through Apple in the app and Stripe on the web. Both stay off
+until their switches are set (`VENUE_BILLING_ENABLED`, `PAYWALL_ENABLED`), so
+today every account outside a short review list gets the Pro limits and every
+venue gets everything Roost has. `MONEY-MODEL.md` has the prices and what each
+plan changes.
+
+**Not built yet**, so nothing in this repo or on the site sells it:
+promoted placement in vote lists, slow-night push offers, and any story UI.
+Stories are a settled decision (2026-08-14): the backend routes exist and are
+tested, no story surface will ship, and the client has zero callers by design.
 
 Blocking used to be listed here as one-way. It is not any more: a Blocked-accounts
 screen with a working unblock shipped on 2026-08-14, so report, block and unblock
@@ -250,7 +256,7 @@ was never carried forward with the app after that.
 |---|---|
 | `DESIGN-STANDARD.md` | Design and copy standard, with per-rule audit status. Binds every UI or copy change |
 | `MONEY-MODEL.md` | Monetization reality: venue B2B first, consumer Pro later |
-| `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price: $35 Premium / $99 Pro, re-priced 2026-08-25 (matches VENUE_PLAN_PRICE in the app). This line said $75 for a week after the change |
+| `VENUE-BILLING.md` | Venue subscriptions. Plan enforcement and Stripe billing are both built and switched off behind `VENUE_BILLING_ENABLED`. Authoritative on the venue price: a free venue account, and Roost at $99/month or $990/year per location with a 14-day trial (matches VENUE_PLAN_PRICE in the app and Terms 9.6) |
 | `MODERATION-LEGAL.md` | Moderation and legal commitments the code must keep |
 | `BACKUP-AND-VERIFICATION.md` | Backup and restore: what is verified, what is only researched |
 | `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
