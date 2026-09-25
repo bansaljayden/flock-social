@@ -826,7 +826,7 @@ export function getNotificationStatus() {
 
 // Re-exported so App.js has a single import for "take me to the thing the
 // notification was about".
-export { onPushNavigate, peekPendingNavigation, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown } from './pushNavigation';
+export { onPushNavigate, peekPendingNavigation, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers } from './pushNavigation';
 
 /**
  * A sign-out takes this account's notifications with it: every one this

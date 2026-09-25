@@ -477,6 +477,23 @@ const SEND_TIMEOUT_MS = 8000;
 // supplies.
 const MAX_TOKENS_PER_USER = 20;
 
+// The rows a send to an account goes to: bounded, and newest first. $2 narrows
+// them to the devices a caller names, or is NULL for every device.
+const DEVICE_ROWS_SQL = `SELECT id, token FROM device_tokens
+        WHERE user_id = $1
+          AND ($2::int[] IS NULL OR id = ANY($2::int[]))
+        ORDER BY updated_at DESC NULLS LAST, id DESC
+        LIMIT ${MAX_TOKENS_PER_USER}`;
+
+// The devices a send to this account would reach now, by id. services/
+// pushHelper.js asks before it corrects an SOS on a device, because a device
+// whose row has gone since (its token replaced, or pruned as dead) can only be
+// reached through the rows that are there now.
+async function currentDeviceIds(userId) {
+  const r = await pool.query(DEVICE_ROWS_SQL, [userId, null]);
+  return (r && r.rows ? r.rows : []).map((row) => Number(row.id));
+}
+
 async function rawSend(message) {
   if (senderOverride) return senderOverride(message);
   return admin.messaging().send(message);
@@ -638,8 +655,12 @@ async function settleLate(userId, atDeadline, late) {
 // The answer above comes only once every device has answered, so it cannot
 // say which copy reached which device first; services/pushHelper.js needs
 // exactly that for an SOS, whose alarm and all-clear share one slot on each
-// device. It is told before the answer resolves, and a throw from it is
-// logged and never touches the send.
+// device. `opts.onUncertain(deviceId)` is called, the same way, for a send
+// that failed without saying the copy never arrived: anything but a dead
+// token. firebase-admin retries a send by itself, and an attempt that landed
+// can still answer as a failure when its reply is lost. Both are told before
+// the answer resolves, and a throw from either is logged and never touches
+// the send.
 async function sendToUserDevices(userId, perToken, opts = {}) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
@@ -648,14 +669,7 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     // unbounded row count here is an unbounded burst of outbound requests for
     // one notification. routes/notifications.js prunes to the same ceiling on
     // registration; this is the half that also bounds rows that predate it.
-    const result = await pool.query(
-      `SELECT id, token FROM device_tokens
-        WHERE user_id = $1
-          AND ($2::int[] IS NULL OR id = ANY($2::int[]))
-        ORDER BY updated_at DESC NULLS LAST, id DESC
-        LIMIT ${MAX_TOKENS_PER_USER}`,
-      [userId, targetIds(opts.onlyIds)]
-    );
+    const result = await pool.query(DEVICE_ROWS_SQL, [userId, targetIds(opts.onlyIds)]);
 
     if (result.rows.length === 0) return { sent: 0, failed: 0 };
 
@@ -668,14 +682,21 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     const attended = result.rows.length - rows.length;
     if (rows.length === 0) return { sent: 0, failed: 0, attended };
 
-    const onAccepted = typeof opts.onAccepted === 'function' ? opts.onAccepted : null;
-    const tellAccepted = (deviceId) => {
-      if (!onAccepted) return;
+    const tell = (fn, name) => (deviceId) => {
+      if (typeof fn !== 'function') return;
       try {
-        onAccepted(deviceId);
+        fn(deviceId);
       } catch (err) {
-        console.error('[Firebase] onAccepted failed:', err.message);
+        console.error(`[Firebase] ${name} failed:`, err.message);
       }
+    };
+    const tellAccepted = tell(opts.onAccepted, 'onAccepted');
+    const tellUncertain = tell(opts.onUncertain, 'onUncertain');
+    // A send's final word, as the caller should hear it: accepted, dead token
+    // (it never arrived, and there is nothing to say), or unsure.
+    const tellFinal = (deviceId, fin) => {
+      if (fin && fin.success) tellAccepted(deviceId);
+      else if (!(fin && fin.stale)) tellUncertain(deviceId);
     };
 
     // Round 7: this was a sequential await per token, inside route handlers
@@ -686,19 +707,23 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
         Promise.resolve()
           .then(() => perToken(row))
           .then((res) => {
-            // Accepted now, or, for a send still out at the deadline, when it
-            // lands. This reaction is attached before settleLate attaches its
+            // Answered now, or, for a send still out at the deadline, when it
+            // does. This reaction is attached before settleLate attaches its
             // own to the same promise, so it always runs first.
-            if (res && res.success) tellAccepted(row.id);
-            else if (res && res.late) {
+            if (res && res.late) {
               Promise.resolve(res.late).then(
-                (fin) => { if (fin && fin.success) tellAccepted(row.id); },
-                () => {}
+                (fin) => tellFinal(row.id, fin),
+                () => tellUncertain(row.id)
               );
+            } else {
+              tellFinal(row.id, res);
             }
             return { id: row.id, ...res };
           })
-          .catch(() => ({ id: row.id, success: false, stale: false }))
+          .catch(() => {
+            tellUncertain(row.id);
+            return { id: row.id, success: false, stale: false };
+          })
       )
     );
 
@@ -756,6 +781,7 @@ module.exports = {
   buildBadgeOnlyMessage,
   sendPushNotification,
   sendPushToUser,
+  currentDeviceIds,
   isEnabled,
   // Exported for the delivery tests — these are the parts that decide where a
   // tap lands, what text arrives, and whether a token gets deleted.

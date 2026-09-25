@@ -745,7 +745,10 @@ test('stand-down: it writes no row, because a row would block the next real SOS'
     assert.ok(!wrote(calls, 'INSERT INTO emergency_alerts'));
     const updates = calls.filter((c) => /UPDATE emergency_alerts/.test(c.text));
     assert.strictEqual(updates.length, 1, 'the one write is the withdrawal');
-    assert.match(updates[0].text, /SET withdrawn_at = NOW\(\)\s+WHERE user_id = \$1 AND id = ANY\(\$2::int\[\]\) AND withdrawn_at IS NULL/);
+    // statement_timestamp(), not NOW(): the stand-down's time is the moment it
+    // marks the alerts, after it has locked them (routes/safety.js, WHICH
+    // ALARM A STAND-DOWN CALLS OFF).
+    assert.match(updates[0].text, /SET withdrawn_at = statement_timestamp\(\)\s+WHERE user_id = \$1 AND id = ANY\(\$2::int\[\]\) AND withdrawn_at IS NULL/);
     assert.doesNotMatch(updates[0].text, /created_at\s*=|contacts_alerted\s*=/, 'the cooldown columns are never touched');
     assert.deepStrictEqual(updates[0].params, [ME.id, [41]]);
   } finally { mail.restore(); restore(); }
