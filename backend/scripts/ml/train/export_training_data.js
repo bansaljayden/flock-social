@@ -361,6 +361,13 @@ function cityQuery(city, optional = {}) {
         -- exist is a hard SQL error, and a database that has not booted 045
         -- must still export.
         ${has('events_observed', 't.events_observed')},
+        -- 2026-09-26 (migration 094): what BestTime's live answer said the
+        -- reading is about, the hour it starts and whether the venue was
+        -- open, and the vendor's own local clock at the call. Carried, never
+        -- featurised; probed like the other optionals.
+        ${has('live_hour_start', 't.live_hour_start')},
+        ${has('live_venue_open', 't.live_venue_open')},
+        ${has('live_local_time', 't.live_local_time')},
         t.collected_at,
         ${has('observed_date', 't.observed_date AS stored_observed_date', 'stored_observed_date')},
         t.busyness_pct,
@@ -1079,10 +1086,24 @@ function rowToCsv(row) {
     labelSource(row),
     vendorForecastPct(row),
     eventsObserved(row),
+    liveHourStart(row),
+    boolField(row.live_venue_open),
+    row.live_local_time,
   ].map(escapeCsv).join(',');
 }
 
-// The corpus contract, 45 columns, in exactly this order.
+// 2026-09-26: BestTime's analysis.hour_start for a live reading, an hour of the
+// day or nothing. Anything else is written as empty rather than guessed at.
+function liveHourStart(row) {
+  const v = row.live_hour_start;
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : '';
+}
+
+// The corpus contract, 48 columns, in exactly this order. (45 until
+// 2026-09-26, when migration 094's three live-answer columns were appended on
+// the same carried-not-featurised terms as the three before them.)
 //
 // prepare_features.py's EXPORT_COLUMNS is the same list and the two are pinned
 // against each other by __tests__/mlPipelineContracts.test.js and
@@ -1120,6 +1141,7 @@ const HEADER = [
   'observed_date', 'label_provenance',
   'label_source', 'vendor_forecast_pct',
   'events_observed',
+  'live_hour_start', 'live_venue_open', 'live_local_time',
 ].join(',');
 
 const UNDECLARED_WEEKLY_MESSAGE =
@@ -1140,6 +1162,11 @@ const OPTIONAL_COLUMNS = {
   events_observed: 'migration 045 adds it; without it NO row can say whether its '
     + 'has_nearby_event is a measurement or the column default, which is the state the '
     + 'whole 3.9M-row corpus is already in',
+  live_hour_start: 'migration 094 adds it; without it no live reading says which hour BestTime '
+    + 'measured it for',
+  live_venue_open: 'migration 094 adds it; without it no live reading says whether BestTime '
+    + 'had the venue open',
+  live_local_time: 'migration 094 adds it; without it no live reading carries the vendor clock',
 };
 
 async function columnsPresent(db, table) {
