@@ -293,6 +293,27 @@ async function readCorpus(files, { legacyCities = [] } = {}) {
   return { venues, curves, live, legacy, census };
 }
 
+// sports_events.csv (exportSportsEvents.js) as the rows ml_sports_events
+// returns to mlPredictor.getSportsTable.
+function readSportsCsv(file) {
+  const lines = fs.readFileSync(file, 'utf8').replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
+  const header = parseCsvLine(lines[0]);
+  const ix = Object.fromEntries(header.map((h, i) => [h, i]));
+  for (const c of ['is_home', 'event_local_date', 'event_local_time', 'venue_lat', 'venue_lon']) {
+    if (ix[c] === undefined) throw new Error(`${file} has no ${c} column`);
+  }
+  return lines.slice(1).map((line) => {
+    const f = parseCsvLine(line);
+    return {
+      is_home: f[ix.is_home] === '1',
+      event_local_date: f[ix.event_local_date] || null,
+      event_local_time: f[ix.event_local_time] || null,
+      venue_lat: f[ix.venue_lat] === '' ? null : Number(f[ix.venue_lat]),
+      venue_lon: f[ix.venue_lon] === '' ? null : Number(f[ix.venue_lon]),
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The serve-path inputs that do not depend on the model
 // ---------------------------------------------------------------------------
@@ -602,6 +623,9 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
   });
   const out = [];
   out.skipped = 0;
+  // The game schedule (train/sports_events.csv, the table serving caches), or
+  // null: every sports column then takes its no-game value, as serving does.
+  out.sports = helpers.sports || null;
   for (const r of rows) {
     const day = dayNumber(r.date);
     if (day === null || !(r.hour >= 0 && r.hour <= 23) || !Number.isFinite(r.y)) { out.skipped++; continue; }
@@ -640,10 +664,19 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
     // equals `off.offset` wherever a slot holds one reading; it is kept apart
     // so the switched arithmetic below is the served arithmetic by
     // construction rather than by coincidence.
-    const switched = I.trailingOffsetBefore(
-      I.parseOffsetReadings(offsetAt.storedOffsetReadings(r.venueId, day * 24 + r.hour, I.OFFSET_READINGS_KEPT)),
-      I.venueSlotOf(ts)
-    );
+    const storedRecent = I.parseRecentReadings(offsetAt.storedReadings(r.venueId, day * 24 + r.hour, I.NOWCAST_READINGS_KEPT));
+    const storedOffset = I.parseOffsetReadings(offsetAt.storedOffsetReadings(r.venueId, day * 24 + r.hour, I.OFFSET_READINGS_KEPT));
+    const switched = I.trailingOffsetBefore(storedOffset, I.venueSlotOf(ts));
+    // The live features an artifact that lists them is served (mlPredictor
+    // liveFeatureValues), from the same stored lists and the served curve an
+    // hour earlier, which getBaseline would blend from the same rows.
+    const prevSlot = I.baselineNeighborSlots(r.dow, r.hour);
+    const curvePrev = I.blendBaselineRows(
+      baselineRowsFor(curve, prevSlot.prevDay, prevSlot.prevHour, I.baselineNeighborSlots),
+      prevSlot.prevDay, prevSlot.prevHour
+    ).data;
+    const live = I.liveFeatureValues({ readings: storedRecent, offsetReadings: storedOffset, fresh: true },
+      I.venueSlotOf(ts), smoothed, curvePrev);
     out.push({
       ...r,
       ts,
@@ -660,6 +693,7 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
         : null,
       nowcastAgeHours: last ? last.ageHours : null,
       nowcastPick,
+      live,
       guessedCategory: I.guessCategory(r.types),
       rule,
       ruleConfidence: ruleResult.confidence,
@@ -689,7 +723,8 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
         && (art.meta.feature_names || []).includes('temperature')
         && I.tempForFeature(r.weather, r.lat, r.ts.getMonth() + 1) == null) return;
     mlIdx.push(i);
-    vectors.push(I.buildFeatureVector(r.venue, r.weather, r.ts, r.events, null, r.smoothed, r.neighbors));
+    vectors.push(I.buildFeatureVector(r.venue, r.weather, r.ts, r.events, null, r.smoothed, r.neighbors,
+      { live: r.live, sports: prepared.sports }));
   });
   const raw = await runGraph(art, vectors);
   const mapsThisModel = (art.meta.model_version || '') === I.QMAP_FITTED_ON;
@@ -706,10 +741,13 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   mlIdx.forEach((i, k) => {
     const r = prepared[i];
     const rawDelta = raw[k];
-    const offset = switchedArithmetic ? r.switchedOffset : r.offset;
     // curve_offset serves every venue-hour the model path reaches, and never
     // runs the model, so a model output cannot divert it.
     const curveOffset = mode === 'curve_offset' && r.smoothed > 0;
+    // An artifact that takes the offset as an input is not handed it again
+    // after the model (predictBusyness, artifactLearnsOffset).
+    const offset = !curveOffset && I.artifactLearnsOffset(art.meta) ? null
+      : (switchedArithmetic ? r.switchedOffset : r.offset);
     if (!curveOffset && !Number.isFinite(rawDelta)) return; // the catch in predictBusyness answers from the rule engine
     const parts = { reconstructed: null, mapped: null, withOffset: null, modelServed: null };
     if (Number.isFinite(rawDelta)) {
@@ -1175,7 +1213,7 @@ function parseArgs(argv) {
     else if (k === 'gate') args.gate = true;
     else if (k === 'slices') args.slices = true;
     else if (k === 'fit') args.fit = true;
-    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from'].includes(k)) args[k] = v;
+    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from', 'sports'].includes(k)) args[k] = v;
     else throw new Error(`unrecognised argument --${k}`);
   }
   return args;
@@ -1254,7 +1292,16 @@ async function main(argv = process.argv.slice(2)) {
   const toDate = args.to || '9999-12-31';
   const inWindow = (r) => r.date >= fromDate && r.date <= toDate;
 
-  const helpers = { I: art.I, crowdEngine };
+  // The game schedule, when the artifact reads it: --sports=<csv>, else
+  // train/sports_events.csv (exportSportsEvents.js), the file training read.
+  let sports = null;
+  if (art.I.artifactReadsSportsFeatures(art.meta)) {
+    const sportsCsv = args.sports || path.join(trainDir, 'sports_events.csv');
+    if (!fs.existsSync(sportsCsv)) throw new Error(`the artifact reads the sports features and ${sportsCsv} does not exist; run exportSportsEvents.js or pass --sports=.`);
+    sports = art.I.buildSportsTable(readSportsCsv(sportsCsv));
+    console.log(`[BandEval] sports schedule: ${sportsCsv} (${sports.byDate.size} game dates, ${sports.arenas.length} arenas)`);
+  }
+  const helpers = { I: art.I, crowdEngine, sports };
   const qmap = args.qmap === undefined ? undefined : args.qmap !== 'false';
   const sections = {};
   const perRow = [];
@@ -1631,6 +1678,7 @@ function writeBandGate(metaPath, gateResult) {
 module.exports = {
   parseCsvLine,
   readCorpus,
+  readSportsCsv,
   isolateFromDatabases,
   pinUtcClock,
   wallClock,

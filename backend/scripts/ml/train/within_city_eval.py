@@ -294,6 +294,7 @@ def rebuild_training_frame() -> pd.DataFrame:
     # CSV's venues too; no holdout city lies within a neighbour box of a
     # training venue, so the training rows' values are the same.
     neighbor_table = pf.build_neighbor_table([train_df])
+    live_reading_table = pf.build_live_reading_table([train_df], neighbor_table)
 
     # Corpus contract, same order as main(). The holdout CSV takes no part in
     # the training frame, so only the train half is replayed; the weather
@@ -319,6 +320,7 @@ def rebuild_training_frame() -> pd.DataFrame:
     train_df = pf.add_astronomy_features(train_df)
     train_df, _temp_norms = pf.add_climate_anomaly(train_df)
     train_df = pf.add_neighbor_features(train_df, neighbor_table)
+    train_df = pf.add_live_features(train_df, live_reading_table, neighbor_table)
     train_df = pf.add_holiday_features(train_df)
 
     train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)

@@ -189,6 +189,9 @@ CALENDAR_POLICY = _policy('FLOCK_CALENDAR_POLICY', 'require', {'require', 'drop'
 # this check used to be and what let a Celsius threshold sit on a Fahrenheit
 # column through every round. See EXPECTED_SPARSE_FEATURES.
 DEAD_SLOT_POLICY = _policy('FLOCK_DEAD_SLOT_POLICY', 'require', {'require', 'warn'})
+# The live features (add_live_features) are on; 'off' drops all five, for the
+# ablation that measures them.
+LIVE_FEATURE_POLICY = _policy('FLOCK_LIVE_FEATURES', 'on', {'on', 'off'})
 
 # Smoke-test escape hatch for the realtime-row floor. A real retrain must never
 # set this; it exists so the pipeline can be exercised on a synthetic fixture.
@@ -1707,6 +1710,191 @@ def add_neighbor_features(df: pd.DataFrame, table: Dict = None) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# ---------------------------------------------------------------------------
+# THE LIVE FEATURES (2026-09-26): the venue's own recent readings as inputs.
+#
+# Production serves curve + 0.85 x the strictly-past trailing offset, plus the
+# newest earlier-hour live reading blended in by its lag (the two serving
+# switches, services/mlPredictor.js). Those are fixed weights applied after
+# any model. These five columns hand the same two quantities to the model, so
+# a retrain learns how far to trust them per hour, category and lag instead of
+# trailing a two-line heuristic. Each is mlPredictor.liveFeatureValues, and
+# __tests__/mlLiveFeatureParity.test.js requires equality on a random grid:
+#
+#   last_live_dev    newest live reading of the venue from a slot STRICTLY
+#                    before the row's, within NOWCAST_MAX_LAG_HOURS, minus the
+#                    row's own served (smoothed) baseline; 0 when none
+#   last_live_age_h  its lag in hours; LIVE_MISSING_AGE_H when none
+#   recent_offset    median of (reading - curve at the reading's own slot) over
+#                    the newest OFFSET_MAX_READINGS readings strictly before the
+#                    slot and inside OFFSET_WINDOW_HOURS, at least
+#                    DEVIATION_MIN_READINGS of them, clamped to
+#                    +/-DEVIATION_CLAMP (trailingOffsetBefore); 0 when none
+#   recent_offset_n  how many readings that median took; 0 when none
+#   curve_prev_hour  the served curve one clock hour earlier
+#                    (blendBaselineRows at the previous slot); 0 with no row
+#
+# NO LEAK, BY CONSTRUCTION AND BY TEST. Every reading a row sees has a slot
+# strictly before the row's own; the row's label, and anything at or after its
+# hour, cannot reach it (test_live_features.py perturbs exactly those and
+# requires nothing to move). The readings are the population
+# buildRecentDeviation.js stores: label_source 'live', a busyness, a dated
+# venue-local slot, and a positive curve at the reading's own slot. They are
+# read from BOTH raw frames before any row is dropped, because serving has
+# every earlier reading, the time-held-out ones included once their hour has
+# passed; strictly-before keeps a training row from seeing any of them.
+#
+# Weekly anchor rows carry no date, so they take the missing values: the same
+# "no recent reading" a venue without live coverage is served.
+# ---------------------------------------------------------------------------
+LIVE_FEATURE_NAMES: List[str] = ['last_live_dev', 'last_live_age_h', 'recent_offset',
+                                 'recent_offset_n', 'curve_prev_hour']
+LIVE_MISSING_AGE_H = 99         # mlPredictor.LIVE_MISSING_AGE_H
+NOWCAST_MAX_LAG_HOURS = 12      # mlPredictor.NOWCAST_MAX_LAG_HOURS
+OFFSET_WINDOW_HOURS = 28 * 24   # mlPredictor.OFFSET_WINDOW_HOURS
+OFFSET_MAX_READINGS = 20        # mlPredictor.OFFSET_MAX_READINGS
+DEVIATION_MIN_READINGS = 2      # mlPredictor.DEVIATION_MIN_READINGS
+DEVIATION_CLAMP = 50            # mlPredictor.DEVIATION_CLAMP
+_EPOCH_ORDINAL = 719163         # date(1970, 1, 1).toordinal()
+
+
+def slot_day_number(value) -> float:
+    """mlPredictor.slotDayNumber: days since the epoch of a strict YYYY-MM-DD, else NaN."""
+    from datetime import date as _date
+    if not isinstance(value, str) or len(value) != 10 or value[4] != '-' or value[7] != '-':
+        return np.nan
+    y, m, d = value[:4], value[5:7], value[8:]
+    if not (y.isdigit() and m.isdigit() and d.isdigit() and y.isascii() and m.isascii() and d.isascii()):
+        return np.nan
+    try:
+        return float(_date(int(y), int(m), int(d)).toordinal() - _EPOCH_ORDINAL)
+    except ValueError:
+        return np.nan
+
+
+def _row_slots(df: pd.DataFrame) -> np.ndarray:
+    """The venue-local slot (days since the epoch x 24 + hour) of each row, NaN when undated."""
+    day = df['observed_date'].map(slot_day_number).to_numpy(dtype=float) \
+        if 'observed_date' in df.columns else np.full(len(df), np.nan)
+    hour = pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)
+    ok = np.isfinite(day) & (hour >= 0) & (hour <= 23) & (np.floor(hour) == hour)
+    return np.where(ok, day * 24 + np.nan_to_num(hour), np.nan)
+
+
+def served_curve_at(table: Dict, venue_ids: np.ndarray, dow: np.ndarray, hour: np.ndarray) -> np.ndarray:
+    """mlPredictor.getBaseline over the neighbour table's raw curves: blendBaselineRows
+    at each (venue, dow, hour), 0 where the slot has no row or the venue no curve."""
+    n = len(venue_ids)
+    out = np.zeros(n, dtype=float)
+    rows = np.fromiter((table['index'].get(v, -1) for v in venue_ids), dtype=np.int64, count=n)
+    ok = ((rows >= 0) & np.isfinite(dow) & np.isfinite(hour) & (dow >= 0) & (dow <= 6)
+          & (hour >= 0) & (hour <= 23))
+    if not ok.any():
+        return out
+    idx = np.flatnonzero(ok)
+    r = rows[idx]
+    s = (dow[idx] * 24 + hour[idx]).astype(np.int64)
+    curve = table['curve']
+    cur = curve[r, s].astype(float)
+    prev = curve[r, (s - 1) % 168].astype(float)
+    nxt = curve[r, (s + 1) % 168].astype(float)
+    prev = np.where(prev > 0, prev, 0.0)   # absent (-1) or 0: "unavailable"
+    nxt = np.where(nxt > 0, nxt, 0.0)
+    has_nb = (prev > 0) | (nxt > 0)
+    blended = js_round(cur * 0.6 + np.where(prev > 0, prev, cur) * 0.2 + np.where(nxt > 0, nxt, cur) * 0.2)
+    val = np.where(has_nb, blended, cur)
+    out[idx] = np.where(cur >= 0, val, 0.0)
+    return out
+
+
+def build_live_reading_table(frames: List[pd.DataFrame], neighbor_table: Dict) -> Dict:
+    """Every live reading buildRecentDeviation.js would store, per venue, oldest first."""
+    cols = ['venue_id', 'day_of_week', 'hour', 'busyness_pct', 'observed_date',
+            'label_source', 'is_realtime']
+    raw = pd.concat([f[cols] for f in frames], ignore_index=True)
+    live = ((pd.to_numeric(raw['is_realtime'], errors='coerce') == 1).to_numpy()
+            & (raw['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy())
+    y = pd.to_numeric(raw['busyness_pct'], errors='coerce').to_numpy(dtype=float)
+    dow = pd.to_numeric(raw['day_of_week'], errors='coerce').to_numpy(dtype=float)
+    hour = pd.to_numeric(raw['hour'], errors='coerce').to_numpy(dtype=float)
+    slot = _row_slots(raw)
+    vid = raw['venue_id'].astype(str).to_numpy()
+    rows = np.fromiter((neighbor_table['index'].get(v, -1) for v in vid), dtype=np.int64, count=len(vid))
+    ok = (live & np.isfinite(y) & (y >= 0) & (y <= 100) & np.isfinite(slot) & (rows >= 0)
+          & np.isfinite(dow) & (dow >= 0) & (dow <= 6) & (np.floor(dow) == dow))
+    idx = np.flatnonzero(ok)
+    own_curve = neighbor_table['curve'][rows[idx], (dow[idx] * 24 + hour[idx]).astype(np.int64)].astype(float)
+    keep = own_curve > 0          # the builder's JOIN ... AND b.baseline > 0
+    idx = idx[keep]
+    dev = y[idx] - own_curve[keep]
+    frame = pd.DataFrame({'v': vid[idx], 'slot': slot[idx], 'y': y[idx], 'dev': dev})
+    frame = frame.sort_values(['v', 'slot'], kind='stable')
+    by_venue = {}
+    for v, g in frame.groupby('v', sort=False):
+        by_venue[v] = (g['slot'].to_numpy(dtype=float), g['y'].to_numpy(dtype=float),
+                       g['dev'].to_numpy(dtype=float))
+    return {'by_venue': by_venue, 'readings': int(len(frame)), 'venues': len(by_venue)}
+
+
+def live_feature_values(readings, target_slot: float, baseline: float) -> Tuple[float, float, float, float]:
+    """(last_live_dev, last_live_age_h, recent_offset, recent_offset_n) for one slot."""
+    last_dev, age, offset, n_off = 0.0, float(LIVE_MISSING_AGE_H), 0.0, 0.0
+    if readings is None or not np.isfinite(target_slot):
+        return last_dev, age, offset, n_off
+    slots, values, devs = readings
+    k = int(np.searchsorted(slots, target_slot, side='left'))   # readings[:k] are strictly earlier
+    if k > 0:
+        lag = target_slot - slots[k - 1]
+        if 1 <= lag <= NOWCAST_MAX_LAG_HOURS:
+            last_dev, age = float(values[k - 1] - baseline), float(lag)
+    window = []
+    j = k - 1
+    while j >= 0 and len(window) < OFFSET_MAX_READINGS:
+        if slots[j] < target_slot - OFFSET_WINDOW_HOURS:
+            break
+        window.append(devs[j])
+        j -= 1
+    if len(window) >= DEVIATION_MIN_READINGS:
+        a = sorted(window)
+        m = len(a)
+        raw = a[(m - 1) // 2] if m % 2 else (a[m // 2 - 1] + a[m // 2]) / 2
+        offset = float(max(-DEVIATION_CLAMP, min(DEVIATION_CLAMP, raw)))
+        n_off = float(m)
+    return last_dev, age, offset, n_off
+
+
+def add_live_features(df: pd.DataFrame, reading_table: Dict, neighbor_table: Dict) -> pd.DataFrame:
+    """The five live columns (the block above). Run after add_baseline_features:
+    last_live_dev is measured against the row's served, smoothed baseline."""
+    n = len(df)
+    vid = df['venue_id'].astype(str).to_numpy()
+    dow = pd.to_numeric(df['day_of_week'], errors='coerce').to_numpy(dtype=float)
+    hour = pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)
+    prev_hour = (hour - 1) % 24
+    prev_dow = np.where(hour == 0, (dow - 1) % 7, dow)
+    df['curve_prev_hour'] = served_curve_at(neighbor_table, vid, prev_dow, prev_hour)
+
+    slot = _row_slots(df)
+    base = pd.to_numeric(df['baseline_busyness'], errors='coerce').fillna(0).to_numpy(dtype=float)
+    out = np.zeros((n, 4), dtype=float)
+    out[:, 1] = LIVE_MISSING_AGE_H
+    by_venue = reading_table['by_venue']
+    for i in np.flatnonzero(np.isfinite(slot)):
+        readings = by_venue.get(vid[i])
+        if readings is not None:
+            out[i] = live_feature_values(readings, slot[i], base[i])
+    df['last_live_dev'] = out[:, 0]
+    df['last_live_age_h'] = out[:, 1]
+    df['recent_offset'] = out[:, 2]
+    df['recent_offset_n'] = out[:, 3]
+    with_reading = int((out[:, 1] < LIVE_MISSING_AGE_H).sum())
+    with_offset = int((out[:, 3] > 0).sum())
+    logger.info('Live features: %d rows with an earlier reading within %dh, %d with a trailing '
+                'offset (of %d dated rows, %d rows).', with_reading, NOWCAST_MAX_LAG_HOURS,
+                with_offset, int(np.isfinite(slot).sum()), n)
+    return df
+
+
 def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
     """Special-night context from holidays.json (v2.5).
 
@@ -1763,12 +1951,29 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
 # all tonight", home or away, because sports bars fill for road games on TV;
 # home-ness and arena distance are separate features layered on top, and the
 # lift is expected to decay with distance rather than be a binary.
-SPORTS_DIST_CAP_KM = 60.0
-SPORTS_LOCAL_KM = 60.0
-SPORTS_HOME_NEAR_KM = 10.0
+SPORTS_DIST_CAP_KM = 60.0       # mlPredictor.SPORTS_DIST_CAP_KM
+SPORTS_LOCAL_KM = 60.0          # mlPredictor.SPORTS_LOCAL_KM
+SPORTS_HOME_NEAR_KM = 10.0      # mlPredictor.SPORTS_HOME_NEAR_KM
+SPORTS_FEATURE_NAMES: List[str] = ['sports_game_today', 'sports_games_count', 'sports_evening_game',
+                                   'sports_home_game_today', 'sports_home_dist_km', 'sports_home_within_10km']
 
 
-def add_sports_features(df: pd.DataFrame) -> pd.DataFrame:
+def sports_features_enabled(env=os.environ) -> bool:
+    """FLOCK_SPORTS_FEATURES: '1' on, '0' off, unset: on exactly when
+    sports_events.csv (exportSportsEvents.js) sits beside this file.
+
+    Off without the file because six columns computed from no schedule are
+    constant and the dead-slot contract would stop the run; a retrain that
+    means to carry the family exports the schedule first (RETRAIN.md)."""
+    v = str(env.get('FLOCK_SPORTS_FEATURES', '')).strip()
+    if v == '1':
+        return True
+    if v == '0':
+        return False
+    return (SCRIPT_DIR / 'sports_events.csv').exists()
+
+
+def add_sports_features(df: pd.DataFrame, path: Path = None) -> pd.DataFrame:
     """Game-night context from sports_events.csv (exportSportsEvents.js).
 
     Three zero cases, each the truth rather than a fallback:
@@ -1789,7 +1994,7 @@ def add_sports_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     cols_zero = ['sports_game_today', 'sports_games_count', 'sports_evening_game',
                  'sports_home_game_today', 'sports_home_within_10km']
-    path = SCRIPT_DIR / 'sports_events.csv'
+    path = Path(path) if path is not None else SCRIPT_DIR / 'sports_events.csv'
     if not path.exists():
         for c in cols_zero:
             df[c] = 0
@@ -2727,19 +2932,13 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # tell the model is a training row's label regime. See realtime_flags.
         'is_realtime',
     }
-    # The sports game-night family is ABLATION-ONLY until mlPredictor.js
-    # computes it at serving time (code review, 2026-09-01): unconditionally
-    # featurised, a normal retrain either aborted on the dead-slot contract
-    # (no sports_events.csv, six constant columns) or produced an artifact the
-    # server refuses to load (metadata names sports_* fields inference cannot
-    # build). The ablation opts in with FLOCK_SPORTS_FEATURES=1; everything
-    # else trains exactly as before, with the columns computed on the frame
-    # but never in feature_cols.
-    if os.environ.get('FLOCK_SPORTS_FEATURES') != '1':
-        exclude |= {
-            'sports_game_today', 'sports_games_count', 'sports_evening_game',
-            'sports_home_game_today', 'sports_home_dist_km', 'sports_home_within_10km',
-        }
+    # The sports game-night family. It was ABLATION-ONLY until mlPredictor.js
+    # computed it at serving time (code review, 2026-09-01). Since 2026-09-26
+    # serving does (mlPredictor.sportsFeatureValues over ml_sports_events,
+    # __tests__/mlSportsParity.test.js), so it is a feature whenever the
+    # schedule export is present: sports_features_enabled() below.
+    if not sports_features_enabled():
+        exclude |= set(SPORTS_FEATURE_NAMES)
     exclude |= DROPPED_FEATURES
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)
@@ -2802,6 +3001,14 @@ def main():
     logger.info('Neighbour table: %d venues, %d with a weekly curve (serving arithmetic, '
                 'box +/-%s degrees around toFixed(3) coordinates).',
                 neighbor_table['venues'], neighbor_table['venues_with_curve'], NEIGHBOR_BOX_DEG)
+    # The live readings serving's offset row stores, from both raw frames and
+    # before any row is dropped (see the block above add_live_features).
+    live_reading_table = build_live_reading_table([train_df, holdout_df], neighbor_table)
+    logger.info('Live reading table: %d readings over %d venues (label_source live, a '
+                'positive curve at the reading\'s own slot).',
+                live_reading_table['readings'], live_reading_table['venues'])
+    if LIVE_FEATURE_POLICY == 'off':
+        drop_features(LIVE_FEATURE_NAMES, 'FLOCK_LIVE_FEATURES=off (ablation)')
 
     # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
     # Recover weather_condition_code from the description text, then decide the
@@ -2894,6 +3101,8 @@ def main():
     train_df = add_astronomy_features(train_df)
     train_df, _ = add_climate_anomaly(train_df, temp_norms)
     train_df = add_neighbor_features(train_df, neighbor_table)
+    # 2026-09-26: the venue's own earlier readings (the block above add_live_features)
+    train_df = add_live_features(train_df, live_reading_table, neighbor_table)
     # v2.5: special-night calendar features from observed_date
     train_df = add_holiday_features(train_df)
     # 2026-08-30: game-night context, zeros unless sports_events.csv exists
@@ -2956,6 +3165,7 @@ def main():
         holdout_df = add_astronomy_features(holdout_df)
         holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
         holdout_df = add_neighbor_features(holdout_df, neighbor_table)
+        holdout_df = add_live_features(holdout_df, live_reading_table, neighbor_table)
         holdout_df = add_holiday_features(holdout_df)
         holdout_df = add_sports_features(holdout_df)
 
@@ -3386,6 +3596,8 @@ def main():
             'calendar_policy': CALENDAR_POLICY,
             'dead_slot_policy': DEAD_SLOT_POLICY,
             'run_length_policy': RUN_LENGTH_POLICY,
+            'live_feature_policy': LIVE_FEATURE_POLICY,
+            'sports_features': sports_features_enabled(),
             'weather_code_recovery': {
                 'train': weather_stats,
                 'holdout': holdout_weather_stats,
