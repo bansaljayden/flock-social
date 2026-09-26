@@ -2424,13 +2424,17 @@ class VideoDriverChoice(unittest.TestCase):
     def test_the_panel_size_is_asked_for_not_assumed(self):
         # set_mode((0, 0), FULLSCREEN) returns the panel's own size. Naming a
         # size is how a remembered 720x1280 outlived the panel it belonged to.
+        #
+        # A REAL display is always asked for its own size. The configured size
+        # is allowed in exactly one place, the placeholder driver, which has no
+        # panel to ask and would otherwise invent SDL's own default.
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
-        idx = source.index('def display_loop():')
-        window = source[idx:idx + 2000]
-        self.assertIn('set_mode(', window)
-        self.assertIn('(0, 0)', window)
-        self.assertNotIn('(DISPLAY_W, DISPLAY_H)', window,
-                         'the panel size is being asserted again instead of asked for')
+        opener = source[source.index('def open_display('):source.index('def display_loop():')]
+        real, placeholder = opener.split('# Nothing real.', 1)
+        self.assertIn('set_mode((0, 0), pygame.FULLSCREEN)', real)
+        self.assertNotIn('(DISPLAY_W, DISPLAY_H)', real,
+                         'a real panel size is being asserted again instead of asked for')
+        self.assertIn('(DISPLAY_W, DISPLAY_H)', placeholder)
 
     def test_a_dark_panel_does_not_stop_the_sensor(self):
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
@@ -2664,5 +2668,73 @@ class DesktopDetection(unittest.TestCase):
         for name in (main.BRAND_DISPLAY, main.BRAND_WORDMARK, main.BRAND_LABEL,
                      main.BRAND_BODY, main.BRAND_MARK_BADGE, main.BRAND_MARK_BIRDS):
             self.assertTrue((here / name).exists(), f'{name} is missing from flux-assets')
+class DisplayBootRace(unittest.TestCase):
+    """At boot the desktop's socket appears seconds after the service starts.
+
+    Opening a display once and giving up on failure left the panel dark for the
+    whole run. These drive open_display with a fake clock and a fake SDL.
+    """
+
+    class _Display:
+        def __init__(self, works_on):
+            self.works_on = works_on
+            self.tried = []
+
+        def quit(self):
+            pass
+
+        def set_mode(self, size, flags=0):
+            d = os.environ.get('SDL_VIDEODRIVER')
+            self.tried.append(d)
+            if d in self.works_on:
+                return _FakeSurface((1024, 600))
+            raise RuntimeError(f'{d} not available')
+
+    class _SDL:
+        FULLSCREEN = 1
+
+        def __init__(self, works_on):
+            self.display = DisplayBootRace._Display(works_on)
+
+        def init(self):
+            pass
+
+    def test_a_display_that_appears_late_is_waited_for(self):
+        rounds = {'n': 0}
+
+        def candidates():
+            rounds['n'] += 1
+            # No desktop for the first two rounds, then it arrives.
+            return ['kmsdrm', 'dummy'] if rounds['n'] < 3 else ['wayland', 'kmsdrm', 'dummy']
+
+        sdl = self._SDL(works_on={'wayland'})
+        screen, driver = main.open_display(sdl, candidates, wait=60, retry=0,
+                                           sleep=lambda s: None)
+        self.assertEqual(driver, 'wayland')
+        self.assertIsNotNone(screen)
+
+    def test_it_gives_up_on_a_real_display_eventually(self):
+        sdl = self._SDL(works_on={'dummy'})
+        screen, driver = main.open_display(sdl, lambda: ['kmsdrm', 'dummy'],
+                                           wait=0, retry=0, sleep=lambda s: None)
+        self.assertEqual(driver, 'dummy')
+
+    def test_a_working_display_is_used_at_once(self):
+        sdl = self._SDL(works_on={'kmsdrm'})
+        naps = []
+        screen, driver = main.open_display(sdl, lambda: ['kmsdrm', 'dummy'],
+                                           wait=60, retry=5, sleep=naps.append)
+        self.assertEqual(driver, 'kmsdrm')
+        self.assertEqual(naps, [], 'it waited although the display was ready')
+
+    def test_no_graphics_hardware_does_not_wait(self):
+        # A venue unit with no panel at all has nothing to wait for, and must
+        # not hold the display thread for the full wait on every boot.
+        sdl = self._SDL(works_on={'dummy'})
+        naps = []
+        _, driver = main.open_display(sdl, lambda: ['dummy'], wait=60, retry=5,
+                                      sleep=naps.append)
+        self.assertEqual(driver, 'dummy')
+        self.assertEqual(naps, [])
 if __name__ == '__main__':
     unittest.main()

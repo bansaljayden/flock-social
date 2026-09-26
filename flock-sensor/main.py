@@ -3305,11 +3305,34 @@ class Panel:
                 y += m['font_xs'] + 6
 
 
-def display_loop():
-    try:
-        import pygame
-        screen = None
-        for driver in video_driver_candidates():
+# How long to wait at boot for a real display before settling for none.
+DISPLAY_WAIT_SECONDS = 45
+DISPLAY_RETRY_SECONDS = 3
+
+
+def open_display(pygame, candidates_fn=None, wait=None, retry=None, sleep=None):
+    """(screen, driver) on the first real driver that works, waiting for one.
+
+    THE BOOT RACE. The service starts early; a Pi that shows a desktop creates
+    that desktop's display socket a few seconds later. Asked too soon, the
+    picker found no desktop, tried the hardware while the desktop was taking
+    it, failed, fell through to the placeholder driver, and the panel stayed
+    dark for the whole run, which looks exactly like a dead unit. So a real
+    driver is retried for up to DISPLAY_WAIT_SECONDS before the placeholder is
+    accepted. Takes its collaborators so the waiting is tested without a clock.
+    """
+    candidates_fn = candidates_fn or video_driver_candidates
+    wait = DISPLAY_WAIT_SECONDS if wait is None else wait
+    retry = DISPLAY_RETRY_SECONDS if retry is None else retry
+    sleep = sleep or _stop.wait
+    deadline = time.monotonic() + wait
+    attempt = 0
+    while True:
+        attempt += 1
+        # Re-read every round: the desktop's socket may exist now when it did
+        # not a moment ago, which is the whole point of waiting.
+        real = [d for d in candidates_fn() if d != 'dummy']
+        for driver in real:
             os.environ['SDL_VIDEODRIVER'] = driver
             try:
                 pygame.display.quit()
@@ -3319,12 +3342,38 @@ def display_loop():
                 pygame.init()
                 # (0, 0) asks the panel for its own size. Naming one here is
                 # how a remembered 720x1280 outlived the panel it belonged to.
-                screen = pygame.display.set_mode(
-                    (0, 0), pygame.FULLSCREEN if driver != 'dummy' else 0)
-                logger.info(f'Display is up on the "{driver}" driver')
-                break
+                screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                logger.info(f'Display is up on the "{driver}" driver'
+                            + (f' after {attempt} tries' if attempt > 1 else ''))
+                return screen, driver
             except Exception as e:
-                logger.warning(f'SDL driver "{driver}" did not work: {e}')
+                log_throttled('display_open', logging.WARNING,
+                              f'SDL driver "{driver}" did not work yet: {e}')
+        if not real or time.monotonic() >= deadline or _stop.is_set():
+            break
+        sleep(retry)
+
+    # Nothing real. The placeholder keeps the thread alive and the counter with
+    # it; the sensor itself never needed a screen.
+    os.environ['SDL_VIDEODRIVER'] = 'dummy'
+    try:
+        pygame.display.quit()
+    except Exception:
+        pass
+    try:
+        pygame.init()
+        screen = pygame.display.set_mode((DISPLAY_W, DISPLAY_H))
+        logger.warning('No real display found; running without a panel.')
+        return screen, 'dummy'
+    except Exception as e:
+        logger.warning(f'Even the placeholder driver failed: {e}')
+        return None, None
+
+
+def display_loop():
+    try:
+        import pygame
+        screen, _driver = open_display(pygame)
         if screen is None:
             logger.error('No SDL video driver worked, so the panel stays dark. '
                          'The sensor keeps counting and keeps pushing.')
