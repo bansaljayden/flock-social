@@ -1029,7 +1029,7 @@ export default function ConsumerVenueCard({
                   return (
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
                       {cd.confidenceBasis === 'owner_report' ? `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`
-                        : cd.confidenceBasis === 'user_reports' ? (adjustedFrom || (madeFrom ? `From ${madeFrom}, ${REPORTS_ADJUSTED_WORDS}.` : 'From the crowd model, adjusted by people who are there.'))
+                        : cd.confidenceBasis === 'user_reports' ? (adjustedFrom || (madeFrom ? `From ${madeFrom}, ${REPORTS_ADJUSTED_WORDS}.` : `From the crowd model, ${REPORTS_ADJUSTED_WORDS}.`))
                         : cd.predictionMethod === 'ml' ? (madeFrom ? `From ${madeFrom}.` : 'From the Flock crowd model.')
                         : 'An estimate from typical patterns for this kind of place.'}
                     </p>
