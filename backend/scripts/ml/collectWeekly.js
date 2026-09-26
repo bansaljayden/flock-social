@@ -157,6 +157,51 @@ async function requireSlotIndex(client, indexName) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// New-venue admissions. The plan (Pro Package 100) admits 100 NEW venues a
+// calendar month, and every venue without a besttime_venue_id is a by-name
+// lookup that spends one. The credit ceiling further down cannot see that
+// allowance: 2,500 credits is 1,250 by-name lookups, a year of admissions in
+// one run. So a run that looks anything up by name refuses unless --max-new
+// covers the count. Refresh runs (--only-found) look nothing up by name and
+// never meet this.
+//
+// --created-after= narrows a run to rows staged since that instant, which is
+// how the demand want-list gets admitted and nothing else. The query orders by
+// id, so a bare --limit would spend the month on the OLDEST never-attempted
+// rows in the city, not the ones addDemandVenues.js just added.
+// ---------------------------------------------------------------------------
+function createdAfterFrom(argv) {
+  const arg = argv.find((a) => a.startsWith('--created-after='));
+  if (!arg) return { at: null };
+  const raw = arg.slice('--created-after='.length);
+  const at = new Date(raw);
+  if (!raw || Number.isNaN(at.getTime())) {
+    return { error: `--created-after must be a date or timestamp, got "${raw}".` };
+  }
+  return { at };
+}
+
+function newVenueCheck(venues, argv) {
+  const byName = venues.filter((v) => !v.besttime_venue_id).length;
+  if (byName === 0) return { byName, refusal: null };
+  const arg = argv.find((a) => a.startsWith('--max-new='));
+  const raw = arg ? arg.slice('--max-new='.length) : '';
+  const maxNew = arg && /^\d+$/.test(raw) ? Number(raw) : null;
+  if (arg && !(maxNew > 0)) {
+    return { byName, refusal: '--max-new must be a positive integer.' };
+  }
+  if (maxNew !== null && byName <= maxNew) return { byName, refusal: null };
+  return {
+    byName,
+    refusal: `REFUSED: ${byName} of these venues have no BestTime id, so each is a by-name `
+      + "lookup that spends one of the plan's 100 new-venue admissions a month. "
+      + (arg ? `That is more than --max-new=${maxNew}. ` : '')
+      + `Narrow the scope (--created-after=..., --city=..., --limit=...) or pass --max-new=${byName} `
+      + 'to spend them on purpose.',
+  };
+}
+
 async function collectWeekly() {
   await ensureAxisColumn();
   await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
@@ -184,6 +229,14 @@ async function collectWeekly() {
     process.exit(1);
   }
 
+  const createdAfter = createdAfterFrom(process.argv);
+  if (createdAfter.error) {
+    console.error(`[ML:Weekly] ${createdAfter.error}`);
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
+
   let query = 'SELECT * FROM ml_venues WHERE is_active = true';
   const params = [];
   if (cityFilter) {
@@ -203,6 +256,10 @@ async function collectWeekly() {
   if (skipAttempted && !retry404) {
     query += ' AND besttime_attempted_at IS NULL';
   }
+  if (createdAfter.at) {
+    params.push(createdAfter.at.toISOString());
+    query += ` AND created_at >= $${params.length}`;
+  }
   query += ' ORDER BY city, id';
   if (limitFilter) {
     params.push(limitFilter);
@@ -210,6 +267,17 @@ async function collectWeekly() {
   }
 
   const { rows: venues } = await pool.query(query, params);
+
+  const admissions = newVenueCheck(venues, process.argv);
+  if (admissions.refusal) {
+    console.error(`[ML:Weekly] ${admissions.refusal}`);
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
+  if (admissions.byName > 0) {
+    console.log(`[ML:Weekly] ${admissions.byName} by-name lookups: each spends one of this month's 100 new-venue admissions.`);
+  }
 
   // The bill, said out loud before the first call: by-id refreshes are 1
   // credit, by-name first-time lookups are 2, and a 404 still bills 1.
@@ -712,6 +780,8 @@ async function run() {
 module.exports = {
   run,
   bestTimeSlotToLocal,
+  createdAfterFrom,
+  newVenueCheck,
   venueCalendar,
   requireSlotIndex,
   BESTTIME_DAY_START_HOUR,

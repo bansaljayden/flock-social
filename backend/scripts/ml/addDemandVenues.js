@@ -15,8 +15,11 @@
 //
 //   node scripts/ml/addDemandVenues.js                (dry run: list only)
 //   node scripts/ml/addDemandVenues.js --commit       (write ml_venues rows)
-//   node scripts/ml/collectWeekly.js --city=philly --skip-attempted --limit=N
-//   node scripts/ml/collectWeekly.js --city=lehigh --skip-attempted --limit=N
+//   node scripts/ml/collectWeekly.js --skip-attempted --created-after=<when --commit ran> --max-new=N
+//
+// The last line is printed, filled in, at the end of a --commit run. It admits
+// exactly the rows this run staged: a --city/--limit run orders by id and would
+// spend the month's admissions on the oldest never-attempted venues instead.
 //
 // Dry run is the DEFAULT because the Package tier admits at most 100 new
 // venues a calendar month: the list gets eyeballed before anything is
@@ -162,6 +165,9 @@ async function main() {
     return pool.end();
   }
   const commit = process.argv.includes('--commit');
+  // Ten minutes early, so a database clock a little behind this machine's
+  // cannot leave the first staged rows outside the admission command below.
+  const stagedSince = new Date(Date.now() - 10 * 60 * 1000);
   const maxNewArg = process.argv.find((a) => a.startsWith('--max-new='));
   const maxNew = maxNewArg ? parseInt(maxNewArg.split('=')[1], 10) : 95;
   if (!Number.isInteger(maxNew) || maxNew <= 0) {
@@ -307,9 +313,8 @@ async function main() {
 
   console.log(`\n[ML:Demand] ${commit ? 'Inserted' : 'Would insert'} ${inserted}. Skipped: ${outOfArea} out of area, ${gone} gone or unresolvable, ${notVenue} not a going-out place${rateLimited ? ', stopped early on rate limiting' : ''} (${probed} probed).`);
   if (commit && inserted > 0) {
-    console.log('[ML:Demand] Next: admit them through the collector, which prices the run first:');
-    console.log('  node scripts/ml/collectWeekly.js --city=philly --skip-attempted');
-    console.log('  node scripts/ml/collectWeekly.js --city=lehigh --skip-attempted');
+    console.log('[ML:Demand] Next: admit exactly these through the collector, which prices the run first:');
+    console.log(`  node scripts/ml/collectWeekly.js --skip-attempted --created-after=${stagedSince.toISOString()} --max-new=${inserted}`);
   }
   return pool.end();
 }

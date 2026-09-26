@@ -613,11 +613,13 @@ test('collectWeekly re-runs against the finished schema: refreshed in place, nev
     return rows;
   };
 
-  process.argv.push('--city=austin'); // leave the fixture venues alone
+  // --max-new: the venue has no BestTime id yet, so this is a by-name lookup,
+  // which spends a new-venue admission and has to be asked for.
+  process.argv.push('--city=austin', '--max-new=1'); // leave the fixture venues alone
   try {
     await collectWeekly.run();
   } finally {
-    process.argv.pop();
+    process.argv.splice(-2);
   }
 
   const first = await weekOf();
@@ -956,11 +958,11 @@ test('F2: collectWeekly refuses to file a forecast under a second parent even wh
   // only it. The stubbed lookup resolves it to the id the fixture holds.
   const second = await mkVenue('ChIJdedupeSecondParent1', null, { name: 'Second Parent', city: 'tulsa', tz: 'America/Chicago' });
   try {
-    process.argv.push('--city=tulsa');
+    process.argv.push('--city=tulsa', '--max-new=1');
     try {
       await freshCollector('../scripts/ml/collectWeekly').run();
     } finally {
-      process.argv.pop();
+      process.argv.splice(-2);
     }
     const { rows: [after] } = await pool.query(
       'SELECT besttime_venue_id, besttime_status, last_collected_at FROM ml_venues WHERE id = $1', [second]

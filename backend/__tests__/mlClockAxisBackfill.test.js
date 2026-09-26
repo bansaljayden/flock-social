@@ -519,11 +519,13 @@ test('the fixed collectors run for real, land on one clock, and the corpus accep
     [AUSTIN_PLACE]
   );
 
-  process.argv.push('--city=austin'); // leave the venues the earlier tests own alone
+  // --max-new: a venue with no BestTime id is a by-name lookup, which spends a
+  // new-venue admission and has to be asked for.
+  process.argv.push('--city=austin', '--max-new=1'); // leave the venues the earlier tests own alone
   try {
     await collectWeekly.run();
   } finally {
-    process.argv.pop();
+    process.argv.splice(-2);
   }
 
   const { rows: weekly } = await pool.query(
