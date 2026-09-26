@@ -2599,99 +2599,19 @@ def thermal_frame_rgb(frame, lo, hi):
         out += palette[0 if i < 0 else 255 if i > 255 else i]
     return bytes(out)
 
-def thermal_image_box(w, h, cols, rows, pad, top, reserve):
-    """Largest rectangle the thermal image can fill without being cropped.
-
-    Fits by whichever of width or height runs out first. The version before
-    this one set the width to the panel's width and derived the height, which
-    on a 1024x600 panel asked for an image 714 pixels tall and drew a third of
-    it off the bottom of the screen.
-    """
-    avail_w = max(1, w - 2 * pad)
-    avail_h = max(1, h - top - reserve)
-    img_w = avail_w
-    img_h = int(round(img_w * rows / float(cols)))
-    if img_h > avail_h:
-        img_h = avail_h
-        img_w = int(round(img_h * cols / float(rows)))
-    return max(1, img_w), max(1, img_h)
-
-
-def draw_thermal_view(pygame, screen, fonts, frame, count, live, size=None):
-    """Fill the panel with what the camera is looking at.
-
-    Takes pygame as an argument rather than importing it, because this program
-    has to run headless on a venue unit where pygame is not installed at all,
-    and an import at module scope would make the whole file unloadable there.
-
-    `size` is the real window size. It defaults to the configured one so that
-    the tests, and any caller that does not have a surface to ask, still work.
-    """
-    font_med, font_sm, font_xs = fonts
-    w, h = size if size else (DISPLAY_W, DISPLAY_H)
-    m = display_metrics(w, h)
-    pad = m['pad']
-    CREAM = (241, 237, 224)
-    MUTED = (160, 170, 180)
-    FAINT = (110, 120, 130)
-    screen.fill((10, 14, 24))
-    screen.blit(font_sm.render('WHAT THE SENSOR SEES', True, CREAM), (pad, pad // 2))
-
-    if not frame:
-        screen.blit(font_med.render('no frame yet', True, MUTED), (pad, h // 2))
-        screen.blit(font_xs.render('tap to go back', True, FAINT), (pad, h - pad - 16))
-        return
-
-    lo, hi = thermal_frame_span(frame)
-    surf = pygame.image.frombuffer(thermal_frame_rgb(frame, lo, hi),
-                                   (THERMAL_COLS, THERMAL_ROWS), 'RGB')
-    top = m['header_h']
-    # Room under the picture for the two readings and the two captions. On a
-    # short panel this is what stops the image eating the text.
-    reserve = m['font_sm'] + m['font_med'] + m['font_xs'] * 2 + pad * 3
-    img_w, img_h = thermal_image_box(w, h, THERMAL_COLS, THERMAL_ROWS,
-                                     pad, top, reserve)
-    # smoothscale interpolates, which is what turns 160x120 into something that
-    # reads as thermal imagery rather than a grid of squares. It refuses some
-    # surface depths, so fall back rather than crash in front of a judge.
-    try:
-        surf = pygame.transform.smoothscale(surf, (img_w, img_h))
-    except Exception:
-        surf = pygame.transform.scale(surf, (img_w, img_h))
-    img_x = (w - img_w) // 2
-    screen.blit(surf, (img_x, top))
-    pygame.draw.rect(screen, (54, 66, 84), (img_x, top, img_w, img_h), 2)
-
-    y = top + img_h + pad // 2
-    screen.blit(font_sm.render('In view now', True, MUTED), (pad, y))
-    screen.blit(font_med.render(f'~{count}' if live else '--', True, CREAM),
-                (pad, y + m['font_sm']))
-    warm_x = pad + max(200, w // 3)
-    screen.blit(font_sm.render('Warmest point', True, MUTED), (warm_x, y))
-    screen.blit(font_med.render(f'{max(frame):.1f}C', True, CREAM),
-                (warm_x, y + m['font_sm']))
-    # Say what the picture is, on the picture. A thermal image of a room reads
-    # as a camera to most people, and this is the one screen in the product
-    # where that misreading is easy to make and worth heading off out loud.
-    screen.blit(font_xs.render('Temperatures only. Nothing here is recorded or sent.',
-                               True, FAINT), (pad, y + m['font_sm'] + m['font_med']))
-    screen.blit(font_xs.render('tap to go back', True, FAINT), (pad, h - pad - 16))
-
-
-
 def video_driver_candidates(env=None, has_dri=None):
     """Which SDL video drivers to try, best first.
 
     THIS IS WHERE THE PANEL FAILED THE FIRST TIME ONE WAS EVER PLUGGED IN. The
     code asked for "fbcon", which is an SDL 1.2 driver name. SDL2 dropped it
     years ago; its Linux drivers are x11, wayland, kmsdrm, offscreen and dummy.
-    Asking for a driver SDL2 does not have did not raise: it HUNG, inside
-    set_mode, so the display thread sat there forever and the one log line that
-    would have explained it never printed. From the outside the program looked
-    like it had simply stopped after pygame's banner.
+    Asking for one SDL2 does not have did not raise, it HUNG inside set_mode,
+    so the display thread sat there forever and the one log line that would
+    have explained it never printed. From outside, the program looked like it
+    simply stopped after pygame's banner.
 
-    Nothing caught it earlier because nothing could. This file's own README
-    said, accurately, that no panel had ever been attached to this code.
+    Nothing had caught it because nothing could: this file's own comment said,
+    accurately, that no panel had ever been attached to this code.
 
     Pure and takes its environment, so the choice is tested on a machine with
     no framebuffer at all.
@@ -2708,7 +2628,8 @@ def video_driver_candidates(env=None, has_dri=None):
     # A desktop session owns the screen and the only way in is through it. This
     # matters more than it looks: a Pi showing the Raspberry Pi OS desktop is
     # the normal state of a unit somebody has just set up, and kmsdrm cannot
-    # take the display away from a running session.
+    # take the display away from a running compositor. On this build labwc held
+    # it, and kmsdrm answered "not available" rather than saying so.
     if env.get('WAYLAND_DISPLAY'):
         out.append('wayland')
     if env.get('DISPLAY'):
@@ -2718,10 +2639,457 @@ def video_driver_candidates(env=None, has_dri=None):
     # thing that can misbehave in front of a judge.
     if has_dri:
         out.append('kmsdrm')
-    # Last resort. The point is not a picture, it is that the display thread
-    # cannot take the doorway counter down with it by failing to start.
+    # Last resort. Not for a picture: so that a display thread which cannot
+    # start is unable to take the doorway counter down with it.
     out.append('dummy')
     return out
+
+
+# The product's own type and palette, so the panel looks like the rest of Flock
+# rather than like a Python program with a screen attached.
+#
+# Fraunces carries the numbers and the wordmark, Hanken Grotesk carries the
+# labels, which is the division the app and the site already use. Both live in
+# brand-fonts/ as TrueType, which is what pygame wants; the web build's woff2
+# is no use here.
+#
+# A missing font file means a plainer screen, never a dark one.
+BRAND_FONT_DIRS = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts'),
+    '/etc/flock-sensor/fonts',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'brand-fonts'),
+)
+
+BRAND_DISPLAY = 'Flock-Fraunces-Display-Bold.ttf'
+BRAND_WORDMARK = 'Flock-Fraunces-Wordmark-Black.ttf'
+BRAND_LABEL = 'Flock-Hanken-Grotesk-Medium.ttf'
+BRAND_BODY = 'Flock-Hanken-Grotesk-Regular.ttf'
+
+# Read off the app's CSS custom properties, not picked by eye.
+BRAND_NAVY = (15, 23, 42)       # --navy  #0f172a
+BRAND_INK = (22, 40, 61)        # --ink   #16283d
+BRAND_CREAM = (244, 239, 227)   # --cream #f4efe3
+BRAND_RULE = (30, 58, 92)       # --border-color #1e3a5c
+BRAND_MUTED = (138, 152, 170)
+BRAND_FAINT = (88, 104, 124)
+BRAND_GREEN = (16, 185, 129)
+BRAND_AMBER = (245, 158, 11)
+BRAND_ORANGE = (249, 115, 22)
+BRAND_RED = (239, 68, 68)
+
+
+def brand_font_path(name):
+    """Where a brand face lives, or None if it was not shipped."""
+    for d in BRAND_FONT_DIRS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def load_brand_font(pygame, name, size):
+    """One face at one size, falling back to whatever pygame has."""
+    path = brand_font_path(name)
+    if path:
+        try:
+            return pygame.font.Font(path, size)
+        except Exception as e:
+            log_throttled('brand_font', logging.WARNING,
+                          f'Could not load {name}: {e}')
+    # pygame's default face runs small for a given point size, so a fallback
+    # that ignored this would make an already plainer screen a harder one to
+    # read across a room.
+    return pygame.font.Font(None, int(size * 1.25))
+
+
+def tracked(pygame, font, text, colour, spacing):
+    """Render with letter spacing, which pygame has no setting for.
+
+    Small capitals need air or they read as a shout. Glyph by glyph is the only
+    way to get it, and at three labels a frame the cost does not show up.
+    """
+    glyphs = [font.render(ch, True, colour) for ch in text]
+    if not glyphs:
+        return None
+    w = sum(g.get_width() for g in glyphs) + spacing * (len(glyphs) - 1)
+    h = max(g.get_height() for g in glyphs)
+    surf = pygame.Surface((max(1, w), max(1, h)), pygame.SRCALPHA)
+    x = 0
+    for g in glyphs:
+        surf.blit(g, (x, 0))
+        x += g.get_width() + spacing
+    return surf
+
+def thermal_image_box(w, h, cols, rows, pad, top, reserve):
+    """Largest rectangle the thermal image can fill without being cropped.
+
+    Fits by whichever of width or height runs out first. The version before
+    this one set the width to the panel's width and derived the height, which
+    on a 1024x600 panel asked for an image 714 pixels tall and drew a third of
+    it off the bottom.
+    """
+    avail_w = max(1, w - 2 * pad)
+    avail_h = max(1, h - top - reserve)
+    img_w = avail_w
+    img_h = int(round(img_w * rows / float(cols)))
+    if img_h > avail_h:
+        img_h = avail_h
+        img_w = int(round(img_h * cols / float(rows)))
+    return max(1, img_w), max(1, img_h)
+
+
+def noise_band(db):
+    """The word and the colour for a level. One place, four screens."""
+    if db < 50:
+        return 'Quiet', BRAND_GREEN
+    if db < 70:
+        return 'Moderate', BRAND_AMBER
+    if db < 85:
+        return 'Lively', BRAND_ORANGE
+    return 'Loud', BRAND_RED
+
+
+def home_cards(w, h, m):
+    """The three tappable readings, as rectangles.
+
+    Pure, so the tap targets and the drawn cards come from one place and cannot
+    disagree: a card drawn in one spot and hit-tested in another is exactly the
+    bug where a button looks pressable and does nothing. Returns a list of
+    (x, y, w, h).
+    """
+    pad = m['pad']
+    top = m['header_h'] + pad
+    bottom = h - pad - m['font_xs'] - 16
+    gap = max(10, pad // 2)
+    if m['columns']:
+        cw = (w - 2 * pad - 2 * gap) // 3
+        ch = bottom - top
+        return [(pad + i * (cw + gap), top, cw, ch) for i in range(3)]
+    ch = (bottom - top - 2 * gap) // 3
+    return [(pad, top + i * (ch + gap), w - 2 * pad, ch) for i in range(3)]
+
+
+def hit_card(pos, cards):
+    """Which card a touch landed on, or None for the gaps between them."""
+    x, y = pos
+    for i, (cx, cy, cw, ch) in enumerate(cards):
+        if cx <= x < cx + cw and cy <= y < cy + ch:
+            return i
+    return None
+
+
+def back_button_rect(m):
+    """The Back button's rectangle. One definition for drawing and hitting."""
+    pad = m['pad']
+    bh = max(40, m['font_sm'] + 20)
+    bw = max(120, m['font_sm'] * 5)
+    return (pad, (m['header_h'] - bh) // 2, bw, bh)
+
+
+class Panel:
+    """Everything the four screens need, built once and kept.
+
+    The first version re-rendered every string four times a second and slept a
+    quarter second between polls, so a tap could sit unnoticed for 250 ms and
+    the whole panel felt like wading. Here text is cached by what it says,
+    events are read sixty times a second, and the screen repaints only when
+    something on it actually changed.
+    """
+
+    MAX_CACHE = 400
+
+    def __init__(self, pygame, screen, w, h):
+        self.pygame = pygame
+        self.screen = screen
+        self.w = w
+        self.h = h
+        self.m = display_metrics(w, h)
+        m = self.m
+        self.f_mark = load_brand_font(pygame, BRAND_WORDMARK, m['font_sm'] + 10)
+        self.f_big = load_brand_font(pygame, BRAND_DISPLAY, m['font_big'])
+        self.f_med = load_brand_font(pygame, BRAND_DISPLAY, m['font_med'])
+        self.f_label = load_brand_font(pygame, BRAND_LABEL, m['font_sm'])
+        self.f_body = load_brand_font(pygame, BRAND_BODY, m['font_xs'])
+        self.cards = home_cards(w, h, m)
+        self.back = back_button_rect(m)
+        self._cache = {}
+        self._thermal_key = None
+        self._thermal_surf = None
+        # The display keeps its own noise trace. The noise loop reads every
+        # five seconds, far too coarse to draw as a wave, and a buffer here
+        # costs nothing and never blocks the thread doing the measuring.
+        self.trace = deque(maxlen=max(120, w // 3))
+
+    # -- primitives --------------------------------------------------------
+
+    def text(self, font, s, colour):
+        key = (id(font), s, colour)
+        surf = self._cache.get(key)
+        if surf is None:
+            if len(self._cache) > self.MAX_CACHE:
+                self._cache.clear()
+            surf = font.render(s, True, colour)
+            self._cache[key] = surf
+        return surf
+
+    def blit(self, font, s, colour, pos):
+        self.screen.blit(self.text(font, s, colour), pos)
+
+    def blit_centred(self, font, s, colour, cx, y):
+        surf = self.text(font, s, colour)
+        self.screen.blit(surf, (cx - surf.get_width() // 2, y))
+
+    def label(self, s, pos, colour=BRAND_MUTED):
+        """Small tracked capitals. Type carries this design, so labels get
+        air rather than a box drawn round them."""
+        key = ('lab', s, colour)
+        surf = self._cache.get(key)
+        if surf is None:
+            surf = tracked(self.pygame, self.f_label, s.upper(), colour,
+                           max(1, self.m['font_sm'] // 10))
+            self._cache[key] = surf
+        if surf:
+            self.screen.blit(surf, pos)
+
+    def rule(self, x1, y, x2, colour=BRAND_RULE):
+        self.pygame.draw.line(self.screen, colour, (x1, y), (x2, y), 1)
+
+    def card(self, rect, pressed=False):
+        """A tappable surface. A lighter field and a hairline border, so it
+        reads as something to press without turning into a rounded icon tile.
+        """
+        x, y, w, h = rect
+        self.pygame.draw.rect(self.screen, BRAND_INK, rect, 0, 14)
+        self.pygame.draw.rect(self.screen, BRAND_RULE, rect, 1, 14)
+
+    def chevron(self, x, y, size, colour, right=True):
+        s = size
+        pts = ([(x - s, y - s), (x, y), (x - s, y + s)] if right
+               else [(x + s, y - s), (x, y), (x + s, y + s)])
+        self.pygame.draw.lines(self.screen, colour, False, pts, 3)
+
+    # -- chrome ------------------------------------------------------------
+
+    def header(self, title, live=None, back=False):
+        m = self.m
+        pad = m['pad']
+        self.screen.fill(BRAND_NAVY)
+        top = m['header_h']
+        if back:
+            bx, by, bw, bh = self.back
+            self.pygame.draw.rect(self.screen, BRAND_INK, self.back, 0, bh // 2)
+            self.pygame.draw.rect(self.screen, BRAND_RULE, self.back, 1, bh // 2)
+            cs = max(6, bh // 6)
+            self.chevron(bx + 18 + cs, by + bh // 2, cs, BRAND_CREAM, right=False)
+            s = self.text(self.f_label, 'Back', BRAND_CREAM)
+            self.screen.blit(s, (bx + 18 + cs * 2 + 10, by + (bh - s.get_height()) // 2))
+            t = self.text(self.f_label, title, BRAND_CREAM)
+            self.screen.blit(t, ((self.w - t.get_width()) // 2,
+                                 (top - t.get_height()) // 2))
+        else:
+            s = self.text(self.f_mark, title, BRAND_CREAM)
+            self.screen.blit(s, (pad, (top - s.get_height()) // 2))
+        if live is not None:
+            dot = BRAND_GREEN if live else BRAND_RED
+            word = 'Live' if live else 'Stale'
+            s = self.text(self.f_body, word, BRAND_MUTED)
+            x = self.w - pad - s.get_width()
+            self.screen.blit(s, (x, (top - s.get_height()) // 2))
+            self.pygame.draw.circle(self.screen, dot, (x - 16, top // 2),
+                                    max(4, m['font_xs'] // 5))
+        self.rule(0, top, self.w)
+
+    # -- screens -----------------------------------------------------------
+
+    def home(self, ir, therm, therm_live, db, noise_live, history):
+        m = self.m
+        self.header('Flux', live=therm_live or noise_live)
+        word, colour = noise_band(db)
+        cells = [
+            ('Through the door', str(ir), BRAND_CREAM, 'since the last update', True),
+            ('In view now', f'{therm}' if therm_live else '--', BRAND_CREAM,
+             'warm bodies' if therm_live else 'thermal offline', therm_live),
+            ('Noise', word if noise_live else '--',
+             colour if noise_live else BRAND_CREAM,
+             f'level {int(db)}' if noise_live else 'microphone offline', noise_live),
+        ]
+        for rect, (lab, val, col, cap, ok) in zip(self.cards, cells):
+            x, y, w, h = rect
+            self.card(rect)
+            cx = x + w // 2
+            inner = max(14, m['pad'] // 2)
+            self.label(lab, (x + inner, y + inner))
+            # One box, one height, for every value, and every caption on the
+            # same line. A word like "Moderate" has to be set smaller than a
+            # digit to fit, and centring each value on its own height left the
+            # three captions at three different heights, which is the first
+            # thing an eye catches on a row of cards.
+            font = self.f_big if len(val) <= 4 else self.f_med
+            vs = self.text(font, val, col)
+            box_h = self.f_big.get_height()
+            box_y = y + (h - box_h) // 2 - m['font_xs']
+            self.screen.blit(vs, (cx - vs.get_width() // 2,
+                                  box_y + (box_h - vs.get_height()) // 2))
+            self.blit_centred(self.f_body, cap, BRAND_MUTED if ok else BRAND_RED,
+                              cx, box_y + box_h + 6)
+            # The affordance. Without it the card is a readout, and the one
+            # thing this screen has to say is that each of these opens.
+            vw = self.text(self.f_label, 'View', BRAND_CREAM)
+            ay = y + h - inner - vw.get_height()
+            self.screen.blit(vw, (x + w - inner - vw.get_width() - 22, ay))
+            self.chevron(x + w - inner - 4, ay + vw.get_height() // 2,
+                         max(5, vw.get_height() // 4), BRAND_CREAM)
+        self.blit_centred(self.f_body, 'Tap a reading to open it', BRAND_FAINT,
+                          self.w // 2, self.h - m['pad'] - m['font_xs'])
+
+    def spark(self, values, x, top, w, height):
+        """A hairline trace of recent counts. Ruled and flat, no fill."""
+        hi = max(values) or 1
+        pts = [(x + (w * i / max(1, len(values) - 1)),
+                top + height - (v / hi) * height) for i, v in enumerate(values)]
+        self.rule(x, top + height, x + w)
+        if len(pts) > 1:
+            self.pygame.draw.lines(self.screen, BRAND_CREAM, False, pts, 2)
+        for p in pts:
+            self.pygame.draw.circle(self.screen, BRAND_CREAM, (int(p[0]), int(p[1])), 3)
+
+    def door(self, ir, history):
+        m = self.m
+        pad = m['pad']
+        self.header('Through the door', back=True)
+        top = m['header_h'] + pad
+        self.label('Since the last update', (pad, top))
+        v = self.text(self.f_big, str(ir), BRAND_CREAM)
+        self.screen.blit(v, (pad, top + m['font_sm'] + 6))
+        # What this number is and is not. It was once labelled "Entered Today",
+        # which it has never been, and a judge asking the obvious follow-up
+        # deserves the honest answer on the screen rather than from the pitch.
+        ty = top + m['font_sm'] + v.get_height() + 16
+        for s in ('Crossings in either direction, over one push interval.',
+                  'The doorway counter adds which way each person went.'):
+            self.blit(self.f_body, s, BRAND_MUTED, (pad, ty))
+            ty += m['font_xs'] + 8
+        if history:
+            ch = max(60, self.h - ty - pad * 3)
+            cy = self.h - pad - ch
+            self.label('Recent headcounts', (pad, cy - m['font_sm'] - 10))
+            self.spark(history, pad, cy, self.w - 2 * pad, ch)
+
+    def noise(self, db, live):
+        m = self.m
+        pad = m['pad']
+        self.header('Noise', back=True, live=live)
+        word, colour = noise_band(db)
+        top = m['header_h'] + pad
+        w = self.text(self.f_big, word if live else '--', colour if live else BRAND_CREAM)
+        self.screen.blit(w, (pad, top))
+        self.blit(self.f_body, f'level {int(db)}' if live else 'microphone offline',
+                  BRAND_MUTED if live else BRAND_RED,
+                  (pad + 4, top + w.get_height() + 2))
+
+        # The trace, with the four bands drawn behind it so a rising line means
+        # something without anybody reading a number off an axis.
+        gtop = top + w.get_height() + m['font_xs'] + pad
+        gbot = self.h - pad
+        if gbot - gtop < 40:
+            return
+        lo, hi = 30.0, 100.0
+        gx, gw = pad, self.w - 2 * pad
+
+        def ypos(v):
+            v = min(hi, max(lo, v))
+            return gbot - (v - lo) / (hi - lo) * (gbot - gtop)
+        bands = ((lo, 50, BRAND_GREEN), (50, 70, BRAND_AMBER),
+                 (70, 85, BRAND_ORANGE), (85, hi, BRAND_RED))
+        for a, b, c in bands:
+            y1, y2 = ypos(b), ypos(a)
+            band = self.pygame.Surface((gw, max(1, int(y2 - y1))), self.pygame.SRCALPHA)
+            band.fill(c + (22,))
+            self.screen.blit(band, (gx, y1))
+        for level in (50, 70, 85):
+            self.rule(gx, ypos(level), gx + gw)
+        # Each band named inside itself, at the left. The newest readings are
+        # drawn at the right edge, so labels there sat on top of the line the
+        # screen exists to show.
+        for a, b, name in ((lo, 50, 'Quiet'), (50, 70, 'Moderate'),
+                           (70, 85, 'Lively'), (85, hi, 'Loud')):
+            mid = (ypos(a) + ypos(b)) / 2.0
+            s = self.text(self.f_body, name, BRAND_MUTED)
+            self.screen.blit(s, (gx + 12, int(mid - s.get_height() / 2)))
+        if len(self.trace) > 1:
+            # Spread across the whole width whatever the buffer holds. Pinning
+            # it to the full window left a fresh screen nine tenths empty with
+            # the trace crammed against the right edge, which reads as broken.
+            # It starts at the label column so the names never sit under it.
+            lx = gx + 12 + max(self.text(self.f_body, n, BRAND_MUTED).get_width()
+                               for n in ('Quiet', 'Moderate', 'Lively', 'Loud')) + 16
+            step = (gx + gw - lx) / float(len(self.trace) - 1)
+            pts = [(lx + i * step, ypos(v)) for i, v in enumerate(self.trace)]
+            self.pygame.draw.lines(self.screen, colour, False, pts, 3)
+            self.pygame.draw.circle(self.screen, colour,
+                                    (int(pts[-1][0]), int(pts[-1][1])), 6)
+        else:
+            self.blit_centred(self.f_body, 'Listening. The trace fills in from here.',
+                              BRAND_MUTED, self.w // 2, (gtop + gbot) // 2)
+
+    def thermal(self, frame, count, live):
+        m = self.m
+        pad = m['pad']
+        self.header('What the sensor sees', back=True, live=live)
+        top = m['header_h'] + max(10, pad // 2)
+        if not frame:
+            self.blit_centred(self.f_med, 'No frame yet', BRAND_MUTED,
+                              self.w // 2, self.h // 2 - m['font_med'])
+            self.blit_centred(self.f_body, 'The camera may still be starting.',
+                              BRAND_FAINT, self.w // 2, self.h // 2 + 10)
+            return
+
+        # The picture takes the height of the panel and the readings sit
+        # beside it. Stacking them under it, which the first version did,
+        # threw away a third of a landscape screen to leave room for two lines
+        # of text, and the picture is the point of this screen.
+        side = max(220, self.w // 4) if m['columns'] else 0
+        avail_w = self.w - 2 * pad - (side + pad if side else 0)
+        avail_h = self.h - top - pad
+        iw, ih = avail_w, int(avail_w * THERMAL_ROWS / float(THERMAL_COLS))
+        if ih > avail_h:
+            ih = avail_h
+            iw = int(ih * THERMAL_COLS / float(THERMAL_ROWS))
+
+        # Only rebuild the scaled picture when the camera delivers a new frame.
+        # The camera runs at about nine frames a second, which is a limit of
+        # the part and not of this code, and scaling the same frame again on
+        # every repaint was pure waste.
+        key = (id(frame), iw, ih)
+        if key != self._thermal_key:
+            lo, hi = thermal_frame_span(frame)
+            raw = self.pygame.image.frombuffer(thermal_frame_rgb(frame, lo, hi),
+                                               (THERMAL_COLS, THERMAL_ROWS), 'RGB')
+            try:
+                self._thermal_surf = self.pygame.transform.smoothscale(raw, (iw, ih))
+            except Exception:
+                self._thermal_surf = self.pygame.transform.scale(raw, (iw, ih))
+            self._thermal_key = key
+        ix = pad
+        self.screen.blit(self._thermal_surf, (ix, top))
+        self.pygame.draw.rect(self.screen, BRAND_RULE, (ix, top, iw, ih), 1)
+
+        if side:
+            sx = ix + iw + pad
+            y = top
+            self.label('In view now', (sx, y))
+            v = self.text(self.f_big, f'{count}' if live else '--', BRAND_CREAM)
+            self.screen.blit(v, (sx, y + m['font_sm'] + 4))
+            y += m['font_sm'] + v.get_height() + 24
+            self.label('Warmest point', (sx, y))
+            self.blit(self.f_med, f'{max(frame):.1f}C', BRAND_CREAM,
+                      (sx, y + m['font_sm'] + 4))
+            y += m['font_sm'] + m['font_med'] + 28
+            # A thermal picture reads as a camera to most people, and this is
+            # the one screen where that misreading is easy to make.
+            for s in ('Temperatures only.', 'Nothing here is', 'recorded or sent.'):
+                self.blit(self.f_body, s, BRAND_MUTED, (sx, y))
+                y += m['font_xs'] + 6
 
 
 def display_loop():
@@ -2737,8 +3105,7 @@ def display_loop():
             try:
                 pygame.init()
                 # (0, 0) asks the panel for its own size. Naming one here is
-                # how a remembered 720x1280 survived a panel change; the real
-                # size is read back below regardless.
+                # how a remembered 720x1280 outlived the panel it belonged to.
                 screen = pygame.display.set_mode(
                     (0, 0), pygame.FULLSCREEN if driver != 'dummy' else 0)
                 logger.info(f'Display is up on the "{driver}" driver')
@@ -2749,47 +3116,53 @@ def display_loop():
             logger.error('No SDL video driver worked, so the panel stays dark. '
                          'The sensor keeps counting and keeps pushing.')
             return
-        # What was asked for and what was granted are not the same thing. On a
-        # real framebuffer FULLSCREEN gives the panel's native size whatever was
-        # requested, so read it back and lay out against that. Asking is how the
-        # 1024x600 panel ended up being drawn for as though it were 720x1280.
+
         try:
             win_w, win_h = screen.get_size()
         except Exception:
             win_w, win_h = DISPLAY_W, DISPLAY_H
-        m = display_metrics(win_w, win_h)
-        logger.info(f'Panel is {win_w}x{win_h}, laying out in '
-                    f'{"columns" if m["columns"] else "rows"}')
         pygame.mouse.set_visible(False)
-        # Sized for a 7 inch panel read from across a room, not for a desktop,
-        # and scaled to the panel rather than to one remembered resolution.
-        font_big = pygame.font.Font(None, m['font_big'])
-        font_med = pygame.font.Font(None, m['font_med'])
-        font_sm = pygame.font.Font(None, m['font_sm'])
-        font_xs = pygame.font.Font(None, m['font_xs'])
+        ui = Panel(pygame, screen, win_w, win_h)
+        logger.info(f'Panel is {win_w}x{win_h}, laying out in '
+                    f'{"columns" if ui.m["columns"] else "rows"}')
 
-        NAVY = (30, 41, 59)
-        CREAM = (241, 237, 224)
-        GREEN = (16, 185, 129)
-        AMBER = (245, 158, 11)
-        ORANGE = (249, 115, 22)
-        RED = (239, 68, 68)
-        MUTED = (160, 170, 180)
-        FAINT = (110, 120, 130)
-        RULE = (54, 66, 84)
+        view = 'home'
+        dirty = True
+        last_paint = 0.0
+        last_state = None
+        TAP_TO = {0: 'door', 1: 'thermal', 2: 'noise'}
 
-        PAD = m['pad']
-        # Inside a block: the label, then the number under it, then the caption
-        # at the bottom. Derived so the caption cannot land on the number on a
-        # short panel, which is what a fixed 200 pixel drop did.
-        num_dy = m['font_sm'] + max(6, win_h // 90)
-        cap_dy = min(m['block_h'] - m['font_xs'] - 8,
-                     num_dy + m['font_big'] + max(4, win_h // 120))
-
-        # Which screen the panel is showing. Demo units only, always: a venue
-        # box has no screen, so this loop never runs there.
-        view = 'stats'
         while not _stop.is_set():
+            # Events first and every pass. The old loop polled once every 250 ms
+            # and a tap could sit unseen for a quarter of a second, which reads
+            # as the screen being broken rather than slow.
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                # A touch panel reports as a mouse under some SDL drivers and as
+                # a finger under others, and which one you get depends on the
+                # driver. A pitch is a bad place to find out you picked wrong.
+                if event.type in (pygame.MOUSEBUTTONDOWN,
+                                  getattr(pygame, 'FINGERDOWN', -1)):
+                    pos = getattr(event, 'pos', None)
+                    if pos is None and hasattr(event, 'x'):
+                        # FINGERDOWN reports 0..1 of the panel, not pixels.
+                        pos = (int(event.x * win_w), int(event.y * win_h))
+                    pos = pos or (win_w // 2, win_h // 2)
+                    if view != 'home':
+                        # On a detail screen the whole panel goes back, with
+                        # the Back button there to say so. A button you have
+                        # to aim for on a seven inch panel is a button a judge
+                        # misses.
+                        view = 'home'
+                    else:
+                        i = hit_card(pos, ui.cards)
+                        target = TAP_TO.get(i) if i is not None else None
+                        if target and (target != 'thermal' or THERMAL_VIEW_ON):
+                            view = target
+                    dirty = True
+
+            now = time.monotonic()
             with _lock:
                 ir = int(_state['ir_count'])
                 therm = int(_state['thermal'])
@@ -2799,125 +3172,48 @@ def display_loop():
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
 
-            # Match what is actually being sent. A frozen number on the screen
-            # while the backend is being sent 0 is the worst of both, and on the
-            # demo unit it is a number a judge is looking at.
-            now_mono = time.monotonic()
-            therm_live = therm_at is not None and now_mono - therm_at <= THERMAL_STALE_AFTER
-            noise_live = noise_at is not None and now_mono - noise_at <= NOISE_STALE_AFTER
-
-            screen.fill(NAVY)
-            top = pygame.Surface((win_w, m['header_h']))
-            top.fill((20, 28, 40))
-            screen.blit(top, (0, 0))
-            screen.blit(font_sm.render('FLOCK VENUE SENSOR', True, CREAM),
-                        (PAD, max(8, (m['header_h'] - m['font_sm']) // 2)))
-
-            def divider(i):
-                # Between the columns when side by side, under each block when
-                # stacked. A horizontal rule drawn across a column layout runs
-                # straight through the neighbouring numbers.
-                if i >= 2:
-                    return
-                if m['columns']:
-                    x = PAD + (i + 1) * m['block_w']
-                    pygame.draw.line(screen, RULE,
-                                     (x, m['block_top']),
-                                     (x, m['block_top'] + m['block_h']), 1)
-                else:
-                    y = m['block_top'] + (i + 1) * m['block_h'] - PAD // 2
-                    pygame.draw.line(screen, RULE, (PAD, y), (win_w - PAD, y), 1)
-
-            # Block 0. Crossings since the last snapshot, in either direction,
-            # over at most one push interval. This was once labelled "Entered
-            # Today", which the number has never been.
-            bx, by = block_origin(m, 0)
-            screen.blit(font_sm.render('Doorway crossings', True, MUTED), (bx, by))
-            screen.blit(font_big.render(str(ir), True, CREAM), (bx, by + num_dy))
-            screen.blit(font_xs.render('since last update', True, FAINT), (bx, by + cap_dy))
-            divider(0)
-
-            # Block 1.
-            bx, by = block_origin(m, 1)
-            screen.blit(font_sm.render('In view now', True, MUTED), (bx, by))
-            screen.blit(font_big.render(f'~{therm}' if therm_live else '--', True, CREAM),
-                        (bx, by + num_dy))
-            if therm_live:
-                screen.blit(font_xs.render('warm bodies, counted here', True, FAINT),
-                            (bx, by + cap_dy))
-            else:
-                screen.blit(font_xs.render('thermal offline', True, RED), (bx, by + cap_dy))
-            divider(1)
-
-            # Block 2.
-            bx, by = block_origin(m, 2)
-            screen.blit(font_sm.render('Noise', True, MUTED), (bx, by))
+            therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
+            noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
             if noise_live:
-                label = 'Quiet' if db < 50 else 'Moderate' if db < 70 else 'Lively' if db < 85 else 'Loud'
-                color = GREEN if db < 50 else AMBER if db < 70 else ORANGE if db < 85 else RED
-                # "level", never "dB": nobody has calibrated this against a sound
-                # level meter, so it is a relative loudness index. See README.
-                screen.blit(font_med.render(label, True, color), (bx, by + num_dy))
-                screen.blit(font_xs.render(f'level {int(db)}', True, FAINT), (bx, by + cap_dy))
-            else:
-                screen.blit(font_med.render('--', True, CREAM), (bx, by + num_dy))
-                screen.blit(font_xs.render('mic offline', True, RED), (bx, by + cap_dy))
-            divider(2)
+                ui.trace.append(db)
 
-            # Chart of recent pushed headcounts, along the bottom.
-            if history:
-                chart_bottom = m['chart_bottom']
-                chart_h = m['chart_h']
-                screen.blit(font_xs.render('Last few readings', True, FAINT),
-                            (PAD, chart_bottom + 8))
-                usable = win_w - PAD * 2
-                slot = usable // max(len(history), 1)
-                bar_w = max(6, slot - 8)
-                max_h = max(history) or 1
-                for i, v in enumerate(history):
-                    bh = int((v / max_h) * chart_h) if max_h else 0
-                    pygame.draw.rect(screen, CREAM,
-                                     (PAD + i * slot, chart_bottom - bh, bar_w, bh))
+            # Repaint when something changed, or twice a second so the trace
+            # keeps moving. Not on every pass: at sixty a second that is sixty
+            # full-screen redraws for nothing.
+            signature = (view, ir, therm, therm_live, int(db), noise_live,
+                         len(history), id(frame) if view == 'thermal' else 0)
+            if signature != last_state or now - last_paint > 0.5:
+                dirty = True
+                last_state = signature
 
-
-            if view == 'thermal':
-                # Wrapped on its own. The outer handler around this loop logs and
-                # RETURNS, which ends the display thread for the life of the
-                # process, and nothing restarts it. So a raise in the newest and
-                # least exercised drawing code would take the doorway counter down
-                # with it, which is the demo's headline moment. Fall back to the
-                # stats screen instead.
+            if dirty:
                 try:
-                    # Drawn over the stats rather than instead of them. The stats
-                    # pass is blits into an off-screen surface with no side effects
-                    # and costs about a millisecond at this size.
-                    draw_thermal_view(pygame, screen, (font_med, font_sm, font_xs),
-                                      frame, therm, therm_live,
-                                      (win_w, win_h))
+                    if view == 'thermal':
+                        ui.thermal(frame, therm, therm_live)
+                    elif view == 'door':
+                        ui.door(ir, history)
+                    elif view == 'noise':
+                        ui.noise(db, noise_live)
+                    else:
+                        ui.home(ir, therm, therm_live, db, noise_live, history)
                 except Exception as e:
-                    view = 'stats'
-                    log_throttled('thermal_view', logging.ERROR,
-                                  f'Thermal view failed, falling back to the stats '
-                                  f'screen: {e}')
-            pygame.display.flip()
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return
-                # A DSI touch panel reports through the mouse events under SDL's
-                # framebuffer driver on Raspberry Pi OS. FINGERDOWN is accepted too,
-                # because which one arrives depends on the driver, and a pitch is a
-                # bad place to discover you picked the wrong one.
-                if THERMAL_VIEW_ON and event.type in (pygame.MOUSEBUTTONDOWN,
-                                                      getattr(pygame, 'FINGERDOWN', -1)):
-                    view = 'thermal' if view == 'stats' else 'stats'
-            # A quarter second, not two. The demo unit's one hero moment is a
-            # hand through the IR slot and the counter ticking, and a two-second
-            # redraw put up to two seconds between the hand and the tick, which
-            # in front of judges reads as the thing not working. Redrawing four
-            # times a second costs nothing on a Pi that is otherwise idle.
-            _stop.wait(0.25)
+                    # A raise in a detail screen used to end the display thread
+                    # for the life of the process, taking the doorway counter
+                    # with it. Fall back to the one screen that always works,
+                    # and name the one that did not before forgetting it.
+                    log_throttled('draw', logging.ERROR,
+                                  f'Screen "{view}" failed, showing home: {e}')
+                    view = 'home'
+                    ui.home(ir, therm, therm_live, db, noise_live, history)
+                pygame.display.flip()
+                last_paint = now
+                dirty = False
+
+            _stop.wait(0.016)
     except Exception as e:
         logger.error(f'Display loop stopped (continuing headless): {e}')
+
+
 
 
 # ---------------------------------------------------------------------------

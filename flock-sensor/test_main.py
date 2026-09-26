@@ -1340,7 +1340,7 @@ class SceneBackgroundCounting(unittest.TestCase):
                 frame, mask=scene.mask(cells, main._ambient(cells)))
             self.assertLessEqual(masked, main.count_thermal_clusters(frame))
 class _FakeSurface:
-    def __init__(self, size=(1, 1)):
+    def __init__(self, size=(1, 1), *_flags):
         self.size = size
         self.blits = 0
 
@@ -1350,10 +1350,22 @@ class _FakeSurface:
     def blit(self, _what, _where):
         self.blits += 1
 
+    def get_width(self):
+        return self.size[0]
+
+    def get_height(self):
+        return self.size[1]
+
 
 class _FakeFont:
+    def __init__(self, *_a, **_k):
+        pass
+
     def render(self, text, _aa, _colour):
-        return _FakeSurface((len(text), 1))
+        return _FakeSurface((max(1, len(text)) * 10, 20))
+
+    def get_height(self):
+        return 20
 
 
 class _FakePygame:
@@ -1367,12 +1379,20 @@ class _FakePygame:
     MOUSEBUTTONDOWN = 1025
     FINGERDOWN = 1792
     QUIT = 256
+    SRCALPHA = 65536
 
     def __init__(self):
         self.calls = []
         self.image = self._Image(self)
         self.transform = self._Transform(self)
         self.draw = self._Draw(self)
+        self.font = self._Font()
+
+    class _Font:
+        Font = _FakeFont
+
+    def Surface(self, size, *flags):
+        return _FakeSurface(size)
 
     class _Image:
         def __init__(self, outer):
@@ -1404,6 +1424,15 @@ class _FakePygame:
 
         def rect(self, *a, **k):
             self.outer.calls.append(('rect',))
+
+        def line(self, *a, **k):
+            self.outer.calls.append(('line',))
+
+        def lines(self, *a, **k):
+            self.outer.calls.append(('lines',))
+
+        def circle(self, *a, **k):
+            self.outer.calls.append(('circle',))
 
 
 class ThermalView(unittest.TestCase):
@@ -1457,7 +1486,7 @@ class ThermalView(unittest.TestCase):
         pg = _FakePygame()
         screen = _FakeSurface()
         fonts = (_FakeFont(), _FakeFont(), _FakeFont())
-        main.draw_thermal_view(pg, screen, fonts, self.frame(), 2, True)
+        main.Panel(pg, screen, 1024, 600).thermal(self.frame(), 2, True)
         self.assertGreater(screen.blits, 3)
         self.assertTrue(any(c[0] == 'frombuffer' for c in pg.calls))
 
@@ -1467,13 +1496,12 @@ class ThermalView(unittest.TestCase):
         pg = _FakePygame()
         screen = _FakeSurface()
         fonts = (_FakeFont(), _FakeFont(), _FakeFont())
-        main.draw_thermal_view(pg, screen, fonts, None, 0, False)
+        main.Panel(pg, screen, 1024, 600).thermal(None, 0, False)
         self.assertGreater(screen.blits, 0)
 
     def test_nothing_in_the_view_writes_an_image(self):
         pg = _FakePygame()
-        main.draw_thermal_view(pg, _FakeSurface(), (_FakeFont(), _FakeFont(), _FakeFont()),
-                               self.frame(), 1, True)
+        main.Panel(pg, _FakeSurface((1024, 600)), 1024, 600).thermal(self.frame(), 1, True)
         self.assertFalse([c for c in pg.calls if c[0] == 'save'],
                          'a frame reached image.save, which the privacy policy forbids')
 
@@ -1706,12 +1734,22 @@ class DisplayFallback(unittest.TestCase):
         # The outer handler around display_loop logs and RETURNS, so an
         # exception in the newest drawing code took the doorway counter down
         # with it, and nothing restarts that thread.
+        #
+        # Every screen is drawn inside one try, and a failure in any of them
+        # falls back to home, which is the one screen that always works. That
+        # is stronger than the version this replaced, which wrapped only the
+        # thermal view.
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
-        idx = source.index("if view == 'thermal':")
-        window = source[idx:idx + 1600]
-        self.assertIn('try:', window)
-        self.assertIn("view = 'stats'", window,
-                      'a failing thermal view does not fall back to the stats screen')
+        loop = source[source.index('def display_loop():'):]
+        dispatch = loop.index("if view == 'thermal':")
+        before = loop[max(0, dispatch - 200):dispatch]
+        after = loop[dispatch:dispatch + 1400]
+        self.assertIn('try:', before, 'the screen dispatch is not inside a try')
+        self.assertIn('except Exception', after)
+        self.assertIn("view = 'home'", after,
+                      'a failing screen does not fall back to home')
+        self.assertIn('ui.home(', after[after.index('except Exception'):],
+                      'the fallback does not actually draw the home screen')
 class ThermalRecovery(unittest.TestCase):
     """The reopen path, which until now was covered by reading it carefully.
 
@@ -2384,5 +2422,78 @@ class VideoDriverChoice(unittest.TestCase):
         window = source[idx:idx + 2600]
         self.assertIn('if screen is None:', window)
         self.assertIn('return', window)
+class PanelTapTargets(unittest.TestCase):
+    """A card drawn in one place and hit-tested in another is a button that
+    looks pressable and does nothing. Both come from home_cards, and these pin
+    that the rectangles are sane on every panel shape."""
+
+    SHAPES = [(1024, 600), (800, 480), (720, 1280), (480, 800)]
+
+    def test_three_cards_every_time(self):
+        for w, h in self.SHAPES:
+            self.assertEqual(len(main.home_cards(w, h, main.display_metrics(w, h))), 3)
+
+    def test_cards_never_overlap_and_stay_on_the_panel(self):
+        for w, h in self.SHAPES:
+            cards = main.home_cards(w, h, main.display_metrics(w, h))
+            for (x, y, cw, ch) in cards:
+                self.assertGreaterEqual(x, 0)
+                self.assertGreaterEqual(y, 0)
+                self.assertLessEqual(x + cw, w, f'card past the right edge at {w}x{h}')
+                self.assertLessEqual(y + ch, h, f'card past the bottom at {w}x{h}')
+            for a, b in zip(cards, cards[1:]):
+                ax, ay, aw, ah = a
+                bx, by, bw, bh = b
+                apart = (ax + aw <= bx) or (ay + ah <= by)
+                self.assertTrue(apart, f'cards overlap at {w}x{h}')
+
+    def test_the_middle_of_each_card_hits_that_card(self):
+        for w, h in self.SHAPES:
+            cards = main.home_cards(w, h, main.display_metrics(w, h))
+            for i, (x, y, cw, ch) in enumerate(cards):
+                self.assertEqual(main.hit_card((x + cw // 2, y + ch // 2), cards), i)
+
+    def test_a_tap_in_the_gutter_opens_nothing(self):
+        # Opening the nearest card on a near miss feels helpful and is how a
+        # pitch lands on the wrong screen in front of a judge.
+        w, h = 1024, 600
+        cards = main.home_cards(w, h, main.display_metrics(w, h))
+        (x0, y0, w0, h0), (x1, _, _, _) = cards[0], cards[1]
+        gutter_x = (x0 + w0 + x1) // 2
+        self.assertIsNone(main.hit_card((gutter_x, y0 + h0 // 2), cards))
+
+    def test_cards_are_big_enough_to_hit_with_a_finger(self):
+        # Roughly 9 mm is the usual floor for a touch target; on a 7 inch
+        # 1024x600 panel that is about 60 pixels.
+        for w, h in self.SHAPES:
+            for (_, _, cw, ch) in main.home_cards(w, h, main.display_metrics(w, h)):
+                self.assertGreaterEqual(min(cw, ch), 60, f'card too small at {w}x{h}')
+
+    def test_the_back_button_fits_inside_the_header(self):
+        for w, h in self.SHAPES:
+            m = main.display_metrics(w, h)
+            x, y, bw, bh = main.back_button_rect(m)
+            self.assertGreaterEqual(y, 0)
+            self.assertLessEqual(y + bh, m['header_h'])
+            self.assertGreaterEqual(bh, 36)
+
+    def test_noise_bands_cover_the_whole_scale_in_order(self):
+        words = [main.noise_band(v)[0] for v in (30, 49.9, 50, 69.9, 70, 84.9, 85, 110)]
+        self.assertEqual(words, ['Quiet', 'Quiet', 'Moderate', 'Moderate',
+                                 'Lively', 'Lively', 'Loud', 'Loud'])
+
+    def test_every_screen_draws_on_a_machine_with_no_panel(self):
+        pg = _FakePygame()
+        ui = main.Panel(pg, _FakeSurface((1024, 600)), 1024, 600)
+        ui.home(3, 2, True, 63.0, True, [1, 2, 3])
+        ui.home(0, 0, False, 0.0, False, [])
+        ui.door(4, [1, 2, 3])
+        ui.door(0, [])
+        ui.noise(66.0, True)
+        for v in (50, 60, 70):
+            ui.trace.append(v)
+        ui.noise(66.0, True)
+        ui.noise(0.0, False)
+        self.assertFalse([c for c in pg.calls if c[0] == 'save'])
 if __name__ == '__main__':
     unittest.main()
