@@ -129,7 +129,7 @@ from sklearn.base import clone
 from sklearn.model_selection import GroupKFold
 from xgboost import XGBRegressor
 
-from prepare_features import MIN_REALTIME_ROWS, serving_population_mask
+from prepare_features import MIN_REALTIME_ROWS, realtime_flags, serving_population_mask
 from train_model import (FIXED_PARAMS, PER_CITY_MIN_ROWS, RANDOM_STATE,
                          FoldCategoryBaselines, LabelContractError, LeakageError,
                          _metrics, assert_delta_label, assert_group_disjoint,
@@ -662,10 +662,9 @@ def main():
                          'features with 0 before saving, so this pickle was not written by it')
     assert_delta_label(y, y_actual, baseline, data.get('label_type', 'absolute'))
 
-    if 'is_realtime' not in feature_cols:
-        raise LabelContractError('is_realtime is not in the feature matrix; the two heads '
-                                 'are split on it')
-    is_realtime = X[:, feature_cols.index('is_realtime')].astype(int) == 1
+    # The two heads are split on is_realtime, taken from the carried key (it left
+    # the feature matrix on 2026-09-25; prepare_features.realtime_flags).
+    is_realtime = realtime_flags(data) == 1
     served = serving_population_mask(baseline)
     if not served.all():
         raise LabelContractError(
