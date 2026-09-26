@@ -137,9 +137,9 @@ Three numbers, every 30 seconds:
   is about 30 cm of floor, so a person in it is a few zones reading nearer than
   the floor. It becomes crossings in the loop that reads it and is discarded;
   nothing keeps a frame.
-- The microphone's samples become one RMS number every five seconds and are
+- The microphone's samples become one RMS number every half second and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
-  from a loudness reading taken every 5 seconds.
+  from a loudness level.
 - There is **no camera, no MAC-address collection, no wifi or Bluetooth probe
   sniffing, no phone detection of any kind.** Nothing that could distinguish
   one person from another is captured.

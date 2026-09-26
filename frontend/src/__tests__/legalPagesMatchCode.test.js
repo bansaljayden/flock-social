@@ -108,6 +108,24 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
     expect(privacy).toContain(`${(cols * rows).toLocaleString('en-US')} temperature readings`);
   });
 
+  test('the loudness cadence and window in the copy come from the device code', () => {
+    // The page says how often the microphone's samples become a figure and what
+    // span the published figure covers. Both are constants in main.py, and the
+    // page said "every five seconds" and "30 seconds" after the code had moved
+    // to a minute.
+    const main = read('flock-sensor', 'main.py');
+    const every = Number((main.match(/^NOISE_BURST_EVERY = ([\d.]+)/m) || [])[1]);
+    const bursts = Number((main.match(/'noise_window': deque\(maxlen=(\d+)\)/) || [])[1]);
+    expect(every).toBe(0.5);
+    expect(bursts * every).toBe(60);
+    const mirror = read('frontend', 'api', 'marketing-page.js');
+    for (const [name, src] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, src.includes('a single loudness figure every half second')]).toEqual([name, true]);
+      expect([name, src.includes('the typical level over the last minute')]).toEqual([name, true]);
+      expect([name, /every five seconds|averaged over the last 30 seconds/.test(src)]).toEqual([name, false]);
+    }
+  });
+
   test('the doorway distance grid in the copy comes from the device code', () => {
     // A unit can count its doorway with a VL53L8CX instead of a beam. "A
     // distance sensor" alone could be anything from one number to a depth
