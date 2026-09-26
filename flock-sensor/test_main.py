@@ -3639,5 +3639,53 @@ class AnchorAgainstHiss(unittest.TestCase):
         self.assertIsNone(main.anchor_problem(10.0, 32.0))
 
 
+class TrainingRecorder(unittest.TestCase):
+    """The recorder is a development tool; the sensor still keeps no frame."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def load(self, name):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            f'training_{name}', self.HERE / 'training' / f'{name}.py')
+        mod = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(self.HERE / 'training'))
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.path.pop(0)
+        return mod
+
+    def test_a_frame_survives_the_round_trip_to_the_hundredth(self):
+        frames = self.load('frames')
+        frame = [20.0 + (i % 160) * 0.07 - (i // 160) * 0.013 for i in range(19200)]
+        back = frames.decode_frame(frames.encode_frame(frame))
+        self.assertEqual(len(back), 19200)
+        # Rounded to the hundredth, so never more than half of one out.
+        self.assertLessEqual(max(abs(a - b) for a, b in zip(frame, back)), 0.00501)
+
+    def test_it_will_not_record_without_consent(self):
+        record = self.load('record')
+        with mock.patch.object(main, 'ThermalCamera',
+                               side_effect=AssertionError('opened the camera')), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertEqual(record.main(['--room', 'kitchen']), 2)
+        self.assertIn('--consent', out.getvalue())
+
+    def test_the_installer_never_puts_it_on_a_unit(self):
+        # A venue unit gets main.py, the panel assets and the counter firmware.
+        setup = (self.HERE / 'setup.sh').read_text(encoding='utf-8')
+        self.assertNotIn('training', setup)
+
+    def test_the_sensor_itself_still_writes_no_frame(self):
+        source = (self.HERE / 'main.py').read_text(encoding='utf-8')
+        self.assertNotIn('encode_frame', source)
+        self.assertNotIn('flux-training', source)
+
+    def test_frames_can_never_be_committed(self):
+        ignore = (self.HERE / '.gitignore').read_text(encoding='utf-8')
+        self.assertIn('*.frames', ignore)
+
+
 if __name__ == '__main__':
     unittest.main()

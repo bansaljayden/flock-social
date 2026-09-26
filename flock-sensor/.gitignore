@@ -14,3 +14,7 @@ buffer.json
 
 __pycache__/
 *.pyc
+
+# Thermal training frames are images of people. They never go into the
+# repository; see training/README.md.
+*.frames
