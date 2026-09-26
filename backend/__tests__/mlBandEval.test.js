@@ -295,115 +295,15 @@ test('the evaluation points every database setting at an address nothing listens
 
 // ── Parity with predictBusyness ─────────────────────────────────────────────
 
-// Four venues inside one neighbour box, one far away. Curves are deterministic
-// multiples of five; venue 4 has holes and a zero-valued slot beside positive
-// neighbours, the edge where blendBaselineRows serves a positive baseline.
-const VENUES = [
-  { id: 101, lat: 40.60210, lng: -75.47120, cat: 'bar', types: ['bar', 'restaurant', 'food'] },
-  { id: 102, lat: 40.60250, lng: -75.47000, cat: 'restaurant', types: ['restaurant', 'food', 'point_of_interest'] },
-  { id: 103, lat: 40.59990, lng: -75.47300, cat: 'cafe', types: ['cafe', 'food', 'store'] },
-  { id: 104, lat: 40.60100, lng: -75.47150, cat: 'restaurant', types: ['meal_takeaway', 'restaurant'] },
-  { id: 105, lat: 40.75000, lng: -75.30000, cat: 'gym', types: ['gym', 'health'] },
-];
-
-function curveValue(v, dow, hour) {
-  return Math.min(100, 5 * ((dow * 3 + hour * 2 + v.id) % 21));
-}
-
-function buildFixture() {
-  const curves = new Map();
-  const weekly = [];
-  for (const v of VENUES) {
-    const c = new Int16Array(168).fill(-1);
-    for (let dow = 0; dow < 7; dow++) {
-      for (let hour = 0; hour < 24; hour++) {
-        if (v.id === 104 && hour === 3) continue;          // a slot with no row at all
-        let val = curveValue(v, dow, hour);
-        if (v.id === 104 && hour === 10) val = 0;          // zero, with positive neighbours
-        if (v.id === 104 && (hour === 9 || hour === 11)) val = Math.max(val, 40);
-        c[dow * 24 + hour] = val;
-        weekly.push({ v, dow, hour, val });
-      }
-    }
-    curves.set(String(v.id), c);
-  }
-  const live = [];
-  const dates = ['2026-09-04', '2026-09-05', '2026-09-06'];
-  let k = 0;
-  for (const date of dates) {
-    const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
-    for (const v of VENUES) {
-      for (const hour of [9, 10, 11, 18, 19, 20, 3]) {
-        k++;
-        const base = curves.get(String(v.id))[dow * 24 + hour];
-        const y = Math.max(0, Math.min(100, 5 * Math.round(((base < 0 ? 30 : base) + ((k * 37) % 61) - 30) / 5)));
-        live.push({
-          v, date, dow, hour, y,
-          weather: k % 5 === 0 ? null : { temp: 60 + (k % 25), humidity: 40 + (k % 30), wind: k % 12, code: [800, 801, 803, 500, 701][k % 5], rain: k % 5 === 3 },
-        });
-      }
-    }
-  }
-  return { curves, weekly, live };
-}
-
-function toCsvRow(fields) {
-  return exporter.rowToCsv(fields);
-}
-
-function writeFixtureCsv(file, fx) {
-  const lines = [exporter.HEADER];
-  for (const w of fx.weekly) {
-    lines.push(toCsvRow({
-      venue_id: w.v.id, day_of_week: w.dow, hour: w.hour, month: 9, season: 'fall',
-      venue_category: w.v.cat, price_level: 2, rating: 4.4, review_count: 900,
-      baseline_busyness: w.val, collection_mode: 'weekly', busyness_pct: w.val, city: 'lehigh',
-      google_types: w.v.types, latitude: w.v.lat, longitude: w.v.lng,
-      avg_user_crowd: 0, user_feedback_count: 0, avg_prediction_error: 0,
-      events_observed: false,
-    }));
-  }
-  for (const r of fx.live) {
-    const c = fx.curves.get(String(r.v.id))[r.dow * 24 + r.hour];
-    lines.push(toCsvRow({
-      venue_id: r.v.id, day_of_week: r.dow, hour: r.hour, month: 9, season: 'fall',
-      venue_category: r.v.cat, price_level: 2, rating: 4.4, review_count: 900,
-      temperature: r.weather ? r.weather.temp : null, humidity: r.weather ? r.weather.humidity : null,
-      wind_speed: r.weather ? r.weather.wind : null, weather_condition: r.weather ? 'clear sky' : null,
-      weather_condition_code: r.weather ? r.weather.code : null, is_raining: r.weather ? r.weather.rain : null,
-      has_nearby_event: null, events_observed: false,
-      baseline_busyness: c < 0 ? 0 : c, collection_mode: 'realtime', busyness_pct: r.y, city: 'lehigh',
-      google_types: r.v.types, latitude: r.v.lat, longitude: r.v.lng,
-      avg_user_crowd: 0, user_feedback_count: 0, avg_prediction_error: 0,
-      stored_observed_date: r.date, label_source: 'live', vendor_forecast_pct: 50,
-    }));
-  }
-  fs.writeFileSync(file, lines.join('\n') + '\n');
-}
-
-// buildRecentDeviation's UPSERT, restated naively and independently of
-// bandEval.makeOffsetLookup: the venue's live readings inside 28 days before
-// the moment, newest twenty, each against its own slot's positive curve.
-function builderOffset(fx, venueId, date, hour) {
-  const t = B.dayNumber(date) * 24 + hour;
-  const devs = fx.live
-    .filter((r) => r.v.id === venueId)
-    .map((r) => ({ t: B.dayNumber(r.date) * 24 + r.hour, b: fx.curves.get(String(venueId))[r.dow * 24 + r.hour], y: r.y }))
-    .filter((r) => r.t < t && r.t >= t - 28 * 24 && r.b > 0)
-    .sort((a, b) => b.t - a.t)
-    .slice(0, 20)
-    .map((r) => r.y - r.b)
-    .sort((a, b) => a - b);
-  if (devs.length === 0) return null;
-  const n = devs.length;
-  return { offset: n % 2 ? devs[(n - 1) / 2] : (devs[n / 2 - 1] + devs[n / 2]) / 2, n };
-}
+// The synthetic corpus and the pool that answers predictBusyness from it live
+// in helpers/bandEvalFixture.js, shared with mlServeModes.test.js.
+const FX = require('./helpers/bandEvalFixture');
 
 test('the replay publishes the score predictBusyness publishes, row for row', async () => {
-  const fx = buildFixture();
+  const fx = FX.buildFixture();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-bandeval-'));
   const csv = path.join(dir, 'fixture.csv');
-  writeFixtureCsv(csv, fx);
+  FX.writeFixtureCsv(csv, fx);
   try {
     B.pinUtcClock();
     const corpus = await B.readCorpus([csv]);
@@ -429,55 +329,10 @@ test('the replay publishes the score predictBusyness publishes, row for row', as
 
     // The production path, against a pool that answers from the same corpus.
     const pool = require('../config/database');
-    const aliasToVenue = new Map();
-    const byPlace = (placeId) => VENUES.find((v) => v.id === aliasToVenue.get(placeId));
+    const moments = new Map();
+    const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
     const realQuery = pool.query;
-    const unknown = [];
-    pool.query = async (text, params = []) => {
-      const sql = String(text).replace(/\s+/g, ' ');
-      if (/FROM ml_venue_baselines WHERE google_place_id = \$1 AND/.test(sql)) {
-        const v = byPlace(params[0]);
-        const c = fx.curves.get(String(v.id));
-        const rows = [];
-        for (const [d, h] of [[params[1], params[2]], [params[3], params[4]], [params[5], params[6]]]) {
-          if (c[d * 24 + h] >= 0) rows.push({ day_of_week: d, hour: h, baseline: String(c[d * 24 + h]), source: 'collected', updated_at: new Date() });
-        }
-        return { rows };
-      }
-      if (/v\.latitude BETWEEN/.test(sql) && /GROUP BY b\.day_of_week, b\.hour/.test(sql)) {
-        const [lat, lng, box] = params.map(Number);
-        const agg = new Map();
-        for (const v of VENUES) {
-          if (!(v.lat >= lat - box && v.lat <= lat + box && v.lng >= lng - box && v.lng <= lng + box)) continue;
-          const c = fx.curves.get(String(v.id));
-          for (let s = 0; s < 168; s++) {
-            if (c[s] < 0) continue;
-            const key = s;
-            const e = agg.get(key) || { dow: Math.floor(s / 24), hour: s % 24, cnt: 0, sum_bl: 0 };
-            e.cnt += 1;
-            e.sum_bl += c[s];
-            agg.set(key, e);
-          }
-        }
-        return { rows: [...agg.values()].map((e) => ({ ...e, sum_bl: String(e.sum_bl) })) };
-      }
-      if (/AS lat, v\.longitude AS lng/.test(sql)) {
-        const v = byPlace(params[0]);
-        const c = fx.curves.get(String(v.id));
-        const rows = [];
-        for (let s = 0; s < 168; s++) if (c[s] >= 0) rows.push({ lat: String(v.lat), lng: String(v.lng), dow: Math.floor(s / 24), hour: s % 24, baseline: String(c[s]) });
-        return { rows };
-      }
-      if (/FROM ml_venue_recent_deviation/.test(sql)) {
-        const at = aliasToVenue.moment.get(params[0]);
-        const off = builderOffset(fx, aliasToVenue.get(params[0]), at.date, at.hour);
-        return { rows: off ? [{ offset_pct: off.offset, n_readings: off.n, updated_at: new Date() }] : [] };
-      }
-      if (/FROM venue_feedback/.test(sql)) return { rows: [{ avg_crowd: null, count: 0, avg_error_mapped: null, avg_error_legacy: null }] };
-      unknown.push(sql.slice(0, 120));
-      return { rows: [] };
-    };
-    aliasToVenue.moment = new Map();
+    pool.query = stub.query;
     try {
       const predictorPath = require.resolve('../services/mlPredictor');
       delete require.cache[predictorPath];
@@ -494,8 +349,7 @@ test('the replay publishes the score predictBusyness publishes, row for row', as
           // A fresh place id per row: getRecentDeviation caches per place for
           // five minutes, and each row is a different moment of the same venue.
           const alias = `ChIJbandeval_${r.venueId}_${i}`;
-          aliasToVenue.set(alias, Number(r.venueId));
-          aliasToVenue.moment.set(alias, { date: r.date, hour: r.hour });
+          moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
           const venue = { ...r.venue, place_id: alias };
           const out = await predictor.predictBusyness(venue, r.weather, r.ts);
           if (out.score !== replay.rows[i].served || (out.predictionMethod === 'ml') !== replay.rows[i].ml) {
@@ -506,7 +360,7 @@ test('the replay publishes the score predictBusyness publishes, row for row', as
         [console.log, console.warn, console.error] = quiet;
         delete require.cache[predictorPath];
       }
-      assert.deepEqual(unknown, [], 'predictBusyness asked the pool something the fixture does not answer');
+      assert.deepEqual(stub.unknown, [], 'predictBusyness asked the pool something the fixture does not answer');
       assert.deepEqual(mismatches, [], 'the replay must publish exactly what production publishes');
     } finally {
       pool.query = realQuery;
