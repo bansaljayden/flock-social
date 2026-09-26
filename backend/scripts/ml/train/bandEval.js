@@ -392,7 +392,7 @@ function makeOffsetLookup(liveRows, curves, { minReadings, clamp }) {
     const b = curve[r.dow * 24 + r.hour];
     if (!(b > 0)) continue;
     if (!byVenue.has(r.venueId)) byVenue.set(r.venueId, []);
-    byVenue.get(r.venueId).push({ t: day * 24 + r.hour, dev: r.y - b });
+    byVenue.get(r.venueId).push({ t: day * 24 + r.hour, dev: r.y - b, y: r.y, date: r.date, dow: r.dow, hour: r.hour });
   }
   for (const list of byVenue.values()) list.sort((a, b) => a.t - b.t);
   const offsetAt = function offsetAt(venueId, t) {
@@ -426,6 +426,26 @@ function makeOffsetLookup(liveRows, curves, { minReadings, clamp }) {
     const last = list[lo - 1];
     const age = t - last.t;
     return age <= NOWCAST_MAX_AGE_HOURS ? { dev: last.dev, ageHours: age } : null;
+  };
+  // WHAT buildRecentDeviation.js WOULD HAVE STORED for the served nowcast
+  // (CROWD_NOWCAST_ENABLED): the venue's newest `keep` readings at or before
+  // hour t, newest first, in the column's own JSON shape. AT OR BEFORE, so the
+  // hour's own reading is in the list whenever the venue was read then: this
+  // is the table right after that hour's sweep, the state in which the serving
+  // path must skip it. prepareRows hands the list to mlPredictor's own parser
+  // and picker, so the replay and the card choose the reading the same way.
+  offsetAt.storedReadings = function storedReadings(venueId, t, keep) {
+    const list = byVenue.get(venueId);
+    if (!list) return [];
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid].t <= t) lo = mid + 1; else hi = mid; }
+    const out = [];
+    for (let i = lo - 1; i >= 0 && out.length < keep; i--) {
+      const e = list[i];
+      out.push({ v: e.y, d: e.date, dow: e.dow, h: e.hour, at: null });
+    }
+    return out;
   };
   return offsetAt;
 }
@@ -584,7 +604,14 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
     const neighbors = neighborActivity({ id: r.venueId, lat: r.lat, lng: r.lng }, r.dow, r.hour);
     const off = offsetAt(r.venueId, day * 24 + r.hour);
     const last = offsetAt.lastReading(r.venueId, day * 24 + r.hour);
-    const rule = crowdEngine.calculateCrowdScore(venue, r.weather, ts).score;
+    const ruleResult = crowdEngine.calculateCrowdScore(venue, r.weather, ts);
+    const rule = ruleResult.score;
+    // The served nowcast's reading, chosen by the serving code from what the
+    // builder would have stored after this hour's sweep.
+    const nowcastPick = I.pickNowcastReading(
+      I.parseRecentReadings(offsetAt.storedReadings(r.venueId, day * 24 + r.hour, I.NOWCAST_READINGS_KEPT)),
+      I.venueSlotOf(ts)
+    );
     out.push({
       ...r,
       ts,
@@ -599,17 +626,28 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
         ? Math.max(0, Math.min(100, Math.round(rawCurve + NOWCAST_WEIGHT_BY_AGE[last.ageHours] * last.dev)))
         : null,
       nowcastAgeHours: last ? last.ageHours : null,
+      nowcastPick,
       guessedCategory: I.guessCategory(r.types),
       rule,
+      ruleConfidence: ruleResult.confidence,
     });
   }
   return out;
 }
 
-// One artifact over prepared rows: the served score and its parts.
-async function scoreArtifact(art, prepared, { qmap } = {}) {
+// One artifact over prepared rows: the served score and its parts, under one
+// serving configuration. Every option defaults to what the process
+// environment says, exactly as predictBusyness reads it: `qmap`
+// (CROWD_QMAP_ENABLED), `serveMode` (CROWD_SERVE_MODE, 'model' or
+// 'curve_offset') and `nowcast` (CROWD_NOWCAST_ENABLED). The switches' own
+// arithmetic, the confidence rule and the version qualifier are mlPredictor's
+// functions, called here, not restated.
+async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   const { I } = art;
   const qmapOn = qmap === undefined ? I.qmapEnabled() : Boolean(qmap);
+  const mode = serveMode === undefined ? I.serveMode() : serveMode;
+  const nowcastOn = nowcast === undefined ? I.nowcastEnabled() : Boolean(nowcast);
+  if (!I.SERVE_MODES.includes(mode)) throw new Error(`unknown serve mode ${mode}; one of ${I.SERVE_MODES.join(', ')}`);
   const mlIdx = [];
   const vectors = [];
   prepared.forEach((r, i) => {
@@ -622,29 +660,73 @@ async function scoreArtifact(art, prepared, { qmap } = {}) {
   });
   const raw = await runGraph(art, vectors);
   const mapsThisModel = (art.meta.model_version || '') === I.QMAP_FITTED_ON;
-  const res = prepared.map((r) => ({ ml: false, served: r.rule }));
+  const accuracy = I.readServedAccuracy(art.meta);
+  const version = art.meta.model_version || '2.1.0';
+  // A rule-engine answer carries crowdEngine's own confidence and no version.
+  const res = prepared.map((r) => ({ ml: false, served: r.rule, confidence: r.ruleConfidence, modelVersion: null }));
   mlIdx.forEach((i, k) => {
     const r = prepared[i];
     const rawDelta = raw[k];
-    if (!Number.isFinite(rawDelta)) return; // the catch in predictBusyness answers from the rule engine
-    const base = art.meta.label_type === 'delta'
-      ? I.reconstructScore(rawDelta, r.smoothed)
-      : Math.max(0, Math.min(100, Math.round(rawDelta)));
-    const mapped = qmapOn && mapsThisModel ? I.applyScoreQuantileMap(base) : base;
-    const withOffset = (s) => (r.offset === null ? s
-      : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * r.offset))));
+    // curve_offset serves every venue-hour the model path reaches, and never
+    // runs the model, so a model output cannot divert it.
+    const curveOffset = mode === 'curve_offset' && r.smoothed > 0;
+    if (!curveOffset && !Number.isFinite(rawDelta)) return; // the catch in predictBusyness answers from the rule engine
+    const parts = { reconstructed: null, mapped: null, withOffset: null, modelServed: null };
+    if (Number.isFinite(rawDelta)) {
+      const base = art.meta.label_type === 'delta'
+        ? I.reconstructScore(rawDelta, r.smoothed)
+        : Math.max(0, Math.min(100, Math.round(rawDelta)));
+      const mapped = qmapOn && mapsThisModel ? I.applyScoreQuantileMap(base) : base;
+      const withOffset = (s) => (r.offset === null ? s
+        : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * r.offset))));
+      parts.reconstructed = base;
+      parts.mapped = mapsThisModel ? I.applyScoreQuantileMap(base) : base;
+      parts.withOffset = withOffset(base);
+      parts.modelServed = withOffset(mapped);
+    }
+    const qmapApplied = !curveOffset && qmapOn && mapsThisModel;
+    // The number before the nowcast: the mode's own arithmetic.
+    const before = curveOffset
+      ? I.curveOffsetScore(r.smoothed, r.offset === null ? null : { offset: r.offset })
+      : parts.modelServed;
+    let served = before;
+    let nowcastApplied = null;
+    if (nowcastOn) {
+      const applied = I.applyNowcast(before, r.nowcastPick, I.nowcastBaseKey(curveOffset, qmapApplied, art.meta.model_version));
+      if (applied) {
+        const { score, ...detail } = applied;
+        served = score;
+        nowcastApplied = detail;
+      }
+    }
+    const published = I.servedConfidence({
+      accuracy,
+      qmapApplied,
+      hasWeather: I.hasTempReading(r.weather),
+      curveOffset,
+      nowcast: nowcastApplied,
+      ladder: () => r.ruleConfidence,
+    });
     res[i] = {
       ml: true,
       rawDelta,
-      reconstructed: base,
-      mapped: mapsThisModel ? I.applyScoreQuantileMap(base) : base,
-      withOffset: withOffset(base),
-      served: withOffset(mapped),
+      reconstructed: parts.reconstructed,
+      mapped: parts.mapped,
+      withOffset: parts.withOffset,
+      curveOffset,
+      beforeNowcast: before,
+      nowcast: nowcastApplied,
+      served,
+      confidence: published.confidence,
+      confidenceMetric: published.confidenceMeasurement.metric,
+      modelVersion: I.servedModelVersion(version, curveOffset, nowcastApplied),
     };
   });
   return {
     version: art.meta.model_version,
-    qmapApplied: qmapOn && mapsThisModel,
+    qmapApplied: qmapOn && mapsThisModel && mode !== 'curve_offset',
+    serveMode: mode,
+    nowcast: nowcastOn,
     rows: res,
   };
 }
@@ -825,7 +907,15 @@ function report(rows, predictors, cuts, labels, { slices = Object.keys(SLICES) }
       out.slices[s][g] = { n: idx.length };
       for (const [name, pred] of Object.entries(predictors)) {
         const m = summarize(idx.map((i) => actual[i]), idx.map((i) => pred[i]), cuts);
-        out.slices[s][g][name] = { within_one_band: m.within_one_band, band_exact: m.band_exact, mae: m.mae, bias: m.bias };
+        out.slices[s][g][name] = {
+          within_10: m.within_10,
+          within_one_band: m.within_one_band,
+          band_exact: m.band_exact,
+          band_mae: m.band_mae,
+          mae: m.mae,
+          bias: m.bias,
+          within_15: m.within_15,
+        };
       }
     }
   }
@@ -919,6 +1009,113 @@ function labelsFromCuts(cuts) {
 }
 
 // ---------------------------------------------------------------------------
+// The two switches: their configurations, and their weights fitted in time
+// ---------------------------------------------------------------------------
+
+// CROWD_SERVE_MODE x CROWD_NOWCAST_ENABLED. 'model' without the nowcast is the
+// app as it serves with both switches off.
+const SERVE_CONFIGS = Object.freeze([
+  { name: 'model', serveMode: 'model', nowcast: false },
+  { name: 'curve_offset', serveMode: 'curve_offset', nowcast: false },
+  { name: 'model+nowcast', serveMode: 'model', nowcast: true },
+  { name: 'curve_offset+nowcast', serveMode: 'curve_offset', nowcast: true },
+]);
+const configKey = (name) => `served[${name}]`;
+
+// The weights a fit tries: 0 to 1 in steps of 0.05. Not above one: a weight
+// above one extrapolates a median (the offset) or a reading (the nowcast)
+// beyond what it says, and the only thing that buys is within-10 on the rails,
+// the trade the quantile map made.
+const FIT_GRID = Object.freeze(Array.from({ length: 21 }, (_, i) => i / 20));
+
+const roundClamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
+
+// The switches' arithmetic with the weight as an argument, so a fit can try
+// weights the serving constants do not hold. Checked against the real serve
+// path at the shipped weights, row for row, before any fit is trusted
+// (checkFitArithmetic).
+function curveOffsetAt(r, w) {
+  const level = roundClamp(r.smoothed);
+  return r.offset === null ? level : roundClamp(level + w * r.offset);
+}
+function nowcastAt(base, pick, a) {
+  return pick && a > 0 ? roundClamp(base + a * (pick.value - base)) : base;
+}
+
+// The grid weight with the least mean absolute error over `idx`; the smaller
+// weight on a tie. MAE because it is the loss neither headline metric can
+// game: within-10 alone rewards pushing numbers onto the rails (the quantile
+// map), within-one-band alone rewards hedging toward "Not Busy" (the
+// constant), and both are reported beside every fit.
+function fitWeight(rows, idx, predictAt) {
+  let best = null;
+  if (idx.length === 0) return { weight: 0, mae: null, n: 0 };
+  for (const w of FIT_GRID) {
+    let s = 0;
+    for (const i of idx) s += Math.abs(predictAt(i, w) - rows[i].y);
+    const mae = s / idx.length;
+    if (!best || mae < best.mae - 1e-12) best = { weight: w, mae, n: idx.length };
+  }
+  return best;
+}
+
+// Every weight the switches carry, fitted on the rows at `idx`: first the
+// curve_offset weight, then per nowcast base and lag bucket the reading's
+// weight on top of that base. `modelBase` holds the model path's number per
+// row with the quantile map on and off (`model_qmap`, `model`).
+function fitServeWeights(rows, modelBase, idx) {
+  const co = fitWeight(rows, idx, (i, w) => curveOffsetAt(rows[i], w));
+  const bases = {
+    curve_offset: (i) => curveOffsetAt(rows[i], co.weight),
+    model_qmap: (i) => modelBase.model_qmap[i],
+    model: (i) => modelBase.model[i],
+  };
+  const nowcast = {};
+  const counts = {};
+  for (const [base, at] of Object.entries(bases)) {
+    nowcast[base] = {};
+    counts[base] = {};
+    for (const bucket of [1, 2, 3, 4]) {
+      const sub = idx.filter((i) => rows[i].nowcastPick && rows[i].nowcastPick.bucket === bucket);
+      const f = fitWeight(rows, sub, (i, a) => nowcastAt(at(i), rows[i].nowcastPick, a));
+      nowcast[base][bucket] = f.weight;
+      counts[base][bucket] = sub.length;
+    }
+  }
+  return { curveOffsetWeight: co.weight, nowcast, rowsByBucket: counts.curve_offset, rows: idx.length };
+}
+
+// The number each configuration serves at a given set of weights, by the
+// restated arithmetic above.
+function servedAt(rows, modelBase, weights, cfg, qmapOn) {
+  return rows.map((r, i) => {
+    const curveOffset = cfg.serveMode === 'curve_offset';
+    const base = curveOffset ? curveOffsetAt(r, weights.curveOffsetWeight) : modelBase[qmapOn ? 'model_qmap' : 'model'][i];
+    if (!cfg.nowcast || !r.nowcastPick) return base;
+    const table = weights.nowcast[curveOffset ? 'curve_offset' : (qmapOn ? 'model_qmap' : 'model')];
+    return nowcastAt(base, r.nowcastPick, table ? table[r.nowcastPick.bucket] : 0);
+  });
+}
+
+// The restated arithmetic must be the served arithmetic: at the shipped
+// weights it has to reproduce every configuration the serve path scored, row
+// for row, or no weight it fits means anything.
+function checkFitArithmetic(rows, modelBase, shipped, scoredByConfig, qmapOn, modelVersion, fittedOn) {
+  const problems = [];
+  for (const cfg of SERVE_CONFIGS) {
+    // The model tables stand aside for an artifact they were not fitted on.
+    const weights = cfg.serveMode === 'model' && cfg.nowcast && modelVersion !== fittedOn
+      ? { ...shipped, nowcast: { ...shipped.nowcast, model: {}, model_qmap: {} } }
+      : shipped;
+    const restated = servedAt(rows, modelBase, weights, cfg, qmapOn);
+    const scored = scoredByConfig[cfg.name];
+    const bad = restated.filter((v, i) => v !== scored[i]).length;
+    if (bad) problems.push(`${cfg.name}: ${bad} of ${rows.length} rows differ`);
+  }
+  if (problems.length) throw new Error(`the fit's arithmetic is not the served arithmetic (${problems.join('; ')}); fix bandEval before trusting a fitted weight.`);
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -931,31 +1128,35 @@ function parseArgs(argv) {
     if (k === 'legacy') args.legacy = true;
     else if (k === 'gate') args.gate = true;
     else if (k === 'slices') args.slices = true;
-    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap'].includes(k)) args[k] = v;
+    else if (k === 'fit') args.fit = true;
+    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from'].includes(k)) args[k] = v;
     else throw new Error(`unrecognised argument --${k}`);
   }
   return args;
 }
 
+// Within 10 first: the product's primary accuracy metric since 2026-08-28.
+// Within one band second: the admin card's. Neither is read without the other.
 function fmt(m) {
-  return `${String(m.n).padStart(6)}  w1b ${String(m.within_one_band).padStart(5)}%  exact ${String(m.band_exact).padStart(5)}%  `
-    + `bandMAE ${String(m.band_mae).padStart(5)}  MAE ${String(m.mae).padStart(6)}  bias ${String(m.bias).padStart(6)}  `
-    + `w15 ${String(m.within_15).padStart(5)}%`;
+  return `${String(m.n).padStart(6)}  w10 ${String(m.within_10).padStart(5)}%  w1b ${String(m.within_one_band).padStart(5)}%  `
+    + `exact ${String(m.band_exact).padStart(5)}%  bandMAE ${String(m.band_mae).padStart(5)}  MAE ${String(m.mae).padStart(6)}  `
+    + `bias ${String(m.bias).padStart(6)}  w15 ${String(m.within_15).padStart(5)}%`;
 }
 
-// --slices: every slice of a section as within-one-band / band exact / MAE,
-// one column per predictor.
-function printSlices(section, names = ['city', 'hour', 'hour_group', 'actual_band', 'category', 'prior_live_readings']) {
-  const preds = Object.keys(section.model_served_rows.overall);
-  const short = (p) => p.replace(/^model_/, '').replace(/^reference_/, 'ref_').replace(/:.*$/, (m) => (m.length > 12 ? `:${m.slice(1, 6)}` : m)).slice(0, 21);
+// --slices: every slice of a section as within-10 / within-one-band / band
+// exact / MAE, one column per predictor (the four serving configurations by
+// default; every predictor is in the JSON report).
+function printSlices(section, names = ['city', 'hour_group', 'actual_band', 'category', 'prior_live_readings'], preds = null) {
+  const cols = preds || Object.keys(section.model_served_rows.overall);
+  const short = (p) => p.replace(/^served\[/, '').replace(/\].*$/, '').replace(/^model_/, '').replace(/^reference_/, 'ref_').slice(0, 24);
   for (const name of names) {
     const groups = section.model_served_rows.slices[name];
     if (!groups) continue;
-    console.log(`\n  by ${name}  (within one band % / band exact % / MAE)`);
-    console.log(`  ${'level'.padEnd(18)}${'n'.padStart(7)}  ${preds.map((p) => short(p).padStart(22)).join('')}`);
+    console.log(`\n  by ${name}  (within 10 % / within one band % / band exact % / MAE)`);
+    console.log(`  ${'level'.padEnd(18)}${'n'.padStart(7)}  ${cols.map((p) => short(p).padStart(26)).join('')}`);
     for (const [level, row] of Object.entries(groups)) {
       console.log(`  ${String(level).padEnd(18)}${String(row.n).padStart(7)}  `
-        + preds.map((p) => `${row[p].within_one_band}/${row[p].band_exact}/${row[p].mae}`.padStart(22)).join(''));
+        + cols.map((p) => `${row[p].within_10}/${row[p].within_one_band}/${row[p].band_exact}/${row[p].mae}`.padStart(26)).join(''));
     }
   }
 }
@@ -1014,8 +1215,17 @@ async function main(argv = process.argv.slice(2)) {
 
   async function evaluate(label, rows, window) {
     const prepared = prepareRows(rows, corpus, helpers, { category: args.category });
-    const mine = await scoreArtifact(art, prepared, { qmap });
-    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap }) : null;
+    // The model's own arithmetic, whatever the switches in this process's
+    // environment say: this is what a retrain changes, what the band gate
+    // judges, and what the app serves with both switches off.
+    const mine = await scoreArtifact(art, prepared, { qmap, serveMode: 'model', nowcast: false });
+    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, serveMode: 'model', nowcast: false }) : null;
+    // The four serving configurations the two switches make, through the same
+    // serve path, under the same quantile-map setting.
+    const configs = {};
+    for (const cfg of SERVE_CONFIGS) {
+      configs[cfg.name] = await scoreArtifact(art, prepared, { qmap, serveMode: cfg.serveMode, nowcast: cfg.nowcast });
+    }
     const served = prepared.map((r, i) => r.smoothed > 0 && mine.rows[i].ml);
     const mlRows = prepared.filter((_, i) => served[i]);
     const pick = (arr) => arr.filter((_, i) => served[i]);
@@ -1026,6 +1236,7 @@ async function main(argv = process.argv.slice(2)) {
     // forward (nowcast in prepareRows).
     const nowcastElseServed = prepared.map((r, i) => (r.nowcast === null ? mine.rows[i].served : r.nowcast));
     const predictors = {
+      ...Object.fromEntries(SERVE_CONFIGS.map((cfg) => [configKey(cfg.name), pick(configs[cfg.name].rows.map((x) => x.served))])),
       [`model_served:${mine.version}`]: pick(mine.rows.map((x) => x.served)),
       [`model_reconstructed:${mine.version}`]: pick(mine.rows.map((x) => x.reconstructed)),
       [`model_mapped:${mine.version}`]: pick(mine.rows.map((x) => x.mapped)),
@@ -1042,6 +1253,19 @@ async function main(argv = process.argv.slice(2)) {
       naive_curve: curve,
     };
     const mlActual = mlRows.map((r) => r.y);
+    // HOW OFTEN THE SERVED NOWCAST HAD A READING TO USE, by the reading's age,
+    // and how often it then moved the number (a bucket whose weight is zero
+    // has a reading and uses none of it).
+    const byBucket = () => ({ 1: 0, 2: 0, 3: 0, '4+': 0 });
+    const bucketName = (b) => (b === 4 ? '4+' : b);
+    const withReading = byBucket();
+    for (const r of mlRows) if (r.nowcastPick) withReading[bucketName(r.nowcastPick.bucket)]++;
+    const applied = {};
+    for (const cfg of SERVE_CONFIGS.filter((c) => c.nowcast)) {
+      const counts = byBucket();
+      configs[cfg.name].rows.forEach((x, i) => { if (served[i] && x.nowcast) counts[bucketName(x.nowcast.bucket)]++; });
+      applied[cfg.name] = counts;
+    }
     sections[label] = {
       window,
       all_live_rows: report(prepared, allRows, cuts, labels, { slices: ['city'] }),
@@ -1055,12 +1279,22 @@ async function main(argv = process.argv.slice(2)) {
           return acc;
         }, {}),
       },
+      served_nowcast_coverage: {
+        of: mlRows.length,
+        max_lag_hours: art.I.NOWCAST_MAX_LAG_HOURS,
+        with_reading_by_lag: withReading,
+        without_reading: mlRows.filter((r) => !r.nowcastPick).length,
+        applied_by_lag: applied,
+      },
       qmap_applied: mine.qmapApplied,
       rows_without_served_baseline: prepared.length - mlRows.length,
       rows_skipped_clock_disagreement: prepared.skipped,
     };
-    prepared.forEach((r, i) => perRow.push({ section: label, r, mine: mine.rows[i], theirs: theirs ? theirs.rows[i] : null }));
-    return { prepared, mine, theirs, served, mlRows, curve };
+    prepared.forEach((r, i) => perRow.push({
+      section: label, r, mine: mine.rows[i], theirs: theirs ? theirs.rows[i] : null,
+      configs: Object.fromEntries(SERVE_CONFIGS.map((cfg) => [cfg.name, configs[cfg.name].rows[i]])),
+    }));
+    return { prepared, mine, theirs, configs, served, mlRows, curve };
   }
 
   const liveResult = await evaluate('live_time_holdout', corpus.live.filter(inWindow), { from: fromDate, to: toDate });
@@ -1078,15 +1312,23 @@ async function main(argv = process.argv.slice(2)) {
     console.log(`\n[BandEval] ${label}: window ${s.window.from} .. ${s.window.to}, ${s.model_served_rows.rows} model-served rows over ${s.model_served_rows.dates} dates `
       + `(${s.rows_without_served_baseline} more answered by the rule engine for want of a baseline, `
       + `${s.rows_skipped_clock_disagreement} skipped: date and weekday disagree); quantile map ${s.qmap_applied ? 'ON' : 'off'}`);
-    for (const [name, m] of Object.entries(s.model_served_rows.overall)) console.log(`  ${name.padEnd(36)} ${fmt(m)}`);
+    console.log('  the serving configurations (CROWD_SERVE_MODE x CROWD_NOWCAST_ENABLED):');
+    for (const cfg of SERVE_CONFIGS) console.log(`  ${configKey(cfg.name).padEnd(36)} ${fmt(s.model_served_rows.overall[configKey(cfg.name)])}`);
+    console.log('  the parts and the references:');
+    for (const [name, m] of Object.entries(s.model_served_rows.overall)) {
+      if (!name.startsWith('served[')) console.log(`  ${name.padEnd(36)} ${fmt(m)}`);
+    }
     if (s.hedge_reference) {
       console.log(`  ${`reference_constant:${s.hedge_reference.band}`.padEnd(36)} ${fmt(s.hedge_reference)}  (in-sample; what a constant answer buys)`);
     }
+    const c = s.served_nowcast_coverage;
+    console.log(`  served nowcast: a reading at most ${c.max_lag_hours} h old for ${c.of - c.without_reading} of ${c.of} rows, `
+      + `by lag ${JSON.stringify(c.with_reading_by_lag)}; it moved the number on ${JSON.stringify(c.applied_by_lag)}`);
     console.log(`  nowcast reference covers ${s.nowcast_coverage.rows} of ${s.nowcast_coverage.of} rows `
       + `(reading age in hours: ${JSON.stringify(s.nowcast_coverage.by_age_hours)})`);
     console.log('  what the app shows on every live row (model where it serves, rule engine elsewhere):');
     for (const [name, m] of Object.entries(s.all_live_rows.overall)) console.log(`  ${name.padEnd(36)} ${fmt(m)}`);
-    if (args.slices) printSlices(s);
+    if (args.slices) printSlices(s, undefined, SERVE_CONFIGS.map((cfg) => configKey(cfg.name)));
   }
 
   let gateResult = null;
@@ -1117,6 +1359,150 @@ async function main(argv = process.argv.slice(2)) {
     writeBandGate(path.join(path.resolve(modelDir), 'model_metadata.json'), gateResult);
   }
 
+  // --fit: THE SWITCHES' WEIGHTS, FITTED ON EARLIER DATES AND SCORED ON LATER
+  // ONES. Fits on every model-served live reading before --score-from
+  // (default: the last three observation dates are scored), reports the
+  // scored dates through the serve path at the SHIPPED weights and at the
+  // fitted ones, repeats the fit on an expanding window (every date from the
+  // third scored by a fit on the dates before it) to show whether the weights
+  // are stable, and prints the within-15 figures mlPredictor.SERVE_MEASURED
+  // should carry for the shipped weights.
+  let fitResult = null;
+  if (args.fit) {
+    const I = art.I;
+    const { prepared, served, mlRows, configs } = liveResult;
+    const idxOf = (arr) => arr.filter((_, i) => served[i]);
+    const on = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: false });
+    const off = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: false });
+    const modelBase = { model_qmap: idxOf(on.rows.map((x) => x.served)), model: idxOf(off.rows.map((x) => x.served)) };
+    const qmapApplied = liveResult.mine.qmapApplied;
+    const shipped = { curveOffsetWeight: I.CURVE_OFFSET_WEIGHT, nowcast: I.NOWCAST_WEIGHTS };
+    checkFitArithmetic(mlRows, modelBase, shipped,
+      Object.fromEntries(SERVE_CONFIGS.map((cfg) => [cfg.name, idxOf(configs[cfg.name].rows.map((x) => x.served))])),
+      qmapApplied, art.meta.model_version, I.NOWCAST_MODEL_FITTED_ON);
+
+    const dates = [...new Set(mlRows.map((r) => r.date))].sort();
+    const scoreFrom = args['score-from'] || dates[Math.max(0, dates.length - 3)];
+    const fitIdx = [];
+    const scoreIdx = [];
+    mlRows.forEach((r, i) => (r.date < scoreFrom ? fitIdx : scoreIdx).push(i));
+    if (!fitIdx.length || !scoreIdx.length) throw new Error(`--fit needs model-served rows on both sides of --score-from=${scoreFrom}.`);
+    const fitted = fitServeWeights(mlRows, modelBase, fitIdx);
+    const everyDate = fitServeWeights(mlRows, modelBase, mlRows.map((_, i) => i));
+    const expanding = [];
+    for (let k = 2; k < dates.length; k++) {
+      const idx = [];
+      mlRows.forEach((r, i) => { if (r.date < dates[k]) idx.push(i); });
+      const f = fitServeWeights(mlRows, modelBase, idx);
+      expanding.push({ scored_date: dates[k], fitted_rows: idx.length, curve_offset_weight: f.curveOffsetWeight, nowcast: f.nowcast });
+    }
+
+    const fwdRows = scoreIdx.map((i) => mlRows[i]);
+    const fwdActual = fwdRows.map((r) => r.y);
+    const fwd = (arr) => scoreIdx.map((i) => arr[i]);
+    // The model path under the nowcast, with the map on and off, for the two
+    // model tables' confidence figures.
+    const mnOn = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: true });
+    const mnOff = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: true });
+    const forward = { shipped_weights: {}, fitted_weights: {} };
+    for (const cfg of SERVE_CONFIGS) {
+      forward.shipped_weights[cfg.name] = summarize(fwdActual, fwd(idxOf(configs[cfg.name].rows.map((x) => x.served))), cuts);
+      forward.fitted_weights[cfg.name] = summarize(fwdActual, fwd(servedAt(mlRows, modelBase, fitted, cfg, qmapApplied)), cuts);
+    }
+    forward.shipped_weights['model+nowcast (quantile map on)'] = summarize(fwdActual, fwd(idxOf(mnOn.rows.map((x) => x.served))), cuts);
+    forward.shipped_weights['model+nowcast (quantile map off)'] = summarize(fwdActual, fwd(idxOf(mnOff.rows.map((x) => x.served))), cuts);
+    forward.shipped_weights['model (quantile map off)'] = summarize(fwdActual, fwd(modelBase.model), cuts);
+
+    // The full offset (1.0) against the fitted weight, with and without the
+    // nowcast, on the scored dates, with date-block intervals on both metrics.
+    const hitsOf = (pred, kind) => fwdRows.map((r, j) => (kind === 'w10'
+      ? Math.abs(pred[j] - r.y) <= 10
+      : Math.abs(bandOf(pred[j], cuts) - bandOf(r.y, cuts)) <= 1));
+    const fullOffset = { ...fitted, curveOffsetWeight: 1.0 };
+    const fullVsFitted = {};
+    for (const name of ['curve_offset', 'curve_offset+nowcast']) {
+      const cfg = SERVE_CONFIGS.find((c) => c.name === name);
+      const a = fwd(servedAt(mlRows, modelBase, fullOffset, cfg, qmapApplied));
+      const b = fwd(servedAt(mlRows, modelBase, fitted, cfg, qmapApplied));
+      fullVsFitted[name] = {
+        full_offset: summarize(fwdActual, a, cuts),
+        fitted_weight: summarize(fwdActual, b, cuts),
+        within_10_full_minus_fitted_pp: pairedDateBootstrap(fwdRows, hitsOf(a, 'w10'), hitsOf(b, 'w10')),
+        within_one_band_full_minus_fitted_pp: pairedDateBootstrap(fwdRows, hitsOf(a, 'w1b'), hitsOf(b, 'w1b')),
+      };
+    }
+
+    // The confidence figures, for the SHIPPED weights: within-15 of each
+    // switched arithmetic on the scored rows it produced.
+    const w15 = (pairs) => (pairs.length
+      ? { within15: Math.round((pairs.filter(([p, y]) => Math.abs(p - y) <= 15).length / pairs.length) * 1000) / 10, rows: pairs.length }
+      : null);
+    const pairsWhere = (scored, test) => {
+      const ml = idxOf(scored.rows);
+      return scoreIdx
+        .map((i) => [ml[i], mlRows[i]])
+        .filter(([x]) => test(x))
+        .map(([x, r]) => [x.served, r.y]);
+    };
+    const measured = {
+      curveOffset: w15(pairsWhere(configs.curve_offset, () => true)),
+      nowcast: {},
+    };
+    const nowcastScored = { curve_offset: configs['curve_offset+nowcast'], model_qmap: mnOn, model: mnOff };
+    for (const [base, scored] of Object.entries(nowcastScored)) {
+      measured.nowcast[base] = {};
+      for (const bucket of [1, 2, 3, 4]) {
+        measured.nowcast[base][bucket] = w15(pairsWhere(scored, (x) => x.nowcast && x.nowcast.base === base && x.nowcast.bucket === bucket));
+      }
+    }
+    const sameWeights = fitted.curveOffsetWeight === shipped.curveOffsetWeight
+      && ['curve_offset', 'model_qmap', 'model'].every((b) => [1, 2, 3, 4].every((k) => fitted.nowcast[b][k] === shipped.nowcast[b][k]));
+
+    fitResult = {
+      criterion: 'mean absolute error, grid 0..1 by 0.05, smaller weight on a tie',
+      fit_dates: dates.filter((d) => d < scoreFrom),
+      scored_dates: dates.filter((d) => d >= scoreFrom),
+      fit_rows: fitIdx.length,
+      scored_rows: scoreIdx.length,
+      nowcast_rows_by_lag_in_fit: fitted.rowsByBucket,
+      shipped: { curve_offset_weight: shipped.curveOffsetWeight, nowcast: shipped.nowcast },
+      fitted: { curve_offset_weight: fitted.curveOffsetWeight, nowcast: fitted.nowcast },
+      shipped_equals_fitted: sameWeights,
+      every_date: { curve_offset_weight: everyDate.curveOffsetWeight, nowcast: everyDate.nowcast },
+      expanding_window: expanding,
+      forward,
+      full_offset_vs_fitted: fullVsFitted,
+      serve_measured_for_shipped_weights: measured,
+    };
+
+    const lags = (t) => [1, 2, 3, 4].map((k) => t[k]).join(' / ');
+    console.log(`\n[BandEval] FIT (${fitResult.criterion}): fitted on ${fitResult.fit_dates[0]}..${fitResult.fit_dates[fitResult.fit_dates.length - 1]} `
+      + `(${fitIdx.length} rows), scored on ${fitResult.scored_dates[0]}..${fitResult.scored_dates[fitResult.scored_dates.length - 1]} (${scoreIdx.length} rows)`);
+    console.log(`  curve_offset weight: fitted ${fitted.curveOffsetWeight}, shipped ${shipped.curveOffsetWeight}, every date ${everyDate.curveOffsetWeight}`);
+    for (const b of ['curve_offset', 'model_qmap', 'model']) {
+      console.log(`  nowcast on ${b.padEnd(12)} lag 1/2/3/4+: fitted ${lags(fitted.nowcast[b])}, shipped ${lags(shipped.nowcast[b])}, every date ${lags(everyDate.nowcast[b])}`);
+    }
+    console.log(`  lagged readings in the fit, lag 1/2/3/4+: ${lags(fitted.rowsByBucket)}`);
+    for (const e of expanding) {
+      console.log(`  expanding: ${e.scored_date} scored by a fit on ${e.fitted_rows} earlier rows: offset ${e.curve_offset_weight}, `
+        + `nowcast curve_offset ${lags(e.nowcast.curve_offset)}, model_qmap ${lags(e.nowcast.model_qmap)}, model ${lags(e.nowcast.model)}`);
+    }
+    console.log(sameWeights ? '  the shipped weights are the fitted ones.' : '  THE SHIPPED WEIGHTS ARE NOT THE FITTED ONES: update mlPredictor.js or say why.');
+    console.log('  scored dates, shipped weights, through the serve path:');
+    for (const [name, m] of Object.entries(forward.shipped_weights)) console.log(`  ${name.padEnd(36)} ${fmt(m)}`);
+    console.log('  scored dates, fitted weights:');
+    for (const [name, m] of Object.entries(forward.fitted_weights)) console.log(`  ${name.padEnd(36)} ${fmt(m)}`);
+    for (const [name, v] of Object.entries(fullVsFitted)) {
+      console.log(`  ${name}: the full offset (1.0) against the fitted weight ${fitted.curveOffsetWeight}:`);
+      console.log(`    full   ${fmt(v.full_offset)}`);
+      console.log(`    fitted ${fmt(v.fitted_weight)}`);
+      console.log(`    within 10 ${v.within_10_full_minus_fitted_pp.delta}pp CI95 ${JSON.stringify(v.within_10_full_minus_fitted_pp.ci95)}, `
+        + `within one band ${v.within_one_band_full_minus_fitted_pp.delta}pp CI95 ${JSON.stringify(v.within_one_band_full_minus_fitted_pp.ci95)} `
+        + `(full minus fitted, ${v.within_10_full_minus_fitted_pp.dates} date blocks)`);
+    }
+    console.log(`  SERVE_MEASURED for the shipped weights: ${JSON.stringify(measured)}`);
+  }
+
   if (args.out) {
     fs.writeFileSync(args.out, JSON.stringify({
       generated_at: new Date().toISOString(),
@@ -1127,6 +1513,7 @@ async function main(argv = process.argv.slice(2)) {
       ladder: { cuts, labels },
       sections,
       band_gate: gateResult,
+      fit: fitResult,
     }, null, 2));
     console.log(`\n[BandEval] report -> ${args.out}`);
   }
@@ -1146,10 +1533,13 @@ async function main(argv = process.argv.slice(2)) {
       ['with_offset', (x) => (x.mine.ml ? x.mine.withOffset : null)], ['served', (x) => x.mine.served],
       ['incumbent_served', (x) => (x.theirs ? x.theirs.served : null)],
       ['nowcast', (x) => x.r.nowcast], ['nowcast_age_hours', (x) => x.r.nowcastAgeHours],
+      ['served_nowcast_reading', (x) => (x.r.nowcastPick ? x.r.nowcastPick.value : null)],
+      ['served_nowcast_lag_hours', (x) => (x.r.nowcastPick ? x.r.nowcastPick.lagHours : null)],
+      ...SERVE_CONFIGS.map((cfg) => [`served_${cfg.name.replace('+', '_')}`, (x) => x.configs[cfg.name].served]),
     ]);
     console.log(`[BandEval] rows -> ${args['rows-out']}`);
   }
-  return { sections, gate: gateResult };
+  return { sections, gate: gateResult, fit: fitResult };
 }
 
 // The band gate may VETO a pass and may confirm one; it never overrides the
@@ -1202,6 +1592,14 @@ module.exports = {
   bandGate,
   writeBandGate,
   incumbentDataThrough,
+  SERVE_CONFIGS,
+  FIT_GRID,
+  curveOffsetAt,
+  nowcastAt,
+  fitWeight,
+  fitServeWeights,
+  servedAt,
+  checkFitArithmetic,
   main,
   BAND_GATE,
   OFFSET_WINDOW_HOURS,

@@ -299,7 +299,69 @@ test('the evaluation points every database setting at an address nothing listens
 // in helpers/bandEvalFixture.js, shared with mlServeModes.test.js.
 const FX = require('./helpers/bandEvalFixture');
 
-test('the replay publishes the score predictBusyness publishes, row for row', async () => {
+const SWITCH_ENV = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED'];
+
+// Runs predictBusyness over every prepared row under one environment, against
+// a pool answering from the fixture as of each row's serve moment, and returns
+// the published results in row order.
+async function runProduction(fx, prepared, env) {
+  const saved = Object.fromEntries(SWITCH_ENV.map((k) => [k, process.env[k]]));
+  for (const k of SWITCH_ENV) delete process.env[k];
+  Object.assign(process.env, env);
+  const pool = require('../config/database');
+  const moments = new Map();
+  const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
+  const realQuery = pool.query;
+  pool.query = stub.query;
+  const predictorPath = require.resolve('../services/mlPredictor');
+  delete require.cache[predictorPath];
+  const quiet = [console.log, console.warn, console.error];
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+  try {
+    const predictor = require(predictorPath);
+    assert.equal(await predictor.init(), true);
+    const out = [];
+    for (let i = 0; i < prepared.length; i++) {
+      const r = prepared[i];
+      // A fresh place id per row: the offset and its readings are cached per
+      // place for five minutes, and each row is a different moment of a venue.
+      const alias = `ChIJbandeval_${r.venueId}_${i}`;
+      moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
+      out.push(await predictor.predictBusyness({ ...r.venue, place_id: alias }, r.weather, r.ts));
+    }
+    assert.deepEqual(stub.unknown, [], 'predictBusyness asked the pool something the fixture does not answer');
+    return out;
+  } finally {
+    [console.log, console.warn, console.error] = quiet;
+    delete require.cache[predictorPath];
+    pool.query = realQuery;
+    for (const k of SWITCH_ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+}
+
+function mismatchesOf(prepared, production, replay) {
+  const bad = [];
+  prepared.forEach((r, i) => {
+    const p = production[i];
+    const q = replay.rows[i];
+    if (p.score !== q.served || (p.predictionMethod === 'ml') !== q.ml
+      || p.confidence !== q.confidence || (p.modelVersion || null) !== (q.modelVersion || null)) {
+      bad.push({
+        i, venue: r.venueId, date: r.date, hour: r.hour,
+        production: [p.score, p.predictionMethod, p.confidence, p.modelVersion],
+        replay: [q.served, q.ml, q.confidence, q.modelVersion],
+      });
+    }
+  });
+  return bad;
+}
+
+test('the replay publishes what predictBusyness publishes, row for row, under every switch setting', async () => {
   const fx = FX.buildFixture();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-bandeval-'));
   const csv = path.join(dir, 'fixture.csv');
@@ -312,58 +374,55 @@ test('the replay publishes the score predictBusyness publishes, row for row', as
     assert.equal(art.meta.model_version, require(path.join(MODELS_DIR, 'model_metadata.json')).model_version);
     const prepared = B.prepareRows(corpus.live, corpus, { I: art.I, crowdEngine });
     assert.equal(prepared.length, fx.live.length);
-    const replay = await B.scoreArtifact(art, prepared);
+    const today = await B.scoreArtifact(art, prepared, { serveMode: 'model', nowcast: false });
     // THE FIXTURE MUST EXERCISE EVERY STEP, or agreement proves nothing: the
     // model and the rule engine both answer, the quantile map and the offset
-    // each move published numbers, and the zero-slot edge is present.
-    const ml = replay.rows.filter((r) => r.ml);
+    // each move published numbers, the zero-slot edge is present, and the
+    // nowcast finds readings at every lag it weighs.
+    const ml = today.rows.filter((r) => r.ml);
     assert.ok(ml.length >= 60, `only ${ml.length} rows reached the model`);
-    assert.ok(replay.rows.some((r) => !r.ml), 'the fixture must reach the rule engine too');
-    assert.equal(replay.qmapApplied, true, 'the shipped artifact is served through the quantile map by default');
+    assert.ok(today.rows.some((r) => !r.ml), 'the fixture must reach the rule engine too');
+    assert.equal(today.qmapApplied, true, 'the shipped artifact is served through the quantile map by default');
     assert.ok(ml.filter((r) => r.mapped !== r.reconstructed).length >= 10, 'the quantile map must move scores');
-    assert.ok(ml.filter((r) => r.served !== (replay.qmapApplied ? r.mapped : r.reconstructed)).length >= 10,
+    assert.ok(ml.filter((r) => r.served !== (today.qmapApplied ? r.mapped : r.reconstructed)).length >= 10,
       'the trailing offset must move published scores');
     assert.ok(prepared.some((r) => r.rawCurve === 0 && r.smoothed > 0),
       'the fixture must include the zero-slot-with-neighbours edge');
     assert.ok(prepared.some((r) => r.neighbors.count > 0), 'and rows with neighbours');
+    const buckets = new Set(prepared.filter((r) => r.nowcastPick).map((r) => r.nowcastPick.bucket));
+    assert.deepEqual([...buckets].sort(), [1, 2, 3, 4], 'the nowcast must find a reading at every lag bucket');
 
-    // The production path, against a pool that answers from the same corpus.
-    const pool = require('../config/database');
-    const moments = new Map();
-    const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
-    const realQuery = pool.query;
-    pool.query = stub.query;
-    try {
-      const predictorPath = require.resolve('../services/mlPredictor');
-      delete require.cache[predictorPath];
-      const predictor = require(predictorPath);
-      const quiet = [console.log, console.warn, console.error];
-      console.log = () => {};
-      console.warn = () => {};
-      console.error = () => {};
-      let mismatches = [];
-      try {
-        assert.equal(await predictor.init(), true);
-        for (let i = 0; i < prepared.length; i++) {
-          const r = prepared[i];
-          // A fresh place id per row: getRecentDeviation caches per place for
-          // five minutes, and each row is a different moment of the same venue.
-          const alias = `ChIJbandeval_${r.venueId}_${i}`;
-          moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
-          const venue = { ...r.venue, place_id: alias };
-          const out = await predictor.predictBusyness(venue, r.weather, r.ts);
-          if (out.score !== replay.rows[i].served || (out.predictionMethod === 'ml') !== replay.rows[i].ml) {
-            mismatches.push({ i, venue: r.venueId, date: r.date, hour: r.hour, production: [out.score, out.predictionMethod], replay: [replay.rows[i].served, replay.rows[i].ml] });
-          }
-        }
-      } finally {
-        [console.log, console.warn, console.error] = quiet;
-        delete require.cache[predictorPath];
+    const settings = [];
+    for (const qmap of [undefined, 'false']) {
+      for (const cfg of B.SERVE_CONFIGS) settings.push({ qmap, cfg });
+    }
+    for (const { qmap, cfg } of settings) {
+      const env = {};
+      if (cfg.serveMode !== 'model') env.CROWD_SERVE_MODE = cfg.serveMode;
+      if (cfg.nowcast) env.CROWD_NOWCAST_ENABLED = 'true';
+      if (qmap) env.CROWD_QMAP_ENABLED = qmap;
+      const label = `${cfg.name}, quantile map ${qmap ? 'off' : 'default'}`;
+      const replay = await B.scoreArtifact(art, prepared, {
+        qmap: qmap ? false : undefined, serveMode: cfg.serveMode, nowcast: cfg.nowcast,
+      });
+      const production = await runProduction(fx, prepared, env);
+      assert.deepEqual(mismatchesOf(prepared, production, replay), [], `${label}: the replay must publish exactly what production publishes`);
+      // Each switch must actually move numbers here, or agreement on it is vacuous.
+      if (cfg.serveMode === 'curve_offset') {
+        assert.ok(replay.rows.filter((r, i) => r.ml && r.served !== today.rows[i].served).length >= 20, `${label}: curve_offset must move scores`);
+        assert.ok(production.every((p) => p.predictionMethod !== 'ml' || p.scoreCalibration === null), `${label}: no quantile map in curve_offset`);
       }
-      assert.deepEqual(stub.unknown, [], 'predictBusyness asked the pool something the fixture does not answer');
-      assert.deepEqual(mismatches, [], 'the replay must publish exactly what production publishes');
-    } finally {
-      pool.query = realQuery;
+      if (cfg.nowcast) {
+        const moved = replay.rows.filter((r) => r.nowcast);
+        assert.ok(moved.length >= 20, `${label}: the nowcast must move scores (${moved.length})`);
+        // Never the target hour's own reading: every reading used is from an
+        // earlier hour, although the stored list held the hour's own reading.
+        for (const [i, r] of replay.rows.entries()) {
+          if (!r.nowcast) continue;
+          assert.ok(r.nowcast.lagHours >= 1, `${label}: row ${i} used a reading from its own hour`);
+          assert.equal(production[i].nowcast.lagHours, r.nowcast.lagHours);
+        }
+      }
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
