@@ -3552,5 +3552,41 @@ class Pi5GpioSwap(unittest.TestCase):
         self.assertIn("'lgpio' not in inspect.getsource(G)", self.setup_text())
 
 
+class ThermalCeiling(unittest.TestCase):
+    """A person is warm, and not that warm."""
+
+    R, C = main.THERMAL_ROWS, main.THERMAL_COLS
+
+    def frame(self, blobs, ambient=21.0):
+        g = [ambient] * (self.R * self.C)
+        for (r0, c0, h, w, t) in blobs:
+            for r in range(r0, r0 + h):
+                for c in range(c0, c0 + w):
+                    g[r * self.C + c] = t
+        return g
+
+    def test_a_hot_mug_is_not_a_person(self):
+        # A mug of coffee bigger than a head in frame used to count as one.
+        self.assertEqual(main.count_thermal_clusters(self.frame([(40, 60, 32, 28, 58.0)])), 0)
+
+    def test_the_person_beside_it_still_counts(self):
+        frame = self.frame([(40, 20, 32, 28, 58.0), (40, 100, 32, 24, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(frame), 1)
+
+    def test_a_person_the_camera_reads_hot_still_counts(self):
+        # Without a calibration target a Lepton can read several degrees high.
+        self.assertEqual(main.count_thermal_clusters(self.frame([(40, 60, 32, 24, 41.0)])), 1)
+
+    def test_calibration_still_sees_every_region(self):
+        # --calibrate measures warm areas, hot ones included; only the count
+        # applies the ceiling.
+        sizes = main.thermal_region_sizes(self.frame([(40, 60, 32, 28, 58.0)]))
+        self.assertEqual(len(sizes), 1)
+
+    def test_the_ceiling_is_a_setting_with_a_sane_default(self):
+        self.assertEqual(main.DEFAULTS['THERMAL_MAX_PERSON_C'], '45.0')
+        self.assertEqual(main.THERMAL_MAX_PERSON_C, 45.0)
+
+
 if __name__ == '__main__':
     unittest.main()
