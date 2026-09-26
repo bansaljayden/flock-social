@@ -95,6 +95,12 @@ fi
 echo "==> install source to ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
 install -m 0755 -o root -g root "${SCRIPT_DIR}/main.py" "${INSTALL_DIR}/main.py"
+# The panel's fonts and marks. Optional: a venue unit has no screen and draws
+# nothing, and a demo unit without them still draws, in pygame's plain face.
+if [ -d "${SCRIPT_DIR}/flux-assets" ]; then
+  mkdir -p "${INSTALL_DIR}/flux-assets"
+  install -m 0644 -o root -g root "${SCRIPT_DIR}"/flux-assets/* "${INSTALL_DIR}/flux-assets/"
+fi
 
 # ---------------------------------------------------------------------------
 # Config: 0600, owned by the service user. It contains the device API key, and

@@ -1157,7 +1157,9 @@ class ThermalPairValidation(unittest.TestCase):
         # guard existed: all three returned 0 for two person-sized bodies.
         for b in (6, 7, 8):
             binned, minimum, complaint = main.validated_thermal_pair(b, 12)
-            self.assertEqual((binned, minimum), (4, 12))
+            # The fallback is whatever pair is current, not a literal: pinning
+            # it here as (4, 12) outlived the minimum being re-derived to 6.
+            self.assertEqual((binned, minimum), (main._MEASURED_BIN, main._MEASURED_MIN_CLUSTER))
             self.assertIn('counts nobody', complaint)
 
     def test_a_coarse_bin_is_allowed_when_the_minimum_comes_down_with_it(self):
@@ -1167,7 +1169,7 @@ class ThermalPairValidation(unittest.TestCase):
 
     def test_a_threshold_inside_the_noise_is_refused(self):
         binned, minimum, complaint = main.validated_thermal_pair(1, 12)
-        self.assertEqual((binned, minimum), (4, 12))
+        self.assertEqual((binned, minimum), (main._MEASURED_BIN, main._MEASURED_MIN_CLUSTER))
         self.assertIn('noise', complaint)
 
     def test_the_running_configuration_is_a_pair_that_counts_people(self):

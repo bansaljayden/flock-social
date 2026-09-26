@@ -24,9 +24,14 @@ Type=simple
 User=pi
 Group=pi
 # Hardware access: video (the USB thermal camera's V4L2 node AND the demo
-# unit's framebuffer), SPI (mic ADC), GPIO (break-beam). The thermal camera
-# moved from I2C to USB, so i2c is no longer in this list.
-SupplementaryGroups=spi gpio video
+# unit's display), SPI (mic ADC), GPIO (break-beam). The thermal camera moved
+# from I2C to USB, so i2c is no longer in this list.
+#
+# input and render are for the demo unit's panel. Drawing straight to the
+# display needs render, and without input the touchscreen's events never reach
+# the process: the screen would draw and ignore every tap, which on a pitch is
+# indistinguishable from the thing being frozen.
+SupplementaryGroups=spi gpio video input render
 
 WorkingDirectory=/opt/flock-sensor
 ExecStart=/usr/bin/python3 /opt/flock-sensor/main.py
