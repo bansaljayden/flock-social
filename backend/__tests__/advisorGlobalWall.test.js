@@ -19,7 +19,8 @@ test('the wall has its own sentinel and its own sentence, and both call sites us
   assert.match(text, /^Roost is busy across Flock today\. It comes back in about 6 hours, and the questions above still work in the meantime\.$/);
   assert.ok(!text.includes('\u2014'));
   assert.notStrictEqual(text, ft.REFUSAL_BUSY);
-  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'advisorFreeText.js'), 'utf8');
+  // Line endings folded first: a Windows checkout writes this file with CRLF.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'advisorFreeText.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /if \(!\(await allowGlobalTokens\(estimate\)\)\) \{\n\s+releaseVenueReservation\(userId, \{ tokens: estimate, \.\.\.counterFor\(charge\) \}\);\n\s+return GLOBAL_WALL;/);
   assert.match(src, /if \(raw === GLOBAL_WALL\) \{\n\s+return \{ mode: 'refused', intentId: null, refusal: refusalGlobalWall\(await ceilingResetPhrase\(\)\) \};/);
   assert.match(src, /if \(out === GLOBAL_WALL\) \{\n\s+return \{ mode: 'refusal', text: refusalGlobalWall\(await ceilingResetPhrase\(\)\), sources: \[\] \};/);
