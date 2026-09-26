@@ -61,9 +61,9 @@ export const crowdArcFor = (score) => {
  * response has no such key, and this returns null so each surface keeps the
  * words it already had.
  *
- * A source ending in '_adjusted' is that arithmetic with verified reports
- * from people in the room blended in afterwards. Its words say so, and a
- * carried reading is then never worded as the number itself.
+ * A source ending in '_adjusted' is that arithmetic with verified visitor
+ * reports blended in afterwards. Its words say so, and a carried reading is
+ * then never worded as the number itself.
  */
 const NUMBER_SOURCE_PHRASES = {
   venue_pattern_live: "this venue's usual pattern and its recent live readings",
@@ -71,14 +71,21 @@ const NUMBER_SOURCE_PHRASES = {
   model_live: "the Flock crowd model and this venue's recent live readings",
   model_alone: 'the Flock crowd model alone',
 };
-// The same sources once people there adjusted the number. "Alone" goes: the
-// model's number is not alone any more.
+// The same sources once visitor reports adjusted the number. "Alone" goes:
+// the model's number is not alone any more.
 const ADJUSTED_BASE_PHRASES = {
   ...NUMBER_SOURCE_PHRASES,
   model_alone: 'the Flock crowd model',
 };
 const ADJUSTED_SUFFIX = '_adjusted';
-const ADJUSTED_WORDS = 'adjusted by people who are there';
+// WHAT THE ADJUSTMENT IS, AND NO MORE. The blend
+// (crowdEngine.buildCalibrationAdjustment) reads verified reports filed for
+// the same hour of the week, give or take an hour, from the last 28 days
+// (routes/crowd.js feedbackWindow and its SELECT). Three "busy" reports from
+// last Friday move tonight's number, and nothing requires any reporter to be
+// in the room now, so the words say when the reports are from and never that
+// people who are there made the number.
+export const REPORTS_ADJUSTED_WORDS = 'adjusted by visitor reports from this time of week over the last four weeks';
 
 // 'live_reading_1h', 'live_reading_2h', ...: the number IS the venue's live
 // reading from that many hours ago, carried forward at full weight. The
@@ -109,14 +116,22 @@ export const numberSourcePhrase = (source) => {
     return hours !== null ? readingPhrase(hours) : NUMBER_SOURCE_PHRASES[parsed.base];
   }
   const base = hours !== null ? readingPhrase(hours) : ADJUSTED_BASE_PHRASES[parsed.base];
-  return `${base}, ${ADJUSTED_WORDS}`;
+  return `${base}, ${REPORTS_ADJUSTED_WORDS}`;
 };
 
-// True when the named source already says people there adjusted the number,
-// so a line that adds those words itself does not say them twice.
+// True when the named source already says visitor reports adjusted the
+// number, so a line that adds those words itself does not say them twice.
 export const isAdjustedSource = (source) => {
   const parsed = parseSource(source);
   return Boolean(parsed && parsed.adjusted);
+};
+
+// True when the number is the venue's weekly pattern with no live reading
+// and no model run in it (curve_offset with neither an offset nor a reading),
+// adjusted or not. Such a number is not live by any reading of the word.
+export const isPatternOnlySource = (source) => {
+  const parsed = parseSource(source);
+  return Boolean(parsed && parsed.base === 'venue_pattern');
 };
 
 // What each source is made of: the base it starts from (null when a carried
@@ -133,6 +148,9 @@ const BASE_PHRASES = {
   both: "the Flock crowd model or this venue's usual pattern",
 };
 const RULE_HOURS_WORDS = 'and in hours not measured here yet, what is typical for a venue like yours';
+// The same words for a reader who is not the venue (the public demo): "like
+// yours" would address a visitor as the owner.
+const RULE_HOURS_WORDS_VISITOR = 'and in hours not measured there yet, what is typical for a venue like this one';
 
 /**
  * The words for an hourly chart, from the bars actually drawn.
@@ -153,9 +171,10 @@ const RULE_HOURS_WORDS = 'and in hours not measured here yet, what is typical fo
  * Null when no drawn bar carries a source, so the chart keeps the caption it
  * already had. A model bar without a source counts as the model's number; a
  * rule-engine bar beside named ones is said to be typical for a venue like
- * this one.
+ * this one. `reader: 'visitor'` words that for someone who is not the venue.
  */
-export const hourlySourcePhrase = (bars) => {
+export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
+  const ruleWords = reader === 'visitor' ? RULE_HOURS_WORDS_VISITOR : RULE_HOURS_WORDS;
   if (!Array.isArray(bars)) return null;
   const drawn = bars.filter(Boolean);
   const sourceOf = (b) => (parseSource(b.numberSource) ? b.numberSource : null);
@@ -173,7 +192,7 @@ export const hourlySourcePhrase = (bars) => {
   });
   const measured = parts.filter((p) => p.base !== 'rule');
   const ruleHours = measured.length < parts.length;
-  const withRule = (phrase) => (ruleHours ? `${phrase}, ${RULE_HOURS_WORDS}` : phrase);
+  const withRule = (phrase) => (ruleHours ? `${phrase}, ${ruleWords}` : phrase);
 
   const distinct = new Set(measured.map((p) => p.source));
   if (distinct.size === 1 && measured[0].source) return withRule(numberSourcePhrase(measured[0].source));
@@ -185,4 +204,46 @@ export const hourlySourcePhrase = (bars) => {
   if (live === measured.length) return withRule(`${base} and this venue's recent live readings`);
   if (live > 0) return withRule(`${base}, with this venue's recent live readings in some hours`);
   return withRule(base);
+};
+
+/**
+ * The words for a row of OTHER venues' numbers, one bar per venue (the venue
+ * dashboard's strip of evening peaks nearby).
+ *
+ * Same inputs as hourlySourcePhrase, one { predictionMethod, numberSource,
+ * liveReadings } per bar, but the bars are several venues rather than one
+ * venue's hours, so "this venue's" would be false. Only model-path bars are
+ * read: a rule-engine row is labelled "typical for its category" beside
+ * itself. Null when no bar carries a source, so the caption keeps the words
+ * it had with both switches off.
+ */
+export const peersSourcePhrase = (bars) => {
+  if (!Array.isArray(bars)) return null;
+  const drawn = bars.filter((b) => b && b.predictionMethod === 'ml');
+  if (!drawn.some((b) => parseSource(b.numberSource))) return null;
+
+  const bases = new Set();
+  let readings = 0;
+  let measured = 0;
+  let live = 0;
+  for (const b of drawn) {
+    const parsed = parseSource(b.numberSource);
+    if (parsed && liveReadingHours(parsed.base) !== null) { readings += 1; continue; }
+    const known = parsed ? SOURCE_PARTS[parsed.base] : { base: 'model', live: false };
+    const flag = typeof b.liveReadings === 'boolean' ? b.liveReadings : known.live;
+    bases.add(known.base);
+    measured += 1;
+    if (flag) live += 1;
+  }
+
+  const words = [];
+  if (bases.has('pattern')) words.push("each venue's usual pattern");
+  if (bases.has('model')) words.push('the Flock crowd model');
+  let phrase = words.join(' or ');
+  if (measured > 0 && live === measured) phrase += ' and recent live readings';
+  else if (live > 0) phrase += ', with recent live readings for some venues';
+  if (readings > 0) {
+    phrase = phrase ? `${phrase}, or a live reading from an earlier hour` : 'live readings from earlier hours';
+  }
+  return phrase;
 };

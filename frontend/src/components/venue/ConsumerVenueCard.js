@@ -80,7 +80,7 @@
 import React, { useState } from 'react';
 import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
-import { crowdLabelFor, numberSourcePhrase, isAdjustedSource } from '../../lib/crowd';
+import { crowdLabelFor, numberSourcePhrase, isAdjustedSource, isPatternOnlySource, REPORTS_ADJUSTED_WORDS } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
 
 // Animated crowd dial — fills from 0 to target score with counting number.
@@ -808,6 +808,11 @@ export default function ConsumerVenueCard({
                   if (!cd?.lastUpdated || ownerNumber) return false;
                   const method = String(cd.predictionMethod || '');
                   if (!method || method.startsWith('rule_engine')) return false;
+                  // With CROWD_SERVE_MODE=curve_offset the method stays 'ml'
+                  // for a number that is the venue's weekly pattern alone: no
+                  // model ran and no live reading reached it. The source says
+                  // so while a switch is on, and that number is not LIVE.
+                  if (isPatternOnlySource(cd.numberSource)) return false;
                   const t = Date.parse(cd.lastUpdated);
                   return Number.isFinite(t) && (Date.now() - t) < CROWD_FRESH_MS;
                 })();
@@ -1012,13 +1017,19 @@ export default function ConsumerVenueCard({
                   // A number a serving switch made carries numberSource, and
                   // its line names that arithmetic instead of the model.
                   const madeFrom = numberSourcePhrase(cd.numberSource);
-                  // A source that already says people adjusted the number
-                  // carries those words itself; they are not said twice.
+                  // A source that already says visitor reports adjusted the
+                  // number carries those words itself; they are not said
+                  // twice. A named source is only ever sent while a serving
+                  // switch is on, and its reporters' line says when the
+                  // reports are from (lib/crowd REPORTS_ADJUSTED_WORDS): the
+                  // blend reads 28 days of reports for this time of week,
+                  // none of which has to be from tonight. The line without a
+                  // source is the switched-off one and keeps its words.
                   const adjustedFrom = madeFrom && isAdjustedSource(cd.numberSource) ? `From ${madeFrom}.` : null;
                   return (
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
                       {cd.confidenceBasis === 'owner_report' ? `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`
-                        : cd.confidenceBasis === 'user_reports' ? (adjustedFrom || (madeFrom ? `From ${madeFrom}, adjusted by people who are there.` : 'From the crowd model, adjusted by people who are there.'))
+                        : cd.confidenceBasis === 'user_reports' ? (adjustedFrom || (madeFrom ? `From ${madeFrom}, ${REPORTS_ADJUSTED_WORDS}.` : 'From the crowd model, adjusted by people who are there.'))
                         : cd.predictionMethod === 'ml' ? (madeFrom ? `From ${madeFrom}.` : 'From the Flock crowd model.')
                         : 'An estimate from typical patterns for this kind of place.'}
                     </p>

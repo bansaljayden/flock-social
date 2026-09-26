@@ -37,7 +37,7 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
-import { hourlySourcePhrase } from '../lib/crowd';
+import { hourlySourcePhrase, peersSourcePhrase } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
 import {
   BASE_URL,
@@ -651,6 +651,13 @@ export default function VenueDashboard({
       : null;
     const tonightPeak = intelReady && venueIntel.todayHourly?.length
       ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
+      : null;
+    // What made the strip's peak bars, one per venue, from the peak source
+    // the server attaches to each row while a serving switch is on.
+    const stripPeaksFrom = venueStrip?.available
+      ? peersSourcePhrase([venueStrip.you, ...(venueStrip.competitors || [])]
+        .filter((v) => v && typeof v.peakLiveReadings === 'boolean')
+        .map((v) => ({ predictionMethod: v.peakMethod, numberSource: v.peakNumberSource, liveReadings: v.peakLiveReadings })))
       : null;
 
     // Two plans: free and Roost. 'pro' is Roost's stored name, and 'premium'
@@ -1338,7 +1345,13 @@ export default function VenueDashboard({
                 </div>
               ))}
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
-                Projected evening peaks within 1.5 km, from Flock's crowd model.
+                {/* Read off the peaks drawn while a serving switch is on:
+                    with the venue's pattern served, those bars are no
+                    model's. The rows carry no peak source with both
+                    switches off, and the old words stand. */}
+                {stripPeaksFrom
+                  ? `Projected evening peaks within 1.5 km, from ${stripPeaksFrom}.`
+                  : "Projected evening peaks within 1.5 km, from Flock's crowd model."}
                 {venueStrip.orderingMinGap ? ` Venues within ${venueStrip.orderingMinGap} points are too close to rank.` : ''}
               </p>
             </div>

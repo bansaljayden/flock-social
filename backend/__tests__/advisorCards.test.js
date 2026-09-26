@@ -357,6 +357,91 @@ test('rule-engine days are refused, never dressed as the venue forecast', async 
   }
 });
 
+// ── 2a. A switched number is never credited to the model ────────────────────
+//
+// With CROWD_SERVE_MODE=curve_offset the predictor keeps predictionMethod
+// 'ml' for a number made from the venue's own weekly curve with no model
+// run, and the peak fact's source is then worded "model estimate" by the
+// template and "Flock's model estimating" by the phrasing contract. The fact
+// says what made it instead, and nothing changes with both switches off.
+
+const advisorPhrasing = require('../services/advisorPhrasing');
+
+test('a peak a serving switch made from the venue\'s pattern says so, on the fact and in the template', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const realPredict = mlPredictor.predictBusyness;
+  // The shape predictBusyness returns in curve_offset mode with a live offset.
+  mlPredictor.predictBusyness = async (_v, _w, ts) => {
+    const h = new Date(ts).getHours();
+    return {
+      score: 90 - Math.abs(21 - h) * 5, label: 'Busy', predictionMethod: 'ml', modelVersion: 'v-test+curve_offset',
+      serveMode: 'curve_offset', dataSourcesUsed: ['venue_data', 'recent_live_readings'], offsetChangedBySwitch: true,
+    };
+  };
+  try {
+    const ctx = { profile: profileRow(), mlVenue: ML_VENUE };
+    const facts = await advisorFacts.buildWeekAhead(ctx, { userId: 7 });
+    const peaks = facts.filter((f) => !advisorFacts.isRefusal(f));
+    assert.strictEqual(peaks.length, 7);
+    for (const f of peaks) {
+      assert.strictEqual(f.numberSource, 'venue_pattern_live');
+      assert.strictEqual(f.note, "Made from your venue's usual weekly pattern and its recent live readings. The crowd model did not make this number.");
+      assert.doesNotMatch(f.note, /—/);
+    }
+    const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text;
+    assert.match(rendered, /estimate from your venue's usual pattern and live readings/i);
+    assert.doesNotMatch(rendered, /model estimate/i, 'the model did not run');
+  } finally {
+    mlPredictor.predictBusyness = realPredict;
+  }
+});
+
+test('a carried live reading and the pattern alone are each named; a model number keeps its words', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const realPredict = mlPredictor.predictBusyness;
+  const shapes = {
+    reading: { dataSourcesUsed: ['ml_model', 'recent_live_readings'], serveMode: 'model', nowcast: { lagHours: 2, weight: 1 }, offsetChangedBySwitch: false },
+    pattern: { dataSourcesUsed: ['venue_data'], serveMode: 'curve_offset', offsetChangedBySwitch: false },
+    model: { dataSourcesUsed: ['ml_model', 'recent_live_readings'], serveMode: 'model', nowcast: { lagHours: 1, weight: 0.5 }, offsetChangedBySwitch: false },
+  };
+  const expected = {
+    reading: { source: 'live_reading_2h', note: /live reading from 2 hours earlier, carried forward\. The crowd model did not make this number\./, chip: /your live reading, carried forward/i },
+    pattern: { source: 'venue_pattern', note: /^Made from your venue's usual weekly pattern\. The crowd model did not make this number\.$/, chip: /estimate from your venue's usual pattern\b(?! and)/i },
+    model: { source: 'model_live', note: null, chip: /model estimate/i },
+  };
+  try {
+    for (const [name, shape] of Object.entries(shapes)) {
+      mlPredictor.predictBusyness = async (_v, _w, ts) => {
+        const h = new Date(ts).getHours();
+        return { score: 90 - Math.abs(21 - h) * 5, label: 'Busy', predictionMethod: 'ml', modelVersion: 'v-test', ...shape };
+      };
+      const facts = await advisorFacts.buildWeekAhead({ profile: profileRow(), mlVenue: ML_VENUE }, { userId: 7 });
+      const peaks = facts.filter((f) => !advisorFacts.isRefusal(f));
+      assert.strictEqual(peaks.length, 7, name);
+      for (const f of peaks) {
+        assert.strictEqual(f.numberSource, expected[name].source, name);
+        if (expected[name].note) assert.match(f.note, expected[name].note, name);
+        else assert.ok(!('note' in f), `${name}: the model made it, so there is nothing to correct`);
+      }
+      const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text;
+      assert.match(rendered, expected[name].chip, name);
+    }
+  } finally {
+    mlPredictor.predictBusyness = realPredict;
+  }
+});
+
+test('with both switches off a peak fact gains no key, and the template keeps its words', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const facts = await advisorFacts.buildWeekAhead({ profile: profileRow(), mlVenue: ML_VENUE }, { userId: 7 });
+  const peaks = facts.filter((f) => !advisorFacts.isRefusal(f));
+  assert.strictEqual(peaks.length, 7);
+  for (const f of peaks) {
+    assert.deepStrictEqual(Object.keys(f).sort(), ['asOf', 'gate', 'id', 'label', 'predictionMethod', 'source', 'unit', 'value']);
+  }
+  assert.match(advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text, /model estimate/i);
+});
+
 // ── 2b. A null result may not wear a fact's clothes ─────────────────────────
 //
 // The strongest-days band had a floor (85% of the best day) and no ceiling, so

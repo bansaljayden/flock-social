@@ -891,9 +891,25 @@ function renderRefusal(block) {
   return { mode: 'refusal', text, sources: [] };
 }
 
+// A forecast a serving switch made without the crowd model carries
+// `numberSource` (advisorFacts makeFact, crowdEngine.describeServedArithmetic),
+// and "model estimate" would then credit a model that did not run. Model-made
+// sources keep the source's own words. Absent with both switches off.
+const SERVED_SOURCE_PHRASES = Object.assign(Object.create(null), {
+  venue_pattern: "estimate from your venue's usual pattern",
+  venue_pattern_live: "estimate from your venue's usual pattern and live readings",
+});
+const CARRIED_READING_PHRASE = 'your live reading, carried forward';
+function factSourcePhrase(fact) {
+  const served = typeof fact.numberSource === 'string' ? fact.numberSource : '';
+  if (SERVED_SOURCE_PHRASES[served]) return SERVED_SOURCE_PHRASES[served];
+  if (/^live_reading_([1-9]|1[0-2])h$/.test(served)) return CARRIED_READING_PHRASE;
+  return sourcePhrase(fact.source);
+}
+
 const provenancePhrase = (fact) => {
   const when = shortAsOf(fact.asOf);
-  return when ? `${sourcePhrase(fact.source)}, as of ${when}` : sourcePhrase(fact.source);
+  return when ? `${factSourcePhrase(fact)}, as of ${when}` : factSourcePhrase(fact);
 };
 
 const sentenceCase = (s) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
@@ -1737,6 +1753,8 @@ function __copyStrings() {
     ADVISOR_NAME,
     ...ADVISOR_GROUPS.map((g) => g.label),
     ...Object.values(SOURCE_PHRASES),
+    ...Object.values(SERVED_SOURCE_PHRASES),
+    CARRIED_READING_PHRASE,
     ...Object.keys(ADVISOR_INTENTS).map((k) => ADVISOR_INTENTS[k].chip),
   ];
 }

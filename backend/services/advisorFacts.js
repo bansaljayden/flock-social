@@ -339,6 +339,10 @@ function makeFact(input) {
   for (const k of ['gate', 'predictionMethod', 'unit']) {
     if (input[k] !== undefined) fact[k] = input[k];
   }
+  // Which arithmetic made a forecast number while a serving switch is on
+  // (crowdEngine.describeServedArithmetic). Only ever passed then, so every
+  // fact built with both switches off keeps exactly the keys it had.
+  if (typeof input.numberSource === 'string' && input.numberSource) fact.numberSource = input.numberSource;
   return Object.freeze(fact);
 }
 
@@ -757,6 +761,26 @@ function dayMeans(curve) {
 // that out (the gate is a field read on the profile row, 030's design intent).
 // The scan covers the venue's FULL operating hours from its own curve, so a
 // breakfast peak at 8 AM surfaces exactly like a dinner peak at 8 PM.
+// What made a week-ahead peak, in an owner's words, when a serving switch
+// made it without the crowd model (crowdEngine.describeServedArithmetic).
+// Null for a number the model made, and for every number with both switches
+// off, so those facts carry the note they always had: none.
+function weekAheadSourceNote(numberSource) {
+  if (typeof numberSource !== 'string') return null;
+  const reading = /^live_reading_([1-9]|1[0-2])h$/.exec(numberSource);
+  if (reading) {
+    const hours = Number(reading[1]);
+    return `This is your venue's live reading from ${hours === 1 ? 'an hour' : `${hours} hours`} earlier, carried forward. The crowd model did not make this number.`;
+  }
+  if (numberSource === 'venue_pattern_live') {
+    return "Made from your venue's usual weekly pattern and its recent live readings. The crowd model did not make this number.";
+  }
+  if (numberSource === 'venue_pattern') {
+    return "Made from your venue's usual weekly pattern. The crowd model did not make this number.";
+  }
+  return null;
+}
+
 async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
   const gate = corpusGate(ctx.profile);
   if (gate) return [gate];
@@ -810,6 +834,8 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
             score: Number(r.score), hour: h,
             method: r.predictionMethod || 'rule_engine',
             modelVersion: r.modelVersion || null,
+            // Null with both switches off.
+            numberSource: crowdEngine.describeServedArithmetic(r),
           };
         }
       } catch { /* one dead hour does not kill the day; a day with no hours refuses below */ }
@@ -836,7 +862,17 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
     }
 
     const support = crowdEngine.describePredictionSupport('ml', 0);
+    // predictionMethod stays 'ml' when a serving switch made the number from
+    // the venue's own pattern or a carried reading with no model run, and
+    // this fact's source is then worded "model estimate" and "Flock's model
+    // estimating". The note says what made it, on the card, in the email and
+    // to the phrasing model, and the fact carries the source for the
+    // template's own words (advisorPhrasing). Nothing is added with both
+    // switches off.
+    const servedNote = weekAheadSourceNote(peak.numberSource);
     out.push(makeFact({
+      ...(peak.numberSource ? { numberSource: peak.numberSource } : {}),
+      ...(servedNote ? { note: servedNote } : {}),
       id: `peak_${date}`,
       value: { date, weekday, peakHour: peak.hour, peakScore: peak.score, modelVersion: peak.modelVersion },
       source: support.basis,

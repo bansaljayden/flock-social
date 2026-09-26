@@ -2094,6 +2094,20 @@ router.get('/strip', requirePro, async (req, res) => {
         // a model reading is exactly how the strip lies. The client labels
         // these, and stripOrderingClaim below refuses to rank them at all.
         method: current.predictionMethod || null,
+        // WHAT MADE THE PEAK THIS ROW DRAWS, while a serving switch is on.
+        // The bar is the evening's peak hour, not the current score, and the
+        // strip's caption credited every bar to the crowd model. With
+        // CROWD_SERVE_MODE=curve_offset those hours are the venue's weekly
+        // pattern with no model run, so the caption is read off these
+        // instead (lib/crowd hourlySourcePhrase). Gated on the forecast's
+        // own live-readings yes or no, which predictHourlyForecast sends on
+        // every hour exactly while a switch is on, so a switched-off row
+        // keeps exactly the keys it had.
+        ...(typeof peak.liveReadings === 'boolean' ? {
+          peakMethod: peak.predictionMethod || null,
+          peakLiveReadings: peak.liveReadings,
+          ...(peak.numberSource ? { peakNumberSource: peak.numberSource } : {}),
+        } : {}),
       };
     };
 
