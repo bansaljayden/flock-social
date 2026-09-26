@@ -527,7 +527,10 @@ function switchedArithmeticOn() {
 async function recentDeviationEntry(placeId) {
   if (!pool || !placeId) return null;
 
-  const withReadings = switchedArithmeticOn();
+  // With a switch on, or for an artifact that takes the live features as
+  // inputs (artifactReadsLiveFeatures). Neither, and the statement is the one
+  // it has always been.
+  const withReadings = switchedArithmeticOn() || artifactReadsLiveFeatures();
   const cached = deviationCache.get(placeId);
   // An entry read with both switches off carries no readings, so with one on
   // that entry is a miss rather than an answer of "no readings".
@@ -3102,6 +3105,221 @@ function tempForFeature(weather, lat, month) {
   return Number.isFinite(norm) ? norm : null;
 }
 
+// ---------------------------------------------------------------------------
+// THE LIVE FEATURES: THE VENUE'S OWN RECENT READINGS AS MODEL INPUTS.
+//
+// The two serving switches (CROWD_SERVE_MODE=curve_offset,
+// CROWD_NOWCAST_ENABLED) add a venue's trailing offset and its last earlier
+// reading to the number with FIXED weights, after any model. A model trained
+// with the same two quantities as inputs can learn how far to trust each one
+// per hour, category and lag, which is how a retrain can beat those switches
+// rather than trail them. Five features, each computed from readings strictly
+// before the slot being scored:
+//
+//   last_live_dev    the venue's newest live reading from an EARLIER
+//                    venue-local hour (pickNowcastReading, the nowcast's own
+//                    choice), minus the served curve at the hour being scored:
+//                    the reading carried forward as a LEVEL, the way the
+//                    nowcast carries it (see the block above serveMode for why
+//                    a level and not the reading's own-hour deviation).
+//                    0 when there is none within NOWCAST_MAX_LAG_HOURS.
+//   last_live_age_h  that reading's lag in hours (1..NOWCAST_MAX_LAG_HOURS),
+//                    LIVE_MISSING_AGE_H when there is none.
+//   recent_offset    the strict trailing offset (trailingOffsetBefore), the
+//                    median a switched number adds; 0 when there is none.
+//   recent_offset_n  how many readings it is a median of; 0 when there is none.
+//   curve_prev_hour  the served curve one hour earlier (getBaseline at the
+//                    previous clock hour): live readings lag the curve by
+//                    about an hour (RETRAIN.md, cause 4). 0 with no row there.
+//
+// scripts/ml/train/prepare_features.py add_live_features computes the same
+// five from the export; __tests__/mlLiveFeatureParity.test.js runs this
+// function against it on a random grid and requires equality on every row.
+// They are read only by an artifact whose feature_names lists them, so the
+// artifact that does not (v2.6.0-starling) is served exactly as before, the
+// statements it sends included (mlServeModes.test.js pins that).
+// ---------------------------------------------------------------------------
+const LIVE_FEATURE_NAMES = Object.freeze(['last_live_dev', 'last_live_age_h', 'recent_offset', 'recent_offset_n', 'curve_prev_hour']);
+const LIVE_MISSING_AGE_H = 99;
+
+function artifactFeatureNames(meta) {
+  return meta && Array.isArray(meta.feature_names) ? meta.feature_names : [];
+}
+
+function artifactReadsLiveFeatures(meta = metadata) {
+  const names = artifactFeatureNames(meta);
+  return LIVE_FEATURE_NAMES.some((n) => names.includes(n));
+}
+
+// An artifact that takes the trailing offset as an input has already decided
+// how much of it to use, so the fixed post-hoc add (DEVIATION_WEIGHT) would
+// count it twice. It is skipped for that artifact in model mode only;
+// curve_offset never runs a model and keeps its own weight.
+function artifactLearnsOffset(meta = metadata) {
+  return artifactFeatureNames(meta).includes('recent_offset');
+}
+
+// `entry` is recentDeviationEntry's answer read with its readings (or the
+// replay's copy of it): { readings, offsetReadings, fresh }. `targetSlot` is
+// venueSlotOf(ts); `baseline` the served curve at the slot; `curvePrevHour`
+// the served curve an hour earlier.
+function liveFeatureValues(entry, targetSlot, baseline, curvePrevHour) {
+  const pick = entry ? pickNowcastReading(entry.readings, targetSlot) : null;
+  const off = entry && entry.fresh ? trailingOffsetBefore(entry.offsetReadings, targetSlot) : null;
+  const base = Number(baseline);
+  const prev = Number(curvePrevHour);
+  return {
+    last_live_dev: pick ? pick.value - (Number.isFinite(base) ? base : 0) : 0,
+    last_live_age_h: pick ? pick.lagHours : LIVE_MISSING_AGE_H,
+    recent_offset: off ? off.offset : 0,
+    recent_offset_n: off ? off.readings : 0,
+    curve_prev_hour: Number.isFinite(prev) ? prev : 0,
+  };
+}
+const LIVE_FEATURE_DEFAULTS = Object.freeze(liveFeatureValues(null, null, 0, 0));
+
+// ---------------------------------------------------------------------------
+// THE SPORTS FEATURES: IS A TRACKED TEAM PLAYING TONIGHT, AND HOW NEAR.
+//
+// prepare_features.add_sports_features builds six columns from
+// train/sports_events.csv, which exportSportsEvents.js writes from
+// ml_sports_events (migration 057). Until 2026-09-26 nothing here computed
+// them, so they were ablation-only: a model trained with them would have read
+// "no game" on every request. This is the same arithmetic over the same table:
+//
+//   * an arena is a distinct (venue_lat, venue_lon) of a HOME game;
+//   * a venue is in market when its nearest arena is within SPORTS_LOCAL_KM,
+//     and every column is zero (distance at its cap) outside the market;
+//   * on a date with any tracked game (home or away): sports_game_today 1,
+//     sports_games_count the games that date, sports_evening_game 1 when one
+//     starts 17:00-23:59 local; with a home game that date, the distance to
+//     the nearest of that date's home arenas, capped at SPORTS_DIST_CAP_KM,
+//     and sports_home_within_10km under SPORTS_HOME_NEAR_KM.
+//
+// The date is the venue-local date buildFeatureMap reads the hour on, the
+// observed_date training keys on. The table is read whole (a few hundred
+// rows a season) at most every SPORTS_CACHE_TTL_MS, and only for an artifact
+// that lists a sports feature, so serving adds no per-request query and the
+// artifact that lists none sends nothing new. __tests__/mlSportsParity.test.js
+// runs this against the Python on a random grid.
+// ---------------------------------------------------------------------------
+const SPORTS_DIST_CAP_KM = 60.0;
+const SPORTS_LOCAL_KM = 60.0;
+const SPORTS_HOME_NEAR_KM = 10.0;
+const SPORTS_FEATURE_NAMES = Object.freeze(['sports_game_today', 'sports_games_count', 'sports_evening_game',
+  'sports_home_game_today', 'sports_home_dist_km', 'sports_home_within_10km']);
+const SPORTS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SPORTS_FAILURE_TTL_MS = 60 * 1000;
+const SPORTS_SQL = `SELECT is_home, event_local_date::text AS event_local_date,
+       event_local_time::text AS event_local_time, venue_lat, venue_lon
+  FROM ml_sports_events
+ WHERE event_local_date IS NOT NULL`;
+let sportsCache = null;     // { table, ts, ttl }
+let sportsInflight = null;
+
+function artifactReadsSportsFeatures(meta = metadata) {
+  const names = artifactFeatureNames(meta);
+  return SPORTS_FEATURE_NAMES.some((n) => names.includes(n));
+}
+
+const sportsHome = (v) => v === true || v === 1 || v === '1' || v === 't' || v === 'true';
+const sportsCoord = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+
+// ml_sports_events rows (or the CSV's) -> the lookup sportsFeatureValues reads.
+function buildSportsTable(rows) {
+  const arenas = [];
+  const arenaIndex = new Map();
+  for (const r of rows || []) {
+    const la = sportsCoord(r.venue_lat);
+    const lo = sportsCoord(r.venue_lon);
+    if (!sportsHome(r.is_home) || Number.isNaN(la) || Number.isNaN(lo)) continue;
+    const key = `${la},${lo}`;
+    if (!arenaIndex.has(key)) { arenaIndex.set(key, arenas.length); arenas.push([la, lo]); }
+  }
+  const byDate = new Map();
+  for (const r of rows || []) {
+    const date = r.event_local_date == null ? '' : String(r.event_local_date);
+    if (!date) continue;
+    if (!byDate.has(date)) byDate.set(date, { count: 0, evening: 0, home: new Set() });
+    const d = byDate.get(date);
+    d.count += 1;
+    const t = r.event_local_time == null ? '' : String(r.event_local_time);
+    const hour = /^\d\d/.test(t) ? Number(t.slice(0, 2)) : -1;
+    if (hour >= 17 && hour <= 23) d.evening = 1;
+    const la = sportsCoord(r.venue_lat);
+    const lo = sportsCoord(r.venue_lon);
+    if (sportsHome(r.is_home) && !Number.isNaN(la) && !Number.isNaN(lo)) {
+      const idx = arenaIndex.get(`${la},${lo}`);
+      if (idx !== undefined) d.home.add(idx);
+    }
+  }
+  return { arenas, byDate };
+}
+
+// numpy's haversine in prepare_features, in the same order of operations.
+function sportsDistanceKm(lat, lng, aLat, aLng) {
+  const rad = Math.PI / 180;
+  const latR = lat * rad;
+  const lngR = lng * rad;
+  const aLatR = aLat * rad;
+  const aLngR = aLng * rad;
+  const h = Math.sin((aLatR - latR) / 2) ** 2
+    + Math.cos(latR) * Math.cos(aLatR) * Math.sin((aLngR - lngR) / 2) ** 2;
+  return 2 * 6371.0 * Math.asin(Math.sqrt(h));
+}
+
+function sportsFeatureValues(table, lat, lng, dateStr) {
+  const out = {
+    sports_game_today: 0,
+    sports_games_count: 0,
+    sports_evening_game: 0,
+    sports_home_game_today: 0,
+    sports_home_dist_km: SPORTS_DIST_CAP_KM,
+    sports_home_within_10km: 0,
+  };
+  if (!table || !dateStr || !table.byDate.has(dateStr)) return out;
+  const la = Number(lat);
+  const lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || table.arenas.length === 0) return out;
+  const dist = table.arenas.map(([a, b]) => sportsDistanceKm(la, lo, a, b));
+  const nearest = dist.reduce((m, d) => (Number.isNaN(d) ? m : Math.min(m, d)), Infinity);
+  if (!(nearest <= SPORTS_LOCAL_KM)) return out;
+  const info = table.byDate.get(dateStr);
+  out.sports_game_today = 1;
+  out.sports_games_count = info.count;
+  out.sports_evening_game = info.evening;
+  if (info.home.size > 0) {
+    let d = Infinity;
+    for (const i of info.home) if (!Number.isNaN(dist[i])) d = Math.min(d, dist[i]);
+    out.sports_home_game_today = 1;
+    out.sports_home_dist_km = Math.min(d === Infinity ? SPORTS_DIST_CAP_KM : d, SPORTS_DIST_CAP_KM);
+  }
+  out.sports_home_within_10km = out.sports_home_game_today === 1 && out.sports_home_dist_km <= SPORTS_HOME_NEAR_KM ? 1 : 0;
+  return out;
+}
+
+// The table, cached. A failed read answers null (every sports column at its
+// no-game value) and is remembered for a minute so an outage cannot become a
+// query per request; it is logged, because "no game" is then an assumption.
+async function getSportsTable() {
+  if (!pool) return null;
+  if (sportsCache && Date.now() - sportsCache.ts < sportsCache.ttl) return sportsCache.table;
+  if (sportsInflight) return sportsInflight;
+  sportsInflight = pool.query(SPORTS_SQL)
+    .then(({ rows }) => {
+      const table = buildSportsTable(rows);
+      sportsCache = { table, ts: Date.now(), ttl: SPORTS_CACHE_TTL_MS };
+      return table;
+    })
+    .catch((err) => {
+      console.error('[MLPredictor] Sports schedule read failed; serving no-game values:', err.message);
+      sportsCache = { table: null, ts: Date.now(), ttl: SPORTS_FAILURE_TTL_MS };
+      return null;
+    })
+    .finally(() => { sportsInflight = null; });
+  return sportsInflight;
+}
+
 // Round 13: split from buildFeatureVector so init() can verify that every
 // name in metadata.feature_names is actually produced. The vector builder
 // zero-fills any name it doesn't recognize (`features[name] || 0`), which is
@@ -3109,7 +3327,7 @@ function tempForFeature(weather, lat, month) {
 // a trained feature is missing from this map (renamed, dropped, or a new
 // training feature that never got its inference-side twin). That failure mode
 // is confident wrong numbers — the worst one a prediction can have.
-function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
+function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors, context = null) {
   const ts = timestamp ? new Date(timestamp) : new Date();
   const dayOfWeek = ts.getDay(); // 0=Sun
   const hour = ts.getHours();
@@ -3416,11 +3634,19 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     features[`gtype_${t}`] = trainedTypes.includes(t) ? 1 : 0;
   }
 
+  // The live and sports families (the two blocks above buildFeatureMap).
+  // Always present, at their no-information values unless the caller read
+  // them, so the load-time coverage check (missingFeatureNames) knows serving
+  // can build them. predictBusyness reads them only for an artifact that
+  // lists them; one that does not never sees these keys in its vector.
+  Object.assign(features, LIVE_FEATURE_DEFAULTS, context && context.live ? context.live : null,
+    sportsFeatureValues(context && context.sports ? context.sports : null, lat, lng, dateStr));
+
   return features;
 }
 
-function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
-  const features = buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
+function buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors, context = null) {
+  const features = buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors, context);
   // Build ordered array matching feature_names — the model consumes POSITIONS,
   // so this ordering is the entire train/inference contract.
   return orderFeatureVector(features, metadata.feature_names || []);
@@ -4213,7 +4439,25 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       // head's guard does.
       score = await scoreTwoHead(ort, venue, weather, timestamp, eventData, feedback, baseline, neighbors);
     } else {
-      const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
+      // The live and sports inputs, read only for an artifact that lists
+      // them (see the blocks above buildFeatureMap). The offset row and the
+      // curve are the cached reads the rest of this function already makes;
+      // the schedule is one cached table.
+      let context = null;
+      if (artifactReadsLiveFeatures() || artifactReadsSportsFeatures()) {
+        context = {};
+        if (artifactReadsLiveFeatures()) {
+          const livePlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
+          const { prevDay, prevHour } = baselineNeighborSlots(ts.getDay(), ts.getHours());
+          const [entry, curvePrev] = await Promise.all([
+            livePlaceId ? recentDeviationEntry(livePlaceId) : null,
+            getBaseline(placeId, prevDay, prevHour, userId),
+          ]);
+          context.live = liveFeatureValues(entry, venueSlotOf(ts), baseline, curvePrev);
+        }
+        if (artifactReadsSportsFeatures()) context.sports = await getSportsTable();
+      }
+      const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors, context);
       const inputName = metadata.onnx_input_name || 'input';
       const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
       const results = await session.run({ [inputName]: tensor });
@@ -4287,7 +4531,10 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     const switchedArithmetic = switchedArithmeticOn();
     // One read serves the offset and the nowcast's readings, from one cache.
     const devEntry = devPlaceId ? await recentDeviationEntry(devPlaceId) : null;
-    if (devEntry) {
+    // An artifact that took the offset as an input (artifactLearnsOffset) is
+    // not handed it a second time here, in model mode.
+    const offsetLearned = !curveOffsetMode && artifactLearnsOffset();
+    if (devEntry && !offsetLearned) {
       const dev = switchedArithmetic
         ? (devEntry.fresh ? trailingOffsetBefore(devEntry.offsetReadings, venueSlotOf(ts)) : null)
         : devEntry.data;
@@ -5001,6 +5248,24 @@ module.exports = {
     servedConfidence,
     getRecentDeviation,
     recentDeviationEntry,
+    // The live and sports feature families, for bandEval.js and the parity
+    // suites (mlLiveFeatureParity, mlSportsParity).
+    LIVE_FEATURE_NAMES,
+    LIVE_MISSING_AGE_H,
+    LIVE_FEATURE_DEFAULTS,
+    artifactReadsLiveFeatures,
+    artifactLearnsOffset,
+    liveFeatureValues,
+    SPORTS_FEATURE_NAMES,
+    SPORTS_DIST_CAP_KM,
+    SPORTS_LOCAL_KM,
+    SPORTS_HOME_NEAR_KM,
+    SPORTS_CACHE_TTL_MS,
+    artifactReadsSportsFeatures,
+    buildSportsTable,
+    sportsFeatureValues,
+    getSportsTable,
+    __resetSportsCache: () => { sportsCache = null; sportsInflight = null; },
     // Tests only: the offset/readings cache and the switched-answer counters.
     __resetRecentDeviationCache: () => {
       deviationCache.clear();

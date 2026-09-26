@@ -775,3 +775,44 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
   assert.match(sql, /-- @requires column ml_venue_recent_deviation\.offset_readings/);
   assert.doesNotMatch(sql.replace(/--.*$/gm, ''), /\b(DROP|DELETE|UPDATE|NOT NULL|DEFAULT)\b/i);
 });
+
+// ── The live and sports feature families leave this artifact alone ─────────
+//
+// v2.6.0-starling lists neither family, so every response it serves, under
+// every switch configuration production can set, must be what it was before
+// the families existed, and so must every statement it sends. Recorded
+// (sha256 of the fixture's 135 responses, `asOf` left out because it is the
+// wall clock, and of the statements in order) from the code before the
+// families were added.
+const PRE_FAMILY = {
+  off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
+  off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
+  co: ['5a457531c684479c013318fddcc7fdce662664bfb776469a5829295c1051e7f5', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  conow: ['6eaaa13d2017ee6de88af71b077d2ac6668e7cd818c23e33c7c2211c90115a7a', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now: ['6e86b0594039e7f3097dc4cfcf8957936e2293999cc0f80f75902a94a327e096', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now_qmapoff: ['57b39eae7cbd6af3dc21cc47bd2bd56934997b73bc0f62536d5e5ef339dc0c0b', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+};
+const PRE_FAMILY_ENV = {
+  off: {},
+  off_qmapoff: { CROWD_QMAP_ENABLED: 'false' },
+  co: { CROWD_SERVE_MODE: 'curve_offset' },
+  conow: { CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' },
+  now: { CROWD_NOWCAST_ENABLED: 'true' },
+  now_qmapoff: { CROWD_NOWCAST_ENABLED: 'true', CROWD_QMAP_ENABLED: 'false' },
+};
+
+test('an artifact that lists no live or sports feature serves byte for byte as before, under every switch configuration', async () => {
+  const crypto = require('crypto');
+  const sha = (x) => crypto.createHash('sha256').update(x).digest('hex');
+  const meta = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, 'model_metadata.json'), 'utf8'));
+  assert.equal(I.artifactReadsLiveFeatures(meta), false);
+  assert.equal(I.artifactReadsSportsFeatures(meta), false);
+  assert.equal(I.artifactLearnsOffset(meta), false);
+  for (const [name, env] of Object.entries(PRE_FAMILY_ENV)) {
+    const { out, sql, version } = await serveFixture(env);
+    if (version !== GOLDEN.version) assert.fail(`the served artifact is ${version}; re-record PRE_FAMILY for it`);
+    assert.equal(sha(JSON.stringify(out, (k, v) => (k === 'asOf' ? null : v))), PRE_FAMILY[name][0], `${name}: responses`);
+    assert.equal(sha(JSON.stringify(sql)), PRE_FAMILY[name][1], `${name}: statements`);
+    assert.ok(sql.every((s) => !/ml_sports_events/.test(s)), `${name}: the schedule is never read`);
+  }
+});
