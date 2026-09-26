@@ -46,6 +46,7 @@ import os
 import random
 import select
 import signal
+import struct
 import sys
 import threading
 import textwrap
@@ -64,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.13.0'
+VERSION = '1.14.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -110,6 +111,16 @@ DEFAULTS = {
     # there, which is the default. A few pull it HIGH. If --beam counts
     # continuously when nothing is happening and stops when you block it, the
     # part is the other kind: set this to 0.
+    # Which doorway counter. auto: the VL53L8CX if one answers on I2C, else
+    # the GPIO pin below. tof or beam forces one; off counts no doorway.
+    'DOOR_SENSOR': 'auto',
+    'TOF_I2C_BUS': '1',
+    'TOF_HZ': '15',
+    # Which way people cross the counter's grid as mounted, and whether its
+    # idea of in and out is the right way round. Both belong to the install:
+    # the counter cannot know which side of the door is inside.
+    'TOF_AXIS': 'row',
+    'TOF_FLIP_DIRECTION': '0',
     'IR_GPIO_PIN': '17',
     'IR_ACTIVE_LOW': '1',
     'IR_DEBOUNCE_SECONDS': '0.5',
@@ -226,6 +237,11 @@ def _cfg_number(key, cast, low, high, fallback):
     a device someone has to drive to the venue to fix.
     """
     raw = CONFIG.get(key, DEFAULTS.get(key, ''))
+    # Unset is not a typo. A key that is absent or blank takes its default
+    # quietly: warning about those put six false complaints at the top of
+    # every start's log, which teaches whoever reads it to skip the real ones.
+    if str(raw).strip() == '':
+        return fallback
     try:
         value = cast(str(raw).strip())
     except (TypeError, ValueError):
@@ -245,6 +261,17 @@ THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 6)
 THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
+DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
+if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
+    print(f'Config DOOR_SENSOR={DOOR_SENSOR!r} is not auto, tof, beam or off; using auto',
+          file=sys.stderr)
+    DOOR_SENSOR = 'auto'
+TOF_I2C_BUS = _cfg_number('TOF_I2C_BUS', int, 0, 20, 1)
+TOF_I2C_ADDR = 0x29   # ST's 0x52, as the 7-bit address Linux wants
+# 15 Hz is the VL53L8CX's ceiling at 8x8.
+TOF_HZ = _cfg_number('TOF_HZ', int, 1, 15, 15)
+TOF_AXIS = 'col' if (CONFIG.get('TOF_AXIS') or '').strip().lower() == 'col' else 'row'
+TOF_FLIP_DIRECTION = bool(_cfg_number('TOF_FLIP_DIRECTION', int, 0, 1, 0))
 IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
 IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
 
@@ -418,6 +445,10 @@ THERMAL_VIEW_ON = bool(DISPLAY_ON and THERMAL_VIEW)
 _lock = threading.Lock()
 _state = {
     'ir_count': 0,                          # Doorway crossings since last snapshot
+    'door_in': 0,                           # Running totals since the counter
+    'door_out': 0,                          #   started, for the panel only
+    'door_source': None,                    # 'tof' or 'beam' while one is counting
+    'door_history': deque(maxlen=12),       # Crossings per snapshot, for the panel
     'thermal': 0,                           # Latest snapshot
     'thermal_at': None,                     # Monotonic mark of the last GOOD read
     'noise_db': 0.0,                        # Rolling 30s average
@@ -1999,6 +2030,9 @@ def snapshot():
         noise = float(_state['noise_db'])
         noise_at = _state['noise_at']
         _state['ir_count'] = 0
+        # Recorded when the reading is taken, not when it is delivered, so the
+        # panel's chart fills on a unit with no network, which is every demo.
+        _state['door_history'].append(ir)
 
     # Outside the lock: _fresh may write a log line, and the sensor threads
     # should never be blocked behind a disk write.
@@ -2342,6 +2376,11 @@ def tof_occupied(frame, floor_mm, margin_mm=None):
     zero distance would put a phantom person against the lens.
     """
     margin = TOF_MARGIN_MM if margin_mm is None else margin_mm
+    # One floor for the grid, or one per zone. Per zone is what the running
+    # counter uses (see TofBackground): on an angled mount the far zones see
+    # floor a metre further off than the near ones.
+    if isinstance(floor_mm, (list, tuple)):
+        return [i for i, d in enumerate(frame) if 0 < d < floor_mm[i] - margin]
     limit = floor_mm - margin
     return [i for i, d in enumerate(frame) if 0 < d < limit]
 
@@ -2473,6 +2512,797 @@ class CrossingTracker:
     @property
     def track_count(self):
         return len(self._tracks)
+
+
+# ---------------------------------------------------------------------------
+# The doorway counter's driver: a VL53L8CX over I2C
+#
+# The sensor arrives with no firmware in it. Every time it powers on, the host
+# loads an 86 KB image and three tables into it before it will measure
+# anything, and the exact sequence of about sixty register writes around that
+# load is ST's, not something to improvise. What follows is a line-for-line
+# port of the parts of ST's Ultra Lite Driver this counter uses
+# (vl53l8cx_api.c in the STM32duino library 2.1.0, BSD 3-Clause; the firmware
+# and the licence are in vl53l8cx/), onto the standard library: I2C through
+# /dev/i2c-N with the same ioctl machinery the thermal camera already uses. No
+# smbus package, nothing to install, and nothing that could capture a picture.
+#
+# Where this differs from ST's C, Linux or Python forced it:
+#
+#   * i2c-dev refuses a single message longer than 8192 bytes, and ST writes
+#     the firmware in 32 KB pieces. Long writes are split, each piece carrying
+#     its own register address. ST's own Arduino driver does the same thing in
+#     pieces as small as 32 bytes, so the sensor is built to take it that way.
+#   * ST accumulates errors in a status byte and carries on to the end of a
+#     call. This raises on the first one. A half-initialised sensor that ranges
+#     wrongly is worse than one that says it failed, which is this file's rule
+#     everywhere else too.
+#   * C integer arithmetic is reproduced where it matters: 32-bit sums wrap,
+#     and division truncates toward zero, which Python's // does not.
+#
+# Not verified on hardware: the part had not arrived when this was written. It
+# is verified against ST's source and against a scripted fake of the sensor in
+# test_main.py that pins the order of the writes. `main.py --tof` is the first
+# thing to run once the board is wired.
+# ---------------------------------------------------------------------------
+
+TOF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'vl53l8cx')
+
+_I2C_RDWR = 0x0707
+_I2C_M_RD = 0x0001
+# A quarter of i2c-dev's 8192-byte limit per message.
+I2C_CHUNK = 2048
+
+
+class _I2cMsg(ctypes.Structure):
+    # struct i2c_msg, <linux/i2c.h>
+    _fields_ = [('addr', ctypes.c_uint16), ('flags', ctypes.c_uint16),
+                ('len', ctypes.c_uint16), ('buf', ctypes.POINTER(ctypes.c_uint8))]
+
+
+class _I2cRdwr(ctypes.Structure):
+    # struct i2c_rdwr_ioctl_data, <linux/i2c-dev.h>
+    _fields_ = [('msgs', ctypes.POINTER(_I2cMsg)), ('nmsgs', ctypes.c_uint32)]
+
+
+class I2CBus:
+    """A device with 16-bit register addresses on /dev/i2c-N.
+
+    Everything goes through I2C_RDWR. A read writes the register address and
+    reads the data back in one transaction, joined by a repeated start, which
+    is how ST's drivers read this part.
+    """
+
+    def __init__(self, bus=1, address=0x29):
+        if fcntl is None:
+            raise OSError('I2C needs Linux')
+        self.address = address
+        self.fd = os.open(f'/dev/i2c-{bus}', os.O_RDWR)
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+    def _transfer(self, msgs):
+        arr = (_I2cMsg * len(msgs))(*msgs)
+        fcntl.ioctl(self.fd, _I2C_RDWR, _I2cRdwr(arr, len(msgs)))
+
+    @staticmethod
+    def _buffer(data):
+        return (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+
+    def write(self, reg, payload):
+        payload = bytes(payload)
+        for off in range(0, len(payload), I2C_CHUNK):
+            r = reg + off
+            buf = self._buffer(bytes([r >> 8 & 0xFF, r & 0xFF]) + payload[off:off + I2C_CHUNK])
+            self._transfer([_I2cMsg(self.address, 0, len(buf), buf)])
+
+    def read(self, reg, n):
+        out = bytearray()
+        for off in range(0, n, I2C_CHUNK):
+            r = reg + off
+            head = self._buffer(bytes([r >> 8 & 0xFF, r & 0xFF]))
+            body = (ctypes.c_uint8 * min(I2C_CHUNK, n - off))()
+            self._transfer([_I2cMsg(self.address, 0, 2, head),
+                            _I2cMsg(self.address, _I2C_M_RD, len(body), body)])
+            out += bytes(body)
+        return bytes(out)
+
+
+def swap4(data):
+    """ST's VL53L8CX_SwapBuffer: reverse the bytes of every 32-bit word.
+
+    The firmware is big-endian and ST's host code is not, so every multi-byte
+    buffer crosses the bus through this. Every size ST passes it is a whole
+    number of words, and anything else here is a bug worth hearing about.
+    """
+    b = bytes(data)
+    if len(b) % 4:
+        raise ValueError(f'{len(b)} bytes is not a whole number of 32-bit words')
+    return b''.join(b[i:i + 4][::-1] for i in range(0, len(b), 4))
+
+
+def _cdiv(a, b):
+    """Integer division the way C does it: truncated toward zero."""
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b > 0) else -q
+
+
+class Vl53l8cxError(Exception):
+    pass
+
+
+# From vl53l8cx_api.h, for one target per zone.
+VL53_RES_4X4 = 16
+VL53_RES_8X8 = 64
+VL53_TARGET_ORDER_CLOSEST = 1
+VL53_UI_CMD_STATUS = 0x2C00
+VL53_UI_CMD_START = 0x2C04
+VL53_UI_CMD_END = 0x2FFF
+VL53_DCI_ZONE_CONFIG = 0x5450
+VL53_DCI_FREQ_HZ = 0x5458
+VL53_DCI_RANGING_MODE = 0xAD30
+VL53_DCI_DSS_CONFIG = 0xAD38
+VL53_DCI_TARGET_ORDER = 0xAE64
+VL53_DCI_SINGLE_RANGE = 0xD964
+VL53_DCI_OUTPUT_CONFIG = 0xD968
+VL53_DCI_OUTPUT_ENABLES = 0xD970
+VL53_DCI_OUTPUT_LIST = 0xD980
+VL53_DCI_PIPE_CONTROL = 0xDB80
+VL53_OFFSET_SIZE = 488
+VL53_XTALK_SIZE = 776
+VL53_NVM_SIZE = 492
+VL53_FW_SIZE = 0x8000 + 0x8000 + 0x5000
+VL53_FW_CHECKSUM = 0x0C0B6C9E
+# The result blocks in ST's order. A block's position in this list is its bit
+# in the output-enable mask.
+VL53_OUTPUT_BH = [0x0000000D, 0x54B400C0, 0x54C00040, 0x54D00104, 0x55D00404,
+                  0xDB840401, 0xDBC40404, 0xDEC40402, 0xDF440402, 0xE0440401,
+                  0xE0840401, 0xD85808C0]
+VL53_NB_TARGET_IDX = 0xDB84
+VL53_DISTANCE_IDX = 0xDF44
+VL53_STATUS_IDX = 0xE084
+# Start, metadata and common data are mandatory (0x7). Of the optional blocks
+# this asks for the three the counter reads: targets per zone (bit 5),
+# distance (bit 8) and target status (bit 10). ST supports trimming the list
+# (its VL53L8CX_DISABLE_* switches do exactly this), and it cuts every frame
+# to 320 bytes, under a quarter of the full set, at fifteen frames a second.
+VL53_OUTPUT_ENABLE = 0x7 | (1 << 5) | (1 << 8) | (1 << 10)
+# 5 is ST's valid range and 9 a valid range with a wide pulse. The rest are
+# ST's own failure codes or a first-frame artefact (6), and a zone with no
+# target at all is 255. Anything outside these reads as no measurement: a
+# missing reading costs one zone for one frame, a wrong one invents a person.
+VL53_VALID_STATUS = (5, 9)
+# The farthest the VL53L8CX reports, per ST's datasheet.
+VL53_RANGE_MM = 4000
+
+
+def vl53_output_config(resolution, enable=VL53_OUTPUT_ENABLE):
+    """(output list, frame size), exactly as vl53l8cx_start_ranging builds them.
+
+    The size has to match what the firmware will send, byte for byte:
+    start_ranging reads the firmware's own figure back and refuses to go on if
+    the two differ. With one target per zone every per-zone block is one entry
+    per zone, which is why both of ST's branches set the same size here.
+    """
+    output = list(VL53_OUTPUT_BH)
+    size = 0
+    for i, bh in enumerate(output):
+        if bh == 0 or not (enable >> i) & 1:
+            continue
+        typ = bh & 0xF
+        if 1 <= typ < 0x0D:
+            output[i] = (bh & ~(0xFFF << 4)) | ((resolution & 0xFFF) << 4)
+            size += typ * resolution
+        else:
+            size += (bh >> 4) & 0xFFF
+        size += 4
+    return output, size + 24
+
+
+def vl53_parse_frame(raw, frame_size):
+    """64 distances in mm from one 8x8 frame, 0 where there is no reading.
+
+    None for a corrupted frame, which ST detects by comparing the id at the
+    head of the frame with the id at its foot, or for one that lacks a block
+    this counter needs. The walk and the conversion are ST's get_ranging_data.
+    """
+    buf = swap4(raw[:frame_size])
+    distance = status = targets = None
+    i = 16
+    while i + 4 <= frame_size:
+        (bh,) = struct.unpack_from('<I', buf, i)
+        typ = bh & 0xF
+        size = (bh >> 4) & 0xFFF
+        idx = bh >> 16
+        msize = typ * size if 1 < typ < 0x0D else size
+        if i + 4 + msize <= frame_size:
+            if idx == VL53_DISTANCE_IDX and msize == 128:
+                distance = struct.unpack_from('<64h', buf, i + 4)
+            elif idx == VL53_STATUS_IDX and msize == 64:
+                status = buf[i + 4:i + 68]
+            elif idx == VL53_NB_TARGET_IDX and msize == 64:
+                targets = buf[i + 4:i + 68]
+        i += msize + 4
+    if distance is None or status is None or targets is None:
+        return None
+    header_id = (buf[8] << 8) | buf[9]
+    footer_id = (buf[frame_size - 4] << 8) | buf[frame_size - 3]
+    if header_id != footer_id:
+        return None
+    out = []
+    for z in range(64):
+        mm = _cdiv(distance[z], 4)
+        ok = targets[z] > 0 and status[z] in VL53_VALID_STATUS and mm > 0
+        out.append(mm if ok else 0)
+    return out
+
+
+def load_vl53_tables(directory=None):
+    """ST's firmware and tables from vl53l8cx/, each checked for its size."""
+    d = directory or TOF_DIR
+    want = {'firmware': ('vl53l8cx_firmware.bin', VL53_FW_SIZE),
+            'config': ('vl53l8cx_default_config.bin', 972),
+            'xtalk': ('vl53l8cx_default_xtalk.bin', VL53_XTALK_SIZE),
+            'nvm_cmd': ('vl53l8cx_get_nvm_cmd.bin', 40)}
+    out = {}
+    for key, (name, size) in want.items():
+        with open(os.path.join(d, name), 'rb') as f:
+            data = f.read()
+        if len(data) != size:
+            raise Vl53l8cxError(f'{name} is {len(data)} bytes, expected {size}: '
+                                f'damaged, or from another driver version')
+        out[key] = data
+    return out
+
+
+class Vl53l8cx:
+    """ST's Ultra Lite Driver, the parts this counter uses, on an I2CBus.
+
+    `sleep` is injectable so the scripted fake in the tests does not sit out
+    ST's delays.
+    """
+
+    def __init__(self, bus, tables=None, sleep=time.sleep):
+        self.bus = bus
+        self.tables = tables if tables is not None else load_vl53_tables()
+        self.sleep = sleep
+        self.streamcount = 255
+        self.frame_size = 0
+        self.offset_data = None
+        self.xtalk_data = None
+        self.ranging = False
+        # The last error the sensor flagged while being asked for a frame.
+        self.fault = None
+
+    # -- bus ----------------------------------------------------------------
+
+    def wr(self, reg, value):
+        self.bus.write(reg, bytes([value & 0xFF]))
+
+    def rd(self, reg):
+        return self.bus.read(reg, 1)[0]
+
+    def wait_ms(self, ms):
+        self.sleep(ms / 1000.0)
+
+    # -- ST's inner helpers -------------------------------------------------
+
+    def poll_for_answer(self, size, pos, address, mask, expected):
+        timeout = 0
+        while True:
+            buf = self.bus.read(address, size)
+            self.wait_ms(10)
+            if timeout >= 200:
+                raise Vl53l8cxError(f'timed out waiting on 0x{address:04X}')
+            if size >= 4 and buf[2] >= 0x7F:
+                raise Vl53l8cxError(f'sensor MCU error 0x{buf[2]:02X}')
+            timeout += 1
+            if (buf[pos] & mask) == expected:
+                return buf
+
+    def poll_for_mcu_boot(self):
+        for _ in range(500):
+            s0 = self.rd(0x06)
+            if s0 & 0x80 and self.rd(0x07) & 0x01:
+                return
+            self.wait_ms(1)
+            if s0 & 0x01:
+                return
+        # ST does not fail here either. A boot that never signals is caught by
+        # the firmware checksum that follows it.
+
+    def send_offset_data(self, resolution):
+        temp = bytearray(self.offset_data[:VL53_OFFSET_SIZE]) + bytearray(8)
+        if resolution == VL53_RES_4X4:
+            temp[0x10:0x18] = bytes([0x0F, 0x04, 0x04, 0x00, 0x08, 0x10, 0x10, 0x07])
+            body = bytearray(swap4(temp[:VL53_OFFSET_SIZE]))
+            sig = list(struct.unpack_from('<64I', body, 0x3C))
+            rng = list(struct.unpack_from('<64h', body, 0x140))
+            for j in range(4):
+                for i in range(4):
+                    a = 2 * i + 16 * j
+                    sig[i + 4 * j] = ((sig[a] + sig[a + 1] + sig[a + 8] + sig[a + 9])
+                                      & 0xFFFFFFFF) // 4
+                    rng[i + 4 * j] = _cdiv(rng[a] + rng[a + 1] + rng[a + 8] + rng[a + 9], 4)
+            rng[16:] = [0] * 48
+            sig[16:] = [0] * 48
+            body[0x3C:0x3C + 256] = struct.pack('<64I', *sig)
+            body[0x140:0x140 + 128] = struct.pack('<64h', *rng)
+            temp[:VL53_OFFSET_SIZE] = swap4(body)
+        for k in range(VL53_OFFSET_SIZE - 4):
+            temp[k] = temp[k + 8]
+        temp[0x1E0:0x1E8] = bytes([0x00, 0x00, 0x00, 0x0F, 0x03, 0x01, 0x01, 0xE4])
+        self.bus.write(0x2E18, bytes(temp[:VL53_OFFSET_SIZE]))
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+
+    def send_xtalk_data(self, resolution):
+        temp = bytearray(self.xtalk_data[:VL53_XTALK_SIZE])
+        if resolution == VL53_RES_4X4:
+            temp[0x08:0x10] = bytes([0x0F, 0x04, 0x04, 0x17, 0x08, 0x10, 0x10, 0x07])
+            temp[0x20:0x28] = bytes([0x00, 0x78, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08])
+            body = bytearray(swap4(temp))
+            sig = list(struct.unpack_from('<64I', body, 0x34))
+            for j in range(4):
+                for i in range(4):
+                    a = 2 * i + 16 * j
+                    sig[i + 4 * j] = ((sig[a] + sig[a + 1] + sig[a + 8] + sig[a + 9])
+                                      & 0xFFFFFFFF) // 4
+            sig[16:] = [0] * 48
+            body[0x34:0x34 + 256] = struct.pack('<64I', *sig)
+            temp = bytearray(swap4(body))
+            temp[0x134:0x138] = bytes([0xA0, 0xFC, 0x01, 0x00])
+            temp[0x78:0x7C] = bytes(4)
+        self.bus.write(0x2CF8, bytes(temp))
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+
+    def dci_read(self, index, size):
+        cmd = bytes([index >> 8 & 0xFF, index & 0xFF, (size & 0xFF0) >> 4,
+                     (size & 0xF) << 4, 0x00, 0x00, 0x00, 0x0F, 0x00, 0x02, 0x00, 0x08])
+        self.bus.write(VL53_UI_CMD_END - 11, cmd)
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+        raw = self.bus.read(VL53_UI_CMD_START, size + 12)
+        return swap4(raw)[4:4 + size]
+
+    def dci_write(self, index, data):
+        size = len(data)
+        head = bytes([index >> 8 & 0xFF, index & 0xFF, (size & 0xFF0) >> 4, (size & 0xF) << 4])
+        foot = bytes([0x00, 0x00, 0x00, 0x0F, 0x05, 0x01, (size + 8) >> 8 & 0xFF,
+                      (size + 8) & 0xFF])
+        self.bus.write(VL53_UI_CMD_END - (size + 12) + 1, head + swap4(data) + foot)
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+
+    def dci_replace(self, index, size, new, pos):
+        data = bytearray(self.dci_read(index, size))
+        data[pos:pos + len(new)] = new
+        self.dci_write(index, bytes(data))
+
+    # -- ST's public calls --------------------------------------------------
+
+    def is_alive(self):
+        """(alive, device id, revision id). Cheap: two register reads."""
+        self.wr(0x7FFF, 0x00)
+        device_id = self.rd(0)
+        revision_id = self.rd(1)
+        self.wr(0x7FFF, 0x02)
+        return device_id == 0xF0 and revision_id == 0x0C, device_id, revision_id
+
+    def init(self):
+        fw = self.tables['firmware']
+        w, r = self.wr, self.rd
+        # Software reboot.
+        w(0x7FFF, 0x00); w(0x0009, 0x04)
+        w(0x000F, 0x40); w(0x000A, 0x03); r(0x7FFF); w(0x000C, 0x01)
+        w(0x0101, 0x00); w(0x0102, 0x00); w(0x010A, 0x01); w(0x4002, 0x01)
+        w(0x4002, 0x00); w(0x010A, 0x03); w(0x0103, 0x01); w(0x000C, 0x00)
+        w(0x000F, 0x43); self.wait_ms(1)
+        w(0x000F, 0x40); w(0x000A, 0x01)
+        self.wait_ms(100)
+        # Wait for the sensor to boot.
+        w(0x7FFF, 0x00)
+        self.poll_for_answer(1, 0, 0x06, 0xFF, 1)
+        w(0x000E, 0x01); w(0x7FFF, 0x02)
+        # Enable firmware access.
+        w(0x7FFF, 0x01); w(0x06, 0x01)
+        self.poll_for_answer(1, 0, 0x21, 0xFF, 0x4)
+        w(0x7FFF, 0x00)
+        # Host access to GO1.
+        r(0x7FFF); w(0x0C, 0x01)
+        # Power on status.
+        w(0x7FFF, 0x00); w(0x101, 0x00); w(0x102, 0x00); w(0x010A, 0x01)
+        w(0x4002, 0x01); w(0x4002, 0x00); w(0x010A, 0x03); w(0x103, 0x01)
+        w(0x400F, 0x00); w(0x21A, 0x43); w(0x21A, 0x03); w(0x21A, 0x01)
+        w(0x21A, 0x00); w(0x219, 0x00); w(0x21B, 0x00)
+        # Wake the MCU.
+        w(0x7FFF, 0x00); r(0x7FFF); w(0x7FFF, 0x01)
+        # The firmware, through three 32 KB page windows.
+        w(0x7FFF, 0x09); self.bus.write(0, fw[0x0000:0x8000])
+        w(0x7FFF, 0x0A); self.bus.write(0, fw[0x8000:0x10000])
+        w(0x7FFF, 0x0B); self.bus.write(0, fw[0x10000:0x15000])
+        w(0x7FFF, 0x01)
+        # Say the download is complete.
+        w(0x7FFF, 0x01); w(0x06, 0x03)
+        self.wait_ms(5)
+        w(0x7FFF, 0x00); r(0x7FFF); w(0x0C, 0x01)
+        # Reset the MCU and wait for it to boot what was loaded.
+        w(0x7FFF, 0x00); w(0x114, 0x00); w(0x115, 0x00); w(0x116, 0x42)
+        w(0x117, 0x00); w(0x0B, 0x00); r(0x7FFF); w(0x0C, 0x00); w(0x0B, 0x01)
+        self.poll_for_mcu_boot()
+        w(0x7FFF, 0x02)
+        # The firmware's own checksum. A load damaged anywhere fails here.
+        (crc,) = struct.unpack('<I', swap4(self.bus.read(0x2FFC, 4)))
+        if crc != VL53_FW_CHECKSUM:
+            raise Vl53l8cxError(f'firmware checksum 0x{crc:08X}, expected '
+                                f'0x{VL53_FW_CHECKSUM:08X}: the load did not arrive intact')
+        # This sensor's factory calibration, out of its own NVM.
+        self.bus.write(0x2FD8, self.tables['nvm_cmd'])
+        self.poll_for_answer(4, 0, VL53_UI_CMD_STATUS, 0xFF, 2)
+        self.offset_data = self.bus.read(VL53_UI_CMD_START, VL53_NVM_SIZE)[:VL53_OFFSET_SIZE]
+        self.send_offset_data(VL53_RES_4X4)
+        self.xtalk_data = bytes(self.tables['xtalk'])
+        self.send_xtalk_data(VL53_RES_4X4)
+        # ST's default configuration, then one target per zone, single range.
+        self.bus.write(0x2C34, self.tables['config'])
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+        self.dci_write(VL53_DCI_PIPE_CONTROL, bytes([1, 0x00, 0x01, 0x00]))
+        self.dci_write(VL53_DCI_SINGLE_RANGE, struct.pack('<I', 1))
+
+    def get_resolution(self):
+        zone = self.dci_read(VL53_DCI_ZONE_CONFIG, 8)
+        return zone[0] * zone[1]
+
+    def set_resolution(self, resolution):
+        if resolution == VL53_RES_8X8:
+            dss_vals, zone_vals = (16, 16, 1), (8, 8, 4, 4)
+        elif resolution == VL53_RES_4X4:
+            dss_vals, zone_vals = (64, 64, 4), (4, 4, 8, 8)
+        else:
+            raise Vl53l8cxError(f'resolution {resolution} is neither 16 nor 64')
+        dss = bytearray(self.dci_read(VL53_DCI_DSS_CONFIG, 16))
+        dss[0x04], dss[0x06], dss[0x09] = dss_vals
+        self.dci_write(VL53_DCI_DSS_CONFIG, bytes(dss))
+        zone = bytearray(self.dci_read(VL53_DCI_ZONE_CONFIG, 8))
+        zone[0x00], zone[0x01], zone[0x04], zone[0x05] = zone_vals
+        self.dci_write(VL53_DCI_ZONE_CONFIG, bytes(zone))
+        self.send_offset_data(resolution)
+        self.send_xtalk_data(resolution)
+
+    def set_ranging_frequency_hz(self, hz):
+        self.dci_replace(VL53_DCI_FREQ_HZ, 4, bytes([hz & 0xFF]), 0x01)
+
+    def set_target_order_closest(self):
+        self.dci_replace(VL53_DCI_TARGET_ORDER, 4, bytes([VL53_TARGET_ORDER_CLOSEST]), 0x00)
+
+    def set_ranging_mode_continuous(self):
+        mode = bytearray(self.dci_read(VL53_DCI_RANGING_MODE, 8))
+        mode[0x01], mode[0x03] = 0x1, 0x3
+        self.dci_write(VL53_DCI_RANGING_MODE, bytes(mode))
+        self.dci_write(VL53_DCI_SINGLE_RANGE, struct.pack('<I', 0))
+
+    def start_ranging(self):
+        resolution = self.get_resolution()
+        self.streamcount = 255
+        output, self.frame_size = vl53_output_config(resolution)
+        self.dci_write(VL53_DCI_OUTPUT_LIST, struct.pack('<12I', *output))
+        self.dci_write(VL53_DCI_OUTPUT_CONFIG,
+                       struct.pack('<2I', self.frame_size, len(output) + 1))
+        self.dci_write(VL53_DCI_OUTPUT_ENABLES,
+                       struct.pack('<4I', VL53_OUTPUT_ENABLE, 0, 0, 0xC0000000))
+        self.wr(0x7FFF, 0x00); self.wr(0x09, 0x05); self.wr(0x7FFF, 0x02)
+        self.bus.write(VL53_UI_CMD_END - 3, bytes([0x00, 0x03, 0x00, 0x00]))
+        self.ranging = True
+        self.poll_for_answer(4, 1, VL53_UI_CMD_STATUS, 0xFF, 0x03)
+        (fw_size,) = struct.unpack_from('<H', self.dci_read(0x5440, 12), 8)
+        if fw_size != self.frame_size:
+            raise Vl53l8cxError(f'the firmware will send {fw_size}-byte frames and '
+                                f'this driver expects {self.frame_size}')
+        if self.dci_read(0xE0C4, 8)[6] != 0:
+            raise Vl53l8cxError('the sensor reports a laser safety fault')
+
+    def stop_ranging(self):
+        """ST's stop, for a clean hand-back. Never raises: it runs on the way
+        out of failures, and the next start reboots the sensor regardless."""
+        if not self.ranging:
+            return
+        self.ranging = False
+        try:
+            (flag,) = struct.unpack('<I', self.bus.read(0x2FFC, 4))
+            if flag != 0x4FF:
+                self.wr(0x7FFF, 0x00)
+                self.wr(0x15, 0x16); self.wr(0x14, 0x01)
+                tmp, timeout = 0, 0
+                while not tmp & 0x80:
+                    tmp = self.rd(0x06)
+                    self.wait_ms(10)
+                    timeout += 1
+                    if timeout > 500:
+                        break
+            if self.rd(0x06) & 0x80:
+                self.rd(0x07)
+            self.wr(0x7FFF, 0x00); self.wr(0x14, 0x00); self.wr(0x15, 0x00)
+            self.wr(0x09, 0x04); self.wr(0x7FFF, 0x02)
+        except Exception:
+            pass
+
+    def data_ready(self):
+        b = self.bus.read(0x0, 4)
+        if (b[0] != self.streamcount and b[0] != 255 and b[1] == 0x5
+                and (b[2] & 0x5) == 0x5 and (b[3] & 0x10) == 0x10):
+            self.streamcount = b[0]
+            return True
+        if b[3] & 0x80:
+            # ST hands this back as a status and its examples carry on. So
+            # does this: a fault that persists stops the frames, and the loop
+            # restarts the sensor after ten seconds without one.
+            self.fault = b[2]
+        return False
+
+    def read_frame(self):
+        """64 distances in mm, 0 for no reading; None for a corrupted frame."""
+        raw = self.bus.read(0x0, self.frame_size)
+        self.streamcount = raw[0]
+        return vl53_parse_frame(raw, self.frame_size)
+
+    def start(self, hz):
+        """Everything from power-on to an 8x8 sensor ranging at `hz`."""
+        self.init()
+        self.set_resolution(VL53_RES_8X8)
+        self.set_ranging_frequency_hz(hz)
+        # With one target per zone and a person over part of a zone, the
+        # sensor sees two things: the person, and the floor behind them. ST's
+        # default reports the stronger return, which for a dark coat over a
+        # pale floor is the floor, and the person drops out of that zone.
+        # Closest reports the person.
+        self.set_target_order_closest()
+        self.set_ranging_mode_continuous()
+        self.start_ranging()
+
+
+class TofBackground:
+    """The empty doorway, learned zone by zone.
+
+    One floor distance for the whole grid does not fit this mount: the head
+    looks down at the doorway at an angle, so the zones at the top of its view
+    see floor much further away than the zones at the bottom, and one threshold
+    either misses people in the near zones or sees phantoms in the far ones.
+    Each zone learns its own floor as the median of its first readings, which
+    somebody walking through during those seconds cannot move far, then
+    follows slow change.
+
+    Something that arrives and stays, a bouncer at the door or a sign put out
+    for the night, is taken into the background after a minute. Left out, it
+    would sit in the grid as a person who never crosses, next to every real
+    person who walks past it.
+    """
+
+    SEED_FRAMES = 20
+    ALPHA = 0.02
+    ABSORB_SECONDS = 60
+
+    def __init__(self, hz=None):
+        self._seed = [[] for _ in range(64)]
+        self._frames = 0
+        self._held = [0] * 64
+        self._absorb = max(1, int(self.ABSORB_SECONDS * (hz or TOF_HZ)))
+        self.floor = None
+
+    @property
+    def ready(self):
+        return self.floor is not None
+
+    def observe(self, frame):
+        if self.floor is None:
+            for z, d in enumerate(frame):
+                if d > 0:
+                    self._seed[z].append(d)
+            self._frames += 1
+            if self._frames >= self.SEED_FRAMES:
+                # A zone that never returned a reading is looking at nothing
+                # inside the sensor's range, so its floor is the edge of it.
+                self.floor = [float(sorted(v)[len(v) // 2]) if v else float(VL53_RANGE_MM)
+                              for v in self._seed]
+                self._seed = None
+            return
+        for z, d in enumerate(frame):
+            if d <= 0:
+                continue
+            f = self.floor[z]
+            if d >= f - TOF_MARGIN_MM:
+                self.floor[z] = f + self.ALPHA * (d - f)
+                self._held[z] = 0
+            else:
+                self._held[z] += 1
+                if self._held[z] >= self._absorb:
+                    self.floor[z] = float(d)
+                    self._held[z] = 0
+
+
+def tof_available():
+    """Whether a VL53L8CX answers on the configured bus. Asks for its id only;
+    loading it takes seconds and is the loop's job."""
+    try:
+        bus = I2CBus(TOF_I2C_BUS, TOF_I2C_ADDR)
+    except OSError:
+        return False
+    try:
+        return Vl53l8cx(bus, tables={}).is_alive()[0]
+    except Exception:
+        return False
+    finally:
+        bus.close()
+
+
+def tof_loop():
+    """Count people through the doorway from the VL53L8CX, forever.
+
+    Each crossing goes into the same count the beam used to feed, so the
+    payload, the backend and the venue card do not change: that field has
+    always meant crossings in either direction. The two directions are kept as
+    running totals as well, for the panel.
+    """
+    backoff = 5.0
+    while not _stop.is_set():
+        dev = bus = None
+        tracker = CrossingTracker(axis=TOF_AXIS)
+        background = TofBackground()
+        try:
+            bus = I2CBus(TOF_I2C_BUS, TOF_I2C_ADDR)
+            dev = Vl53l8cx(bus)
+            started = time.monotonic()
+            dev.start(TOF_HZ)
+            logger.info(f'Doorway counter ranging, 8x8 at {TOF_HZ} Hz, '
+                        f'{time.monotonic() - started:.1f}s to load')
+            with _lock:
+                _state['door_source'] = 'tof'
+            backoff = 5.0
+            last_frame = time.monotonic()
+            while not _stop.is_set():
+                if not dev.data_ready():
+                    if time.monotonic() - last_frame > 10:
+                        raise Vl53l8cxError(
+                            'no frame for ten seconds'
+                            + (f' (sensor error 0x{dev.fault:02X})' if dev.fault is not None else ''))
+                    _stop.wait(0.01)
+                    continue
+                last_frame = time.monotonic()
+                frame = dev.read_frame()
+                if frame is None:
+                    log_throttled('tof_frame', logging.WARNING,
+                                  'Doorway counter: a corrupted frame was dropped')
+                    continue
+                background.observe(frame)
+                if not background.ready:
+                    continue
+                came_in, went_out = tracker.observe(
+                    tof_clusters(tof_occupied(frame, background.floor)))
+                if TOF_FLIP_DIRECTION:
+                    came_in, went_out = went_out, came_in
+                if came_in or went_out:
+                    with _lock:
+                        _state['ir_count'] = min(MAX_IR_PER_READING,
+                                                 _state['ir_count'] + came_in + went_out)
+                        _state['door_in'] += came_in
+                        _state['door_out'] += went_out
+        except Exception as e:
+            log_throttled('tof_loop', logging.ERROR,
+                          f'Doorway counter stopped ({e}); retrying in {backoff:.0f}s')
+        finally:
+            with _lock:
+                _state['door_source'] = None
+            if dev is not None:
+                dev.stop_ranging()
+            if bus is not None:
+                bus.close()
+        _stop.wait(backoff)
+        backoff = min(backoff * 2, 120.0)
+
+
+def tof_test(seconds=None):
+    """Bring the doorway counter up and show what it sees.
+
+    The first thing to run once the board is wired. Each step says what it
+    proved, and when one fails, what to check, in the order somebody with the
+    board in front of them would check it.
+    """
+    print(f'flock-sensor {VERSION} doorway counter test')
+    print('  (stop the service first, `sudo systemctl stop flock-sensor`: two')
+    print('   programs driving one sensor restart it under each other)')
+    print(f'  I2C bus {TOF_I2C_BUS}, address 0x{TOF_I2C_ADDR:02X}')
+    try:
+        bus = I2CBus(TOF_I2C_BUS, TOF_I2C_ADDR)
+    except OSError as e:
+        print(f'  Cannot open /dev/i2c-{TOF_I2C_BUS}: {e}')
+        print('  Turn I2C on with `sudo raspi-config nonint do_i2c 0`, then reboot.')
+        return 1
+    try:
+        tables = load_vl53_tables()
+    except (OSError, Vl53l8cxError) as e:
+        bus.close()
+        print(f'  The firmware files are missing or damaged: {e}')
+        print(f'  They belong in {TOF_DIR}. Run setup.sh again.')
+        return 1
+    dev = Vl53l8cx(bus, tables)
+    try:
+        alive, dev_id, rev = dev.is_alive()
+    except OSError as e:
+        bus.close()
+        print(f'  Nothing answered at 0x{TOF_I2C_ADDR:02X} ({e}).')
+        print('  Check in this order: VIN to 3.3V (pin 1), GND (pin 6), SDA to pin 3,')
+        print('  SCL to pin 5. `i2cdetect -y 1` should then show 29.')
+        return 1
+    if not alive:
+        bus.close()
+        print(f'  Something answered, but it is not a VL53L8CX (id 0x{dev_id:02X}, '
+              f'revision 0x{rev:02X}; a VL53L8CX is F0 and 0C).')
+        return 1
+    print('  Sensor found. Loading its firmware (86 KB)...')
+    t0 = time.monotonic()
+    try:
+        dev.start(TOF_HZ)
+    except Exception as e:
+        dev.stop_ranging()
+        bus.close()
+        print(f'  Start-up failed: {e}')
+        print('  A checksum failure usually means a noisy bus: shorter wires, or a')
+        print('  slower one (dtparam=i2c_arm_baudrate in /boot/firmware/config.txt).')
+        return 1
+    print(f'  Firmware checksum good. Ranging 8x8 at {TOF_HZ} Hz after '
+          f'{time.monotonic() - t0:.1f}s.')
+    print('  Keep the doorway clear for two seconds while it learns the floor,')
+    print('  then walk through it. Ctrl+C to stop.')
+    print('')
+    tracker = CrossingTracker(axis=TOF_AXIS)
+    background = TofBackground()
+    came_in = went_out = frames = 0
+    deadline = None if seconds is None else time.monotonic() + seconds
+    last_print = 0.0
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            if not dev.data_ready():
+                time.sleep(0.01)
+                continue
+            frame = dev.read_frame()
+            if frame is None:
+                continue
+            frames += 1
+            background.observe(frame)
+            if not background.ready:
+                continue
+            occupied = set(tof_occupied(frame, background.floor))
+            i, o = tracker.observe(tof_clusters(occupied))
+            if TOF_FLIP_DIRECTION:
+                i, o = o, i
+            came_in += i
+            went_out += o
+            if i or o:
+                print(f'  {"IN " if i else "OUT"}   in {came_in}   out {went_out}')
+            if time.monotonic() - last_print > 1.0:
+                last_print = time.monotonic()
+                print('  distance in cm; [ ] means somebody is there')
+                for r in range(TOF_ROWS):
+                    cells = []
+                    for c in range(TOF_COLS):
+                        z = r * TOF_COLS + c
+                        cell = f'{frame[z] // 10:3d}' if frame[z] else '  -'
+                        cells.append(f'[{cell}]' if z in occupied else f' {cell} ')
+                    print('   ' + ''.join(cells))
+                print('')
+    except KeyboardInterrupt:
+        print('')
+    finally:
+        dev.stop_ranging()
+        bus.close()
+    print(f'  {frames} frames, {came_in} in, {went_out} out.')
+    if frames and not (came_in or went_out):
+        print('  Nothing crossed. If somebody did walk through, people may be')
+        print('  crossing the grid sideways as it is mounted: set TOF_AXIS=col.')
+    elif went_out > came_in:
+        print('  If those were arrivals, the head is facing the other way round:')
+        print('  set TOF_FLIP_DIRECTION=1.')
+    return 0
+
 
 # ---------------------------------------------------------------------------
 # Display loop (optional, demo unit only)
@@ -3119,13 +3949,14 @@ class Panel:
         s = self.text(self.f_body, text, BRAND_FAINT)
         self.screen.blit(s, (pad, wire - s.get_height() - 8))
 
-    def home(self, ir, therm, therm_live, level, noise_live, history):
+    def home(self, ir, therm, therm_live, level, noise_live, history, door_live=True):
         m = self.m
         self.header(live=therm_live or noise_live)
         n_value, n_caption, basis = noise_reading(level)
         word, colour = noise_band(basis)
         cells = [
-            ('Through the door', str(ir), BRAND_CREAM, 'since the last update', True),
+            ('Through the door', str(ir) if door_live else '--', BRAND_CREAM,
+             'since the last update' if door_live else 'counter offline', door_live),
             ('In view now', f'{therm}' if therm_live else '--', BRAND_CREAM,
              'people in the room' if therm_live else 'thermal offline', therm_live),
             ('Noise', word if noise_live else '--',
@@ -3167,30 +3998,53 @@ class Panel:
         for p in pts:
             self.pygame.draw.circle(self.screen, BRAND_CREAM, (int(p[0]), int(p[1])), 3)
 
-    def door(self, ir, history):
+    def door(self, ir, history, came_in=None, went_out=None, live=True):
         m = self.m
         pad = m['pad']
         self.header('Through the door', back=True)
         top = m['header_h'] + pad
+        vy = top + m['font_sm'] + 6
         self.label('Since the last update', (pad, top))
-        v = self.text(self.f_big, str(ir), BRAND_CREAM)
-        self.screen.blit(v, (pad, top + m['font_sm'] + 6))
-        # What this number is and is not. It was once labelled "Entered Today",
-        # which it has never been, and a judge asking the obvious follow-up
-        # deserves the honest answer on the screen rather than in the pitch.
-        tx = pad + v.get_width() + pad
-        ty = top + m['font_sm'] + 6 + (v.get_height() - 2 * (m['font_xs'] + 8)) // 2
-        for s in ('Crossings in either direction, over one push interval.',
-                  'The doorway counter adds which way each person went.'):
-            self.blit(self.f_body, s, BRAND_MUTED, (tx, ty))
-            ty += m['font_xs'] + 8
+        v = self.text(self.f_big, str(ir) if live else '--', BRAND_CREAM)
+        self.screen.blit(v, (pad, vy))
+        if live and came_in is not None:
+            # The doorway counter knows which way each person went, so both
+            # directions stand beside the total. Running totals since it
+            # started, not per update: an update splits a handful of crossings
+            # two ways, which is noise, and a night's totals are its shape.
+            half = self.w // 2
+            self.pygame.draw.line(self.screen, BRAND_RULE, (half - pad, top),
+                                  (half - pad, vy + v.get_height()), 1)
+            colw = (self.w - pad - half) // 2
+            for i, (name, n) in enumerate((('Came in', came_in), ('Went out', went_out))):
+                x = half + i * colw
+                self.label(name, (x, top))
+                self.blit(self.f_big, str(n), BRAND_CREAM, (x, vy))
+            self.blit(self.f_body, 'Since the counter started', BRAND_MUTED,
+                      (half, vy + v.get_height() + 4))
+        else:
+            # What this number is and is not. It was once labelled "Entered
+            # Today", which it has never been, and a judge asking the obvious
+            # follow-up deserves the honest answer on the screen rather than
+            # in the pitch.
+            if live:
+                lines = ('Crossings in either direction, over one push interval.',
+                         'This sensor counts crossings, not which way they went.')
+            else:
+                lines = ('No doorway counter is answering.',
+                         'Check its wiring, then run main.py --selftest on the Pi.')
+            tx = pad + v.get_width() + pad
+            ty = vy + (v.get_height() - 2 * (m['font_xs'] + 8)) // 2
+            for line in lines:
+                self.blit(self.f_body, line, BRAND_MUTED if live else BRAND_RED, (tx, ty))
+                ty += m['font_xs'] + 8
         chart_top = top + m['font_sm'] + v.get_height() + pad * 2
-        self.section('Recent headcounts', chart_top)
+        self.section('Crossings per update', chart_top)
         if history:
             ch = self.h - chart_top - pad * 2
             self.spark(history, pad, chart_top + pad, self.w - 2 * pad, max(40, ch))
         else:
-            self.blit_centred(self.f_body, 'Readings appear here after the first update.',
+            self.blit_centred(self.f_body, 'Each update adds a point here.',
                               BRAND_FAINT, self.w // 2, (chart_top + self.h) // 2)
 
     def noise(self, level, live, average=None):
@@ -3477,9 +4331,15 @@ def display_loop():
                 burst = float(window[-1]) if window else db
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
+                door_history = list(_state['door_history'])
+                came_in, went_out = _state['door_in'], _state['door_out']
+                door_source = _state['door_source']
 
             therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
             noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
+            door_live = door_source is not None
+            # Directions only from the counter that measures them.
+            directions = (came_in, went_out) if door_source == 'tof' else (None, None)
             # One point per new reading. This used to append on every pass of a
             # sixty-a-second loop while the microphone reports every five
             # seconds, so the trace was hundreds of copies of one value and the
@@ -3505,6 +4365,7 @@ def display_loop():
             # keeps moving. Not on every pass: at sixty a second that is sixty
             # full-screen redraws for nothing.
             signature = (view, ir, therm, therm_live, int(burst), int(db), noise_live,
+                         door_source, came_in, went_out, len(door_history),
                          len(history), len(ui.trace), id(frame) if view == 'thermal' else 0)
             if signature != last_state or now - last_paint > 0.5:
                 dirty = True
@@ -3515,11 +4376,12 @@ def display_loop():
                     if view == 'thermal':
                         ui.thermal(frame, therm, therm_live)
                     elif view == 'door':
-                        ui.door(ir, history)
+                        ui.door(ir, door_history, *directions, live=door_live)
                     elif view == 'noise':
                         ui.noise(burst, noise_live, average=db)
                     else:
-                        ui.home(ir, therm, therm_live, burst, noise_live, history)
+                        ui.home(ir, therm, therm_live, burst, noise_live, history,
+                                door_live=door_live)
                 except Exception as e:
                     # A raise in a detail screen used to end the display thread
                     # for the life of the process, taking the doorway counter
@@ -3528,7 +4390,8 @@ def display_loop():
                     log_throttled('draw', logging.ERROR,
                                   f'Screen "{view}" failed, showing home: {e}')
                     view = 'home'
-                    ui.home(ir, therm, therm_live, burst, noise_live, history)
+                    ui.home(ir, therm, therm_live, burst, noise_live, history,
+                            door_live=door_live)
                 pygame.display.flip()
                 last_paint = now
                 dirty = False
@@ -4167,7 +5030,21 @@ def selftest():
     print('    (if the service is running, it already holds the camera, SPI and')
     print('     GPIO devices and these may read as NOT DETECTED. Stop it first')
     print('     with `sudo systemctl stop flock-sensor` for a true check.)')
-    print(f'    IR break-beam  : {"ok" if init_ir() else "NOT DETECTED (reports 0)"}')
+    # Whichever doorway counter this unit has. The VL53L8CX is only asked for
+    # its id here; loading it takes seconds and is what --tof is for.
+    if DOOR_SENSOR in ('auto', 'tof') and tof_available():
+        try:
+            load_vl53_tables()
+            print(f'    door counter   : ok  (VL53L8CX on I2C bus {TOF_I2C_BUS}; '
+                  f'`main.py --tof` watches it count)')
+        except (OSError, Vl53l8cxError) as e:
+            print(f'    door counter   : FOUND BUT CANNOT START: {e}')
+    elif DOOR_SENSOR == 'off':
+        print('    door counter   : off in the config (reports 0)')
+    elif DOOR_SENSOR == 'tof':
+        print('    door counter   : NOT DETECTED on I2C (reports 0); run main.py --tof')
+    else:
+        print(f'    IR break-beam  : {"ok" if init_ir() else "NOT DETECTED (reports 0)"}')
     thermal_ok = init_thermal()
     print(f'    thermal camera : {"ok" if thermal_ok else "NOT DETECTED (reports 0)"}'
           f'  [{THERMAL_DEVICE}]')
@@ -4299,10 +5176,25 @@ def main():
 
     _install_signal_handlers()
 
-    ir_ok = init_ir()
+    # The doorway counter. The VL53L8CX if one answers, because it tells two
+    # people abreast from one and in from out, which a beam cannot; the GPIO
+    # pin otherwise. Never both: each would count the same person.
+    tof_ok = DOOR_SENSOR in ('auto', 'tof') and tof_available()
+    if tof_ok:
+        threading.Thread(target=tof_loop, daemon=True, name='tof').start()
+    elif DOOR_SENSOR in ('auto', 'beam'):
+        if init_ir():
+            with _lock:
+                _state['door_source'] = 'beam'
+    if DOOR_SENSOR == 'tof' and not tof_ok:
+        logger.error('DOOR_SENSOR=tof but no VL53L8CX answered on I2C. '
+                     'Run main.py --tof to see why.')
+    with _lock:
+        ir_ok = tof_ok or _state['door_source'] == 'beam'
     thermal_ok = init_thermal()
     noise_ok = init_noise()
-    logger.info(f'Init summary: IR={ir_ok} thermal={thermal_ok} noise={noise_ok}')
+    door = 'VL53L8CX' if tof_ok else ('beam' if ir_ok else 'none')
+    logger.info(f'Init summary: door={door} thermal={thermal_ok} noise={noise_ok}')
     if not (ir_ok or thermal_ok or noise_ok):
         logger.error('No sensor initialized. The device will report zeros but stay '
                      'online so it can be diagnosed remotely.')
@@ -4345,6 +5237,8 @@ if __name__ == '__main__':
                         help='live microphone level meter; Ctrl+C to stop')
     parser.add_argument('--calibrate', action='store_true',
                         help='measure THERMAL_MIN_CLUSTER against this mounting position')
+    parser.add_argument('--tof', action='store_true',
+                        help='bring up the VL53L8CX doorway counter and watch it count')
     parser.add_argument('--anchor', type=float, default=None, metavar='DB',
                         help='pair one phone sound-meter reading with the microphone, '
                              'so the panel shows decibels')
@@ -4366,6 +5260,8 @@ if __name__ == '__main__':
         sys.exit(listen(args.seconds))
     if args.calibrate:
         sys.exit(calibrate(max(5, args.seconds or CALIBRATE_SECONDS)))
+    if args.tof:
+        sys.exit(tof_test(args.seconds))
     if args.anchor is not None:
         sys.exit(anchor(args.anchor, args.seconds, args.write))
     main()
