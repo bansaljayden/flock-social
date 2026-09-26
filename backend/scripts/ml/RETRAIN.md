@@ -78,7 +78,7 @@ Quiet shown Packed 5.4%), against 9.7% shown quieter. Dinner, 17:00-20:00, holds
 | 4 | live readings lag the curve by about an hour | the curve one hour EARLIER matches the reading better: MAE 25.76 at −1 h vs 26.42 at 0 h; within one band 71.5% vs 65.1% on the 1,720 held-out readings that have a reading an hour earlier | +2.5 (curve only); overlaps with #2 | `curve_prev_hour` feature; store BestTime's `hour_analysis` |
 | 5 | venues with little live history | 0-1 prior readings (17% of rows): 55-58%; 10+ readings: 73-78% | ~+1.5, from collection | none in the model; it closes as readings accrue |
 | 6 | Miami | 51.9% vs Lehigh 65.3% (no map, no offset); Miami's curve alone is +13 biased there; collected at two hours a day | ~+1 | more Miami hours, or accept; it is a holdout city |
-| 7 | neighbour features computed differently in training | the count differs on 58.6% of rows (mean 1.58 venues), the mean by 3.2 points (p90 6.8): a 0.005° grid over smoothed curves in training, a ±0.0075° box over raw curves in serving | < 0.5 (both carry ~6% of gain) | recompute training's with serving's box arithmetic |
+| 7 | neighbour features computed differently in training | the count differs on 58.6% of rows (mean 1.58 venues), the mean by 3.2 points (p90 6.8): a 0.005° grid over smoothed curves in training, a ±0.0075° box over raw curves in serving | < 0.5 (both carry ~6% of gain) | **done 2026-09-26**: training computes serving's box arithmetic, 0 disagreements on the 8,006 readings |
 | 8 | category from `guessCategory(types)` rather than the corpus category | 64.0% vs 64.3% | +0.3 | none |
 | 9 | late night | the BEST hours: 20-25% miss rate at 00:00-05:00 against 51% at dinner | 0 | none |
 | 10 | the Steady/Busy boundary | adjacent bands are hits for this metric; Busy readings are within one band 82-84% | 0 (band exact only) | none |
@@ -177,7 +177,9 @@ September (their `month` is 9, everyone else's is 3, 4 or 5).
 2. **One weight per vendor update, not per hour.** Weight each maximal run of
    identical consecutive-hour readings of a venue by 1/run length in training,
    so a sticky venue does not count three times. Evaluation keeps every reading,
-   because the card is judged per venue-hour.
+   because the card is judged per venue-hour. **Done 2026-09-26**, default on,
+   `FLOCK_RUN_LENGTH_WEIGHTS=off` to ablate; the weekly anchor weight under
+   `auto` is solved against the divided total (rehearsed below).
 3. **Record what BestTime says the reading is about.** `collectRealtime.js`
    discards `hour_analysis` and `venue_open` from the live response. Storing
    them (a migration and a collector change) is what separates the one-hour lag
@@ -194,10 +196,12 @@ Drop, all measured above or in `train/RETRAIN-V27-LOG.md`:
   carries a quarter of the booster's gain and, in September, adds +4.5 to every
   prediction. Re-admit when the live corpus spans seasons.
 - `is_realtime`: a provenance flag that is always 1 at serving and carries 6.1%
-  of the gain (197 of its splits at depth 0-1). Needs the four readers that
-  take it out of X by position (quick_eval.realtime_flags, train_model,
-  sports_ablation, hour_ranking_eval) to read the carried
-  `features_*.pkl['is_realtime']` first.
+  of the gain (197 of its splits at depth 0-1). **Dropped 2026-09-26.** Six
+  scripts read it out of X by position, not four (quick_eval, eval_two_head
+  through quick_eval, train_model, train_two_head, sports_ablation,
+  hour_ranking_eval); all read the carried key through
+  `prepare_features.realtime_flags` now. Serving needs no change: the vector is
+  built from the artifact's own `feature_names`.
 - `is_school_break` (dropped in the v2.7 experiment for the same epoch reason),
   the four user-feedback features (constant; audit finding 13's leak arms the
   day they stop being constant) and `etype_family` (constant).
@@ -217,7 +221,8 @@ build) and a parity test like `__tests__/mlSmoothingParity.test.js`:
   the artifact that learns it.
 - `curve_prev_hour`: the weekly curve one hour earlier (cause 4).
 
-Fix before the run: the neighbour features' training arithmetic (cause 7).
+Fixed before the run (2026-09-26): the neighbour features' training arithmetic
+(cause 7) is serving's; `__tests__/mlNeighborParity.test.js` pins it.
 
 ### Target and calibration
 
@@ -282,10 +287,10 @@ figure is read without what it costs to fake.
 
 ### The commands, in order
 
-Pre-work in code before the export (not done in this change): the neighbour
-arithmetic (cause 7), `is_realtime` out of X, the three nowcast features with
-their serving twins, and the run-length weights. The run below works without
-them and measures the rest. Done in this change: the time holdout, the band
+Pre-work in code before the export: the three nowcast features with their
+serving twins (not done). Done on 2026-09-26 and rehearsed below: the neighbour
+arithmetic (cause 7), `is_realtime` out of X, and the run-length weights
+(default on). Done in this change: the time holdout, the band
 gate, the served-baseline smoothing parity and the anchor weight switch.
 
 ```bash
@@ -391,6 +396,81 @@ city regression, MAE guard passed; FAIL on sample only (3 dates, 5 required),
 which is the right answer for a three-day window. Point gate: FAIL on criterion
 1 alone, R² +0.077 against the curve on Miami's 726 live readings where +0.10
 is required.
+
+### The training fixes, rehearsed (2026-09-26)
+
+The same partial export and window (Lehigh 09-06..08 and Miami, 4,183
+model-served readings over 3 dates), `FLOCK_TIME_HOLDOUT_DAYS=3`,
+`FLOCK_MIN_REALTIME_ROWS=1000`, `FLOCK_DEAD_SLOT_POLICY=warn`, CPU training at 12
+threads. Each row adds one change to the one above; each is scored by
+`node bandEval.js --gate` against v2.6.0-starling as served today (quantile map
+on). Within-10 (w10) is the primary metric, within one band (w1b) is the card's.
+
+| candidate, as served (no map, + offset) | w10 | w1b | band exact | band MAE | MAE | bias |
+|---|---|---|---|---|---|---|
+| the 2026-09-25 rehearsal, reproduced (anchor 0.05, calendar kept) | 29.9% | 70.0% | 35.0% | 1.047 | 24.67 | −4.37 |
+| A baseline: calendar dropped, `FLOCK_WEEKLY_ANCHOR_WEIGHT=auto` | 31.7% | 70.1% | 35.8% | 1.044 | 24.42 | −5.07 |
+| B + serving's neighbour arithmetic | 31.6% | 70.1% | 35.9% | 1.044 | 24.51 | −5.38 |
+| C + run-length weights | 31.7% | 70.8% | 35.3% | 1.041 | 24.24 | −4.91 |
+| **D + `is_realtime` dropped** (all three) | **31.9%** | **70.7%** | 35.7% | **1.037** | **24.23** | −5.25 |
+| D with `FLOCK_RUN_LENGTH_WEIGHTS=off` | 31.6% | 70.2% | 35.8% | 1.044 | 24.46 | −5.58 |
+| v2.6.0-starling as served today (map on) | 28.6% | 58.5% | 32.2% | 1.321 | 30.61 | +13.00 |
+| weekly curve | 32.3% | 65.9% | 31.5% | 1.128 | 25.66 | +4.39 |
+| curve + full trailing offset | 34.1% | 68.7% | 35.0% | 1.078 | 24.86 | −2.61 |
+
+Date-block bootstrap (bandEval's, 2,000 resamples over only 3 dates, so the
+intervals are coarse), change in points [CI95]:
+
+| comparison | w1b | w10 |
+|---|---|---|
+| D vs the incumbent | +12.26 [11.63, 12.90] | +3.28 [−0.17, 4.92] |
+| D vs the weekly curve | +4.85 [4.01, 6.47] | −0.48 [−4.46, 2.11] |
+| D vs curve + full offset | +2.08 [1.07, 5.32] | −2.22 [−4.37, −1.24] |
+| A vs the reproduced rehearsal | +0.02 [−0.65, 0.44] | +1.79 [1.12, 2.90] |
+| B vs A (neighbours) | +0.07 [−0.35, 0.33] | −0.07 [−0.97, 0.58] |
+| C vs B (run-length) | +0.62 [−0.32, 0.99] | +0.05 [−0.08, 0.35] |
+| D vs C (`is_realtime`) | −0.02 [−0.17, 0.65] | +0.22 [0.00, 0.97] |
+| D vs D without run-length | +0.53 [0.50, 0.65] | +0.26 [−0.16, 0.44] |
+
+By city, D: Lehigh (3,615) w10 33.6%, w1b 71.8%, exact 37.5%, band MAE 1.007,
+MAE 23.55, bias −6.63 (A: 33.3 / 71.4 / 37.5 / 1.014 / 23.77); Miami (568) w10
+21.0%, w1b 63.9%, exact 24.3%, band MAE 1.229, MAE 28.61, bias +3.53 (A: 21.7 /
+61.8 / 25.2 / 1.232 / 28.54). Miami loses 0.7 of w10 and 0.9 of band exact
+from A to D while gaining 2.1 of w1b, on 568 readings.
+
+What it says, without rounding it up:
+
+- **The three fixes together are worth a fraction of a point.** D beats A by
+  +0.2 w10, +0.6 w1b, −0.1 band exact, −0.19 MAE. That is what cause 7's row
+  predicted (< 0.5) and the size of the other two; none of it is outside the
+  noise of three dates. They are correctness fixes first: the model now trains
+  on the neighbour values it is served, no longer spends splits on a flag that
+  is constant at serving, and no longer counts a stale vendor value once per
+  hour.
+- **Run-length weights trade band exact for within one band** in C (+0.6 w1b,
+  −0.6 exact, w10 flat), and much less so on top of D (+0.5 w1b, −0.1 exact,
+  +0.3 w10). Kept on by default because every other column moves the right way
+  in D; re-run the D pair on the October export and switch it off if band
+  exact pays for it there.
+- **The neighbour fix is neutral on these readings** (+0.1 w1b, −0.1 w10). It
+  was expected to be small: the feature carries little gain.
+- **Most of the within-10 gain over the 2026-09-25 rehearsal is the anchor
+  weight** (`auto`, +1.8 w10 with a CI above zero), not these changes.
+- **Every candidate is still below the curve plus its full offset on within-10**
+  (−2.2 points, CI entirely below zero) while beating it on within one band.
+  The model wins the card's metric and loses the owner's primary one to a
+  two-line heuristic; the nowcast features are what the plan expects to change
+  that.
+- The previous rehearsal's within-10, not recorded then: **29.9%**
+  (reproduced exactly: 70.0% / 35.0% / 1.047 / 24.67, with the default anchor
+  weight and the calendar family kept).
+- The rehearsal found one defect before October did: with `is_realtime` out of
+  the feature list, the holdout frame was cut to `feature_cols` before the flag
+  was pickled, and `prepare_features.py` stopped with a KeyError. Fixed in the
+  same change (`keep_extra`), pinned by `mlTrainingContracts.test.js`.
+- Training with `FLOCK_RUN_LENGTH_WEIGHTS=off` reproduced the run without the
+  change bit for bit (C with the switch off equals B on every reading), so the
+  switch is a clean ablation.
 
 **A decision to take before October.** Criterion 1 (MAE down 5 OR R² up 0.10
 against the curve on the city holdout) was calibrated on spring rows. Its gate
@@ -806,9 +886,9 @@ same day:
 | 15 | event features alive in training, dead in production | **CHANGED.** `TICKETMASTER_API_KEY` is set in production, so serving computes them; live readings record `events_observed` (99.9% of the local live rows, 1,467 with an event). The spring corpus's defaulted negatives remain (54% of rows sit in cities with zero events, `export_v28.log`) |
 | 16 | city imbalance | **OPEN.** Beijing holds 2,057 rows; the plan drops it |
 | 17 | unknown cities skipped silently; city clock; US holidays | **PARTLY FIXED.** Each reading uses the venue's own zone (`getLocalTime(venue.timezone \|\| cityConfig.tz, startedAt)`); an unknown city is still skipped without a log line (`sweepVenues`); the US calendar still applies everywhere, inert while collection is Pennsylvania and Miami |
-| 18 | `is_realtime` a provenance feature kept for itself | **CONFIRMED** (was SUSPECTED). 6.1% of the shipped booster's gain, 197 splits at depth 0-1, constant 1 at serving. The plan drops it once its four positional readers take the carried key |
+| 18 | `is_realtime` a provenance feature kept for itself | **CONFIRMED** (was SUSPECTED). 6.1% of the shipped booster's gain, 197 splits at depth 0-1, constant 1 at serving. **Closed 2026-09-26**: out of the feature set, refused by `train_model`, all six positional readers take the carried key (`prepare_features.realtime_flags`) |
 | 19 | repeatability gaps | **FIXED.** Device and library versions recorded, `MODEL_VERSION` warned, CPU path bit-reproducible |
-| 20 | coordinate-keyed identity | **OPEN, low.** `add_neighbor_features` still keys venues on rounded coordinates, and NEW: its 0.005° grid over smoothed baselines differs from serving's ±0.0075° box over raw ones (the neighbour count differs on 58.6% of live September readings, the mean by 3.2 points) |
+| 20 | coordinate-keyed identity | **FIXED 2026-09-26.** `add_neighbor_features` keyed venues on rounded coordinates and used a 0.005° grid over smoothed baselines where serving uses a ±0.0075° box over raw ones (the count differed on 58.6% of live September readings). It now rebuilds serving's table per venue_id from the raw export and computes `getNeighborActivity`'s arithmetic; `mlNeighborParity.test.js` requires equality with the real function on a random grid |
 | 21 | holiday features near-constant | **CHANGED.** Labor Day 2026-09-07 gives `is_holiday` its first 1,174 live readings |
 
 Left open in that pass and **closed on 2026-08-16**: the `category_baseline` /
