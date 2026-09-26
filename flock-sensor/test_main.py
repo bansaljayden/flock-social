@@ -3588,5 +3588,56 @@ class ThermalCeiling(unittest.TestCase):
         self.assertEqual(main.THERMAL_MAX_PERSON_C, 45.0)
 
 
+class NoiseCadence(unittest.TestCase):
+    """The microphone listened for 0.1s in every 5, and a shout slipped between."""
+
+    SRC = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+
+    def body(self, name):
+        start = self.SRC.index(f'def {name}(')
+        end = self.SRC.index('\ndef ', start + 10)
+        return self.SRC[start:end]
+
+    def test_it_listens_at_least_twice_a_second(self):
+        self.assertLessEqual(main.NOISE_BURST_EVERY, 0.5)
+
+    def test_the_published_figure_still_spans_a_minute(self):
+        span = main._state['noise_window'].maxlen * main.NOISE_BURST_EVERY
+        self.assertEqual(span, 60)
+
+    def test_one_sampler_for_the_loop_and_both_calibrations(self):
+        # --listen and --anchor kept their own loops with a 1ms sleep, so what
+        # they measured was not what the running sensor measured.
+        for name in ('noise_loop', 'listen', '_median_burst_rms'):
+            body = self.body(name)
+            self.assertIn('noise_burst(', body, name)
+            self.assertNotIn('time.sleep(0.001)', body, name)
+
+    def test_a_minute_of_steady_room_ignores_a_few_seconds_of_shouting(self):
+        # The typical level is what the venue card shows; the panel shows the
+        # shout itself, live.
+        window = [45.0] * 108 + [95.0] * 12
+        self.assertAlmostEqual(main.trimmed_mean(window), 45.0, places=6)
+
+    def test_a_room_that_really_got_louder_reads_louder(self):
+        window = [45.0] * 60 + [75.0] * 60
+        self.assertGreater(main.trimmed_mean(window), 55.0)
+
+
+class AnchorAgainstHiss(unittest.TestCase):
+    """A calibration taken over the microphone's own hiss shrinks every reading."""
+
+    def test_a_sound_barely_above_the_hiss_is_refused(self):
+        self.assertIsNotNone(main.anchor_problem(15.0, 20.0))
+
+    def test_a_clear_sound_is_accepted(self):
+        self.assertIsNone(main.anchor_problem(15.0, 60.0))
+
+    def test_the_margin_is_ten_decibels(self):
+        self.assertEqual(main.ANCHOR_MIN_SNR_DB, 10.0)
+        self.assertIsNotNone(main.anchor_problem(10.0, 31.0))
+        self.assertIsNone(main.anchor_problem(10.0, 32.0))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -373,7 +373,7 @@ RATE_LIMIT_STATUS = 429
 RATE_LIMIT_RETRY_MIN = 2.0
 
 # A sensor that stops answering must not keep reporting the last number it read.
-# thermal_loop reads every 2s and noise_loop every 5s, so these are generous
+# thermal_loop reads every 2s and noise_loop twice a second, so these are generous
 # multiples: a handful of failed reads never zeroes a working signal, but a bus
 # that has locked up stops being reported as a live crowd.
 THERMAL_STALE_AFTER = 90
@@ -467,13 +467,14 @@ _state = {
     'door_history': deque(maxlen=12),       # Crossings per snapshot, for the panel
     'thermal': 0,                           # Latest snapshot
     'thermal_at': None,                     # Monotonic mark of the last GOOD read
-    'noise_db': 0.0,                        # Rolling 30s average
+    'noise_db': 0.0,                        # Typical level over the last minute
     'noise_at': None,                       # Monotonic mark of the last GOOD read
-    # 12 bursts x 5s = 60s. It was 6, and a plain mean of six values lets one
-    # bad burst move the published figure by a sixth of its own excess. A
-    # slammed door or a dropped glass lasts long enough to own an entire
-    # 100ms burst, so that is not a hypothetical.
-    'noise_window': deque(maxlen=12),
+    # Every burst of the last minute: 120 of them at two a second. The
+    # published figure is their trimmed mean with a tenth set aside at each
+    # end, so a slammed door or a dropped glass, which can own a whole 100ms
+    # burst, cannot carry the number. The panel shows the newest burst, which
+    # is why the screen now moves when somebody shouts.
+    'noise_window': deque(maxlen=120),
     'last_push_history': deque(maxlen=12),  # For the optional display chart
     'pushed_at': None,                      # Monotonic mark of the last delivery
     # The most recent thermal frame, and ONLY when THERMAL_VIEW_ON. On any unit
@@ -1759,11 +1760,18 @@ def compute_noise_db(samples, ref_counts=None, offset=None, scale=None):
 # Changing the sample rate changes the measured RMS, so it changes what
 # NOISE_REF_COUNTS should be. Re-run --listen after this.
 NOISE_BURST_SECONDS = 0.1
+# How often a burst is taken. It was every 5 seconds, so the microphone listened
+# for 2% of the time: a shout lasting a couple of seconds usually fell between
+# two bursts and never registered, and the panel showed a reading up to five
+# seconds old even when one did. Twice a second catches anything a person
+# notices and keeps the panel live. The cost is 100ms of one core in every 500.
+NOISE_BURST_EVERY = 0.5
 # A ceiling so a fast machine cannot build an enormous list. At 20kHz this is
 # reached before the window closes and the burst simply ends early.
 NOISE_MAX_SAMPLES = 4000
 
-# How many bursts to discard from each end of the window before averaging.
+# The fewest bursts to discard from each end of the window before averaging.
+# The trim is a tenth of the window at each end, and never fewer than this.
 #
 # Professional noise monitoring does not report a plain mean, it reports
 # percentile levels: L90 for the background a room sits at, L50 for the typical
@@ -1791,7 +1799,8 @@ def trimmed_mean(values, trim=None):
     Falls back to a plain mean while the window is too short to trim, which is
     the first minute after a start or a reopen.
     """
-    trim = NOISE_WINDOW_TRIM if trim is None else trim
+    if trim is None:
+        trim = max(NOISE_WINDOW_TRIM, len(values) // 10)
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -1799,13 +1808,26 @@ def trimmed_mean(values, trim=None):
         ordered = ordered[trim:len(ordered) - trim]
     return sum(ordered) / float(len(ordered))
 
+def noise_burst(seconds=None):
+    """One burst from the microphone at the converter's full rate, centred on 0.
+
+    The one sampler everything uses: the running loop, --listen and --anchor.
+    Those two used to keep loops of their own with a 1ms sleep between reads,
+    about 650 samples a second against the loop's thousands, so the settings
+    they recommended were measured differently from the figure they set.
+    """
+    samples = []
+    t_end = time.monotonic() + (NOISE_BURST_SECONDS if seconds is None else seconds)
+    while time.monotonic() < t_end and len(samples) < NOISE_MAX_SAMPLES:
+        samples.append(_read_mcp3008_ch0() - ADC_MID)  # centre around 0
+    return samples
+
+
 def noise_loop():
     while not _stop.is_set():
+        started = time.monotonic()
         try:
-            samples = []
-            t_end = time.monotonic() + NOISE_BURST_SECONDS
-            while time.monotonic() < t_end and len(samples) < NOISE_MAX_SAMPLES:
-                samples.append(_read_mcp3008_ch0() - ADC_MID)  # centre around 0
+            samples = noise_burst()
             if samples:
                 # A converter that has stopped converting returns the same count
                 # every time, and compute_noise_db turns that into a perfectly
@@ -1825,7 +1847,7 @@ def noise_loop():
                         _state['noise_at'] = time.monotonic()
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
-        _stop.wait(5)
+        _stop.wait(max(0.05, NOISE_BURST_EVERY - (time.monotonic() - started)))
 
 
 # ---------------------------------------------------------------------------
@@ -3928,9 +3950,8 @@ class Panel:
         self._marks = {}
         self._thermal_key = None
         self._thermal_surf = None
-        # The panel keeps its own noise trace. The noise loop reads every five
-        # seconds, far too coarse to draw as a wave, and a buffer here costs
-        # nothing and never blocks the thread doing the measuring.
+        # The panel keeps its own noise trace, one point per burst, so drawing
+        # never waits on the thread doing the measuring.
         self.trace = deque(maxlen=max(120, w // 3))
 
     # -- primitives --------------------------------------------------------
@@ -4781,6 +4802,46 @@ def set_config_keys(text, updates):
     return '\n'.join(out) + '\n'
 
 
+def _median_burst_rms(seconds):
+    """Median RMS of the bursts in a window, or None if nothing was read.
+
+    The median, not the mean: one cough during the window moves a mean and
+    barely touches a median, and a calibration rests on this number.
+    """
+    readings = []
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        centred = noise_burst()
+        if centred:
+            readings.append(math.sqrt(sum(c * c for c in centred) / len(centred)))
+    if not readings:
+        return None
+    readings.sort()
+    return readings[len(readings) // 2]
+
+
+# How far a calibration sound has to stand above the microphone's own noise.
+# Noise powers add, so at 10 dB the hiss moves the reading by under half a
+# decibel; much closer and the anchor is pairing the phone's number with the
+# electrical floor, which then shrinks every reading after it: a shout that
+# should read 90 reads Moderate.
+ANCHOR_MIN_SNR_DB = 10.0
+
+
+def anchor_problem(floor_rms, sound_rms):
+    """Why a calibration reading cannot be trusted, or None if it can."""
+    if floor_rms is None or sound_rms is None:
+        return 'No samples were read.'
+    if floor_rms <= 0:
+        return None
+    snr = 20 * math.log10(max(sound_rms, 1e-6) / floor_rms)
+    if snr < ANCHOR_MIN_SNR_DB:
+        return (f'The sound was only {max(snr, 0):.0f} dB above the microphone\'s own '
+                f'hiss, so this reading would mostly be hiss. Make the sound louder or '
+                f'bring it closer to the microphone, read the phone again, and rerun.')
+    return None
+
+
 def anchor(meter_db, seconds=None, write=False):
     """Pair one phone sound-meter reading with the microphone.
 
@@ -4806,26 +4867,24 @@ def anchor(meter_db, seconds=None, write=False):
 
     seconds = max(3, seconds or ANCHOR_SECONDS)
     print(f'flock-sensor {VERSION} decibel calibration')
-    print(f'  Keep the sound steady and the phone beside the microphone for {seconds}s.')
-    rms_readings = []
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        raw = []
-        t_end = time.monotonic() + 0.12
-        while time.monotonic() < t_end:
-            raw.append(_read_mcp3008(NOISE_CHANNEL))
-            time.sleep(0.001)
-        if raw:
-            centred = [r - ADC_MID for r in raw]
-            rms_readings.append(math.sqrt(sum(c * c for c in centred) / len(centred)))
-    if not rms_readings:
+    print('  First the microphone on its own: turn the sound OFF and stay quiet.')
+    for n in (3, 2, 1):
+        print(f'    {n}...')
+        time.sleep(1)
+    floor = _median_burst_rms(3)
+    print('  Now turn the sound back ON, the same as when you read the phone,')
+    print('  with the phone beside the microphone. Starting in 3 seconds.')
+    time.sleep(3)
+    print(f'  Measuring for {seconds}s. Keep it steady.')
+    rms = _median_burst_rms(seconds)
+    if rms is None or floor is None:
         print('No samples were read.')
         return 1
-
-    # The median, not the mean: one cough during the window moves a mean and
-    # barely touches a median, and the whole calibration rests on this number.
-    rms_readings.sort()
-    rms = rms_readings[len(rms_readings) // 2]
+    problem = anchor_problem(floor, rms)
+    if problem:
+        for line in textwrap.wrap(problem, 70):
+            print(f'  {line}')
+        return 1
     if rms < 2.0:
         print(f'The microphone measured almost nothing (RMS {rms:.2f} counts). '
               f'Calibrating against silence pins the scale to the noise floor, '
@@ -4855,7 +4914,7 @@ def anchor(meter_db, seconds=None, write=False):
     return 0
 
 
-def listen(seconds=None):
+def listen(seconds=None, write=False):
     """Live level meter. What the microphone is hearing, right now.
 
     Built because a column of numbers does not tell a person whether the
@@ -4889,14 +4948,9 @@ def listen(seconds=None):
     floor = None
     try:
         while deadline is None or time.monotonic() < deadline:
-            raw = []
-            t_end = time.monotonic() + 0.12
-            while time.monotonic() < t_end:
-                raw.append(_read_mcp3008(NOISE_CHANNEL))
-                time.sleep(0.001)
-            if not raw:
+            centred = noise_burst()
+            if not centred:
                 continue
-            centred = [r - ADC_MID for r in raw]
             rms = math.sqrt(sum(c * c for c in centred) / len(centred))
             level = compute_noise_db(centred)
             peak = max(peak, rms)
@@ -4907,7 +4961,7 @@ def listen(seconds=None):
                     else 'Lively' if level < 85 else 'Loud')
             # Clipping is worth its own counter: it is the one fault the bar
             # cannot show, because a pinned reading looks like a loud room.
-            clips = sum(1 for r in raw if r <= 1 or r >= 1022)
+            clips = sum(1 for c in centred if c <= 1 - ADC_MID or c >= 1022 - ADC_MID)
             filled = max(0, min(32, int(level / 100.0 * 32)))
             bar = '#' * filled + '.' * (32 - filled)
             flag = f'  CLIPPING x{clips}' if clips else ''
@@ -4956,12 +5010,24 @@ def listen(seconds=None):
                   f'heard at {LOUD_TARGET_LEVEL:.0f},')
             print('  so all four words are reachable. Both are needed: the')
             print('  reference slides the scale, and only the scale can stretch it.')
+            if write:
+                try:
+                    current = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ''
+                    CONFIG_PATH.write_text(set_config_keys(
+                        current, {'NOISE_REF_COUNTS': f'{ref}', 'NOISE_SCALE': f'{scale}'}))
+                    print(f'  Written to {CONFIG_PATH}. sudo systemctl restart flock-sensor')
+                    print('  to use it.')
+                except Exception as e:
+                    print(f'  Could not write {CONFIG_PATH}: {e}. Add the two settings by hand.')
         elif suggested is not None:
             print('')
             print(f'  RECOMMENDED: NOISE_REF_COUNTS={suggested}')
             print(f'  That puts a room this quiet at {QUIET_TARGET_LEVEL:.0f}, inside Quiet.')
             print('  Make some noise during the next run and it can recommend a')
             print('  NOISE_SCALE too, which is what makes Loud reachable.')
+            if write:
+                print('  Nothing was written: without a loud moment in the run there is')
+                print('  no scale to set. Be quiet for a few seconds, then shout or clap.')
 
         # The four words span 35 dB. A microphone whose whole range is narrower
         # than that can never reach the top word no matter how it is referenced,
@@ -5384,7 +5450,7 @@ if __name__ == '__main__':
                         help='pair one phone sound-meter reading with the microphone, '
                              'so the panel shows decibels')
     parser.add_argument('--write', action='store_true',
-                        help='with --anchor, write the result into the config file')
+                        help='with --anchor or --listen, write the result into the config file')
     # default=None, not CALIBRATE_SECONDS: --listen runs until Ctrl+C when the
     # flag is absent, and `--listen --seconds 20` used to be indistinguishable
     # from not passing it at all, so an explicitly requested duration was
@@ -5398,7 +5464,7 @@ if __name__ == '__main__':
     if args.beam:
         sys.exit(beam_test(args.seconds))
     if args.listen:
-        sys.exit(listen(args.seconds))
+        sys.exit(listen(args.seconds, args.write))
     if args.calibrate:
         sys.exit(calibrate(max(5, args.seconds or CALIBRATE_SECONDS)))
     if args.tof:
