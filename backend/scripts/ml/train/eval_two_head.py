@@ -346,7 +346,7 @@ def main():
     baseline = np.asarray(hold['baseline'], dtype=np.float64)
     cities = np.asarray(hold['cities']).astype(str)
     dates = np.asarray(hold.get('observed_date', np.array([''] * len(y_actual)))).astype(str)
-    is_rt = realtime_flags(X, feature_cols, len(y_actual)) == 1
+    is_rt = realtime_flags(hold) == 1
     gate = is_rt & serving_population_mask(baseline)
     n_gate = int(gate.sum())
     hold_prov = np.asarray(hold.get('label_provenance', np.array(['unknown'] * len(y_actual)))).astype(str)

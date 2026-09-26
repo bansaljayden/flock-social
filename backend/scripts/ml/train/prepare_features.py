@@ -565,6 +565,40 @@ def serving_population_mask(baseline) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# is_realtime IS CARRIED, NOT A FEATURE (2026-09-25).
+#
+# PRE-RETRAIN-AUDIT finding 18, confirmed: mlPredictor.buildFeatureMap sets
+# is_realtime to 1 on every prediction, so as a feature it could only ever
+# tell the model which label regime a TRAINING row came from, weekly anchor or
+# live reading: a provenance flag, the class sample_weight and
+# label_provenance are excluded for. v2.6.0-starling spent
+# 6.1% of its split gain on it (197 splits at depth 0-1). get_feature_columns
+# now excludes it, and every reader takes the flag from the key both pickles
+# carry, through this function. Until now six scripts read it out of X by
+# position: quick_eval (the point gate's slice), eval_two_head (through
+# quick_eval), train_model (the weight tiers and the served-slice metrics
+# mlPredictor publishes), train_two_head, sports_ablation and hour_ranking_eval.
+# ---------------------------------------------------------------------------
+def realtime_flags(data: Dict) -> np.ndarray:
+    """is_realtime per row of a features pickle (0/1 ints), from its carried key.
+
+    A pickle written before the key existed (models/incumbent/'s, 2026-08-18)
+    still had the flag as a feature, and is read by position; one with neither
+    is refused rather than read as all weekly.
+    """
+    if 'is_realtime' in data:
+        return np.asarray(data['is_realtime']).astype(int)
+    cols = list(data.get('feature_cols') or [])
+    if 'is_realtime' in cols:
+        return np.asarray(data['X'][:, cols.index('is_realtime')]).astype(int)
+    raise CorpusContractError(
+        'This features pickle carries no is_realtime: not as the carried key '
+        'prepare_features.py writes, and not as a feature. Without it the served slice '
+        '(is_realtime AND baseline > 0) cannot be told from the weekly anchors. '
+        'Re-run prepare_features.py.')
+
+
+# ---------------------------------------------------------------------------
 # Vendor provenance (2026-08-18, poisoning preconditions).
 #
 # Three fits in this file compute means that later become FEATURES for other
@@ -2688,6 +2722,10 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # geography laundered through a data-collection artefact, the same
         # class of leak latitude and longitude are dropped for.
         'events_observed',
+        # 2026-09-25 CARRIED COLUMN, no longer a feature (PRE-RETRAIN-AUDIT
+        # finding 18). Serving sets it to 1 on every prediction, so all it can
+        # tell the model is a training row's label regime. See realtime_flags.
+        'is_realtime',
     }
     # The sports game-night family is ABLATION-ONLY until mlPredictor.js
     # computes it at serving time (code review, 2026-09-01): unconditionally
@@ -3105,7 +3143,9 @@ def main():
     keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                   'label_provenance', 'venue_category',
                   'label_source', 'vendor_forecast_pct', 'events_observed',
-                  'observed_date', 'weather_observed']
+                  'observed_date', 'weather_observed',
+                  # no longer a feature (realtime_flags), so it must be kept by name
+                  'is_realtime']
     holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
@@ -3241,12 +3281,10 @@ def main():
         'category_cell_stats': cell_stats,
         # Round 26 carried columns. weather_observed: 1 where the six weather
         # slots are a reading, 0 where they are the outage vector. is_realtime
-        # is ALSO still a feature (quick_eval, train_model, sports_ablation and
-        # hour_ranking_eval all read it out of X by position), and this key is
-        # the step that lets them stop: PRE-RETRAIN-AUDIT finding 18 names it
-        # as a provenance feature kept for itself, hardcoded to 1 at serving,
-        # and it cannot leave feature_cols until those readers take it from
-        # here instead.
+        # is the ONLY copy of that flag since 2026-09-25: PRE-RETRAIN-AUDIT finding 18
+        # named it a provenance feature kept for itself, hardcoded to 1 at
+        # serving, so it left feature_cols and every reader takes it from here
+        # through realtime_flags.
         'weather_observed': train_df['weather_observed'].values.astype(np.int8),
         'is_realtime': train_df['is_realtime'].values.astype(np.int8),
     }

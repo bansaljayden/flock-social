@@ -135,7 +135,16 @@ def load_and_reproduce():
     y = np.asarray(hold['y_actual'], dtype=float)
     baseline = np.asarray(hold['baseline'], dtype=float)
     cities = np.asarray(hold['cities'])
-    is_realtime = X[:, hold_cols.index('is_realtime')].astype(int)
+    # The carried key when the pickle has one (every pickle since 2026-09-25, when
+    # the flag stopped being a feature); the incumbent's 2026-08-18 pickle predates
+    # the key and still has the flag as a feature, so it is read there by position.
+    # prepare_features.realtime_flags, restated for the reason below.
+    if 'is_realtime' in hold:
+        is_realtime = np.asarray(hold['is_realtime']).astype(int)
+    elif 'is_realtime' in hold_cols:
+        is_realtime = X[:, hold_cols.index('is_realtime')].astype(int)
+    else:
+        sys.exit('features_holdout.pkl carries no is_realtime, as a key or a feature')
 
     # The gate slice: exactly quick_eval's `serving_population_mask(baseline) &
     # is_realtime`. Reimplemented as `baseline > 0` here only because importing

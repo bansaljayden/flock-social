@@ -46,7 +46,7 @@ os.environ['CROWD_QMAP_ENABLED'] = 'false'  # before quick_eval import, see docs
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from quick_eval import metrics, reconstruct, date_block_bootstrap  # noqa: E402
+from quick_eval import metrics, reconstruct, date_block_bootstrap, realtime_flags  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -96,14 +96,12 @@ def main():
             'inside ONE feature build, never across two.')
     if 'observed_date' not in tr:
         raise SystemExit('train pickle lacks observed_date; re-run prepare_features.py (2026-08-30 dump).')
-    if 'is_realtime' not in cols:
-        raise SystemExit('is_realtime missing from feature_cols; wrong pickle generation.')
 
     sports_idx = [cols.index(c) for c in SPORTS_COLS]
     keep_idx = [i for i in range(len(cols)) if i not in set(sports_idx)]
 
     dates_tr = np.asarray(tr['observed_date'])
-    rt_tr = tr['X'][:, cols.index('is_realtime')] == 1
+    rt_tr = realtime_flags(tr) == 1
     served_tr = tr['baseline'] > 0
     pa_tr = np.isin(tr['cities'], list(PA))
 
@@ -157,7 +155,7 @@ def main():
 
     # No-harm check on the geographic holdout, where every sports column is
     # zero by the market gate.
-    rt_ho = ho['X'][:, cols.index('is_realtime')] == 1
+    rt_ho = realtime_flags(ho) == 1
     served_ho = ho['baseline'] > 0
     hmask = rt_ho & served_ho
     hw = reconstruct(m_with.predict(ho['X'][hmask]), ho['baseline'][hmask])

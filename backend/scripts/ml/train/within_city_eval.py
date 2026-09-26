@@ -302,10 +302,12 @@ def rebuild_training_frame() -> pd.DataFrame:
 
     feature_cols = pf.get_feature_columns(train_df)
     train_df[feature_cols] = train_df[feature_cols].fillna(0)
+    # is_realtime rides along by name: it left feature_cols on 2026-09-25 and
+    # every slice below is cut on it.
     keep = feature_cols + ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                            'label_provenance', 'venue_category', 'sample_weight',
                            'venue_id', 'observed_date', 'day_of_week', 'price_level',
-                           'rating']
+                           'rating', 'is_realtime']
     keep = list(dict.fromkeys(keep))
     train_df = train_df[keep].reset_index(drop=True)
     train_df.attrs['feature_cols'] = feature_cols

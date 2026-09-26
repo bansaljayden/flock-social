@@ -582,15 +582,35 @@ test('(e)(f) the split stays whole-city, the holdout never fits on itself, and i
   assert.match(EXPORT_JS, /const isHoldout = HOLDOUT_CITIES\.includes\(city\);/,
     'the exporter routes whole cities; a venue is in exactly one city, so no venue can sit on both sides');
   // is_realtime is a provenance flag hardcoded to 1 at serving (PRE-RETRAIN-AUDIT
-  // finding 18). It stays a feature only because quick_eval, train_model,
-  // sports_ablation and hour_ranking_eval read it out of X by position; the
-  // carried key is the step that lets them stop, and the reason is written
-  // where the key is.
+  // finding 18). It left feature_cols on 2026-09-25, once every reader took it
+  // from the key both pickles carry, through prepare_features.realtime_flags.
   assert.match(PREPARE_PY, /'is_realtime': train_df\['is_realtime'\]\.values\.astype\(np\.int8\)/);
   assert.match(PREPARE_PY, /'is_realtime': holdout_df\['is_realtime'\]\.values\.astype\(np\.int8\)/);
   assert.match(PREPARE_PY, /PRE-RETRAIN-AUDIT finding 18/);
-  assert.match(QUICK_EVAL_PY, /X\[:, feature_cols\.index\('is_realtime'\)\]/,
-    'the day quick_eval stops reading the flag from X is the day it can leave feature_cols');
+  const exclude = PREPARE_PY.slice(PREPARE_PY.indexOf('def get_feature_columns('));
+  assert.match(exclude.slice(0, exclude.indexOf('exclude |= DROPPED_FEATURES')), /^\s*'is_realtime',\s*$/m,
+    'is_realtime must stay out of the feature set: serving sets it to 1 on every prediction');
+  // The holdout frame is cut to feature_cols + keep_extra before it is pickled;
+  // with the flag out of feature_cols it survives only by name.
+  const keepExtra = PREPARE_PY.match(/keep_extra = \[([\s\S]*?)\]/);
+  assert.ok(keepExtra && keepExtra[1].includes("'is_realtime'"),
+    'the holdout pickle would lose is_realtime: keep it in keep_extra');
+  assert.ok(pyDictKeys(TRAIN_PY, 'FORBIDDEN_FEATURES').includes('is_realtime'),
+    'the trainer must refuse is_realtime by name');
+  assert.match(QUICK_EVAL_PY, /hold_is_realtime = realtime_flags\(hold_data\)/,
+    'the point gate slice must read the carried flag');
+  assert.match(TRAIN_PY, /is_realtime = realtime_flags\(data\) == 1/,
+    'the weight tiers and the served-slice metrics must read the carried flag');
+  // No script reads the flag out of X by position any more, except the one
+  // fallback each for a pickle written before the key existed (the incumbent's).
+  const positional = {};
+  for (const f of fs.readdirSync(TRAIN_DIR).filter((n) => n.endsWith('.py'))) {
+    const code = read(path.join(TRAIN_DIR, f)).replace(/#[^\n]*/g, '');
+    const hits = (code.match(/\.index\('is_realtime'\)/g) || []).length;
+    if (hits) positional[f] = hits;
+  }
+  assert.deepStrictEqual(positional, { 'hour_ranking_eval.py': 1, 'prepare_features.py': 1 },
+    'a script reads is_realtime out of X by position; it left the feature set, read realtime_flags(pickle)');
 });
 
 test('no blanket fill, and coordinates are a contract rather than an equator', () => {

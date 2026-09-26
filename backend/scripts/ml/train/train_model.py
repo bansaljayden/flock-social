@@ -64,7 +64,7 @@ from xgboost import XGBRegressor
 # CAT_KEYS / REFINED_KEYS come from the same place for the same reason: the
 # per-fold refit below has to key its cells exactly the way the map it replaces
 # was keyed, and a second copy of those key lists is a second thing to drift.
-from prepare_features import serving_population_mask, CAT_KEYS, REFINED_KEYS
+from prepare_features import serving_population_mask, realtime_flags, CAT_KEYS, REFINED_KEYS
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -106,6 +106,9 @@ FORBIDDEN_FEATURES = {
     # provenance: encodes which label regime a row belongs to
     'sample_weight': 'the training weight — encodes the label regime',
     'label_provenance': 'encodes the label regime',
+    'is_realtime': ('1 on every prediction serving makes, so as a feature it encodes only the '
+                    'label regime of a training row (PRE-RETRAIN-AUDIT finding 18); carried in '
+                    'the pickle, read through prepare_features.realtime_flags'),
     'venue_id': 'an identifier — as a feature it is pure venue memorization',
     # geographic overfitting: lat/lng act as a city lookup table
     'latitude': 'geographic overfitting — lat/lng are a city lookup table',
@@ -1278,12 +1281,13 @@ def main():
         'delta_label (the target)': y,
     })
 
-    if 'is_realtime' in feature_cols:
-        is_realtime = X[:, feature_cols.index('is_realtime')].astype(int) == 1
-    else:
-        logger.warning('is_realtime is not in the feature set — the per-population '
-                       'breakdown will treat every row as weekly.')
-        is_realtime = np.zeros(n, dtype=bool)
+    # The carried key (prepare_features.realtime_flags), never a zero fill: the
+    # weight tiers and the realtime_served slice mlPredictor publishes as the
+    # card's confidence are both cut on it.
+    is_realtime = realtime_flags(data) == 1
+    if len(is_realtime) != n:
+        raise ValueError(f'is_realtime has {len(is_realtime)} rows but y has {n}. Re-run '
+                         'prepare_features.py.')
     weight_tiers = assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
                                                        data.get('run_length_divisor'))
 

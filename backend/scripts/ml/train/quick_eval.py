@@ -31,6 +31,8 @@ from pathlib import Path
 import numpy as np
 
 from prepare_features import serving_population_mask
+# realtime_flags is re-exported: eval_two_head.py imports it from here.
+from prepare_features import realtime_flags  # noqa: F401
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -237,12 +239,6 @@ QMAP_Y = np.array([0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 10, 10, 10, 15, 15, 20, 20, 25,
 
 def apply_score_qmap(score):
     return np.clip(np.interp(score, QMAP_X, QMAP_Y), 0, 100)
-
-
-def realtime_flags(X, feature_cols, n_rows):
-    if 'is_realtime' not in feature_cols:
-        return np.zeros(n_rows, dtype=int)
-    return X[:, feature_cols.index('is_realtime')].astype(int)
 
 
 # ---------------------------------------------------------------------------
@@ -517,9 +513,10 @@ def main():
     with open(SCRIPT_DIR / 'features_holdout.pkl', 'rb') as f:
         hold_data = pickle.load(f)
     X_hold = hold_data['X']
-    # The gate reads is_realtime out of X BY POSITION. If the two pickles were
-    # written by different runs, that position means something else and the gate
-    # slice is silently the wrong rows.
+    # The model consumes X BY POSITION. If the two pickles were written by
+    # different runs, a position means something else and every holdout number
+    # is silently wrong. (The gate slice's is_realtime used to be read out of X
+    # by position too; since 2026-09-25 it is the carried key, realtime_flags.)
     if list(hold_data['feature_cols']) != list(feature_cols):
         raise SystemExit(
             'features_train.pkl and features_holdout.pkl carry different feature '
@@ -529,7 +526,10 @@ def main():
     hold_baseline = np.asarray(hold_data['baseline'], dtype=float)
     hold_y_actual = np.asarray(hold_data['y_actual'], dtype=float)
     hold_cities = hold_data['cities']
-    hold_is_realtime = realtime_flags(X_hold, feature_cols, len(hold_y_actual))
+    hold_is_realtime = realtime_flags(hold_data)
+    if len(hold_is_realtime) != len(hold_y_actual):
+        raise SystemExit('features_holdout.pkl carries an is_realtime key that is not row-aligned '
+                         'with its y_actual. Re-run prepare_features.py.')
 
     with open(SCRIPT_DIR / 'best_model.pkl', 'rb') as f:
         model_data = pickle.load(f)
