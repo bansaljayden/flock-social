@@ -47,8 +47,49 @@ const REQUARANTINE_SQL = `UPDATE bill_splits b SET quarantined = true
 const COUNT_OUTSIDE_QUARANTINE_SQL = `SELECT COUNT(*)::bigint AS n FROM bill_splits b
  WHERE ${LEGACY_BILL_OUTSIDE_QUARANTINE}`;
 
+// ---------------------------------------------------------------------------
+// AND THE NOTIFICATIONS THAT CARRY A QUARANTINED BILL'S FIGURES.
+// ---------------------------------------------------------------------------
+//
+// Two pushes name a bill's figure in their body (routes/billing.js):
+// bill_created, "You owe {payer} $X", and bill_settled, "{name} says they paid
+// you $X". A push held for quiet hours or queued for a retry waits in
+// push_outbox with that body verbatim, so one written for a legacy bill before
+// 089 ran could still go out after it, figure and all, and a restore can bring
+// such a row back. Both name their bill by its plan, which has one bill
+// (bill_splits is UNIQUE on flock_id).
+//
+// services/pushHelper.js refuses to send either about a quarantined bill,
+// fresh or queued. Migration 091, and db/migrate.js on every boot after
+// REQUARANTINE_SQL, delete the queued ones, and scripts/verify-backup.js fails
+// a restore that still holds one after its boot. The flock id rides in the
+// payload as text and is compared as a number only when it is one, so a
+// malformed payload matches nothing instead of failing the statement, and with
+// it the boot. The two types are written out in the SQL too; the boot-safety
+// suite holds the list and the SQL to each other, and 091 to this text.
+const BILL_PUSH_TYPES = Object.freeze(['bill_created', 'bill_settled']);
+
+const QUEUED_PUSH_FOR_QUARANTINED_BILL = `o.data->>'type' IN ('bill_created', 'bill_settled')
+   AND EXISTS (SELECT 1 FROM bill_splits b
+                WHERE b.quarantined IS TRUE
+                  AND b.flock_id = CASE WHEN o.data->>'flockId' ~ '^[0-9]{1,18}$'
+                                        THEN (o.data->>'flockId')::bigint END)`;
+
+// Run by db/migrate.js on every boot, after REQUARANTINE_SQL, so a bill that
+// boot put back in quarantine loses its queued pushes in the same boot.
+const PURGE_QUEUED_BILL_PUSHES_SQL = `DELETE FROM push_outbox o
+ WHERE ${QUEUED_PUSH_FOR_QUARANTINED_BILL}`;
+
+// Read by scripts/verify-backup.js: how many are still waiting.
+const COUNT_QUEUED_BILL_PUSHES_SQL = `SELECT COUNT(*)::bigint AS n FROM push_outbox o
+ WHERE ${QUEUED_PUSH_FOR_QUARANTINED_BILL}`;
+
 module.exports = {
   LEGACY_BILL_OUTSIDE_QUARANTINE,
   REQUARANTINE_SQL,
   COUNT_OUTSIDE_QUARANTINE_SQL,
+  BILL_PUSH_TYPES,
+  QUEUED_PUSH_FOR_QUARANTINED_BILL,
+  PURGE_QUEUED_BILL_PUSHES_SQL,
+  COUNT_QUEUED_BILL_PUSHES_SQL,
 };

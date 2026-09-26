@@ -79,7 +79,7 @@
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
-const { REQUARANTINE_SQL } = require('./billQuarantine');
+const { REQUARANTINE_SQL, PURGE_QUEUED_BILL_PUSHES_SQL } = require('./billQuarantine');
 
 // Fixed app-wide key for pg_advisory_lock — serializes migration runs across
 // replicas / rolling deploys so two boots can't race the same file.
@@ -698,17 +698,22 @@ async function reapplyMigration(client, file, info, reqs) {
 // nothing runs a file this runner believes is done. For 089 that was a privacy
 // leak rather than a stale column: every bill from before August 27 in a dump
 // taken before 089 lands with bill_splits.quarantined false, and GET hands one
-// person's budget answer to the rest of the plan.
+// person's budget answer to the rest of the plan. A dump can also hold a push
+// waiting in push_outbox with one of those bills' figures in its body, which
+// 091 deleted once, from the database it ran on.
 //
 // So these statements run after the files on EVERY boot, inside the same
 // advisory lock and timeouts, and server.js awaits them before listen(). Each
 // one only ever moves a row one way and only touches a row it changes, so a
 // second run changes nothing and a healthy database takes no row lock at all;
-// each has an index that holds only the rows it would change (090 for the
-// quarantine), so it reads nothing when there is nothing to do, however large
-// the table grows; and it is one statement in autocommit, so a request another
-// instance serves mid-deploy sees every row it changes before or after, never
-// half of them.
+// each reads next to nothing when there is nothing to do, however large the
+// tables grow (the quarantine through 090's index, which holds only the bills
+// it would change; the purge because push_outbox only ever holds a few hours
+// of pushes and each one it checks is one index probe into bill_splits); and
+// each is one statement in autocommit, so a request another instance serves
+// mid-deploy sees every row it changes before or after, never half of them.
+// They run in this order, so a bill the first puts back in quarantine loses
+// its queued pushes in the same boot.
 //
 // A step that throws fails the boot, unlike a heal. Serving with the fact
 // missing is the leak the step exists to close, and the next boot tries again.
@@ -718,6 +723,12 @@ const EVERY_BOOT = [
     sql: REQUARANTINE_SQL,
     moved: (n) => `put ${n} bill(s) from before August 27 back in quarantine. They arrived without the flag, ` +
       'which is what a restore from a dump taken before migration 089 does.',
+  },
+  {
+    name: '091 queued bill pushes',
+    sql: PURGE_QUEUED_BILL_PUSHES_SQL,
+    moved: (n) => `deleted ${n} queued push(es) carrying a figure from a quarantined bill before anything could ` +
+      'send them. They came back with a restore, or were queued by an instance still running older code.',
   },
 ];
 

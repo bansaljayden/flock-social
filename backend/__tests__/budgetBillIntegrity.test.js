@@ -58,6 +58,9 @@
 //      flag, after 089 was recorded against an empty database. The next boot
 //      puts them back in quarantine before anybody reads one, and
 //      scripts/verify-backup.js fails a restore that still has one out.
+//  13. A PUSH CARRYING A QUARANTINED BILL'S FIGURE is never sent: not from the
+//      outbox, where one queued before 089 kept its body, and not fresh. The
+//      boot deletes such a push a restore brings back.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1199,6 +1202,8 @@ test('the quarantine takes every bill from before the cut-off in a flock that co
 async function loadDumpFromBefore089(base) {
   const id = (n) => base + n;
   const at = (day) => `'${day}T20:00:00.000Z'`;
+  // A time relative to now, written the way the dump writes a timestamptz.
+  const soon = (seconds) => `'${new Date(Date.now() + seconds * 1000).toISOString()}'`;
   const members = (flock) => [1, 2, 3, 4].map((u) => `(${id(10 * flock + u)}, ${id(flock)}, ${id(u)}, 'accepted')`).join(',\n  ');
   const client = await pool.connect();
   try {
@@ -1237,6 +1242,13 @@ ON CONFLICT DO NOTHING;`,
   (${id(7301)}, ${id(6300)}, ${id(1)}, 45.00, false, true, ${at('2026-09-01')}),
   (${id(7302)}, ${id(6300)}, ${id(2)}, 45.00, false, false, NULL)
 ON CONFLICT DO NOTHING;`,
+      // Two pushes still waiting when the dump was taken, before 085 gave the
+      // table token_ids: Eve's settle on the legacy bill, telling Pat the
+      // figure on her ghost share, and Ann's on the bill from after the cut-off.
+      `INSERT INTO "push_outbox" ("id", "user_id", "reason", "title", "body", "data", "attempts", "next_attempt_at", "expires_at", "created_at") VALUES
+  (${id(8100)}, ${id(1)}, 'quiet', 'Marked as paid back', 'Eve says they paid you $47.13 for Dinner. Check your payment app.', '{"type": "bill_settled", "flockId": "${id(100)}", "fromUserId": "${id(4)}"}', 0, ${soon(-60)}, ${soon(3600)}, ${soon(-3600)}),
+  (${id(8300)}, ${id(1)}, 'quiet', 'Marked as paid back', 'Ann says they paid you $45.00 for Brunch. Check your payment app.', '{"type": "bill_settled", "flockId": "${id(300)}", "fromUserId": "${id(2)}"}', 0, ${soon(-60)}, ${soon(3600)}, ${soon(-3600)})
+ON CONFLICT DO NOTHING;`,
       'SET session_replication_role = DEFAULT;',
       'COMMIT;',
     ]) await client.query(sql);
@@ -1254,6 +1266,7 @@ ON CONFLICT DO NOTHING;`,
     pat: await person(1), ann: await person(2), bea: await person(3), eve: await person(4),
     flockId: id(100),
     bills: { legacy: id(6100), noBudget: id(6200), afterCutoff: id(6300) },
+    queued: { legacy: id(8100), afterCutoff: id(8300) },
   };
 }
 
@@ -1300,7 +1313,7 @@ test('verify-backup fails a restored database with a bill out of quarantine, and
     console.log = () => {};
     try { return await fn(); } finally { console.log = log; }
   };
-  const [name, sql] = verify.INVARIANTS.find(([n]) => /quarantine/.test(n)) || [];
+  const [name, sql] = verify.INVARIANTS.find(([n]) => /is in quarantine/.test(n)) || [];
   assert.ok(sql, 'verify-backup has no quarantine invariant');
   const d = await loadDumpFromBefore089(980000);
   const client = await pool.connect();
@@ -1318,4 +1331,90 @@ test('verify-backup fails a restored database with a bill out of quarantine, and
   } finally {
     client.release();
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 13. A push that carries a quarantined bill's figure
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// bill_created ("You owe {payer} $X") and bill_settled ("{name} says they paid
+// you $X") carry an amount in their body, and a push held for quiet hours or
+// queued for a retry waits in push_outbox with that body verbatim. Delivery
+// re-checked membership, blocks and bans, and never the quarantine, so a settle
+// on a legacy bill before 089 ran could queue Eve's ghost share, which is Ann's
+// answer, for Pat, and the sweep sent it after the bill had been quarantined.
+
+const outboxRows = async (ids) => (await pool.query(
+  'SELECT id FROM push_outbox WHERE id = ANY($1::bigint[]) ORDER BY id', [ids]
+)).rows.map((r) => Number(r.id));
+
+test('a push queued with a legacy bill\'s figure is never sent once the bill is quarantined, and none is sent fresh', async () => {
+  const firebaseService = require('../services/firebaseService');
+  const pushHelper = require('../services/pushHelper');
+  const { pat, eve, flockId } = await legacyBillWithAnnsAnswer();
+  // An ordinary bill beside it, so the same sweep shows it still delivers.
+  const cal = await mkUser('Cal');
+  const dee = await mkUser('Dee');
+  const plainFlock = await mkFlock(cal, [dee]);
+  assert.equal((await call('POST', `/api/billing/${plainFlock}/create`, { token: cal.token, body: { totalAmount: 60 } })).status, 201);
+  // One device each, with no time zone on record, so nothing waits for morning.
+  for (const u of [pat, cal]) {
+    await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [u.id, `fcm-bbi-${u.id}-${'x'.repeat(40)}`]);
+  }
+  // The row a settle on the legacy bill queued before 089 ran and the purge
+  // did not see: an instance still on older code mid-deploy queues its failed
+  // send for a retry after the new boot has already cleared the outbox.
+  const queue = async (userId, body, data) => (await one(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+     VALUES ($1, 'retry', 'Marked as paid back', $2, $3::jsonb, NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [userId, body, JSON.stringify(data)]
+  )).id;
+  const legacyRow = Number(await queue(pat.id, 'Eve says they paid you $47.13 for Dinner. Check your payment app.',
+    { type: 'bill_settled', flockId: String(flockId), fromUserId: String(eve.id) }));
+  const plainRow = Number(await queue(cal.id, 'Dee says they paid you $30.00 for Dinner. Check your payment app.',
+    { type: 'bill_settled', flockId: String(plainFlock), fromUserId: String(dee.id) }));
+
+  const sent = [];
+  pushHelper._resetDebounce();
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    await pushHelper.sweepPushOutbox();
+    const told = sent.map((m) => m.notification.body);
+    assert.ok(!JSON.stringify(sent).includes('47.13'), `the sweep sent the legacy bill's figure: ${JSON.stringify(told)}`);
+    assert.deepEqual(told, ['Dee says they paid you $30.00 for Dinner. Check your payment app.'],
+      'the ordinary bill\'s push did not go out, so the sweep proves nothing');
+    assert.deepEqual(await outboxRows([legacyRow, plainRow]), [], 'the refused row was kept to be tried again');
+
+    // Fresh, both kinds: refused the same way before anything is sent.
+    for (const type of ['bill_created', 'bill_settled']) {
+      const r = await pushHelper.pushIfOffline(io, pat.id, 'Bill', 'You owe Pat $47.13 for Dinner',
+        { type, flockId: String(flockId), fromUserId: String(eve.id) });
+      assert.deepEqual([r.skipped, r.reason], [true, 'not-visible'], `${type}: ${JSON.stringify(r)}`);
+    }
+    // And a bill push that names no plan cannot be checked, so it is not sent.
+    const unnamed = await pushHelper.pushIfOffline(io, pat.id, 'Bill', 'You owe Pat $47.13',
+      { type: 'bill_settled', fromUserId: String(eve.id) });
+    assert.equal(unnamed.skipped, true);
+    assert.equal(sent.length, 1);
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+});
+
+test('a push a restore brings back for a quarantined bill is deleted by the boot, before the sweep can send it', async () => {
+  const d = await loadDumpFromBefore089(990000);
+  const queued = Object.values(d.queued);
+  assert.deepEqual(await outboxRows(queued), queued.sort((a, b) => a - b), 'the load brought both pushes in');
+
+  const { migrate } = require('../db/migrate');
+  await migrate(pool); // the boot: 089's quarantine again, then the purge
+  assert.deepEqual(await quarantineFlags(d.bills), { legacy: true, noBudget: false, afterCutoff: false });
+  assert.deepEqual(await outboxRows(queued), [d.queued.afterCutoff],
+    'the boot left the legacy bill\'s figure waiting to be sent, or took a push it had no reason to');
+  const verify = require('../scripts/verify-backup');
+  const [, sql] = verify.INVARIANTS.find(([n]) => /queued push/.test(n)) || [];
+  assert.ok(sql, 'verify-backup has no invariant for queued pushes');
+  assert.equal(Number((await one(sql)).n), 0);
 });

@@ -63,6 +63,9 @@ const firebaseService = require('./firebaseService');
 // The words of an SOS alarm and its all-clear, for when rule 4 has to build one
 // again (see AN SOS ALARM MUST NOT OUTLIVE ITS ALL-CLEAR below).
 const { alarmPush, allClearPush } = require('./sosPushes');
+// The pushes that carry a bill's figure, which a quarantined bill never sends
+// (see checkVisibility).
+const { BILL_PUSH_TYPES } = require('../db/billQuarantine');
 
 // Debounce map: key -> timestamp of last push sent
 const lastPushSent = new Map();
@@ -1130,6 +1133,19 @@ async function checkVisibility(userId, data = {}) {
     const inviteClause = data?.type === 'flock_invite'
       ? " AND f.status NOT IN ('completed', 'cancelled')"
       : '';
+    // A QUARANTINED BILL SENDS NOBODY ITS FIGURES (migration 089,
+    // db/billQuarantine.js). bill_created and bill_settled carry an amount in
+    // their body, and a push held for quiet hours or queued for a retry keeps
+    // that body verbatim, so one written for a legacy bill before 089 ran went
+    // out after it with the figure the bill no longer shows anybody. The
+    // payload names the bill by its plan, which has one bill; a bill push that
+    // names no plan cannot be checked and is not sent. Same shape as the
+    // invite clause: a literal chosen by a boolean, never text from the payload.
+    const billPush = BILL_PUSH_TYPES.includes(data?.type);
+    if (billPush && !flockId) return CANNOT_SEE;
+    const billClause = billPush
+      ? ' AND NOT EXISTS (SELECT 1 FROM bill_splits bs WHERE bs.flock_id = f.id AND bs.quarantined IS TRUE)'
+      : '';
     const r = await pool.query(
       `SELECT
          COALESCE(u.is_banned, false) AS is_banned,
@@ -1138,7 +1154,7 @@ async function checkVisibility(userId, data = {}) {
            SELECT 1 FROM flocks f
            LEFT JOIN flock_members m ON m.flock_id = f.id AND m.user_id = u.id
            WHERE f.id = $2
-             AND (f.creator_id = u.id OR m.status IN ('accepted', 'invited'))${inviteClause}
+             AND (f.creator_id = u.id OR m.status IN ('accepted', 'invited'))${inviteClause}${billClause}
          ) END AS can_see
        FROM users u
        WHERE u.id = $1`,
