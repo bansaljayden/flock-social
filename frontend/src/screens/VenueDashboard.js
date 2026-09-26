@@ -37,6 +37,7 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
+import { numberSourcePhrase } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
 import {
   BASE_URL,
@@ -1572,7 +1573,11 @@ export default function VenueDashboard({
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
-                {venueIntel.model ? `Flock crowd model v${venueIntel.model}` : 'Flock rule engine: typical for a venue like yours, not measured here yet.'}
+                {venueIntel.model
+                  ? (numberSourcePhrase(venueIntel.numberSource)
+                    ? `From ${numberSourcePhrase(venueIntel.numberSource)}.`
+                    : `Flock crowd model v${venueIntel.model}`)
+                  : 'Flock rule engine: typical for a venue like yours, not measured here yet.'}
               </p>
             </div>
           )}

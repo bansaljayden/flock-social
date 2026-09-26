@@ -182,6 +182,38 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
   return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
 }
 
+// WHICH ARITHMETIC MADE A MODEL-PATH NUMBER, for the words that attribute it.
+//
+// predictionMethod stays 'ml' whenever the model path answered, including when
+// one of mlPredictor's two serving switches changed the arithmetic
+// (CROWD_SERVE_MODE=curve_offset serves the venue's own weekly curve plus its
+// recent live offset and never runs the model; CROWD_NOWCAST_ENABLED=true
+// blends in the venue's latest earlier live reading). A surface that says
+// "From the Flock crowd model" off predictionMethod alone would then describe
+// arithmetic that did not run. This reads the switched response's own account
+// and answers with one of:
+//
+//   'venue_pattern_live'  curve_offset, with a live offset or reading in it
+//   'venue_pattern'       curve_offset, with neither (the curve alone)
+//   'model_live'          the model's number with a live reading blended in
+//   null                  anything else: the attribution predictionMethod
+//                         already gives is the true one
+//
+// Null for every response with both switches off, because mlPredictor only
+// adds serveMode and nowcast to a response while a switch is on. Surfaces
+// publish the value only when it is not null, so a switched-off payload keeps
+// exactly the keys it had. It names the arithmetic, never a reading or an
+// offset: those stay on the server (a venue's recent level).
+function describeServedArithmetic(result) {
+  if (!result || result.predictionMethod !== 'ml') return null;
+  if (result.serveMode === 'curve_offset') {
+    const live = Array.isArray(result.dataSourcesUsed) && result.dataSourcesUsed.includes('recent_live_readings');
+    return live ? 'venue_pattern_live' : 'venue_pattern';
+  }
+  if (result.nowcast) return 'model_live';
+  return null;
+}
+
 // WHY `confidence` IS NOT LOWERED HERE, only explained.
 //
 // The obvious move is to cap it. It would be wrong twice over. First, a cap is
@@ -2095,6 +2127,7 @@ module.exports = {
   // alternatives entry cannot disagree about whether the same answer is a
   // measurement or a category prior.
   describePredictionSupport,
+  describeServedArithmetic,
   publishedConfidence,
   publishedLabel,
   hedgeLabel,

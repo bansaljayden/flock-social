@@ -1079,6 +1079,7 @@ router.get('/:placeId',
       // twice would let the two drift if it ever stopped being pure, and the
       // block's whole job is to describe the number that actually shipped.
       const cardConfidence = crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost);
+      const numberSource = crowdEngine.describeServedArithmetic(crowdResult);
 
       // Game-night FACT for the card, never a crowd claim: the 2026-08-30
       // ablation measured no lift the model could stand behind, so this
@@ -1097,6 +1098,12 @@ router.get('/:placeId',
         // `predictionMethod` is what services/mlPredictor.js decided; `basis`
         // and `supported` are what that entitles this card to claim.
         predictionMethod: crowdResult.predictionMethod || null,
+        // Which arithmetic made an 'ml' number when a serving switch changed
+        // it (crowdEngine.describeServedArithmetic), so the card's attribution
+        // line names the venue's own pattern and live readings instead of a
+        // model that did not run. Absent, not null, with both switches off, so
+        // that payload is exactly what it was.
+        ...(numberSource ? { numberSource } : {}),
         confidenceBasis: support.basis,
         // What the `confidence` number above actually measures. 'input_
         // completeness' means "how much did we know about this venue", NOT

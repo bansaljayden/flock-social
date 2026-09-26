@@ -48,3 +48,27 @@ export const crowdArcFor = (score) => {
   if (word === 'Steady' || word === 'Busy') return '#FBBF24';
   return '#4ADE80';
 };
+
+/**
+ * What made a crowd number, in words, when the server says a serving switch
+ * changed the arithmetic.
+ *
+ * The server keeps predictionMethod 'ml' for every number the model path
+ * answered, including one made from the venue's own weekly pattern plus its
+ * recent live readings with no model run at all. Those responses carry
+ * `numberSource` (`number_source` on the public demo), named by
+ * backend/services/crowdEngine.js describeServedArithmetic; every other
+ * response has no such key, and this returns null so each surface keeps the
+ * words it already had.
+ */
+const NUMBER_SOURCE_PHRASES = {
+  venue_pattern_live: "this venue's usual pattern and its recent live readings",
+  venue_pattern: "this venue's usual pattern",
+  model_live: "the Flock crowd model and this venue's recent live readings",
+};
+
+export const numberSourcePhrase = (source) => (
+  typeof source === 'string' && Object.prototype.hasOwnProperty.call(NUMBER_SOURCE_PHRASES, source)
+    ? NUMBER_SOURCE_PHRASES[source]
+    : null
+);
