@@ -5,6 +5,31 @@
 // ---------------------------------------------------------------------------
 
 const { sleep } = require('./config');
+const { buildEventResult, HOUR_MS: EVENT_HOUR_MS } = require('../../services/eventFeatures');
+
+// WHAT SERVING WOULD HAND THE MODEL FOR THIS LISTING (2026-09-26).
+//
+// The feature columns of a live reading (has_nearby_event, the two counts and
+// sizes, the nearest type and distance) are what the model is trained on, and
+// serving computes them from the same Ticketmaster listing with
+// eventFeatures.buildEventResult: every event within 2 km that is ongoing at
+// the hour by its type's duration, counted, its size the venue capacity
+// Ticketmaster prints or else the size class estimateTmAttendance assigns by
+// segment and venue name. This collector used to store its own reading instead
+// (the nearest event that started in the window, a count of one, and a size
+// only when a capacity was printed, which it almost never is), so on the live
+// rows the two size columns trained as 0 on every event while serving handed
+// the model the size class. The answer is computed here from the same listing
+// entries, with the same function, and storeReading writes it.
+//
+// Null when the list is not one it can replay: Ticketmaster did not answer,
+// or an entry does not carry the listing it came from (a test double, SeatGeek).
+function servedEventValues(tmEvents, venueLat, venueLon, at) {
+  if (!Array.isArray(tmEvents)) return null;
+  if (!tmEvents.every((e) => e && e.raw && typeof e.raw === 'object')) return null;
+  const when = at instanceof Date && Number.isFinite(at.getTime()) ? at : new Date();
+  return buildEventResult(tmEvents.map((e) => e.raw), venueLat, venueLon, Math.floor(when.getTime() / EVENT_HOUR_MS));
+}
 
 // Haversine distance in km
 function distanceKm(lat1, lon1, lat2, lon2) {
@@ -106,6 +131,10 @@ async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Da
         lon: parseFloat(e._embedded?.venues?.[0]?.location?.longitude || 0),
         startTime: e.dates?.start?.dateTime || null,
         size: parseInt(e._embedded?.venues?.[0]?.generalInfo?.capacity || 0, 10) || null,
+        // The listing entry as Ticketmaster sent it, so the collector can
+        // compute the event features serving computes from the same entry
+        // (servedEventValues below, services/eventFeatures.js).
+        raw: e,
       })),
       total,
     };
@@ -191,6 +220,17 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = NEARBY_KM, at = ne
 // query between neighbouring venues, reaches each venue's answer through this
 // same code rather than through a second copy of it.
 function nearestEventFromAnswers(tmEvents, sgEvents, venueLat, venueLon, at = new Date()) {
+  const out = nearestEventCore(tmEvents, sgEvents, venueLat, venueLon, at);
+  // Only on a measured answer: an unmeasured one writes NULL feature columns
+  // (migration 045), whatever a partial listing would have said.
+  if (out.observed === true) {
+    const served = servedEventValues(tmEvents, venueLat, venueLon, at);
+    if (served) out.served = served;
+  }
+  return out;
+}
+
+function nearestEventCore(tmEvents, sgEvents, venueLat, venueLon, at = new Date()) {
   // Provenance travels with the answer (2026-09-01, migration 045's rule
   // applied at the source). A fetcher returns NULL when it could not answer
   // (no key, HTTP failure, timeout) and an ARRAY when it answered, empty
@@ -296,5 +336,5 @@ function nearestEventFromAnswers(tmEvents, sgEvents, venueLat, venueLon, at = ne
 
 module.exports = {
   getNearestEvent, fetchTicketmasterEvents, fetchTicketmasterPage, fetchSeatGeekEvents,
-  nearestEventFromAnswers, distanceKm, NEARBY_KM, TM_PAGE_SIZE,
+  nearestEventFromAnswers, servedEventValues, distanceKm, NEARBY_KM, TM_PAGE_SIZE,
 };

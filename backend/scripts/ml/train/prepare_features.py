@@ -1462,6 +1462,12 @@ def fit_temperature_norms(df: pd.DataFrame) -> pd.DataFrame:
         )
     norms = (d.groupby(['lat_band', 'month'])['temperature']
               .agg(temp_norm='mean', n_obs='size').reset_index())
+    # Rounded to the two decimals metadata.temp_norms ships with (main() writes
+    # round(temp_norm, 2)), BEFORE any row is filled or differenced with them.
+    # Training used the unrounded mean and serving the rounded one, so every
+    # imputed temperature and every temp_anomaly differed by up to 0.005F
+    # between the two (found by __tests__/mlContextFeatureParity.test.js).
+    norms['temp_norm'] = [round(float(v), 2) for v in norms['temp_norm']]
     logger.info('Climate norms: %d (lat_band, month) cells fitted from %d rows that carry a '
                 'temperature reading (%d rows carry none and will take the norm).',
                 len(norms), int(observed.sum()), int((~observed).sum()))
