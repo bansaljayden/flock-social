@@ -124,6 +124,11 @@ DEFAULTS = {
     'IR_GPIO_PIN': '17',
     'IR_ACTIVE_LOW': '1',
     'IR_DEBOUNCE_SECONDS': '0.5',
+    # The base's two lights, by GPIO number. 0 drives nothing, which is the
+    # default: a pin is only switched once somebody has wired a light to it.
+    # Each LED needs a 330 ohm resistor in series. README.md, The lights.
+    'LED_POWER_GPIO': '0',
+    'LED_LINK_GPIO': '0',
     # The V4L2 node the Lepton's USB breakout came up on. /dev/video0 on a Pi
     # with nothing else plugged in; `v4l2-ctl --list-devices` says for certain.
     'THERMAL_DEVICE': '/dev/video0',
@@ -274,6 +279,8 @@ TOF_AXIS = 'col' if (CONFIG.get('TOF_AXIS') or '').strip().lower() == 'col' else
 TOF_FLIP_DIRECTION = bool(_cfg_number('TOF_FLIP_DIRECTION', int, 0, 1, 0))
 IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
 IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
+LED_POWER_GPIO = _cfg_number('LED_POWER_GPIO', int, 0, 27, 0)
+LED_LINK_GPIO = _cfg_number('LED_LINK_GPIO', int, 0, 27, 0)
 
 # The bench measured the pair (4, 12) and nothing else, and the two settings are
 # not independent: a cell is bin x bin pixels, so the SAME 12 means 48 raw pixels
@@ -459,6 +466,7 @@ _state = {
     # 100ms burst, so that is not a hypothetical.
     'noise_window': deque(maxlen=12),
     'last_push_history': deque(maxlen=12),  # For the optional display chart
+    'pushed_at': None,                      # Monotonic mark of the last delivery
     # The most recent thermal frame, and ONLY when THERMAL_VIEW_ON. On any unit
     # without a screen this stays None for the life of the process, which is
     # what keeps 'the grid is reduced to a count and thrown away' literally true
@@ -2176,6 +2184,7 @@ class Pusher:
                 delivered += 1
                 with _lock:
                     _state['last_push_history'].append(item.get('thermal_headcount', 0))
+                    _state['pushed_at'] = time.monotonic()
                 continue
 
             if code in FATAL_PAYLOAD_STATUSES:
@@ -2303,6 +2312,90 @@ class Pusher:
         # needs clearing. In normal operation this writes nothing at all.
         if _pending or before or _buffer_on_disk:
             persist_buffer()
+
+
+# ---------------------------------------------------------------------------
+# The base's two lights
+#
+# POWER is on for as long as this program runs. LINK blinks while the head is
+# talking and readings are going out, and is dark otherwise. Neither is driven
+# until its pin is set: a GPIO switched to an output with nothing on it is
+# harmless, and one switched under a bus or a HAT that already uses it is not.
+# ---------------------------------------------------------------------------
+
+LINK_BLINK_SECONDS = 1.0
+
+# Pins that already carry something on this build: I2C1 for the doorway
+# counter, and SPI0 for the microphone's converter.
+_BUS_PINS = {2: 'I2C SDA', 3: 'I2C SCL', 7: 'SPI CE1', 8: 'SPI CE0',
+             9: 'SPI MISO', 10: 'SPI MOSI', 11: 'SPI SCLK'}
+
+
+def led_pin_problem(pin, beam_pin=None):
+    """Why a light cannot go on `pin`, or None if it can (or if it is off)."""
+    if pin < 2:
+        return None
+    if pin in _BUS_PINS:
+        return f'GPIO {pin} is {_BUS_PINS[pin]}, which this build already uses'
+    if beam_pin is not None and pin == beam_pin:
+        return f'GPIO {pin} is the crossing sensor\'s input'
+    return None
+
+
+def link_lit(now, pushed_at, sensors_live, push_interval=None):
+    """Whether LINK is lit at `now`.
+
+    It blinks while two things are both true: the head is talking, meaning at
+    least one of its sensors has a fresh reading, and readings are going out,
+    meaning one was delivered within the last two push intervals plus the
+    jitter on them. Either failing leaves it dark, and dark is the point: a
+    head whose cable has come out, and a backend nobody can reach, both look
+    on the screen like a quiet room, and this is the one place that says
+    otherwise from across the room.
+    """
+    interval = PUSH_INTERVAL if push_interval is None else push_interval
+    if not sensors_live or pushed_at is None or now - pushed_at > 2.1 * interval:
+        return False
+    return int(now / (LINK_BLINK_SECONDS / 2)) % 2 == 0
+
+
+def led_loop():
+    beam = IR_GPIO_PIN if DOOR_SENSOR in ('auto', 'beam') else None
+    pins = {}
+    for name, pin in (('POWER', LED_POWER_GPIO), ('LINK', LED_LINK_GPIO)):
+        problem = led_pin_problem(pin, beam)
+        if problem:
+            logger.error(f'{name} light not driven: {problem}. Pick another pin.')
+        elif pin >= 2:
+            pins[name] = pin
+    if not pins:
+        return
+    try:
+        import RPi.GPIO as GPIO
+        GPIO.setmode(GPIO.BCM)
+        for pin in pins.values():
+            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+    except Exception as e:
+        logger.error(f'Status lights unavailable: {e}')
+        return
+    if 'POWER' in pins:
+        GPIO.output(pins['POWER'], GPIO.HIGH)
+    lit = None
+    while not _stop.is_set():
+        if 'LINK' in pins:
+            now = time.monotonic()
+            with _lock:
+                fresh = [(_state['thermal_at'], THERMAL_STALE_AFTER),
+                         (_state['noise_at'], NOISE_STALE_AFTER)]
+                pushed_at = _state['pushed_at']
+                counter = _state['door_source'] == 'tof'
+            talking = counter or any(at is not None and now - at <= stale
+                                     for at, stale in fresh)
+            want = link_lit(now, pushed_at, talking)
+            if want != lit:
+                GPIO.output(pins['LINK'], GPIO.HIGH if want else GPIO.LOW)
+                lit = want
+        _stop.wait(0.05)
 
 
 def push_loop():
@@ -5230,6 +5323,8 @@ def main():
 
     push_thread = threading.Thread(target=push_loop, daemon=True, name='push')
     push_thread.start()
+    if LED_POWER_GPIO >= 2 or LED_LINK_GPIO >= 2:
+        threading.Thread(target=led_loop, daemon=True, name='leds').start()
 
     if DISPLAY_ON:
         # pygame wants the main thread. If it stops, fall through to the

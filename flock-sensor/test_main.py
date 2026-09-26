@@ -3504,5 +3504,37 @@ class EnclosureFiles(unittest.TestCase):
                                  stl.read_bytes().replace(b'\r\n', b'\n'), stl.name)
 
 
+class StatusLights(unittest.TestCase):
+    """POWER and LINK on the base."""
+
+    def test_nothing_is_driven_until_a_pin_is_set(self):
+        self.assertEqual(main.DEFAULTS['LED_POWER_GPIO'], '0')
+        self.assertEqual(main.DEFAULTS['LED_LINK_GPIO'], '0')
+        self.assertIsNone(main.led_pin_problem(0))
+
+    def test_a_light_is_refused_a_pin_a_bus_already_uses(self):
+        # An output driven under the counter's I2C or the microphone's SPI
+        # takes that sensor down with it.
+        for pin in (2, 3, 7, 8, 9, 10, 11):
+            self.assertIsNotNone(main.led_pin_problem(pin), pin)
+        self.assertIsNotNone(main.led_pin_problem(17, beam_pin=17))
+        self.assertIsNone(main.led_pin_problem(23))
+        self.assertIsNone(main.led_pin_problem(24, beam_pin=17))
+
+    def test_link_is_dark_until_a_reading_has_gone_out(self):
+        self.assertFalse(main.link_lit(100.0, None, True, push_interval=30))
+
+    def test_link_is_dark_when_the_head_is_silent(self):
+        self.assertFalse(main.link_lit(100.0, 95.0, False, push_interval=30))
+
+    def test_link_is_dark_when_readings_stop_going_out(self):
+        self.assertFalse(main.link_lit(200.0, 100.0, True, push_interval=30))
+
+    def test_link_blinks_while_both_are_true(self):
+        states = {main.link_lit(100.0 + t / 10.0, 99.0, True, push_interval=30)
+                  for t in range(0, 20)}
+        self.assertEqual(states, {True, False})
+
+
 if __name__ == '__main__':
     unittest.main()
