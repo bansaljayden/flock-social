@@ -168,10 +168,10 @@ The one thing to be careful about: it is a promise about a device that has
 only been switched on once. As of 2026-09-06 the thermal camera and the
 microphone have been brought up on a Pi and the claims above held: no image
 library is present, no frame reaches a file, and the payload is three integers.
-The doorway counter has never been wired. Before the first venue install, re-read
-section 3 against the running unit rather than against this file: it describes
-the crossing count as an infrared beam, and a unit counting with the VL53L8CX
-measures distances instead.
+The doorway counter has never been wired. Section 3 describes both counters,
+the beam and the VL53L8CX's 64 distances, and a test pins that grid to
+`TOF_COLS` and `TOF_ROWS` here. Before the first venue install, re-read it
+against the running unit rather than against this file.
 
 ---
 

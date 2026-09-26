@@ -108,6 +108,25 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
     expect(privacy).toContain(`${(cols * rows).toLocaleString('en-US')} temperature readings`);
   });
 
+  test('the doorway distance grid in the copy comes from the device code', () => {
+    // A unit can count its doorway with a VL53L8CX instead of a beam. "A
+    // distance sensor" alone could be anything from one number to a depth
+    // camera, so the page says how many distances and how coarse, and those
+    // come from the counter's own grid constants in main.py. The beam stays
+    // named too, because a unit can still have one.
+    const main = read('flock-sensor', 'main.py');
+    const cols = Number((main.match(/^TOF_COLS = (\d+)/m) || [])[1]);
+    const rows = Number((main.match(/^TOF_ROWS = (\d+)/m) || [])[1]);
+    expect(cols).toBeGreaterThan(0);
+    expect(rows).toBeGreaterThan(0);
+    const mirror = read('frontend', 'api', 'marketing-page.js');
+    for (const [name, src] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, src.includes(`reads ${cols * rows} distances, an ${cols} by ${rows} grid`)]).toEqual([name, true]);
+      expect([name, src.includes('an infrared beam across the doorway or with an infrared distance sensor')]).toEqual([name, true]);
+      expect([name, /infrared beam across the doorway was broken/.test(src)]).toEqual([name, false]);
+    }
+  });
+
   test('the thermal stream is a raw temperature format, not a picture format', () => {
     // The policy calls the thermal part "a grid of temperatures, not a
     // picture". On a USB thermal camera that is a claim about the pixel
