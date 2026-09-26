@@ -240,11 +240,44 @@ def head_to_head(y_actual, model_pred, baseline_pred, min_rows=100) -> dict:
 # venue_id and observed_date columns riding along are aligned to X by
 # construction.
 # ---------------------------------------------------------------------------
+def filter_and_weight_like_prepare_features(train_df: pd.DataFrame) -> pd.DataFrame:
+    """The serving filter and the sample weights, in prepare_features.main()'s order.
+
+    main() counts each live reading's run of identical consecutive-hour
+    readings on the whole frame BEFORE the serving filter removes any row (a
+    run is broken by an hour that is not there, not by one that is filtered
+    out), then filters, excludes unknown-provenance realtime rows, and lets
+    assign_sample_weights write the tier ladder over the run-length divisor
+    and solve the weekly anchor against the realtime total. The rebuild used
+    to write its own ladder (live 1.0, forecast 0.3, weekly 0.05), which
+    stopped being main()'s the day live weights were divided by run length, so
+    verify_rebuild's sample_weight check refused every rebuild. Calling the
+    same functions in the same order is the only way the two cannot drift
+    again; __tests__/withinCityEval.test.js runs
+    test_within_city_rebuild.py, which pins it on a small frame.
+    """
+    train_df['live_run_length'] = pf.live_run_lengths(train_df)
+    train_df = train_df[serving_population_mask(train_df['baseline_busyness'])].copy()
+    train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
+    train_df, _unknown = pf.exclude_unknown_provenance(train_df, 'train')
+    train_df = train_df.copy()
+    pf.assign_sample_weights(train_df, pf.RUN_LENGTH_POLICY)
+    return train_df
+
+
 def rebuild_training_frame() -> pd.DataFrame:
+    cached = None
     if FRAME_CACHE.exists():
         logger.info('Loading cached rebuilt frame from %s', FRAME_CACHE)
         with open(FRAME_CACHE, 'rb') as f:
             cached = pickle.load(f)
+        # A frame cached before the rebuild weighed rows as prepare_features
+        # does carries the old fixed ladder and no run lengths; verify_rebuild
+        # would refuse it, so it is rebuilt instead of reused.
+        if 'live_run_length' not in cached.columns:
+            logger.info('  the cached frame predates run-length weights; rebuilding it')
+            cached = None
+    if cached is not None:
         if not cached.attrs.get('feature_cols'):
             # DataFrame.attrs does not survive every pandas pickle round-trip.
             with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
@@ -291,14 +324,7 @@ def rebuild_training_frame() -> pd.DataFrame:
     train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
     train_df['delta_label'] = (train_df['busyness_pct']
                                - train_df['baseline_busyness']).astype(float)
-    train_df = train_df[serving_population_mask(train_df['baseline_busyness'])]
-    train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
-    is_forecast_label = ((train_df['is_realtime'] == 1)
-                         & (train_df['label_provenance'] == 'forecast'))
-    train_df['sample_weight'] = np.where(
-        train_df['is_realtime'] != 1, 0.05,
-        np.where(is_forecast_label, 0.3, 1.0),
-    )
+    train_df = filter_and_weight_like_prepare_features(train_df)
 
     feature_cols = pf.get_feature_columns(train_df)
     train_df[feature_cols] = train_df[feature_cols].fillna(0)
@@ -307,7 +333,7 @@ def rebuild_training_frame() -> pd.DataFrame:
     keep = feature_cols + ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                            'label_provenance', 'venue_category', 'sample_weight',
                            'venue_id', 'observed_date', 'day_of_week', 'price_level',
-                           'rating', 'is_realtime']
+                           'rating', 'is_realtime', 'live_run_length']
     keep = list(dict.fromkeys(keep))
     train_df = train_df[keep].reset_index(drop=True)
     train_df.attrs['feature_cols'] = feature_cols

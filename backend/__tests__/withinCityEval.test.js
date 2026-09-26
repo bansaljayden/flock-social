@@ -148,3 +148,34 @@ test('within_city_eval proves its splits are disjoint before scoring them', () =
     'the paired familiarity test is the only unconfounded evidence in the file '
     + 'about whether buying more observations per venue helps.');
 });
+
+// THE REBUILD WEIGHS ROWS AS prepare_features DOES. verify_rebuild refuses to
+// measure unless the rebuilt sample_weight equals features_train.pkl's, and the
+// rebuild once wrote a fixed ladder of its own (live 1.0, forecast 0.3, weekly
+// 0.05) after prepare_features began dividing live weights by run length, so
+// every rebuild was refused. test_within_city_rebuild.py pins the rebuild's
+// filter-and-weight step to main()'s order on a small frame. Skipped, not
+// failed, where Python with pandas is absent (the mlTrainingContracts rule).
+const { spawnSync } = require('node:child_process');
+
+const PY = (() => {
+  for (const bin of ['python', 'python3']) {
+    const probe = spawnSync(bin, ['-c', 'import pandas, numpy, sklearn, xgboost'], { encoding: 'utf8' });
+    if (probe.status === 0) return bin;
+  }
+  return null;
+})();
+
+test('within_city_eval rebuilds sample weights with the run lengths and ladder prepare_features uses',
+  { skip: PY ? false : 'python with pandas, scikit-learn and xgboost not available' }, () => {
+    const env = { ...process.env };
+    delete env.FLOCK_RUN_LENGTH_WEIGHTS;
+    delete env.FLOCK_WEEKLY_ANCHOR_WEIGHT;
+    delete env.ML_ALLOW_UNKNOWN_PROVENANCE;
+    const r = spawnSync(PY, ['test_within_city_rebuild.py'], { cwd: TRAIN_DIR, encoding: 'utf8', env });
+    assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
+    assert.ok(summary, r.stdout);
+    assert.strictEqual(summary[1], summary[2]);
+    assert.ok(Number(summary[2]) >= 4, `only ${summary[2]} checks ran`);
+  });
