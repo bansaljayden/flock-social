@@ -222,6 +222,35 @@ test('the batch records WHICH model served each row, the same as the card does',
     'and the response says it too, the way the detail card always has');
 });
 
+test('a number a serving switch made is recorded as ml, under the version that names the switch', async () => {
+  // CROWD_SERVE_MODE and CROWD_NOWCAST_ENABLED keep predictionMethod 'ml' (the
+  // corpus path answered, not the rule engine) and qualify modelVersion with
+  // what changed the number. That qualifier is the only record of the mode, so
+  // it has to reach served_predictions.model_version on both write paths, and
+  // the method has to stay 'ml' so the admin card still counts the serve.
+  const real = mlPredictor.predictBusyness;
+  mlPredictor.predictBusyness = async (...a) => ({
+    ...(await real(...a)),
+    modelVersion: '2.6.0-starling+curve_offset+nowcast',
+  });
+  try {
+    const place = pid('SwitchDet');
+    const d = await call('GET', `/api/crowd/${place}?localHour=20&localDay=5`);
+    assert.equal(d.status, 200, d.text);
+    const b = await call('POST', '/api/crowd/batch', {
+      venues: [{ place_id: pid('SwitchBat'), name: 'Bar Switched', types: ['bar'] }],
+    });
+    assert.equal(b.status, 200, b.text);
+    assert.equal(servedWrites.length, 2);
+    for (const w of servedWrites) {
+      assert.deepEqual(w.params[3], ['ml'], 'the method stays ml, so the admin card counts it');
+      assert.deepEqual(w.params[4], ['2.6.0-starling+curve_offset+nowcast'], 'the mode is recorded with the version');
+    }
+  } finally {
+    mlPredictor.predictBusyness = real;
+  }
+});
+
 test('a duplicated place id in one batch is one serve, not many', async () => {
   // The batch route accepts the same place id many times in one body (its
   // header documents that as the clock oracle). Twenty copies of one venue in

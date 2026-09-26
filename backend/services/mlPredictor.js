@@ -323,6 +323,21 @@ function countPrediction(method) {
   predictionMethodCounts[key] = (predictionMethodCounts[key] || 0) + 1;
 }
 
+// HOW MANY OF THE `ml` ANSWERS A SWITCH MADE (CROWD_SERVE_MODE,
+// CROWD_NOWCAST_ENABLED). `ml` above still counts every venue-hour the corpus
+// path answered, whichever arithmetic it used, because what that tally exists
+// to show is the corpus path against the rule engine. These say how much of it
+// the model's own delta did NOT produce, so the panel that reads "answered by
+// the model" can say so when it was the curve instead.
+const switchedCounts = { curveOffset: 0, nowcastByLag: { 1: 0, 2: 0, 3: 0, 4: 0 } };
+
+function countSwitchedArithmetic(curveOffset, nowcast) {
+  if (curveOffset) switchedCounts.curveOffset += 1;
+  if (nowcast && switchedCounts.nowcastByLag[nowcast.bucket] !== undefined) {
+    switchedCounts.nowcastByLag[nowcast.bucket] += 1;
+  }
+}
+
 // Non-consuming read, for routes/admin.js. `modelShare` is the fraction of
 // predictions this process answered with the trained model, null while nothing
 // has been scored yet rather than 0, because "no data" and "the model never
@@ -340,6 +355,12 @@ function predictionCoverage() {
     byMethod,
     modelVersion: (metadata && metadata.model_version) || null,
     modelLoaded: useML,
+    // The switches as this process reads them now, and how many of the `ml`
+    // answers above each one produced since the counters started.
+    serveMode: serveMode(),
+    nowcastEnabled: nowcastEnabled(),
+    curveOffsetAnswers: switchedCounts.curveOffset,
+    nowcastAnswersByLag: { ...switchedCounts.nowcastByLag },
     inMemory: true,
   };
 }
@@ -460,16 +481,50 @@ const DEVIATION_CLAMP = 50;
  * exist to change, not take a prediction down with it.
  */
 async function getRecentDeviation(placeId) {
+  const entry = await recentDeviationEntry(placeId);
+  return entry ? entry.data : null;
+}
+
+// The statement the offset has always been read with. With the nowcast off it
+// is sent byte for byte as it was, so a switched-off server asks the database
+// exactly what it asked before the nowcast existed.
+const RECENT_DEVIATION_SQL = `SELECT offset_pct, n_readings, updated_at
+         FROM ml_venue_recent_deviation
+        WHERE google_place_id = $1`;
+// With the nowcast on, the same row and one more column: the venue's newest
+// live readings, which scripts/ml/buildRecentDeviation.js stores beside the
+// offset after every hourly sweep (migration 092). Still one indexed read on
+// the primary key, cached with the offset, so the nowcast adds no query.
+const RECENT_DEVIATION_WITH_READINGS_SQL = `SELECT offset_pct, n_readings, updated_at, recent_readings
+         FROM ml_venue_recent_deviation
+        WHERE google_place_id = $1`;
+
+// The cached row: `data` is the offset exactly as getRecentDeviation has
+// always returned it, and `readings` (present only when the entry was read
+// with the nowcast on) is the parsed recent-readings list or null.
+//
+// HOW STALE A READING CAN BE HERE. The builder runs once an hour, after the
+// sweep that starts at :07 and after the baseline refresh behind it, so a
+// reading taken in hour H is in the table by the end of hour H in the usual
+// case, and this cache adds at most DEVIATION_CACHE_TTL on top. Staleness
+// never reaches the number, though: the nowcast measures a reading's age from
+// its own venue-local slot to the slot being scored and weighs it by that lag,
+// so a reading that arrived late is weighed as the older reading it is, and a
+// builder that stops running ages every reading past NOWCAST_MAX_LAG_HOURS
+// within half a day.
+async function recentDeviationEntry(placeId) {
   if (!pool || !placeId) return null;
 
+  const withReadings = nowcastEnabled();
   const cached = deviationCache.get(placeId);
-  if (cached && Date.now() - cached.ts < DEVIATION_CACHE_TTL) return cached.data;
+  // An entry read with the nowcast off carries no readings, so with it on
+  // that entry is a miss rather than an answer of "no readings".
+  if (cached && Date.now() - cached.ts < DEVIATION_CACHE_TTL
+    && (!withReadings || cached.readings !== undefined)) return cached;
 
   try {
     const { rows } = await pool.query(
-      `SELECT offset_pct, n_readings, updated_at
-         FROM ml_venue_recent_deviation
-        WHERE google_place_id = $1`,
+      withReadings ? RECENT_DEVIATION_WITH_READINGS_SQL : RECENT_DEVIATION_SQL,
       [placeId]
     );
     const row = rows[0];
@@ -486,15 +541,63 @@ async function getRecentDeviation(placeId) {
         readings: Number(row.n_readings),
       };
     }
-    boundedSet(deviationCache, placeId, { data, ts: Date.now() });
-    return data;
+    const entry = { data, ts: Date.now() };
+    // The readings do not share the offset's floor or its age limit: one
+    // reading an hour ago is the nowcast's best evidence and an anecdote to
+    // the median, and the nowcast has its own limit, on the reading's age.
+    if (withReadings) entry.readings = parseRecentReadings(row ? row.recent_readings : null);
+    boundedSet(deviationCache, placeId, entry);
+    return entry;
   } catch (err) {
     // A missing table is the expected state before migration 070 has run
     // anywhere, and it must not be an error condition.
     console.error('[MLPredictor] Recent-deviation lookup failed:', err.message);
-    boundedSet(deviationCache, placeId, { data: null, ts: Date.now() });
-    return null;
+    const entry = { data: null, ts: Date.now() };
+    if (withReadings) entry.readings = null;
+    boundedSet(deviationCache, placeId, entry);
+    return entry;
   }
+}
+
+// The stored list, read defensively: pg hands JSONB back parsed, a string is
+// parsed here, and an entry that is not a whole reading (a value outside 0-100,
+// a date that is not a date, an hour outside the clock) is dropped rather than
+// guessed at. Newest first, as the builder writes it; sorted again anyway, so
+// the pick below never depends on the writer's ordering.
+function parseRecentReadings(raw) {
+  let list = raw;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return null; }
+  }
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const e of list) {
+    if (!e || typeof e !== 'object') continue;
+    const value = Number(e.v);
+    const hour = Number(e.h);
+    const day = slotDayNumber(e.d);
+    if (!Number.isFinite(value) || value < 0 || value > 100) continue;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || day === null) continue;
+    out.push({
+      value,
+      date: e.d,
+      hour,
+      slot: day * 24 + hour,
+      observedAt: typeof e.at === 'string' ? e.at : null,
+    });
+  }
+  out.sort((a, b) => b.slot - a.slot);
+  return out;
+}
+
+// Days since the epoch for a 'YYYY-MM-DD' venue-local date, or null. The
+// nowcast counts lag in venue-local wall-clock hours, on the same slot numbers
+// scripts/ml/train/bandEval.js replays them on.
+function slotDayNumber(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
 }
 
 // User feedback cache: key = venue_place_id → { data, ts }
@@ -3454,6 +3557,333 @@ function applyScoreQuantileMap(score) {
   return Math.max(0, Math.min(100, Math.round(mapped)));
 }
 
+// ---------------------------------------------------------------------------
+// TWO SWITCHES, BOTH OFF: CROWD_SERVE_MODE AND CROWD_NOWCAST_ENABLED.
+//
+// Both change the arithmetic that turns a venue's curve into the number on
+// the card, for exactly the venue-hours the model path serves, and for no
+// others: every rule-engine exit above them (no model loaded, no baseline, no
+// weather norm, an exception) answers exactly as it does with both off. With
+// both off the served number, its confidence and every field of the response
+// are what they were before either switch existed; __tests__/mlServeModes
+// .test.js pins that value for value against numbers recorded from the code
+// before this block was written.
+//
+// Measured, every figure below, by scripts/ml/train/bandEval.js replaying this
+// file over the live readings of the local 2026-09-08 export (Lehigh and
+// Miami, 7,920 model-served readings over 2026-09-01..08): each weight fitted
+// on 2026-09-01..05 and scored on 2026-09-06..08, the 4,183 readings the
+// retrain plan's prequential window already uses.
+//
+// CROWD_SERVE_MODE=curve_offset. The venue's own weekly curve at the hour (the
+// value blendBaselineRows serves) plus CURVE_OFFSET_WEIGHT times its trailing
+// live offset, with no model delta and no quantile map. Any other value,
+// unset included, is 'model', today's arithmetic, and a value this file does
+// not know is logged once and served as 'model' rather than guessed at.
+//
+// CROWD_NOWCAST_ENABLED=true. On top of either mode: the venue's most recent
+// live reading from an EARLIER venue-local hour than the one being scored is
+// blended into the number with a weight that falls with the reading's age,
+// NOWCAST_WEIGHTS[base][lag bucket]. The target hour's own reading is never
+// used, however it got into the table: the admin card pairs a served number
+// with the live reading of that hour, and a number made of that reading would
+// be scored against itself.
+//
+// WHAT THE NOWCAST CARRIES. The reading's deviation from the venue's curve AT
+// THE HOUR BEING SCORED, so at weight a the number is
+//     base + a * (reading - base)
+// which in curve_offset mode is curve + a * (reading - curve) + (1 - a) *
+// w * offset: the deviation carried forward, blended with the trailing
+// offset. It is measured against the target hour's curve and not the
+// reading's own hour's because BestTime's live value is sticky: 81% of
+// consecutive-hour readings of a venue are identical, so a reading predicts
+// the next one as a LEVEL. Carrying its deviation from its own hour's curve
+// instead moves it by the curve's hour-to-hour change, which the next reading
+// mostly does not make: on the 3,165 readings with a reading one hour earlier,
+// within 10 points 85.9% as a level against 67.3% re-anchored to the curve,
+// within one band 92.0% against 91.5%.
+// ---------------------------------------------------------------------------
+const SERVE_MODES = Object.freeze(['model', 'curve_offset']);
+let unknownServeModeLogged = false;
+
+function serveMode() {
+  const raw = String(process.env.CROWD_SERVE_MODE || '').trim().toLowerCase();
+  if (raw === '' || raw === 'model') return 'model';
+  if (raw === 'curve_offset') return 'curve_offset';
+  if (!unknownServeModeLogged) {
+    unknownServeModeLogged = true;
+    console.warn(`[MLPredictor] CROWD_SERVE_MODE=${JSON.stringify(process.env.CROWD_SERVE_MODE)} is not one of ${SERVE_MODES.join(', ')}; serving 'model'.`);
+  }
+  return 'model';
+}
+
+// 'true' and nothing else, in any case. A switch that is off by default must
+// not be turned on by a typo, so '1', 'yes' and 'on' are all off.
+function nowcastEnabled() {
+  return String(process.env.CROWD_NOWCAST_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
+// The trailing offset's weight in curve_offset mode. Fitted by mean absolute
+// error over 0..1 in steps of 0.05; a weight above one extrapolates a median,
+// which only wins within-10 by pushing numbers onto the rails the way the
+// quantile map did. Against the full offset (1.0) on the scored days: 1.0 is
+// 1.3 points better within 10 and 0.4 worse within one band on this mode
+// alone, and 0.6 better within 10 and 0.3 worse within one band with the
+// nowcast on (date-block intervals, three blocks). MAE picks 0.85; the fit on
+// all eight dates picks 0.7.
+const CURVE_OFFSET_WEIGHT = 0.85;
+
+// Readings older than this carry nothing the fit could find: past three hours
+// every weight it chose was 0.15 or less. Half a day also keeps one night's
+// reading out of the next day's afternoon.
+const NOWCAST_MAX_LAG_HOURS = 12;
+
+// How many of a venue's newest readings the builder stores. Two would do for
+// the current hour (the target hour's own reading, which is skipped, and the
+// one before it); three leaves room for an hour the sweep missed.
+const NOWCAST_READINGS_KEPT = 3;
+
+// The weight on a reading 1, 2, 3 and 4-to-NOWCAST_MAX_LAG_HOURS hours old,
+// per base arithmetic: the curve_offset number, the model's number with the
+// quantile map applied, and without it. Fitted by mean absolute error over
+// 0..1 in steps of 0.05, bucket by bucket.
+//
+// The two model bases were fitted on NOWCAST_MODEL_FITTED_ON's output, and a
+// weight fitted on one model's errors is not a weight for another's, so for
+// any other artifact the nowcast stands aside in model mode (the number is the
+// model's, unblended) and still serves in curve_offset mode, whose arithmetic
+// no artifact enters. Same refusal the quantile map makes (QMAP_FITTED_ON).
+const NOWCAST_MODEL_FITTED_ON = '2.6.0-starling';
+const NOWCAST_WEIGHTS = Object.freeze({
+  curve_offset: Object.freeze({ 1: 1.0, 2: 0.85, 3: 0.25, 4: 0.0 }),
+  model_qmap: Object.freeze({ 1: 1.0, 2: 1.0, 3: 0.55, 4: 0.15 }),
+  model: Object.freeze({ 1: 1.0, 2: 0.9, 3: 0.3, 4: 0.0 }),
+});
+
+// WHAT THE CONFIDENCE FIGURE IS WHEN A SWITCH MADE THE NUMBER. Within-15 of
+// the served number, measured on the scored days for exactly the arithmetic
+// that produced it, and published with its own population string the way
+// QMAP_MEASURED is. A figure measured on different arithmetic would describe
+// a number nobody is shown.
+const SERVE_MEASURED_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export); weights fitted on 2026-09-01..05';
+const SERVE_MEASURED = Object.freeze({
+  curveOffset: Object.freeze({ within15: 41.7, rows: 4183 }),
+  // Per base and lag bucket, on the scored readings the nowcast moved. A
+  // bucket whose weight is zero never moves a number, so it carries no figure.
+  nowcast: Object.freeze({
+    curve_offset: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 62.8, rows: 368 }, 3: { within15: 43.5, rows: 184 }, 4: null }),
+    model_qmap: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 63.3, rows: 368 }, 3: { within15: 37.0, rows: 184 }, 4: { within15: 41.3, rows: 712 } }),
+    model: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 62.2, rows: 368 }, 3: { within15: 39.1, rows: 184 }, 4: null }),
+  }),
+});
+
+// The venue-local slot a timestamp names: days since the epoch of its local
+// date, times 24, plus its local hour. The same local getters buildFeatureMap
+// reads the hour with, so the nowcast and the model always agree on which
+// hour is being scored.
+function venueSlotOf(ts) {
+  const d = ts instanceof Date ? ts : new Date(ts);
+  const ms = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Number.isFinite(ms) ? Math.round(ms / 86400000) * 24 + d.getHours() : null;
+}
+
+function nowcastBucket(lagHours) {
+  if (!Number.isInteger(lagHours) || lagHours < 1 || lagHours > NOWCAST_MAX_LAG_HOURS) return null;
+  return lagHours >= 4 ? 4 : lagHours;
+}
+
+// The newest stored reading from a slot strictly before the one being scored,
+// or null. Strictly: the target hour's own reading is in the list whenever the
+// venue was read that hour and the builder has run since, and it is skipped
+// here rather than trusted to be absent. Only the newest earlier reading is
+// eligible; an older one is never preferred to it.
+function pickNowcastReading(readings, targetSlot) {
+  if (!Array.isArray(readings) || !Number.isInteger(targetSlot)) return null;
+  for (const r of readings) {
+    if (!r || !Number.isInteger(r.slot) || r.slot >= targetSlot) continue;
+    const lagHours = targetSlot - r.slot;
+    const bucket = nowcastBucket(lagHours);
+    return bucket === null ? null : { ...r, lagHours, bucket };
+  }
+  return null;
+}
+
+// Which weight table a number's base arithmetic takes, or null when none fits
+// it (a model other than the one the model tables were fitted on).
+function nowcastBaseKey(curveOffset, qmapApplied, modelVersion) {
+  if (curveOffset) return 'curve_offset';
+  if ((modelVersion || '') !== NOWCAST_MODEL_FITTED_ON) return null;
+  return qmapApplied ? 'model_qmap' : 'model';
+}
+
+// The curve_offset number before any nowcast, from the served baseline and
+// getRecentDeviation's answer: rounded and clamped exactly as the offset step
+// in the model path rounds and clamps.
+function curveOffsetScore(baseline, dev) {
+  const level = Math.max(0, Math.min(100, Math.round(Number(baseline) || 0)));
+  if (!dev || !Number.isFinite(dev.offset)) return level;
+  return Math.max(0, Math.min(100, Math.round(level + CURVE_OFFSET_WEIGHT * dev.offset)));
+}
+
+// The nowcast step: `score` is the base number, `pick` a pickNowcastReading
+// answer. Returns null when it does not apply (no reading, no table for this
+// base, or a weight of zero), else the blended number and what moved it.
+function applyNowcast(score, pick, baseKey) {
+  if (!pick || !baseKey || !NOWCAST_WEIGHTS[baseKey]) return null;
+  const weight = NOWCAST_WEIGHTS[baseKey][pick.bucket];
+  if (!(weight > 0)) return null;
+  const blended = Math.max(0, Math.min(100, Math.round(score + weight * (pick.value - score))));
+  return {
+    score: blended,
+    base: baseKey,
+    lagHours: pick.lagHours,
+    bucket: pick.bucket,
+    weight,
+    reading: pick.value,
+    readingSlot: { date: pick.date, hour: pick.hour },
+    observedAt: pick.observedAt,
+    moved: blended - score,
+  };
+}
+
+// The measured figure for a number a switch produced, or null when neither
+// switch changed this number's arithmetic (the model path as it always was,
+// whose figure is QMAP_MEASURED or the artifact's own, decided below).
+function switchedMeasurement(curveOffset, nowcast) {
+  if (nowcast) {
+    const m = SERVE_MEASURED.nowcast[nowcast.base] && SERVE_MEASURED.nowcast[nowcast.base][nowcast.bucket];
+    if (!m) return null;
+    return {
+      percent: m.within15,
+      metric: `within_15_nowcast_${nowcast.base}_lag${nowcast.bucket === 4 ? '4plus' : nowcast.bucket}`,
+      population: SERVE_MEASURED_POPULATION,
+      rows: m.rows,
+    };
+  }
+  if (curveOffset) {
+    return {
+      percent: SERVE_MEASURED.curveOffset.within15,
+      metric: 'within_15_curve_offset',
+      population: SERVE_MEASURED_POPULATION,
+      rows: SERVE_MEASURED.curveOffset.rows,
+    };
+  }
+  return null;
+}
+
+// The version string a served number carries: the artifact's own, plus one
+// qualifier per switch that changed THIS number. A nowcast that was on but had
+// no reading to use changed nothing and adds nothing.
+function servedModelVersion(version, curveOffset, nowcast) {
+  return `${version}${curveOffset ? '+curve_offset' : ''}${nowcast ? '+nowcast' : ''}`;
+}
+
+// THE CONFIDENCE FIGURE FOR A NUMBER THE MODEL PATH SERVED, and what it is
+// allowed to claim. One function, called by predictBusyness and replayed by
+// scripts/ml/train/bandEval.js, so the figure the replay-parity test compares
+// is the figure a card publishes rather than a copy of the rule for it.
+//
+//   accuracy     readServedAccuracy(metadata); never 'malformed' here, the
+//                caller has already refused that
+//   qmapApplied  whether the score went through the quantile map
+//   hasWeather   whether the vector carried a live temperature reading
+//   curveOffset  whether CROWD_SERVE_MODE=curve_offset made the number
+//   nowcast      applyNowcast's account of this number, or null
+//   ladder       () => crowdEngine's input-completeness figure for the venue,
+//                read only for an artifact that cannot state an accuracy
+function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, ladder }) {
+  let confidence;
+  let confidenceMeasurement;
+  // WHEN A SWITCH MADE THE NUMBER, neither the artifact's figure nor the
+  // quantile map's describes it: both were measured on the model's own
+  // arithmetic. The figure is the one measured for the arithmetic that did
+  // run (SERVE_MEASURED), with its own population string. Null whenever the
+  // number is the model path as it always was, which leaves the two branches
+  // after this one exactly as they were.
+  const switched = switchedMeasurement(curveOffset, nowcast);
+  if (switched) {
+    // The weather adjustment below exists because the MODEL runs on
+    // climatology without a live reading. A number the model's output did
+    // not enter (curve_offset, or a reading carried at full weight) was not
+    // degraded by the missing reading, so it owes nothing for it.
+    const modelContributes = !curveOffset && !(nowcast && nowcast.weight >= 1);
+    const weatherPenalty = modelContributes && !hasWeather ? 15 : 0;
+    confidence = Math.max(0, Math.round(switched.percent) - weatherPenalty);
+    confidenceMeasurement = {
+      status: 'measured',
+      means: 'measured_accuracy',
+      metric: switched.metric,
+      population: switched.population,
+      populationRows: switched.rows,
+      measuredPercent: switched.percent,
+      weatherPenalty,
+    };
+  } else if (accuracy.status === 'measured') {
+    // WHEN THE QMAP IS ON, metadata's figure stops describing the published
+    // number. `accuracy` is the artifact's measured within-15 on the RAW
+    // reconstruction; the qmap publishes a different number, and quoting the
+    // old figure for it would be exactly the "publishing a measurement of
+    // something else" failure readServedAccuracy was written to end. So the
+    // map carries its own measurement and it is published with its own
+    // population string, which is a smaller, later, holdout-side one. On the
+    // rows where both were measured the direction is real and the same:
+    // within-15 30.12% unmapped -> 36.42% mapped.
+    const served = qmapApplied
+      ? {
+        percent: QMAP_MEASURED.within15,
+        metric: 'within_15_score_qmap',
+        population: QMAP_MEASURED.population,
+        rows: QMAP_MEASURED.rows,
+      }
+      : accuracy;
+    confidence = Math.round(served.percent);
+    // Without a live reading the temperature in the vector is climatology,
+    // not evidence, and the weather one-hot sits in 'unknown'. The rule
+    // engine adds 15 confidence for having weather; take the same 15 back off
+    // here so a degraded prediction cannot report an undegraded number. It is
+    // an adjustment, not a measurement, so it is published as one rather than
+    // folded silently into the percentage.
+    const weatherPenalty = hasWeather ? 0 : 15;
+    confidence = Math.max(0, confidence - weatherPenalty);
+    confidenceMeasurement = {
+      status: 'measured',
+      means: 'measured_accuracy',
+      metric: served.metric,
+      population: served.population,
+      populationRows: served.rows,
+      measuredPercent: served.percent,
+      weatherPenalty,
+    };
+  } else {
+    // UNMEASURED (every artifact exported before 2026-08-15). The model still
+    // runs and its per-venue baseline still answers; what it cannot do is
+    // state a hit rate. The blend is not a substitute — it is the specific
+    // wrong number this whole change exists to stop publishing — and 0 would
+    // be a lie in the other direction, so `confidence` carries the only other
+    // defined quantity in this system: crowdEngine's input-completeness
+    // ladder, the SAME number and the SAME meaning the rule-engine path
+    // publishes for this venue, which routes/crowd.js already labels
+    // 'input_completeness'. It is not an accuracy and `means` says so.
+    //
+    // No weather penalty is applied on this branch and none is owed: the
+    // ladder already adds 15 for a live reading (crowdEngine
+    // calculateCrowdScore), so subtracting it again would double-count the
+    // same outage.
+    const ladderFigure = Number(ladder());
+    confidence = Number.isFinite(ladderFigure) ? Math.max(0, Math.min(100, Math.round(ladderFigure))) : 0;
+    confidenceMeasurement = {
+      status: 'unmeasured',
+      means: 'input_completeness',
+      metric: 'venue_metadata_completeness',
+      population: null,
+      populationRows: null,
+      measuredPercent: null,
+      weatherPenalty: 0,
+    };
+  }
+  return { confidence, confidenceMeasurement };
+}
+
 // WHY AN UNCHECKED STREET DOES NOT MOVE THE CONFIDENCE FIGURE.
 //
 // The obvious symmetry with weatherPenalty is wrong, and the reason is worth
@@ -3631,9 +4061,22 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       return result;
     }
 
+    // CROWD_SERVE_MODE (off unless set; see the block above serveMode). Here,
+    // after every rule-engine exit has had its say, so curve_offset serves
+    // exactly the venue-hours the model path would have and no others. It
+    // needs a positive baseline to be a curve at all, which every delta
+    // artifact already guarantees at this line; under an artifact that serves
+    // without one, the model answers as it always has.
+    const curveOffsetMode = serveMode() === 'curve_offset' && baseline > 0;
+
     const ort = require('onnxruntime-node');
     let score;
-    if (twoHead) {
+    if (curveOffsetMode) {
+      // The venue's own curve at this hour, the value blendBaselineRows
+      // served. No model delta and no quantile map; the trailing offset joins
+      // it below at CURVE_OFFSET_WEIGHT.
+      score = Math.max(0, Math.min(100, Math.round(baseline)));
+    } else if (twoHead) {
       // Two graphs, profile then deviation; see scoreTwoHead. A non-finite
       // output from either head throws into the catch below like the single
       // head's guard does.
@@ -3671,7 +4114,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // one shown. The version check is not defensive padding: the table is one
     // artifact's quantile grid and would be meaningless applied to another's.
     let qmapApplied = false;
-    if (qmapEnabled() && (metadata.model_version || '') === QMAP_FITTED_ON) {
+    if (!curveOffsetMode && qmapEnabled() && (metadata.model_version || '') === QMAP_FITTED_ON) {
       score = applyScoreQuantileMap(score);
       qmapApplied = true;
     }
@@ -3686,20 +4129,43 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // Everything about it is past-only. It is a median over readings that
     // already happened, taken from a table this request does not write, so
     // there is no path by which tonight informs tonight's own prediction.
+    //
+    // In curve_offset mode the same offset, at the weight fitted for a curve
+    // rather than for the model's number (CURVE_OFFSET_WEIGHT).
     let deviationApplied = null;
     const devPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
-    if (devPlaceId) {
-      const dev = await getRecentDeviation(devPlaceId);
+    const offsetWeight = curveOffsetMode ? CURVE_OFFSET_WEIGHT : DEVIATION_WEIGHT;
+    // One read serves the offset and the nowcast's readings, from one cache.
+    const devEntry = devPlaceId ? await recentDeviationEntry(devPlaceId) : null;
+    if (devEntry) {
+      const dev = devEntry.data;
       if (dev) {
         const before = score;
-        score = Math.max(0, Math.min(100, Math.round(score + DEVIATION_WEIGHT * dev.offset)));
+        score = Math.max(0, Math.min(100, Math.round(score + offsetWeight * dev.offset)));
         deviationApplied = {
           offset: dev.offset,
-          weight: DEVIATION_WEIGHT,
+          weight: offsetWeight,
           readings: dev.readings,
           moved: score - before,
           clamped: dev.clamped,
         };
+      }
+    }
+
+    // CROWD_NOWCAST_ENABLED (off unless 'true'; see the block above
+    // serveMode). Last, on whichever number the mode produced, and before the
+    // word, for the reason the quantile map and the offset are: the band must
+    // describe the number on the card. It reads the readings the offset's row
+    // already brought back, so it costs no query, and it never reads the
+    // target hour's own reading (pickNowcastReading).
+    let nowcastApplied = null;
+    if (devEntry && nowcastEnabled()) {
+      const pick = pickNowcastReading(devEntry.readings, venueSlotOf(ts));
+      const applied = applyNowcast(score, pick, nowcastBaseKey(curveOffsetMode, qmapApplied, metadata.model_version));
+      if (applied) {
+        const { score: blended, ...detail } = applied;
+        score = blended;
+        nowcastApplied = detail;
       }
     }
 
@@ -3718,77 +4184,27 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       throw new Error(`refusing to publish a confidence figure: ${accuracy.reason}`);
     }
 
-    let confidence;
-    let confidenceMeasurement;
-    if (accuracy.status === 'measured') {
-      // WHEN THE QMAP IS ON, metadata's figure stops describing the published
-      // number. `accuracy` is the artifact's measured within-15 on the RAW
-      // reconstruction; the qmap publishes a different number, and quoting the
-      // old figure for it would be exactly the "publishing a measurement of
-      // something else" failure readServedAccuracy was written to end. So the
-      // map carries its own measurement and it is published with its own
-      // population string, which is a smaller, later, holdout-side one. On the
-      // rows where both were measured the direction is real and the same:
-      // within-15 30.12% unmapped -> 36.42% mapped.
-      const served = qmapApplied
-        ? {
-          percent: QMAP_MEASURED.within15,
-          metric: 'within_15_score_qmap',
-          population: QMAP_MEASURED.population,
-          rows: QMAP_MEASURED.rows,
-        }
-        : accuracy;
-      confidence = Math.round(served.percent);
-      // Without a live reading the temperature in the vector is climatology,
-      // not evidence, and the weather one-hot sits in 'unknown'. The rule
-      // engine adds 15 confidence for having weather; take the same 15 back off
-      // here so a degraded prediction cannot report an undegraded number. It is
-      // an adjustment, not a measurement, so it is published as one rather than
-      // folded silently into the percentage.
-      const weatherPenalty = hasWeather ? 0 : 15;
-      confidence = Math.max(0, confidence - weatherPenalty);
-      confidenceMeasurement = {
-        status: 'measured',
-        means: 'measured_accuracy',
-        metric: served.metric,
-        population: served.population,
-        populationRows: served.rows,
-        measuredPercent: served.percent,
-        weatherPenalty,
-      };
-    } else {
-      // UNMEASURED (every artifact exported before 2026-08-15). The model still
-      // runs and its per-venue baseline still answers; what it cannot do is
-      // state a hit rate. The blend is not a substitute — it is the specific
-      // wrong number this whole change exists to stop publishing — and 0 would
-      // be a lie in the other direction, so `confidence` carries the only other
-      // defined quantity in this system: crowdEngine's input-completeness
-      // ladder, the SAME number and the SAME meaning the rule-engine path
-      // publishes for this venue, which routes/crowd.js already labels
-      // 'input_completeness'. It is not an accuracy and `means` says so.
-      //
-      // No weather penalty is applied on this branch and none is owed: the
-      // ladder already adds 15 for a live reading (crowdEngine
-      // calculateCrowdScore), so subtracting it again would double-count the
-      // same outage.
-      const ladder = Number(crowdEngine.calculateCrowdScore(venue, weather, timestamp).confidence);
-      confidence = Number.isFinite(ladder) ? Math.max(0, Math.min(100, Math.round(ladder))) : 0;
-      confidenceMeasurement = {
-        status: 'unmeasured',
-        means: 'input_completeness',
-        metric: 'venue_metadata_completeness',
-        population: null,
-        populationRows: null,
-        measuredPercent: null,
-        weatherPenalty: 0,
-      };
-    }
+    const { confidence, confidenceMeasurement } = servedConfidence({
+      accuracy,
+      qmapApplied,
+      hasWeather,
+      curveOffset: curveOffsetMode,
+      nowcast: nowcastApplied,
+      ladder: () => crowdEngine.calculateCrowdScore(venue, weather, timestamp).confidence,
+    });
 
     // `ticketmaster_events` is a claim that the listing was consulted, so it
     // needs `observed`, not just `hasEvent`. A quiet night that Ticketmaster
     // actually answered for IS a source and now says so; an outage never is.
-    const dataSources = ['ml_model', hasWeather ? 'weather' : null, 'venue_data'];
-    if (eventsSeen) dataSources.push('ticketmaster_events');
+    //
+    // In curve_offset mode the number reads neither the model, the weather nor
+    // the listing (all three were still looked up, for the fields below), so
+    // it names what it did read: the venue's curve and its live readings.
+    const dataSources = curveOffsetMode
+      ? ['venue_data', deviationApplied || nowcastApplied ? 'recent_live_readings' : null]
+      : ['ml_model', hasWeather ? 'weather' : null, 'venue_data'];
+    if (!curveOffsetMode && eventsSeen) dataSources.push('ticketmaster_events');
+    if (!curveOffsetMode && nowcastApplied) dataSources.push('recent_live_readings');
 
     const response = {
       score,
@@ -3797,7 +4213,15 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       factors: {},
       dataSourcesUsed: dataSources.filter(Boolean),
       predictionMethod: 'ml',
-      modelVersion: metadata.model_version || '2.1.0',
+      // WHICH ARITHMETIC MADE THE NUMBER, where every consumer already looks
+      // for "what produced this": the artifact's version, qualified when a
+      // switch changed the number ('2.6.0-starling+curve_offset',
+      // '...+nowcast'). routes/crowd.js writes it to served_predictions
+      // .model_version, so the admin card's accuracy can be read per mode from
+      // the table it already scores, and its footnote already names a window
+      // that mixes them. Unqualified, as before, whenever neither switch moved
+      // this number, so a switched-off server records exactly what it did.
+      modelVersion: servedModelVersion(metadata.model_version || '2.1.0', curveOffsetMode, nowcastApplied),
       // WHAT THE NUMBER ABOVE IS, said in the payload rather than left to be
       // inferred. `confidence` is one integer and cannot carry its own
       // provenance: which metric, over which population, how many rows, and
@@ -3872,6 +4296,15 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       recentDeviation: deviationApplied,
     };
 
+    // The two switches' own account of this number, present only while either
+    // is on, so a switched-off response carries exactly the keys it always
+    // did. Internal, like recentDeviation: routes name the fields they
+    // publish, and a reading's value here is a venue's recent level.
+    if (serveMode() !== 'model' || nowcastEnabled()) {
+      response.serveMode = curveOffsetMode ? 'curve_offset' : 'model';
+      response.nowcast = nowcastApplied;
+    }
+
     // Add event alert when large event nearby
     if (eventsSeen && eventData.hasEvent && eventData.nearestAttendance > 5000) {
       response.eventAlert = {
@@ -3886,6 +4319,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // still divert to the rule engine and the tally has to record the exit that
     // was actually taken.
     countPrediction(response.predictionMethod);
+    countSwitchedArithmetic(curveOffsetMode, nowcastApplied);
     return response;
   } catch (err) {
     console.error('[MLPredictor] Prediction error, falling back:', err.message);
@@ -4347,5 +4781,38 @@ module.exports = {
     DEVIATION_MIN_READINGS,
     DEVIATION_CLAMP,
     DEVIATION_MAX_AGE_MS,
+    // The two switches (CROWD_SERVE_MODE, CROWD_NOWCAST_ENABLED): how they are
+    // read, their fitted constants, and the arithmetic predictBusyness runs,
+    // exported so bandEval.js replays these functions rather than a copy of
+    // them, and so __tests__/mlServeModes.test.js can pin each piece.
+    serveMode,
+    nowcastEnabled,
+    SERVE_MODES,
+    CURVE_OFFSET_WEIGHT,
+    NOWCAST_MAX_LAG_HOURS,
+    NOWCAST_READINGS_KEPT,
+    NOWCAST_MODEL_FITTED_ON,
+    NOWCAST_WEIGHTS,
+    SERVE_MEASURED,
+    SERVE_MEASURED_POPULATION,
+    venueSlotOf,
+    slotDayNumber,
+    nowcastBucket,
+    pickNowcastReading,
+    parseRecentReadings,
+    nowcastBaseKey,
+    curveOffsetScore,
+    applyNowcast,
+    switchedMeasurement,
+    servedModelVersion,
+    servedConfidence,
+    getRecentDeviation,
+    recentDeviationEntry,
+    // Tests only: the offset/readings cache and the switched-answer counters.
+    __resetRecentDeviationCache: () => {
+      deviationCache.clear();
+      switchedCounts.curveOffset = 0;
+      for (const k of Object.keys(switchedCounts.nowcastByLag)) switchedCounts.nowcastByLag[k] = 0;
+    },
   },
 };
