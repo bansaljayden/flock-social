@@ -2510,6 +2510,159 @@ class PanelTapTargets(unittest.TestCase):
             ui.trace.append(v)
         ui.noise(66.0, True)
         ui.noise(0.0, False)
+        ui.noise(71.0, True, average=64.0)
+        ui.splash()
         self.assertFalse([c for c in pg.calls if c[0] == 'save'])
+class DecibelAnchor(unittest.TestCase):
+    """One phone reading turns the relative level into estimated decibels.
+
+    Everything here is arithmetic, so it is checked without a microphone. The
+    one property that matters most: the number, the word and the trace must be
+    read on the SAME scale. The first draft took the word from the raw level and
+    the number from the estimate, and the panel showed "Moderate" beside "37 dB".
+    """
+
+    def setUp(self):
+        self._saved = (main.NOISE_SPL_ANCHOR_COUNTS, main.NOISE_SPL_ANCHOR_DB)
+
+    def tearDown(self):
+        main.NOISE_SPL_ANCHOR_COUNTS, main.NOISE_SPL_ANCHOR_DB = self._saved
+
+    def anchor(self, counts, db):
+        main.NOISE_SPL_ANCHOR_COUNTS, main.NOISE_SPL_ANCHOR_DB = counts, db
+
+    def test_no_anchor_means_no_decibels(self):
+        self.anchor(0.0, 0.0)
+        self.assertIsNone(main.display_decibels(63.0))
+        value, caption, basis = main.noise_reading(63.0)
+        self.assertEqual(value, 'level 63')
+        self.assertIn('not yet calibrated', caption)
+        self.assertEqual(basis, 63.0)
+
+    def test_the_anchor_point_reads_back_exactly(self):
+        # Whatever level those counts produce must come back as the phone's
+        # reading. If this drifts, every calibrated unit is off by the drift.
+        counts = 20.0
+        level = main.compute_noise_db([counts, -counts] * 50)
+        self.anchor(counts, 62.0)
+        self.assertAlmostEqual(main.display_decibels(level), 62.0, places=3)
+
+    def test_ten_times_the_pressure_is_twenty_decibels(self):
+        # The physics the one-point calibration rests on.
+        self.anchor(20.0, 60.0)
+        quiet = main.compute_noise_db([20.0, -20.0] * 50)
+        loud = main.compute_noise_db([200.0, -200.0] * 50)
+        self.assertAlmostEqual(main.display_decibels(loud) - main.display_decibels(quiet),
+                               20.0, places=3)
+
+    def test_the_word_is_read_on_the_same_scale_as_the_number(self):
+        # 37 dB is quiet. The level that produces it must not be called
+        # Moderate just because the raw index happens to sit in that band.
+        self.anchor(150.0, 68.0)
+        value, _, basis = main.noise_reading(63.0)
+        self.assertTrue(value.endswith('dB'))
+        spl = int(value.split()[0])
+        self.assertEqual(main.noise_band(basis), main.noise_band(spl))
+        self.assertEqual(main.noise_band(basis)[0], 'Quiet')
+
+    def test_a_silent_reading_is_not_turned_into_decibels(self):
+        self.anchor(20.0, 60.0)
+        self.assertIsNone(main.display_decibels(0.0))
+
+    def test_no_approximately_sign_reaches_the_screen(self):
+        # The brand fonts are subsets and do not carry it; it draws as an
+        # empty box. Checked 2026-09-26, and the reason the caption says
+        # "estimated" in words.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        panel = source[source.index('class Panel:'):source.index('def display_loop():')]
+        self.assertNotIn('\u2248', panel)
+        self.assertNotIn(chr(0x2248), panel)
+
+
+class ConfigRewrite(unittest.TestCase):
+    """--anchor --write edits the file that also holds the device's API key.
+
+    So it is tested as a pure function first. Losing a line of that file is how
+    a unit silently stops pushing.
+    """
+
+    SAMPLE = ('# Flock sensor\n'
+              'FLOCK_API_KEY=secret-key-123\n'
+              '#NOISE_SPL_ANCHOR_DB=0\n'
+              'NOISE_SPL_ANCHOR_COUNTS=1.0\n'
+              'THERMAL_BIN=4\n')
+
+    def test_an_existing_key_is_replaced_in_place(self):
+        out = main.set_config_keys(self.SAMPLE, {'NOISE_SPL_ANCHOR_COUNTS': '17.500'})
+        self.assertIn('NOISE_SPL_ANCHOR_COUNTS=17.500', out)
+        self.assertNotIn('NOISE_SPL_ANCHOR_COUNTS=1.0', out)
+        self.assertEqual(out.count('NOISE_SPL_ANCHOR_COUNTS='), 1)
+
+    def test_a_new_key_is_appended(self):
+        out = main.set_config_keys(self.SAMPLE, {'NOISE_SPL_ANCHOR_DB': '62'})
+        self.assertTrue(out.rstrip().endswith('NOISE_SPL_ANCHOR_DB=62'))
+
+    def test_a_commented_key_keeps_its_comment(self):
+        # The file documents itself in comments. Rewriting one would erase the
+        # explanation of what the setting does.
+        out = main.set_config_keys(self.SAMPLE, {'NOISE_SPL_ANCHOR_DB': '62'})
+        self.assertIn('#NOISE_SPL_ANCHOR_DB=0', out)
+
+    def test_the_api_key_and_everything_else_survive(self):
+        out = main.set_config_keys(self.SAMPLE, {'NOISE_SPL_ANCHOR_COUNTS': '17.5',
+                                                  'NOISE_SPL_ANCHOR_DB': '62'})
+        for line in ('FLOCK_API_KEY=secret-key-123', 'THERMAL_BIN=4', '# Flock sensor'):
+            self.assertIn(line, out)
+
+    def test_an_empty_file_gets_just_the_new_keys(self):
+        out = main.set_config_keys('', {'NOISE_SPL_ANCHOR_DB': '62'})
+        self.assertEqual(out.strip(), 'NOISE_SPL_ANCHOR_DB=62')
+
+    def test_the_anchor_refuses_a_reading_no_room_produces(self):
+        # Checked before any hardware is touched, so this runs anywhere.
+        self.assertEqual(main.anchor(5.0), 1)
+        self.assertEqual(main.anchor(200.0), 1)
+
+
+class DesktopDetection(unittest.TestCase):
+    """Drawing on a Pi that shows the desktop, with nothing typed by hand."""
+
+    def test_a_running_desktop_is_found_from_its_socket(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, 'wayland-0'), 'w').close()
+            open(os.path.join(d, 'wayland-0.lock'), 'w').close()
+            env = {'XDG_RUNTIME_DIR': d}
+            self.assertEqual(main.wayland_socket(env), 'wayland-0')
+            self.assertEqual(main.video_driver_candidates(env=env, has_dri=True)[0], 'wayland')
+
+    def test_no_desktop_goes_to_the_hardware(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            env = {'XDG_RUNTIME_DIR': d}
+            self.assertIsNone(main.wayland_socket(env))
+            self.assertEqual(main.video_driver_candidates(env=env, has_dri=True)[0], 'kmsdrm')
+
+    def test_a_missing_runtime_directory_is_not_an_error(self):
+        self.assertIsNone(main.wayland_socket({'XDG_RUNTIME_DIR': '/no/such/dir/at/all'}))
+
+    def test_the_service_can_reach_the_touchscreen(self):
+        # Without input the panel draws and ignores every tap, which on a pitch
+        # is indistinguishable from the unit being frozen.
+        unit = Path(__file__).resolve().parent.joinpath('flock-sensor.service').read_text(encoding='utf-8')
+        groups = [l for l in unit.splitlines() if l.startswith('SupplementaryGroups=')]
+        self.assertEqual(len(groups), 1)
+        for g in ('video', 'input', 'render'):
+            self.assertIn(g, groups[0].split('=', 1)[1].split())
+
+    def test_the_installer_ships_the_panel_assets(self):
+        setup = Path(__file__).resolve().parent.joinpath('setup.sh').read_text(encoding='utf-8')
+        self.assertIn('flux-assets', setup)
+
+    def test_every_asset_the_panel_asks_for_is_in_the_repo(self):
+        here = Path(__file__).resolve().parent / 'flux-assets'
+        for name in (main.BRAND_DISPLAY, main.BRAND_WORDMARK, main.BRAND_LABEL,
+                     main.BRAND_BODY, main.BRAND_MARK_BADGE, main.BRAND_MARK_BIRDS):
+            self.assertTrue((here / name).exists(), f'{name} is missing from flux-assets')
 if __name__ == '__main__':
     unittest.main()
