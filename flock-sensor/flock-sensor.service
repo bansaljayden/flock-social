@@ -24,14 +24,16 @@ Type=simple
 User=pi
 Group=pi
 # Hardware access: video (the USB thermal camera's V4L2 node AND the demo
-# unit's display), SPI (mic ADC), GPIO (break-beam). The thermal camera moved
-# from I2C to USB, so i2c is no longer in this list.
+# unit's display), SPI (mic ADC), GPIO (break-beam), and i2c for the doorway
+# counter, a VL53L8CX on /dev/i2c-1. i2c left this list once, when the thermal
+# camera moved from I2C to USB, and came back with the counter: without it the
+# counter is found by `--selftest`, run as root, and never by the service.
 #
 # input and render are for the demo unit's panel. Drawing straight to the
 # display needs render, and without input the touchscreen's events never reach
 # the process: the screen would draw and ignore every tap, which on a pitch is
 # indistinguishable from the thing being frozen.
-SupplementaryGroups=spi gpio video input render
+SupplementaryGroups=spi gpio video input render i2c
 
 WorkingDirectory=/opt/flock-sensor
 ExecStart=/usr/bin/python3 /opt/flock-sensor/main.py
@@ -54,7 +56,7 @@ RestartSec=10
 # Hardening, and the distinction this comment used to blur.
 #
 # Still deliberately NOT ProtectSystem=strict or DevicePolicy=closed: this
-# process needs /dev/video0, /dev/spidev0.0, /dev/gpiomem and possibly /dev/fb0,
+# process needs /dev/video0, /dev/spidev0.0, /dev/i2c-1, /dev/gpiomem and possibly /dev/fb0,
 # and a sensor that is beautifully sandboxed but cannot read its sensors is
 # worse than one that can. `strict` would also make /var read-only, and the
 # buffer and the log both live there.
