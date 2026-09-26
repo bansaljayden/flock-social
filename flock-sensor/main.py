@@ -132,12 +132,35 @@ DEFAULTS = {
     # reads 1. That is the bare-head-against-covered-torso failure predicted
     # in count_thermal_clusters, seen for real.
     'THERMAL_BIN': '4',
-    # 12 was derived from lens geometry at bin 2, where it meant 48 raw
-    # pixels. At bin 4 the same 12 means 192, so it now encodes a body-sized
-    # warm region rather than a head, and the bench above is what says that
-    # is the right thing for it to encode. See count_thermal_clusters and
-    # README.md, Calibration.
-    'THERMAL_MIN_CLUSTER': '12',
+    # 6 cells: a HEAD, not a body. At bin 4 that is 96 raw pixels.
+    #
+    # It was 12, which at bin 4 is 192 pixels and encodes a whole warm torso.
+    # On the demo unit that meant a person had to be close and mostly in frame
+    # before they counted at all: somebody half out of shot, a head over a
+    # table, or anybody past about four metres read as nobody. A room is full
+    # of partly visible people, so a threshold that only fires on a complete
+    # silhouette undercounts exactly when the room is busiest.
+    #
+    # The arithmetic for 6. The Lepton 3.5 spans 57 degrees across, so at
+    # three metres a bin-4 cell is about 8 cm of scene; a head is roughly
+    # 16 x 22 cm, which is 2 x 3 cells before the thermal bloom around a
+    # face, and 6 cells after it. Head and shoulders at six metres lands in
+    # the same place.
+    #
+    # Why lowering it does not bring back the double counting bin 4 fixed:
+    # that was ONE person splitting into head and torso. At bin 4 the cool
+    # band between them is averaged away and the body is one connected region
+    # whatever the minimum is, so a smaller minimum lets smaller people count
+    # without letting one large person count twice. What it can do is count a
+    # person twice when a heavy coat and scarf cut the warm regions apart;
+    # that is the honest cost.
+    #
+    # And why this is not counting noise: 96 pixels is twice the 48 that
+    # validated_thermal_pair treats as the sensor's own floor, and the scene
+    # background removes lamps, screens and mugs before anything is grouped.
+    # Confirm it at the real mount with --calibrate, which measures a person
+    # at the actual range and recommends the number.
+    'THERMAL_MIN_CLUSTER': '6',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
@@ -219,7 +242,7 @@ THERMAL_DEVICE = (CONFIG.get('THERMAL_DEVICE') or DEFAULTS['THERMAL_DEVICE']).st
 THERMAL_THRESHOLD_C = _cfg_number('THERMAL_THRESHOLD_C', float, 0.0, 100.0, 28.0)
 THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
 THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
-THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
+THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 6)
 THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
@@ -240,7 +263,7 @@ IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
 # tests are built from. Outside the band the pair is refused rather than clamped,
 # because a threshold nobody measured is not an improvement on the one somebody
 # did.
-_MEASURED_BIN, _MEASURED_MIN_CLUSTER = 4, 12
+_MEASURED_BIN, _MEASURED_MIN_CLUSTER = 4, 6
 _NOMINAL_PERSON_PIXELS = 320
 _MIN_SANE_THRESHOLD_PIXELS = 48
 
@@ -2645,25 +2668,34 @@ def video_driver_candidates(env=None, has_dri=None):
     return out
 
 
-# The product's own type and palette, so the panel looks like the rest of Flock
-# rather than like a Python program with a screen attached.
+# The product's own type, palette and marks, so the panel looks like the rest of
+# Flock rather than like a Python program with a screen attached.
 #
-# Fraunces carries the numbers and the wordmark, Hanken Grotesk carries the
-# labels, which is the division the app and the site already use. Both live in
-# brand-fonts/ as TrueType, which is what pygame wants; the web build's woff2
-# is no use here.
+# Fraunces carries every large piece of text and Hanken Grotesk every small
+# one, which is the division the app, the site and the pitch deck already use.
+# The marks are the same illustrated birds, cut down in flux-assets/ to the
+# sizes this panel draws them at.
 #
-# A missing font file means a plainer screen, never a dark one.
-BRAND_FONT_DIRS = (
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts'),
-    '/etc/flock-sensor/fonts',
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'brand-fonts'),
+# A missing file means a plainer screen, never a dark one. And note what these
+# fonts are: brand SUBSETS of about 35 KB, not the full families. Checked
+# 2026-09-26 against every character this file draws; the one real gap is the
+# approximately-equal sign, which renders as an empty box, so the decibel
+# readout says "estimated" in words instead.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+BRAND_ASSET_DIRS = (
+    os.path.join(_HERE, 'flux-assets'),
+    '/etc/flock-sensor/flux-assets',
+    os.path.join(_HERE, 'fonts'),
+    os.path.join(_HERE, '..', 'brand-fonts'),
 )
+BRAND_FONT_DIRS = BRAND_ASSET_DIRS
 
 BRAND_DISPLAY = 'Flock-Fraunces-Display-Bold.ttf'
 BRAND_WORDMARK = 'Flock-Fraunces-Wordmark-Black.ttf'
 BRAND_LABEL = 'Flock-Hanken-Grotesk-Medium.ttf'
 BRAND_BODY = 'Flock-Hanken-Grotesk-Regular.ttf'
+BRAND_MARK_BADGE = 'flux-flock-badge.png'
+BRAND_MARK_BIRDS = 'flux-birds-walking.png'
 
 # Read off the app's CSS custom properties, not picked by eye.
 BRAND_NAVY = (15, 23, 42)       # --navy  #0f172a
@@ -2679,8 +2711,8 @@ BRAND_RED = (239, 68, 68)
 
 
 def brand_font_path(name):
-    """Where a brand face lives, or None if it was not shipped."""
-    for d in BRAND_FONT_DIRS:
+    """Where a brand file lives, or None if it was not shipped."""
+    for d in BRAND_ASSET_DIRS:
         p = os.path.join(d, name)
         if os.path.exists(p):
             return p
@@ -2694,19 +2726,33 @@ def load_brand_font(pygame, name, size):
         try:
             return pygame.font.Font(path, size)
         except Exception as e:
-            log_throttled('brand_font', logging.WARNING,
-                          f'Could not load {name}: {e}')
-    # pygame's default face runs small for a given point size, so a fallback
-    # that ignored this would make an already plainer screen a harder one to
-    # read across a room.
+            log_throttled('brand_font', logging.WARNING, f'Could not load {name}: {e}')
+    # pygame's default face runs small for its point size, so a fallback that
+    # ignored that would turn a plainer screen into a harder one to read.
     return pygame.font.Font(None, int(size * 1.25))
+
+
+def load_brand_mark(pygame, name):
+    """A brand illustration with its transparency, or None if unavailable."""
+    path = brand_font_path(name)
+    if not path:
+        return None
+    try:
+        surf = pygame.image.load(path)
+        try:
+            return surf.convert_alpha()
+        except Exception:
+            return surf
+    except Exception as e:
+        log_throttled('brand_mark', logging.WARNING, f'Could not load {name}: {e}')
+        return None
 
 
 def tracked(pygame, font, text, colour, spacing):
     """Render with letter spacing, which pygame has no setting for.
 
     Small capitals need air or they read as a shout. Glyph by glyph is the only
-    way to get it, and at three labels a frame the cost does not show up.
+    way to get it, and at a few labels a frame the cost does not show up.
     """
     glyphs = [font.render(ch, True, colour) for ch in text]
     if not glyphs:
@@ -2719,6 +2765,39 @@ def tracked(pygame, font, text, colour, spacing):
         surf.blit(g, (x, 0))
         x += g.get_width() + spacing
     return surf
+
+
+def display_decibels(level):
+    """Estimated dB SPL behind a published level, or None if not anchored.
+
+    The level the noise loop publishes is a log-scale index, not decibels. It
+    becomes an estimate of real sound pressure only once one reading from a
+    phone sound meter has been paired with it, which is what the SPL anchor
+    records. Until then this returns None and the panel says "level", because
+    printing "dB" beside an unanchored index would be a claim nothing supports.
+    Inverts compute_noise_db exactly, then asks spl_from_counts.
+    """
+    if NOISE_SPL_ANCHOR_COUNTS <= 0 or NOISE_SPL_ANCHOR_DB <= 0 or level <= 0:
+        return None
+    rms = NOISE_REF_COUNTS * 10 ** ((level - NOISE_DB_OFFSET) / (20.0 * NOISE_SCALE))
+    return spl_from_counts(rms)
+
+
+def noise_reading(level):
+    """(number, caption, scale value) for a published noise level.
+
+    The third value is what the word and the trace are measured against, and
+    it has to be the same thing the number shows. The first version took the
+    word from the raw index and the number from the calibrated estimate, and
+    rendering it put "Moderate" beside "37 dB": two readings of one room that
+    disagreed on the same card. Calibrated, everything is decibels; not, it is
+    all the index, and the caption says so.
+    """
+    spl = display_decibels(level)
+    if spl is None:
+        return f'level {int(level)}', 'relative, not yet calibrated', level
+    return f'{int(round(spl))} dB', 'estimated sound level', spl
+
 
 def thermal_image_box(w, h, cols, rows, pad, top, reserve):
     """Largest rectangle the thermal image can fill without being cropped.
@@ -2753,18 +2832,17 @@ def home_cards(w, h, m):
     """The three tappable readings, as rectangles.
 
     Pure, so the tap targets and the drawn cards come from one place and cannot
-    disagree: a card drawn in one spot and hit-tested in another is exactly the
-    bug where a button looks pressable and does nothing. Returns a list of
-    (x, y, w, h).
+    disagree: a card drawn in one spot and hit-tested in another is a button
+    that looks pressable and does nothing. Room is left at the bottom for the
+    footer and its birds. Returns a list of (x, y, w, h).
     """
     pad = m['pad']
-    top = m['header_h'] + pad
-    bottom = h - pad - m['font_xs'] - 16
-    gap = max(10, pad // 2)
+    top = m['header_h'] + max(14, pad // 2)
+    bottom = h - pad - max(70, h // 8)
+    gap = max(12, pad // 2)
     if m['columns']:
         cw = (w - 2 * pad - 2 * gap) // 3
-        ch = bottom - top
-        return [(pad + i * (cw + gap), top, cw, ch) for i in range(3)]
+        return [(pad + i * (cw + gap), top, cw, bottom - top) for i in range(3)]
     ch = (bottom - top - 2 * gap) // 3
     return [(pad, top + i * (ch + gap), w - 2 * pad, ch) for i in range(3)]
 
@@ -2787,13 +2865,13 @@ def back_button_rect(m):
 
 
 class Panel:
-    """Everything the four screens need, built once and kept.
+    """Everything the screens need, built once and kept.
 
     The first version re-rendered every string four times a second and slept a
-    quarter second between polls, so a tap could sit unnoticed for 250 ms and
-    the whole panel felt like wading. Here text is cached by what it says,
+    quarter second between polls, so a tap could wait 250 ms and the panel
+    felt like wading. Text is cached by what it says, marks are scaled once,
     events are read sixty times a second, and the screen repaints only when
-    something on it actually changed.
+    something on it changed.
     """
 
     MAX_CACHE = 400
@@ -2805,19 +2883,23 @@ class Panel:
         self.h = h
         self.m = display_metrics(w, h)
         m = self.m
-        self.f_mark = load_brand_font(pygame, BRAND_WORDMARK, m['font_sm'] + 10)
+        # Large text is Fraunces, small text is Hanken Grotesk, everywhere.
+        self.f_mark = load_brand_font(pygame, BRAND_WORDMARK, m['font_sm'] + 12)
+        self.f_title = load_brand_font(pygame, BRAND_DISPLAY, m['font_sm'] + 8)
         self.f_big = load_brand_font(pygame, BRAND_DISPLAY, m['font_big'])
         self.f_med = load_brand_font(pygame, BRAND_DISPLAY, m['font_med'])
+        self.f_hero = load_brand_font(pygame, BRAND_WORDMARK, max(72, h // 6))
         self.f_label = load_brand_font(pygame, BRAND_LABEL, m['font_sm'])
         self.f_body = load_brand_font(pygame, BRAND_BODY, m['font_xs'])
         self.cards = home_cards(w, h, m)
         self.back = back_button_rect(m)
         self._cache = {}
+        self._marks = {}
         self._thermal_key = None
         self._thermal_surf = None
-        # The display keeps its own noise trace. The noise loop reads every
-        # five seconds, far too coarse to draw as a wave, and a buffer here
-        # costs nothing and never blocks the thread doing the measuring.
+        # The panel keeps its own noise trace. The noise loop reads every five
+        # seconds, far too coarse to draw as a wave, and a buffer here costs
+        # nothing and never blocks the thread doing the measuring.
         self.trace = deque(maxlen=max(120, w // 3))
 
     # -- primitives --------------------------------------------------------
@@ -2840,8 +2922,7 @@ class Panel:
         self.screen.blit(surf, (cx - surf.get_width() // 2, y))
 
     def label(self, s, pos, colour=BRAND_MUTED):
-        """Small tracked capitals. Type carries this design, so labels get
-        air rather than a box drawn round them."""
+        """Small tracked capitals in Hanken. They get air, not a box."""
         key = ('lab', s, colour)
         surf = self._cache.get(key)
         if surf is None:
@@ -2851,16 +2932,39 @@ class Panel:
         if surf:
             self.screen.blit(surf, pos)
 
+    def mark(self, name, height):
+        """A brand mark scaled to a height, cached, or None if unavailable."""
+        key = (name, height)
+        if key not in self._marks:
+            src = load_brand_mark(self.pygame, name)
+            if src is None:
+                self._marks[key] = None
+            else:
+                w = max(1, int(src.get_width() * height / float(src.get_height())))
+                try:
+                    self._marks[key] = self.pygame.transform.smoothscale(src, (w, height))
+                except Exception:
+                    self._marks[key] = self.pygame.transform.scale(src, (w, height))
+        return self._marks[key]
+
     def rule(self, x1, y, x2, colour=BRAND_RULE):
         self.pygame.draw.line(self.screen, colour, (x1, y), (x2, y), 1)
 
-    def card(self, rect, pressed=False):
-        """A tappable surface. A lighter field and a hairline border, so it
-        reads as something to press without turning into a rounded icon tile.
-        """
-        x, y, w, h = rect
-        self.pygame.draw.rect(self.screen, BRAND_INK, rect, 0, 14)
-        self.pygame.draw.rect(self.screen, BRAND_RULE, rect, 1, 14)
+    def section(self, text, cy):
+        """A centred title between two rules, the way the deck heads a section."""
+        s = self.text(self.f_title, text, BRAND_CREAM)
+        x = (self.w - s.get_width()) // 2
+        self.screen.blit(s, (x, cy - s.get_height() // 2))
+        gap = 18
+        pad = self.m['pad']
+        self.rule(pad, cy, x - gap)
+        self.rule(x + s.get_width() + gap, cy, self.w - pad)
+
+    def card(self, rect):
+        """A tappable surface: a lighter field and a hairline border, so it
+        reads as something to press without becoming a rounded icon tile."""
+        self.pygame.draw.rect(self.screen, BRAND_INK, rect, 0, 16)
+        self.pygame.draw.rect(self.screen, BRAND_RULE, rect, 1, 16)
 
     def chevron(self, x, y, size, colour, right=True):
         s = size
@@ -2870,11 +2974,20 @@ class Panel:
 
     # -- chrome ------------------------------------------------------------
 
-    def header(self, title, live=None, back=False):
+    def status(self, live):
+        m = self.m
+        top = m['header_h']
+        dot = BRAND_GREEN if live else BRAND_RED
+        s = self.text(self.f_body, 'Live' if live else 'Stale', BRAND_MUTED)
+        x = self.w - m['pad'] - s.get_width()
+        self.screen.blit(s, (x, (top - s.get_height()) // 2))
+        self.pygame.draw.circle(self.screen, dot, (x - 16, top // 2), max(4, m['font_xs'] // 5))
+
+    def header(self, title=None, live=None, back=False):
         m = self.m
         pad = m['pad']
-        self.screen.fill(BRAND_NAVY)
         top = m['header_h']
+        self.screen.fill(BRAND_NAVY)
         if back:
             bx, by, bw, bh = self.back
             self.pygame.draw.rect(self.screen, BRAND_INK, self.back, 0, bh // 2)
@@ -2883,70 +2996,111 @@ class Panel:
             self.chevron(bx + 18 + cs, by + bh // 2, cs, BRAND_CREAM, right=False)
             s = self.text(self.f_label, 'Back', BRAND_CREAM)
             self.screen.blit(s, (bx + 18 + cs * 2 + 10, by + (bh - s.get_height()) // 2))
-            t = self.text(self.f_label, title, BRAND_CREAM)
-            self.screen.blit(t, ((self.w - t.get_width()) // 2,
-                                 (top - t.get_height()) // 2))
+            t = self.text(self.f_title, title, BRAND_CREAM)
+            self.screen.blit(t, ((self.w - t.get_width()) // 2, (top - t.get_height()) // 2))
         else:
-            s = self.text(self.f_mark, title, BRAND_CREAM)
-            self.screen.blit(s, (pad, (top - s.get_height()) // 2))
-        if live is not None:
-            dot = BRAND_GREEN if live else BRAND_RED
-            word = 'Live' if live else 'Stale'
-            s = self.text(self.f_body, word, BRAND_MUTED)
-            x = self.w - pad - s.get_width()
+            # The Flock badge, then the product's name, the way the deck signs
+            # every slide with the badge in its corner.
+            x = pad
+            badge = self.mark(BRAND_MARK_BADGE, max(34, top - 22))
+            if badge is not None:
+                self.screen.blit(badge, (x, (top - badge.get_height()) // 2))
+                x += badge.get_width() + 14
+            s = self.text(self.f_mark, 'Flux', BRAND_CREAM)
             self.screen.blit(s, (x, (top - s.get_height()) // 2))
-            self.pygame.draw.circle(self.screen, dot, (x - 16, top // 2),
-                                    max(4, m['font_xs'] // 5))
+        if live is not None:
+            self.status(live)
         self.rule(0, top, self.w)
 
     # -- screens -----------------------------------------------------------
 
-    def home(self, ir, therm, therm_live, db, noise_live, history):
+    def splash(self, message='Starting the sensors'):
+        """What the panel shows while the camera and microphone warm up.
+
+        The camera needs about thirty frames to learn the room before it will
+        count anybody, which is several seconds of a blank or zero screen. A
+        blank screen in front of a judge reads as broken; this reads as a
+        product starting.
+        """
+        self.screen.fill(BRAND_NAVY)
+        cx, cy = self.w // 2, self.h // 2
+        # The badge itself, the way the deck opens: the fainter circle mark
+        # this first used all but disappeared against the navy.
+        flock = self.mark(BRAND_MARK_BADGE, max(120, self.h // 4))
+        name = self.text(self.f_hero, 'Flux', BRAND_CREAM)
+        by = self.text(self.f_body, 'by Flock', BRAND_MUTED)
+        note = self.text(self.f_body, message, BRAND_FAINT)
+        fh = flock.get_height() if flock is not None else 0
+        total = fh + 18 + name.get_height() + 4 + by.get_height() + 30 + note.get_height()
+        y = cy - total // 2
+        if flock is not None:
+            self.screen.blit(flock, (cx - flock.get_width() // 2, y))
+            y += fh + 18
+        self.screen.blit(name, (cx - name.get_width() // 2, y))
+        y += name.get_height() + 4
+        self.screen.blit(by, (cx - by.get_width() // 2, y))
+        y += by.get_height() + 30
+        self.screen.blit(note, (cx - note.get_width() // 2, y))
+
+    def footer(self, text):
+        """A hairline along the bottom, the hint on the left, and the birds
+        walking along the right of it: the brand's signature, not decoration
+        laid over the data."""
         m = self.m
-        self.header('Flux', live=therm_live or noise_live)
-        word, colour = noise_band(db)
+        pad = m['pad']
+        base = self.h - max(18, pad // 2)
+        birds = self.mark(BRAND_MARK_BIRDS, max(44, self.h // 11))
+        if birds is not None:
+            bx = self.w - pad - birds.get_width()
+            self.rule(pad, base, bx - 12)
+            self.screen.blit(birds, (bx, base - birds.get_height() + 6))
+        else:
+            self.rule(pad, base, self.w - pad)
+        s = self.text(self.f_body, text, BRAND_FAINT)
+        self.screen.blit(s, (pad, base - s.get_height() - 10))
+
+    def home(self, ir, therm, therm_live, level, noise_live, history):
+        m = self.m
+        self.header(live=therm_live or noise_live)
+        n_value, n_caption, basis = noise_reading(level)
+        word, colour = noise_band(basis)
         cells = [
             ('Through the door', str(ir), BRAND_CREAM, 'since the last update', True),
             ('In view now', f'{therm}' if therm_live else '--', BRAND_CREAM,
-             'warm bodies' if therm_live else 'thermal offline', therm_live),
+             'people in the room' if therm_live else 'thermal offline', therm_live),
             ('Noise', word if noise_live else '--',
              colour if noise_live else BRAND_CREAM,
-             f'level {int(db)}' if noise_live else 'microphone offline', noise_live),
+             n_value if noise_live else 'microphone offline', noise_live),
         ]
         for rect, (lab, val, col, cap, ok) in zip(self.cards, cells):
             x, y, w, h = rect
             self.card(rect)
             cx = x + w // 2
-            inner = max(14, m['pad'] // 2)
+            inner = max(16, m['pad'] // 2)
             self.label(lab, (x + inner, y + inner))
-            # One box, one height, for every value, and every caption on the
-            # same line. A word like "Moderate" has to be set smaller than a
-            # digit to fit, and centring each value on its own height left the
-            # three captions at three different heights, which is the first
-            # thing an eye catches on a row of cards.
+            # One box, one height, for every value, and every caption on one
+            # line. A word like "Moderate" is set smaller than a digit to fit,
+            # and centring each on its own height put three captions at three
+            # heights, which is the first thing an eye catches on a row.
             font = self.f_big if len(val) <= 4 else self.f_med
             vs = self.text(font, val, col)
             box_h = self.f_big.get_height()
-            box_y = y + (h - box_h) // 2 - m['font_xs']
-            self.screen.blit(vs, (cx - vs.get_width() // 2,
-                                  box_y + (box_h - vs.get_height()) // 2))
+            box_y = y + (h - box_h) // 2 - m['font_xs'] // 2
+            self.screen.blit(vs, (cx - vs.get_width() // 2, box_y + (box_h - vs.get_height()) // 2))
             self.blit_centred(self.f_body, cap, BRAND_MUTED if ok else BRAND_RED,
-                              cx, box_y + box_h + 6)
-            # The affordance. Without it the card is a readout, and the one
-            # thing this screen has to say is that each of these opens.
+                              cx, box_y + box_h + 4)
             vw = self.text(self.f_label, 'View', BRAND_CREAM)
             ay = y + h - inner - vw.get_height()
-            self.screen.blit(vw, (x + w - inner - vw.get_width() - 22, ay))
-            self.chevron(x + w - inner - 4, ay + vw.get_height() // 2,
-                         max(5, vw.get_height() // 4), BRAND_CREAM)
-        self.blit_centred(self.f_body, 'Tap a reading to open it', BRAND_FAINT,
-                          self.w // 2, self.h - m['pad'] - m['font_xs'])
+            cs = max(5, vw.get_height() // 4)
+            self.screen.blit(vw, (x + w - inner - vw.get_width() - cs - 12, ay))
+            self.chevron(x + w - inner, ay + vw.get_height() // 2, cs, BRAND_CREAM)
+        self.footer('Tap a reading to open it')
 
     def spark(self, values, x, top, w, height):
         """A hairline trace of recent counts. Ruled and flat, no fill."""
         hi = max(values) or 1
-        pts = [(x + (w * i / max(1, len(values) - 1)),
-                top + height - (v / hi) * height) for i, v in enumerate(values)]
+        pts = [(x + (w * i / max(1, len(values) - 1)), top + height - (v / hi) * height)
+               for i, v in enumerate(values)]
         self.rule(x, top + height, x + w)
         if len(pts) > 1:
             self.pygame.draw.lines(self.screen, BRAND_CREAM, False, pts, 2)
@@ -2963,32 +3117,45 @@ class Panel:
         self.screen.blit(v, (pad, top + m['font_sm'] + 6))
         # What this number is and is not. It was once labelled "Entered Today",
         # which it has never been, and a judge asking the obvious follow-up
-        # deserves the honest answer on the screen rather than from the pitch.
-        ty = top + m['font_sm'] + v.get_height() + 16
+        # deserves the honest answer on the screen rather than in the pitch.
+        tx = pad + v.get_width() + pad
+        ty = top + m['font_sm'] + 6 + (v.get_height() - 2 * (m['font_xs'] + 8)) // 2
         for s in ('Crossings in either direction, over one push interval.',
                   'The doorway counter adds which way each person went.'):
-            self.blit(self.f_body, s, BRAND_MUTED, (pad, ty))
+            self.blit(self.f_body, s, BRAND_MUTED, (tx, ty))
             ty += m['font_xs'] + 8
+        chart_top = top + m['font_sm'] + v.get_height() + pad * 2
+        self.section('Recent headcounts', chart_top)
         if history:
-            ch = max(60, self.h - ty - pad * 3)
-            cy = self.h - pad - ch
-            self.label('Recent headcounts', (pad, cy - m['font_sm'] - 10))
-            self.spark(history, pad, cy, self.w - 2 * pad, ch)
+            ch = self.h - chart_top - pad * 2
+            self.spark(history, pad, chart_top + pad, self.w - 2 * pad, max(40, ch))
+        else:
+            self.blit_centred(self.f_body, 'Readings appear here after the first update.',
+                              BRAND_FAINT, self.w // 2, (chart_top + self.h) // 2)
 
-    def noise(self, db, live):
+    def noise(self, level, live):
         m = self.m
         pad = m['pad']
         self.header('Noise', back=True, live=live)
-        word, colour = noise_band(db)
+        n_value, n_caption, basis = noise_reading(level)
+        word, colour = noise_band(basis)
         top = m['header_h'] + pad
         w = self.text(self.f_big, word if live else '--', colour if live else BRAND_CREAM)
         self.screen.blit(w, (pad, top))
-        self.blit(self.f_body, f'level {int(db)}' if live else 'microphone offline',
-                  BRAND_MUTED if live else BRAND_RED,
-                  (pad + 4, top + w.get_height() + 2))
+        if live:
+            # The number, set as large as the word, at the right. Decibels
+            # when the unit has been anchored to a phone meter, the level when
+            # it has not, and a caption that says which.
+            d = self.text(self.f_big, n_value, BRAND_CREAM)
+            self.screen.blit(d, (self.w - pad - d.get_width(), top))
+            c = self.text(self.f_body, n_caption, BRAND_MUTED)
+            self.screen.blit(c, (self.w - pad - c.get_width(), top + d.get_height() + 2))
+        else:
+            self.blit(self.f_body, 'microphone offline', BRAND_RED,
+                      (pad + 4, top + w.get_height() + 2))
 
-        # The trace, with the four bands drawn behind it so a rising line means
-        # something without anybody reading a number off an axis.
+        # The trace, over the four bands, so a rising line means something
+        # without anybody reading a number off an axis.
         gtop = top + w.get_height() + m['font_xs'] + pad
         gbot = self.h - pad
         if gbot - gtop < 40:
@@ -2999,35 +3166,31 @@ class Panel:
         def ypos(v):
             v = min(hi, max(lo, v))
             return gbot - (v - lo) / (hi - lo) * (gbot - gtop)
-        bands = ((lo, 50, BRAND_GREEN), (50, 70, BRAND_AMBER),
-                 (70, 85, BRAND_ORANGE), (85, hi, BRAND_RED))
-        for a, b, c in bands:
+        for a, b, c in ((lo, 50, BRAND_GREEN), (50, 70, BRAND_AMBER),
+                        (70, 85, BRAND_ORANGE), (85, hi, BRAND_RED)):
             y1, y2 = ypos(b), ypos(a)
             band = self.pygame.Surface((gw, max(1, int(y2 - y1))), self.pygame.SRCALPHA)
-            band.fill(c + (22,))
+            band.fill(c + (24,))
             self.screen.blit(band, (gx, y1))
-        for level in (50, 70, 85):
-            self.rule(gx, ypos(level), gx + gw)
-        # Each band named inside itself, at the left. The newest readings are
-        # drawn at the right edge, so labels there sat on top of the line the
-        # screen exists to show.
-        for a, b, name in ((lo, 50, 'Quiet'), (50, 70, 'Moderate'),
-                           (70, 85, 'Lively'), (85, hi, 'Loud')):
-            mid = (ypos(a) + ypos(b)) / 2.0
+        for level_mark in (50, 70, 85):
+            self.rule(gx, ypos(level_mark), gx + gw)
+        # Each band named inside itself at the left. The newest readings are
+        # at the right edge, so labels there sat on the line this screen is for.
+        names = ((lo, 50, 'Quiet'), (50, 70, 'Moderate'), (70, 85, 'Lively'), (85, hi, 'Loud'))
+        widest = 0
+        for a, b, name in names:
             s = self.text(self.f_body, name, BRAND_MUTED)
-            self.screen.blit(s, (gx + 12, int(mid - s.get_height() / 2)))
+            widest = max(widest, s.get_width())
+            self.screen.blit(s, (gx + 12, int((ypos(a) + ypos(b)) / 2.0 - s.get_height() / 2)))
         if len(self.trace) > 1:
-            # Spread across the whole width whatever the buffer holds. Pinning
-            # it to the full window left a fresh screen nine tenths empty with
-            # the trace crammed against the right edge, which reads as broken.
-            # It starts at the label column so the names never sit under it.
-            lx = gx + 12 + max(self.text(self.f_body, n, BRAND_MUTED).get_width()
-                               for n in ('Quiet', 'Moderate', 'Lively', 'Loud')) + 16
+            # Spread across the width whatever the buffer holds. Pinned to the
+            # full window, a fresh screen was nine tenths empty with the trace
+            # crammed against the right edge, which reads as broken.
+            lx = gx + 12 + widest + 16
             step = (gx + gw - lx) / float(len(self.trace) - 1)
             pts = [(lx + i * step, ypos(v)) for i, v in enumerate(self.trace)]
             self.pygame.draw.lines(self.screen, colour, False, pts, 3)
-            self.pygame.draw.circle(self.screen, colour,
-                                    (int(pts[-1][0]), int(pts[-1][1])), 6)
+            self.pygame.draw.circle(self.screen, colour, (int(pts[-1][0]), int(pts[-1][1])), 6)
         else:
             self.blit_centred(self.f_body, 'Listening. The trace fills in from here.',
                               BRAND_MUTED, self.w // 2, (gtop + gbot) // 2)
@@ -3036,19 +3199,18 @@ class Panel:
         m = self.m
         pad = m['pad']
         self.header('What the sensor sees', back=True, live=live)
-        top = m['header_h'] + max(10, pad // 2)
+        top = m['header_h'] + max(12, pad // 2)
         if not frame:
-            self.blit_centred(self.f_med, 'No frame yet', BRAND_MUTED,
-                              self.w // 2, self.h // 2 - m['font_med'])
+            self.blit_centred(self.f_med, 'No picture yet', BRAND_MUTED, self.w // 2,
+                              self.h // 2 - m['font_med'])
             self.blit_centred(self.f_body, 'The camera may still be starting.',
                               BRAND_FAINT, self.w // 2, self.h // 2 + 10)
             return
 
-        # The picture takes the height of the panel and the readings sit
-        # beside it. Stacking them under it, which the first version did,
-        # threw away a third of a landscape screen to leave room for two lines
-        # of text, and the picture is the point of this screen.
-        side = max(220, self.w // 4) if m['columns'] else 0
+        # The picture takes the height of the panel and the readings sit beside
+        # it. Stacked underneath, the first version spent a third of a
+        # landscape screen on two lines of text, and the picture is the point.
+        side = max(230, self.w // 4) if m['columns'] else 0
         avail_w = self.w - 2 * pad - (side + pad if side else 0)
         avail_h = self.h - top - pad
         iw, ih = avail_w, int(avail_w * THERMAL_ROWS / float(THERMAL_COLS))
@@ -3056,10 +3218,9 @@ class Panel:
             ih = avail_h
             iw = int(ih * THERMAL_COLS / float(THERMAL_ROWS))
 
-        # Only rebuild the scaled picture when the camera delivers a new frame.
-        # The camera runs at about nine frames a second, which is a limit of
-        # the part and not of this code, and scaling the same frame again on
-        # every repaint was pure waste.
+        # Rebuild the scaled picture only for a new frame. The Lepton delivers
+        # about nine a second, a limit of the part rather than of this code, and
+        # rescaling the same frame on every repaint was pure waste.
         key = (id(frame), iw, ih)
         if key != self._thermal_key:
             lo, hi = thermal_frame_span(frame)
@@ -3070,21 +3231,19 @@ class Panel:
             except Exception:
                 self._thermal_surf = self.pygame.transform.scale(raw, (iw, ih))
             self._thermal_key = key
-        ix = pad
-        self.screen.blit(self._thermal_surf, (ix, top))
-        self.pygame.draw.rect(self.screen, BRAND_RULE, (ix, top, iw, ih), 1)
+        self.screen.blit(self._thermal_surf, (pad, top))
+        self.pygame.draw.rect(self.screen, BRAND_RULE, (pad, top, iw, ih), 1)
 
         if side:
-            sx = ix + iw + pad
+            sx = pad + iw + pad
             y = top
             self.label('In view now', (sx, y))
             v = self.text(self.f_big, f'{count}' if live else '--', BRAND_CREAM)
             self.screen.blit(v, (sx, y + m['font_sm'] + 4))
-            y += m['font_sm'] + v.get_height() + 24
+            y += m['font_sm'] + v.get_height() + 22
             self.label('Warmest point', (sx, y))
-            self.blit(self.f_med, f'{max(frame):.1f}C', BRAND_CREAM,
-                      (sx, y + m['font_sm'] + 4))
-            y += m['font_sm'] + m['font_med'] + 28
+            self.blit(self.f_med, f'{max(frame):.1f}\u00b0C', BRAND_CREAM, (sx, y + m['font_sm'] + 4))
+            y += m['font_sm'] + m['font_med'] + 26
             # A thermal picture reads as a camera to most people, and this is
             # the one screen where that misreading is easy to make.
             for s in ('Temperatures only.', 'Nothing here is', 'recorded or sent.'):
@@ -3175,7 +3334,9 @@ def display_loop():
             therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
             noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
             if noise_live:
-                ui.trace.append(db)
+                # The same scale the word and the number are read on, so a
+                # calibrated unit draws decibels against decibel bands.
+                ui.trace.append(noise_reading(db)[2])
 
             # Repaint when something changed, or twice a second so the trace
             # keeps moving. Not on every pass: at sixty a second that is sixty

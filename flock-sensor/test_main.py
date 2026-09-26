@@ -239,13 +239,27 @@ class ThermalCounting(unittest.TestCase):
         # this is ever back at 4, the device is counting noise as a crowd.
         self.assertGreater(main.THERMAL_MIN_CLUSTER, 4)
 
-    def test_the_bench_pair_is_still_the_bench_pair(self):
-        # These two are one setting in two variables. 12 cells is 48 raw pixels
-        # at bin 2 and 192 at bin 4, so moving either one silently redefines the
-        # other, and the 2026-09-06 bench only measured the pair (4, 12).
-        # Changing either means re-deriving both. See README.md, Calibration.
-        self.assertEqual((main.THERMAL_BIN, main.THERMAL_MIN_CLUSTER), (4, 12),
-                         'the thermal pair moved off the only combination anyone has measured')
+    def test_the_thermal_pair_is_the_derived_pair(self):
+        # These two are one setting in two variables: min_cluster counts bin
+        # cells, so moving either one silently redefines the other. The bin is
+        # the 2026-09-06 bench's 4, which merges a person's head and torso into
+        # one region. The minimum was then re-derived from 12, a whole body, to
+        # 6, a head at venue range, because 12 counted nobody who was partly
+        # out of frame. The reasoning is written out at THERMAL_MIN_CLUSTER.
+        # Moving either again means re-deriving both.
+        self.assertEqual((main.THERMAL_BIN, main.THERMAL_MIN_CLUSTER), (4, 6),
+                         'the thermal pair moved off the derived combination')
+
+    def test_a_head_on_its_own_now_counts(self):
+        # The case the old whole-body minimum missed: one warm head-sized patch,
+        # the rest of the person out of shot or behind something.
+        f = self.frame(20.0, [(40, 60, 12, 10, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(f), 1)
+
+    def test_a_small_person_is_still_not_noise(self):
+        # Lowering the minimum must not lower it into the sensor's own floor.
+        raw = main.THERMAL_MIN_CLUSTER * main.THERMAL_BIN * main.THERMAL_BIN
+        self.assertGreaterEqual(raw, 2 * main._MIN_SANE_THRESHOLD_PIXELS)
 
     def test_a_fragmenting_silhouette_is_one_person_at_the_default_bin(self):
         # The bench, made executable: a bare head over a covered torso with a
