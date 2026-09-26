@@ -80,7 +80,7 @@
 import React, { useState } from 'react';
 import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
-import { crowdLabelFor, numberSourcePhrase } from '../../lib/crowd';
+import { crowdLabelFor, numberSourcePhrase, isAdjustedSource } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
 
 // Animated crowd dial — fills from 0 to target score with counting number.
@@ -1012,10 +1012,13 @@ export default function ConsumerVenueCard({
                   // A number a serving switch made carries numberSource, and
                   // its line names that arithmetic instead of the model.
                   const madeFrom = numberSourcePhrase(cd.numberSource);
+                  // A source that already says people adjusted the number
+                  // carries those words itself; they are not said twice.
+                  const adjustedFrom = madeFrom && isAdjustedSource(cd.numberSource) ? `From ${madeFrom}.` : null;
                   return (
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
                       {cd.confidenceBasis === 'owner_report' ? `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`
-                        : cd.confidenceBasis === 'user_reports' ? (madeFrom ? `From ${madeFrom}, adjusted by people who are there.` : 'From the crowd model, adjusted by people who are there.')
+                        : cd.confidenceBasis === 'user_reports' ? (adjustedFrom || (madeFrom ? `From ${madeFrom}, adjusted by people who are there.` : 'From the crowd model, adjusted by people who are there.'))
                         : cd.predictionMethod === 'ml' ? (madeFrom ? `From ${madeFrom}.` : 'From the Flock crowd model.')
                         : 'An estimate from typical patterns for this kind of place.'}
                     </p>

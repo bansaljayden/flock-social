@@ -500,6 +500,12 @@ function applyOwnerReport(result, ownerRow, options = {}) {
     supported: true,
     ownerReport: { ...live, applied: true, noun, attribution },
   };
+  // The served arithmetic's name goes with the served number. It is only
+  // ever present while a serving switch is on (crowdEngine
+  // .describePublishedArithmetic), and left here it would attribute the
+  // owner's figure to the venue's pattern or to a carried live reading.
+  delete out.numberSource;
+  delete out.number_source;
   if (result.waitEstimate !== undefined) {
     out.waitEstimate = crowdEngine.estimateWait(live.percent, result.venueTypes || [], result.priceLevel ?? null);
   }

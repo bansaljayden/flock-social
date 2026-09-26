@@ -4466,6 +4466,13 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       // True when the strict offset (trailingOffsetBefore) put a different
       // number here than the stored median would have, before any nowcast.
       response.offsetChangedBySwitch = offsetChangedBySwitch;
+      // WHETHER ANY LIVE READING REACHED THIS NUMBER, said as a yes or a no
+      // rather than left to be inferred from describeServedArithmetic. That
+      // answer is null whenever the strict offset happens to land on the
+      // stored one's score, and a live offset may still be in such a number,
+      // so its absence cannot mean "no live readings". True when an offset of
+      // live readings or a nowcast reading moved the number, false otherwise.
+      response.usedLiveReadings = Boolean(deviationApplied || nowcastApplied);
     }
 
     // Add event alert when large event nearby
@@ -4717,6 +4724,13 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         label: result.label,
         predictionMethod: result.predictionMethod || null,
         ...(numberSource ? { numberSource } : {}),
+        // Whether a live reading reached THIS hour's number, as an explicit
+        // yes or no on every hour while a switch is on (a rule-engine hour
+        // is a no). numberSource cannot answer it by being absent: it is
+        // absent both for an hour no reading touched and for one whose
+        // live offset happened to land on the stored offset's score.
+        // Absent with both switches off, like numberSource.
+        ...(switchedArithmeticOn() ? { liveReadings: result.usedLiveReadings === true } : {}),
         // The ordering axis for this hour, carried per entry because
         // crowdEngine picks it for the whole candidate set at once and has to
         // be able to see that EVERY hour it is about to compare has one. Null
@@ -4763,6 +4777,8 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         // exit uses: nothing was attempted for this hour.
         eventsObserved: false,
         eventsUnavailableReason: 'not_attempted',
+        // No live reading reached a rule-engine number.
+        ...(switchedArithmeticOn() ? { liveReadings: false } : {}),
       });
     }
   }

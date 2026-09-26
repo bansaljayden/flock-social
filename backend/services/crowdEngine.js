@@ -228,6 +228,33 @@ function describeServedArithmetic(result) {
   return null;
 }
 
+// WHAT MADE THE NUMBER A SURFACE ACTUALLY PUBLISHES, which is not always the
+// number the predictor served. Two things can move it after the predictor:
+//
+//   reportsBlended  verified reports from people in the room were blended in
+//                   (buildCalibrationAdjustment, feedbackUsed). The served
+//                   arithmetic still started the number, but it is no longer
+//                   that arithmetic's number, and 'live_reading_1h' would
+//                   then call a 35 the venue's reading of 20. The source
+//                   keeps its name with '_adjusted' after it, which the
+//                   clients and Birdie word as "adjusted by people who are
+//                   there" and never as the reading itself.
+//   ownerReading    the venue's own live report replaced the number
+//                   (ownerReports.applyOwnerReport, applied). Null: that
+//                   number names its own source, and none of the served
+//                   arithmetic is in it.
+//
+// Every surface that publishes the attribution goes through this, so the
+// served source can only reach a client when it is still the whole story.
+// Null for every switched-off response, as describeServedArithmetic is, so
+// a switched-off payload keeps exactly the keys it had.
+function describePublishedArithmetic(result, { reportsBlended = false, ownerReading = false } = {}) {
+  if (ownerReading) return null;
+  const served = describeServedArithmetic(result);
+  if (!served) return null;
+  return reportsBlended ? `${served}_adjusted` : served;
+}
+
 // WHY `confidence` IS NOT LOWERED HERE, only explained.
 //
 // The obvious move is to cap it. It would be wrong twice over. First, a cap is
@@ -2142,6 +2169,7 @@ module.exports = {
   // measurement or a category prior.
   describePredictionSupport,
   describeServedArithmetic,
+  describePublishedArithmetic,
   publishedConfidence,
   publishedLabel,
   hedgeLabel,

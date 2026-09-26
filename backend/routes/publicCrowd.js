@@ -21,7 +21,7 @@ const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 // Free outage detection. This is the file whose console.error below ran for five days in September with nobody counting it. See utils/placesHealth.js.
 const { recordPlacesResult } = require('../utils/placesHealth');
 const { paywallEnabled } = require('../services/entitlements');
-const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, describeServedArithmetic, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
+const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, describePublishedArithmetic, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
 // The one place that decides whether a confidence integer may be called a
@@ -448,8 +448,10 @@ async function buildCard(v, weather, clock, preScored, place) {
     // Which arithmetic made the number when a serving switch changed it
     // (crowdEngine.describeServedArithmetic), so the note under the card names
     // the venue's pattern and live readings instead of "the model". Absent with
-    // both switches off, so that card is exactly what it was.
-    ...(describeServedArithmetic(scored) ? { number_source: describeServedArithmetic(scored) } : {}),
+    // both switches off, so that card is exactly what it was. Through
+    // describePublishedArithmetic like every surface: the demo blends no
+    // reports and applies no owner reading, so nothing here adjusts it.
+    ...(describePublishedArithmetic(scored) ? { number_source: describePublishedArithmetic(scored) } : {}),
     confidence: scored.confidence,
     // The confidence above is the free half of this demo and is published to
     // people who have no account, so it is the FIRST number this product shows
