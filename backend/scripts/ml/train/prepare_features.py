@@ -1941,13 +1941,25 @@ def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
     means only for the neighbours, which belong to a different hour and
     therefore cannot contain this row's label.
 
-    The blend mirrors mlPredictor.getBaseline:
+    The blend mirrors mlPredictor.getBaseline (blendBaselineRows):
       - neighbours are the adjacent CLOCK hours and wrap across the day
         boundary (23 -> next day 00, 00 -> previous day 23);
       - a neighbour that is absent or 0 is treated as unavailable and falls back
         to the centre value;
       - with neither neighbour available the centre value passes through;
       - the result is rounded the way JS Math.round rounds (half up).
+
+    A SLOT WHOSE OWN BASELINE IS 0 IS STILL BLENDED WHEN IT HAS A ROW
+    (2026-09-25). blendBaselineRows returns 0 only when ml_venue_baselines has
+    NO row for the slot; a row holding 0 beside a positive neighbour blends to
+    round(0.6*0 + 0.2*prev + 0.2*next), which is positive, so production serves
+    the MODEL there (the hour before a venue opens, the hour after it closes).
+    This used to keep the 0, which the serving-population filter then dropped,
+    so training and the ship gate never saw a population the product serves:
+    160 of the 7,920 live September readings the band replay scores
+    (bandEval.js). A slot "has a row" when a weekly row exists for it, which is
+    exactly when buildBaselines writes one; __tests__/mlSmoothingParity.test.js
+    runs this function and blendBaselineRows over the same grid.
     """
     cell = (df.groupby(['venue_id', 'day_of_week', 'hour'], as_index=False)
               ['baseline_busyness'].mean())
@@ -2006,8 +2018,34 @@ def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
     prev_eff = np.where(prev_row > 0, prev_row, current)
     next_eff = np.where(next_row > 0, next_row, current)
     blended = np.floor(current * 0.6 + prev_eff * 0.2 + next_eff * 0.2 + 0.5)
-    df['baseline_busyness'] = np.where((current > 0) & has_neighbour, blended, current)
+    df['baseline_busyness'] = np.where(slot_has_baseline_row(df) & has_neighbour, blended, current)
     return df
+
+
+def slot_has_baseline_row(df: pd.DataFrame) -> np.ndarray:
+    """True where ml_venue_baselines holds a row for the row's own slot.
+
+    buildBaselines.js writes a slot exactly when a weekly row exists for it, so
+    a weekly row always has one, a realtime row has one when a weekly row of
+    the same venue shares its (day_of_week, hour), and a positive baseline can
+    only have come from one. A realtime row at a slot with no weekly row
+    exports baseline 0 through the exporter's COALESCE, and blendBaselineRows
+    answers 0 for it however busy its neighbours are.
+    """
+    if 'is_realtime' not in df.columns:
+        raise CorpusContractError(
+            'smooth_baseline_hours needs is_realtime to tell a slot whose baseline row '
+            'holds 0 from a slot with no baseline row at all; production blends the '
+            'first and refuses the second.')
+    weekly = pd.to_numeric(df['is_realtime'], errors='coerce').fillna(0).to_numpy() != 1
+    key = pd.DataFrame({
+        'venue': df['venue_id'].astype(str).to_numpy(),
+        'dow': pd.to_numeric(df['day_of_week'], errors='coerce').to_numpy(),
+        'hour': pd.to_numeric(df['hour'], errors='coerce').to_numpy(),
+    })
+    weekly_slots = pd.MultiIndex.from_frame(key[weekly]).unique()
+    has_row = pd.MultiIndex.from_frame(key).isin(weekly_slots)
+    return has_row | (df['baseline_busyness'].to_numpy(dtype=float) > 0)
 
 
 def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.DataFrame, Dict]:
