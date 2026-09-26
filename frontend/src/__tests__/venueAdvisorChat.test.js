@@ -230,6 +230,32 @@ describe('Roost chat: the three answers are told apart', () => {
     expect(screen.queryByText(/general advice/i)).toBeNull();
   });
 
+  test('a peak a serving switch made from the venue\'s pattern is footed by what made it, not the model', async () => {
+    const PATTERN = {
+      ...GROUNDED,
+      text: 'Your busiest stretch this week lands on Friday evening.',
+      sources: [{ id: 'peak_2026-08-21', source: 'model_holdout', asOf: '2026-08-20', numberSource: 'venue_pattern' }],
+    };
+    await askWith(PATTERN);
+    expect(screen.getByText("From your venue's usual pattern.")).toBeTruthy();
+    expect(screen.queryByText(/model estimate/i)).toBeNull();
+  });
+
+  test('the footer reads each source\'s served arithmetic first, and keeps its words without one', () => {
+    const { sourcesLine } = require('../components/VenueAdvisorChat');
+    const src = (numberSource) => ({ id: 'peak', source: 'model_holdout', asOf: '2026-08-20', ...(numberSource ? { numberSource } : {}) });
+    expect(sourcesLine([src()])).toBe('From model estimate.');
+    expect(sourcesLine([src('venue_pattern')])).toBe("From your venue's usual pattern.");
+    expect(sourcesLine([src('venue_pattern_live')])).toBe("From your venue's usual pattern and live readings.");
+    expect(sourcesLine([src('live_reading_2h')])).toBe('From your live readings, carried forward.');
+    // The model made these, so the model's label stands.
+    expect(sourcesLine([src('model_live')])).toBe('From model estimate.');
+    expect(sourcesLine([src('model_alone')])).toBe('From model estimate.');
+    // Mixed days name each once.
+    expect(sourcesLine([src('venue_pattern'), src('venue_pattern'), src()])).toBe("From your venue's usual pattern, model estimate.");
+    for (const s of ['venue_pattern', 'venue_pattern_live', 'live_reading_1h']) expect(sourcesLine([src(s)])).not.toMatch(/—/);
+  });
+
   test('an advice answer is marked as advice and inset behind a rule', async () => {
     await askWith(ADVICE);
     const marker = screen.getByText(/general advice, not from your data/i);

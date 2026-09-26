@@ -372,9 +372,40 @@ test('Birdie is told to attribute each forecast hour by its own source', () => {
   const rule = /- Each entry in `hourly_forecast`[^\n]*/.exec(prompt);
   assert.ok(rule, 'the per-hour rule is in the prompt');
   assert.match(rule[0], /Attribute each hour by its own `crowd_method`, with the meanings above, and never by the headline's/);
-  assert.match(rule[0], /An hour without `crowd_method` is the crowd model's number when its `predictionMethod` is "ml"\./);
+  // The replaced first hour carries the headline's reports basis, and the
+  // model fallback does not reach it: with both switches off it keeps
+  // predictionMethod "ml" and has no crowd_method.
+  assert.match(rule[0], /An hour with `crowd_source` = "user_reports" is the headline's number, adjusted by visitor reports from this time of week over the last four weeks, whatever its `predictionMethod` says, and is attributed that way\./);
+  assert.match(rule[0], /An hour with neither `crowd_method` nor `crowd_source` is the crowd model's number when its `predictionMethod` is "ml", what is typical for a venue like this one when its `predictionMethod` starts with "rule_engine", and the venue's own report when it is "owner_report"\./);
+  assert.doesNotMatch(rule[0], /An hour without `crowd_method` is the crowd model's number/);
+  assert.match(rule[0], /can carry its own `crowd_method`, `crowd_source` and `live_readings`/);
   assert.match(rule[0], /`live_readings` says whether the venue's recent live readings reached that hour's number\. When it is false, never say that hour used live readings\./);
   assert.doesNotMatch(rule[0], /—/, 'no em dash');
+});
+
+test('Birdie\'s crowd rules agree with each other about what the crowd model made', () => {
+  const { buildSystemPrompt } = aiRouter.__testables;
+  for (const ageBracket of ['adult', 'teen', null]) {
+    const prompt = buildSystemPrompt('Ava', {}, { ageBracket });
+    // The tool line no longer tells Birdie every number is the model's, which
+    // the per-source rules below then had to contradict.
+    const tool = /- get_crowd_prediction:[^\n]*/.exec(prompt);
+    assert.ok(tool);
+    assert.doesNotMatch(tool[0], /crowd model/);
+    // The headline's reports basis has a meaning of its own, with or without
+    // a switch naming the arithmetic.
+    const reports = /- When get_crowd_prediction returns `crowd_source` = "user_reports"[^\n]*/.exec(prompt);
+    assert.ok(reports, 'the headline reports rule is in the prompt');
+    assert.match(reports[0], /adjusted by verified visitor reports filed for this time of week over the last four weeks/);
+    assert.match(reports[0], /never say or imply that people at the venue right now adjusted it, and never call it the crowd model's number alone/);
+    assert.match(reports[0], /"category_pattern", the number is what is typical for a venue like this one, not a reading of this venue, and never the crowd model's number/);
+    // An adjusted model source is still the model's number, adjusted: the
+    // exception covers every model_ name, not only the two plain ones.
+    const method = /- When get_crowd_prediction returns `crowd_method`[^\n]*/.exec(prompt);
+    assert.match(method[0], /Unless it starts with "model_", never call it the crowd model's number\./);
+    assert.doesNotMatch(method[0], /Unless it is "model_live" or "model_alone"/);
+    for (const r of [tool[0], reports[0], method[0]]) assert.doesNotMatch(r, /—/, 'no em dash');
+  }
 });
 
 // ===========================================================================
@@ -394,6 +425,7 @@ test('Birdie: every forecast hour carries its own source and live-readings answe
   assert.strictEqual(hf[0].score, out.crowd_score);
   assert.strictEqual(hf[0].crowd_method, 'live_reading_1h');
   assert.strictEqual(hf[0].live_readings, true);
+  assert.ok(!('crowd_source' in hf[0]), 'no reports adjusted this hour');
   // A model hour with no named source still says a reading reached it.
   assert.strictEqual(hf[1].predictionMethod, 'ml');
   assert.ok(!('crowd_method' in hf[1]));
@@ -423,8 +455,10 @@ test('Birdie: a first hour replaced by a reporters\' blend is named as adjusted;
   assert.strictEqual(out.crowd_source, 'user_reports');
   assert.strictEqual(hf[0].score, out.crowd_score);
   assert.strictEqual(hf[0].crowd_method, 'live_reading_1h_adjusted');
+  assert.strictEqual(hf[0].crowd_source, 'user_reports');
   assert.strictEqual(hf[0].live_readings, true);
   assert.strictEqual(hf[2].crowd_method, 'venue_pattern', 'the blend moved the current hour only');
+  for (let i = 1; i < hf.length; i++) assert.ok(!('crowd_source' in hf[i]), `hour ${i} is not the blend`);
 });
 
 test('Birdie: a first hour replaced by the owner\'s reading carries neither key', async () => {
@@ -440,7 +474,7 @@ test('Birdie: a first hour replaced by the owner\'s reading carries neither key'
   assert.strictEqual(hf[2].crowd_method, 'venue_pattern');
 });
 
-test('Birdie with both switches off: every forecast hour keeps exactly its four keys, on every path', async () => {
+test('Birdie with both switches off: every forecast hour keeps its four keys, and a first hour the reporters\' blend replaced says so', async () => {
   SWITCHED = false;
   const plain = await ask(freshId('BIRDIEHOUROFF'), 4509);
   for (const h of plain.hourly_forecast) assert.deepStrictEqual(keysOf(h), SWITCHED_OFF_HOUR_KEYS, h.hour);
@@ -451,8 +485,15 @@ test('Birdie with both switches off: every forecast hour keeps exactly its four 
   feedbackRows = threeBusyReporters();
   const blended = await ask(b, 4510);
   assert.strictEqual(blended.crowd_source, 'user_reports');
-  for (const h of blended.hourly_forecast) assert.deepStrictEqual(keysOf(h), SWITCHED_OFF_HOUR_KEYS, h.hour);
-  assert.strictEqual(blended.hourly_forecast[0].score, blended.crowd_score);
+  // The one switched-off change: the first hour, replaced by the reporters'
+  // blend, carries the headline's reports basis so Birdie does not read the
+  // blended number as the model's alone. Every other hour keeps its four keys.
+  const [first, ...rest] = blended.hourly_forecast;
+  assert.deepStrictEqual(keysOf(first), [...SWITCHED_OFF_HOUR_KEYS, 'crowd_source'].sort());
+  assert.strictEqual(first.crowd_source, 'user_reports');
+  assert.strictEqual(first.predictionMethod, 'ml');
+  assert.strictEqual(first.score, blended.crowd_score);
+  for (const h of rest) assert.deepStrictEqual(keysOf(h), SWITCHED_OFF_HOUR_KEYS, h.hour);
 
   const o = freshId('BIRDIEHOUROFFOWNER');
   ownerRows[o] = liveOwnerRow(o, 85);
@@ -543,6 +584,19 @@ test('the strip carries what made each row\'s peak while a switch is on, and not
   assert.strictEqual(on.body.you.peakMethod, 'ml');
   assert.strictEqual(on.body.you.peakNumberSource, 'venue_pattern_live');
   assert.strictEqual(on.body.you.peakLiveReadings, true);
+
+  // The current hour is the model path's while the evening peak is the rule
+  // engine's: the row says both, and the client labels and captions the row
+  // off the peak (lib/crowd stripRowMethod, peersSourcePhrase).
+  HOURLY = (i) => (i === 0 ? { predictionMethod: 'rule_engine_no_baseline', liveReadings: false } : { numberSource: 'venue_pattern', liveReadings: false });
+  CURRENT_USER = { id: 4613, name: 'Owner', role: 'venue_owner' };
+  venueCtx = { id: 43, google_place_id: freshId('STRIPRULEPEAK'), verified: true };
+  const rulePeak = await call('GET', '/api/venue-dashboard/strip');
+  assert.strictEqual(rulePeak.status, 200, rulePeak.text);
+  assert.strictEqual(rulePeak.body.you.method, 'ml');
+  assert.strictEqual(rulePeak.body.you.peakMethod, 'rule_engine_no_baseline');
+  assert.strictEqual(rulePeak.body.you.peakLiveReadings, false);
+  assert.ok(!('peakNumberSource' in rulePeak.body.you));
 
   SWITCHED = false;
   CURRENT_USER = { id: 4612, name: 'Owner', role: 'venue_owner' };

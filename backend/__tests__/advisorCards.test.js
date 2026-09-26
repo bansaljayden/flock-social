@@ -442,6 +442,79 @@ test('with both switches off a peak fact gains no key, and the template keeps it
   assert.match(advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text, /model estimate/i);
 });
 
+// ── 2a'. The answer's sources list carries the served arithmetic ────────────
+//
+// The chat footer is built from the answer's `sources`, and each entry kept
+// only the fact's source, 'model_holdout' for every week-ahead peak, so a
+// pattern-made peak was footed "From model estimate". Every builder (the
+// template, the generated answer's valve, and the advice valve) now carries
+// numberSource beside the source, and only when the fact has one.
+
+const advisorFreeText = require('../services/advisorFreeText');
+
+async function patternPeaks() {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const realPredict = mlPredictor.predictBusyness;
+  mlPredictor.predictBusyness = async (_v, _w, ts) => {
+    const h = new Date(ts).getHours();
+    return {
+      score: 90 - Math.abs(21 - h) * 5, label: 'Busy', predictionMethod: 'ml', modelVersion: 'v-test+curve_offset',
+      serveMode: 'curve_offset', dataSourcesUsed: ['venue_data'], offsetChangedBySwitch: false,
+    };
+  };
+  try {
+    const facts = await advisorFacts.buildWeekAhead({ profile: profileRow(), mlVenue: ML_VENUE }, { userId: 7 });
+    return facts.filter((f) => !advisorFacts.isRefusal(f));
+  } finally {
+    mlPredictor.predictBusyness = realPredict;
+  }
+}
+
+test('every answer builder carries a pattern-made peak\'s served arithmetic to the sources list', async () => {
+  const peaks = await patternPeaks();
+  assert.strictEqual(peaks.length, 7);
+
+  // The template answer.
+  const template = advisorPhrasing.renderTemplate({ facts: peaks });
+  assert.strictEqual(template.sources.length, 7);
+  for (const s of template.sources) {
+    assert.strictEqual(s.source, 'model_holdout');
+    assert.strictEqual(s.numberSource, 'venue_pattern');
+  }
+
+  // The generated answer, through the valve that substitutes its placeholders
+  // (the conditioned facts are flattened and re-keyed, as phrase() does).
+  const llmFacts = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts(peaks));
+  const scoreFact = llmFacts.find((f) => f.unit !== 'hour' && Number.isFinite(Number(f.value)));
+  assert.ok(scoreFact, 'a peak part to cite');
+  const phrased = advisorPhrasing.applyValve(`Your busiest evening reads {{fact:${scoreFact.id}}} on our scale.`, { facts: llmFacts });
+  assert.ok(phrased, 'the valve kept the answer');
+  assert.strictEqual(phrased.sources.length, 1);
+  assert.strictEqual(phrased.sources[0].numberSource, 'venue_pattern');
+  assert.strictEqual(phrased.sources[0].id, scoreFact.sourceId);
+
+  // The advice answer, through its own valve.
+  const advice = advisorFreeText.applyAdviceValve(`Your busiest evening reads {{fact:${scoreFact.id}}} on our scale.`, llmFacts);
+  assert.ok(advice, 'the advice valve kept the answer');
+  assert.strictEqual(advice.sources[0].numberSource, 'venue_pattern');
+});
+
+test('with both switches off every answer builder\'s sources keep exactly their three keys', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const facts = await advisorFacts.buildWeekAhead({ profile: profileRow(), mlVenue: ML_VENUE }, { userId: 7 });
+  const peaks = facts.filter((f) => !advisorFacts.isRefusal(f));
+  const template = advisorPhrasing.renderTemplate({ facts: peaks });
+  for (const s of template.sources) assert.deepStrictEqual(Object.keys(s).sort(), ['asOf', 'id', 'source']);
+  const llmFacts = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts(peaks));
+  const cite = llmFacts.find((f) => f.unit !== 'hour' && Number.isFinite(Number(f.value)));
+  const phrased = advisorPhrasing.applyValve(`Your busiest evening reads {{fact:${cite.id}}} on our scale.`, { facts: llmFacts });
+  assert.ok(phrased);
+  for (const s of phrased.sources) assert.deepStrictEqual(Object.keys(s).sort(), ['asOf', 'id', 'source']);
+  const advice = advisorFreeText.applyAdviceValve(`Your busiest evening reads {{fact:${cite.id}}} on our scale.`, llmFacts);
+  assert.ok(advice);
+  for (const s of advice.sources) assert.deepStrictEqual(Object.keys(s).sort(), ['asOf', 'id', 'source']);
+});
+
 // ── 2b. A null result may not wear a fact's clothes ─────────────────────────
 //
 // The strongest-days band had a floor (85% of the best day) and no ceiling, so

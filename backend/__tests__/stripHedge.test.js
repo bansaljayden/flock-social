@@ -60,6 +60,19 @@ test('a rule-engine number can never be part of an ordering claim', () => {
     'two category priors differ about the categories, not about tonight');
 });
 
+test('while a serving switch is on, the claim asks what made each PEAK, not the current hour', () => {
+  // A row's peak fields are sent exactly while a switch is on.
+  const peak = (row, peakMethod) => ({ ...row, peakMethod, peakLiveReadings: false });
+  // The current hour is the model's, the evening peak the rule engine's.
+  assert.strictEqual(stripOrderingClaim(you(20), peak(them(90), 'rule_engine_no_baseline')), null);
+  assert.strictEqual(stripOrderingClaim(peak(you(20), 'rule_engine_no_baseline'), them(90)), null);
+  // Model peaks on both sides still claim, whatever the current hour was.
+  assert.strictEqual(stripOrderingClaim(peak(you(20, 'rule_engine'), 'ml'), peak(them(90), 'ml')), 'busier');
+  // With both switches off there is no peak field, and the current method
+  // decides exactly as before.
+  assert.strictEqual(stripOrderingClaim(you(20), them(90)), 'busier');
+});
+
 test('missing scores and missing rows draw no claim', () => {
   assert.strictEqual(stripOrderingClaim(you(null), them(90)), null);
   assert.strictEqual(stripOrderingClaim(you(40), them(undefined)), null);

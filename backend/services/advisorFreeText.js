@@ -1143,10 +1143,10 @@ function applyAdviceValve(raw, facts) {
 
   return {
     text: advisorPhrasing.internals.dedupeAdjacentWords(rendered),
-    sources: [...used].map((id) => {
-      const f = byId.get(id);
-      return { id: f.sourceId || id, source: f.source, asOf: f.asOf };
-    }),
+    // Built by the same function as the grounded modes' sources, so a peak a
+    // serving switch made without the model carries its served arithmetic
+    // to the footer here too.
+    sources: [...used].map((id) => advisorPhrasing.internals.answerSource(byId.get(id), id)),
   };
 }
 

@@ -189,8 +189,13 @@ describe('owner view of the card', () => {
     // here would put the wrong word on most venues, and the backend's
     // venueLabel.test.js greps this tree for exactly that mistake.
     expect(card).toContain("cd.ownerReport.noun");
-    expect(card).toContain("cd.ownerReport?.noun");
+    // The line under the dial is built in lib/crowd cardSourceLine now, and
+    // reads the same field.
+    const crowdLib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'crowd.js'), 'utf8');
+    expect(card).toContain('{cardSourceLine(cd)}');
+    expect(crowdLib).toContain("cd.ownerReport?.noun");
     expect(card).not.toMatch(/bar says/i);
+    expect(crowdLib).not.toMatch(/bar says/i);
   });
 
   it('the locked-forecast tease does not open the consumer paywall on a venue account', () => {
