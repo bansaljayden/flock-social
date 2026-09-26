@@ -533,7 +533,9 @@ module assembled() {
     color("white") place_pi_spacers();
     color("white") place_grommet();
     color("orange", 0.6) battery_body();
-    color("steelblue", 0.6) screen_body();
+    // Dark glass: the panel is off in a render, and a see-through screen
+    // reads as a hole.
+    color([0.04, 0.06, 0.09]) screen_body();
     color("green", 0.6) pi_body();
     color("lightgreen", 0.3) pi_plug_room();
     color("yellow") led_bodies();

@@ -91,6 +91,42 @@ def solid_check(log, name):
         sys.exit(f'{name} is not one closed solid:\n{log}')
 
 
+FACET = re.compile(
+    r'facet normal\s+(\S+)\s+(\S+)\s+(\S+)\s+outer loop\s+'
+    r'vertex\s+(\S+)\s+(\S+)\s+(\S+)\s+vertex\s+(\S+)\s+(\S+)\s+(\S+)\s+'
+    r'vertex\s+(\S+)\s+(\S+)\s+(\S+)\s+endloop\s+endfacet')
+
+
+def canonical_stl(path):
+    """Rewrite an ASCII STL with its triangles in one fixed order.
+
+    OpenSCAD writes the same solid with its triangles in a different order on
+    every run, so each export rewrote thousands of lines of every STL and a
+    real change could not be told from a reshuffle. Each triangle is rotated
+    to start at its smallest corner, which keeps its winding and so which way
+    it faces, and the triangles are then sorted. Same solid, same bytes.
+    """
+    facets = []
+    for f in FACET.findall(path.read_text()):
+        normal, corners = f[0:3], [f[3:6], f[6:9], f[9:12]]
+        key = [tuple(float(c) for c in v) for v in corners]
+        start = key.index(min(key))
+        corners = corners[start:] + corners[:start]
+        key = key[start:] + key[:start]
+        facets.append((key, normal, corners))
+    facets.sort(key=lambda item: item[0])
+    lines = ['solid OpenSCAD_Model']
+    for _, normal, corners in facets:
+        lines.append(f'  facet normal {" ".join(normal)}')
+        lines.append('    outer loop')
+        lines.extend(f'      vertex {" ".join(v)}' for v in corners)
+        lines.append('    endloop')
+        lines.append('  endfacet')
+    lines.append('endsolid OpenSCAD_Model')
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8', newline='\n')
+    return len(facets)
+
+
 def path_data(svg_text):
     m = re.search(r'<path d="([^"]+)"', svg_text)
     return m.group(1).strip() if m else ''
@@ -130,8 +166,10 @@ def main():
         (HERE / folder).mkdir(exist_ok=True)
 
     for scad, part, name in PRINTED:
-        log = run(openscad, scad, HERE / 'stl' / f'{name}.stl', part)
+        out = HERE / 'stl' / f'{name}.stl'
+        log = run(openscad, scad, out, part)
         solid_check(log, name)
+        canonical_stl(out)
         print(f'stl/{name}.stl')
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -139,7 +177,10 @@ def main():
         for part, engrave in PANELS:
             log = run(openscad, BASE, tmp / f'{part}.stl', part)
             solid_check(log, part)
-            run(openscad, BASE, HERE / 'dxf' / f'base-{part}.dxf', part, '-D', 'flat=true')
+            dxf = HERE / 'dxf' / f'base-{part}.dxf'
+            run(openscad, BASE, dxf, part, '-D', 'flat=true')
+            # OpenSCAD writes CRLF on Windows and LF elsewhere; keep one.
+            dxf.write_text(dxf.read_text(), encoding='utf-8', newline='\n')
             run(openscad, BASE, tmp / f'{part}.svg', part, '-D', 'flat=true')
             cut_d = path_data((tmp / f'{part}.svg').read_text())
             engrave_d = ''
@@ -157,20 +198,18 @@ def main():
         print('clash check: nothing overlaps')
 
     if not args.no_preview:
+        # (file, part, output, rotation about x, y, z, projection). Each is
+        # framed whole by --viewall rather than by a hand-set distance.
         views = [
-            ('base-assembled', 'assembled', '-160,-330,260,114,44,89'),
-            ('base-inside', 'inside', '-150,-260,330,114,44,80'),
-            ('base-front', 'front_face', '114,-420,89,114,0,89'),
-            ('head-assembled', None, None),
+            (BASE, 'assembled', 'base-assembled', '65,0,-28', 'p'),
+            (BASE, 'inside', 'base-inside', '55,0,-30', 'p'),
+            (BASE, 'front_face', 'base-front', '90,0,0', 'o'),
+            (HEAD, 'assembled', 'head-assembled', '110,0,200', 'p'),
         ]
-        for name, part, camera in views:
-            if part is None:
-                run(openscad, HEAD, HERE / 'preview' / f'{name}.png', 'assembled',
-                    '--imgsize=1200,1000', '--viewall', '--autocenter', '--colorscheme=Tomorrow')
-            else:
-                run(openscad, BASE, HERE / 'preview' / f'{name}.png', part,
-                    '--imgsize=1400,1000', f'--camera={camera}', '--projection=p',
-                    '--colorscheme=Tomorrow')
+        for scad, part, name, rot, projection in views:
+            run(openscad, scad, HERE / 'preview' / f'{name}.png', part,
+                '--imgsize=1400,1000', f'--camera=0,0,0,{rot},0', '--viewall',
+                '--autocenter', f'--projection={projection}', '--colorscheme=Tomorrow')
             print(f'preview/{name}.png')
 
 
