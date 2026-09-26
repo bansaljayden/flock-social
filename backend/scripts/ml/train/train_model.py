@@ -261,13 +261,20 @@ def assert_delta_label(y, y_actual, baseline, label_type: str) -> None:
                 len(diff), worst)
 
 
-def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance) -> dict:
+def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
+                                        run_length_divisor=None) -> dict:
     """Sample weights must follow the pipeline's tiering, not the other way round.
 
     prepare_features.py sets weekly < vendor-forecast < live-observed, with the
     reason written out there. The numbers live in that file; what is checked here
     is that each tier is internally consistent and correctly ordered, so a
     reordering or a collapsed tier cannot slip through unnoticed.
+
+    `run_length_divisor` (2026-09-25) is what prepare_features divided each
+    row's tier weight by: a live row's run of identical consecutive-hour
+    readings under FLOCK_RUN_LENGTH_WEIGHTS=on, 1 everywhere else. The tier is
+    then weight x divisor, still one number per tier, and only a live row may
+    carry a divisor above 1.
     """
     if sample_weight is None:
         raise LabelContractError(
@@ -281,6 +288,21 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance) 
 
     rt = np.asarray(is_realtime).astype(bool)
     prov = np.asarray(provenance).astype(str) if provenance is not None else None
+    if run_length_divisor is None:
+        tier_w = w
+    else:
+        div = np.asarray(run_length_divisor, dtype=np.float64)
+        if (len(div) != len(w) or not np.all(np.isfinite(div)) or np.any(div < 1)
+                or np.any(div != np.floor(div))):
+            raise LabelContractError(
+                'run_length_divisor must be a whole number >= 1 on every row, aligned with '
+                'sample_weight.')
+        live = rt & (prov == 'live') if prov is not None else rt
+        if np.any(div[~live] != 1):
+            raise LabelContractError(
+                f'{int((div[~live] != 1).sum())} row(s) that are not live readings carry a '
+                'run-length divisor above 1. Only a live reading can repeat a vendor update.')
+        tier_w = w * div
     tiers = {'weekly_anchor': ~rt}
     if prov is not None:
         tiers['realtime_vendor_forecast'] = rt & (prov == 'forecast')
@@ -292,14 +314,18 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance) 
     for name, mask in tiers.items():
         if not mask.any():
             continue
-        vals = np.unique(np.round(w[mask], 6))
+        vals = np.unique(np.round(tier_w[mask], 6))
         if len(vals) > 1:
             raise LabelContractError(
-                f'Tier {name} carries {len(vals)} different sample weights {vals.tolist()}. '
+                f'Tier {name} carries {len(vals)} different sample weights {vals.tolist()}'
+                f'{" (weight x run-length divisor)" if run_length_divisor is not None else ""}. '
                 'Each provenance tier must have one weight, or the loss no longer means '
                 'what prepare_features.py says it means.')
         summary[name] = {'rows': int(mask.sum()), 'weight': float(vals[0]),
                          'weight_share_pct': round(float(w[mask].sum() / w.sum()) * 100, 2)}
+        if run_length_divisor is not None and name != 'weekly_anchor':
+            summary[name]['rows_divided_by_run_length'] = int((div[mask] > 1).sum())
+            summary[name]['weight_sum'] = round(float(w[mask].sum()), 3)
 
     order = [k for k in ('weekly_anchor', 'realtime_vendor_forecast', 'realtime_observed',
                          'realtime') if k in summary]
@@ -1258,7 +1284,8 @@ def main():
         logger.warning('is_realtime is not in the feature set — the per-population '
                        'breakdown will treat every row as weekly.')
         is_realtime = np.zeros(n, dtype=bool)
-    weight_tiers = assert_weighting_matches_provenance(sample_weight, is_realtime, provenance)
+    weight_tiers = assert_weighting_matches_provenance(sample_weight, is_realtime, provenance,
+                                                       data.get('run_length_divisor'))
 
     logger.info('Data shape: %s, Label type: %s, Label range: [%.1f, %.1f]',
                 X.shape, label_type, y.min(), y.max())
