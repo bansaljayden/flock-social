@@ -65,6 +65,20 @@ STATIC_FLOOR_FALLBACK = 29.2  # pre-clock-fix v2.5 figure; used only when no
 ALLOW_NO_INCUMBENT = os.environ.get('ML_ALLOW_NO_INCUMBENT', '').lower() == 'true'
 ALLOW_APPROXIMATE_INCUMBENT = os.environ.get('ML_ALLOW_APPROXIMATE_INCUMBENT', '').lower() == 'true'
 
+# THE BAND GATE (2026-09-25). Everything this script measures is a point metric
+# on the city holdout. The number the product is judged on is different: the
+# share of served forecasts within one crowd band of the live reading, on the
+# venues the product serves, forward in time (the admin Overview "Model" card).
+# That is measured by bandEval.js, which replays the EXPORTED artifact through
+# the serving code, so it can only run after export_model.py. This script
+# therefore records its own verdict as point_gate_pass and leaves overall_pass
+# FALSE, verdict pending_band_gate; bandEval.js --gate sets overall_pass to
+# (point_gate_pass AND band gate). mlPredictor.init() refuses an artifact whose
+# overall_pass is false, so an artifact that skipped the band gate cannot load.
+# ML_ALLOW_NO_BAND_GATE=true keeps the old single-gate verdict, recorded as
+# band_gate_required false; it is for local debugging, never a release.
+ALLOW_NO_BAND_GATE = os.environ.get('ML_ALLOW_NO_BAND_GATE', '').lower() == 'true'
+
 
 def metrics(y_true, y_pred):
     y_pred = np.clip(y_pred, 0, 100)
@@ -722,6 +736,35 @@ def main():
             incumbent.pop('_gate_rows', None)
             incumbent.pop('_metrics_pair', None)
 
+    # WHEN THE PICKLE CANNOT LINE THE INCUMBENT UP, THE BAND GATE CAN
+    # (2026-09-25). compare_incumbent scores the incumbent through its preserved
+    # features_holdout.pkl, which works only while the holdout ROWS are the ones
+    # it was built on. v2.6.0-starling's pickle holds the 395,464 spring rows of
+    # 2026-08-18, unknown-provenance realtime rows included; every holdout built
+    # since round 26 excludes those, so the comparison is 'incomparable' for any
+    # candidate with a changed feature set, and the gate failed by construction
+    # (measured on the local dry run: 395,464 rows against 240,657). The one
+    # hatch, ML_ALLOW_APPROXIMATE_INCUMBENT, compares metrics on different rows.
+    #
+    # The band gate replays models/incumbent/crowd_model.onnx through the
+    # serving code on the SAME live readings as the candidate, which is the
+    # comparison this arm exists to make, done on identical rows. So when the
+    # band gate is required and the incumbent artifact is there to replay, arms
+    # 3 and 4 are deferred to it and recorded as deferred, never passed. An
+    # absent incumbent is still a failure here.
+    incumbent_deferred = bool(
+        not ALLOW_NO_BAND_GATE
+        and incumbent is not None
+        and incumbent.get('status') == 'incomparable'
+        and (INCUMBENT_DIR / 'crowd_model.onnx').exists()
+        and (INCUMBENT_DIR / 'model_metadata.json').exists())
+    if incumbent_deferred:
+        incumbent['deferred_to_band_gate'] = True
+        incumbent_pass = True
+        logger.warning('INCUMBENT: %s. Arms 3 and 4 are DEFERRED to the band gate, which '
+                       'replays models/incumbent/ through the serving code on the same live '
+                       'readings as the candidate.', incumbent.get('reason'))
+
     # ============= SHIP VERDICT =============
     logger.info('\n========== SHIP GATE ==========')
     logger.info('Criteria (ALL must hold):')
@@ -751,6 +794,15 @@ def main():
             f"{floor_subject_within10}%. Replaces the stale pre-clock-fix "
             f"constant {STATIC_FLOOR_FALLBACK}% per RETRAIN.md/MODEL-METRICS.md."
         )
+    elif incumbent_deferred:
+        floor_value = None
+        floor_basis = 'deferred_to_band_gate'
+        floor_subject_within10 = rt_model_metrics['within_10'] if rt_model_metrics else None
+        floor_derivation = (
+            'the incumbent could not be aligned to this holdout by its preserved pickle '
+            f"({incumbent.get('reason')}); the band gate compares the two artifacts on "
+            'identical live readings instead.'
+        )
     else:
         floor_value = STATIC_FLOOR_FALLBACK
         floor_basis = 'static_fallback_pre_clock_fix'
@@ -768,13 +820,15 @@ def main():
         relative_pass = (rt_mae_delta >= GATE_MAE_IMPROVEMENT) or (rt_r2_delta >= GATE_R2_IMPROVEMENT)
         no_mae_regression = rt_mae_delta >= 0
         rt_pass = bool(relative_pass and no_mae_regression)
-        floor_pass = bool(floor_subject_within10 is not None
-                          and floor_subject_within10 >= floor_value)
+        floor_pass = bool(floor_basis == 'deferred_to_band_gate'
+                          or (floor_subject_within10 is not None
+                              and floor_subject_within10 >= floor_value))
         logger.info(f'  1+2 relative:  MAE Δ={rt_mae_delta:+.2f}  R² Δ={rt_r2_delta:+.3f}  '
                     f'→ {"PASS" if rt_pass else "FAIL"}')
+        deferred = 'DEFERRED to the band gate' if incumbent_deferred else None
         logger.info(f'  3   floor:     within-10 ={floor_subject_within10}% vs floor '
-                    f'{floor_value}% ({floor_basis})  → {"PASS" if floor_pass else "FAIL"}')
-        logger.info(f'  4   incumbent: → {"PASS" if incumbent_pass else "FAIL"}')
+                    f'{floor_value}% ({floor_basis})  → {deferred or ("PASS" if floor_pass else "FAIL")}')
+        logger.info(f'  4   incumbent: → {deferred or ("PASS" if incumbent_pass else "FAIL")}')
 
     logger.info(f'Diagnostics — training (LOCO CV) {"PASS" if train_pass else "FAIL"}, '
                 f'holdout overall {"PASS" if hold_pass else "FAIL"} '
@@ -831,11 +885,37 @@ def main():
                     'substitute: most of those rows are weekly snapshots where the label equals '
                     'the baseline by construction.')
 
+    # The band gate decides the rest (see ALLOW_NO_BAND_GATE above). A point
+    # failure stays a failure whatever the band gate later says.
+    point_gate_pass = bool(overall_pass)
+    band_gate_required = not ALLOW_NO_BAND_GATE
+    if band_gate_required:
+        overall_pass = False
+        if point_gate_pass:
+            verdict = 'pending_band_gate'
+        logger.info('BAND GATE: %s. Export with export_model.py, then run '
+                    '`node bandEval.js --gate` to score the exported artifact on the live '
+                    'time holdout; it sets overall_pass = point AND band.',
+                    'point gate passed, overall verdict pending' if point_gate_pass
+                    else 'point gate failed, so the artifact cannot ship whatever the band gate says')
+    else:
+        logger.warning('ML_ALLOW_NO_BAND_GATE=true: the verdict stands on the point gate alone. '
+                       'Recorded as band_gate_required false. Not for a release.')
+
     meta['ship_gate'] = {
         # Decision — realtime holdout rows that production would actually serve.
         'overall_pass': overall_pass,
         'gate_basis': gate_basis,
         'verdict': verdict,
+        # The point gate's own verdict, which bandEval.js --gate ANDs with the
+        # band gate to produce overall_pass.
+        'point_gate_pass': point_gate_pass,
+        'band_gate_required': band_gate_required,
+        'band_gate_status': 'pending' if band_gate_required else 'waived',
+        # True when arms 3 and 4 could not be computed from the incumbent's
+        # pickle and were handed to the band gate, which replays both artifacts
+        # on identical live readings (see incumbent_deferred above).
+        'incumbent_deferred_to_band_gate': incumbent_deferred,
         'realtime_rows': rt_count,
         'excluded_no_baseline_rows': excluded_no_baseline,
         'realtime_mae_improvement': round(rt_mae_delta, 4) if rt_mae_delta is not None else None,
@@ -884,6 +964,9 @@ def main():
             f'vs that baseline, AND within-10 ≥ the incumbent measured on the same rows '
             f'this run ({floor_value}%, {floor_basis}), AND no MAE '
             f'regression vs the incumbent artifact.'
+            + (' AND the band gate: bandEval.js --gate on the live time holdout, run on the '
+               'exported artifact, sets overall_pass to point AND band.'
+               if band_gate_required else ' (band gate waived by ML_ALLOW_NO_BAND_GATE.)')
         ),
     }
     meta['evaluation'] = {
