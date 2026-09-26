@@ -182,6 +182,10 @@ function createdAfterFrom(argv) {
   return { at };
 }
 
+// No single run can admit more than the plan allows in a month, so a --max-new
+// above it is refused here rather than handed to BestTime to refuse halfway.
+const PLAN_MONTHLY_ADMISSIONS = 100;
+
 function newVenueCheck(venues, argv) {
   const byName = venues.filter((v) => !v.besttime_venue_id).length;
   if (byName === 0) return { byName, refusal: null };
@@ -191,15 +195,25 @@ function newVenueCheck(venues, argv) {
   if (arg && !(maxNew > 0)) {
     return { byName, refusal: '--max-new must be a positive integer.' };
   }
+  if (maxNew !== null && maxNew > PLAN_MONTHLY_ADMISSIONS) {
+    return {
+      byName,
+      refusal: `--max-new=${maxNew} is more than the plan's ${PLAN_MONTHLY_ADMISSIONS} new-venue admissions a month.`,
+    };
+  }
   if (maxNew !== null && byName <= maxNew) return { byName, refusal: null };
-  return {
-    byName,
-    refusal: `REFUSED: ${byName} of these venues have no BestTime id, so each is a by-name `
-      + "lookup that spends one of the plan's 100 new-venue admissions a month. "
-      + (arg ? `That is more than --max-new=${maxNew}. ` : '')
-      + `Narrow the scope (--created-after=..., --city=..., --limit=...) or pass --max-new=${byName} `
-      + 'to spend them on purpose.',
-  };
+  const head = `REFUSED: ${byName} of these venues have no BestTime id, so each is a by-name `
+    + `lookup that spends one of the plan's ${PLAN_MONTHLY_ADMISSIONS} new-venue admissions a month. `
+    + (arg ? `That is more than --max-new=${maxNew}. ` : '');
+  // Suggest a --max-new only when it could be honoured. The venues people
+  // actually asked about come through addDemandVenues.js, which stages them
+  // and prints the exact admission command.
+  const next = byName > PLAN_MONTHLY_ADMISSIONS
+    ? 'No single run can admit that many. To admit the venues people asked about, run '
+      + 'addDemandVenues.js --commit, which stages them and prints the exact command.'
+    : `Narrow the scope (--created-after=..., --city=..., --limit=...) or pass --max-new=${byName} `
+      + 'to spend them on purpose.';
+  return { byName, refusal: head + next };
 }
 
 async function collectWeekly() {

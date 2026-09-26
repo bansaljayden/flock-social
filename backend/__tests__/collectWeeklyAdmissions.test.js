@@ -36,6 +36,21 @@ test('a run with any by-name lookup refuses unless the count is asked for', () =
   assert.match(refusal, /--max-new=3 to spend them on purpose/);
 });
 
+test('a run bigger than a month of admissions points at the demand list, never at a bigger --max-new', () => {
+  // 2026-09-25: a pasted all-cities run selected 2,000 never-attempted venues,
+  // and the first version of this message suggested --max-new=2000.
+  const { refusal } = newVenueCheck(byName(2000), []);
+  assert.match(refusal, /REFUSED: 2000 of these venues have no BestTime id/);
+  assert.match(refusal, /No single run can admit that many/);
+  assert.match(refusal, /addDemandVenues\.js --commit/);
+  assert.doesNotMatch(refusal, /--max-new=2000/);
+});
+
+test('--max-new above the monthly allowance is refused outright', () => {
+  assert.match(newVenueCheck(byName(5), ['--max-new=101']).refusal, /more than the plan's 100 new-venue admissions/);
+  assert.strictEqual(newVenueCheck(byName(100), ['--max-new=100']).refusal, null);
+});
+
 test('--max-new admits up to its count and refuses one more', () => {
   assert.strictEqual(newVenueCheck(byName(42), ['--max-new=42']).refusal, null);
   assert.strictEqual(newVenueCheck(byName(7), ['--max-new=42']).refusal, null);
