@@ -1,0 +1,6 @@
+# Everything here runs on a Raspberry Pi and usually gets there by being
+# copied from a checkout. A Windows checkout turns line endings into CRLF,
+# and then bash refuses setup.sh ("bad interpreter") and systemd reads
+# "User=pi" with a carriage return on the end. LF in every working copy;
+# files git sees as binary are left alone.
+* text=auto eol=lf

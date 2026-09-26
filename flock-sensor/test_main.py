@@ -3411,6 +3411,16 @@ class InstallerHardwareAccess(unittest.TestCase):
         attrs = (self.HERE / 'vl53l8cx' / '.gitattributes').read_text(encoding='utf-8')
         self.assertIn('*.bin binary', attrs)
 
+    def test_the_files_the_pi_runs_have_unix_line_endings(self):
+        # A CRLF setup.sh fails before its first command ("bad interpreter"),
+        # and a CRLF unit file hands systemd a user name ending in a carriage
+        # return. A Windows checkout produced exactly that until
+        # flock-sensor/.gitattributes pinned LF.
+        for name in ('setup.sh', 'flock-sensor.service', 'main.py', 'flock_sensor.env.example'):
+            self.assertNotIn(b'\r\n', (self.HERE / name).read_bytes(), name)
+        attrs = (self.HERE / '.gitattributes').read_text(encoding='utf-8')
+        self.assertIn('eol=lf', attrs)
+
 
 if __name__ == '__main__':
     unittest.main()
