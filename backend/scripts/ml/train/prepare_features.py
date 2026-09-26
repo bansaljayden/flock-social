@@ -47,6 +47,7 @@ import json
 import math
 import os
 import pickle
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -275,7 +276,8 @@ def exclude_unknown_provenance(df: pd.DataFrame, label: str) -> Tuple[pd.DataFra
 #
 # So every realtime row observed on or after the cutoff leaves the TRAINING
 # frame here, before anything is fitted on it: the category maps, the climate
-# norms, the neighbour grid and the model itself. Weekly rows stay, because
+# norms and the model itself (the neighbour table reads weekly rows only, as
+# ml_venue_baselines does). Weekly rows stay, because
 # production has them at serve time. Earlier live rows of the same venues stay
 # too, because production has those as well, which is exactly what a forecast
 # made today for tomorrow faces. The held-out rows need no pickle: the band gate
@@ -429,8 +431,10 @@ def serving_population_mask(baseline) -> np.ndarray:
 #
 # Three fits in this file compute means that later become FEATURES for other
 # rows: the category/refined baseline maps, the per-fold cell aggregates that
-# rebuild them, and the per-venue baseline map inside add_neighbor_features.
-# Today every row in the corpus is vendor-collected (BestTime via
+# rebuild them, and the neighbour table (build_neighbor_table). The neighbour
+# table is stricter than this predicate since 2026-09-25: it reads weekly rows
+# only, which is all ml_venue_baselines is built from, so no realtime label of
+# any provenance reaches it. Today every row in the corpus is vendor-collected (BestTime via
 # collectWeekly/collectRealtime), so filtering those fits to vendor provenance
 # changes nothing — which is exactly when to install the filter. The moment a
 # non-vendor label source lands in the corpus (the venue-owner slider,
@@ -1211,7 +1215,7 @@ def require_coordinates(df: pd.DataFrame, csv_path: Path, label: str) -> None:
     """Every row needs a finite latitude and longitude, or the run stops.
 
     Three feature families derive from the coordinates: the astronomy shape,
-    the climate norm lookup and the neighbour grid. The old `fillna(0)` in two
+    the climate norm lookup and the neighbour box. The old `fillna(0)` in two
     of them put a coordinate-less row on the equator at the prime meridian and
     trained it there, silently. No row in the corpus lacks coordinates, which
     is exactly why a hard contract costs nothing now and catches the first one.
@@ -1222,7 +1226,7 @@ def require_coordinates(df: pd.DataFrame, csv_path: Path, label: str) -> None:
     if bad.any():
         raise CorpusContractError(
             f'{label} ({csv_path}) has {int(bad.sum())} row(s) without a finite latitude/'
-            'longitude. Astronomy, the climate norm and the neighbour grid are all derived '
+            'longitude. Astronomy, the climate norm and the neighbour box are all derived '
             'from the coordinates, and filling them with 0 would train those rows at 0N 0E. '
             'Fix the venue in ml_venues; do not fill.'
         )
@@ -1283,7 +1287,7 @@ def temperature_norm_lookup(df: pd.DataFrame, norms: pd.DataFrame) -> pd.Series:
     """The norm serving would look up for each row: its cell, else the table mean.
 
     Index-preserving on purpose (a map, not a merge): this runs before the
-    baseline smoothing and the neighbour grid, both of which key on the frame's
+    baseline smoothing and the neighbour features, both of which key on the frame's
     own columns, and a merge that reset the index here would be an invitation
     to a positional mistake later.
     """
@@ -1324,64 +1328,211 @@ def add_climate_anomaly(df: pd.DataFrame, norms: pd.DataFrame = None) -> Tuple[p
     return df, norms
 
 
-def add_neighbor_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Neighbor-venue same-hour baseline activity (v2.4, agglomeration signal).
+# ---------------------------------------------------------------------------
+# NEIGHBOUR ACTIVITY IS SERVING'S ARITHMETIC (2026-09-25).
+#
+# log_neighbor_count and neighbor_baseline_same_hour are what
+# mlPredictor.getNeighborActivity returns, and serving is the reference. Its
+# arithmetic, restated over the export:
+#
+#   the box   the venue's coordinates rounded by JS toFixed(3), then plus and
+#             minus NEIGHBOR_BOX_DEG in float64, both ends included: the range
+#             scan's BETWEEN on DOUBLE PRECISION columns
+#   members   every venue in the box with an ml_venue_baselines row for the
+#             slot. buildBaselines writes one exactly when a weekly row exists,
+#             so a row holding 0 counts, a slot with no weekly row does not,
+#             and two venues at one address are two venues
+#   values    that raw weekly baseline (a SMALLINT), never the smoothed number
+#             the delta label is taken against
+#   self      taken back out, count and value, when the venue itself has a row
+#             for the slot
+#   result    count = members - self; mean = (sum - own) / count, clamped to
+#             0..100; (0, 0) when the count is 0 or the coordinates are unusable
+#
+# The version this replaces bucketed SMOOTHED baselines on a 0.005-degree grid
+# (a 3x3 window whose edges fall anywhere relative to the venue), keyed venues
+# on coordinates rounded to five places, and counted realtime rows at slots no
+# weekly row holds. On the 8,006 live September readings bandEval.js replays,
+# its count disagreed with serving's on 58.6% of rows (by 1.58 venues on
+# average) and its mean by 3.3 points on average (p90 7.0); this version
+# disagrees on none. __tests__/mlNeighborParity.test.js runs it and the real
+# getNeighborActivity over one random grid and requires equality on every row.
+#
+# THE TABLE IS BUILT FROM THE RAW FRAMES, before any row is dropped. Serving's
+# range scan sees every venue that has a weekly row: the always-zero venues
+# main() drops from training, and the other frame's cities, are still somebody's
+# neighbours. Only weekly rows build it, as only weekly rows build
+# ml_venue_baselines, so no realtime, owner or feedback label can move another
+# venue's feature (the poisoning rule vendor_provenance_mask states).
+# ---------------------------------------------------------------------------
+NEIGHBOR_BOX_DEG = 0.0075  # mlPredictor.NEIGHBOR_BOX_DEG (neighborCacheBucketing.test.js pins it there)
+_MILLI = Decimal('0.001')
 
-    For each venue: how much typical same-hour activity surrounds it within
-    ~1km (3x3 grid of ~500m buckets), excluding itself. The academic result
-    this encodes: nearby venues' demand predicts a venue's own demand.
-    Inference computes the identical quantity via SQL over ml_venues +
-    ml_venue_baselines (same source data).
+
+def js_to_fixed_3(x: float) -> float:
+    """Number((+x).toFixed(3)), exactly.
+
+    toFixed rounds the EXACT binary value of x to three decimals and sends a
+    tie to the larger magnitude. Python's round() sends a tie to even and
+    numpy's rounds a scaled copy, and on a coordinate like -75.0625 either
+    would centre the box a metre from where serving centres it. Decimal(x) is
+    the exact binary value.
     """
-    df['_vkey'] = df['latitude'].round(5).astype(str) + '_' + df['longitude'].round(5).astype(str)
-    # The venue-baseline map is built from VENDOR rows only (2026-08-18): a
-    # non-vendor row (owner slider, user feedback, sensor) carrying a
-    # baseline_busyness would otherwise dilute its venue's mean here, and that
-    # mean becomes a FEATURE of every venue within ~1km — one venue's
-    # self-reports must never move a neighbour's neighbor_baseline_same_hour.
-    # Every row still RECEIVES the feature via the merge below; only the fit
-    # is restricted. No-op on the frozen all-vendor corpus.
-    vb = (
-        df[vendor_provenance_mask(df)]
-        .groupby(['_vkey', 'day_of_week', 'hour'])
-        .agg(bl=('baseline_busyness', 'mean'), lat=('latitude', 'first'), lng=('longitude', 'first'))
-        .reset_index()
-    )
-    vb['bx'] = (vb['lat'] / 0.005).round().astype(np.int32)
-    vb['by'] = (vb['lng'] / 0.005).round().astype(np.int32)
+    return float(Decimal(float(x)).quantize(_MILLI, rounding=ROUND_HALF_UP))
 
-    bucket = (
-        vb.groupby(['bx', 'by', 'day_of_week', 'hour'])
-        .agg(b_sum=('bl', 'sum'), b_cnt=('bl', 'size'))
-        .reset_index()
-    )
-    # 3x3 window sums via shifted copies
-    shifted = []
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            s = bucket.copy()
-            s['bx'] = s['bx'] + dx
-            s['by'] = s['by'] + dy
-            shifted.append(s)
-    window = (
-        pd.concat(shifted, ignore_index=True)
-        .groupby(['bx', 'by', 'day_of_week', 'hour'])
-        .agg(w_sum=('b_sum', 'sum'), w_cnt=('b_cnt', 'sum'))
-        .reset_index()
-    )
-    vb = vb.merge(window, on=['bx', 'by', 'day_of_week', 'hour'], how='left')
-    vb['neighbor_count'] = (vb['w_cnt'].fillna(1) - 1).clip(lower=0)
-    vb['neighbor_baseline_same_hour'] = np.where(
-        vb['neighbor_count'] > 0,
-        (vb['w_sum'].fillna(vb['bl']) - vb['bl']) / vb['neighbor_count'].replace(0, 1),
-        0.0,
-    )
-    nb = vb[['_vkey', 'day_of_week', 'hour', 'neighbor_count', 'neighbor_baseline_same_hour']]
-    df = df.merge(nb, on=['_vkey', 'day_of_week', 'hour'], how='left')
-    df['neighbor_count'] = df['neighbor_count'].fillna(0)
-    df['log_neighbor_count'] = np.log1p(df['neighbor_count'])
-    df['neighbor_baseline_same_hour'] = df['neighbor_baseline_same_hour'].fillna(0).clip(0, 100)
-    return df
+
+def js_round(values) -> np.ndarray:
+    """Math.round: the nearest integer, a tie going toward +infinity."""
+    v = np.asarray(values, dtype=float)
+    f = np.floor(v)
+    return f + ((v - f) >= 0.5)
+
+
+def _has_coordinates(lat: float, lng: float) -> bool:
+    """mlPredictor.hasCoordinates."""
+    return bool(np.isfinite(lat) and np.isfinite(lng)
+                and -90 <= lat <= 90 and -180 <= lng <= 180)
+
+
+def build_neighbor_table(frames: List[pd.DataFrame]) -> Dict:
+    """ml_venues joined to ml_venue_baselines, as serving's range scan reads them.
+
+    Venues and their coordinates come from the first row of each venue_id in
+    frame order (the export writes ml_venues' coordinates on every row of a
+    venue); a venue's curve is its weekly rows' baseline_busyness, which the
+    exporter takes from the same aggregate buildBaselines writes. This is the
+    table bandEval.js readCorpus builds from the same files.
+    """
+    cols = ['venue_id', 'latitude', 'longitude', 'day_of_week', 'hour',
+            'baseline_busyness', 'is_realtime']
+    raw = pd.concat([f[cols] for f in frames], ignore_index=True)
+    vid = raw['venue_id'].astype(str).to_numpy()
+    first = ~pd.Series(vid).duplicated(keep='first').to_numpy()
+    venue_ids = vid[first]
+    index = {v: i for i, v in enumerate(venue_ids)}
+    lat = pd.to_numeric(raw['latitude'], errors='coerce').to_numpy(dtype=float)[first]
+    lng = pd.to_numeric(raw['longitude'], errors='coerce').to_numpy(dtype=float)[first]
+
+    dow = pd.to_numeric(raw['day_of_week'], errors='coerce').to_numpy(dtype=float)
+    hour = pd.to_numeric(raw['hour'], errors='coerce').to_numpy(dtype=float)
+    base = pd.to_numeric(raw['baseline_busyness'], errors='coerce').to_numpy(dtype=float)
+    weekly = pd.to_numeric(raw['is_realtime'], errors='coerce').fillna(0).to_numpy() != 1
+    on_grid = ((dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
+               & (np.floor(dow) == dow) & (np.floor(hour) == hour))
+    use = weekly & np.isfinite(base) & on_grid
+
+    curve = np.full((len(venue_ids), 168), -1, dtype=np.int16)
+    rows = np.fromiter((index[v] for v in vid[use]), dtype=np.int64, count=int(use.sum()))
+    slots = (dow[use] * 24 + hour[use]).astype(np.int64)
+    # Row order, so a later row for the same slot wins, as it does in the replay.
+    curve[rows, slots] = js_round(base[use]).astype(np.int16)
+    has_curve = np.zeros(len(venue_ids), dtype=bool)
+    has_curve[rows] = True
+
+    member = has_curve & np.isfinite(lat) & np.isfinite(lng)
+    member_idx = np.flatnonzero(member)
+    order = member_idx[np.argsort(lat[member_idx], kind='stable')]
+    return {
+        'index': index,
+        'lat': lat,
+        'lng': lng,
+        'curve': curve,
+        'has_curve': has_curve,
+        'members_by_lat': order,
+        'members_lat_sorted': lat[order],
+        'box_deg': NEIGHBOR_BOX_DEG,
+        'venues': int(len(venue_ids)),
+        'venues_with_curve': int(has_curve.sum()),
+    }
+
+
+def _box_totals(table: Dict, b_lat: float, b_lng: float) -> Tuple[np.ndarray, np.ndarray]:
+    """COUNT(*) and SUM(baseline) per slot over the box centred on (b_lat, b_lng)."""
+    d = table['box_deg']
+    lat_lo, lat_hi = b_lat - d, b_lat + d
+    lng_lo, lng_hi = b_lng - d, b_lng + d
+    sorted_lat = table['members_lat_sorted']
+    lo = np.searchsorted(sorted_lat, lat_lo, side='left')
+    hi = np.searchsorted(sorted_lat, lat_hi, side='right')
+    cand = table['members_by_lat'][lo:hi]
+    lng = table['lng'][cand]
+    inside = cand[(lng >= lng_lo) & (lng <= lng_hi)]
+    curves = table['curve'][inside]
+    present = curves >= 0
+    return present.sum(axis=0), np.where(present, curves, 0).sum(axis=0).astype(float)
+
+
+def neighbor_activity(table: Dict, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    """(count, mean) for every row: getNeighborActivity at the row's venue and slot."""
+    n = len(df)
+    vid = df['venue_id'].astype(str).to_numpy()
+    lat = pd.to_numeric(df['latitude'], errors='coerce').to_numpy(dtype=float)
+    lng = pd.to_numeric(df['longitude'], errors='coerce').to_numpy(dtype=float)
+    dow = pd.to_numeric(df['day_of_week'], errors='coerce').to_numpy(dtype=float)
+    hour = pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)
+
+    # One box per distinct (venue, coordinates) the frame asks about.
+    keys = pd.DataFrame({'v': vid, 'lat': lat, 'lng': lng})
+    combo = keys.groupby(['v', 'lat', 'lng'], sort=False, dropna=False).ngroup().to_numpy()
+    first = ~pd.Series(combo).duplicated(keep='first').to_numpy()
+    n_combo = int(combo.max()) + 1 if n else 0
+    c_venue = np.empty(n_combo, dtype=object)
+    c_lat = np.empty(n_combo)
+    c_lng = np.empty(n_combo)
+    c_venue[combo[first]] = vid[first]
+    c_lat[combo[first]] = lat[first]
+    c_lng[combo[first]] = lng[first]
+
+    d = table['box_deg']
+    cnt = np.zeros((n_combo, 168), dtype=np.int64)
+    tot = np.zeros((n_combo, 168), dtype=float)
+    own = np.full((n_combo, 168), -1, dtype=np.int16)
+    boxes: Dict[Tuple[float, float], Tuple[np.ndarray, np.ndarray]] = {}
+    for c in range(n_combo):
+        if not _has_coordinates(c_lat[c], c_lng[c]):
+            continue  # serving answers {count: 0, mean: 0}
+        b_lat, b_lng = js_to_fixed_3(c_lat[c]), js_to_fixed_3(c_lng[c])
+        if (b_lat, b_lng) not in boxes:
+            boxes[(b_lat, b_lng)] = _box_totals(table, b_lat, b_lng)
+        cnt[c], tot[c] = boxes[(b_lat, b_lng)]
+        # getSelfBaselines: the venue's own row for the slot, subtracted only
+        # when its stored coordinates fall inside the box the totals covered.
+        i = table['index'].get(c_venue[c])
+        if (i is not None and table['has_curve'][i]
+                and abs(table['lat'][i] - b_lat) <= d and abs(table['lng'][i] - b_lng) <= d):
+            own[c] = table['curve'][i]
+
+    on_grid = ((dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
+               & (np.floor(dow) == dow) & (np.floor(hour) == hour))
+    slot = np.where(on_grid, np.nan_to_num(dow) * 24 + np.nan_to_num(hour), 0).astype(np.int64)
+    r_cnt = np.where(on_grid, cnt[combo, slot], 0)
+    r_tot = tot[combo, slot]
+    r_own = own[combo, slot].astype(float)
+    has_own = r_own >= 0
+    count = np.where(r_cnt > 0, r_cnt - has_own, 0)
+    safe = np.where(count > 0, count, 1)
+    mean = np.where(count > 0,
+                    np.clip((r_tot - np.where(has_own, r_own, 0.0)) / safe, 0.0, 100.0), 0.0)
+    return count.astype(float), mean
+
+
+def add_neighbor_features(df: pd.DataFrame, table: Dict = None) -> pd.DataFrame:
+    """Neighbour-venue same-hour baseline activity (v2.4, agglomeration signal).
+
+    How much typical same-hour activity surrounds a venue within ~830 m, itself
+    excluded, computed the way serving computes it (the block above). `table`
+    is build_neighbor_table over the raw export; None builds it from `df`
+    alone, which is only right when `df` has lost no rows.
+    """
+    if table is None:
+        table = build_neighbor_table([df])
+    count, mean = neighbor_activity(table, df)
+    df['neighbor_count'] = count
+    df['log_neighbor_count'] = np.log1p(count)
+    df['neighbor_baseline_same_hour'] = mean
+    # A fresh RangeIndex, as the merge this used to end with returned: the
+    # feature steps after this one assign by index.
+    return df.reset_index(drop=True)
 
 
 def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -2365,7 +2516,7 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'has_venue_baseline',  # leaks the same signal as baseline_busyness
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
-        '_vkey', 'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
+        'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
         # Round 26 CARRIED COLUMN. Whether the row's weather is a reading or the
         # outage vector. As a feature it would be a perfect proxy for weekly
         # versus realtime, i.e. the label regime, which is why sample_weight
@@ -2465,6 +2616,13 @@ def main():
     require_coordinates(train_df, train_path, 'training_data.csv')
     require_coordinates(holdout_df, holdout_path, 'holdout_data.csv')
 
+    # The neighbour table serving's range scan reads, from BOTH raw frames and
+    # before any row is dropped (see the block above build_neighbor_table).
+    neighbor_table = build_neighbor_table([train_df, holdout_df])
+    logger.info('Neighbour table: %d venues, %d with a weekly curve (serving arithmetic, '
+                'box +/-%s degrees around toFixed(3) coordinates).',
+                neighbor_table['venues'], neighbor_table['venues_with_curve'], NEIGHBOR_BOX_DEG)
+
     # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
     # Recover weather_condition_code from the description text, then decide the
     # weather and calendar policies ONCE, before any feature is built, so the
@@ -2555,7 +2713,7 @@ def main():
     # v2.4 features (sunset/anomaly/neighbors) — see function docstrings
     train_df = add_astronomy_features(train_df)
     train_df, _ = add_climate_anomaly(train_df, temp_norms)
-    train_df = add_neighbor_features(train_df)
+    train_df = add_neighbor_features(train_df, neighbor_table)
     # v2.5: special-night calendar features from observed_date
     train_df = add_holiday_features(train_df)
     # 2026-08-30: game-night context, zeros unless sports_events.csv exists
@@ -2617,7 +2775,7 @@ def main():
         holdout_df = add_event_features(holdout_df)
         holdout_df = add_astronomy_features(holdout_df)
         holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
-        holdout_df = add_neighbor_features(holdout_df)
+        holdout_df = add_neighbor_features(holdout_df, neighbor_table)
         holdout_df = add_holiday_features(holdout_df)
         holdout_df = add_sports_features(holdout_df)
 
