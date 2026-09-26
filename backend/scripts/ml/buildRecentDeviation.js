@@ -114,15 +114,104 @@ const PRUNE_SQL = `
    WHERE updated_at < NOW() - ($1 || ' days')::interval
 `;
 
+// ---------------------------------------------------------------------------
+// THE NEWEST READINGS, FOR THE NOWCAST (migration 092).
+//
+// services/mlPredictor.js, with CROWD_NOWCAST_ENABLED=true, blends a venue's
+// newest live reading from an hour before the one it is scoring into the
+// served number. Serving may not add a query for it, so it is stored here, on
+// the row the serving path already reads for the offset.
+//
+// The same readings the offset is built from (live, a busyness, a positive
+// curve at the reading's own slot), newest slot first, READINGS_KEPT of them.
+// More than one because the newest is often the target hour's own reading,
+// which the nowcast refuses to use: right after this runs at hour H, the
+// newest reading is H's and the one the card for hour H may carry is H-1's.
+// READINGS_KEPT equals mlPredictor's NOWCAST_READINGS_KEPT
+// (__tests__/mlServeModes.test.js pins the two).
+//
+// A short scan window: the nowcast weighs nothing older than twelve hours,
+// and READINGS_WINDOW_HOURS only has to cover that from any moment it serves.
+// A row whose venue has no reading inside it is set back to NULL, so a stale
+// list can never outlive the readings it names.
+//
+// ITS OWN STATEMENT, run after the offset's and inside its own try, because
+// this file deploys with the BESTTIME collector while migration 092 is applied
+// by the main service's boot. Until that boot, this statement fails on the
+// missing column, and the offset above must not fail with it.
+const READINGS_KEPT = 3;
+const READINGS_WINDOW_HOURS = 48;
+
+const LATEST_READINGS_SQL = `
+  WITH ranked AS (
+    SELECT
+      v.google_place_id,
+      t.busyness_pct,
+      t.observed_date,
+      t.day_of_week,
+      t.hour,
+      t.collected_at,
+      ROW_NUMBER() OVER (
+        PARTITION BY v.google_place_id
+        ORDER BY t.observed_date DESC, t.hour DESC, t.collected_at DESC
+      ) AS recency
+    FROM ml_training_data t
+    JOIN ml_venues v ON v.id = t.venue_id
+    JOIN ml_venue_baselines b
+      ON b.google_place_id = v.google_place_id
+     AND b.day_of_week = t.day_of_week
+     AND b.hour = t.hour
+    WHERE t.collection_mode = 'realtime'
+      AND t.label_source = 'live'
+      AND t.busyness_pct IS NOT NULL
+      AND t.observed_date IS NOT NULL
+      AND b.baseline > 0
+      AND t.collected_at >= NOW() - make_interval(hours => $1::int)
+  ),
+  latest AS (
+    SELECT
+      google_place_id,
+      jsonb_agg(
+        jsonb_build_object(
+          'v', busyness_pct,
+          'd', to_char(observed_date, 'YYYY-MM-DD'),
+          'dow', day_of_week,
+          'h', hour,
+          'at', collected_at
+        ) ORDER BY recency
+      ) AS readings
+    FROM ranked
+    WHERE recency <= $2::int
+    GROUP BY google_place_id
+  )
+  UPDATE ml_venue_recent_deviation d
+     SET recent_readings = l.readings
+    FROM ml_venue_recent_deviation d0
+    LEFT JOIN latest l ON l.google_place_id = d0.google_place_id
+   WHERE d.google_place_id = d0.google_place_id
+     AND d.recent_readings IS DISTINCT FROM l.readings
+`;
+
+async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT } = {}) {
+  try {
+    const res = await pool.query(LATEST_READINGS_SQL, [windowHours, keep]);
+    return { updated: res.rowCount, error: null };
+  } catch (err) {
+    console.error('[ML:Deviation] Recent readings not stored (the offset was):', err.message);
+    return { updated: null, error: err.message };
+  }
+}
+
 async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS } = {}) {
   const written = await pool.query(UPSERT_SQL, [windowDays, maxReadings]);
+  const readings = await storeLatestReadings();
   const pruned = await pool.query(PRUNE_SQL, [windowDays * 2]);
-  return { written: written.rowCount, pruned: pruned.rowCount };
+  return { written: written.rowCount, pruned: pruned.rowCount, readings };
 }
 
 async function main() {
   const t0 = Date.now();
-  const { written, pruned } = await buildRecentDeviation();
+  const { written, pruned, readings } = await buildRecentDeviation();
 
   const { rows } = await pool.query(`
     SELECT COUNT(*)::int                                    AS venues,
@@ -140,6 +229,9 @@ async function main() {
     + `Offset mean ${s.mean_offset}, range ${s.min_offset} to ${s.max_offset}.`);
   console.log('[ML:Deviation] A venue with fewer than two readings is recorded but not '
     + 'served: one reading is an anecdote, not a level.');
+  console.log(readings.error
+    ? `[ML:Deviation] Recent readings for the nowcast were not stored: ${readings.error}`
+    : `[ML:Deviation] Recent readings for the nowcast: ${readings.updated} venue rows changed.`);
 }
 
 if (require.main === module) {
@@ -151,4 +243,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { buildRecentDeviation, WINDOW_DAYS, MAX_READINGS };
+module.exports = {
+  buildRecentDeviation,
+  storeLatestReadings,
+  WINDOW_DAYS,
+  MAX_READINGS,
+  READINGS_KEPT,
+  READINGS_WINDOW_HOURS,
+};

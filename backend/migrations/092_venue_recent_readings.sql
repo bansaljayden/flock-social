@@ -1,0 +1,25 @@
+-- 092: a venue's newest live readings, stored beside its trailing offset.
+--
+-- ASCII only, like 065, 082 and 091: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHAT IT HOLDS. After every hourly sweep scripts/ml/buildRecentDeviation.js
+-- writes the venue's newest live readings, newest first: the same readings the
+-- offset in this row is a median of (label_source 'live', each against a
+-- positive curve at its own slot). A JSON array of
+--   {"v": busyness 0-100, "d": venue-local date, "dow": weekday 0-6,
+--    "h": venue-local hour 0-23, "at": when it was collected}
+-- NULL when the venue has no reading recent enough to matter.
+--
+-- WHO READS IT. services/mlPredictor.js, and only with CROWD_NOWCAST_ENABLED=true:
+-- the nowcast blends the newest reading from an hour BEFORE the one being
+-- scored into the served number. It rides the offset's row, so serving stays
+-- one indexed read on the primary key, and with the switch off the column is
+-- never selected.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing row reads NULL, which the reader treats as no
+-- readings. A replay is a no-op.
+-- @requires column ml_venue_recent_deviation.recent_readings
+
+ALTER TABLE ml_venue_recent_deviation ADD COLUMN IF NOT EXISTS recent_readings JSONB;
