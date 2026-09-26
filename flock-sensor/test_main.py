@@ -3435,5 +3435,74 @@ class InstallerHardwareAccess(unittest.TestCase):
         self.assertIn('eol=lf', attrs)
 
 
+class EnclosureFiles(unittest.TestCase):
+    """The committed laser and print files, against the .scad they came from.
+
+    Nobody building the box opens OpenSCAD; they take svg/ to a laser and stl/
+    to a printer. So the files are what has to be right, and a number changed
+    in the .scad without a re-export is a box cut to the old drawing.
+    """
+
+    ENC = Path(__file__).resolve().parent / 'enclosure'
+
+    def scad_number(self, name):
+        text = (self.ENC / 'flux-enclosure.scad').read_text(encoding='utf-8')
+        return float(re.search(rf'^{name}\s*=\s*([\d.]+);', text, re.M).group(1))
+
+    def svg(self, part):
+        return (self.ENC / 'svg' / f'base-{part}.svg').read_text(encoding='utf-8')
+
+    def test_every_panel_is_cut_to_the_size_the_drawing_says(self):
+        w, h, d, sheet = (self.scad_number(n) for n in ('box_w', 'box_h', 'box_d', 'sheet'))
+        # Butt joints: front and back full size, top and bottom between them,
+        # sides inside all four.
+        expected = {'front': (w, h), 'back': (w, h), 'top': (w, d - 2 * sheet),
+                    'bottom': (w, d - 2 * sheet), 'side': (d - 2 * sheet, h - 2 * sheet)}
+        for part, (ew, eh) in expected.items():
+            m = re.search(r'width="([\d.]+)mm" height="([\d.]+)mm"', self.svg(part))
+            self.assertIsNotNone(m, part)
+            self.assertAlmostEqual(float(m.group(1)), ew, delta=0.01, msg=part)
+            self.assertAlmostEqual(float(m.group(2)), eh, delta=0.01, msg=part)
+
+    def test_cuts_are_red_hairlines_and_the_wordmark_is_an_engraving(self):
+        # The convention school laser software reads: red stroke cuts, black
+        # fill engraves. A fill on a cut path would engrave the whole panel.
+        for part in ('front', 'back', 'top', 'bottom', 'side'):
+            svg = self.svg(part)
+            self.assertIn('fill="none" stroke="#FF0000"', svg, part)
+        self.assertIn('fill="#000000" stroke="none"', self.svg('front'))
+        for part in ('back', 'top', 'bottom', 'side'):
+            self.assertNotIn('fill="#000000"', self.svg(part), part)
+
+    def test_every_part_the_export_script_makes_is_committed(self):
+        sys.path.insert(0, str(self.ENC))
+        try:
+            import export
+        finally:
+            sys.path.pop(0)
+        for _, _, name in export.PRINTED:
+            self.assertTrue((self.ENC / 'stl' / f'{name}.stl').exists(), name)
+        for part, _ in export.PANELS:
+            self.assertTrue((self.ENC / 'dxf' / f'base-{part}.dxf').exists(), part)
+            self.assertTrue((self.ENC / 'svg' / f'base-{part}.svg').exists(), part)
+
+    def test_the_stls_came_from_the_export_script(self):
+        # It writes each solid's triangles in one fixed order. A file exported
+        # by hand is in OpenSCAD's order of the day, which is how an unchanged
+        # part turns into a four-thousand-line diff.
+        sys.path.insert(0, str(self.ENC))
+        try:
+            import export
+        finally:
+            sys.path.pop(0)
+        with tempfile.TemporaryDirectory() as tmp:
+            for stl in sorted((self.ENC / 'stl').glob('*.stl')):
+                copy = Path(tmp) / stl.name
+                copy.write_bytes(stl.read_bytes())
+                export.canonical_stl(copy)
+                self.assertEqual(copy.read_bytes().replace(b'\r\n', b'\n'),
+                                 stl.read_bytes().replace(b'\r\n', b'\n'), stl.name)
+
+
 if __name__ == '__main__':
     unittest.main()
