@@ -2781,6 +2781,14 @@ export default function RevenueScreen({
                           </p>
                         </div>
                       </div>
+                      {(p.serveMode === 'curve_offset' || p.nowcastEnabled === true) && (
+                        <p style={{ ...sub, margin: '10px 0 0' }}>
+                          {p.serveMode === 'curve_offset'
+                            ? `Serve mode is curve_offset: of the answers above, ${count(Number.isFinite(p.curveOffsetAnswers) ? p.curveOffsetAnswers : 0)} are the venue's own curve plus its live offset, with no model adjustment.`
+                            : 'Serve mode is model.'}
+                          {p.nowcastEnabled === true ? ' The nowcast is on: a venue read live in an earlier hour has that reading blended into its number.' : ''}
+                        </p>
+                      )}
                       {p.since && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>Counting since {new Date(p.since).toLocaleString()}.</p>
                       )}
