@@ -2622,6 +2622,34 @@ def thermal_frame_rgb(frame, lo, hi):
         out += palette[0 if i < 0 else 255 if i > 255 else i]
     return bytes(out)
 
+def wayland_socket(env=None):
+    """The running desktop's Wayland socket, or None.
+
+    Found on disk rather than trusted from the environment, because the two
+    places this program runs from never have it set: an SSH session, and the
+    systemd service. Without this, drawing on a Pi that shows the desktop took
+    three environment variables typed by hand, which nobody will remember in
+    front of a judge. When found, the variables SDL needs are filled in.
+    """
+    env = os.environ if env is None else env
+    runtime = env.get('XDG_RUNTIME_DIR')
+    if not runtime and hasattr(os, 'getuid'):
+        runtime = f'/run/user/{os.getuid()}'
+    if not runtime or not os.path.isdir(runtime):
+        return None
+    try:
+        names = sorted(n for n in os.listdir(runtime)
+                       if n.startswith('wayland-') and not n.endswith('.lock'))
+    except OSError:
+        return None
+    if not names:
+        return None
+    if env is os.environ:
+        os.environ.setdefault('XDG_RUNTIME_DIR', runtime)
+        os.environ.setdefault('WAYLAND_DISPLAY', names[0])
+    return names[0]
+
+
 def video_driver_candidates(env=None, has_dri=None):
     """Which SDL video drivers to try, best first.
 
@@ -2653,7 +2681,7 @@ def video_driver_candidates(env=None, has_dri=None):
     # the normal state of a unit somebody has just set up, and kmsdrm cannot
     # take the display away from a running compositor. On this build labwc held
     # it, and kmsdrm answered "not available" rather than saying so.
-    if env.get('WAYLAND_DISPLAY'):
+    if env.get('WAYLAND_DISPLAY') or wayland_socket(env):
         out.append('wayland')
     if env.get('DISPLAY'):
         out.append('x11')
@@ -2795,7 +2823,7 @@ def noise_reading(level):
     """
     spl = display_decibels(level)
     if spl is None:
-        return f'level {int(level)}', 'relative, not yet calibrated', level
+        return f'level {int(level)}', 'relative level, not yet calibrated', level
     return f'{int(round(spl))} dB', 'estimated sound level', spl
 
 
@@ -2838,7 +2866,8 @@ def home_cards(w, h, m):
     """
     pad = m['pad']
     top = m['header_h'] + max(14, pad // 2)
-    bottom = h - pad - max(70, h // 8)
+    # Leaves room for the wire and the birds standing on it, and no more.
+    bottom = h - pad - max(60, h // 9 + 2)
     gap = max(12, pad // 2)
     if m['columns']:
         cw = (w - 2 * pad - 2 * gap) // 3
@@ -2886,8 +2915,15 @@ class Panel:
         # Large text is Fraunces, small text is Hanken Grotesk, everywhere.
         self.f_mark = load_brand_font(pygame, BRAND_WORDMARK, m['font_sm'] + 12)
         self.f_title = load_brand_font(pygame, BRAND_DISPLAY, m['font_sm'] + 8)
-        self.f_big = load_brand_font(pygame, BRAND_DISPLAY, m['font_big'])
-        self.f_med = load_brand_font(pygame, BRAND_DISPLAY, m['font_med'])
+        # Numbers and values in the heavy wordmark cut, not the display cut.
+        # Rendered side by side, the display cut's 4 has a hairline diagonal
+        # that all but vanishes at this size and reads as a broken glyph, on a
+        # screen whose whole job is to be read from across a room. The heavy
+        # cut keeps every digit solid, and it is the weight the pitch deck
+        # sets its own headlines in. Titles keep the display cut, where its
+        # contrast reads as elegant rather than fragile.
+        self.f_big = load_brand_font(pygame, BRAND_WORDMARK, m['font_big'])
+        self.f_med = load_brand_font(pygame, BRAND_WORDMARK, m['font_med'])
         self.f_hero = load_brand_font(pygame, BRAND_WORDMARK, max(72, h // 6))
         self.f_label = load_brand_font(pygame, BRAND_LABEL, m['font_sm'])
         self.f_body = load_brand_font(pygame, BRAND_BODY, m['font_xs'])
@@ -3043,21 +3079,21 @@ class Panel:
         self.screen.blit(note, (cx - note.get_width() // 2, y))
 
     def footer(self, text):
-        """A hairline along the bottom, the hint on the left, and the birds
-        walking along the right of it: the brand's signature, not decoration
-        laid over the data."""
+        """One line along the bottom with the birds standing on it and the hint
+        resting on it at the left: birds on a wire, the way the deck's cover
+        has them on a branch. The first version stopped the line where the
+        birds began, which read as an underline that ran out."""
         m = self.m
         pad = m['pad']
-        base = self.h - max(18, pad // 2)
-        birds = self.mark(BRAND_MARK_BIRDS, max(44, self.h // 11))
+        wire = self.h - max(20, pad // 2)
+        self.rule(pad, wire, self.w - pad)
+        birds = self.mark(BRAND_MARK_BIRDS, max(48, self.h // 9))
         if birds is not None:
-            bx = self.w - pad - birds.get_width()
-            self.rule(pad, base, bx - 12)
-            self.screen.blit(birds, (bx, base - birds.get_height() + 6))
-        else:
-            self.rule(pad, base, self.w - pad)
+            # Drawn after the wire, so it shows between their feet.
+            self.screen.blit(birds, (self.w - pad - birds.get_width(),
+                                     wire - birds.get_height() + 4))
         s = self.text(self.f_body, text, BRAND_FAINT)
-        self.screen.blit(s, (pad, base - s.get_height() - 10))
+        self.screen.blit(s, (pad, wire - s.get_height() - 8))
 
     def home(self, ir, therm, therm_live, level, noise_live, history):
         m = self.m
@@ -3133,12 +3169,18 @@ class Panel:
             self.blit_centred(self.f_body, 'Readings appear here after the first update.',
                               BRAND_FAINT, self.w // 2, (chart_top + self.h) // 2)
 
-    def noise(self, level, live):
+    def noise(self, level, live, average=None):
         m = self.m
         pad = m['pad']
         self.header('Noise', back=True, live=live)
         n_value, n_caption, basis = noise_reading(level)
         word, colour = noise_band(basis)
+        if average is not None and live:
+            # What the venue card will actually say: the steady minute figure,
+            # under the live one, so nobody reads the latest burst as the
+            # published rating.
+            a_value = noise_reading(average)[0]
+            n_caption = f'{n_caption}. Minute average {a_value}.'
         top = m['header_h'] + pad
         w = self.text(self.f_big, word if live else '--', colour if live else BRAND_CREAM)
         self.screen.blit(w, (pad, top))
@@ -3146,7 +3188,11 @@ class Panel:
             # The number, set as large as the word, at the right. Decibels
             # when the unit has been anchored to a phone meter, the level when
             # it has not, and a caption that says which.
-            d = self.text(self.f_big, n_value, BRAND_CREAM)
+            # Calibrated, the unit belongs beside the number. Not calibrated,
+            # the headline is the bare number: "level 71" set in the display
+            # face read as clumsy, and the caption already says what it is.
+            big = n_value if display_decibels(level) is not None else str(int(level))
+            d = self.text(self.f_big, big, BRAND_CREAM)
             self.screen.blit(d, (self.w - pad - d.get_width(), top))
             c = self.text(self.f_body, n_caption, BRAND_MUTED)
             self.screen.blit(c, (self.w - pad - c.get_width(), top + d.get_height() + 2))
@@ -3236,7 +3282,11 @@ class Panel:
 
         if side:
             sx = pad + iw + pad
-            y = top
+            # Centred against the picture rather than hung from its top edge,
+            # which left the column crowded up and the space under it empty.
+            col_h = (2 * m['font_sm'] + 8 + self.f_big.get_height() + 22
+                     + self.f_med.get_height() + 26 + 3 * (m['font_xs'] + 6))
+            y = top + max(0, (ih - col_h) // 2)
             self.label('In view now', (sx, y))
             v = self.text(self.f_big, f'{count}' if live else '--', BRAND_CREAM)
             self.screen.blit(v, (sx, y + m['font_sm'] + 4))
@@ -3290,6 +3340,14 @@ def display_loop():
         last_paint = 0.0
         last_state = None
         TAP_TO = {0: 'door', 1: 'thermal', 2: 'noise'}
+        # The splash stays up while the sensors warm up: long enough to read,
+        # gone the moment either one has something to show, and never more
+        # than eight seconds, after which home shows what is offline in words.
+        # A panel that sits blank or on zeros for several seconds after power
+        # reads as broken; this reads as a product starting.
+        started = time.monotonic()
+        splash_min, splash_max = 1.5, 8.0
+        last_noise_at = None
 
         while not _stop.is_set():
             # Events first and every pass. The old loop polled once every 250 ms
@@ -3328,21 +3386,46 @@ def display_loop():
                 therm_at = _state['thermal_at']
                 db = float(_state['noise_db'])
                 noise_at = _state['noise_at']
+                # The newest single burst, next to the published figure. The
+                # published figure is a trimmed average over a minute, built on
+                # purpose to ignore a slammed door or a dropped glass, which also
+                # means it ignores somebody testing the microphone by shouting
+                # at it, and on a demo screen that reads as the sensor being
+                # dead. The screen leads with the latest burst; the venue card
+                # keeps the steady figure.
+                window = _state['noise_window']
+                burst = float(window[-1]) if window else db
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
 
             therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
             noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
-            if noise_live:
-                # The same scale the word and the number are read on, so a
-                # calibrated unit draws decibels against decibel bands.
-                ui.trace.append(noise_reading(db)[2])
+            # One point per new reading. This used to append on every pass of a
+            # sixty-a-second loop while the microphone reports every five
+            # seconds, so the trace was hundreds of copies of one value and the
+            # line barely moved. On the same scale as the word and the number,
+            # so a calibrated unit draws decibels against decibel bands.
+            if noise_live and noise_at != last_noise_at:
+                ui.trace.append(noise_reading(burst)[2])
+                last_noise_at = noise_at
+
+            # The startup splash, decided before anything else is drawn.
+            waking = (now - started < splash_min or
+                      (not therm_live and not noise_live and now - started < splash_max))
+            if waking:
+                if last_state != 'splash':
+                    ui.splash()
+                    pygame.display.flip()
+                    last_paint = now
+                    last_state = 'splash'
+                _stop.wait(0.016)
+                continue
 
             # Repaint when something changed, or twice a second so the trace
             # keeps moving. Not on every pass: at sixty a second that is sixty
             # full-screen redraws for nothing.
-            signature = (view, ir, therm, therm_live, int(db), noise_live,
-                         len(history), id(frame) if view == 'thermal' else 0)
+            signature = (view, ir, therm, therm_live, int(burst), int(db), noise_live,
+                         len(history), len(ui.trace), id(frame) if view == 'thermal' else 0)
             if signature != last_state or now - last_paint > 0.5:
                 dirty = True
                 last_state = signature
@@ -3354,9 +3437,9 @@ def display_loop():
                     elif view == 'door':
                         ui.door(ir, history)
                     elif view == 'noise':
-                        ui.noise(db, noise_live)
+                        ui.noise(burst, noise_live, average=db)
                     else:
-                        ui.home(ir, therm, therm_live, db, noise_live, history)
+                        ui.home(ir, therm, therm_live, burst, noise_live, history)
                 except Exception as e:
                     # A raise in a detail screen used to end the display thread
                     # for the life of the process, taking the doorway counter
@@ -3365,7 +3448,7 @@ def display_loop():
                     log_throttled('draw', logging.ERROR,
                                   f'Screen "{view}" failed, showing home: {e}')
                     view = 'home'
-                    ui.home(ir, therm, therm_live, db, noise_live, history)
+                    ui.home(ir, therm, therm_live, burst, noise_live, history)
                 pygame.display.flip()
                 last_paint = now
                 dirty = False
@@ -3588,6 +3671,106 @@ def calibrate(seconds=CALIBRATE_SECONDS):
         return 1
     finally:
         _thermal_camera.close()
+ANCHOR_SECONDS = 6
+
+
+def set_config_keys(text, updates):
+    """Config text with each key in `updates` set, and every other line kept.
+
+    Pure, so rewriting the file that holds the device's API key is tested before
+    it is ever done to the real one. A key that is already set is replaced in
+    place; a commented-out one is left alone and the live value appended, so
+    the file's own documentation survives an edit.
+    """
+    out, seen = [], set()
+    for line in text.splitlines():
+        s = line.strip()
+        key = s.split('=', 1)[0].strip() if ('=' in s and not s.startswith('#')) else None
+        if key in updates:
+            out.append(f'{key}={updates[key]}')
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            out.append(f'{key}={value}')
+    return '\n'.join(out) + '\n'
+
+
+def anchor(meter_db, seconds=None, write=False):
+    """Pair one phone sound-meter reading with the microphone.
+
+    This is the whole calibration. The slope between the microphone's counts and
+    sound pressure is fixed by physics, so one reading pins the constant, and
+    from then on the panel shows estimated decibels instead of a relative level.
+    Hold the phone beside the microphone in a steady sound, a conversation or
+    music, not silence and not a clap, read the number, and pass it here.
+    """
+    if not 30 <= meter_db <= 120:
+        print(f'{meter_db} dB is outside what a phone meter reads in a room. '
+              f'Pass the number the meter showed, between 30 and 120.')
+        return 1
+    if not init_noise():
+        print('MCP3008 not detected. Check SPI is enabled and the wiring.')
+        return 1
+    healthy, why = adc_health(sample_adc(NOISE_CHANNEL), sample_adc(ADC_SPARE_CHANNEL))
+    if not healthy:
+        print('The converter is not returning anything usable:')
+        for line in textwrap.wrap(why, 70):
+            print(f'  {line}')
+        return 1
+
+    seconds = max(3, seconds or ANCHOR_SECONDS)
+    print(f'flock-sensor {VERSION} decibel calibration')
+    print(f'  Keep the sound steady and the phone beside the microphone for {seconds}s.')
+    rms_readings = []
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        raw = []
+        t_end = time.monotonic() + 0.12
+        while time.monotonic() < t_end:
+            raw.append(_read_mcp3008(NOISE_CHANNEL))
+            time.sleep(0.001)
+        if raw:
+            centred = [r - ADC_MID for r in raw]
+            rms_readings.append(math.sqrt(sum(c * c for c in centred) / len(centred)))
+    if not rms_readings:
+        print('No samples were read.')
+        return 1
+
+    # The median, not the mean: one cough during the window moves a mean and
+    # barely touches a median, and the whole calibration rests on this number.
+    rms_readings.sort()
+    rms = rms_readings[len(rms_readings) // 2]
+    if rms < 2.0:
+        print(f'The microphone measured almost nothing (RMS {rms:.2f} counts). '
+              f'Calibrating against silence pins the scale to the noise floor, '
+              f'which is the one reading guaranteed to be wrong. Play something '
+              f'steady at around conversation volume and run this again.')
+        return 1
+
+    updates = {'NOISE_SPL_ANCHOR_COUNTS': f'{rms:.3f}',
+               'NOISE_SPL_ANCHOR_DB': f'{meter_db:g}'}
+    print('')
+    print(f'  The phone read {meter_db:g} dB; the microphone measured RMS {rms:.2f} counts.')
+    for k, v in updates.items():
+        print(f'    {k}={v}')
+    if not write:
+        print(f'\n  Put these in {CONFIG_PATH} and restart the service,')
+        print('  or run this again with --write to have it done for you.')
+        return 0
+    try:
+        current = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ''
+        CONFIG_PATH.write_text(set_config_keys(current, updates))
+    except Exception as e:
+        print(f'\n  Could not write {CONFIG_PATH}: {e}')
+        print('  Add the two lines above by hand.')
+        return 1
+    print(f'\n  Written to {CONFIG_PATH}.')
+    print('  sudo systemctl restart flock-sensor   to start showing decibels.')
+    return 0
+
+
 def listen(seconds=None):
     """Live level meter. What the microphone is hearing, right now.
 
@@ -4082,6 +4265,11 @@ if __name__ == '__main__':
                         help='live microphone level meter; Ctrl+C to stop')
     parser.add_argument('--calibrate', action='store_true',
                         help='measure THERMAL_MIN_CLUSTER against this mounting position')
+    parser.add_argument('--anchor', type=float, default=None, metavar='DB',
+                        help='pair one phone sound-meter reading with the microphone, '
+                             'so the panel shows decibels')
+    parser.add_argument('--write', action='store_true',
+                        help='with --anchor, write the result into the config file')
     # default=None, not CALIBRATE_SECONDS: --listen runs until Ctrl+C when the
     # flag is absent, and `--listen --seconds 20` used to be indistinguishable
     # from not passing it at all, so an explicitly requested duration was
@@ -4098,4 +4286,6 @@ if __name__ == '__main__':
         sys.exit(listen(args.seconds))
     if args.calibrate:
         sys.exit(calibrate(max(5, args.seconds or CALIBRATE_SECONDS)))
+    if args.anchor is not None:
+        sys.exit(anchor(args.anchor, args.seconds, args.write))
     main()
