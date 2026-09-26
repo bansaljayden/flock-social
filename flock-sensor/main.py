@@ -2264,6 +2264,194 @@ def push_loop():
 
 
 # ---------------------------------------------------------------------------
+# The doorway counter
+#
+# A VL53L8CX returns an 8x8 grid of distances, about sixty-four numbers in
+# millimetres, ten to fifteen times a second. It is not a camera: a zone is
+# roughly a 30 cm square of floor at doorway range, which is enough to tell one
+# person from two walking abreast and nowhere near enough to tell one person
+# from another. That is the whole reason it is the part this build uses.
+#
+# Everything below is pure and works on lists of numbers, so the counting rules
+# are tested without a sensor, a doorway, or anybody to walk through it. The
+# driver that fetches the frames is separate and is the only part that needs
+# hardware.
+#
+# WHY THIS REPLACED A BREAK BEAM. A single beam counts breaks, not people, and
+# two people walking abreast break it once. Vendor tables put a single beam at
+# about 85% for pairs, and a doorway at its busiest is exactly where pairs
+# happen. Two people abreast are two separate clusters in this grid. The beam
+# also cannot tell an arrival from a departure at all, and the order zones trip
+# across the grid gives that away for free.
+# ---------------------------------------------------------------------------
+
+TOF_COLS = 8
+TOF_ROWS = 8
+
+# A zone counts as occupied when something is this much nearer than the floor.
+# A head at doorway range is about a metre closer than the floor, so 300 mm is
+# generous, and generous is right: the cost of a missed person is a wrong count
+# and the cost of a jumpy threshold is a count that drifts all night.
+TOF_MARGIN_MM = _cfg_number('TOF_MARGIN_MM', int, 100, 1500, 300)
+
+# Clusters smaller than this are noise, not people. One zone is about 30 cm of
+# floor, so a person spans several; a single lit zone is far more likely to be
+# a reflection off a door frame.
+TOF_MIN_CLUSTER = _cfg_number('TOF_MIN_CLUSTER', int, 1, 32, 3)
+
+# How long a track survives without being seen before it is dropped. At roughly
+# 15 Hz this is about a third of a second, which covers somebody being briefly
+# hidden behind somebody else without keeping ghosts around.
+TOF_TRACK_MISSES = _cfg_number('TOF_TRACK_MISSES', int, 1, 30, 5)
+
+# How far a cluster may move between frames and still be the same person, in
+# zones. A brisk walk crosses the grid in about a second, so a zone or two per
+# frame; three is slack for a dropped frame.
+TOF_MAX_JUMP = _cfg_number('TOF_MAX_JUMP', float, 1.0, 8.0, 3.0)
+
+
+def tof_occupied(frame, floor_mm, margin_mm=None):
+    """Which of the 64 zones have something in them.
+
+    `frame` is 64 distances in millimetres, row-major. A zone reading 0 or
+    negative is a failed measurement, not a very close object, and is treated
+    as empty: the sensor reports invalid zones that way and reading them as
+    zero distance would put a phantom person against the lens.
+    """
+    margin = TOF_MARGIN_MM if margin_mm is None else margin_mm
+    limit = floor_mm - margin
+    return [i for i, d in enumerate(frame) if 0 < d < limit]
+
+
+def tof_clusters(occupied, min_cluster=None):
+    """Group occupied zones into people.
+
+    Eight-connectivity, the same rule the thermal counter uses, and for the
+    same reason: a person straddling two zones diagonally is one person, and
+    four-connectivity splits them into two.
+    """
+    floor = TOF_MIN_CLUSTER if min_cluster is None else min_cluster
+    remaining = set(occupied)
+    out = []
+    while remaining:
+        seed = remaining.pop()
+        group = [seed]
+        stack = [seed]
+        while stack:
+            i = stack.pop()
+            r, c = divmod(i, TOF_COLS)
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    nr, nc = r + dr, c + dc
+                    if not (0 <= nr < TOF_ROWS and 0 <= nc < TOF_COLS):
+                        continue
+                    j = nr * TOF_COLS + nc
+                    if j in remaining:
+                        remaining.discard(j)
+                        group.append(j)
+                        stack.append(j)
+        if len(group) >= floor:
+            out.append(group)
+    return out
+
+
+def tof_centroid(group):
+    """Middle of a cluster, as (row, column) in zones."""
+    rows = [g // TOF_COLS for g in group]
+    cols = [g % TOF_COLS for g in group]
+    return (sum(rows) / float(len(rows)), sum(cols) / float(len(cols)))
+
+
+class CrossingTracker:
+    """Follows clusters across frames and counts which way they went.
+
+    The rule is deliberately the simplest one that can tell a direction: follow
+    each cluster, and when its centre crosses the middle row of the grid, count
+    it once, in the direction it crossed. No speed model, no shape model,
+    nothing that could be tuned into agreeing with whatever the operator hoped
+    for.
+
+    What it will not do is count somebody who stops in the doorway, turns
+    around, and goes back the way they came. It counts that as nothing, which
+    is right, and it is the case a break beam gets wrong twice.
+    """
+
+    def __init__(self, axis='row'):
+        # Which way the doorway runs across the sensor's view. Mount the head
+        # so people cross the grid top to bottom and leave this alone.
+        self.axis = axis
+        self.mid = (TOF_ROWS - 1) / 2.0 if axis == 'row' else (TOF_COLS - 1) / 2.0
+        self._tracks = []   # each is {'pos': (r, c), 'side': -1/1, 'missed': n}
+        self.entries = 0
+        self.exits = 0
+
+    def _coord(self, pos):
+        return pos[0] if self.axis == 'row' else pos[1]
+
+    def _side(self, pos):
+        return -1 if self._coord(pos) < self.mid else 1
+
+    def observe(self, clusters):
+        """Feed one frame's clusters. Returns (entries, exits) added by it."""
+        centres = [tof_centroid(g) for g in clusters]
+        used = set()
+        gained_in = gained_out = 0
+
+        for t in self._tracks:
+            # Nearest unclaimed cluster within the jump limit is the same
+            # person. Greedy rather than optimal on purpose: at two or three
+            # people in a doorway the two agree, and an assignment algorithm
+            # here would be untestable complexity for no measurable gain.
+            best, best_d = None, TOF_MAX_JUMP
+            for i, c in enumerate(centres):
+                if i in used:
+                    continue
+                d = ((c[0] - t['pos'][0]) ** 2 + (c[1] - t['pos'][1]) ** 2) ** 0.5
+                if d < best_d:
+                    best, best_d = i, d
+            if best is None:
+                t['missed'] += 1
+                continue
+            used.add(best)
+            t['missed'] = 0
+            new_pos = centres[best]
+            new_side = self._side(new_pos)
+            if new_side != t['side']:
+                if new_side > 0:
+                    gained_in += 1
+                else:
+                    gained_out += 1
+                t['side'] = new_side
+            t['pos'] = new_pos
+
+        for i, c in enumerate(centres):
+            if i not in used:
+                self._tracks.append({'pos': c, 'side': self._side(c), 'missed': 0})
+
+        self._tracks = [t for t in self._tracks if t['missed'] < TOF_TRACK_MISSES]
+        self.entries += gained_in
+        self.exits += gained_out
+        return gained_in, gained_out
+
+    @property
+    def net(self):
+        """Everyone who came in and has not left. Never below zero.
+
+        It can only be a floor, not a truth: the room may have been occupied
+        before the sensor was switched on, and a night that starts mid-service
+        starts counting from whatever is already inside. The venue being empty
+        at close is what makes this number mean anything, and that is also the
+        free calibration the roadmap describes.
+        """
+        return max(0, self.entries - self.exits)
+
+    @property
+    def track_count(self):
+        return len(self._tracks)
+
+# ---------------------------------------------------------------------------
 # Display loop (optional, demo unit only)
 #
 # THE PANEL SIZE IS NOT A CONSTANT, and treating it as one is what broke this.

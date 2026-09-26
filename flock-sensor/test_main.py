@@ -2172,5 +2172,142 @@ class ThermalImageFit(unittest.TestCase):
         self.assertGreater(naive_h, 600, 'this test no longer reproduces the bug')
         _, ih = main.thermal_image_box(1024, 600, 160, 120, m['pad'], m['header_h'], 200)
         self.assertLess(ih, 600)
+def _tof_frame(floor=2500, people=()):
+    """An 8x8 frame of distances: empty floor, with heads punched into it.
+
+    Each person is (row, col) and lights a 2x2 block, which is about what a
+    shoulder span covers at doorway range.
+    """
+    f = [floor] * 64
+    for (r, c) in people:
+        for dr in (0, 1):
+            for dc in (0, 1):
+                rr, cc = r + dr, c + dc
+                if 0 <= rr < 8 and 0 <= cc < 8:
+                    f[rr * 8 + cc] = floor - 1000
+    return f
+
+
+class DoorwayCounting(unittest.TestCase):
+    """Reading the grid, before anything is tracked through it."""
+
+    def test_an_empty_doorway_has_nobody_in_it(self):
+        self.assertEqual(main.tof_occupied(_tof_frame(), 2500), [])
+
+    def test_a_failed_zone_is_empty_not_touching_the_lens(self):
+        # The sensor reports an invalid measurement as 0. Read as a distance
+        # that is a person pressed against the glass, which is the single most
+        # expensive misreading available here: an unplugged sensor would count
+        # a permanent crowd.
+        f = _tof_frame()
+        for i in range(0, 64, 7):
+            f[i] = 0
+        self.assertEqual(main.tof_occupied(f, 2500), [])
+
+    def test_a_person_lights_a_cluster(self):
+        occ = main.tof_occupied(_tof_frame(people=[(3, 3)]), 2500)
+        self.assertEqual(len(occ), 4)
+        self.assertEqual(len(main.tof_clusters(occ)), 1)
+
+    def test_two_people_abreast_are_two_clusters(self):
+        # The entire reason this part replaced a break beam. A beam counts this
+        # once; the published figure for a single beam on pairs is about 85%.
+        occ = main.tof_occupied(_tof_frame(people=[(3, 1), (3, 5)]), 2500)
+        self.assertEqual(len(main.tof_clusters(occ)), 2)
+
+    def test_two_people_touching_are_one_cluster_and_that_is_honest(self):
+        # Shoulder to shoulder with no gap, this cannot separate them, and it
+        # says so rather than inventing a split. Pretending otherwise is how a
+        # counter gets tuned until it agrees with whatever was hoped for.
+        occ = main.tof_occupied(_tof_frame(people=[(3, 3), (3, 4)]), 2500)
+        self.assertEqual(len(main.tof_clusters(occ)), 1)
+
+    def test_one_stray_zone_is_not_a_person(self):
+        f = _tof_frame()
+        f[27] = 1200
+        self.assertEqual(main.tof_clusters(main.tof_occupied(f, 2500)), [])
+
+    def test_a_diagonal_body_is_one_person(self):
+        # Eight-connectivity, same as the thermal counter. Four-connectivity
+        # splits somebody standing at an angle into two.
+        occ = [0, 9, 18]
+        self.assertEqual(len(main.tof_clusters(occ, min_cluster=3)), 1)
+
+
+class DoorwayDirection(unittest.TestCase):
+    """Which way somebody went, which a break beam cannot answer at all."""
+
+    @staticmethod
+    def walk(tracker, rows, col=3):
+        for r in rows:
+            occ = main.tof_occupied(_tof_frame(people=[(r, col)]), 2500)
+            tracker.observe(main.tof_clusters(occ))
+
+    def test_walking_one_way_counts_an_entry(self):
+        t = main.CrossingTracker()
+        self.walk(t, [0, 1, 2, 3, 4, 5, 6])
+        self.assertEqual((t.entries, t.exits), (1, 0))
+
+    def test_walking_the_other_way_counts_an_exit(self):
+        t = main.CrossingTracker()
+        self.walk(t, [6, 5, 4, 3, 2, 1, 0])
+        self.assertEqual((t.entries, t.exits), (0, 1))
+
+    def test_somebody_who_turns_back_is_not_counted(self):
+        # Steps into the doorway, changes their mind, leaves the way they came.
+        # A break beam counts that as two people. It is nobody.
+        t = main.CrossingTracker()
+        self.walk(t, [0, 1, 2, 2, 1, 0])
+        self.assertEqual((t.entries, t.exits), (0, 0))
+        self.assertEqual(t.net, 0)
+
+    def test_two_people_abreast_count_as_two(self):
+        t = main.CrossingTracker()
+        for r in [0, 1, 2, 3, 4, 5, 6]:
+            occ = main.tof_occupied(_tof_frame(people=[(r, 1), (r, 5)]), 2500)
+            t.observe(main.tof_clusters(occ))
+        self.assertEqual(t.entries, 2)
+
+    def test_one_in_one_out_leaves_the_room_as_it_was(self):
+        t = main.CrossingTracker()
+        self.walk(t, [0, 1, 2, 3, 4, 5, 6], col=1)
+        self.walk(t, [6, 5, 4, 3, 2, 1, 0], col=5)
+        self.assertEqual((t.entries, t.exits), (1, 1))
+        self.assertEqual(t.net, 0)
+
+    def test_the_room_never_holds_a_negative_number_of_people(self):
+        # A unit switched on mid-service sees people leave who it never saw
+        # arrive. The count is a floor, not a truth, and a negative headcount
+        # on a venue card would be worse than a low one.
+        t = main.CrossingTracker()
+        self.walk(t, [6, 5, 4, 3, 2, 1, 0])
+        self.assertEqual(t.exits, 1)
+        self.assertEqual(t.net, 0)
+
+    def test_a_person_who_vanishes_does_not_haunt_the_doorway(self):
+        t = main.CrossingTracker()
+        self.walk(t, [0, 1, 2])
+        for _ in range(main.TOF_TRACK_MISSES + 1):
+            t.observe([])
+        self.assertEqual(t.track_count, 0)
+
+    def test_a_brief_occlusion_does_not_split_one_person_into_two(self):
+        # Somebody passes behind somebody else for a frame or two. Dropping the
+        # track there would count them again when they reappear.
+        t = main.CrossingTracker()
+        self.walk(t, [0, 1, 2])
+        t.observe([])
+        self.walk(t, [3, 4, 5, 6])
+        self.assertEqual(t.entries, 1)
+
+    def test_nobody_is_counted_for_standing_still_in_the_doorway(self):
+        t = main.CrossingTracker()
+        self.walk(t, [2] * 40)
+        self.assertEqual((t.entries, t.exits), (0, 0))
+
+    def test_the_threshold_and_cluster_floor_are_configurable(self):
+        self.assertGreater(main.TOF_MARGIN_MM, 0)
+        self.assertGreaterEqual(main.TOF_MIN_CLUSTER, 1)
+        self.assertGreater(main.TOF_MAX_JUMP, 0)
 if __name__ == '__main__':
     unittest.main()
