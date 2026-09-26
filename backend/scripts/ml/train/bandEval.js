@@ -447,6 +447,28 @@ function makeOffsetLookup(liveRows, curves, { minReadings, clamp }) {
     }
     return out;
   };
+  // WHAT buildRecentDeviation.js WOULD HAVE STORED as the offset's readings
+  // (migration 093) right after hour t's sweep: the venue's newest `keep`
+  // readings at or before t inside the offset's window, newest first, each as
+  // its deviation from its own slot's curve, in the column's JSON shape. AT OR
+  // BEFORE, like storedReadings: hour t's own reading is in the list, and the
+  // switched serve path must leave it out. prepareRows hands the list to
+  // mlPredictor's own parser and trailingOffsetBefore, so the replay and the
+  // card compute a switched number's offset with the same cutoff.
+  offsetAt.storedOffsetReadings = function storedOffsetReadings(venueId, t, keep) {
+    const list = byVenue.get(venueId);
+    if (!list) return [];
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid].t <= t) lo = mid + 1; else hi = mid; }
+    const out = [];
+    for (let i = lo - 1; i >= 0 && out.length < keep; i--) {
+      const e = list[i];
+      if (e.t < t - OFFSET_WINDOW_HOURS) break;
+      out.push({ dev: e.dev, d: e.date, h: e.hour });
+    }
+    return out;
+  };
   return offsetAt;
 }
 
@@ -612,6 +634,16 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
       I.parseRecentReadings(offsetAt.storedReadings(r.venueId, day * 24 + r.hour, I.NOWCAST_READINGS_KEPT)),
       I.venueSlotOf(ts)
     );
+    // The offset a SWITCHED number reads (either switch on), computed by the
+    // serving code from what the builder would have stored after this hour's
+    // sweep, with this hour's own reading left out. On the replay's data it
+    // equals `off.offset` wherever a slot holds one reading; it is kept apart
+    // so the switched arithmetic below is the served arithmetic by
+    // construction rather than by coincidence.
+    const switched = I.trailingOffsetBefore(
+      I.parseOffsetReadings(offsetAt.storedOffsetReadings(r.venueId, day * 24 + r.hour, I.OFFSET_READINGS_KEPT)),
+      I.venueSlotOf(ts)
+    );
     out.push({
       ...r,
       ts,
@@ -620,6 +652,7 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
       smoothed,
       rawCurve,
       offset: off.offset,
+      switchedOffset: switched ? switched.offset : null,
       offsetReadings: off.readings,
       priorLive: off.prior,
       nowcast: last && rawCurve !== null
@@ -664,9 +697,16 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   const version = art.meta.model_version || '2.1.0';
   // A rule-engine answer carries crowdEngine's own confidence and no version.
   const res = prepared.map((r) => ({ ml: false, served: r.rule, confidence: r.ruleConfidence, modelVersion: null }));
+  // With either switch on, predictBusyness reads the offset recomputed
+  // strictly before the scored hour (mlPredictor.trailingOffsetBefore); with
+  // both off, the stored median. The replay's stored median is already
+  // strictly past, which production's is not after the hour's own sweep: that
+  // difference is today's switched-off behaviour and is left as it is.
+  const switchedArithmetic = mode === 'curve_offset' || nowcastOn;
   mlIdx.forEach((i, k) => {
     const r = prepared[i];
     const rawDelta = raw[k];
+    const offset = switchedArithmetic ? r.switchedOffset : r.offset;
     // curve_offset serves every venue-hour the model path reaches, and never
     // runs the model, so a model output cannot divert it.
     const curveOffset = mode === 'curve_offset' && r.smoothed > 0;
@@ -677,8 +717,8 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
         ? I.reconstructScore(rawDelta, r.smoothed)
         : Math.max(0, Math.min(100, Math.round(rawDelta)));
       const mapped = qmapOn && mapsThisModel ? I.applyScoreQuantileMap(base) : base;
-      const withOffset = (s) => (r.offset === null ? s
-        : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * r.offset))));
+      const withOffset = (s) => (offset === null ? s
+        : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * offset))));
       parts.reconstructed = base;
       parts.mapped = mapsThisModel ? I.applyScoreQuantileMap(base) : base;
       parts.withOffset = withOffset(base);
@@ -687,7 +727,7 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
     const qmapApplied = !curveOffset && qmapOn && mapsThisModel;
     // The number before the nowcast: the mode's own arithmetic.
     const before = curveOffset
-      ? I.curveOffsetScore(r.smoothed, r.offset === null ? null : { offset: r.offset })
+      ? I.curveOffsetScore(r.smoothed, offset === null ? null : { offset })
       : parts.modelServed;
     let served = before;
     let nowcastApplied = null;
@@ -1034,9 +1074,11 @@ const roundClamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
 // weights the serving constants do not hold. Checked against the real serve
 // path at the shipped weights, row for row, before any fit is trusted
 // (checkFitArithmetic).
+// curve_offset is a switched number, so its offset is the one recomputed
+// strictly before the scored hour (r.switchedOffset), as predictBusyness reads it.
 function curveOffsetAt(r, w) {
   const level = roundClamp(r.smoothed);
-  return r.offset === null ? level : roundClamp(level + w * r.offset);
+  return r.switchedOffset === null ? level : roundClamp(level + w * r.switchedOffset);
 }
 function nowcastAt(base, pick, a) {
   return pick && a > 0 ? roundClamp(base + a * (pick.value - base)) : base;
@@ -1062,13 +1104,15 @@ function fitWeight(rows, idx, predictAt) {
 // Every weight the switches carry, fitted on the rows at `idx`: first the
 // curve_offset weight, then per nowcast base and lag bucket the reading's
 // weight on top of that base. `modelBase` holds the model path's number per
-// row with the quantile map on and off (`model_qmap`, `model`).
+// row with the quantile map on and off (`model_qmap`, `model`), and under
+// `switched` the same two with the switched offset, which is the base the
+// nowcast blends into.
 function fitServeWeights(rows, modelBase, idx) {
   const co = fitWeight(rows, idx, (i, w) => curveOffsetAt(rows[i], w));
   const bases = {
     curve_offset: (i) => curveOffsetAt(rows[i], co.weight),
-    model_qmap: (i) => modelBase.model_qmap[i],
-    model: (i) => modelBase.model[i],
+    model_qmap: (i) => modelBase.switched.model_qmap[i],
+    model: (i) => modelBase.switched.model[i],
   };
   const nowcast = {};
   const counts = {};
@@ -1090,7 +1134,9 @@ function fitServeWeights(rows, modelBase, idx) {
 function servedAt(rows, modelBase, weights, cfg, qmapOn) {
   return rows.map((r, i) => {
     const curveOffset = cfg.serveMode === 'curve_offset';
-    const base = curveOffset ? curveOffsetAt(r, weights.curveOffsetWeight) : modelBase[qmapOn ? 'model_qmap' : 'model'][i];
+    // With the nowcast on the model's number carries the switched offset.
+    const mb = cfg.nowcast ? modelBase.switched : modelBase;
+    const base = curveOffset ? curveOffsetAt(r, weights.curveOffsetWeight) : mb[qmapOn ? 'model_qmap' : 'model'][i];
     if (!cfg.nowcast || !r.nowcastPick) return base;
     const table = weights.nowcast[curveOffset ? 'curve_offset' : (qmapOn ? 'model_qmap' : 'model')];
     return nowcastAt(base, r.nowcastPick, table ? table[r.nowcastPick.bucket] : 0);
@@ -1286,6 +1332,10 @@ async function main(argv = process.argv.slice(2)) {
         without_reading: mlRows.filter((r) => !r.nowcastPick).length,
         applied_by_lag: applied,
       },
+      // Rows where a switched number's offset (recomputed from the stored
+      // readings, strictly before the hour) differs from the replay's own
+      // strictly-past median. Zero unless one slot holds two readings.
+      switched_offset_differs: mlRows.filter((r) => r.switchedOffset !== r.offset).length,
       qmap_applied: mine.qmapApplied,
       rows_without_served_baseline: prepared.length - mlRows.length,
       rows_skipped_clock_disagreement: prepared.skipped,
@@ -1374,7 +1424,20 @@ async function main(argv = process.argv.slice(2)) {
     const idxOf = (arr) => arr.filter((_, i) => served[i]);
     const on = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: false });
     const off = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: false });
-    const modelBase = { model_qmap: idxOf(on.rows.map((x) => x.served)), model: idxOf(off.rows.map((x) => x.served)) };
+    // The model path under the nowcast, with the map on and off: its number
+    // before the blend is the model's with the switched offset, the base the
+    // nowcast's model tables are fitted on; and its published figures are the
+    // model tables' confidence figures below.
+    const mnOn = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: true });
+    const mnOff = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: true });
+    const modelBase = {
+      model_qmap: idxOf(on.rows.map((x) => x.served)),
+      model: idxOf(off.rows.map((x) => x.served)),
+      switched: {
+        model_qmap: idxOf(mnOn.rows.map((x) => x.beforeNowcast)),
+        model: idxOf(mnOff.rows.map((x) => x.beforeNowcast)),
+      },
+    };
     const qmapApplied = liveResult.mine.qmapApplied;
     const shipped = { curveOffsetWeight: I.CURVE_OFFSET_WEIGHT, nowcast: I.NOWCAST_WEIGHTS };
     checkFitArithmetic(mlRows, modelBase, shipped,
@@ -1400,10 +1463,6 @@ async function main(argv = process.argv.slice(2)) {
     const fwdRows = scoreIdx.map((i) => mlRows[i]);
     const fwdActual = fwdRows.map((r) => r.y);
     const fwd = (arr) => scoreIdx.map((i) => arr[i]);
-    // The model path under the nowcast, with the map on and off, for the two
-    // model tables' confidence figures.
-    const mnOn = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: true });
-    const mnOff = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: true });
     const forward = { shipped_weights: {}, fitted_weights: {} };
     for (const cfg of SERVE_CONFIGS) {
       forward.shipped_weights[cfg.name] = summarize(fwdActual, fwd(idxOf(configs[cfg.name].rows.map((x) => x.served))), cuts);

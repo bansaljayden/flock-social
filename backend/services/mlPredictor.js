@@ -491,17 +491,29 @@ async function getRecentDeviation(placeId) {
 const RECENT_DEVIATION_SQL = `SELECT offset_pct, n_readings, updated_at
          FROM ml_venue_recent_deviation
         WHERE google_place_id = $1`;
-// With the nowcast on, the same row and one more column: the venue's newest
-// live readings, which scripts/ml/buildRecentDeviation.js stores beside the
-// offset after every hourly sweep (migration 092). Still one indexed read on
-// the primary key, cached with the offset, so the nowcast adds no query.
-const RECENT_DEVIATION_WITH_READINGS_SQL = `SELECT offset_pct, n_readings, updated_at, recent_readings
+// With either switch on, the same row and two more columns, both written by
+// scripts/ml/buildRecentDeviation.js after every hourly sweep: the venue's
+// newest live readings for the nowcast (migration 092), and the readings the
+// offset is a median of, each with its slot and its deviation (migration 093),
+// from which a switched number recomputes its offset strictly before the hour
+// it scores (trailingOffsetBefore). Still one indexed read on the primary key,
+// cached with the offset, so the switches add no query.
+const RECENT_DEVIATION_SWITCHED_SQL = `SELECT offset_pct, n_readings, updated_at, recent_readings, offset_readings
          FROM ml_venue_recent_deviation
         WHERE google_place_id = $1`;
 
+// Whether either switch is on, which is when the row is read with its
+// readings and a number's offset is the strict one. The same test
+// predictBusyness makes, so the cache and the arithmetic never disagree.
+function switchedArithmeticOn() {
+  return serveMode() === 'curve_offset' || nowcastEnabled();
+}
+
 // The cached row: `data` is the offset exactly as getRecentDeviation has
-// always returned it, and `readings` (present only when the entry was read
-// with the nowcast on) is the parsed recent-readings list or null.
+// always returned it. Present only when the entry was read with a switch on:
+// `readings`, the parsed recent-readings list or null; `offsetReadings`, the
+// parsed offset readings or null; and `fresh`, whether the row passes the
+// offset's age limit (DEVIATION_MAX_AGE_MS), which the strict offset keeps.
 //
 // HOW STALE A READING CAN BE HERE. The builder runs once an hour, after the
 // sweep that starts at :07 and after the baseline refresh behind it, so a
@@ -515,16 +527,16 @@ const RECENT_DEVIATION_WITH_READINGS_SQL = `SELECT offset_pct, n_readings, updat
 async function recentDeviationEntry(placeId) {
   if (!pool || !placeId) return null;
 
-  const withReadings = nowcastEnabled();
+  const withReadings = switchedArithmeticOn();
   const cached = deviationCache.get(placeId);
-  // An entry read with the nowcast off carries no readings, so with it on
+  // An entry read with both switches off carries no readings, so with one on
   // that entry is a miss rather than an answer of "no readings".
   if (cached && Date.now() - cached.ts < DEVIATION_CACHE_TTL
-    && (!withReadings || cached.readings !== undefined)) return cached;
+    && (!withReadings || cached.offsetReadings !== undefined)) return cached;
 
   try {
     const { rows } = await pool.query(
-      withReadings ? RECENT_DEVIATION_WITH_READINGS_SQL : RECENT_DEVIATION_SQL,
+      withReadings ? RECENT_DEVIATION_SWITCHED_SQL : RECENT_DEVIATION_SQL,
       [placeId]
     );
     const row = rows[0];
@@ -545,7 +557,12 @@ async function recentDeviationEntry(placeId) {
     // The readings do not share the offset's floor or its age limit: one
     // reading an hour ago is the nowcast's best evidence and an anecdote to
     // the median, and the nowcast has its own limit, on the reading's age.
-    if (withReadings) entry.readings = parseRecentReadings(row ? row.recent_readings : null);
+    if (withReadings) {
+      entry.readings = parseRecentReadings(row ? row.recent_readings : null);
+      entry.offsetReadings = parseOffsetReadings(row ? row.offset_readings : null);
+      entry.fresh = Boolean(row && row.updated_at
+        && Date.now() - new Date(row.updated_at).getTime() < DEVIATION_MAX_AGE_MS);
+    }
     boundedSet(deviationCache, placeId, entry);
     return entry;
   } catch (err) {
@@ -553,7 +570,11 @@ async function recentDeviationEntry(placeId) {
     // anywhere, and it must not be an error condition.
     console.error('[MLPredictor] Recent-deviation lookup failed:', err.message);
     const entry = { data: null, ts: Date.now() };
-    if (withReadings) entry.readings = null;
+    if (withReadings) {
+      entry.readings = null;
+      entry.offsetReadings = null;
+      entry.fresh = false;
+    }
     boundedSet(deviationCache, placeId, entry);
     return entry;
   }
@@ -598,6 +619,89 @@ function slotDayNumber(dateStr) {
   if (!m) return null;
   const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
+}
+
+// ---------------------------------------------------------------------------
+// THE OFFSET A SWITCHED NUMBER READS: STRICTLY BEFORE THE HOUR IT SCORES.
+//
+// offset_pct is the median over the venue's newest readings as of the
+// builder's last run, and the builder runs right after each hourly sweep. A
+// card for hour H served after H's sweep therefore reads an offset that
+// includes H's own live reading, the reading that number is scored against.
+// With both switches off that is how the offset has always been served, and it
+// stays that way here: changing it would change today's number. A number a
+// switch made reads the offset recomputed from the stored readings with every
+// reading at or after the target slot left out, which is exactly the offset
+// scripts/ml/train/bandEval.js replays and measured the switches' weights and
+// confidence figures on (it calls these two functions).
+//
+// The builder's window and depth, restated because requiring that module opens
+// the database; __tests__/mlServeModes.test.js pins them against its source.
+// It stores OFFSET_READINGS_SLACK readings beyond the depth so that the target
+// hour's own reading (and a few more after it, for a card served for an hour
+// already past) can be dropped with twenty still left to take the median of.
+const OFFSET_WINDOW_HOURS = 28 * 24;
+const OFFSET_MAX_READINGS = 20;
+const OFFSET_READINGS_SLACK = 4;
+const OFFSET_READINGS_KEPT = OFFSET_MAX_READINGS + OFFSET_READINGS_SLACK;
+
+// The stored offset readings (migration 093), read as defensively as the
+// nowcast's: pg hands JSONB back parsed, a string is parsed here, and an entry
+// without a whole slot or a finite deviation is dropped. Newest slot first;
+// entries in one slot keep the writer's order, so the take below is the same
+// on every read.
+function parseOffsetReadings(raw) {
+  let list = raw;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return null; }
+  }
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const e of list) {
+    if (!e || typeof e !== 'object') continue;
+    const dev = Number(e.dev);
+    const hour = Number(e.h);
+    const day = slotDayNumber(e.d);
+    if (!Number.isFinite(dev) || dev < -100 || dev > 100) continue;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || day === null) continue;
+    out.push({ dev, slot: day * 24 + hour });
+  }
+  // Stable, so equal slots keep their stored order.
+  out.sort((a, b) => b.slot - a.slot);
+  return out;
+}
+
+// percentile_cont(0.5), the builder's median: the middle value, or the mean of
+// the two middle values.
+function medianOf(values) {
+  const a = values.slice().sort((x, y) => x - y);
+  const n = a.length;
+  if (n === 0) return null;
+  return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+}
+
+// The trailing offset as of the start of `targetSlot`: the median deviation of
+// the newest OFFSET_MAX_READINGS readings with a slot strictly before it and no
+// more than OFFSET_WINDOW_HOURS before it, under the same floor and clamp as
+// the stored offset. Null when fewer than DEVIATION_MIN_READINGS qualify, or
+// when there is no list to read (the builder has not written one yet), in
+// which case a switched number carries no offset rather than a leaky one.
+function trailingOffsetBefore(list, targetSlot) {
+  if (!Array.isArray(list) || !Number.isInteger(targetSlot)) return null;
+  const devs = [];
+  for (const r of list) {
+    if (devs.length >= OFFSET_MAX_READINGS) break;
+    if (!r || !Number.isInteger(r.slot) || r.slot >= targetSlot) continue;
+    if (r.slot < targetSlot - OFFSET_WINDOW_HOURS) break;
+    devs.push(r.dev);
+  }
+  if (devs.length < DEVIATION_MIN_READINGS) return null;
+  const raw = medianOf(devs);
+  return {
+    offset: Math.max(-DEVIATION_CLAMP, Math.min(DEVIATION_CLAMP, raw)),
+    clamped: Math.abs(raw) > DEVIATION_CLAMP,
+    readings: devs.length,
+  };
 }
 
 // User feedback cache: key = venue_place_id → { data, ts }
@@ -3665,6 +3769,12 @@ const NOWCAST_WEIGHTS = Object.freeze({
 // that produced it, and published with its own population string the way
 // QMAP_MEASURED is. A figure measured on different arithmetic would describe
 // a number nobody is shown.
+//
+// Every figure here is for a number whose offset is the one recomputed
+// strictly before the scored hour (trailingOffsetBefore), which is what a
+// switched number reads. Re-measured after that became the served offset: the
+// replay's switched offset equals its strictly-past median on all 7,920 rows,
+// the fit returns these weights, and these figures reproduce to the decimal.
 const SERVE_MEASURED_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export); weights fitted on 2026-09-01..05';
 const SERVE_MEASURED = Object.freeze({
   curveOffset: Object.freeze({ within15: 41.7, rows: 4183 }),
@@ -4126,19 +4236,31 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // against. Before getLabel, for the same reason the qmap is: the band must
     // never describe a different figure than the one on the card.
     //
-    // Everything about it is past-only. It is a median over readings that
-    // already happened, taken from a table this request does not write, so
-    // there is no path by which tonight informs tonight's own prediction.
+    // It is a median over readings that already happened, taken from a table
+    // this request does not write. Past-only relative to the request, but not
+    // always relative to the hour scored: served during hour H after H's
+    // sweep, the stored median includes H's own reading. The switched path
+    // below leaves it out; the switched-off path keeps today's behaviour.
     //
     // In curve_offset mode the same offset, at the weight fitted for a curve
     // rather than for the model's number (CURVE_OFFSET_WEIGHT).
+    //
+    // WITH EITHER SWITCH ON, the offset is the one recomputed strictly before
+    // the hour being scored (trailingOffsetBefore), not the stored median,
+    // which after this hour's sweep includes this hour's own reading. That is
+    // the offset bandEval.js measured the switches on. With both off the
+    // stored median is served as it always has been, that leak included; see
+    // the block above OFFSET_WINDOW_HOURS.
     let deviationApplied = null;
     const devPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
     const offsetWeight = curveOffsetMode ? CURVE_OFFSET_WEIGHT : DEVIATION_WEIGHT;
+    const switchedArithmetic = switchedArithmeticOn();
     // One read serves the offset and the nowcast's readings, from one cache.
     const devEntry = devPlaceId ? await recentDeviationEntry(devPlaceId) : null;
     if (devEntry) {
-      const dev = devEntry.data;
+      const dev = switchedArithmetic
+        ? (devEntry.fresh ? trailingOffsetBefore(devEntry.offsetReadings, venueSlotOf(ts)) : null)
+        : devEntry.data;
       if (dev) {
         const before = score;
         score = Math.max(0, Math.min(100, Math.round(score + offsetWeight * dev.offset)));
@@ -4791,6 +4913,12 @@ module.exports = {
     CURVE_OFFSET_WEIGHT,
     NOWCAST_MAX_LAG_HOURS,
     NOWCAST_READINGS_KEPT,
+    OFFSET_WINDOW_HOURS,
+    OFFSET_MAX_READINGS,
+    OFFSET_READINGS_KEPT,
+    parseOffsetReadings,
+    trailingOffsetBefore,
+    switchedArithmeticOn,
     NOWCAST_MODEL_FITTED_ON,
     NOWCAST_WEIGHTS,
     SERVE_MEASURED,

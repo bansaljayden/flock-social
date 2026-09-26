@@ -129,10 +129,14 @@ function builderHistory(fx, venueId) {
 // buildRecentDeviation's UPSERT, restated independently of
 // bandEval.makeOffsetLookup: the venue's live readings inside 28 days before
 // the moment, newest twenty, each against its own slot's positive curve.
-function builderOffset(fx, venueId, date, hour) {
+// Strictly before the hour by default, which is the median the replay serves
+// with both switches off. `{ inclusive: true }` is what the real builder has
+// stored once the hour's own sweep has run: the median INCLUDES that hour's
+// reading, the leak a switched number must not read.
+function builderOffset(fx, venueId, date, hour, { inclusive = false } = {}) {
   const t = dayNumber(date) * 24 + hour;
   const devs = builderHistory(fx, venueId)
-    .filter((x) => x.t < t && x.t >= t - 28 * 24)
+    .filter((x) => (inclusive ? x.t <= t : x.t < t) && x.t >= t - 28 * 24)
     .sort((a, b) => b.t - a.t)
     .slice(0, 20)
     .map((x) => x.r.y - x.b)
@@ -162,12 +166,28 @@ function builderReadings(fx, venueId, date, hour, keep) {
     }));
 }
 
+// buildRecentDeviation's offset-readings statement (migration 093), restated:
+// the venue's newest `keep` live readings inside 28 days with a slot at or
+// before (date, hour), newest first, each as its deviation from its own
+// slot's positive curve. INCLUSIVE of the target hour, like builderReadings.
+function builderOffsetReadings(fx, venueId, date, hour, keep) {
+  const t = dayNumber(date) * 24 + hour;
+  return builderHistory(fx, venueId)
+    .filter((x) => x.t <= t && x.t >= t - 28 * 24)
+    .sort((a, b) => b.t - a.t)
+    .slice(0, keep)
+    .map((x) => ({ dev: x.r.y - x.b, d: x.r.date, h: x.r.hour }));
+}
+
 // A pool that answers predictBusyness from the fixture. `moment(alias)` names
 // the venue and the serve moment ({ venueId, date, hour }) a place id stands
 // for; each row of a parity run gets a fresh alias, because the predictor's
 // per-place caches would otherwise hand one moment's answers to the next.
 // `unknown` collects any statement the fixture does not answer.
-function makeFixturePool(fx, moment, { keepReadings = 3 } = {}) {
+// `leakyOffset` stores offset_pct the way the real builder has it after the
+// target hour's sweep (inclusive of that hour's reading); the default stores
+// the strictly-past median the replay serves with both switches off.
+function makeFixturePool(fx, moment, { keepReadings = 3, keepOffsetReadings = 24, leakyOffset = false } = {}) {
   const unknown = [];
   const byAlias = (placeId) => {
     const m = moment(placeId);
@@ -209,12 +229,16 @@ function makeFixturePool(fx, moment, { keepReadings = 3 } = {}) {
     }
     if (/FROM ml_venue_recent_deviation/.test(sql)) {
       const { m } = byAlias(params[0]);
-      const off = builderOffset(fx, m.venueId, m.date, m.hour);
-      if (!off) return { rows: [] };
-      const row = { offset_pct: off.offset, n_readings: off.n, updated_at: new Date() };
-      // Only a statement that asks for the column gets it, the way Postgres
+      const off = builderOffset(fx, m.venueId, m.date, m.hour, { inclusive: leakyOffset });
+      const offsetReadings = builderOffsetReadings(fx, m.venueId, m.date, m.hour, keepOffsetReadings);
+      if (!off && offsetReadings.length === 0) return { rows: [] };
+      const row = off
+        ? { offset_pct: off.offset, n_readings: off.n, updated_at: new Date() }
+        : { offset_pct: null, n_readings: 0, updated_at: new Date() };
+      // Only a statement that asks for a column gets it, the way Postgres
       // answers: a predictor that never selects it never sees it.
       if (/recent_readings/.test(sql)) row.recent_readings = builderReadings(fx, m.venueId, m.date, m.hour, keepReadings);
+      if (/offset_readings/.test(sql)) row.offset_readings = offsetReadings;
       return { rows: [row] };
     }
     if (/FROM venue_feedback/.test(sql)) return { rows: [{ avg_crowd: null, count: 0, avg_error_mapped: null, avg_error_legacy: null }] };
@@ -235,5 +259,6 @@ module.exports = {
   builderHistory,
   builderOffset,
   builderReadings,
+  builderOffsetReadings,
   makeFixturePool,
 };

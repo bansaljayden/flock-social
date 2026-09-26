@@ -294,6 +294,126 @@ test('the version a switched number carries names each switch that changed it', 
   assert.equal(I.servedModelVersion('2.6.0-starling', true, { bucket: 1 }), '2.6.0-starling+curve_offset+nowcast');
 });
 
+// ── The offset a switched number reads ─────────────────────────────────────
+
+const offReading = (dev, d, h) => ({ dev, d, h });
+
+test('a switched number\'s offset is the median strictly before the hour it scores, under the stored offset\'s floor and clamp', () => {
+  const T = slot('2026-09-06', 19);
+  const stored = I.parseOffsetReadings([
+    offReading(80, '2026-09-06', 19), offReading(-20, '2026-09-06', 17), offReading(-10, '2026-09-06', 16),
+  ]);
+  // Scoring 19:00 after the 19:00 sweep: the 19:00 reading is left out.
+  assert.deepEqual(I.trailingOffsetBefore(stored, T), { offset: -15, clamped: false, readings: 2 });
+  // Scoring 20:00: all three count.
+  assert.equal(I.trailingOffsetBefore(stored, T + 1).offset, -10);
+  // Scoring 17:00: one earlier reading is below the floor, so no offset at all.
+  assert.equal(I.trailingOffsetBefore(stored, slot('2026-09-06', 17)), null);
+  // No list (the builder has not written one yet): no offset, never the stored median.
+  assert.equal(I.trailingOffsetBefore(null, T), null);
+  // The clamp, and the flag that says it bound.
+  const wild = I.parseOffsetReadings([offReading(90, '2026-09-06', 10), offReading(80, '2026-09-06', 9)]);
+  assert.deepEqual(I.trailingOffsetBefore(wild, T), { offset: I.DEVIATION_CLAMP, clamped: true, readings: 2 });
+});
+
+test('the strict offset takes the newest OFFSET_MAX_READINGS inside the window, and the stored slack covers the hour\'s own reading', () => {
+  const T = slot('2026-09-06', 12);
+  // KEPT readings, one an hour, newest at T itself: after dropping it, exactly
+  // OFFSET_MAX_READINGS remain, the depth the builder's median is taken over.
+  const list = [];
+  for (let k = 0; k < I.OFFSET_READINGS_KEPT; k++) {
+    const s = T - k;
+    const d = new Date(Math.floor(s / 24) * 86400000).toISOString().slice(0, 10);
+    list.push(offReading(k, d, s % 24));
+  }
+  const got = I.trailingOffsetBefore(I.parseOffsetReadings(list), T);
+  assert.equal(got.readings, I.OFFSET_MAX_READINGS);
+  // Deviations 1..20: the median of the twenty newest earlier readings.
+  assert.equal(got.offset, 10.5);
+  // A reading older than the window never counts.
+  const old = I.parseOffsetReadings([offReading(-5, '2026-09-06', 11), offReading(-5, '2026-09-06', 10), offReading(40, '2026-08-01', 10)]);
+  assert.equal(I.trailingOffsetBefore(old, T).readings, 2);
+  assert.equal(I.OFFSET_WINDOW_HOURS, 28 * 24);
+  assert.ok(I.OFFSET_READINGS_KEPT > I.OFFSET_MAX_READINGS);
+  // Read defensively, like the nowcast's list.
+  assert.equal(I.parseOffsetReadings('not json'), null);
+  assert.equal(I.parseOffsetReadings([{ dev: 'x', d: '2026-09-06', h: 1 }, { dev: 5, d: 'no', h: 1 }, { dev: 5, d: '2026-09-06', h: 1 }]).length, 1);
+});
+
+// A flat curve of 20 and two live readings at one venue: 0 at 17:00 and 100 at
+// 19:00. The card for 19:00 is served during 19:00, after that hour's sweep,
+// so the stored median includes the 19:00 reading. With both switches on the
+// replay serves 3 (no offset from a single earlier reading, then the 17:00
+// reading blended in at the two-hour weight); reading the stored median would
+// serve 7, a number moved by the reading it is scored against.
+async function serveFlatCurveCase(env) {
+  const venue = FX.VENUES[0];
+  const curves = new Map();
+  for (const v of FX.VENUES) curves.set(String(v.id), new Int16Array(168).fill(20));
+  const date = '2026-09-06';
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const fx = {
+    curves,
+    weekly: [],
+    live: [
+      { v: venue, date, dow, hour: 17, y: 0, weather: null },
+      { v: venue, date, dow, hour: 19, y: 100, weather: null },
+    ],
+  };
+  const pool = require('../config/database');
+  const realQuery = pool.query;
+  const stub = FX.makeFixturePool(fx, () => ({ venueId: venue.id, date, hour: 19 }), { leakyOffset: true });
+  pool.query = stub.query;
+  const quiet = [console.log, console.warn, console.error];
+  try {
+    return await withEnv(env, async () => {
+      const predictor = freshPredictor();
+      console.log = () => {};
+      console.warn = () => {};
+      console.error = () => {};
+      assert.equal(await predictor.init(), true);
+      const out = await predictor.predictBusyness({
+        place_id: 'ChIJservemodes_flat_curve',
+        types: venue.types,
+        rating: 4.4,
+        user_ratings_total: 900,
+        price_level: 2,
+        location: { latitude: venue.lat, longitude: venue.lng },
+      }, { temp: 70, humidity: 50, windSpeed: 5, conditions: 'clear sky', conditionId: 800, isRaining: false },
+      new Date(Date.UTC(2026, 8, 6, 19, 30)));
+      assert.deepEqual(stub.unknown, []);
+      return out;
+    });
+  } finally {
+    [console.log, console.warn, console.error] = quiet;
+    pool.query = realQuery;
+    delete require.cache[PREDICTOR];
+  }
+}
+
+test('with both switches on, the hour\'s own reading never reaches the number through the offset', async () => {
+  const on = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' });
+  assert.equal(on.predictionMethod, 'ml');
+  assert.equal(on.recentDeviation, null, 'one earlier reading is below the floor, so no offset');
+  assert.equal(on.nowcast.lagHours, 2);
+  assert.equal(on.score, Math.round(20 + I.NOWCAST_WEIGHTS.curve_offset[2] * (0 - 20)));
+  assert.equal(on.score, 3);
+  // curve_offset alone: the curve, with no offset from the 19:00 reading.
+  const co = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset' });
+  assert.equal(co.score, 20);
+  assert.equal(co.recentDeviation, null);
+});
+
+test('with both switches off the stored median is served as before, the hour\'s own reading included (unchanged, pre-existing)', async () => {
+  const off = await serveFlatCurveCase({});
+  assert.equal(off.predictionMethod, 'ml');
+  // median(0 - 20, 100 - 20) = 30: the stored offset, exactly as it was read
+  // before the switches existed.
+  assert.equal(off.recentDeviation.offset, 30);
+  assert.equal(off.recentDeviation.weight, I.DEVIATION_WEIGHT);
+  assert.ok(!('serveMode' in off) && !('nowcast' in off));
+});
+
 // ── Through predictBusyness ─────────────────────────────────────────────────
 
 test('with the switches on, the rule-engine exits answer exactly as they do off, and switched numbers say what made them', async () => {
@@ -316,7 +436,7 @@ test('with the switches on, the rule-engine exits answer exactly as they do off,
   // The offset and the readings came from one statement per place.
   const dev = on.sql.filter((s) => /ml_venue_recent_deviation/.test(s));
   assert.equal(dev.length, on.out.length - GOLDEN.ruleRows.length);
-  assert.ok(dev.every((s) => /recent_readings/.test(s)));
+  assert.ok(dev.every((s) => /recent_readings/.test(s) && /offset_readings/.test(s)));
 });
 
 test('predictionCoverage says which switches are on and how many answers each made', async () => {
@@ -355,5 +475,34 @@ test('migration 092 adds the column additively, in ASCII, and declares it', () =
   assert.ok(/^[\x00-\x7F]*$/.test(sql), 'ASCII only: the boot-safety server is WIN1252');
   assert.match(sql, /ADD COLUMN IF NOT EXISTS recent_readings JSONB;/);
   assert.match(sql, /-- @requires column ml_venue_recent_deviation\.recent_readings/);
+  assert.doesNotMatch(sql.replace(/--.*$/gm, ''), /\b(DROP|DELETE|UPDATE|NOT NULL|DEFAULT)\b/i);
+});
+
+test('the builder stores the offset\'s readings over the offset\'s own window and depth, plus the slack serving expects', () => {
+  const src = fs.readFileSync(path.join(ML_DIR, 'buildRecentDeviation.js'), 'utf8');
+  const windowDays = Number(/const WINDOW_DAYS = (\d+);/.exec(src)[1]);
+  const maxReadings = Number(/const MAX_READINGS = (\d+);/.exec(src)[1]);
+  const slack = Number(/const OFFSET_READINGS_SLACK = (\d+);/.exec(src)[1]);
+  assert.equal(windowDays * 24, I.OFFSET_WINDOW_HOURS);
+  assert.equal(maxReadings, I.OFFSET_MAX_READINGS);
+  assert.equal(maxReadings + slack, I.OFFSET_READINGS_KEPT);
+  // The offset's population, newest slot first, each against its own slot's curve.
+  const stmt = /const OFFSET_READINGS_SQL = `([\s\S]*?)`;/.exec(src)[1];
+  assert.match(stmt, /t\.busyness_pct - b\.baseline AS deviation/);
+  assert.match(stmt, /t\.label_source = 'live'[\s\S]*b\.baseline > 0/);
+  assert.match(stmt, /ORDER BY t\.observed_date DESC, t\.hour DESC, t\.collected_at DESC/);
+  assert.match(stmt, /'dev', deviation/);
+  // Its own statement in its own try, after the offset's, so a missing 093
+  // column cannot cost the offset or the nowcast's readings.
+  const body = src.slice(src.indexOf('async function buildRecentDeviation('));
+  assert.ok(body.indexOf('UPSERT_SQL') < body.indexOf('storeOffsetReadings('));
+  assert.match(src, /async function storeOffsetReadings[\s\S]*catch \(err\)/);
+});
+
+test('migration 093 adds the offset readings column additively, in ASCII, and declares it', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '093_venue_offset_readings.sql'), 'utf8');
+  assert.ok(/^[\x00-\x7F]*$/.test(sql), 'ASCII only: the boot-safety server is WIN1252');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS offset_readings JSONB;/);
+  assert.match(sql, /-- @requires column ml_venue_recent_deviation\.offset_readings/);
   assert.doesNotMatch(sql.replace(/--.*$/gm, ''), /\b(DROP|DELETE|UPDATE|NOT NULL|DEFAULT)\b/i);
 });
