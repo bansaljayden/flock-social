@@ -35,7 +35,8 @@ design choice below follows from that.
 >   the bench, because at bin 2 one standing person at about 3 ft fragmented
 >   into 3 clusters and at bin 4 the same person reads 1. What that did to
 >   `THERMAL_MIN_CLUSTER` is worked out under Calibration; the short version is
->   that 12 cells now means four times as many pixels as it used to.
+>   that the minimum has since come down from 12 cells to 6, so a head counts on
+>   its own instead of needing most of a body in frame.
 > - **The microphone, end to end.** 2026-09-13: the MCP3008 converts, and CH0
 >   idles near mid-scale and swings with sound in the room, which is what a
 >   working MAX4466 does. Four wires were wrong to get there and all four were
@@ -54,16 +55,21 @@ design choice below follows from that.
 >
 > **Not verified:**
 >
-> - **The IR crossing sensor, the only sensor that has never been read.**
->   Nothing is wired. `--selftest` reports it NOT DETECTED and the device
->   reports 0 crossings. `main.py --beam` is the tool for bringing it up. The
->   receiver voltage question below applies if a two-part break-beam is used,
->   and getting that one wrong damages the Pi rather than returning a bad
->   number; a one-sided proximity module powered from 3V3 avoids it.
+> - **The doorway counter, the only sensor that has never been read.** The
+>   build uses a VL53L8CX time-of-flight sensor and `main.py` drives it: the
+>   firmware load, ST's start-up sequence, the counting. None of that has met
+>   the part, which had not arrived when it was written. It is checked against
+>   ST's own source and against a scripted fake of the sensor in `test_main.py`.
+>   `main.py --tof` is the tool for bringing it up. A GPIO crossing sensor still
+>   works in its place (`main.py --beam`), and the receiver voltage question
+>   below applies if that is a two-part break-beam.
 > - **The noise figure.** The mic reads. The number it produces is uncalibrated
 >   and needs a sound level meter beside a running unit, and until then it is a
 >   relative loudness index rather than dB SPL.
-> - **The display.** No framebuffer has been drawn into.
+> - **The display, as it is now.** The panel has drawn on the real 1024x600
+>   screen, through the Pi's Wayland desktop. The redesigned screens since then
+>   have been rendered at that size on a PC with the real fonts and have not
+>   yet been seen on the panel.
 > - **Two people at once, and any distance past 10 ft.** Everything measured so
 >   far was one person between roughly 3 and 10 ft. A count that has never seen
 >   two bodies is not a headcount yet.
@@ -93,7 +99,7 @@ Three numbers, every 30 seconds:
 
 | Field | What it is | How it is measured |
 |---|---|---|
-| `ir_beam_count` | Doorway crossings since the last reading | An infrared sensor on one GPIO pin, a one-sided proximity module or a two-part break-beam; each crossing counts once |
+| `ir_beam_count` | Doorway crossings since the last reading | A VL53L8CX time-of-flight sensor over the doorway, an 8x8 grid of distances; or an infrared sensor on one GPIO pin. Each crossing counts once, in either direction |
 | `thermal_headcount` | Warm bodies in the camera's field of view | Heat clusters in a 160×120 thermal grid |
 | `noise_db` | Ambient loudness | RMS level from a microphone |
 
@@ -127,6 +133,10 @@ Three numbers, every 30 seconds:
   not whether a frame is held in memory, so they were never going to catch
   this. The guard that does exist is THERMAL_VIEW_ON requiring a screen, and a
   test that asserts it.
+- The doorway counter's frame is 64 distances, an 8x8 grid in which one zone
+  is about 30 cm of floor, so a person in it is a few zones reading nearer than
+  the floor. It becomes crossings in the loop that reads it and is discarded;
+  nothing keeps a frame.
 - The microphone's samples become one RMS number every five seconds and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
   from a loudness reading taken every 5 seconds.
@@ -158,8 +168,10 @@ The one thing to be careful about: it is a promise about a device that has
 only been switched on once. As of 2026-09-06 the thermal camera and the
 microphone have been brought up on a Pi and the claims above held: no image
 library is present, no frame reaches a file, and the payload is three integers.
-The crossing sensor has never been wired. Before the first venue install, re-read section
-3 against the running unit rather than against this file.
+The doorway counter has never been wired. Before the first venue install, re-read
+section 3 against the running unit rather than against this file: it describes
+the crossing count as an infrared beam, and a unit counting with the VL53L8CX
+measures distances instead.
 
 ---
 
@@ -176,7 +188,7 @@ every row but the last.
 | MCP3008 ADC | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
 | MAX4466 microphone | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
 | 7 inch 1024x600 HDMI touchscreen, landscape (demo units only) | HDMI | none |
-| VL53L8CX time-of-flight counter (sensor head, **designed only**) | I2C. **`main.py` has no support for it** | none yet |
+| VL53L8CX time-of-flight doorway counter on a Pololu #3419 carrier | I2C bus 1, address 0x29. `main.py` loads its firmware at every start | VIN to 3V3 (pin 1, never 5V), GND, SDA pin 3, SCL pin 5, and the carrier's SPI/I2C pin to GND. See The doorway counter |
 
 Two things about that list that are decisions, not details.
 
@@ -226,6 +238,67 @@ round than a doorway that busy). `--seconds N` bounds the run.
 > proximity module powered from 3V3 does not have this problem, which is most
 > of the reason to prefer it.
 
+### The doorway counter
+
+A VL53L8CX looks down at the doorway and returns an 8x8 grid of distances
+fifteen times a second. It is not a camera: at doorway range one zone is about
+30 cm of floor, enough to tell two people abreast from one and an arrival from
+a departure, and nowhere near enough to tell one person from another. Each
+frame is reduced to crossings in the loop that reads it and dropped.
+
+`main.py` drives it with nothing to install: the sensor has no firmware until the
+host loads 86 KB of ST's into it at every start, and the register sequence
+around that load is a line-for-line port of ST's own driver onto the Pi's I2C.
+The firmware and ST's licence for it are in `vl53l8cx/`.
+
+**Wiring, five wires, by the carrier's own labels:**
+
+| Carrier pin | Pi | Why |
+|---|---|---|
+| VIN | 3V3, pin 1 | **Never 5V.** The carrier shifts SDA and SCL to whatever VIN is, and the Pi's pins are 3.3V only |
+| GND | GND, pin 6 | |
+| SDA | GPIO 2, pin 3 | |
+| SCL | GPIO 3, pin 5 | |
+| SPI/I2C | GND, a short jumper to the carrier's own GND pin | **The one that gets missed.** The carrier pulls it high, which puts the sensor in SPI mode, and then nothing answers on I2C at all |
+
+Everything else (LP, INT, CS, MISO, SYNC and the two regulator outputs) stays
+unconnected. In the Cat6 run to the head, twist SDA and SCL each with a ground.
+
+**Bring it up with `main.py --tof`,** not the service; stop the service first,
+because two programs driving one sensor restart it under each other. It opens
+the bus, asks the sensor for its id, loads the firmware and checks the
+sensor's own checksum, then prints the grid live with anybody in it bracketed
+and each crossing as IN or OUT. Every failure says what to check next.
+
+Three settings, all install decisions:
+
+- `DOOR_SENSOR`: `auto` (the default) uses the VL53L8CX if one answers at
+  start-up and the GPIO pin if not. On a unit with the counter fitted, set
+  `tof`: the counter is then started even if it did not answer at boot and
+  keeps retrying, and the panel says "counter offline" rather than showing a
+  beam the unit does not have.
+- `TOF_AXIS`: `row` if people cross the grid top to bottom as mounted, `col` if
+  they cross it side to side. `--tof` says which to try when nothing crosses.
+- `TOF_FLIP_DIRECTION=1` if arrivals come out as OUT.
+
+There is no floor distance to measure. It learns the empty doorway zone by
+zone over its first twenty frames at every start, which matters on this mount:
+the head looks down at an angle, so the far zones see floor a metre further
+off than the near ones, and one threshold for the whole grid reads the near
+rows as a crowd. Something that arrives and stays, a sign or a bouncer, joins
+the background after a minute.
+
+**What reaches the backend does not change.** Each crossing adds one to
+`ir_beam_count`, in either direction, exactly as the beam did. The two
+directions show on the panel's door screen and go nowhere else.
+
+**The bus runs at the Pi's default 100 kHz,** which costs about eight seconds
+of loading at each start. On a short cable,
+`dtparam=i2c_arm_baudrate=400000` in `/boot/firmware/config.txt` cuts that to
+about two. `setup.sh` does not set it, because the head sits at the end of
+three metres of Cat6, and a bus too fast for its cable fails the firmware
+checksum instead of running slowly.
+
 ### The sensor head, designed and not built
 
 The enclosure splits the device in two (`enclosure/README.md`). The Pi, the
@@ -235,11 +308,11 @@ joined to the base by one Cat6 run carrying SPI and I2C. The converter goes in
 the head so the analog run is centimetres rather than three metres beside a 4G
 modem.
 
-None of that is in the code yet, and three things follow:
+Three things about it are still open:
 
-- **`main.py` has no VL53L8CX or I2C support.** The crossing count still comes
-  from one GPIO pin. The head's time-of-flight window is drawn; nothing reads
-  what is behind it.
+- **The counter is driven and has never run.** `main.py` has the VL53L8CX
+  driver (see The doorway counter, above), and the part had not arrived when
+  it was written.
 - **SPI over three metres of cable is untested.** `main.py` opens the MCP3008
   at 1 MHz. Try it on the bench with the real cable before building around it.
 - **The base's two indicator lights (POWER, LINK) and the head's one are holes
@@ -258,14 +331,14 @@ running on as its first line.
 
 ### The pin conflict, which is still open
 
-Moving the thermal camera to USB freed the I2C pins (3 and 5), and that is a
-real reduction. The sensor head as drawn would take I2C back for its
-time-of-flight counter. It did not dissolve the problem, and it is worth being precise
-about what is left rather than declaring it solved.
+Moving the thermal camera to USB freed the I2C pins (3 and 5), and the
+doorway counter now uses them. None of that dissolved the problem, and it is
+worth being precise about what is left rather than declaring it solved.
 
 What this code still needs on the 40-pin header:
 
-- **GPIO 17** (pin 11) for the crossing sensor, plus 3V3 and a ground.
+- **I2C1** for the doorway counter: pins 3 and 5, plus 3V3 and a ground. Or,
+  on a unit with a GPIO crossing sensor instead, **GPIO 17** (pin 11);
   `IR_GPIO_PIN` moves it if the HAT needs 17.
 - **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24.
 
@@ -284,7 +357,8 @@ code's**, and none of them is picked here:
 
 1. **Stacking header.** A 2x20 extra-tall header raises the HAT and leaves the
    pins reachable underneath. Cheapest, no code change. Only works if the HAT
-   does not itself use GPIO 17 or SPI0, which is the unverified part above.
+   does not itself use I2C1, SPI0 or, with a beam, GPIO 17, which is the
+   unverified part above.
 2. **Put the modem on USB too.** These HATs generally expose a USB interface
    and can run as a plain USB modem off a cable instead of on the header. The
    header is then completely free and the pass-through question disappears.
@@ -373,8 +447,9 @@ sudo systemctl restart flock-sensor
 `setup.sh` is safe to re-run and never overwrites an existing config. It works
 out which account owns the Pi (Raspberry Pi OS has not shipped a default `pi`
 user since 2022), installs the source to `/opt/flock-sensor`, writes the config
-at mode 0600, adds the service user to the `video`/`spi`/`gpio` groups, and turns
-on NTP.
+at mode 0600, turns on SPI and I2C, installs the doorway counter's firmware,
+adds the service user to every hardware group the unit file names (`spi`,
+`gpio`, `video`, `input`, `render`, `i2c`), and turns on NTP.
 
 ### Verify before you leave the venue
 
@@ -536,12 +611,23 @@ bin 4 instead:
   and 25 across, so even a fraction of that silhouette clearing the warm cutoff
   is hundreds of raw pixels, which is tens of cells at bin 4.
 
-So `THERMAL_MIN_CLUSTER = 12` no longer encodes "a head at doorway range". It
-encodes "a body-sized warm region in frame", and the bench is what says that is
-the right thing for it to encode: at 8 to 10 ft a whole silhouette counted every
-time and a partial crop at the frame edge counted zero. **This device measures
-warm area.** It is repeatable at a fixed input. What varied between the early
-runs was how much of a body was in frame, not the algorithm.
+So `THERMAL_MIN_CLUSTER = 12` no longer encoded "a head at doorway range". It
+encoded "a body-sized warm region in frame", and the bench showed what that
+costs: at 8 to 10 ft a whole silhouette counted every time and a partial crop at
+the frame edge counted zero. **This device measures warm area.** It is
+repeatable at a fixed input. What varied between the early runs was how much of
+a body was in frame, not the algorithm.
+
+**So the default is now 6: a head again.** A room is full of partly visible
+people, somebody half out of shot or a head over a table, and a threshold that
+only fires on a whole silhouette undercounts exactly when the room is busiest.
+6 cells at bin 4 is 96 raw pixels, the head the arithmetic above gives at about
+3 m once the warm bloom around a face is included. It does not bring back the
+double counting bin 4 fixed: that was one body splitting into head and torso,
+and at bin 4 the cool band between them is averaged away whatever the minimum
+is. It can count one person twice when a heavy coat and scarf cut the warm
+regions apart, which is the honest cost. The derivation is also written out
+beside the default in `main.py`.
 
 **Which makes framing a mounting problem, and it is the thing to settle before
 the first venue install.** Where the camera sits and how it is angled decides
@@ -551,7 +637,7 @@ low. Mounted back far enough that a whole body fits, the count is the one that
 was measured. Nobody has done this against a real doorway yet.
 
 The two constants are one setting in two variables, so `test_main.py` pins the
-pair (4, 12). Move either and re-derive both.
+pair (4, 6). Move either and re-derive both.
 
 Still unmeasured, and the next two things to run: two people at once, which is
 the difference between a count and a headcount, and any distance past 10 ft.
@@ -561,10 +647,10 @@ right now, and walk in and out of frame. Stop the service first or it holds the
 camera. If one person reads as several, the silhouette is fragmenting and
 `THERMAL_BIN` should go up, and `THERMAL_MIN_CLUSTER` should come down with it:
 the two are one setting, the product `min_cluster x bin^2` is the real threshold
-in raw pixels, and it wants to stay near the measured 192. Raising the bin alone
-past 5 leaves the shipped 12 demanding more warm area than a whole person has,
+in raw pixels, and it wants to stay near the default's 96. Raising the bin alone
+past 7 leaves the shipped 6 demanding more warm area than a whole person has,
 which counts nobody at all. `validated_thermal_pair` refuses that combination,
-falls back to the measured 4 and 12, and says so in the log and in `--selftest`.
+falls back to 4 and 6, and says so in the log and in `--selftest`.
 If an empty room
 reads as one or more people, raise `THERMAL_MARGIN_C` first, then
 `THERMAL_MIN_CLUSTER`.
@@ -633,14 +719,15 @@ as `sqrt(current / new)`:
 | 5 | 80 | 1.55x |
 
 12 to 11 buys about 4%, which at 10 ft is five inches. Buying a useful amount
-of range means roughly halving the number, and 5 is where this sensor's own
-noise starts being counted as people. That is the failure the 24x32 default of
+of range means roughly halving the number, which is what the move to 6 did, and
+5 is where this sensor's own noise starts being counted as people. That is the failure the 24x32 default of
 4 produced, and the reason `test_main.py` pins the minimum above 4. When the
 count has to reach farther than the setting allows, the lever is where the
 camera is mounted rather than this number.
 
 **`main.py --calibrate` measures the number for the room it is actually in.**
-The shipped 12 is one number from one bench in one room. What it should be
+The shipped 6 is derived from the lens and one bench session, not measured in
+your room. What it should be
 depends on how far the camera sits from the crossing and how warm the room
 runs. Mount the unit where it is going to live, then:
 
@@ -727,7 +814,9 @@ the finer grid.
 crossing in either direction, so a doorway used both ways roughly doubles the
 true entry count, and someone loitering in front of the sensor inflates it
 further. Anything built on
-this field has to treat it as a relative activity signal.
+this field has to treat it as a relative activity signal. The VL53L8CX knows
+which way each person went and the panel shows it, but the payload still carries
+the one total, so all of this stays true of what the backend receives.
 
 ---
 
@@ -755,7 +844,12 @@ Commit it and have `setup.sh` install from it.
 | `refused (HTTP 403)` + `Device deactivated` | `is_active = false` | Re-activate the row |
 | `no reply` | Venue firewall or captive portal | Outbound HTTPS on 443 must be allowed; captive portals need the Pi's MAC allowlisted by the venue |
 | `certificate is not yet valid` | Clock unset and no NTP | Check internet access; `timedatectl set-ntp true` |
-| Service works by hand, fails under systemd | Missing hardware group membership | `sudo adduser <user> video` (also `spi`, `gpio`) then reboot |
+| Service works by hand, fails under systemd | Missing hardware group membership | Re-run `setup.sh`, which installs the unit with every group it names; by hand, `sudo adduser <user> video` (also `spi`, `gpio`, `i2c`, `input`, `render`) then reboot |
+| Doorway counter: `--tof` says nothing answered at 0x29 | The carrier's SPI/I2C pin is not tied to GND, I2C is off, or a wire | Tie SPI/I2C to GND; `sudo raspi-config nonint do_i2c 0`; `i2cdetect -y 1` should show 29 |
+| Doorway counter: firmware checksum failed | Bytes damaged on the bus | Reseat the connections, twist SDA and SCL each with a ground, and take out any raised `i2c_arm_baudrate` |
+| Doorway counter: people walk through and nothing counts, `--tof` shows them in the grid | They cross the grid sideways as mounted | `TOF_AXIS=col` |
+| Doorway counter: arrivals show as OUT | The head faces the other way round | `TOF_FLIP_DIRECTION=1` |
+| Door screen says counter offline on a unit with the counter fitted | It stopped answering, or is still loading its firmware (about eight seconds) | Wait ten seconds; then `journalctl -u flock-sensor` names the failure, and `--tof` walks it |
 | Headcount stuck at 0, log says the node does not exist | Camera not enumerated | `v4l2-ctl --list-devices`; check the USB cable, then set `THERMAL_DEVICE` if it came up somewhere other than `/dev/video0` |
 | Headcount stuck at 0, log says "not radiometric" | The AGC video node, or a non-radiometric Lepton | `v4l2-ctl -d /dev/videoN --list-formats` and use the node offering `Y16`. A Lepton 3.0 cannot do this at all; it has to be a 3.5 |
 | Headcount stuck at 0, log says "would not give a raw Y16 stream" | Same as above, caught at open time | Same fix |
@@ -809,9 +903,9 @@ decide to do.
 
 ## The thermal view
 
-On a unit with a screen, tap the panel and it shows what the camera is looking
-at: the room in false colour, the count, and the warmest point in frame. Tap
-again to go back. This is step 6 of the pitch demo and it is the moment that
+On a unit with a screen, tap the In view now card and the panel shows what
+the camera is looking at: the room in false colour, the count, and the warmest
+point in frame. Tap anywhere to go back. This is step 6 of the pitch demo and it is the moment that
 makes an invisible sensor legible to somebody watching.
 
 It is the only place in this program that turns a frame into a picture, so it is
@@ -841,12 +935,13 @@ imagery rather than a grid of squares.
 
 Things that are still open, so nobody has to rediscover them.
 
-1. **The beam has never been read, and no sensor has run for longer than a
-   selftest.** As of 2026-09-06 `setup.sh`, the config load, the clock, the
-   backend credential check, the thermal camera and the microphone are all
-   verified on a Pi 5. The crossing sensor is not wired at all, the display has
-   never drawn, and `thermal_loop` and `noise_loop` have never run a shift. See
-   the status box at the top.
+1. **The doorway counter has never been read, and no sensor has run for
+   longer than a selftest.** As of 2026-09-06 `setup.sh`, the config load, the
+   clock, the backend credential check, the thermal camera and the microphone
+   are all verified on a Pi 5. The counter's driver is written and the part is
+   not wired, the current screens have not been seen on the panel, and
+   `thermal_loop` and `noise_loop` have never run a shift. See the status box at
+   the top.
 2. **No provisioning UI.** Creating, rotating and revoking a device key is
    hand-written SQL against production. That is a mistake waiting to happen
    (wrong `place_id`, plaintext key pasted somewhere) and should become an
@@ -878,18 +973,16 @@ Things that are still open, so nobody has to rediscover them.
    should show an offline state built from it instead of hiding the whole
    occupancy section when a unit stops reporting, and something should alert
    when a device that was reporting stops.
-8. **The demo unit's thermal view exists, and has never been drawn.** Step 6 of
-   the pitch choreography, "tap the touchscreen, see the heat signature of the
-   hand", is built: `draw_thermal_view` plus a tap handler in `display_loop`.
-   The conversion from frame to pixels is pure and tested, and the draw path is
-   exercised against a stub, but no part of `display_loop` has ever run on a
-   framebuffer, so the first time this meets a real panel expect the layout to
-   be wrong somewhere. The touch event is the other unknown: the panel may
-   report MOUSEBUTTONDOWN or FINGERDOWN depending on the driver, and both are
-   accepted for that reason.
-9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C but a
-   40-pin cellular HAT still covers the pins the crossing sensor and the mic's
-   ADC need. See "The pin conflict, which is still open". It is an open hardware
+8. **The demo unit's screens have met the panel once, and the current ones
+   have not.** The first version ran on the real 1024x600 panel under the
+   Wayland desktop, and what that showed (slow repaints, a small thermal image,
+   a noise trace that barely moved) is fixed in screens that have so far been
+   rendered at the panel's size on a PC. The touch event is the other unknown:
+   the panel may report MOUSEBUTTONDOWN or FINGERDOWN depending on the driver,
+   so both are accepted, and one tap is taken once.
+9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C, the
+   doorway counter took it back, and a 40-pin cellular HAT still covers the
+   pins the counter and the mic's ADC need. See "The pin conflict, which is still open". It is an open hardware
    decision, and it blocks ordering the modem, not the sensors.
 10. **The Lepton path is executed but barely exercised.** Every V4L2 ioctl in
    `ThermalCamera` was written from documentation, and on 2026-09-06 they all
@@ -899,8 +992,8 @@ Things that are still open, so nobody has to rediscover them.
    PureThermal firmware, and more than one person in frame. The cluster
    thresholds are calibrated against exactly one body at two distances. See
    Calibration.
-11. **The sensor head is ahead of the code.** `enclosure/flux-sensor-head.scad`
-   draws a VL53L8CX window and a Cat6 run carrying SPI and I2C. `main.py` has
-   no I2C code, SPI has only ever run on the bench, and none of the enclosure
-   has been rendered, because OpenSCAD is not installed where it was written.
-   See "The sensor head, designed and not built".
+11. **The sensor head is drawn and exported, and not yet printed.** Every part
+   of `enclosure/` renders as one closed solid and the print files are in
+   `enclosure/stl`; the two fit tests come first. `main.py` now drives the
+   head's VL53L8CX, and SPI down the Cat6 run has still only run on the bench.
+   See "The sensor head, designed and not built" and `enclosure/README.md`.

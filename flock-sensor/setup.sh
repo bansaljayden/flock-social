@@ -87,16 +87,11 @@ else
   echo "    Enable SPI and I2C by hand before the mic and the doorway counter will work." >&2
 fi
 
-# The counter's firmware is 86 KB and crosses I2C on every start. At the Pi's
-# default 100 kHz that is about eight seconds of a doorway going uncounted; at
-# 400 kHz, standard fast mode, about two. Appended once, and never over a
-# rate somebody has already set.
-BOOT_CONFIG=/boot/firmware/config.txt
-[ -f "${BOOT_CONFIG}" ] || BOOT_CONFIG=/boot/config.txt
-if [ -f "${BOOT_CONFIG}" ] && ! grep -q '^dtparam=i2c_arm_baudrate=' "${BOOT_CONFIG}"; then
-  echo "dtparam=i2c_arm_baudrate=400000" >> "${BOOT_CONFIG}"
-  echo "    I2C set to 400 kHz from the next reboot"
-fi
+# The bus stays at the Pi's default 100 kHz. The counter's 86 KB firmware
+# then takes about eight seconds to load at each start, where 400 kHz would
+# take two, but the head sits at the end of three metres of Cat6, and a bus
+# too fast for its cable fails the firmware checksum instead of running
+# slowly. README.md, The doorway counter, has the line for a short cable.
 
 # The thermal camera needs no bus enabled, but it does need to have enumerated.
 if [ ! -e /dev/video0 ]; then

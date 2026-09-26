@@ -100,6 +100,16 @@ DEFAULTS = {
     # drawing the picture means holding a real thermal frame in memory, and the
     # privacy policy's promise about venue sensors rests on that not happening.
     'THERMAL_VIEW': '1',
+    # Which doorway counter. auto: the VL53L8CX if one answers on I2C, else
+    # the GPIO pin below. tof or beam forces one; off counts no doorway.
+    'DOOR_SENSOR': 'auto',
+    'TOF_I2C_BUS': '1',
+    'TOF_HZ': '15',
+    # Which way people cross the counter's grid as mounted, and whether its
+    # idea of in and out is the right way round. Both belong to the install:
+    # the counter cannot know which side of the door is inside.
+    'TOF_AXIS': 'row',
+    'TOF_FLIP_DIRECTION': '0',
     # The crossing sensor. This was written for a two-part break-beam, an
     # emitter facing a receiver across the doorway, and the code never cared:
     # all it watches is one pin changing state. So a one-sided IR proximity
@@ -111,16 +121,6 @@ DEFAULTS = {
     # there, which is the default. A few pull it HIGH. If --beam counts
     # continuously when nothing is happening and stops when you block it, the
     # part is the other kind: set this to 0.
-    # Which doorway counter. auto: the VL53L8CX if one answers on I2C, else
-    # the GPIO pin below. tof or beam forces one; off counts no doorway.
-    'DOOR_SENSOR': 'auto',
-    'TOF_I2C_BUS': '1',
-    'TOF_HZ': '15',
-    # Which way people cross the counter's grid as mounted, and whether its
-    # idea of in and out is the right way round. Both belong to the install:
-    # the counter cannot know which side of the door is inside.
-    'TOF_AXIS': 'row',
-    'TOF_FLIP_DIRECTION': '0',
     'IR_GPIO_PIN': '17',
     'IR_ACTIVE_LOW': '1',
     'IR_DEBOUNCE_SECONDS': '0.5',
@@ -135,7 +135,7 @@ DEFAULTS = {
     # Pixels are mean-pooled into bin x bin cells before counting, so the two
     # settings below are coupled: THERMAL_MIN_CLUSTER counts CELLS in that
     # binned grid, not raw pixels. At bin 4 the grid is 40x30, one cell is
-    # sixteen pixels, and 12 cells is 192 of the sensor's 19,200.
+    # sixteen pixels, and the default 6 cells is 96 of the sensor's 19,200.
     #
     # 4, not the 2 this shipped with. Bench 2026-09-06, PureThermal 3 and a
     # Lepton 3.5 indoors, room median about 20C: at bin 2 one standing person
@@ -285,11 +285,11 @@ IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
 # minimum of 12 is more area than a whole person occupies.
 #
 # The band below is in raw pixels, which is the physical quantity, and is
-# anchored on the two numbers there is evidence for: 192 raw pixels is the
-# measured working threshold, and a person is at least the 320-pixel blob these
-# tests are built from. Outside the band the pair is refused rather than clamped,
-# because a threshold nobody measured is not an improvement on the one somebody
-# did.
+# anchored on the two numbers there is evidence for: under 48 raw pixels this
+# sensor's own noise starts counting as people, and a person is at least the
+# 320-pixel blob these tests are built from. The default pair, 6 cells at bin
+# 4, is 96. Outside the band the pair is refused rather than clamped, because a
+# threshold nobody derived is not an improvement on the one somebody did.
 _MEASURED_BIN, _MEASURED_MIN_CLUSTER = 4, 6
 _NOMINAL_PERSON_PIXELS = 320
 _MIN_SANE_THRESHOLD_PIXELS = 48
@@ -307,14 +307,14 @@ def validated_thermal_pair(bin_size, min_cluster):
                 f'THERMAL_BIN={bin_size} with THERMAL_MIN_CLUSTER={min_cluster} needs '
                 f'{raw} warm pixels before it counts anybody, and a person is about '
                 f'{_NOMINAL_PERSON_PIXELS}. That pair counts nobody, ever. Falling back '
-                f'to the measured {_MEASURED_BIN}/{_MEASURED_MIN_CLUSTER}. For a coarser '
-                f'bin, bring THERMAL_MIN_CLUSTER down with it: min_cluster times bin '
-                f'squared is the number to keep near 192.')
+                f'to {_MEASURED_BIN}/{_MEASURED_MIN_CLUSTER}. For a coarser bin, bring '
+                f'THERMAL_MIN_CLUSTER down with it: min_cluster times bin squared is '
+                f'the number to keep near {_MEASURED_MIN_CLUSTER * _MEASURED_BIN ** 2}.')
     if raw < _MIN_SANE_THRESHOLD_PIXELS:
         return (_MEASURED_BIN, _MEASURED_MIN_CLUSTER,
                 f'THERMAL_BIN={bin_size} with THERMAL_MIN_CLUSTER={min_cluster} counts '
                 f'anything over {raw} warm pixels as a person, which is inside this '
-                f'sensor own noise. Falling back to the measured '
+                f"sensor's own noise. Falling back to "
                 f'{_MEASURED_BIN}/{_MEASURED_MIN_CLUSTER}.')
     return bin_size, min_cluster, None
 
@@ -1209,6 +1209,8 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
         cannot get 192 pixels out of a head past about 2 m, and a whole
         standing body supplies it comfortably at 3 m, so the threshold now
         encodes a body-sized warm region rather than a head.
+      - It has since been retuned to 6, a head again, so somebody partly in
+        frame counts. The derivation is beside the default at the top.
 
     That shows up as the one repeatable miss on the bench: at 8 to 10 ft a
     full silhouette counts every time and a partially cropped one at the edge
@@ -3119,6 +3121,22 @@ class TofBackground:
                     self._held[z] = 0
 
 
+def door_plan(setting, tof_found):
+    """Which doorway counter to run: 'tof', 'beam', or None.
+
+    DOOR_SENSOR=tof starts the counter's loop even when nothing answered at
+    boot. The loop keeps retrying, so a wire fixed later is picked up without
+    a restart, and the panel says the counter is offline rather than showing
+    a beam that was never fitted. auto takes the counter only if it answered.
+    Never both: each would count the same person.
+    """
+    if setting == 'tof' or (setting == 'auto' and tof_found):
+        return 'tof'
+    if setting in ('auto', 'beam'):
+        return 'beam'
+    return None
+
+
 def tof_available():
     """Whether a VL53L8CX answers on the configured bus. Asks for its id only;
     loading it takes seconds and is the loop's job."""
@@ -3229,8 +3247,12 @@ def tof_test(seconds=None):
     except OSError as e:
         bus.close()
         print(f'  Nothing answered at 0x{TOF_I2C_ADDR:02X} ({e}).')
-        print('  Check in this order: VIN to 3.3V (pin 1), GND (pin 6), SDA to pin 3,')
-        print('  SCL to pin 5. `i2cdetect -y 1` should then show 29.')
+        print('  Check in this order:')
+        print('    the carrier\'s SPI/I2C pin is tied to GND. Left alone it sits high and')
+        print('    the sensor talks SPI, so nothing ever answers on I2C;')
+        print('    VIN to 3.3V (pin 1), never 5V: the carrier puts VIN on SDA and SCL;')
+        print('    GND (pin 6), SDA to pin 3, SCL to pin 5.')
+        print('  `i2cdetect -y 1` shows 29 once it is right.')
         return 1
     if not alive:
         bus.close()
@@ -3245,8 +3267,9 @@ def tof_test(seconds=None):
         dev.stop_ranging()
         bus.close()
         print(f'  Start-up failed: {e}')
-        print('  A checksum failure usually means a noisy bus: shorter wires, or a')
-        print('  slower one (dtparam=i2c_arm_baudrate in /boot/firmware/config.txt).')
+        print('  A checksum failure means bytes were damaged on the way. Reseat the')
+        print('  connections, twist SDA and SCL each with a ground in the cable, and if')
+        print('  i2c_arm_baudrate was raised in /boot/firmware/config.txt, take it out.')
         return 1
     print(f'  Firmware checksum good. Ranging 8x8 at {TOF_HZ} Hz after '
           f'{time.monotonic() - t0:.1f}s.')
@@ -5042,7 +5065,8 @@ def selftest():
     elif DOOR_SENSOR == 'off':
         print('    door counter   : off in the config (reports 0)')
     elif DOOR_SENSOR == 'tof':
-        print('    door counter   : NOT DETECTED on I2C (reports 0); run main.py --tof')
+        print('    door counter   : NOT DETECTED on I2C (reports 0). Is the carrier\'s')
+        print('                     SPI/I2C pin tied to GND? `main.py --tof` checks the rest.')
     else:
         print(f'    IR break-beam  : {"ok" if init_ir() else "NOT DETECTED (reports 0)"}')
     thermal_ok = init_thermal()
@@ -5176,25 +5200,22 @@ def main():
 
     _install_signal_handlers()
 
-    # The doorway counter. The VL53L8CX if one answers, because it tells two
-    # people abreast from one and in from out, which a beam cannot; the GPIO
-    # pin otherwise. Never both: each would count the same person.
-    tof_ok = DOOR_SENSOR in ('auto', 'tof') and tof_available()
-    if tof_ok:
+    tof_found = DOOR_SENSOR in ('auto', 'tof') and tof_available()
+    door = door_plan(DOOR_SENSOR, tof_found)
+    if door == 'tof':
         threading.Thread(target=tof_loop, daemon=True, name='tof').start()
-    elif DOOR_SENSOR in ('auto', 'beam'):
-        if init_ir():
-            with _lock:
-                _state['door_source'] = 'beam'
-    if DOOR_SENSOR == 'tof' and not tof_ok:
-        logger.error('DOOR_SENSOR=tof but no VL53L8CX answered on I2C. '
-                     'Run main.py --tof to see why.')
+        if not tof_found:
+            logger.error('DOOR_SENSOR=tof and no VL53L8CX has answered on I2C yet. '
+                         'The counter keeps trying; `main.py --tof` shows why.')
+    elif door == 'beam' and init_ir():
+        with _lock:
+            _state['door_source'] = 'beam'
     with _lock:
-        ir_ok = tof_ok or _state['door_source'] == 'beam'
+        ir_ok = door == 'tof' or _state['door_source'] == 'beam'
     thermal_ok = init_thermal()
     noise_ok = init_noise()
-    door = 'VL53L8CX' if tof_ok else ('beam' if ir_ok else 'none')
-    logger.info(f'Init summary: door={door} thermal={thermal_ok} noise={noise_ok}')
+    logger.info(f'Init summary: door={door if ir_ok else "none"} '
+                f'thermal={thermal_ok} noise={noise_ok}')
     if not (ir_ok or thermal_ok or noise_ok):
         logger.error('No sensor initialized. The device will report zeros but stay '
                      'online so it can be diagnosed remotely.')
