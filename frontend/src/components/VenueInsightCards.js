@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BirdNote, WARM_BIRD } from './ui/BirdieBird';
-import { numberSourcePhrase } from '../lib/crowd';
+import { hourlySourcePhrase } from '../lib/crowd';
 
 // Roost, the advisor's T0 surface (ADVISOR-PRODUCT-SHAPE.md sec 5), grown into
 // a screen a venue owner can poke at: a daypart-aware lead card, a tappable
@@ -823,9 +823,12 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
                   ))}
                 </div>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                  {/* Read off the bars drawn, not the current score: each
+                      hour carries its own source, and an evening hour the
+                      nowcast had no reading for must not be credited to one. */}
                   {intel?.model
-                    ? (numberSourcePhrase(intel.numberSource)
-                      ? `Today hour by hour, our estimate from ${numberSourcePhrase(intel.numberSource)}.`
+                    ? (hourlySourcePhrase(hourly)
+                      ? `Today hour by hour, our estimate from ${hourlySourcePhrase(hourly)}.`
                       : `Today hour by hour, our estimate. Flock crowd model v${intel.model}.`)
                     : 'Today hour by hour. Flock rule engine: typical for a venue like yours, not measured here yet.'}
                   {hourlyWindowed ? ' Shown across your listed hours.' : ''}
