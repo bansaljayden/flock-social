@@ -25,18 +25,20 @@
  *                   via the same db/migrate.js that production boots run.
  *   3. RESTORE    — every statement in the dump executes, first error aborts
  *                   loudly with the table and statement it died in. This is the
- *                   psql ON_ERROR_STOP=1 semantic, without needing psql. Then
- *                   the restored database is booted the way the app's first
- *                   boot on it would: the same runner again, whose every-boot
- *                   steps put back what a dump from before a migration loads
- *                   without (db/migrate.js, "Every boot"). A restore the app
- *                   could not boot on fails here.
+ *                   psql ON_ERROR_STOP=1 semantic, without needing psql.
  *   4. MIGRATIONS — the restored schema_migrations matches the repo's migration
  *                   file list exactly. An extra name means the dump came from a
  *                   NEWER schema than this checkout, and restoring it here
  *                   would be a silent downgrade.
  *   5. COUNTS     — every table's restored row count equals the manifest count
- *                   the dump carries. A single dropped row fails here.
+ *                   the dump carries. A single dropped row fails here. Then
+ *                   the restored database is booted the way the app's first
+ *                   boot on it would: the same runner again, whose every-boot
+ *                   steps put back what a dump from before a migration loads
+ *                   without, and delete what must not be sent from it
+ *                   (db/migrate.js, "Every boot"). The counts are read before
+ *                   it, because that boot deletes rows on purpose. A restore
+ *                   the app could not boot on fails here.
  *   6. INTEGRITY  — every foreign key in the schema is swept for orphans.
  *                   This is not paranoia: the dump restores under
  *                   session_replication_role = replica, which DISABLES foreign
@@ -51,7 +53,8 @@
  *                   every bill from before August 27 in a plan with a budget
  *                   in the quarantine migration 089 put it in (a dump taken
  *                   before 089 loads those bills without the flag, and the
- *                   boot above must have put it back).
+ *                   boot above must have put it back), with no push waiting
+ *                   in the outbox to carry one of their figures (091).
  *
  * What it CANNOT prove: a value silently corrupted in place (row counts and
  * constraints intact, contents wrong) is invisible to every check here, and so
@@ -71,7 +74,7 @@ const path = require('path');
 const zlib = require('zlib');
 const readline = require('readline');
 
-const { COUNT_OUTSIDE_QUARANTINE_SQL } = require('../db/billQuarantine');
+const { COUNT_OUTSIDE_QUARANTINE_SQL, COUNT_QUEUED_BILL_PUSHES_SQL } = require('../db/billQuarantine');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 
@@ -421,6 +424,10 @@ const INVARIANTS = [
   // so a restore that leaves one is not one to rely on.
   ['every bill from before August 27 in a plan with a budget is in quarantine (migration 089)',
     COUNT_OUTSIDE_QUARANTINE_SQL],
+  // And no push waiting to go out with one of those bills' figures in it
+  // (migration 091), which the boot deletes after the quarantine.
+  ['no queued push carries a figure from a quarantined bill (migration 091)',
+    COUNT_QUEUED_BILL_PUSHES_SQL],
 ];
 
 // The app's first boot on the restored database: the same runner again. The
@@ -431,16 +438,25 @@ const INVARIANTS = [
 // calls listen(), so this is the database the app would first serve. Returns
 // whether the boot succeeded; a restore the app could not boot on fails.
 async function bootRestored(pool, client) {
+  console.log('\n[5/8] ...and the app\'s first boot on the restored database (db/migrate.js again)');
   const { migrate } = require('../db/migrate');
   const outside = async () => Number((await client.query(COUNT_OUTSIDE_QUARANTINE_SQL)).rows[0].n);
+  // Nothing sends here, so the only thing that takes a row out of the outbox
+  // during this boot is the purge of pushes carrying a quarantined bill's figure.
+  const queued = async () => Number((await client.query('SELECT COUNT(*)::bigint AS n FROM push_outbox')).rows[0].n);
   try {
     const before = await outside();
+    const queuedBefore = await queued();
     await migrate(pool);
-    // What the boot actually moved. One it left out is the invariant's to fail.
+    // What the boot actually did. Anything it left is the invariants' to fail.
     const moved = before - (await outside());
+    const purged = queuedBefore - (await queued());
+    const did = [];
+    if (moved > 0) did.push(`put ${moved} bill(s) from before August 27 back in quarantine`);
+    if (purged > 0) did.push(`deleted ${purged} queued push(es) carrying a quarantined bill's figure`);
     return record('boot', true,
       'booted the restored database the way the app does (db/migrate.js again)' +
-      (moved > 0 ? `, which put ${moved} bill(s) from before August 27 back in quarantine` : ''));
+      (did.length > 0 ? `, which ${did.join(' and ')}` : ''));
   } catch (e) {
     return record('boot', false, `the app would not boot on the restored database: ${e.message}`);
   }
@@ -586,11 +602,15 @@ async function main() {
     }
 
     // ---- checks ------------------------------------------------------------
-    // Read after the boot, which is the database the app would first serve.
+    // The counts are the restore's, so they are read before the boot, which
+    // deletes rows on purpose (a queued push that carries a quarantined bill's
+    // figure). Everything after it is read off the database the app would
+    // first serve.
     if (restored) {
-      let ok = await bootRestored(pool, client);
+      let ok = true;
       ok = (await checkMigrations(client)) && ok;
       ok = (await checkRowCounts(client, scan.manifest)) && ok;
+      ok = (await bootRestored(pool, client)) && ok;
       ok = (await checkForeignKeys(client)) && ok;
       ok = (await checkSequences(client, scan.manifest)) && ok;
       ok = (await checkInvariants(client)) && ok;

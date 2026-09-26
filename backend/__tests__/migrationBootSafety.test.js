@@ -1466,6 +1466,78 @@ test('every boot puts a bill that arrived without its flag back in quarantine, t
   await pool.query(`DELETE FROM users WHERE email LIKE '%090@example.com'`);
 });
 
+// ---------------------------------------------------------------------------
+// 14. 091, AND THE PUSHES THAT WAITED WITH A QUARANTINED BILL'S FIGURE.
+// ---------------------------------------------------------------------------
+//
+// 091 deletes every queued bill_created or bill_settled whose bill is
+// quarantined, reading the bill off the payload's flockId, and db/migrate.js
+// runs the same DELETE after the files on every boot (db/billQuarantine.js).
+// Pinned here: it takes exactly those rows, and not a bill push about an
+// ordinary bill, another push about the same plan, or one whose flockId is not
+// a number, which it has to survive rather than fail the boot on; a replay
+// moves nothing; and 091's statement is the boot's, over the same two types the
+// delivery check in services/pushHelper.js refuses.
+
+const QUEUED_PUSHES_091 = '091_quarantined_bill_pushes.sql';
+
+test('091 deletes the queued pushes that carry a quarantined bill\'s figure, and nothing else, once', async () => {
+  const { splitStatements } = require('../db/migrate');
+  const { PURGE_QUEUED_BILL_PUSHES_SQL, BILL_PUSH_TYPES } = require('../db/billQuarantine');
+  const flat = (s) => s.replace(/\s+/g, ' ').trim();
+  const [statement] = splitStatements(fs.readFileSync(path.join(MIGRATIONS_DIR, QUEUED_PUSHES_091), 'utf8'));
+  const delete091 = statement.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+  assert.equal(flat(delete091), flat(PURGE_QUEUED_BILL_PUSHES_SQL), '091 and the boot disagree about which pushes go');
+  assert.ok(PURGE_QUEUED_BILL_PUSHES_SQL.includes(`IN (${BILL_PUSH_TYPES.map((t) => `'${t}'`).join(', ')})`),
+    'the purge and the delivery check disagree about which pushes carry a bill\'s figure');
+
+  const owner = await insertUser('owner091@example.com', 'Owner 091');
+  const other = await insertUser('other091@example.com', 'Other 091');
+  const flock = async (name) => (await pool.query(
+    'INSERT INTO flocks (name, creator_id, budget_enabled) VALUES ($1, $2, true) RETURNING id', [name, owner]
+  )).rows[0].id;
+  const legacyFlock = await flock('Legacy 091');
+  const plainFlock = await flock('Plain 091');
+  await pool.query(
+    `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, created_at)
+     VALUES ($1, 90, 'equal', $2, 0, '2026-08-20T20:00:00Z'), ($3, 90, 'equal', $2, 0, NOW())`,
+    [legacyFlock, owner, plainFlock]
+  );
+  await migrate(pool); // a boot, which puts the legacy bill in quarantine
+  const queue = async (data) => Number((await pool.query(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, expires_at)
+     VALUES ($1, 'quiet', 'Marked as paid back', 'says they paid you', $2::jsonb, NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [owner, JSON.stringify(data)]
+  )).rows[0].id);
+  const legacy = String(legacyFlock);
+  const ids = {
+    settled: await queue({ type: 'bill_settled', flockId: legacy, fromUserId: String(other) }),
+    created: await queue({ type: 'bill_created', flockId: legacy, fromUserId: String(other) }),
+    numberId: await queue({ type: 'bill_settled', flockId: legacyFlock, fromUserId: String(other) }),
+    ordinaryBill: await queue({ type: 'bill_settled', flockId: String(plainFlock), fromUserId: String(other) }),
+    samePlanMessage: await queue({ type: 'flock_message', flockId: legacy, senderId: String(other) }),
+    malformed: await queue({ type: 'bill_settled', flockId: 'not-a-number', fromUserId: String(other) }),
+  };
+  const left = async () => {
+    const { rows } = await pool.query('SELECT id FROM push_outbox WHERE id = ANY($1::bigint[])', [Object.values(ids)]);
+    const kept = new Set(rows.map((r) => Number(r.id)));
+    return Object.keys(ids).filter((k) => kept.has(ids[k]));
+  };
+  assert.deepEqual(await left(), Object.keys(ids));
+
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [QUEUED_PUSHES_091]);
+  await migrate(pool); // the deploy: must not throw, the malformed row included
+  assert.deepEqual(await left(), ['ordinaryBill', 'samePlanMessage', 'malformed']);
+  assert.equal(await migrationRowCount(QUEUED_PUSHES_091), 1);
+
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [QUEUED_PUSHES_091]);
+  await migrate(pool);
+  assert.deepEqual(await left(), ['ordinaryBill', 'samePlanMessage', 'malformed'], 'a second pass of 091 moved a row');
+
+  await pool.query(`DELETE FROM users WHERE email LIKE '%091@example.com'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block
