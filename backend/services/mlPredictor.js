@@ -594,10 +594,10 @@ function parseRecentReadings(raw) {
   const out = [];
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
-    const value = Number(e.v);
-    const hour = Number(e.h);
+    const value = storedNumber(e.v);
+    const hour = storedNumber(e.h);
     const day = slotDayNumber(e.d);
-    if (!Number.isFinite(value) || value < 0 || value > 100) continue;
+    if (value === null || value < 0 || value > 100) continue;
     if (!Number.isInteger(hour) || hour < 0 || hour > 23 || day === null) continue;
     out.push({
       value,
@@ -611,14 +611,35 @@ function parseRecentReadings(raw) {
   return out;
 }
 
+// A number field of a stored reading, or null when it is not one. Number()
+// alone turns null, false, '' and [] into 0 and true into 1, which would read
+// a missing hour as midnight and a missing deviation as "exactly the curve".
+// Only a finite number, or a string that is a plain decimal numeral (how a
+// hand-written or re-serialised row could carry one), is a value here.
+const STORED_NUMERAL = /^\s*-?\d+(\.\d+)?\s*$/;
+function storedNumber(raw) {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string' && STORED_NUMERAL.test(raw)) return Number(raw);
+  return null;
+}
+
 // Days since the epoch for a 'YYYY-MM-DD' venue-local date, or null. The
 // nowcast counts lag in venue-local wall-clock hours, on the same slot numbers
-// scripts/ml/train/bandEval.js replays them on.
+// scripts/ml/train/bandEval.js replays them on. Only a string, and only a
+// calendar date: String() would let ['2026-09-06'] through, and Date.UTC
+// rolls '2026-02-31' over into March instead of refusing it.
 function slotDayNumber(dateStr) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  if (typeof dateStr !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
   if (!m) return null;
-  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isFinite(ms) ? Math.round(ms / 86400000) : null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  const ms = Date.UTC(y, mo, d);
+  if (!Number.isFinite(ms)) return null;
+  const back = new Date(ms);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo || back.getUTCDate() !== d) return null;
+  return Math.round(ms / 86400000);
 }
 
 // ---------------------------------------------------------------------------
@@ -659,10 +680,10 @@ function parseOffsetReadings(raw) {
   const out = [];
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
-    const dev = Number(e.dev);
-    const hour = Number(e.h);
+    const dev = storedNumber(e.dev);
+    const hour = storedNumber(e.h);
     const day = slotDayNumber(e.d);
-    if (!Number.isFinite(dev) || dev < -100 || dev > 100) continue;
+    if (dev === null || dev < -100 || dev > 100) continue;
     if (!Number.isInteger(hour) || hour < 0 || hour > 23 || day === null) continue;
     out.push({ dev, slot: day * 24 + hour });
   }
@@ -4252,6 +4273,15 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // stored median is served as it always has been, that leak included; see
     // the block above OFFSET_WINDOW_HOURS.
     let deviationApplied = null;
+    // WHETHER A SWITCH CHANGED THE NUMBER THROUGH THE OFFSET ALONE. With the
+    // nowcast on and no reading it can use, nothing else marks the number as
+    // switched, yet the strict offset can differ from the stored median the
+    // switched-off server would have added (a stored median of 40 against a
+    // strict one of 20, or a stored offset against none at all). Recorded
+    // here, by computing the stored offset's number beside the served one, so
+    // crowdEngine.describeServedArithmetic can attribute it. Only read while a
+    // switch is on; the switched-off response never carries it.
+    let offsetChangedBySwitch = false;
     const devPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
     const offsetWeight = curveOffsetMode ? CURVE_OFFSET_WEIGHT : DEVIATION_WEIGHT;
     const switchedArithmetic = switchedArithmeticOn();
@@ -4261,6 +4291,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       const dev = switchedArithmetic
         ? (devEntry.fresh ? trailingOffsetBefore(devEntry.offsetReadings, venueSlotOf(ts)) : null)
         : devEntry.data;
+      const beforeOffset = score;
       if (dev) {
         const before = score;
         score = Math.max(0, Math.min(100, Math.round(score + offsetWeight * dev.offset)));
@@ -4271,6 +4302,13 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
           moved: score - before,
           clamped: dev.clamped,
         };
+      }
+      if (switchedArithmetic) {
+        const stored = devEntry.data;
+        const storedScore = stored
+          ? Math.max(0, Math.min(100, Math.round(beforeOffset + offsetWeight * stored.offset)))
+          : beforeOffset;
+        offsetChangedBySwitch = storedScore !== score;
       }
     }
 
@@ -4425,6 +4463,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     if (serveMode() !== 'model' || nowcastEnabled()) {
       response.serveMode = curveOffsetMode ? 'curve_offset' : 'model';
       response.nowcast = nowcastApplied;
+      // True when the strict offset (trailingOffsetBefore) put a different
+      // number here than the stored median would have, before any nowcast.
+      response.offsetChangedBySwitch = offsetChangedBySwitch;
     }
 
     // Add event alert when large event nearby
@@ -4660,6 +4701,13 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     const slotWeather = weatherForSlot(hourlyWx, slot.instantMs, weather, nowMs);
     try {
       const result = await predictBusyness(venue, slotWeather, ts, options, slot.instantMs);
+      // Which arithmetic made THIS hour's number when a serving switch changed
+      // it, per entry for the reason predictionMethod is: a strip can mix
+      // hours the nowcast moved with hours it had no reading for, and a chart
+      // captioned off the current hour alone would credit live readings to
+      // bars that never used one. Absent with both switches off, so a
+      // switched-off entry keeps exactly its keys.
+      const numberSource = crowdEngine.describeServedArithmetic(result);
       // predictionMethod per entry (skew fix c): without it a strip silently
       // mixed ML hours and rule-engine hours — a baseline exists at 19:00 but
       // not at 03:00 — and no client could tell which bars were which.
@@ -4668,6 +4716,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         score: result.score,
         label: result.label,
         predictionMethod: result.predictionMethod || null,
+        ...(numberSource ? { numberSource } : {}),
         // The ordering axis for this hour, carried per entry because
         // crowdEngine picks it for the whole candidate set at once and has to
         // be able to see that EVERY hour it is about to compare has one. Null

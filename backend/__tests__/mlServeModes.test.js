@@ -150,7 +150,8 @@ for (const [label, env, golden] of [
       assert.equal(r.label, crowdEngine.getLabel(r.score));
       if (!rule) {
         assert.equal(r.modelVersion, GOLDEN.version, 'no qualifier with both off');
-        assert.ok(!('serveMode' in r) && !('nowcast' in r), 'a switched-off response carries no new keys');
+        assert.ok(!('serveMode' in r) && !('nowcast' in r) && !('offsetChangedBySwitch' in r),
+          'a switched-off response carries no new keys');
         assert.ok(r.dataSourcesUsed.includes('ml_model'));
       }
     });
@@ -340,30 +341,79 @@ test('the strict offset takes the newest OFFSET_MAX_READINGS inside the window, 
   assert.equal(I.parseOffsetReadings([{ dev: 'x', d: '2026-09-06', h: 1 }, { dev: 5, d: 'no', h: 1 }, { dev: 5, d: '2026-09-06', h: 1 }]).length, 1);
 });
 
+// Number() turns null, false, '' and [] into 0 and true into 1, so a reading
+// with a missing hour would have been read as midnight and a missing
+// deviation as "exactly the curve". None of these is a reading.
+const NOT_NUMBERS = [null, undefined, true, false, '', '  ', [], [5], {}, { valueOf: () => 5 }, NaN, Infinity, '5x', '0x10', '1e1'];
+const NOT_DATES = [null, undefined, '', 20260906, ['2026-09-06'], { toString: () => '2026-09-06' }, new Date('2026-09-06T00:00:00Z'),
+  '2026-02-31', '2026-13-01', '2026-9-6', ' 2026-09-06'];
+
+test('the offset readings parser drops any entry whose dev, d or h is not a genuine value', () => {
+  const good = { dev: -12.5, d: '2026-09-06', h: 18 };
+  assert.deepEqual(I.parseOffsetReadings([good]), [{ dev: -12.5, slot: slot('2026-09-06', 18) }]);
+  for (const bad of NOT_NUMBERS) {
+    assert.deepEqual(I.parseOffsetReadings([{ ...good, dev: bad }]), [], `dev ${String(bad)}`);
+    assert.deepEqual(I.parseOffsetReadings([{ ...good, h: bad }]), [], `h ${String(bad)}`);
+  }
+  for (const bad of NOT_DATES) assert.deepEqual(I.parseOffsetReadings([{ ...good, d: bad }]), [], `d ${String(bad)}`);
+  // A missing field is the same as a bad one.
+  assert.deepEqual(I.parseOffsetReadings([{ d: '2026-09-06', h: 18 }, { dev: 3, d: '2026-09-06' }, { dev: 3, h: 18 }]), []);
+  // A plain decimal numeral still reads, as it always has, and a leap day is a date.
+  assert.deepEqual(I.parseOffsetReadings([{ dev: '-4', d: '2028-02-29', h: '7' }]).map((r) => r.dev), [-4]);
+});
+
+test('the nowcast readings parser is exactly as strict about v, d and h', () => {
+  const good = reading(40, '2026-09-06', 18);
+  assert.equal(I.parseRecentReadings([good]).length, 1);
+  for (const bad of NOT_NUMBERS) {
+    assert.deepEqual(I.parseRecentReadings([{ ...good, v: bad }]), [], `v ${String(bad)}`);
+    assert.deepEqual(I.parseRecentReadings([{ ...good, h: bad }]), [], `h ${String(bad)}`);
+  }
+  for (const bad of NOT_DATES) assert.deepEqual(I.parseRecentReadings([{ ...good, d: bad }]), [], `d ${String(bad)}`);
+  // Through the picker: a reading with a null hour used to be a midnight
+  // reading and could be carried into the next hours.
+  assert.equal(I.pickNowcastReading(I.parseRecentReadings([{ v: 90, d: '2026-09-06', h: null }]), slot('2026-09-06', 1)), null);
+});
+
+test('a null deviation is no longer a zero that pulls the strict offset toward the curve', () => {
+  const T = slot('2026-09-06', 19);
+  const list = [{ dev: -30, d: '2026-09-06', h: 18 }, { dev: null, d: '2026-09-06', h: 17 }, { dev: -30, d: '2026-09-06', h: 16 }, { dev: null, d: '2026-09-06', h: 15 }];
+  assert.deepEqual(I.trailingOffsetBefore(I.parseOffsetReadings(list), T), { offset: -30, clamped: false, readings: 2 });
+});
+
 // A flat curve of 20 and two live readings at one venue: 0 at 17:00 and 100 at
 // 19:00. The card for 19:00 is served during 19:00, after that hour's sweep,
 // so the stored median includes the 19:00 reading. With both switches on the
 // replay serves 3 (no offset from a single earlier reading, then the 17:00
 // reading blended in at the two-hour weight); reading the stored median would
 // serve 7, a number moved by the reading it is scored against.
-async function serveFlatCurveCase(env) {
+// `live` swaps in other readings on the same flat curve, as [date, hour, y];
+// `hourly` asks predictHourlyForecast for [startHour, count] instead.
+async function serveFlatCurveCase(env, { live = [['2026-09-06', 17, 0], ['2026-09-06', 19, 100]], hourly = null } = {}) {
   const venue = FX.VENUES[0];
   const curves = new Map();
   for (const v of FX.VENUES) curves.set(String(v.id), new Int16Array(168).fill(20));
   const date = '2026-09-06';
-  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const dowOf = (d) => new Date(`${d}T00:00:00Z`).getUTCDay();
   const fx = {
     curves,
     weekly: [],
-    live: [
-      { v: venue, date, dow, hour: 17, y: 0, weather: null },
-      { v: venue, date, dow, hour: 19, y: 100, weather: null },
-    ],
+    live: live.map(([d, hour, y]) => ({ v: venue, date: d, dow: dowOf(d), hour, y, weather: null })),
   };
   const pool = require('../config/database');
   const realQuery = pool.query;
   const stub = FX.makeFixturePool(fx, () => ({ venueId: venue.id, date, hour: 19 }), { leakyOffset: true });
-  pool.query = stub.query;
+  // predictHourlyForecast reads the venue's whole week once (primeVenueCurve),
+  // a statement the band fixture's pool does not answer: the flat curve here.
+  const WHOLE_WEEK = /^SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines WHERE google_place_id = \$1$/;
+  pool.query = (text, params) => {
+    if (WHOLE_WEEK.test(String(text).replace(/\s+/g, ' ').trim())) {
+      const rows = [];
+      for (let s = 0; s < 168; s++) rows.push({ day_of_week: Math.floor(s / 24), hour: s % 24, baseline: '20', source: 'collected', updated_at: new Date() });
+      return Promise.resolve({ rows });
+    }
+    return stub.query(text, params);
+  };
   const quiet = [console.log, console.warn, console.error];
   try {
     return await withEnv(env, async () => {
@@ -372,15 +422,18 @@ async function serveFlatCurveCase(env) {
       console.warn = () => {};
       console.error = () => {};
       assert.equal(await predictor.init(), true);
-      const out = await predictor.predictBusyness({
+      const place = {
         place_id: 'ChIJservemodes_flat_curve',
         types: venue.types,
         rating: 4.4,
         user_ratings_total: 900,
         price_level: 2,
         location: { latitude: venue.lat, longitude: venue.lng },
-      }, { temp: 70, humidity: 50, windSpeed: 5, conditions: 'clear sky', conditionId: 800, isRaining: false },
-      new Date(Date.UTC(2026, 8, 6, 19, 30)));
+      };
+      const wx = { temp: 70, humidity: 50, windSpeed: 5, conditions: 'clear sky', conditionId: 800, isRaining: false };
+      const out = hourly
+        ? await predictor.predictHourlyForecast(place, wx, hourly[0], hourly[1], new Date(Date.UTC(2026, 8, 6, hourly[0])))
+        : await predictor.predictBusyness(place, wx, new Date(Date.UTC(2026, 8, 6, 19, 30)));
       assert.deepEqual(stub.unknown, []);
       return out;
     });
@@ -457,16 +510,119 @@ test('describeServedArithmetic names the switched arithmetic, and nothing for a 
   const off = await serveFixture({});
   assert.ok(off.out.every((r) => describeServedArithmetic(r) === null));
   const co = await serveFixture({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' });
+  const carried = (r) => (r.nowcast && r.nowcast.weight >= 1 ? `live_reading_${r.nowcast.lagHours}h` : null);
   for (const r of co.out) {
     if (r.predictionMethod !== 'ml') { assert.equal(describeServedArithmetic(r), null); continue; }
     const live = Boolean(r.recentDeviation || r.nowcast);
-    assert.equal(describeServedArithmetic(r), live ? 'venue_pattern_live' : 'venue_pattern');
+    assert.equal(describeServedArithmetic(r), carried(r) || (live ? 'venue_pattern_live' : 'venue_pattern'));
   }
   const mn = await serveFixture({ CROWD_NOWCAST_ENABLED: 'true' });
   const withReading = mn.out.filter((r) => r.nowcast);
   assert.ok(withReading.length > 0);
-  assert.ok(withReading.every((r) => describeServedArithmetic(r) === 'model_live'));
-  assert.ok(mn.out.filter((r) => !r.nowcast).every((r) => describeServedArithmetic(r) === null));
+  assert.ok(withReading.some((r) => carried(r)), 'the fixture carries a reading at full weight somewhere');
+  assert.ok(withReading.every((r) => describeServedArithmetic(r) === (carried(r) || 'model_live')));
+  for (const r of mn.out.filter((x) => x.predictionMethod === 'ml' && !x.nowcast)) {
+    assert.equal(typeof r.offsetChangedBySwitch, 'boolean');
+    const want = r.offsetChangedBySwitch ? (r.recentDeviation ? 'model_live' : 'model_alone') : null;
+    assert.equal(describeServedArithmetic(r), want);
+  }
+});
+
+test('a reading carried at full weight is attributed as that reading, with its age', () => {
+  const { describeServedArithmetic } = crowdEngine;
+  const ml = (extra) => ({ predictionMethod: 'ml', serveMode: 'model', dataSourcesUsed: ['ml_model', 'recent_live_readings'], ...extra });
+  // Every base carries a one-hour-old reading at weight 1 today.
+  for (const base of Object.keys(I.NOWCAST_WEIGHTS)) assert.equal(I.NOWCAST_WEIGHTS[base][1], 1, base);
+  assert.equal(describeServedArithmetic(ml({ nowcast: { base: 'model_qmap', lagHours: 1, bucket: 1, weight: 1 } })), 'live_reading_1h');
+  // Older than an hour and still weight 1: model_qmap at two hours.
+  assert.equal(I.NOWCAST_WEIGHTS.model_qmap[2], 1);
+  assert.equal(describeServedArithmetic(ml({ nowcast: { base: 'model_qmap', lagHours: 2, bucket: 2, weight: 1 } })), 'live_reading_2h');
+  // In curve_offset mode too: the pattern did not shape it either.
+  assert.equal(describeServedArithmetic({ ...ml({ nowcast: { base: 'curve_offset', lagHours: 1, bucket: 1, weight: 1 } }), serveMode: 'curve_offset' }), 'live_reading_1h');
+  // A partial weight is a blend, and keeps the blend's words.
+  assert.equal(describeServedArithmetic(ml({ nowcast: { base: 'model_qmap', lagHours: 3, bucket: 3, weight: 0.55 } })), 'model_live');
+  assert.equal(describeServedArithmetic({ ...ml({ nowcast: { base: 'curve_offset', lagHours: 2, bucket: 2, weight: 0.85 } }), serveMode: 'curve_offset' }), 'venue_pattern_live');
+  // A malformed lag never becomes a label.
+  assert.equal(describeServedArithmetic(ml({ nowcast: { lagHours: null, weight: 1 } })), 'model_live');
+  // The offset flag alone, off the served shape.
+  assert.equal(describeServedArithmetic(ml({ nowcast: null, offsetChangedBySwitch: true, recentDeviation: { offset: -5 } })), 'model_live');
+  assert.equal(describeServedArithmetic(ml({ nowcast: null, offsetChangedBySwitch: true, recentDeviation: null })), 'model_alone');
+  assert.equal(describeServedArithmetic(ml({ nowcast: null, offsetChangedBySwitch: false, recentDeviation: { offset: -5 } })), null);
+});
+
+test('through predictBusyness, a reading carried at full weight IS the number, and says so', async () => {
+  // Nowcast only, model mode: the 17:00 reading of 0 is two hours old at
+  // 19:00, and model_qmap carries a two-hour reading at weight 1.
+  const two = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' });
+  assert.equal(two.nowcast.weight, 1);
+  assert.equal(two.nowcast.lagHours, 2);
+  assert.equal(two.score, 0, 'the number is the reading');
+  assert.equal(crowdEngine.describeServedArithmetic(two), 'live_reading_2h');
+  // A reading an hour old.
+  const one = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: [['2026-09-06', 18, 55], ['2026-09-06', 19, 100]] });
+  assert.equal(one.score, 55);
+  assert.equal(crowdEngine.describeServedArithmetic(one), 'live_reading_1h');
+});
+
+test('a switch that changes only the offset is attributed, even with no nowcast reading', async () => {
+  // Flat curve 20. Yesterday's readings are too old for the nowcast (over
+  // NOWCAST_MAX_LAG_HOURS) but inside the offset's window. Strictly before
+  // 19:00 the median deviation is -20; the stored median, which includes
+  // 19:00's own reading of 100, is 0.
+  const live = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-05', 12, 40], ['2026-09-06', 19, 100]];
+  const off = await serveFlatCurveCase({}, { live });
+  assert.equal(off.recentDeviation.offset, 0);
+  assert.ok(!('offsetChangedBySwitch' in off));
+  assert.equal(crowdEngine.describeServedArithmetic(off), null);
+  const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live });
+  assert.equal(on.nowcast, null, 'no reading the nowcast may use');
+  assert.equal(on.recentDeviation.offset, -20);
+  assert.notEqual(on.score, off.score, 'the switch changed the number');
+  assert.equal(on.offsetChangedBySwitch, true);
+  assert.equal(crowdEngine.describeServedArithmetic(on), 'model_live');
+
+  // A stored offset and no strict one (one earlier reading is under the
+  // floor): the switched number is the model's with no live readings in it.
+  const lone = [['2026-09-05', 11, 0], ['2026-09-06', 19, 100]];
+  const offLone = await serveFlatCurveCase({}, { live: lone });
+  assert.equal(offLone.recentDeviation.offset, 30);
+  const onLone = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: lone });
+  assert.equal(onLone.nowcast, null);
+  assert.equal(onLone.recentDeviation, null);
+  assert.equal(onLone.offsetChangedBySwitch, true);
+  assert.notEqual(onLone.score, offLone.score);
+  assert.equal(crowdEngine.describeServedArithmetic(onLone), 'model_alone');
+
+  // Where the strict and stored offsets agree, the switch changed nothing and
+  // nothing is claimed.
+  const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
+  const onSame = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: same });
+  assert.equal(onSame.nowcast, null);
+  assert.equal(onSame.offsetChangedBySwitch, false);
+  assert.equal(crowdEngine.describeServedArithmetic(onSame), null);
+});
+
+test('each forecast hour carries its own source, and a switched-off hour carries none', async () => {
+  const OFF_KEYS = ['baselineScore', 'eventsObserved', 'eventsUnavailableReason', 'hour', 'label', 'predictionMethod', 'score'];
+  const off = await serveFlatCurveCase({}, { hourly: [17, 5] });
+  assert.equal(off.length, 5);
+  for (const h of off) assert.deepEqual(Object.keys(h).sort(), OFF_KEYS, h.hour);
+  // The stored readings as of 19:00 are 0 at 17:00 and 100 at 19:00. At 17:00
+  // nothing earlier exists, so there is no reading to carry and no strict
+  // offset, where the stored median would have added one: the model alone.
+  // 18:00 and 19:00 carry the 17:00 reading, 20:00 and 21:00 the 19:00 one.
+  const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { hourly: [17, 5] });
+  const sources = on.map((h) => h.numberSource || null);
+  assert.deepEqual(sources, ['model_alone', 'live_reading_1h', 'live_reading_2h', 'live_reading_1h', 'live_reading_2h']);
+  // Each carried hour's number is the reading it names.
+  assert.deepEqual(on.slice(1).map((h) => h.score), [0, 0, 100, 100]);
+  for (const h of on) {
+    if (h.numberSource) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'numberSource'].sort());
+    else assert.deepEqual(Object.keys(h).sort(), OFF_KEYS);
+  }
+  // The venue dashboard passes each hour's source through to its bars.
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
+  assert.match(dash, /todayHourly: todayHourly\.map\(\(\{ baselineScore, \.\.\.bar \}\) => bar\),/);
 });
 
 test('the card, Birdie, the public demo and the venue dashboard publish the arithmetic only when a switch made the number', () => {

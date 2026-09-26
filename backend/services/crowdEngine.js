@@ -193,24 +193,38 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
 // arithmetic that did not run. This reads the switched response's own account
 // and answers with one of:
 //
+//   'live_reading_<N>h'   the nowcast carried a reading N hours old at full
+//                         weight, so the number IS that reading and neither
+//                         the pattern nor the model shaped it (the case
+//                         servedConfidence already treats as model-free)
 //   'venue_pattern_live'  curve_offset, with a live offset or reading in it
 //   'venue_pattern'       curve_offset, with neither (the curve alone)
-//   'model_live'          the model's number with a live reading blended in
+//   'model_live'          the model's number with a live reading blended in,
+//                         or with an offset of live readings that a switch
+//                         changed (offsetChangedBySwitch)
+//   'model_alone'         the model's number where a switch took away the
+//                         offset the stored median would have added
 //   null                  anything else: the attribution predictionMethod
 //                         already gives is the true one
 //
 // Null for every response with both switches off, because mlPredictor only
-// adds serveMode and nowcast to a response while a switch is on. Surfaces
-// publish the value only when it is not null, so a switched-off payload keeps
-// exactly the keys it had. It names the arithmetic, never a reading or an
-// offset: those stay on the server (a venue's recent level).
+// adds serveMode, nowcast and offsetChangedBySwitch to a response while a
+// switch is on. Surfaces publish the value only when it is not null, so a
+// switched-off payload keeps exactly the keys it had. It names the arithmetic
+// and at most a reading's age, never a reading or an offset: those stay on
+// the server (a venue's recent level).
 function describeServedArithmetic(result) {
   if (!result || result.predictionMethod !== 'ml') return null;
+  const nowcast = result.nowcast;
+  if (nowcast && nowcast.weight >= 1 && Number.isInteger(nowcast.lagHours) && nowcast.lagHours >= 1) {
+    return `live_reading_${nowcast.lagHours}h`;
+  }
   if (result.serveMode === 'curve_offset') {
     const live = Array.isArray(result.dataSourcesUsed) && result.dataSourcesUsed.includes('recent_live_readings');
     return live ? 'venue_pattern_live' : 'venue_pattern';
   }
-  if (result.nowcast) return 'model_live';
+  if (nowcast) return 'model_live';
+  if (result.offsetChangedBySwitch === true) return result.recentDeviation ? 'model_live' : 'model_alone';
   return null;
 }
 
