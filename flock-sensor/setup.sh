@@ -75,14 +75,27 @@ case "${BOARD}" in
     ;;
 esac
 
-# SPI only. The thermal camera is on USB now, so I2C is no longer enabled
-# here: turning on a bus nothing uses is one more thing wrong on the box.
-echo "==> enable SPI"
+# SPI for the microphone's converter, I2C for the doorway counter. I2C was
+# left off while the thermal camera's move to USB meant nothing used it; the
+# VL53L8CX uses it now.
+echo "==> enable SPI and I2C"
 if command -v raspi-config >/dev/null 2>&1; then
   raspi-config nonint do_spi 0
+  raspi-config nonint do_i2c 0
 else
   echo "    raspi-config not found, so this does not look like Raspberry Pi OS." >&2
-  echo "    Enable SPI by hand before the mic will work." >&2
+  echo "    Enable SPI and I2C by hand before the mic and the doorway counter will work." >&2
+fi
+
+# The counter's firmware is 86 KB and crosses I2C on every start. At the Pi's
+# default 100 kHz that is about eight seconds of a doorway going uncounted; at
+# 400 kHz, standard fast mode, about two. Appended once, and never over a
+# rate somebody has already set.
+BOOT_CONFIG=/boot/firmware/config.txt
+[ -f "${BOOT_CONFIG}" ] || BOOT_CONFIG=/boot/config.txt
+if [ -f "${BOOT_CONFIG}" ] && ! grep -q '^dtparam=i2c_arm_baudrate=' "${BOOT_CONFIG}"; then
+  echo "dtparam=i2c_arm_baudrate=400000" >> "${BOOT_CONFIG}"
+  echo "    I2C set to 400 kHz from the next reboot"
 fi
 
 # The thermal camera needs no bus enabled, but it does need to have enumerated.
@@ -100,6 +113,13 @@ install -m 0755 -o root -g root "${SCRIPT_DIR}/main.py" "${INSTALL_DIR}/main.py"
 if [ -d "${SCRIPT_DIR}/flux-assets" ]; then
   mkdir -p "${INSTALL_DIR}/flux-assets"
   install -m 0644 -o root -g root "${SCRIPT_DIR}"/flux-assets/* "${INSTALL_DIR}/flux-assets/"
+fi
+# The doorway counter's firmware, with ST's licence and notice beside it.
+# main.py loads it into the sensor on every start; without it a unit with the
+# counter fitted reports no crossings and says why in the log.
+if [ -d "${SCRIPT_DIR}/vl53l8cx" ]; then
+  mkdir -p "${INSTALL_DIR}/vl53l8cx"
+  install -m 0644 -o root -g root "${SCRIPT_DIR}"/vl53l8cx/* "${INSTALL_DIR}/vl53l8cx/"
 fi
 
 # ---------------------------------------------------------------------------
@@ -132,8 +152,15 @@ echo "==> install systemd unit"
 # only the ones this image actually has. Missing hardware groups are also the
 # usual reason a sensor that works when run by hand fails under systemd, so add
 # the service user to each surviving one.
+#
+# The list is the unit file's own. This loop used to carry a list of three
+# (spi gpio video) and then rewrite the unit's line with the survivors, so
+# every installed unit lost input and render, which the touchscreen needs,
+# and would have lost i2c, which the doorway counter needs, while the unit
+# file in the repo looked right.
+WANTED_GROUPS="$(sed -n 's/^SupplementaryGroups=//p' "${SCRIPT_DIR}/flock-sensor.service")"
 PRESENT_GROUPS=""
-for grp in spi gpio video; do
+for grp in ${WANTED_GROUPS}; do
   if getent group "${grp}" >/dev/null 2>&1; then
     PRESENT_GROUPS="${PRESENT_GROUPS}${PRESENT_GROUPS:+ }${grp}"
     adduser "${SERVICE_USER}" "${grp}" >/dev/null 2>&1 || true

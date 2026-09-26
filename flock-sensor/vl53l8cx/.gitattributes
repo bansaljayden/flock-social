@@ -1,0 +1,3 @@
+# ST's firmware and tables are loaded byte for byte and checked against the
+# sensor's own checksum. Never let line-ending conversion near them.
+*.bin binary
