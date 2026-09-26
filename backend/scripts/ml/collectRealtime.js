@@ -125,6 +125,42 @@ const clampPct = (v) => (v == null ? null : Math.max(0, Math.min(100, v)));
 // ---------------------------------------------------------------------------
 const LIVE_LOCAL_TIME_MAX = 48;
 
+// The six event FEATURE columns of a realtime row, from a lookup's answer
+// (eventService.nearestEventFromAnswers). A measured answer that carries
+// `served` (serving's own computation over the same Ticketmaster listing)
+// writes it; any other measured answer takes the per-row rules storeReading
+// documents; an unmeasured one writes NULL throughout (migration 045). Pure,
+// exported for __tests__/mlEventCollectionParity.test.js.
+function eventFeatureColumns(eventData) {
+  const e = eventData || {};
+  if (e.observed !== true) {
+    return [
+      ['has_nearby_event', null], ['total_nearby_events', null],
+      ['total_nearby_attendance', null], ['nearest_event_attendance', null],
+      ['nearest_event_distance_km', e.event_distance_km ?? null], ['nearest_event_type', e.event_type ?? null],
+    ];
+  }
+  const s = e.served;
+  if (s && typeof s === 'object' && s.observed === true) {
+    return [
+      ['has_nearby_event', s.hasEvent === true],
+      ['total_nearby_events', s.totalEvents],
+      ['total_nearby_attendance', s.totalAttendance],
+      ['nearest_event_attendance', s.nearestAttendance],
+      ['nearest_event_distance_km', s.hasEvent === true ? s.nearestDistance : null],
+      ['nearest_event_type', s.hasEvent === true ? s.nearestType : null],
+    ];
+  }
+  return [
+    ['has_nearby_event', e.event_nearby === true],
+    ['total_nearby_events', e.event_nearby === true ? 1 : 0],
+    ['total_nearby_attendance', e.event_nearby === true ? (e.event_size ?? null) : 0],
+    ['nearest_event_attendance', e.event_nearby === true ? (e.event_size ?? null) : 0],
+    ['nearest_event_distance_km', e.event_distance_km ?? null],
+    ['nearest_event_type', e.event_type ?? null],
+  ];
+}
+
 function liveAnswerColumns(live) {
   const src = live && typeof live === 'object' ? live : {};
   const h = src.hourStart;
@@ -1211,9 +1247,16 @@ async function storeReading(venue, at, live,
     // The value mirrors total_nearby_attendance because the realtime
     // enrichment resolves ONE nearest event: its attendance is that event's
     // size. null when the lookup did not happen, never a defaulted zero.
-    ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
-    ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
-    // THREE STATES, NOT TWO. The comment above says "null when the lookup
+    //
+    // SINCE 2026-09-26 THE SIX FEATURE COLUMNS ARE SERVING'S OWN VALUES
+    // whenever Ticketmaster's listing answered: eventFeatureColumns below
+    // writes eventService.servedEventValues, which is
+    // services/eventFeatures.buildEventResult over the same listing entries,
+    // the function serving hands the model. The rules that follow are the
+    // fallback for an answer that cannot be replayed that way (SeatGeek only,
+    // or a test double), and they keep their three-state meaning.
+    ...eventFeatureColumns(eventData),
+    // THREE STATES, NOT TWO (the fallback's size columns). The comment above says "null when the lookup
     // did not happen, never a defaulted zero", and `|| 0` broke it in the
     // other direction: Ticketmaster publishes capacity for almost nothing,
     // eventService maps a missing capacity to null, and `null || 0` is 0.
@@ -1225,14 +1268,6 @@ async function storeReading(venue, at, live,
     //   observed, no event nearby  -> 0      (a real measurement)
     //   observed, event of unknown size -> null (we looked, they do not say)
     //   not observed               -> null   (we could not look)
-    ['total_nearby_attendance', eventData.observed === true
-      ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
-      : null],
-    ['nearest_event_attendance', eventData.observed === true
-      ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
-      : null],
-    ['nearest_event_distance_km', eventData.event_distance_km],
-    ['nearest_event_type', eventData.event_type],
     ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
     ['baseline_busyness', baseline],
     ['busyness_pct', clampPct(busyness)],
@@ -1784,7 +1819,7 @@ async function run() {
 }
 
 module.exports = {
-  run, classifyReading, liveAnswerColumns, LIVE_LOCAL_TIME_MAX, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
+  run, classifyReading, liveAnswerColumns, LIVE_LOCAL_TIME_MAX, eventFeatureColumns, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,

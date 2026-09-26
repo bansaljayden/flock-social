@@ -165,19 +165,24 @@ test('every enrichment column is written, including the one the comment miscount
   //   observed, nothing nearby        -> 0     (a real measurement)
   //   observed, event of unknown size -> null  (we looked; they do not publish it)
   //   not observed                    -> null  (we could not look)
+  //
+  // Since 2026-09-26 the six feature columns come from
+  // collectRealtime.eventFeatureColumns: serving's own values when the
+  // Ticketmaster listing can be replayed (mlEventCollectionParity.test.js), and
+  // these three-state rules for any other measured answer. Pinned by behaviour.
+  const { eventFeatureColumns } = require('../scripts/ml/collectRealtime');
+  const cols = (e) => Object.fromEntries(eventFeatureColumns(e));
+  assert.doesNotMatch(collect, /event_size \|\| 0/, '`event_size || 0` turns an unpublished capacity into a measured zero');
   for (const col of ['total_nearby_attendance', 'nearest_event_attendance']) {
-    const m = collect.match(new RegExp("\\['" + col + "',[\\s\\S]{0,260}?\\],"));
-    assert.ok(m, col + ' is not written at all');
-    const expr = m[0];
-    assert.ok(!/event_size \|\| 0/.test(expr),
-      col + ': `event_size || 0` turns an unpublished capacity into a measured zero');
-    assert.match(expr, /event_size \?\? null/,
+    assert.equal(cols({ observed: true, event_nearby: false })[col], 0,
+      col + ': a measured zero when the lookup found nothing nearby');
+    assert.equal(cols({ observed: true, event_nearby: true, event_size: null })[col], null,
       col + ': an unknown capacity must be null, not a number');
-    assert.match(expr, /event_nearby === true/,
-      col + ': a measured zero is only honest when the lookup found nothing nearby');
-    assert.match(expr, /observed === true/,
+    assert.equal(cols({ observed: true, event_nearby: true, event_size: 800 })[col], 800);
+    assert.equal(cols({ observed: false, reason: 'lookup_failed' })[col], null,
       col + ': a lookup that did not happen must be null');
   }
+  assert.match(collect, /\.\.\.eventFeatureColumns\(eventData\)/);
   assert.match(collect, /The SEVEN enrichment columns are written EXPLICITLY/);
 });
 
