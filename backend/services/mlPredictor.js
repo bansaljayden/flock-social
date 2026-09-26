@@ -4337,5 +4337,15 @@ module.exports = {
     },
     getMetadata: () => metadata,
     getSession: () => session,
+    // The serve-time constants scripts/ml/train/bandEval.js replays, exported
+    // so the offline evaluation reads the numbers production uses instead of
+    // restating them (a restated copy is how the gate and the card drift
+    // apart). Read-only: nothing here changes what predictBusyness does.
+    qmapEnabled,
+    NEIGHBOR_BOX_DEG,
+    DEVIATION_WEIGHT,
+    DEVIATION_MIN_READINGS,
+    DEVIATION_CLAMP,
+    DEVIATION_MAX_AGE_MS,
   },
 };
