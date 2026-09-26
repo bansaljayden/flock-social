@@ -2897,6 +2897,26 @@ def back_button_rect(m):
     return (pad, (m['header_h'] - bh) // 2, bw, bh)
 
 
+# Two events closer together than this are one tap.
+TAP_DEBOUNCE_SECONDS = 0.3
+
+
+def accept_tap(now, last_tap, synthesized=False):
+    """Whether a press should act, given when the last accepted one was.
+
+    A touchscreen tap can arrive twice: once as a finger event and once as the
+    mouse event SDL synthesises from it. Acting on both toggled a detail screen
+    open and straight back shut inside one frame, so the tap appeared to do
+    nothing, which in front of a judge reads as a frozen unit. The synthesised
+    copy is dropped outright when SDL marks it, and anything inside the
+    debounce window is dropped whatever it claims to be, since not every
+    driver sets the mark.
+    """
+    if synthesized:
+        return False
+    return last_tap is None or now - last_tap >= TAP_DEBOUNCE_SECONDS
+
+
 class Panel:
     """Everything the screens need, built once and kept.
 
@@ -3401,6 +3421,7 @@ def display_loop():
         started = time.monotonic()
         splash_min, splash_max = 1.5, 8.0
         last_noise_at = None
+        last_tap = None
 
         while not _stop.is_set():
             # Events first and every pass. The old loop polled once every 250 ms
@@ -3414,6 +3435,12 @@ def display_loop():
                 # driver. A pitch is a bad place to find out you picked wrong.
                 if event.type in (pygame.MOUSEBUTTONDOWN,
                                   getattr(pygame, 'FINGERDOWN', -1)):
+                    tap_now = time.monotonic()
+                    synthesized = (event.type == pygame.MOUSEBUTTONDOWN
+                                   and bool(getattr(event, 'touch', False)))
+                    if not accept_tap(tap_now, last_tap, synthesized):
+                        continue
+                    last_tap = tap_now
                     pos = getattr(event, 'pos', None)
                     if pos is None and hasattr(event, 'x'):
                         # FINGERDOWN reports 0..1 of the panel, not pixels.
