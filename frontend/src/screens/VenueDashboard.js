@@ -1573,13 +1573,16 @@ export default function VenueDashboard({
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
-                {/* From the bars drawn, hour by hour: the current score's
-                    source says nothing about an hour it did not make. */}
-                {venueIntel.model
-                  ? (hourlySourcePhrase(venueIntel.todayHourly)
-                    ? `From ${hourlySourcePhrase(venueIntel.todayHourly)}.`
-                    : `Flock crowd model v${venueIntel.model}`)
-                  : 'Flock rule engine: typical for a venue like yours, not measured here yet.'}
+                {/* From the bars drawn, hour by hour, and before the current
+                    score: its source says nothing about an hour it did not
+                    make, and with the venue's pattern served the current hour
+                    can be a rule-engine hour (no model version) while every
+                    later bar is the pattern's. */}
+                {hourlySourcePhrase(venueIntel.todayHourly)
+                  ? `From ${hourlySourcePhrase(venueIntel.todayHourly)}.`
+                  : venueIntel.model
+                    ? `Flock crowd model v${venueIntel.model}`
+                    : 'Flock rule engine: typical for a venue like yours, not measured here yet.'}
               </p>
             </div>
           )}

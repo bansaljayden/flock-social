@@ -1079,7 +1079,14 @@ router.get('/:placeId',
       // twice would let the two drift if it ever stopped being pure, and the
       // block's whole job is to describe the number that actually shipped.
       const cardConfidence = crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost);
-      const numberSource = crowdEngine.describeServedArithmetic(crowdResult);
+      // The published number's source, not the served one's: when verified
+      // reporters were blended in, the served arithmetic no longer made the
+      // whole number, and a carried reading of 20 must not be named as the
+      // 35 the card shows (crowdEngine.describePublishedArithmetic). An
+      // owner reading, applied at send time, drops it in applyOwnerReport.
+      const numberSource = crowdEngine.describePublishedArithmetic(crowdResult, {
+        reportsBlended: calibration.feedbackUsed === true,
+      });
 
       // Game-night FACT for the card, never a crowd claim: the 2026-08-30
       // ablation measured no lift the model could stand behind, so this

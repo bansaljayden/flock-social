@@ -150,7 +150,8 @@ for (const [label, env, golden] of [
       assert.equal(r.label, crowdEngine.getLabel(r.score));
       if (!rule) {
         assert.equal(r.modelVersion, GOLDEN.version, 'no qualifier with both off');
-        assert.ok(!('serveMode' in r) && !('nowcast' in r) && !('offsetChangedBySwitch' in r),
+        assert.ok(!('serveMode' in r) && !('nowcast' in r) && !('offsetChangedBySwitch' in r)
+          && !('usedLiveReadings' in r),
           'a switched-off response carries no new keys');
         assert.ok(r.dataSourcesUsed.includes('ml_model'));
       }
@@ -515,6 +516,8 @@ test('describeServedArithmetic names the switched arithmetic, and nothing for a 
     if (r.predictionMethod !== 'ml') { assert.equal(describeServedArithmetic(r), null); continue; }
     const live = Boolean(r.recentDeviation || r.nowcast);
     assert.equal(describeServedArithmetic(r), carried(r) || (live ? 'venue_pattern_live' : 'venue_pattern'));
+    // The explicit yes or no agrees with what actually reached the number.
+    assert.equal(r.usedLiveReadings, live);
   }
   const mn = await serveFixture({ CROWD_NOWCAST_ENABLED: 'true' });
   const withReading = mn.out.filter((r) => r.nowcast);
@@ -525,7 +528,14 @@ test('describeServedArithmetic names the switched arithmetic, and nothing for a 
     assert.equal(typeof r.offsetChangedBySwitch, 'boolean');
     const want = r.offsetChangedBySwitch ? (r.recentDeviation ? 'model_live' : 'model_alone') : null;
     assert.equal(describeServedArithmetic(r), want);
+    assert.equal(r.usedLiveReadings, Boolean(r.recentDeviation));
   }
+  // Somewhere on the fixture a live offset reached the number while the
+  // switch changed nothing, so no source is named and the yes is the only
+  // account of it.
+  assert.ok(mn.out.some((r) => r.predictionMethod === 'ml' && describeServedArithmetic(r) === null && r.usedLiveReadings === true),
+    'the fixture has an hour whose live offset matched the stored one');
+  for (const r of mn.out.filter((x) => x.predictionMethod === 'ml' && x.nowcast)) assert.equal(r.usedLiveReadings, true);
 });
 
 test('a reading carried at full weight is attributed as that reading, with its age', () => {
@@ -600,6 +610,31 @@ test('a switch that changes only the offset is attributed, even with no nowcast 
   assert.equal(onSame.nowcast, null);
   assert.equal(onSame.offsetChangedBySwitch, false);
   assert.equal(crowdEngine.describeServedArithmetic(onSame), null);
+  // Nothing is claimed about the arithmetic, yet live readings are in this
+  // number: the strict offset of the two readings moved it. Said as a yes.
+  assert.ok(onSame.recentDeviation, 'a live offset was applied');
+  assert.equal(onSame.usedLiveReadings, true);
+  assert.equal(onLone.usedLiveReadings, false, 'no offset and no reading: a no');
+  assert.equal(on.usedLiveReadings, true);
+  assert.ok(!('usedLiveReadings' in off));
+});
+
+test('each forecast hour says yes or no to live readings, including an hour no source is named for', async () => {
+  // Readings too old for the nowcast but inside the offset window, and 19:00's
+  // own reading. At 18:00 and 19:00 the strict offset (the two 2026-09-05
+  // readings) lands on the stored offset's score, so no source is named, and
+  // a live offset is still in the number. At 20:00 the 19:00 reading is an
+  // hour old and carried.
+  const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
+  const on = await serveFlatCurveCase({ CROWD_NOWCAST_ENABLED: 'true' }, { live: same, hourly: [18, 3] });
+  assert.deepEqual(on.map((h) => h.numberSource || null), [null, null, 'live_reading_1h']);
+  assert.deepEqual(on.map((h) => h.liveReadings), [true, true, true],
+    'a missing source is not a missing live reading');
+  // Switched off, no hour carries the yes or no.
+  const off = await serveFlatCurveCase({}, { live: same, hourly: [18, 3] });
+  for (const h of off) assert.ok(!('liveReadings' in h) && !('numberSource' in h), h.hour);
+  assert.deepEqual(off.map((h) => h.score), on.slice(0, 2).map((h) => h.score).concat(off[2].score),
+    'where no source is named the number is the switched-off number');
 });
 
 test('each forecast hour carries its own source, and a switched-off hour carries none', async () => {
@@ -616,28 +651,61 @@ test('each forecast hour carries its own source, and a switched-off hour carries
   assert.deepEqual(sources, ['model_alone', 'live_reading_1h', 'live_reading_2h', 'live_reading_1h', 'live_reading_2h']);
   // Each carried hour's number is the reading it names.
   assert.deepEqual(on.slice(1).map((h) => h.score), [0, 0, 100, 100]);
+  // Every switched hour says yes or no to live readings; a source only where
+  // one is named.
   for (const h of on) {
-    if (h.numberSource) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'numberSource'].sort());
-    else assert.deepEqual(Object.keys(h).sort(), OFF_KEYS);
+    if (h.numberSource) assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings', 'numberSource'].sort());
+    else assert.deepEqual(Object.keys(h).sort(), [...OFF_KEYS, 'liveReadings'].sort());
   }
+  assert.deepEqual(on.map((h) => h.liveReadings), [false, true, true, true, true]);
   // The venue dashboard passes each hour's source through to its bars.
   const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
   assert.match(dash, /todayHourly: todayHourly\.map\(\(\{ baselineScore, \.\.\.bar \}\) => bar\),/);
 });
 
-test('the card, Birdie, the public demo and the venue dashboard publish the arithmetic only when a switch made the number', () => {
+test('describePublishedArithmetic names the published number: adjusted by reporters, or nothing under an owner reading', () => {
+  const { describePublishedArithmetic } = crowdEngine;
+  const carried = { predictionMethod: 'ml', serveMode: 'model', nowcast: { base: 'model_qmap', lagHours: 1, bucket: 1, weight: 1 } };
+  assert.equal(describePublishedArithmetic(carried), 'live_reading_1h');
+  assert.equal(describePublishedArithmetic(carried, { reportsBlended: false }), 'live_reading_1h');
+  // A reading of 20 blended to 35 by verified reporters is not the reading.
+  assert.equal(describePublishedArithmetic(carried, { reportsBlended: true }), 'live_reading_1h_adjusted');
+  // The owner's figure names its own source.
+  assert.equal(describePublishedArithmetic(carried, { ownerReading: true }), null);
+  assert.equal(describePublishedArithmetic(carried, { reportsBlended: true, ownerReading: true }), null);
+  const pattern = { predictionMethod: 'ml', serveMode: 'curve_offset', dataSourcesUsed: ['venue_data', 'recent_live_readings'] };
+  assert.equal(describePublishedArithmetic(pattern, { reportsBlended: true }), 'venue_pattern_live_adjusted');
+  // With both switches off nothing is named, adjusted or not.
+  const plain = { predictionMethod: 'ml', dataSourcesUsed: ['ml_model'] };
+  for (const adj of [undefined, {}, { reportsBlended: true }, { ownerReading: true }]) {
+    assert.equal(describePublishedArithmetic(plain, adj), null);
+  }
+  assert.equal(describePublishedArithmetic(null, { reportsBlended: true }), null);
+  assert.equal(describePublishedArithmetic({ predictionMethod: 'rule_engine_fallback', serveMode: 'curve_offset' }, { reportsBlended: true }), null);
+});
+
+test('the card, Birdie, the public demo and the venue dashboard publish the arithmetic only when a switch made the number, as adjusted', () => {
   const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
   const crowd = read('routes/crowd.js');
-  assert.match(crowd, /const numberSource = crowdEngine\.describeServedArithmetic\(crowdResult\);/);
+  assert.match(crowd, /const numberSource = crowdEngine\.describePublishedArithmetic\(crowdResult, \{\s*reportsBlended: calibration\.feedbackUsed === true,\s*\}\);/);
   assert.match(crowd, /\.\.\.\(numberSource \? \{ numberSource \} : \{\}\),/);
   const ai = read('routes/ai.js');
-  assert.match(ai, /\.\.\.\(!ownerLive && describeServedArithmetic\(crowdResult\)\s*\? \{ crowd_method: describeServedArithmetic\(crowdResult\) \}\s*: \{\}\),/);
+  assert.match(ai, /\.\.\.\(describePublishedArithmetic\(crowdResult, \{ reportsBlended, ownerReading: Boolean\(ownerLive\) \}\)\s*\? \{ crowd_method: describePublishedArithmetic\(crowdResult, \{ reportsBlended, ownerReading: Boolean\(ownerLive\) \}\) \}\s*: \{\}\),/);
+  assert.match(ai, /reportsBlended = cal\.feedbackUsed === true;/);
   assert.match(ai, /delete result\.crowd_method;/, 'a locked forecast drops it with the rest of the reading');
   assert.match(ai, /When get_crowd_prediction returns \\`crowd_method\\`/);
+  assert.match(ai, /A value ending in "_adjusted"[^\n]*never present it as the live reading itself/);
   const demo = read('routes/publicCrowd.js');
-  assert.match(demo, /\.\.\.\(describeServedArithmetic\(scored\) \? \{ number_source: describeServedArithmetic\(scored\) \} : \{\}\),/);
+  assert.match(demo, /\.\.\.\(describePublishedArithmetic\(scored\) \? \{ number_source: describePublishedArithmetic\(scored\) \} : \{\}\),/);
   const dash = read('routes/venueDashboard.js');
-  assert.match(dash, /\.\.\.\(crowdEngine\.describeServedArithmetic\(current\)\s*\? \{ numberSource: crowdEngine\.describeServedArithmetic\(current\) \}\s*: \{\}\),/);
+  assert.match(dash, /\.\.\.\(crowdEngine\.describePublishedArithmetic\(current\)\s*\? \{ numberSource: crowdEngine\.describePublishedArithmetic\(current\) \}\s*: \{\}\),/);
+  // No surface publishes the served source unfiltered any more.
+  for (const [name, src] of [['crowd', crowd], ['ai', ai], ['demo', demo], ['dash', dash]]) {
+    assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), /describeServedArithmetic\(/, name);
+  }
+  // An applied owner reading drops the served source from the card.
+  const owner = read('services/ownerReports.js');
+  assert.match(owner, /delete out\.numberSource;\n\s*delete out\.number_source;/);
 });
 
 test('predictionCoverage says which switches are on and how many answers each made', async () => {

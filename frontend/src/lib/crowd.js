@@ -57,9 +57,13 @@ export const crowdArcFor = (score) => {
  * answered, including one made from the venue's own weekly pattern plus its
  * recent live readings with no model run at all. Those responses carry
  * `numberSource` (`number_source` on the public demo), named by
- * backend/services/crowdEngine.js describeServedArithmetic; every other
+ * backend/services/crowdEngine.js describePublishedArithmetic; every other
  * response has no such key, and this returns null so each surface keeps the
  * words it already had.
+ *
+ * A source ending in '_adjusted' is that arithmetic with verified reports
+ * from people in the room blended in afterwards. Its words say so, and a
+ * carried reading is then never worded as the number itself.
  */
 const NUMBER_SOURCE_PHRASES = {
   venue_pattern_live: "this venue's usual pattern and its recent live readings",
@@ -67,6 +71,14 @@ const NUMBER_SOURCE_PHRASES = {
   model_live: "the Flock crowd model and this venue's recent live readings",
   model_alone: 'the Flock crowd model alone',
 };
+// The same sources once people there adjusted the number. "Alone" goes: the
+// model's number is not alone any more.
+const ADJUSTED_BASE_PHRASES = {
+  ...NUMBER_SOURCE_PHRASES,
+  model_alone: 'the Flock crowd model',
+};
+const ADJUSTED_SUFFIX = '_adjusted';
+const ADJUSTED_WORDS = 'adjusted by people who are there';
 
 // 'live_reading_1h', 'live_reading_2h', ...: the number IS the venue's live
 // reading from that many hours ago, carried forward at full weight. The
@@ -76,15 +88,35 @@ const liveReadingHours = (source) => {
   const m = typeof source === 'string' ? LIVE_READING_SOURCE.exec(source) : null;
   return m ? Number(m[1]) : null;
 };
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+// { base, adjusted } for a source the server can name, or null.
+const parseSource = (source) => {
+  if (typeof source !== 'string') return null;
+  const adjusted = source.endsWith(ADJUSTED_SUFFIX);
+  const base = adjusted ? source.slice(0, -ADJUSTED_SUFFIX.length) : source;
+  if (liveReadingHours(base) === null && !hasOwn(NUMBER_SOURCE_PHRASES, base)) return null;
+  return { base, adjusted };
+};
+
+const readingPhrase = (hours) => `this venue's live reading taken ${hours === 1 ? 'an hour' : `${hours} hours`} ago`;
 
 export const numberSourcePhrase = (source) => {
-  const hours = liveReadingHours(source);
-  if (hours !== null) {
-    return `this venue's live reading taken ${hours === 1 ? 'an hour' : `${hours} hours`} ago`;
+  const parsed = parseSource(source);
+  if (!parsed) return null;
+  const hours = liveReadingHours(parsed.base);
+  if (!parsed.adjusted) {
+    return hours !== null ? readingPhrase(hours) : NUMBER_SOURCE_PHRASES[parsed.base];
   }
-  return typeof source === 'string' && Object.prototype.hasOwnProperty.call(NUMBER_SOURCE_PHRASES, source)
-    ? NUMBER_SOURCE_PHRASES[source]
-    : null;
+  const base = hours !== null ? readingPhrase(hours) : ADJUSTED_BASE_PHRASES[parsed.base];
+  return `${base}, ${ADJUSTED_WORDS}`;
+};
+
+// True when the named source already says people there adjusted the number,
+// so a line that adds those words itself does not say them twice.
+export const isAdjustedSource = (source) => {
+  const parsed = parseSource(source);
+  return Boolean(parsed && parsed.adjusted);
 };
 
 // What each source is made of: the base it starts from (null when a carried
@@ -100,6 +132,7 @@ const BASE_PHRASES = {
   model: 'the Flock crowd model',
   both: "the Flock crowd model or this venue's usual pattern",
 };
+const RULE_HOURS_WORDS = 'and in hours not measured here yet, what is typical for a venue like yours';
 
 /**
  * The words for an hourly chart, from the bars actually drawn.
@@ -107,31 +140,49 @@ const BASE_PHRASES = {
  * Each forecast hour carries its own `numberSource`, because a serving switch
  * can change one hour's arithmetic and not the next (the nowcast has a reading
  * for the next hour and none for an evening eight hours out). The current
- * score's attribution is not the chart's. Null when no drawn bar carries a
- * source, so the chart keeps the caption it already had. A bar the model
- * answered without a source counts as the model's own number, which is what
- * the old caption already calls it; a rule-engine bar is not counted, as
- * before.
+ * score's attribution is not the chart's, and a caption must not be chosen
+ * off the current score either: with the venue's pattern served, the current
+ * hour can be a rule-engine hour while every later bar is the pattern's.
+ *
+ * Whether live readings reached a bar comes from the bar's own `liveReadings`
+ * yes or no, which the server sends on every hour while a switch is on. It is
+ * never inferred from a missing source: the server names no source for a
+ * model hour whose live offset happened to land on the stored offset's score,
+ * and that hour still used live readings.
+ *
+ * Null when no drawn bar carries a source, so the chart keeps the caption it
+ * already had. A model bar without a source counts as the model's number; a
+ * rule-engine bar beside named ones is said to be typical for a venue like
+ * this one.
  */
 export const hourlySourcePhrase = (bars) => {
   if (!Array.isArray(bars)) return null;
-  const counted = bars.filter((b) => b && (b.predictionMethod === 'ml' || numberSourcePhrase(b.numberSource)));
-  const sourceOf = (b) => (numberSourcePhrase(b.numberSource) ? b.numberSource : null);
-  if (!counted.some(sourceOf)) return null;
-  const distinct = new Set(counted.map(sourceOf));
-  if (distinct.size === 1) return numberSourcePhrase([...distinct][0]);
+  const drawn = bars.filter(Boolean);
+  const sourceOf = (b) => (parseSource(b.numberSource) ? b.numberSource : null);
+  if (!drawn.some(sourceOf)) return null;
 
-  const parts = counted.map((b) => {
+  const parts = drawn.map((b) => {
     const s = sourceOf(b);
-    if (s && SOURCE_PARTS[s]) return SOURCE_PARTS[s];
-    if (liveReadingHours(s) !== null) return { base: null, live: true };
-    return { base: 'model', live: false };
+    const flag = typeof b.liveReadings === 'boolean' ? b.liveReadings : null;
+    if (s) {
+      const known = SOURCE_PARTS[parseSource(s).base] || { base: null, live: true };
+      return { source: s, base: known.base, live: flag === null ? known.live : flag };
+    }
+    if (b.predictionMethod === 'ml') return { source: null, base: 'model', live: flag === true };
+    return { source: null, base: 'rule', live: false };
   });
-  const bases = new Set(parts.map((p) => p.base).filter(Boolean));
-  const live = parts.filter((p) => p.live).length;
-  if (bases.size === 0) return "this venue's live readings from earlier hours";
+  const measured = parts.filter((p) => p.base !== 'rule');
+  const ruleHours = measured.length < parts.length;
+  const withRule = (phrase) => (ruleHours ? `${phrase}, ${RULE_HOURS_WORDS}` : phrase);
+
+  const distinct = new Set(measured.map((p) => p.source));
+  if (distinct.size === 1 && measured[0].source) return withRule(numberSourcePhrase(measured[0].source));
+
+  const bases = new Set(measured.map((p) => p.base).filter(Boolean));
+  const live = measured.filter((p) => p.live).length;
+  if (bases.size === 0) return withRule("this venue's live readings from earlier hours");
   const base = bases.size > 1 ? BASE_PHRASES.both : BASE_PHRASES[[...bases][0]];
-  if (live === parts.length) return `${base} and this venue's recent live readings`;
-  if (live > 0) return `${base}, with this venue's recent live readings in some hours`;
-  return base;
+  if (live === measured.length) return withRule(`${base} and this venue's recent live readings`);
+  if (live > 0) return withRule(`${base}, with this venue's recent live readings in some hours`);
+  return withRule(base);
 };

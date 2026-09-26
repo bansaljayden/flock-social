@@ -823,14 +823,17 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
                   ))}
                 </div>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                  {/* Read off the bars drawn, not the current score: each
-                      hour carries its own source, and an evening hour the
-                      nowcast had no reading for must not be credited to one. */}
-                  {intel?.model
-                    ? (hourlySourcePhrase(hourly)
-                      ? `Today hour by hour, our estimate from ${hourlySourcePhrase(hourly)}.`
-                      : `Today hour by hour, our estimate. Flock crowd model v${intel.model}.`)
-                    : 'Today hour by hour. Flock rule engine: typical for a venue like yours, not measured here yet.'}
+                  {/* Read off the bars drawn FIRST, before the current score:
+                      each hour carries its own source, an evening hour the
+                      nowcast had no reading for must not be credited to one,
+                      and with the venue's pattern served the current hour can
+                      be a rule-engine hour (no model version) while every
+                      later bar is the pattern's. */}
+                  {hourlySourcePhrase(hourly)
+                    ? `Today hour by hour, our estimate from ${hourlySourcePhrase(hourly)}.`
+                    : intel?.model
+                      ? `Today hour by hour, our estimate. Flock crowd model v${intel.model}.`
+                      : 'Today hour by hour. Flock rule engine: typical for a venue like yours, not measured here yet.'}
                   {hourlyWindowed ? ' Shown across your listed hours.' : ''}
                 </p>
               </div>

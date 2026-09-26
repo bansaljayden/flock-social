@@ -1963,8 +1963,11 @@ router.get('/intelligence', requirePro, async (req, res) => {
       // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock
       // crowd model v..." off `model` otherwise, which with curve_offset on
       // would credit a model that did not run. Absent with both switches off.
-      ...(crowdEngine.describeServedArithmetic(current)
-        ? { numberSource: crowdEngine.describeServedArithmetic(current) }
+      // Through describePublishedArithmetic like every surface; this dial
+      // blends no reports and applies no owner reading, so the served source
+      // is the published one.
+      ...(crowdEngine.describePublishedArithmetic(current)
+        ? { numberSource: crowdEngine.describePublishedArithmetic(current) }
         : {}),
       generatedAt: new Date().toISOString(),
     };

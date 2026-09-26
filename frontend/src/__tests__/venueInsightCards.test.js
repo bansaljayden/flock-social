@@ -522,3 +522,35 @@ describe('Roost: the verdict card leads', () => {
     expect(within(container).queryByRole('button', { name: /upgrade|unlock/i })).toBeNull();
   });
 });
+
+describe('the hourly caption comes from the bars drawn, before the current score', () => {
+  // With the venue's pattern served (CROWD_SERVE_MODE=curve_offset) the
+  // current hour can lack a baseline, so the rule engine answers it and
+  // /intelligence carries no model version, while every later bar is the
+  // pattern's. The caption used to branch on the model version first.
+  const bar = (hour, extra) => ({ hour, score: 40, label: 'Steady', ...extra });
+  const patternDay = [
+    bar('9 PM', { predictionMethod: 'rule_engine_no_baseline', liveReadings: false }),
+    bar('10 PM', { predictionMethod: 'ml', numberSource: 'venue_pattern_live', liveReadings: true }),
+    bar('11 PM', { predictionMethod: 'ml', numberSource: 'venue_pattern', liveReadings: false }),
+  ];
+
+  test('pattern bars under a rule-engine current hour are captioned as the pattern', async () => {
+    mount({ intel: { model: null, todayHourly: patternDay } });
+    const caption = await screen.findByText(/^Today hour by hour, our estimate from /);
+    expect(caption.textContent).toBe(
+      "Today hour by hour, our estimate from this venue's usual pattern, with this venue's recent live readings in some hours, and in hours not measured here yet, what is typical for a venue like yours."
+    );
+    expect(document.body.textContent).not.toMatch(/Flock rule engine/);
+  });
+
+  test('with no source on any bar the old captions stand (both switches off)', async () => {
+    const plain = [bar('9 PM', { predictionMethod: 'ml' }), bar('10 PM', { predictionMethod: 'ml' })];
+    const first = mount({ intel: { model: '2.6.0-starling', todayHourly: plain } });
+    expect(await screen.findByText(/Today hour by hour, our estimate\. Flock crowd model v2\.6\.0-starling\./)).toBeInTheDocument();
+    first.unmount();
+    const rules = [bar('9 PM', { predictionMethod: 'rule_engine_no_baseline' }), bar('10 PM', { predictionMethod: 'rule_engine_no_baseline' })];
+    mount({ intel: { model: null, todayHourly: rules } });
+    expect(await screen.findByText(/Today hour by hour\. Flock rule engine: typical for a venue like yours, not measured here yet\./)).toBeInTheDocument();
+  });
+});
