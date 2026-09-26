@@ -2736,5 +2736,32 @@ class DisplayBootRace(unittest.TestCase):
                                       sleep=naps.append)
         self.assertEqual(driver, 'dummy')
         self.assertEqual(naps, [])
+class TapHandling(unittest.TestCase):
+    """One physical tap must produce one action."""
+
+    def test_the_first_tap_is_taken(self):
+        self.assertTrue(main.accept_tap(10.0, None))
+
+    def test_the_echo_of_a_tap_is_dropped(self):
+        # The mouse event SDL synthesises from a finger event, arriving a few
+        # milliseconds after it. Acting on both opened a screen and shut it.
+        self.assertFalse(main.accept_tap(10.004, 10.0))
+
+    def test_a_synthesised_press_is_dropped_even_late(self):
+        self.assertFalse(main.accept_tap(99.0, 10.0, synthesized=True))
+
+    def test_a_second_deliberate_tap_is_taken(self):
+        # Open a card, then tap Back a moment later: both must work.
+        self.assertTrue(main.accept_tap(10.0 + main.TAP_DEBOUNCE_SECONDS + 0.01, 10.0))
+
+    def test_the_window_is_shorter_than_a_person_can_tap_twice(self):
+        # A deliberate double tap is roughly 0.3 to 0.5 s apart. Longer than
+        # that and Back feels ignored.
+        self.assertLessEqual(main.TAP_DEBOUNCE_SECONDS, 0.35)
+
+    def test_the_loop_consults_it(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        loop = source[source.index('def display_loop():'):]
+        self.assertIn('accept_tap(', loop)
 if __name__ == '__main__':
     unittest.main()
