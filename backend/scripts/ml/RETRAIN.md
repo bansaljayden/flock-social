@@ -11,8 +11,428 @@ holds, and its version numbers do not.
 
 One rule governs every number this runbook reports: **score the realtime served
 slice.** A high R² on the blended population means nothing here, because the
-weekly rows carry a delta label of zero by construction. The realtime slice is
-the population production serves and it is the only gate.
+weekly rows carry a delta label of zero by construction. Since 2026-09-25 there
+are two gates on that slice and an artifact must pass both: the point gate
+(`quick_eval.py`, city holdout) and the band gate (`bandEval.js --gate`, live
+readings held out in time, scored the way the admin Overview "Model" card
+scores the product). See "The mid-October retrain" directly below.
+
+## The mid-October 2026 retrain: the plan (written 2026-09-25)
+
+Everything in this section was measured on the local export of 2026-09-08
+(`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
+Lehigh's 7,276 live readings of 09-01..09-08 and Miami's 730 of 09-05..09-08,
+and **no Philadelphia rows**). It replays the shipped v2.6.0-starling through
+the serving code (`train/bandEval.js`, described under "The band evaluation"
+below). 7,920 of those 8,006 readings reach the model; the rest have no served
+baseline and get the rule engine. Every figure is within one crowd band unless
+it says otherwise. Eight days of mostly one city: treat each number as a
+direction, and re-measure on the October export with the same command.
+
+### What the card is scored on, and what it gets
+
+The admin card's figure is served `ml` forecasts within one band of the live
+reading for the same venue and local hour: **52.6%** over the last 30 days
+(n = 192 venue-hours over 9 days, only venues somebody opened). The replay over
+every live reading gives the same order of number:
+
+| on the 7,920 model-served September readings | within 1 band | band exact | band MAE | MAE | bias |
+|---|---|---|---|---|---|
+| **as served today** (quantile map on, + half the trailing offset) | **57.4%** | 32.0% | 1.340 | 31.00 | +15.2 |
+| the same model, quantile map off, + offset | 67.9% | 28.5% | 1.123 | 25.90 | +8.0 |
+| the same model, no map, no offset | 64.0% | 25.7% | 1.206 | 27.52 | +11.2 |
+| the venue's weekly curve at that hour (naive) | 64.5% | 31.2% | 1.163 | 26.42 | +6.5 |
+| curve + the full trailing offset | 67.6% | 34.9% | 1.093 | 25.24 | +0.3 |
+| rule engine (crowdEngine) | 60.3% | 22.0% | 1.295 | 29.48 | +4.6 |
+| served, but the venue's last live reading carried forward when it is at most 2 h old (reference, not served) | 71.8% | 44.9% | 0.986 | 23.05 | +9.0 |
+| **a constant "Not Busy"** | **75.8%** | 14.4% | 1.262 | 28.12 | −11.5 |
+
+Read the last row before quoting any within-one-band number. Real venue-hours
+are bimodal (37.7% Quiet, 16.5% Packed here), and the second band covers three
+of the five, so a forecast that always says "Not Busy" beats everything the
+product has ever served on this metric while being right about the band 14% of
+the time. Within one band is only meaningful next to band exact and band MAE,
+which is why the band gate below never reads it alone.
+
+The spring reference (the unknown-provenance March-May rows of Miami and
+Barcelona that every gate before September was scored on, 43,858 rows): served
+59.2%, no map 62.9%, curve 57.4%, rule engine 52.5%, constant "Not Busy" 69.3%.
+The replay reproduces the pickle-based gate there: its point MAE on these rows
+is 28.03 and MODEL-METRICS.md's per-city figures (Miami 27.54, Barcelona 29.25)
+weighted by the same row counts give 28.04.
+
+### Where the misses come from, ranked by the points they could recover
+
+Misses (two or more bands off) are 42.6% of served September readings, and they
+are mostly OVER-prediction: 32.9% of rows are shown two or more bands busier
+than they were (Steady rooms shown Packed 10.0%, Quiet shown Steady 7.3%,
+Quiet shown Packed 5.4%), against 9.7% shown quieter. Dinner, 17:00-20:00, holds
+38% of all misses. Prequential means fitted on 09-01..05 and scored on
+09-06..08 (4,183 readings); the rest is measured on all 7,920.
+
+| # | cause | evidence | points of within-one-band | fix |
+|---|---|---|---|---|
+| 1 | **the score quantile map** | 57.4% on vs 67.9% off (prequential 58.5 vs 69.2); band MAE 1.340 on vs 1.123 off, worse than the constant; it moves Steady rooms to Packed | **+10.5** | `CROWD_QMAP_ENABLED=false` on the main service, no retrain. The map is fitted to 2.6.0-starling and never applies to a new artifact anyway (mlPredictor's version check) |
+| 2 | **no use of the venue's latest live reading** | a reading one hour old predicts the next hour within one band 92.0% (band exact 86.5%, 3,169 rows); deviations from the curve correlate 0.815 at 1 h, 0.487 at 2 h, 0.203 at 3 h | **+7.7** at September's coverage (41% of readings had one an hour earlier); **+20** on the rows that have one (70.1 → 90.2) | serve-time nowcast plus training features, see "Features" below |
+| 3 | systematic over-prediction, most of it the month epoch artifact | bias +8 after the offset; v2.6.0's mean delta is −22.8 at month 3, +5.8 at month 5, +4.5 at month 9 (September's, what it serves); `month` carries 20.1% of the booster's split gain (274 of 800 root splits), `month_cos`/`month_sin` another 4.8%; the smoothed curve alone (65.9%) beats the model's own reconstruction (64.0%) | +1.6 to +2.2 (prequential de-bias) | drop the month family; `is_realtime` too (below) |
+| 4 | live readings lag the curve by about an hour | the curve one hour EARLIER matches the reading better: MAE 25.76 at −1 h vs 26.42 at 0 h; within one band 71.5% vs 65.1% on the 1,720 held-out readings that have a reading an hour earlier | +2.5 (curve only); overlaps with #2 | `curve_prev_hour` feature; store BestTime's `hour_analysis` |
+| 5 | venues with little live history | 0-1 prior readings (17% of rows): 55-58%; 10+ readings: 73-78% | ~+1.5, from collection | none in the model; it closes as readings accrue |
+| 6 | Miami | 51.9% vs Lehigh 65.3% (no map, no offset); Miami's curve alone is +13 biased there; collected at two hours a day | ~+1 | more Miami hours, or accept; it is a holdout city |
+| 7 | neighbour features computed differently in training | the count differs on 58.6% of rows (mean 1.58 venues), the mean by 3.2 points (p90 6.8): a 0.005° grid over smoothed curves in training, a ±0.0075° box over raw curves in serving | < 0.5 (both carry ~6% of gain) | recompute training's with serving's box arithmetic |
+| 8 | category from `guessCategory(types)` rather than the corpus category | 64.0% vs 64.3% | +0.3 | none |
+| 9 | late night | the BEST hours: 20-25% miss rate at 00:00-05:00 against 51% at dinner | 0 | none |
+| 10 | the Steady/Busy boundary | adjacent bands are hits for this metric; Busy readings are within one band 82-84% | 0 (band exact only) | none |
+| 11 | the six-hour baseline stamp | fixed (status board below). The curve against the same readings shifted by k hours: MAE 26.42 at 0 h, 34.62 at −6 h, 41.06 at +6 h | 0 | none |
+
+The rows do not add. Cumulatively, prequential on 09-06..08: 58.5% as served →
+69.2% map off → 71.4% with a fitted per-hour-group de-bias → **79.1%** with the
+last-hour nowcast where one exists.
+
+One property of the labels matters for all of it. **81% of consecutive-hour
+live readings of a venue are identical**, 82% even where the venue's own
+weekly curve moves 10+ points between the two hours, and identical runs rarely
+exceed three hours (531 runs of three, 57 longer). Our fetch has no cache; the
+live value BestTime returns updates on a slower cadence than hourly. So a live
+reading is a slowly refreshed vendor estimate, consecutive readings are not
+independent observations, and that stickiness is part of why the last reading
+predicts the next one so well.
+
+### Is 85% reachable?
+
+**Not by retraining this model on more rows.** On live September readings the
+delta layer adds nothing over the venue's own curve (the model's reconstruction
+64.0% against the smoothed curve's 65.9%; on spring rows WITHIN-CITY-EVAL.md
+found it worth +0.3 points of within-10), and a venue's live depth does not
+change that (WITHIN-CITY-EVAL.md section 5). A retrain that fixes causes 3, 4
+and 7 is worth a few points, which puts the model near 70% (the rehearsal
+below: 70.0%).
+
+**Yes, on the venue-hours that have a fresh live reading, if the product uses
+it.** Carrying the last reading forward is 90-92% within one band and 65-86%
+band exact on those rows, which is real accuracy rather than hedging. The card's
+figure only counts venue-hours that have a live reading, and BestTime's live
+coverage is persistent from hour to hour, so most of those venue-hours had a
+reading the hour before. Estimated card figure with the map off and the nowcast
+served: about 80% at September's coverage, crossing 85% when three quarters of
+scored venue-hours have a reading at most an hour old, which the full hourly
+sweeps since 2026-09-25 should reach. Venues with no live coverage stay near
+70%, and a product-wide 85% for them is not reachable from these inputs.
+
+Two things 85% must never mean: a within-one-band figure bought by hedging (the
+constant scores 75.8%), or a figure measured on rows the card never serves. The
+band gate below enforces both.
+
+### What will exist by mid-October
+
+Live readings arrived at about 2,000 a day before the sweeps were fixed (15,835
+live- or forecast-labelled realtime rows by 2026-09-08, `train/export_v28.log`)
+and about 2,100 a day now. At that rate the corpus holds **roughly 50,000 live
+readings on 2026-09-25 and 90,000 to 95,000 on 2026-10-15**, over about 45
+observation dates. The 2026-09-08 split was about half Philadelphia (≈7,800),
+46% Lehigh (7,276) and 5% Miami (730, two named hours a day). A 14-day time
+holdout keeps about 29,000 of them out of training and leaves about 60,000 for
+it, above the 50,000 proven-live floor (`FLOCK_MIN_REALTIME_ROWS`). If the
+export lands short of that, hold out 10 days rather than lower the floor.
+
+**Re-weight the weekly anchors for that corpus.** The v2.3.1 blend gives every
+weekly row weight 0.05. With v2.6.0's 369,076 realtime rows that left live rows
+82% of the loss; with 60,000 live rows against ~1.7M servable weekly rows it
+leaves them about 41%, and the anchors (whose correct delta is 0) pull every
+deviation back toward the curve, which is the v2.2.1 failure. The local dry run
+(3,579 live training rows) put live rows at 5% of the loss.
+`FLOCK_WEEKLY_ANCHOR_WEIGHT=auto` (prepare_features.py) sets the weekly weight
+so live rows carry 80% of the loss again (≈0.01 at 60,000; never above 0.05)
+and records it as `sample_weight_policy`; `=0` trains on live rows alone. Run
+both and let the band gate choose.
+
+To measure the coverage that decides the nowcast's value (the share of live
+readings whose venue was also read the hour before), the owner can run, read
+only, against production:
+
+```sql
+BEGIN READ ONLY;
+WITH live AS (
+  SELECT venue_id, observed_date + make_interval(hours => hour::int) AS slot
+    FROM ml_training_data
+   WHERE collection_mode = 'realtime' AND label_source = 'live'
+     AND observed_date >= CURRENT_DATE - 7
+)
+-- (venue_id, day_of_week, hour, observed_date) is unique for realtime rows
+-- (migration 024), so the join matches at most one earlier reading.
+SELECT COUNT(*) AS readings, COUNT(p.venue_id) AS read_the_hour_before
+  FROM live l
+  LEFT JOIN live p ON p.venue_id = l.venue_id AND p.slot = l.slot - interval '1 hour';
+ROLLBACK;
+```
+
+The 457,402 realtime rows of March-May stay excluded (unknown provenance,
+migration 025). Weekly rows: 3.4M, the Pennsylvania ones re-collected in
+September (their `month` is 9, everyone else's is 3, 4 or 5).
+
+### Labels
+
+1. **Live only.** The default already excludes unknown-provenance rows. Keep
+   forecast-labelled rows at weight 0.3, and run one ablation without them; the
+   band gate decides.
+2. **One weight per vendor update, not per hour.** Weight each maximal run of
+   identical consecutive-hour readings of a venue by 1/run length in training,
+   so a sticky venue does not count three times. Evaluation keeps every reading,
+   because the card is judged per venue-hour.
+3. **Record what BestTime says the reading is about.** `collectRealtime.js`
+   discards `hour_analysis` and `venue_open` from the live response. Storing
+   them (a migration and a collector change) is what separates the one-hour lag
+   in cause 4 from a labelling problem, and explains the 246 readings (81% of
+   them non-zero) at slots whose curve says the venue is shut.
+4. Drop Beijing (2,057 rows, a statistically empty cross-validation fold).
+
+### Features
+
+Drop, all measured above or in `train/RETRAIN-V27-LOG.md`:
+
+- `month`, `month_sin`, `month_cos`, the four `season_*` and the month-derived
+  astronomy/anomaly slots: `FLOCK_CALENDAR_POLICY=drop`. The epoch artifact
+  carries a quarter of the booster's gain and, in September, adds +4.5 to every
+  prediction. Re-admit when the live corpus spans seasons.
+- `is_realtime`: a provenance flag that is always 1 at serving and carries 6.1%
+  of the gain (197 of its splits at depth 0-1). Needs the four readers that
+  take it out of X by position (quick_eval.realtime_flags, train_model,
+  sports_ablation, hour_ranking_eval) to read the carried
+  `features_*.pkl['is_realtime']` first.
+- `is_school_break` (dropped in the v2.7 experiment for the same epoch reason),
+  the four user-feedback features (constant; audit finding 13's leak arms the
+  day they stop being constant) and `etype_family` (constant).
+
+Add, each computable at serve time from tables production already has, and
+each needing a twin in `mlPredictor.buildFeatureMap` in the same change (the
+load-time coverage check refuses an artifact whose features serving cannot
+build) and a parity test like `__tests__/mlSmoothingParity.test.js`:
+
+- `last_live_dev`, `last_live_age_h`: the venue's most recent live reading
+  strictly before the slot, as a deviation from its own slot's curve, and its
+  age in hours (missing: age 99, deviation 0). Past-only by construction. This
+  is cause 2, learned instead of hard-coded.
+- `recent_offset`, `recent_offset_n`: the trailing 28-day median deviation that
+  serving currently adds at a fixed weight of 0.5 after the model; as a
+  feature, the model learns how far to trust it. Remove the post-hoc add for
+  the artifact that learns it.
+- `curve_prev_hour`: the weekly curve one hour earlier (cause 4).
+
+Fix before the run: the neighbour features' training arithmetic (cause 7).
+
+### Target and calibration
+
+- Keep the delta label and the point head: the card shows a number, and
+  `label_type: 'delta'` is what serving reconstructs.
+- Train it with `reg:absoluteerror`. The target is bimodal; squared error pulls
+  every prediction toward the middle, which is where the Quiet-shown-Steady
+  misses come from (the two-head ablation found absolute error "wins every
+  column at once").
+- No quantile map for the new artifact. Run the point gate with
+  `CROWD_QMAP_ENABLED=false`: gated with the 2.6.0 map on, a new artifact is
+  refused at load (`mlPredictor.evaluateShipGate`) because the map it was scored
+  through is not its own. Any refit map has to pass the band gate like a model.
+- A band (ordinal) head is a diagnostic only in October. A decision rule that
+  maximises within one band hedges toward "Not Busy"; it becomes useful with
+  band exact and band MAE in the objective, and with a product decision about
+  showing a likelihood instead of a number.
+- The published confidence is still the spring gate slice's within-15
+  (QMAP_MEASURED, 36.4%). The served number's within-15 on the September
+  readings is 37.1% with the map on and 36.6% off. After the retrain, publish
+  the band gate's measured figure for the served number instead (a follow-up in
+  `mlPredictor.readServedAccuracy`).
+
+### Validation
+
+- **Time**: the last 14 days of live readings are held out of training in every
+  city (`prepare_features.py`, `FLOCK_TIME_HOLDOUT_DAYS`, recorded as
+  `metadata.time_holdout`). The band gate scores them.
+- **City**: the existing leave-one-city-out CV in `train_model.py` and the
+  Miami live readings in the point gate. Only Philadelphia and Lehigh carry live
+  training rows, so leave-one-city-out is a transfer check here, not a gate.
+- Every interval is a date-block bootstrap: readings repeat hour to hour and a
+  night's weather moves a whole city, so row-level intervals would be too narrow.
+
+### The ship gate
+
+`quick_eval.py` writes the point verdict as `ship_gate.point_gate_pass` and
+leaves `overall_pass` false with verdict `pending_band_gate`. After
+`export_model.py`, `node bandEval.js --gate` replays the exported candidate and
+`models/incumbent/` through the serving code on the time holdout and sets
+`overall_pass` = point AND band. mlPredictor refuses an artifact whose
+`overall_pass` is false, so an artifact that skipped the band gate cannot load.
+When the point gate cannot line the incumbent up by its preserved pickle (it
+cannot, for October; see the rehearsal below), its incumbent arms are recorded
+as deferred and the band gate's head-to-head on identical live readings decides
+them.
+The band gate requires, on the model-served live readings of the window
+(`BAND_GATE` in `bandEval.js`):
+
+| criterion | requirement |
+|---|---|
+| sample | at least 1,000 readings over at least 5 dates |
+| the incumbent never saw the window | its `time_holdout.training_live_through` (else `trained_at`) is before the window |
+| beats the incumbent | within one band up, and the date-block CI95 lower bound above −1.0 point |
+| beats the weekly curve | within one band up with a CI95 lower bound above 0, AND band MAE no worse than the curve's (this is what stops a hedge) |
+| not worse than the rule engine | within one band not below it |
+| no city regresses | every city with 300+ readings within 2 points of the incumbent |
+| point error | MAE at most 1 point above the incumbent's |
+
+Every verdict also records the constant-answer reference, so no within-one-band
+figure is read without what it costs to fake.
+
+### The commands, in order
+
+Pre-work in code before the export (not done in this change): the neighbour
+arithmetic (cause 7), `is_realtime` out of X, the three nowcast features with
+their serving twins, and the run-length weights. The run below works without
+them and measures the rest. Done in this change: the time holdout, the band
+gate, the served-baseline smoothing parity and the anchor weight switch.
+
+```bash
+# Serving, now, no retrain (cause 1): on the main Railway service
+#   CROWD_QMAP_ENABLED=false        then restart. Reversible by unsetting it.
+
+# ── On the training machine, from backend/scripts/ml ─────────────────────────
+# 0. Preserve the incumbent. models/incumbent/ already holds v2.6.0-starling's
+#    best_model.pkl and features_holdout.pkl from 2026-08-18; add the pair the
+#    band gate replays (identical to the tracked files):
+mkdir -p models/incumbent
+cp models/crowd_model.onnx models/model_metadata.json models/incumbent/
+
+# 1. Clear stale artifacts, the interrupted 2026-09-08 export included.
+cd train
+rm -f training_data.csv holdout_data.csv training_data.csv.partial holdout_data.csv.partial \
+      features_train.pkl features_holdout.pkl best_model.pkl band_gate_report.json
+
+# 2. THE PRODUCTION EXPORT. Run by the owner, with backend/.env pointing at
+#    production. Read-only: the exporter opens every statement inside
+#    BEGIN READ ONLY with default_transaction_read_only=on.
+node export_training_data.js
+head -1 training_data.csv | tr ',' '\n' | grep -c .     # must print 45
+#    From here on nothing touches the database.
+
+# 3. Features: 14-day time holdout (the default), no month epoch, live rows at
+#    80% of the loss. (Ablation: FLOCK_WEEKLY_ANCHOR_WEIGHT=0, same steps 3-7,
+#    into a copy of models/; ship whichever passes the band gate higher.)
+FLOCK_CALENDAR_POLICY=drop FLOCK_WEEKLY_ANCHOR_WEIGHT=auto python prepare_features.py
+python test_fold_category_baselines.py && python test_time_holdout.py
+#    If it stops on DEAD SLOTS (the local dry run named cold_outdoor,
+#    is_holiday_eve, is_special_night, rain_x_weekend, special_boost,
+#    special_suppress, weather_other, weather_snow, weather_thunderstorm: only
+#    live rows carry weather now), decide each one in EXPECTED_SPARSE_FEATURES
+#    or drop it. Do not set FLOCK_DEAD_SLOT_POLICY=warn for a release.
+
+# 4. Train, CPU-pinned so the artifact reproduces, then the diagnostics.
+FLOCK_TRAIN_DEVICE=cpu FLOCK_TRAIN_THREADS=12 python train_model.py
+python evaluate_model.py
+
+# 5. Point gate, without the 2.6.0 quantile map.
+CROWD_QMAP_ENABLED=false python quick_eval.py
+
+# 6. Export.
+MODEL_VERSION=2.8.0-starling python export_model.py
+
+# 7. Band gate: writes ship_gate.band_gate, sets overall_pass = point AND band.
+node bandEval.js --gate --out=band_gate_report.json
+
+# 8. Verify the artifact the way production reads it, then read the verdict.
+cd ../../..
+node --test
+node -e "const g=require('./scripts/ml/models/model_metadata.json').ship_gate;
+         console.log(g.overall_pass, g.point_gate_pass, g.band_gate_status,
+                     JSON.stringify(g.band_gate && g.band_gate.candidate))"
+```
+
+`run_training.sh` runs steps 2 to 7 in the same order. Run step 7 with
+`CROWD_QMAP_ENABLED` set exactly as the main service has it, because the band
+gate compares the candidate against the incumbent AS SERVED, and the map
+changes what the incumbent serves.
+
+### A rehearsal on the local export (2026-09-25)
+
+The whole sequence, prepare → train → point gate → export → band gate, run on
+the 2026-09-08 partial export in a scratch copy of this directory, with the
+last three days of live readings held out (`FLOCK_TIME_HOLDOUT_DAYS=3`) and the
+proven-live floor lowered by its smoke-test hatch (`FLOCK_MIN_REALTIME_ROWS=1000`;
+the partial export holds only Lehigh's live rows for training). It trained on
+3,579 live readings and 1,315,242 weekly anchors, and it found three things the
+October run would otherwise have found the hard way:
+
+1. **The dead-slot contract stops the run.** With weather only on live rows,
+   `cold_outdoor`, `is_holiday_eve`, `is_special_night`, `rain_x_weekend`,
+   `special_boost`, `special_suppress`, `weather_other`, `weather_snow` and
+   `weather_thunderstorm` were constant. October will name some of the same.
+   Decide each (the rehearsal used `FLOCK_DEAD_SLOT_POLICY=warn` to go on).
+2. **The point gate's incumbent arm could not pass for any candidate.** It
+   scores the incumbent through its preserved `features_holdout.pkl`, whose
+   395,464 spring rows no longer match any holdout built since the
+   unknown-provenance exclusion (240,657 rows here): "incomparable", gate FAIL,
+   by construction. Fixed in this change: when the band gate is required and
+   `models/incumbent/` holds the ONNX artifact, arms 3 and 4 are recorded as
+   `deferred_to_band_gate`, and the band gate compares the two artifacts on
+   identical live readings through the serving code.
+3. **Live rows were 5% of the loss** (the weekly anchor weight, above).
+
+The verdicts, on the 4,183 held-out readings (Lehigh 09-06..08 and Miami):
+
+| on the held-out readings | within 1 band | band exact | band MAE | MAE |
+|---|---|---|---|---|
+| rehearsal candidate as served (no map, + offset) | 70.0% | 35.0% | 1.047 | 24.67 |
+| v2.6.0-starling as served today (map on) | 58.5% | 32.2% | 1.321 | 30.61 |
+| v2.6.0-starling, map off (prequential table above) | 69.2% | | | 25.41 |
+| weekly curve | 65.9% | 31.5% | 1.128 | 25.66 |
+| rule engine | 61.7% | 22.8% | 1.269 | 29.03 |
+| last reading carried forward, else served (reference) | 78.2% | 46.7% | 0.822 | 19.43 |
+| constant "Not Busy" (reference) | 78.8% | 14.2% | 1.212 | 26.82 |
+
+Band gate: beats the incumbent by +11.6 points (CI95 11.2 to 13.4), the curve
+by +4.2 (CI95 2.9 to 6.1) with a lower band MAE, the rule engine by +8.3, no
+city regression, MAE guard passed; FAIL on sample only (3 dates, 5 required),
+which is the right answer for a three-day window. Point gate: FAIL on criterion
+1 alone, R² +0.077 against the curve on Miami's 726 live readings where +0.10
+is required.
+
+**A decision to take before October.** Criterion 1 (MAE down 5 OR R² up 0.10
+against the curve on the city holdout) was calibrated on spring rows. Its gate
+slice is now Miami's live readings at two hours of the day, where v2.6.0 itself
+is worse than the curve (MAE 32.2 against 30.3). A candidate can beat the
+incumbent and the curve by clear margins on the band gate and still be refused
+there. Keep it, or make it advisory whenever the band gate is required (the
+band gate's "beats the weekly curve" asks the same question on the population
+the card is scored on). This change keeps it binding.
+
+## The band evaluation (`train/bandEval.js`, 2026-09-25)
+
+The replay behind the numbers above and the band gate. For every live-labelled
+realtime reading in an export it rebuilds what production would have served:
+the baseline through `mlPredictor.blendBaselineRows` over the venue's weekly
+curve, the neighbours with `getNeighborActivity`'s box arithmetic, the vector
+with `buildFeatureVector` under the scored artifact's own metadata, then
+`reconstructScore`, the quantile map under the same flag and version check, half
+the venue's trailing live offset computed past-only with
+`buildRecentDeviation.js`'s window, and the band; the rule engine wherever there
+is no served baseline. It scores any artifact directory (a fresh `mlPredictor`
+is loaded per artifact with its two file paths pointed at that directory), and
+it never opens a database connection: `DATABASE_URL` is pointed at an address
+nothing listens on before any service module loads.
+
+`__tests__/mlBandEval.test.js` runs the real `predictBusyness` against a pool
+stubbed from the same synthetic corpus and requires the replay's published
+score to match it on every row, rule-engine rows, the zero-slot edge, offsets
+and the quantile map included.
+
+```bash
+# from backend/: a report on the current model (any export, .partial included)
+node scripts/ml/train/bandEval.js --train=scripts/ml/train/training_data.csv \
+     --holdout=scripts/ml/train/holdout_data.csv --model=scripts/ml/models \
+     --legacy --out=band_report.json --rows-out=band_rows.csv
+```
+
+What it cannot replay: the venue record of the moment (production scores the
+Google Places payload and guesses the category from its types; the replay uses
+the corpus copy of those fields and the same guess), the weather and event
+lookups of the moment (it uses what the collector recorded at the reading), and
+which venues users open (the card counts only served venue-hours).
 
 ## The v2.3 change (why this retrain exists)
 
@@ -34,7 +454,11 @@ model no longer trains on rows it will never serve.
 > three shipped fixes (baseline smoothing, vendor-forecast weighting, the
 > leave-one-out baseline) never reached an artifact. **A retrain starts at the
 > export.** `prepare_features.py` now refuses a CSV that is not the current
-> 44-column shape, so this cannot recur silently, but do not try.
+> 45-column shape (44 until round 25 appended `events_observed`), so this
+> cannot recur silently, but do not try.
+
+For the October 2026 run use the command block in "The mid-October 2026
+retrain" above; it is this procedure with that run's settings filled in.
 
 ```bash
 # ── 0. PRESERVE THE INCUMBENT. Do this FIRST; it is unrecoverable afterwards.
@@ -45,20 +469,31 @@ cp train/best_model.pkl train/features_holdout.pkl models/incumbent/
 #    quick_eval.py FAILS THE GATE without models/incumbent/best_model.pkl.
 #    features_holdout.pkl matters too: when the feature set changes (it will),
 #    it is the only way to score the incumbent on the same holdout ROWS.
+#    ONLY when train/ holds the pickles of the model being replaced. After a
+#    run that did not ship (v2.7, the two-head and sports experiments), train/
+#    holds that run's pickles or none, and this line would overwrite the true
+#    incumbent. models/incumbent/ has held v2.6.0-starling's pair since
+#    2026-08-18; check its model_metadata.json version before copying.
 
 # ── 1. Clear stale artifacts so a partial failure cannot silently reuse them.
 cd train
-rm -f training_data.csv holdout_data.csv \
-      features_train.pkl features_holdout.pkl best_model.pkl
+rm -f training_data.csv holdout_data.csv training_data.csv.partial holdout_data.csv.partial \
+      features_train.pkl features_holdout.pkl best_model.pkl band_gate_report.json
 
 # ── 2. Full pipeline, in this order. Never start in the middle.
-node export_training_data.js                     # 44-column CSVs
-head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 44
+node export_training_data.js                     # 45-column CSVs
+head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 45
 python prepare_features.py                       # contract-checked; see below
 python train_model.py                            # LOCO CV -> best_model.pkl
 python evaluate_model.py                         # diagnostics + plots
-python quick_eval.py                             # SHIP GATE (must run last)
+CROWD_QMAP_ENABLED=false python quick_eval.py    # POINT GATE; overall_pass stays
+                                                 #  false, pending the band gate.
+                                                 #  The map is 2.6.0-starling's own:
+                                                 #  a new artifact gated through it
+                                                 #  is refused at load.
 MODEL_VERSION=2.6.0-<name> python export_model.py
+node bandEval.js --gate --out=band_gate_report.json   # BAND GATE: overall_pass =
+                                                       #  point AND band
 
 # ── 3. Verify the artifact the way production reads it.
 cd ../../..                                      # backend/
@@ -67,8 +502,9 @@ node --test
 # ── 4. Read the gate before committing anything.
 node -e "const m=require('./scripts/ml/models/model_metadata.json');
          console.log(m.model_version, JSON.stringify(m.ship_gate,null,1))"
-#    overall_pass must be true, gate_basis 'holdout_realtime_served', and
-#    ship_gate.incumbent.no_regression must be true.
+#    overall_pass must be true, gate_basis 'holdout_realtime_served',
+#    ship_gate.incumbent.no_regression must be true, point_gate_pass true and
+#    band_gate_status 'pass'.
 
 # ── 5. Commit crowd_model.onnx + model_metadata.json, push, Railway serves it.
 ```
@@ -84,7 +520,7 @@ It fails loud instead of degrading. Each of these used to be a silent skip:
 
 | It stops when | Because |
 |---|---|
-| the CSV is not the 44-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence. Round 20 appended `label_source` and `vendor_forecast_pct` as CARRIED columns (validated and pickled, never features) — a CSV without them would still train, which is why their absence has to be an error: it means the file predates the exporter |
+| the CSV is not the 45-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence. Round 20 appended `label_source` and `vendor_forecast_pct` as CARRIED columns (validated and pickled, never features) — a CSV without them would still train, which is why their absence has to be an error: it means the file predates the exporter |
 | `label_source` carries a value outside `{live, forecast}`, or `label_provenance` is not what `(is_realtime, label_source)` implies, or a `forecast` row disagrees with its own `vendor_forecast_pct` | the derived column is a pure function of the raw one, so the two check each other; a mismatch means a row rejoins the weight-1.0 pool as `unknown` with nothing said |
 | a weather description is not in `WEATHER_DESCRIPTION_CODES` | guessing a group is inventing data — add the OpenWeatherMap id |
 | no `weather_condition_code` survives recovery | all ten `weather_*` features would be constant again |
@@ -336,29 +772,44 @@ Do not start the retrain until every BLOCKING row below reads DONE or has an
 owner. The audit file itself is the specification and is not edited; this is the
 status board.
 
-| # | Blocking finding | Status |
+**Re-verified against the code on 2026-09-25**, finding by finding, with the
+three defects the audit's section 0 confirmed listed first (K1-K3). Every
+blocking finding is closed in code. Two gaps turned up while checking: the
+runbook still said 44 columns (fixed here), and the served baseline and the
+trained one disagreed on one shape of slot (fixed here, row 3).
+
+| # | Finding | Status 2026-09-25 | Evidence in the current code |
+|---|---|---|---|
+| K1 | `collectWeekly.js` wrote BestTime's array index into `hour` | **FIXED** | `bestTimeSlotToLocal` writes `(slot + 6) % 24` and rolls the day forward for slots 18-23, for every row (collectWeekly.js, the per-day loop), stamping `hour_axis = 'venue_local'`; migration 023 rotated the history; `buildBaselines.js` and the exporter refuse an undeclared weekly row; `discoverBestTime.js` routes through the same function. Data: on the September live readings the weekly curve matches best at 0 and −1 h and is 8-15 MAE worse at ±6 h |
+| K2 | Two writers of `ml_venue_baselines` with different definitions | **FIXED** | `collectRealtime.run()` calls `buildBaselines.refreshCollectedBaselines` (weekly, venue-local only); the exporter's `BASELINE_AGGREGATE_SQL` is the same statement, proved row by row in `mlExportContracts.test.js`. The third writer (`storeGoogleBaselines`) is unreachable from every request path; see #14 below |
+| K3 | Realtime rows stamped with the baseline of a slot six hours off | **FIXED, and inert** | `storeReading` reads weekly rows at the reading's own `obs.dayOfWeek`/`obs.hour` with `hour_axis = 'venue_local'`; and nothing reads the stamped column: the exporter recomputes `baseline_busyness` from the weekly aggregate, `buildRecentDeviation.js` joins `ml_venue_baselines` |
+| 1 | Stale 40-column CSVs; runbook started after the export | **FIXED in code; the runbook said "must print 44" until today** | `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 45-column export (44 until round 25 appended `events_observed`), naming the missing columns and telling you to re-run the exporter. Runbook starts at step 0 (preserve incumbent) then `node export_training_data.js`; the header check now expects 45, step 1 also removes the interrupted `.partial` export, and step 0 warns that copying `train/` pickles into `models/incumbent/` would overwrite the true incumbent after a run that did not ship. |
+| 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **FIXED** | Migration `024_ml_training_data_unique_slot.sql` collapses the duplicates and adds the key; `collectWeekly.js` upserts `ON CONFLICT (venue_id, day_of_week, hour) WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'`, `collectRealtime.js` inserts `ON CONFLICT (venue_id, day_of_week, hour, observed_date) WHERE ... DO NOTHING`, and both refuse to run without the index (`requireSlotIndex`). The index shape deviates from the one specified here; see "The unique key on `ml_training_data`" below for why the `COALESCE(observed_date,'1970-01-01')` form would have destroyed data. `mlCorpusDedupe.test.js`. |
+| 3 | Positional `shift(1)` smoothed an hour against itself on duplicate rows | **FIXED; a parity gap FIXED 2026-09-25** | `smooth_baseline_hours()` blends on a complete 7×24 grid against the true clock neighbours. It still differed from `mlPredictor.blendBaselineRows` on one shape: a slot whose own baseline row holds 0 beside a positive neighbour, which production blends to a positive baseline and serves with the MODEL, and training kept at 0 and then dropped. That was 202,030 rows of the local corpus (195,619 weekly edge-of-opening slots, 160 live September readings). `slot_has_baseline_row` now mirrors production; `__tests__/mlSmoothingParity.test.js` runs both implementations over one random grid (the pre-fix code disagrees on 377 of its 1,488 rows). |
+| 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **FIXED** | `collectRealtime.js` writes `weather.conditionId` (every live reading in the local export carries one); `collectWeekly.js` writes NULL weather on purpose (a typical week has no moment), and `repairWeeklyWeather.js` cleared the old weekly weather on 2026-09-05; `recover_weather_codes()` still maps legacy descriptions and stops on an unmapped one. |
+| 5 | 62.9% of rows carry `month=0` with all four season one-hots at 0 | **FIXED as written; the epoch it warned about is MEASURED and belongs to the retrain** | `collectWeekly.venueCalendar` stamps `month`/`season`, migration 024 backfilled from `collected_at`, and `prepare_features.py` refuses a row without a month. The limitation this row always named is now a number: in the shipped booster `month` carries 20.1% of all split gain (274 of 800 root splits), and in September it adds about +4.5 points to every served prediction. The plan above drops the month family (`FLOCK_CALENDAR_POLICY=drop`). |
+| 6 | Gate measured on holdout rows production refuses to serve | **FIXED** | `quick_eval.py` imports `serving_population_mask` from `prepare_features`, applies it to the gate slice, persists `excluded_no_baseline_rows` and keeps the unfiltered figure as a labelled diagnostic. `mlPipelineContracts.test.js`. |
+| 7 | No incumbent comparison, and this document claimed there was one | **FIXED** | `quick_eval.compare_incumbent` scores `models/incumbent/` on the same rows and fails the gate without it; since 2026-09-25 the band gate also replays `models/incumbent/` through the serving code on the time holdout. |
+| 8 | Gate structurally blind to corpus-wide corruption; v2.5 passed by 0.0126 | **FIXED** | The MAE arm may not regress; the within-10 floor is the incumbent's measured figure on the same rows; `evaluate_model.py` prints the corpus mean by hour; and `dinnerPeakAccuracy.test.js` PART 3 (the audit's `dinnerPeakAccuracy.test.js:332`, now at line 350) was inverted on 2026-08-18 to assert that the exported artifact's category peaks sit in the evening and that the old +6 h shift makes them worse, which the runbook's `node --test` step runs on the new artifact. Strengthened 2026-09-25: the band gate scores the artifact against live readings taken on the venue's own clock, which share nothing with the baseline comparator, so a corpus-wide error can no longer cancel. |
+
+The non-blocking findings that touch label or feature quality, re-verified the
+same day:
+
+| # | Finding | Status 2026-09-25 |
 |---|---|---|
-| 1 | Stale 40-column CSVs; runbook started after the export | **DONE (python side).** `prepare_features.py` raises `CorpusContractError` on any CSV that is not the 44-column export, naming the missing columns and telling you to re-run the exporter. Runbook above now starts at step 0 (preserve incumbent) then `node export_training_data.js`. Deleting the stale CSVs is step 1 of the runbook. |
-| 2 | No unique constraint on `ml_training_data`, so `ON CONFLICT DO NOTHING` is a no-op | **DONE.** Migration `024_ml_training_data_unique_slot.sql` collapses the duplicates and adds the key; both collectors now name a real conflict target. The index shape deviates from the one specified here — see "The unique key on `ml_training_data`" below for what changed and why the `COALESCE(observed_date,'1970-01-01')` form would have destroyed data. |
-| 3 | Positional `shift(1)` smoothed an hour against itself on duplicate rows | **DONE.** `smooth_baseline_hours()` collapses to one value per (venue_id, dow, hour), lays them on a complete 7×24 grid so a missing hour is a real gap, blends against the true clock neighbours with the day/week wraps `mlPredictor.getBaseline` uses, and merges back. Measured on a duplicate-heavy fixture: the old code left 9,714 of 14,112 cells holding more than one distinct smoothed baseline; the new code leaves 0. |
-| 4 | `weather_condition_code` NULL on 100% of rows → ten constant features | **DONE (recovery + contract).** `WEATHER_DESCRIPTION_CODES` maps every OpenWeatherMap description to its condition id and `recover_weather_codes()` backfills the column; the 25 descriptions present in the 2026-08-12 corpus are all covered. Unmapped descriptions are reported by name and count and stop the run. **The collector half is now DONE too:** both `collectWeekly.js` and `collectRealtime.js` write `weather.conditionId` into `weather_condition_code`, so recovery is a transitional path for old rows rather than a permanent one. The historical rows are deliberately NOT backfilled in SQL — the exporter already derives them, and a second full-table rewrite would have doubled the deploy's downtime for nothing. |
-| 5 | 62.9% of rows carry `month=0` with all four season one-hots at 0 | **DONE, with one stated limitation.** `collectWeekly.js` now stamps `month`/`season` from the venue's own clock at collection (falling back to UTC if `ml_venues.timezone` is unusable), and migration 024 backfills every existing row from its `collected_at`, which is a real `DEFAULT NOW()` insert timestamp and not an invented date. Rows whose `collected_at` is NULL are skipped, not guessed. The limitation, which the retrain must not forget: on a weekly row `month` means "the month this typical-week snapshot was taken in", not "the month this busyness happened in", and because collection ran in a narrow window it does **not** stop `month` from proxying row provenance. What it does fix is the impossible corner — every stamped row now has a month in 1..12 and exactly one season, a region the serving path actually reaches. `prepare_features.py`'s refusal and `FLOCK_CALENDAR_POLICY=drop` both stay as the guard. |
-| 6 | Gate measured on holdout rows production refuses to serve | **DONE.** `quick_eval.py` imports `serving_population_mask` from `prepare_features` and applies it to the gate slice; the excluded count is logged and persisted, and the old unfiltered number is kept as a labelled diagnostic. |
-| 7 | No incumbent comparison, and this document claimed there was one | **DONE.** See "The ship gate" above. Absent or dishonest comparison = gate failure. |
-| 8 | Gate structurally blind to corpus-wide corruption; v2.5 passed by 0.0126 | **PARTLY DONE.** Added here: the MAE arm may not regress, an absolute realtime within-10 floor of 29.2%, and a per-hour corpus mean printed by `evaluate_model.py` so a bent axis is visible. Still open: the hard assertion that category peak hours land in the evening, which now belongs with the retrain — the corpus-side clock fix shipped 2026-08-15 (migration 023 + both collectors), so `__tests__/dinnerPeakAccuracy.test.js:332` (PART 3) now *pins the shipped artifact's pre-fix vintage* (model_metadata.json's category_baselines are still on the bucket axis) and must be fully inverted when a model is exported from the corrected corpus, not worked around. |
-
-Non-blocking items also closed in the same pass: **#10** (`evaluate_model.py` no
-longer re-reads the raw CSV and positionally truncates it — `hour` and
-`venue_category` travel inside the pickle, and the LOCO folds refit **with**
-`sample_weight`, so `evaluation.validation` finally describes the model that was
-actually trained) and the first half of **#11** (`prepare_features.py` merges
-metadata instead of rewriting it, and names the keys it evicts).
-
-Still open in `run_training.sh`, which is not owned here: its summary reads
-`evaluation.validation`, a key `quick_eval.py` has never written (it writes
-`training_loco_cv`), so the summary prints `?`; and step 4 imports matplotlib +
-seaborn unguarded under `set -e`, so a missing plotting dependency aborts the
-pipeline **before** the ship gate runs.
+| 9 | confidence published from the blend | **FIXED.** `readServedAccuracy` publishes `training_metrics_by_population.realtime_served.within_15`, or `QMAP_MEASURED` with the map on. Both are spring-slice measurements; the plan publishes the band gate's live figure after the retrain |
+| 10 | per-hour diagnostic on misaligned rows; unweighted LOCO refit | **FIXED.** `hour` and `venue_category` travel in the pickle; the refit passes `sample_weight` |
+| 11 | metadata rewritten from scratch | **FIXED.** Merge plus a named eviction list; `run_training.sh`'s summary reads `training_loco_cv`; `evaluate_model.py`'s plotting imports are guarded |
+| 12 | weekly rows carry one weather snapshot | **FIXED.** NULL weather on weekly rows; 0% of weekly rows in the local export carry a temperature |
+| 13 | `venue_feedback` join is a lookahead | **OPEN, dormant.** The aggregate is 28 days back from NOW(), not from each row's date (`export_training_data.js`, the `fb` subquery); 0 verified feedback rows exist, so all four features are constant. The plan drops them |
+| 14 | third baseline writer; `source` not reset | **OPEN, dormant.** `storeGoogleBaselines` is unreachable from every request path; `buildBaselines`' upsert still does not reset `source` |
+| 15 | event features alive in training, dead in production | **CHANGED.** `TICKETMASTER_API_KEY` is set in production, so serving computes them; live readings record `events_observed` (99.9% of the local live rows, 1,467 with an event). The spring corpus's defaulted negatives remain (54% of rows sit in cities with zero events, `export_v28.log`) |
+| 16 | city imbalance | **OPEN.** Beijing holds 2,057 rows; the plan drops it |
+| 17 | unknown cities skipped silently; city clock; US holidays | **PARTLY FIXED.** Each reading uses the venue's own zone (`getLocalTime(venue.timezone \|\| cityConfig.tz, startedAt)`); an unknown city is still skipped without a log line (`sweepVenues`); the US calendar still applies everywhere, inert while collection is Pennsylvania and Miami |
+| 18 | `is_realtime` a provenance feature kept for itself | **CONFIRMED** (was SUSPECTED). 6.1% of the shipped booster's gain, 197 splits at depth 0-1, constant 1 at serving. The plan drops it once its four positional readers take the carried key |
+| 19 | repeatability gaps | **FIXED.** Device and library versions recorded, `MODEL_VERSION` warned, CPU path bit-reproducible |
+| 20 | coordinate-keyed identity | **OPEN, low.** `add_neighbor_features` still keys venues on rounded coordinates, and NEW: its 0.005° grid over smoothed baselines differs from serving's ±0.0075° box over raw ones (the neighbour count differs on 58.6% of live September readings, the mean by 3.2 points) |
+| 21 | holiday features near-constant | **CHANGED.** Labor Day 2026-09-07 gives `is_holiday` its first 1,174 live readings |
 
 Left open in that pass and **closed on 2026-08-16**: the `category_baseline` /
 `refined_category_baseline` leak that
