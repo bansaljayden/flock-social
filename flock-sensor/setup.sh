@@ -70,8 +70,20 @@ echo "==> board: ${BOARD:-unknown}"
 case "${BOARD}" in
   "Raspberry Pi 5"*)
     echo "    Pi 5: swapping RPi.GPIO for rpi-lgpio"
-    pip3 uninstall -y RPi.GPIO >/dev/null 2>&1 || true
+    # The uninstall needs the same flag as every install here. Without it,
+    # current Raspberry Pi OS (Debian trixie) refuses it as an externally
+    # managed environment, the refusal went to /dev/null, and the old
+    # library stayed in /usr/local, which Python searches before the
+    # system's rpi-lgpio. Every Pi 5 set up this way imported the library
+    # that cannot drive its GPIO, and nothing said so.
+    pip3 uninstall -y --break-system-packages RPi.GPIO >/dev/null 2>&1 \
+      || pip3 uninstall -y RPi.GPIO >/dev/null 2>&1 || true
     pip_install rpi-lgpio
+    # Check what Python actually imports, rather than what was asked for.
+    if ! python3 -c "import inspect, RPi.GPIO as G; raise SystemExit('lgpio' not in inspect.getsource(G))" 2>/dev/null; then
+      echo "    WARNING: python3 still imports the old RPi.GPIO, which cannot drive a Pi 5." >&2
+      echo "    Remove it by hand: sudo pip3 uninstall --break-system-packages RPi.GPIO" >&2
+    fi
     ;;
 esac
 
