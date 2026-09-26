@@ -177,6 +177,14 @@ DEFAULTS = {
     # Confirm it at the real mount with --calibrate, which measures a person
     # at the actual range and recommends the number.
     'THERMAL_MIN_CLUSTER': '6',
+    # A person is warm, and not that warm. Skin reads about 30 to 36C and
+    # clothing less. A Lepton without a calibration target can read several
+    # degrees out either way, so the ceiling sits well clear of a person: a
+    # warm region whose average is hotter than this is a mug of coffee, a
+    # lamp or a heater, each of which counted as a person the moment it was
+    # bigger than a head in frame. The floor already exists: nothing under
+    # THERMAL_THRESHOLD_C, or the room's own median plus the margin, is warm.
+    'THERMAL_MAX_PERSON_C': '45.0',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
@@ -265,6 +273,7 @@ THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
 THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 6)
 THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
+THERMAL_MAX_PERSON_C = _cfg_number('THERMAL_MAX_PERSON_C', float, 38.0, 90.0, 45.0)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -1235,29 +1244,27 @@ def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
     if len(frame) < rows * cols:
         return 0
     min_cluster = THERMAL_MIN_CLUSTER if min_cluster is None else min_cluster
-    sizes = thermal_region_sizes(frame, threshold_c=threshold_c, margin_c=margin_c,
-                                 rows=rows, cols=cols, bin_size=bin_size,
-                                 mask=mask)
-    return min(MAX_THERMAL, sum(1 for s in sizes if s >= min_cluster))
+    cells, regions = thermal_regions(frame, threshold_c=threshold_c, margin_c=margin_c,
+                                     rows=rows, cols=cols, bin_size=bin_size,
+                                     mask=mask)
+    # Big enough to be a person, and not too hot to be one.
+    people = sum(1 for region in regions
+                 if len(region) >= min_cluster
+                 and sum(cells[i] for i in region) / len(region) <= THERMAL_MAX_PERSON_C)
+    return min(MAX_THERMAL, people)
 
 
-def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
-                         rows=None, cols=None, bin_size=None, mask=None):
-    """Every connected warm region in the frame, as a list of cell counts.
+def thermal_regions(frame, threshold_c=None, margin_c=None,
+                    rows=None, cols=None, bin_size=None, mask=None):
+    """Every connected warm region, as (binned cells, [region, ...]).
 
-    The same flood fill count_thermal_clusters runs, with the minimum-size
-    filter left off. Nothing on the serving path wants this. --calibrate does,
-    because the questions it asks are "how big is a person from here" and "how
-    big does this room's noise get", and the filter throws both answers away.
-
-    Split out rather than copied: two flood fills that were supposed to agree
-    would eventually stop agreeing, and the one in the calibration path is the
-    one nobody would notice had drifted.
+    Each region is the list of its cells' indexes into the binned grid, so
+    a caller can read their temperatures as well as count them.
     """
     rows = THERMAL_ROWS if rows is None else rows
     cols = THERMAL_COLS if cols is None else cols
     if len(frame) < rows * cols:
-        return []
+        return [], []
     threshold_c = THERMAL_THRESHOLD_C if threshold_c is None else threshold_c
     margin_c = THERMAL_MARGIN_C if margin_c is None else margin_c
     bin_size = THERMAL_BIN if bin_size is None else bin_size
@@ -1275,19 +1282,19 @@ def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
 
     grid = [[_warm(r * cols + c) for c in range(cols)] for r in range(rows)]
     visited = [[False] * cols for _ in range(rows)]
-    sizes = []
+    regions = []
     for r0 in range(rows):
         for c0 in range(cols):
             if not grid[r0][c0] or visited[r0][c0]:
                 continue
             stack = [(r0, c0)]
-            size = 0
+            region = []
             while stack:
                 r, c = stack.pop()
                 if r < 0 or r >= rows or c < 0 or c >= cols or visited[r][c] or not grid[r][c]:
                     continue
                 visited[r][c] = True
-                size += 1
+                region.append(r * cols + c)
                 # Eight-connectivity, where the coarse sensor used four. At
                 # 24x32 a diagonal gap between two warm pixels was almost
                 # always two people. At this resolution it is almost always one
@@ -1296,8 +1303,26 @@ def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
                     for dc in (-1, 0, 1):
                         if dr or dc:
                             stack.append((r + dr, c + dc))
-            sizes.append(size)
-    return sizes
+            regions.append(region)
+    return cells, regions
+
+
+def thermal_region_sizes(frame, threshold_c=None, margin_c=None,
+                         rows=None, cols=None, bin_size=None, mask=None):
+    """Every connected warm region in the frame, as a list of cell counts.
+
+    The same flood fill count_thermal_clusters runs, with the minimum-size
+    filter left off. Nothing on the serving path wants this. --calibrate does,
+    because the questions it asks are "how big is a person from here" and "how
+    big does this room's noise get", and the filter throws both answers away.
+
+    Split out rather than copied: two flood fills that were supposed to agree
+    would eventually stop agreeing, and the one in the calibration path is the
+    one nobody would notice had drifted.
+    """
+    return [len(region) for region in thermal_regions(
+        frame, threshold_c=threshold_c, margin_c=margin_c, rows=rows, cols=cols,
+        bin_size=bin_size, mask=mask)[1]]
 
 
 # After this many consecutive reads that produced nothing usable, stop trusting
