@@ -2633,7 +2633,11 @@ def wayland_socket(env=None):
     """
     env = os.environ if env is None else env
     runtime = env.get('XDG_RUNTIME_DIR')
-    if not runtime and hasattr(os, 'getuid'):
+    # Guess the standard location only for the real environment. A caller that
+    # passes its own env, a test above all, gets exactly that env and nothing
+    # read off the machine: otherwise running the suite on a Pi with the
+    # desktop up finds the real socket and the bare-console case fails.
+    if not runtime and env is os.environ and hasattr(os, 'getuid'):
         runtime = f'/run/user/{os.getuid()}'
     if not runtime or not os.path.isdir(runtime):
         return None
