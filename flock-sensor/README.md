@@ -357,6 +357,22 @@ provides the same module and API and needs no change to `main.py`. The two
 libraries cannot both be installed. `main.py --selftest` prints the board it is
 running on as its first line.
 
+**On the battery, the Pi 5 caps its USB ports at 600 mA between them.** It
+allows the full 1.6 A only when its supply says 5 A is available, which the
+official Pi supply does and a power bank does not. The screen's touch cable
+and the thermal camera both draw from those ports, and together they can pass
+600 mA: the screen flickers, or the camera drops off the bus and the headcount
+goes stale. Add this line to `/boot/firmware/config.txt` and reboot:
+
+```
+usb_max_current_enable=1
+```
+
+Only on a supply that gives 3 A at 5 V, which the Anker A1336 does over USB-C.
+Not verified on this unit yet: whether the screen and camera together really
+cross the cap is the first thing to watch the first time it runs on the
+battery.
+
 ### The pin conflict, which is still open
 
 Moving the thermal camera to USB freed the I2C pins (3 and 5), and the
