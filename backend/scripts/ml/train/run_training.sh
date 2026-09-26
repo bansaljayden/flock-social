@@ -15,12 +15,12 @@ echo "================================================"
 echo ""
 
 # Step 1: Export data from PostgreSQL
-echo "[1/7] Exporting training data from database..."
+echo "[1/8] Exporting training data from database..."
 node export_training_data.js
 echo ""
 
 # Step 2: Feature engineering
-echo "[2/7] Preparing features..."
+echo "[2/8] Preparing features..."
 python prepare_features.py
 echo ""
 
@@ -30,17 +30,17 @@ echo ""
 # the shipped ones exactly — is what stops train_model.py reporting a
 # cross-validation number for a model it is not saving. Its negative control
 # rebuilds the statistics the pre-round-21 way and requires the suite to catch it.
-echo "[3/7] Per-fold category baseline contract..."
+echo "[3/8] Per-fold category baseline contract..."
 python test_fold_category_baselines.py
 echo ""
 
 # Step 4: Train models
-echo "[4/7] Training models (XGBoost, LightGBM, Random Forest)..."
+echo "[4/8] Training models (XGBoost, LightGBM, Random Forest)..."
 python train_model.py
 echo ""
 
 # Step 5: Evaluate
-echo "[5/7] Evaluating model..."
+echo "[5/8] Evaluating model..."
 python evaluate_model.py
 echo ""
 
@@ -48,13 +48,22 @@ echo ""
 # Round 10: mlPredictor.init() refuses to promote an artifact whose ship_gate
 # does not pass, so the gate has to be part of the pipeline — not an optional
 # follow-up step in RETRAIN.md. quick_eval.py must run AFTER evaluate_model.py.
-echo "[6/7] Ship gate (realtime-only holdout)..."
+echo "[6/8] Ship gate (realtime-only holdout)..."
 python quick_eval.py
 echo ""
 
 # Step 7: Export to ONNX
-echo "[7/7] Exporting to ONNX..."
+echo "[7/8] Exporting to ONNX..."
 python export_model.py
+echo ""
+
+# Step 8: The band gate. quick_eval.py left overall_pass false, pending this:
+# the exported artifact and the incumbent (models/incumbent/) replayed through
+# the serving code on the live readings the time holdout kept out of training,
+# scored within one crowd band. It writes ship_gate.band_gate and sets
+# overall_pass = point gate AND band gate.
+echo "[8/8] Band gate (live time holdout, within one band)..."
+node bandEval.js --gate --out=band_gate_report.json
 echo ""
 
 echo "================================================"
@@ -98,6 +107,11 @@ else:
 g = m.get('ship_gate')
 if g:
     print(f'  SHIP GATE: {\"PASS\" if g.get(\"overall_pass\") else \"FAIL\"} ({g.get(\"gate_basis\", \"?\")}) — the backend refuses to load a FAIL artifact')
+    print(f'    point gate: {g.get(\"point_gate_pass\", \"?\")}  band gate: {g.get(\"band_gate_status\", \"?\")}')
+    bg = g.get('band_gate') or {}
+    for name in ('candidate', 'incumbent', 'naive_curve', 'rule_engine'):
+        if bg.get(name):
+            print(f'    {name}: within one band {bg[name].get(\"within_one_band\")}%  band exact {bg[name].get(\"band_exact\")}%  band MAE {bg[name].get(\"band_mae\")}')
 else:
     print('  SHIP GATE: not computed — mlPredictor.init() FAILS CLOSED on a missing gate and will serve the rule engine')
 print(f'  Version: {m.get(\"model_version\", \"?\")} (set MODEL_VERSION before export_model.py for a release tag)')

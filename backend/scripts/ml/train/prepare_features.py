@@ -262,6 +262,140 @@ def exclude_unknown_provenance(df: pd.DataFrame, label: str) -> Tuple[pd.DataFra
         UNKNOWN_PROVENANCE_ENV)
     return df[~unknown], record
 
+# ---------------------------------------------------------------------------
+# THE TIME HOLDOUT (2026-09-25): the live readings the band gate scores.
+#
+# The band gate (bandEval.js --gate) scores the exported candidate the way the
+# admin Overview "Model" card scores the product: served forecasts against the
+# live reading of the same venue and hour, FORWARD IN TIME, in the cities the
+# product serves. The city holdout cannot do that job. Miami is collected at
+# two named hours of the day (collectRealtime's --holdout-utc-hours), Tokyo and
+# Barcelona not at all since May, and Philadelphia and the Lehigh Valley, where
+# every user is, sit in training.
+#
+# So every realtime row observed on or after the cutoff leaves the TRAINING
+# frame here, before anything is fitted on it: the category maps, the climate
+# norms, the neighbour grid and the model itself. Weekly rows stay, because
+# production has them at serve time. Earlier live rows of the same venues stay
+# too, because production has those as well, which is exactly what a forecast
+# made today for tomorrow faces. The held-out rows need no pickle: the band gate
+# replays them from the export through the exported artifact.
+#
+#   FLOCK_TIME_HOLDOUT_FROM=YYYY-MM-DD  the first held-out date, explicitly
+#   FLOCK_TIME_HOLDOUT_DAYS=N           the last N days of live readings
+#                                       (default 14); 0 turns the split off,
+#                                       which leaves the band gate nothing to
+#                                       score, so the artifact cannot ship
+# ---------------------------------------------------------------------------
+TIME_HOLDOUT_FROM_ENV = 'FLOCK_TIME_HOLDOUT_FROM'
+TIME_HOLDOUT_DAYS_ENV = 'FLOCK_TIME_HOLDOUT_DAYS'
+DEFAULT_TIME_HOLDOUT_DAYS = 14
+
+
+def _live_dates(df: pd.DataFrame) -> pd.Series:
+    is_rt = pd.to_numeric(df['is_realtime'], errors='coerce') == 1
+    live = df['label_source'].astype('string').fillna('').str.strip() == 'live'
+    dates = df['observed_date'].astype('string').fillna('').str.strip()
+    return dates[(is_rt & live & (dates != '')).to_numpy()]
+
+
+def resolve_time_holdout(frames: List[pd.DataFrame], env=os.environ) -> Dict:
+    """Decide the first held-out date. An explicit date wins over a day count."""
+    all_live = pd.concat([_live_dates(f) for f in frames], ignore_index=True)
+    last_live = str(all_live.max()) if len(all_live) else None
+    explicit = str(env.get(TIME_HOLDOUT_FROM_ENV, '')).strip()
+    if explicit:
+        try:
+            parsed = pd.Timestamp(explicit)
+        except ValueError as err:
+            raise CorpusContractError(f'{TIME_HOLDOUT_FROM_ENV}={explicit!r} is not a date: {err}')
+        if parsed.strftime('%Y-%m-%d') != explicit:
+            raise CorpusContractError(f'{TIME_HOLDOUT_FROM_ENV} must be written YYYY-MM-DD, got {explicit!r}.')
+        return {'policy': 'explicit_date', 'days': None, 'from_date': explicit, 'last_live_date': last_live}
+    raw = str(env.get(TIME_HOLDOUT_DAYS_ENV, '')).strip()
+    try:
+        days = int(raw) if raw else DEFAULT_TIME_HOLDOUT_DAYS
+    except ValueError:
+        raise CorpusContractError(f'{TIME_HOLDOUT_DAYS_ENV}={raw!r} is not a whole number of days.')
+    if days < 0:
+        raise CorpusContractError(f'{TIME_HOLDOUT_DAYS_ENV} cannot be negative (got {days}).')
+    if days == 0:
+        logger.warning('POLICY OVERRIDE %s=0: no time holdout. The band gate will have no '
+                       'held-out live readings to score and the artifact cannot ship.', TIME_HOLDOUT_DAYS_ENV)
+        return {'policy': 'off', 'days': 0, 'from_date': None, 'last_live_date': last_live}
+    if last_live is None:
+        return {'policy': 'no_live_rows', 'days': days, 'from_date': None, 'last_live_date': None}
+    start = (pd.Timestamp(last_live) - pd.Timedelta(days=days - 1)).strftime('%Y-%m-%d')
+    return {'policy': 'last_days', 'days': days, 'from_date': start, 'last_live_date': last_live}
+
+
+def split_time_holdout(df: pd.DataFrame, from_date) -> Tuple[pd.DataFrame, Dict]:
+    """Remove every realtime row observed on or after `from_date` (any provenance)."""
+    record = {'realtime_rows_held_out': 0, 'live_rows_held_out': 0, 'held_out_by_city': {}}
+    if not from_date:
+        record['training_live_through'] = str(_live_dates(df).max()) if len(_live_dates(df)) else None
+        return df, record
+    is_rt = (pd.to_numeric(df['is_realtime'], errors='coerce') == 1).to_numpy()
+    dates = df['observed_date'].astype('string').fillna('').str.strip()
+    held = is_rt & (dates != '').to_numpy() & (dates >= from_date).fillna(False).to_numpy()
+    live = held & (df['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy()
+    kept = df[~held]
+    record['realtime_rows_held_out'] = int(held.sum())
+    record['live_rows_held_out'] = int(live.sum())
+    record['held_out_by_city'] = {str(k): int(v) for k, v in df.loc[held, 'city'].value_counts().items()}
+    kept_live = _live_dates(kept)
+    record['training_live_through'] = str(kept_live.max()) if len(kept_live) else None
+    return kept, record
+
+
+# ---------------------------------------------------------------------------
+# THE WEEKLY ANCHOR WEIGHT (2026-09-25).
+#
+# The v2.3.1 blend gives every weekly row weight 0.05, a number sized for a
+# corpus with 369,076 realtime rows: live rows were 82% of the loss. The corpus
+# the next retrain trains on has about 60,000 live rows beside ~1.7M servable
+# weekly rows, where 0.05 leaves live rows about 41% of the loss, and the
+# anchors, whose correct delta is 0 by construction, pull every deviation back
+# toward the curve. That is the v2.2.1 failure the blend was written to end.
+#
+#   FLOCK_WEEKLY_ANCHOR_WEIGHT=0.05  (default, unchanged) a fixed weight
+#   FLOCK_WEEKLY_ANCHOR_WEIGHT=auto  the weight at which realtime rows carry
+#                                    WEEKLY_ANCHOR_AUTO_SHARE of the loss,
+#                                    never above 0.05
+#
+# Any value keeps train_model.assert_weighting_matches_provenance's ordering
+# (weekly < forecast 0.3 < live 1.0), and the choice is recorded in
+# model_metadata.json as sample_weight_policy.
+# ---------------------------------------------------------------------------
+WEEKLY_ANCHOR_WEIGHT_ENV = 'FLOCK_WEEKLY_ANCHOR_WEIGHT'
+DEFAULT_WEEKLY_ANCHOR_WEIGHT = 0.05
+WEEKLY_ANCHOR_AUTO_SHARE = 0.80
+
+
+def resolve_weekly_anchor_weight(realtime_weight_sum: float, weekly_rows: int, env=os.environ) -> Dict:
+    raw = str(env.get(WEEKLY_ANCHOR_WEIGHT_ENV, '')).strip().lower()
+    if raw in ('', str(DEFAULT_WEEKLY_ANCHOR_WEIGHT)):
+        return {'policy': 'default', 'weight': DEFAULT_WEEKLY_ANCHOR_WEIGHT}
+    if raw == 'auto':
+        if weekly_rows <= 0 or realtime_weight_sum <= 0:
+            return {'policy': 'auto_degenerate', 'weight': DEFAULT_WEEKLY_ANCHOR_WEIGHT}
+        share = WEEKLY_ANCHOR_AUTO_SHARE
+        w = realtime_weight_sum * (1 - share) / share / weekly_rows
+        return {'policy': 'auto', 'target_realtime_share': share,
+                'weight': float(min(DEFAULT_WEEKLY_ANCHOR_WEIGHT, w))}
+    try:
+        w = float(raw)
+    except ValueError:
+        raise CorpusContractError(f'{WEEKLY_ANCHOR_WEIGHT_ENV}={raw!r} is neither a number nor auto.')
+    if not (0 <= w < 0.3):
+        raise CorpusContractError(
+            f'{WEEKLY_ANCHOR_WEIGHT_ENV}={w} must be in [0, 0.3): weekly anchors must weigh less '
+            'than a vendor-forecast label (0.3), which weighs less than a live one.')
+    logger.warning('POLICY OVERRIDE %s=%s (default %s). Recorded in model_metadata.json.',
+                   WEEKLY_ANCHOR_WEIGHT_ENV, w, DEFAULT_WEEKLY_ANCHOR_WEIGHT)
+    return {'policy': 'explicit', 'weight': w}
+
+
 # Features that a policy switched off for this run. get_feature_columns()
 # excludes them, so metadata.feature_names never advertises a dead slot.
 DROPPED_FEATURES: set = set()
@@ -2379,6 +2513,18 @@ def main():
         'legacy_aliases': dict(LEGACY_EVENT_TYPE_ALIASES),
     }
 
+    # The time holdout, cut BEFORE anything is fitted (see the block above
+    # resolve_time_holdout). Only the training frame loses rows; the city
+    # holdout was never trained on.
+    time_holdout = resolve_time_holdout([train_df, holdout_df])
+    train_df, time_split = split_time_holdout(train_df, time_holdout['from_date'])
+    time_holdout.update(time_split)
+    logger.info('Time holdout (%s): live readings from %s on are held out of training for the '
+                'band gate: %d realtime rows (%d live) %s; training live data runs through %s.',
+                time_holdout['policy'], time_holdout['from_date'], time_holdout['realtime_rows_held_out'],
+                time_holdout['live_rows_held_out'], time_holdout['held_out_by_city'],
+                time_holdout['training_live_through'])
+
     # Drop rows with null label
     train_df = train_df.dropna(subset=['busyness_pct'])
     logger.info(f'After dropping null labels: {len(train_df)} rows')
@@ -2544,21 +2690,26 @@ def main():
                                  'env': UNKNOWN_PROVENANCE_ENV}
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
     is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
-    train_df['sample_weight'] = np.where(
-        train_df['is_realtime'] != 1, 0.05,
-        np.where(is_owner_label, OWNER_LABEL_WEIGHT,
-                 np.where(is_forecast_label, 0.3, 1.0)),
-    )
     n_rt = int((train_df['is_realtime'] == 1).sum())
     n_fc = int(is_forecast_label.sum())
     n_ow = int(is_owner_label.sum())
+    weekly_weight_policy = resolve_weekly_anchor_weight(
+        realtime_weight_sum=(n_rt - n_fc - n_ow) * 1.0 + n_fc * 0.3 + n_ow * OWNER_LABEL_WEIGHT,
+        weekly_rows=len(train_df) - n_rt)
+    weekly_weight = weekly_weight_policy['weight']
+    train_df['sample_weight'] = np.where(
+        train_df['is_realtime'] != 1, weekly_weight,
+        np.where(is_owner_label, OWNER_LABEL_WEIGHT,
+                 np.where(is_forecast_label, 0.3, 1.0)),
+    )
     total_w = float(train_df['sample_weight'].sum())
     rt_w = float(train_df.loc[train_df['is_realtime'] == 1, 'sample_weight'].sum())
+    weekly_weight_policy['realtime_loss_share'] = round(rt_w / total_w, 4) if total_w else None
     logger.info(
         f'v2.3.1 blend: {before_filter} -> {len(train_df)} rows with baseline>0 '
         f'({n_rt} realtime of which {n_fc} vendor-forecast @ weight 0.3 and '
         f'{n_ow} owner-report @ weight {OWNER_LABEL_WEIGHT}, '
-        f'{len(train_df) - n_rt} weekly @ weight 0.05; '
+        f'{len(train_df) - n_rt} weekly @ weight {weekly_weight:.6g} ({weekly_weight_policy["policy"]}); '
         f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )
     known_prov = sorted(train_df['label_provenance'].dropna().unique().tolist())
@@ -2872,6 +3023,12 @@ def main():
             'fails closed and the backend serves the rule engine.', evicted)
 
     metadata.update({
+        # Which live readings this artifact never trained on, and the last date
+        # of live data it did train on. bandEval.js --gate scores the first; a
+        # later retrain's gate reads the second when this artifact becomes the
+        # incumbent, to prove the incumbent has not seen that retrain's window.
+        'time_holdout': time_holdout,
+        'sample_weight_policy': weekly_weight_policy,
         'feature_names': feature_cols,
         'feature_count': len(feature_cols),
         **venue_metadata,

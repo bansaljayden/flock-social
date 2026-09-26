@@ -265,6 +265,25 @@ test('the band verdict is ANDed with the point verdict, and a deliberate no-band
   }
 });
 
+test('quick_eval leaves the verdict pending the band gate, and defers only what the band gate can decide', () => {
+  const q = fs.readFileSync(path.join(ML_DIR, 'train', 'quick_eval.py'), 'utf8').replace(/\r\n/g, '\n');
+  // The point verdict is kept apart and overall_pass waits for the band gate.
+  assert.match(q, /point_gate_pass = bool\(overall_pass\)/);
+  assert.match(q, /if band_gate_required:\n\s+overall_pass = False/);
+  assert.match(q, /'point_gate_pass': point_gate_pass/);
+  assert.match(q, /'band_gate_required': band_gate_required/);
+  // The deferral: only with the band gate required, only for an incumbent that
+  // is present but cannot be aligned, only when its artifact can be replayed.
+  const block = q.slice(q.indexOf('incumbent_deferred = bool('), q.indexOf('if incumbent_deferred:'));
+  assert.match(block, /not ALLOW_NO_BAND_GATE/);
+  assert.match(block, /incumbent\.get\('status'\) == 'incomparable'/);
+  assert.match(block, /INCUMBENT_DIR \/ 'crowd_model\.onnx'\)\.exists\(\)/);
+  assert.match(block, /INCUMBENT_DIR \/ 'model_metadata\.json'\)\.exists\(\)/);
+  assert.ok(!/'absent'/.test(block), 'an absent incumbent is a failure, never a deferral');
+  assert.match(q, /'incumbent_deferred_to_band_gate': incumbent_deferred/);
+  assert.match(q, /floor_basis = 'deferred_to_band_gate'/);
+});
+
 test('the evaluation points every database setting at an address nothing listens on', () => {
   const env = { PGHOST: 'prod.example', PGPASSWORD: 'x', DATABASE_URL: 'postgresql://u:p@prod.example/db' };
   B.isolateFromDatabases(env);

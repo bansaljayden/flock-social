@@ -1166,7 +1166,10 @@ function writeBandGate(metaPath, gateResult) {
   if (g.band_gate_required === false) {
     throw new Error(`${metaPath} was gated with ML_ALLOW_NO_BAND_GATE; refusing to rewrite a verdict that was taken without this gate on purpose.`);
   }
-  g.band_gate = gateResult;
+  // When quick_eval could not line the incumbent up by its pickle it deferred
+  // its incumbent arms here; this verdict's beats_incumbent and
+  // point_error_guard, on identical live readings, are then the ones that count.
+  g.band_gate = { ...gateResult, decides_deferred_incumbent_arms: g.incumbent_deferred_to_band_gate === true };
   g.overall_pass = Boolean(g.point_gate_pass && gateResult.pass);
   g.verdict = g.overall_pass ? 'ship' : 'do_not_ship';
   g.band_gate_status = gateResult.pass ? 'pass' : 'fail';
