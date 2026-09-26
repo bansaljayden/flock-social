@@ -398,6 +398,144 @@ def resolve_weekly_anchor_weight(realtime_weight_sum: float, weekly_rows: int, e
     return {'policy': 'explicit', 'weight': w}
 
 
+# ---------------------------------------------------------------------------
+# ONE WEIGHT PER VENDOR UPDATE, NOT PER HOUR (2026-09-25).
+#
+# 81% of consecutive-hour live readings of a venue are identical, 82% even
+# where the venue's own weekly curve moves 10+ points between the two hours.
+# The sweep reads BestTime every hour and BestTime's live value refreshes more
+# slowly than that, so one vendor estimate is stored two, three, up to seven
+# times, and at weight 1.0 a row a sticky venue counts once per hour its value
+# sat unchanged.
+#
+# So a live row's tier weight is divided by the length of its RUN: the maximal
+# stretch of consecutive hours of one venue on one local date (observed_date,
+# hour) whose live readings are identical. A run of three weighs 1/3 a row, one
+# update in all. A run never crosses midnight, a gap, a forecast-labelled hour
+# or a changed value. Runs are counted before the serving-population filter, so
+# a run that loses a row there keeps its other rows at 1/length rather than
+# being promoted.
+#
+# It composes by multiplication. sample_weight = tier weight / run length, the
+# tier ladder is unchanged (weekly < forecast 0.3 < live 1.0), and the pickle
+# carries the divisor as `run_length_divisor` so train_model.assert_weighting_
+# matches_provenance checks weight x divisor, one number per tier. The weekly anchor
+# weight under FLOCK_WEEKLY_ANCHOR_WEIGHT=auto is solved against the realtime
+# total AFTER the division, so live rows keep their share of the loss.
+# Evaluation keeps every reading at full weight: the card is judged per
+# venue-hour, and only the loss changes.
+#
+#   FLOCK_RUN_LENGTH_WEIGHTS=on    (default) live rows weigh 1 / run length
+#   FLOCK_RUN_LENGTH_WEIGHTS=off   every live row at its tier weight (ablation)
+# ---------------------------------------------------------------------------
+RUN_LENGTH_ENV = 'FLOCK_RUN_LENGTH_WEIGHTS'
+RUN_LENGTH_POLICY = _policy(RUN_LENGTH_ENV, 'on', {'on', 'off'})
+
+
+def _is_live_row(df: pd.DataFrame) -> np.ndarray:
+    realtime = (pd.to_numeric(df['is_realtime'], errors='coerce') == 1).to_numpy()
+    prov = df['label_provenance'].astype('string').fillna('').str.strip().to_numpy()
+    return realtime & (prov == 'live')
+
+
+def live_run_lengths(df: pd.DataFrame) -> np.ndarray:
+    """Per row, the length of its run of identical consecutive-hour live readings.
+
+    1 for every row that is not a live reading, and for a live reading with no
+    date, hour or label to place it in a run.
+    """
+    run_length = np.ones(len(df), dtype=np.int32)
+    live = _is_live_row(df)
+    idx = np.flatnonzero(live)
+    if len(idx) == 0:
+        return run_length
+    sub = pd.DataFrame({
+        'pos': idx,
+        'venue': df['venue_id'].astype(str).to_numpy()[idx],
+        'date': df['observed_date'].astype('string').fillna('').str.strip().to_numpy()[idx],
+        'hour': pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)[idx],
+        'value': pd.to_numeric(df['busyness_pct'], errors='coerce').to_numpy(dtype=float)[idx],
+    })
+    sub = sub[(sub['date'] != '') & np.isfinite(sub['hour']) & np.isfinite(sub['value'])]
+    dup = sub.duplicated(['venue', 'date', 'hour'], keep=False)
+    if dup.any():
+        raise CorpusContractError(
+            f'{int(dup.sum())} live readings share a (venue, observed_date, hour) with another '
+            f'live reading, e.g. {sub[dup].head(3)[["venue", "date", "hour"]].to_dict("records")}. '
+            'Migration 024 keys realtime rows on (venue_id, day_of_week, hour, observed_date), so '
+            'the export is not the corpus; a run length over duplicated hours would mean nothing.')
+    sub = sub.sort_values(['venue', 'date', 'hour'], kind='stable')
+    v = sub['venue'].to_numpy()
+    d = sub['date'].to_numpy()
+    h = sub['hour'].to_numpy()
+    x = sub['value'].to_numpy()
+    continues = np.zeros(len(sub), dtype=bool)
+    continues[1:] = (v[1:] == v[:-1]) & (d[1:] == d[:-1]) & (h[1:] == h[:-1] + 1) & (x[1:] == x[:-1])
+    run_id = np.cumsum(~continues)
+    run_length[sub['pos'].to_numpy()] = np.bincount(run_id)[run_id]
+    return run_length
+
+
+def run_length_divisor(df: pd.DataFrame, run_length: np.ndarray, policy: str) -> np.ndarray:
+    """What each row's tier weight is divided by: its run length under 'on', else 1."""
+    if policy not in ('on', 'off'):
+        raise CorpusContractError(f'{RUN_LENGTH_ENV}={policy!r} is not one of on, off.')
+    divisor = np.ones(len(df), dtype=np.int32)
+    if policy == 'on':
+        live = _is_live_row(df)
+        divisor[live] = np.asarray(run_length, dtype=np.int32)[live]
+    return divisor
+
+
+def run_length_record(df: pd.DataFrame, run_length: np.ndarray, divisor: np.ndarray,
+                      policy: str) -> Dict:
+    """What the run-length weighting did to this frame's live rows, for metadata."""
+    live = _is_live_row(df)
+    lengths = np.asarray(run_length)[live]
+    by_length = pd.Series(np.minimum(lengths, 4)).value_counts().sort_index()
+    return {
+        'policy': policy,
+        'env': RUN_LENGTH_ENV,
+        'live_rows': int(live.sum()),
+        'live_rows_by_run_length': {('4+' if k == 4 else str(int(k))): int(n) for k, n in by_length.items()},
+        'live_rows_in_runs_over_one_pct': round(float((lengths > 1).mean()) * 100, 1) if len(lengths) else 0.0,
+        'live_weight_before': int(live.sum()),
+        'live_weight_after': round(float((1.0 / np.asarray(divisor)[live]).sum()), 3),
+    }
+
+
+def assign_sample_weights(train_df: pd.DataFrame, run_policy: str,
+                          env=os.environ) -> Tuple[Dict, np.ndarray]:
+    """Write train_df['sample_weight']: the tier ladder over the run-length divisor.
+
+    Realtime rows first: live 1.0, forecast 0.3, owner OWNER_LABEL_WEIGHT, each
+    divided by its run length (live rows under FLOCK_RUN_LENGTH_WEIGHTS=on, 1
+    otherwise). Weekly rows take the anchor weight after, because
+    FLOCK_WEEKLY_ANCHOR_WEIGHT=auto solves it against the realtime total. Needs
+    live_run_length (live_run_lengths) and label_provenance on the frame.
+    Returns the sample_weight_policy record and the divisor, row-aligned.
+    """
+    is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
+    is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
+    run_divisor = run_length_divisor(train_df, train_df['live_run_length'].to_numpy(), run_policy)
+    train_df['sample_weight'] = np.where(
+        train_df['is_realtime'] != 1, 0.0,
+        np.where(is_owner_label, OWNER_LABEL_WEIGHT,
+                 np.where(is_forecast_label, 0.3, 1.0)),
+    ) / run_divisor
+    is_rt_row = (train_df['is_realtime'] == 1).to_numpy()
+    policy = resolve_weekly_anchor_weight(
+        realtime_weight_sum=float(train_df['sample_weight'].to_numpy()[is_rt_row].sum()),
+        weekly_rows=int((~is_rt_row).sum()), env=env)
+    train_df.loc[~is_rt_row, 'sample_weight'] = policy['weight']
+    policy['live_run_length'] = run_length_record(
+        train_df, train_df['live_run_length'].to_numpy(), run_divisor, run_policy)
+    total_w = float(train_df['sample_weight'].sum())
+    rt_w = float(train_df['sample_weight'].to_numpy()[is_rt_row].sum())
+    policy['realtime_loss_share'] = round(rt_w / total_w, 4) if total_w else None
+    return policy, run_divisor
+
+
 # Features that a policy switched off for this run. get_feature_columns()
 # excludes them, so metadata.feature_names never advertises a dead slot.
 DROPPED_FEATURES: set = set()
@@ -2516,6 +2654,10 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'has_venue_baseline',  # leaks the same signal as baseline_busyness
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
+        # 2026-09-25: how many consecutive hours the row's live value sat
+        # unchanged, counted over the row's own label and its neighbours'. A
+        # function of the labels, and absent at serving: a weight, never a feature.
+        'live_run_length',
         'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
         # Round 26 CARRIED COLUMN. Whether the row's weather is a reading or the
         # outage vector. As a feature it would be a perfect proxy for weekly
@@ -2810,6 +2952,11 @@ def main():
     # further down, once the frame is the one X will be built from.
     cell_aggregates = build_category_cell_aggregates(train_df, LEAVE_OUT_COL)
 
+    # Runs of identical live readings are counted on every live reading of the
+    # training window, before the filter below removes any of them (see the
+    # block above live_run_lengths).
+    train_df['live_run_length'] = live_run_lengths(train_df)
+
     before_filter = len(train_df)
     # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
     # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
@@ -2846,28 +2993,23 @@ def main():
     holdout_df, unknown_holdout = exclude_unknown_provenance(holdout_df, 'holdout')
     unknown_provenance_record = {'train': unknown_train, 'holdout': unknown_holdout,
                                  'env': UNKNOWN_PROVENANCE_ENV}
+    weekly_weight_policy, run_divisor = assign_sample_weights(train_df, RUN_LENGTH_POLICY)
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
     is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
     n_rt = int((train_df['is_realtime'] == 1).sum())
     n_fc = int(is_forecast_label.sum())
     n_ow = int(is_owner_label.sum())
-    weekly_weight_policy = resolve_weekly_anchor_weight(
-        realtime_weight_sum=(n_rt - n_fc - n_ow) * 1.0 + n_fc * 0.3 + n_ow * OWNER_LABEL_WEIGHT,
-        weekly_rows=len(train_df) - n_rt)
     weekly_weight = weekly_weight_policy['weight']
-    train_df['sample_weight'] = np.where(
-        train_df['is_realtime'] != 1, weekly_weight,
-        np.where(is_owner_label, OWNER_LABEL_WEIGHT,
-                 np.where(is_forecast_label, 0.3, 1.0)),
-    )
     total_w = float(train_df['sample_weight'].sum())
     rt_w = float(train_df.loc[train_df['is_realtime'] == 1, 'sample_weight'].sum())
-    weekly_weight_policy['realtime_loss_share'] = round(rt_w / total_w, 4) if total_w else None
+    rl = weekly_weight_policy['live_run_length']
     logger.info(
         f'v2.3.1 blend: {before_filter} -> {len(train_df)} rows with baseline>0 '
         f'({n_rt} realtime of which {n_fc} vendor-forecast @ weight 0.3 and '
         f'{n_ow} owner-report @ weight {OWNER_LABEL_WEIGHT}, '
         f'{len(train_df) - n_rt} weekly @ weight {weekly_weight:.6g} ({weekly_weight_policy["policy"]}); '
+        f'run-length weights {rl["policy"]}: {rl["live_rows"]} live rows weigh {rl["live_weight_after"]} '
+        f'(runs {rl["live_rows_by_run_length"]}); '
         f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )
     known_prov = sorted(train_df['label_provenance'].dropna().unique().tolist())
@@ -3073,6 +3215,9 @@ def main():
         'y_actual': train_df['busyness_pct'].values.astype(np.float32),
         'baseline': train_df['baseline_busyness'].values.astype(np.float32),
         'sample_weight': train_df['sample_weight'].values.astype(np.float32),
+        # What each row's tier weight was divided by: its live run length under
+        # FLOCK_RUN_LENGTH_WEIGHTS=on, else 1. train_model checks weight x this.
+        'run_length_divisor': run_divisor.astype(np.int16),
         'feature_cols': feature_cols,
         'cities': train_df['city'].values,
         'hour': train_df['hour'].values.astype(np.int16),
@@ -3202,6 +3347,7 @@ def main():
             'weather_policy': WEATHER_POLICY,
             'calendar_policy': CALENDAR_POLICY,
             'dead_slot_policy': DEAD_SLOT_POLICY,
+            'run_length_policy': RUN_LENGTH_POLICY,
             'weather_code_recovery': {
                 'train': weather_stats,
                 'holdout': holdout_weather_stats,
