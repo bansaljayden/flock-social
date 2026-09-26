@@ -133,7 +133,10 @@ test('every surface that credits the crowd model reads the number source first',
   expect(card).toMatch(/madeFrom \? `From \$\{madeFrom\}\.` : 'From the Flock crowd model\.'/);
   // The switched line says when the reports are from. The line without a
   // source is the switched-off one and keeps its words exactly.
-  expect(card).toMatch(/madeFrom \? `From \$\{madeFrom\}, \$\{REPORTS_ADJUSTED_WORDS\}\.` : 'From the crowd model, adjusted by people who are there\.'/);
+  expect(card).toMatch(/madeFrom \? `From \$\{madeFrom\}, \$\{REPORTS_ADJUSTED_WORDS\}\.` : `From the crowd model, \$\{REPORTS_ADJUSTED_WORDS\}\.`/);
+  // The blended reports come from a four-week window for this time of week,
+  // so no line may say the people adjusting the number are there now.
+  expect(card).not.toMatch(/adjusted by people who are there/);
   // A number that is the venue's pattern alone is not LIVE.
   expect(card).toMatch(/if \(isPatternOnlySource\(cd\.numberSource\)\) return false;/);
   // A source that already says people adjusted it is not followed by the
