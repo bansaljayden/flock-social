@@ -3536,5 +3536,21 @@ class StatusLights(unittest.TestCase):
         self.assertEqual(states, {True, False})
 
 
+class Pi5GpioSwap(unittest.TestCase):
+    """setup.sh on a Pi 5 has to leave rpi-lgpio as the RPi.GPIO Python imports."""
+
+    def setup_text(self):
+        return (Path(__file__).resolve().parent / 'setup.sh').read_text(encoding='utf-8')
+
+    def test_the_old_library_is_removed_on_current_raspberry_pi_os(self):
+        # Debian trixie refuses a plain pip uninstall of a system-wide package.
+        # The refusal was sent to /dev/null, so the old RPi.GPIO stayed in
+        # /usr/local and shadowed rpi-lgpio on every Pi 5 installed this way.
+        self.assertIn('pip3 uninstall -y --break-system-packages RPi.GPIO', self.setup_text())
+
+    def test_the_installer_checks_what_python_actually_imports(self):
+        self.assertIn("'lgpio' not in inspect.getsource(G)", self.setup_text())
+
+
 if __name__ == '__main__':
     unittest.main()
