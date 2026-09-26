@@ -45,8 +45,10 @@
 //     second stand-down in the same slot, a token replaced mid-way, a retry
 //     that the correction made a second ring of, an older all-clear standing
 //     in for a newer one, a device corrected to one push without end, one
-//     device's spent history holding another's back, and a replaced token
-//     starting the count again;
+//     device's spent history holding another's back, a replaced token
+//     starting the count again, a token replaced while its own correction was
+//     out or while its retry waited, and a chain whose counts are all
+//     forgotten, which the alert's deadline still ends;
 //   * and the times that let the app tell an alarm from the stand-down that
 //     called it off: the stand-down's socket event skips anybody a newer
 //     alarm reached, and every all-clear carries the stand-down's own time.
@@ -2152,6 +2154,270 @@ test('a phone whose token keeps being replaced while its retry is out is correct
     assert.ok(replaced > cap, `the chain needs more replacements than the cap to show anything (${replaced})`);
     assert.ok(provider.refused.length <= cap, `${provider.refused.length} corrections to tokens registered in place of one that went`);
     assert.strictEqual(pushHelper.SOS_CORRECTIONS_PER_KEY, cap);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+// ===========================================================================
+// A phone whose token is replaced is found before anything is set aside for
+// it, and a chain ends at its alert's deadline whatever the counts remember
+// ===========================================================================
+
+test('a phone whose token is replaced while its correction is out, and the correction then fails unsure, is corrected on the token registered now', async () => {
+  // A correction that fails without saying whether it arrived is left to the
+  // retry it queued. The check set such a phone aside before it asked which
+  // devices were still registered, so when the phone's token had been
+  // replaced while the correction was out, nothing went to the new token,
+  // the retry owed to the old one found no device and was deleted, and the
+  // phone kept the alarm the person had withdrawn.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.t@example.com', '5550323');
+  const phone = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  try {
+    // The alarm sticks at the provider, "I'm OK" lands, and the alarm lands
+    // after it.
+    rules.push(alarmTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the all-clear');
+    rules.push(clearTo(phone));
+    await letLand(take(provider, alarmTo(phone)));
+    // The correction, the all-clear again, sticks at the provider...
+    await until(async () => provider.held.length === 1, 'the correction at the provider');
+    // ...the phone's token is replaced while it is out...
+    await pool.query('DELETE FROM device_tokens WHERE id = $1', [phone.id]);
+    const renewed = await addPhone(rec);
+    // ...and it fails without saying whether it arrived.
+    take(provider, clearTo(phone)).fail();
+    await until(async () => typesOn(provider, renewed).length === 1, 'the all-clear on the token registered now');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+    // The retry the failed correction queued is owed to a row that has gone:
+    // taken off it, so no release stands in for it a second time.
+    assert.deepStrictEqual(await outboxFor(rec), [], 'a retry owed only to a token that has gone was kept');
+    await sweepUntilEmpty(rec, 4);
+    await sleep(150);
+    assert.deepStrictEqual(typesOn(provider, renewed), ['safety_alert_cancelled'],
+      'the phone kept the alarm the person had withdrawn, or heard the all-clear twice');
+    assert.deepStrictEqual(typesOn(provider, phone), ['safety_alert_cancelled', 'safety_alert']);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('a retry owed to a phone whose token is replaced while it waits goes to the token registered now', async () => {
+  // The other order: the phone is still registered when its correction fails
+  // unsure, so it is rightly left to its retry, and the token is replaced
+  // while that retry waits. The retry then found no device and was deleted.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.u@example.com', '5550324');
+  const phone = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  try {
+    rules.push(alarmTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the all-clear');
+    rules.push(clearTo(phone));
+    await letLand(take(provider, alarmTo(phone)));
+    await until(async () => provider.held.length === 1, 'the correction at the provider');
+    take(provider, clearTo(phone)).fail();
+    await until(async () => (await queuedFor(rec, 'safety_alert_cancelled', phone)).length === 1, 'the correction queued for a retry');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+    assert.deepStrictEqual(typesOn(provider, phone), ['safety_alert_cancelled', 'safety_alert'],
+      'a phone waiting on its own retry was sent the all-clear again at once');
+
+    // While the retry waits, the phone's token is replaced.
+    await pool.query('DELETE FROM device_tokens WHERE id = $1', [phone.id]);
+    const renewed = await addPhone(rec);
+    await sweepUntilEmpty(rec, 4);
+    await until(async () => typesOn(provider, renewed).length === 1, 'the all-clear on the token registered now');
+    await sleep(150);
+    assert.deepStrictEqual(typesOn(provider, renewed), ['safety_alert_cancelled'],
+      'the retry found no device and was deleted, and the phone kept the alarm the person had withdrawn');
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('a retry that finds its token gone while the device list cannot be read is checked again, and reaches the token registered now', async () => {
+  // Only the list of devices registered now can say that a device has gone,
+  // so a check that cannot read it tries again rather than letting go.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.v@example.com', '5550325');
+  const phone = await addPhone(rec);
+  pushHelper._setSosRecheckDelays([60, 120, 240]);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  const realQuery = pool.query;
+  try {
+    rules.push(alarmTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the all-clear');
+    rules.push(clearTo(phone));
+    await letLand(take(provider, alarmTo(phone)));
+    await until(async () => provider.held.length === 1, 'the correction at the provider');
+    take(provider, clearTo(phone)).fail();
+    await until(async () => (await queuedFor(rec, 'safety_alert_cancelled', phone)).length === 1, 'the correction queued for a retry');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+
+    // The token is replaced while the retry waits, and the first read of the
+    // account's devices after its release fails. The release's own send asks
+    // for the one device it is owed to, and is left alone.
+    await pool.query('DELETE FROM device_tokens WHERE id = $1', [phone.id]);
+    const renewed = await addPhone(rec);
+    let failures = 1;
+    pool.query = function failing(text, params) {
+      if (failures > 0 && typeof text === 'string' && text.includes('SELECT id, token FROM device_tokens')
+        && Array.isArray(params) && params[1] === null) {
+        failures -= 1;
+        return Promise.reject(new Error('connection terminated unexpectedly'));
+      }
+      return realQuery.apply(pool, arguments);
+    };
+    await sweepUntilEmpty(rec, 4);
+    await until(async () => typesOn(provider, renewed).length === 1, 'the all-clear on the token registered now');
+    await sleep(150);
+    assert.strictEqual(failures, 0, 'the device list was never read after the release');
+    assert.deepStrictEqual(typesOn(provider, renewed), ['safety_alert_cancelled'],
+      'the check let go of a phone it could not tell had gone');
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    pool.query = realQuery;
+    pushHelper._setSosRecheckDelays(null);
+    stopPushThrough();
+  }
+});
+
+test('with every count forgotten between releases, a phone the provider keeps refusing is let go at the alert\'s deadline', async () => {
+  // Each count in sosCorrections is one key in a map of five thousand, the
+  // least recently corrected pushed out first, and a key pushed out starts
+  // again at nothing. With more keys than that corrected inside one window,
+  // a phone the provider kept refusing was corrected, queued and released
+  // again for as long as it refused. Here every count is forgotten before
+  // each release, which is the most any eviction can do. The alert's
+  // deadline, six hours from its created_at, is read from Postgres, and is
+  // what has to end it: no correction after it, no retry queued to expire
+  // after it, and no release after it, from a row queued by any process.
+  const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
+  const cap = 3; // SOS_CORRECTIONS_PER_KEY, held to it below
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  const phone = await addPhone(rec);
+  // An alert raised six hours ago, less four seconds: its window is closing.
+  const { rows: [alert] } = await pool.query(
+    `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients, created_at)
+     VALUES ($1, 1, '{}'::int[], '[]'::jsonb, (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 millisecond'))
+     RETURNING id, FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms`,
+    [sen.id, windowMs - 4000]
+  );
+  const deadline = Number(alert.created_ms) + windowMs;
+  pushThrough = true;
+  const refusedAt = [];
+  stubProvider({
+    refuse: (m) => {
+      const refusing = m.token === phone.token && m.data.type === 'safety_alert';
+      if (refusing) refusedAt.push(Date.now());
+      return refusing;
+    },
+  });
+  try {
+    // The alert's flock leg, as /alert runs it: the alarm is refused, is
+    // corrected, and that is refused and queued for a retry.
+    await S.alertFlockMembers(io, { id: sen.id, name: sen.name }, null, 1, alert.id);
+    await until(async () => (await outboxFor(rec)).length === 1 && pushHelper._openSosSlots() === 0, 'the alarm queued for a retry');
+
+    let latestExpiry = 0;
+    let sweeps = 0;
+    while (Date.now() < deadline + 2500) {
+      pushHelper._resetDebounce();
+      const { rows: queued } = await pool.query(
+        `SELECT FLOOR(EXTRACT(EPOCH FROM expires_at) * 1000)::bigint AS expires_ms FROM push_outbox WHERE user_id = $1`,
+        [rec.id]
+      );
+      for (const row of queued) latestExpiry = Math.max(latestExpiry, Number(row.expires_ms));
+      await pool.query(`UPDATE push_outbox SET next_attempt_at = NOW() - INTERVAL '1 second' WHERE user_id = $1`, [rec.id]);
+      await pushHelper.sweepPushOutbox();
+      sweeps += 1;
+      await sleep(30);
+      await until(async () => pushHelper._openSosSlots() === 0, `sweep ${sweeps} settled`);
+    }
+
+    const before = refusedAt.filter((t) => t < deadline).length;
+    assert.ok(before > 2 * cap + 3, `the chain has to outrun the counts to show anything (${before} sends before the deadline)`);
+    // A send already on its way at the deadline may answer just after it.
+    const late = refusedAt.filter((t) => t > deadline + 500);
+    assert.strictEqual(late.length, 0, `${late.length} sends to a phone the provider keeps refusing after the alert's deadline`);
+    assert.deepStrictEqual(await outboxFor(rec), [], 'a retry outlived the alert\'s deadline');
+    assert.ok(latestExpiry <= deadline, `a retry was queued to expire ${latestExpiry - deadline} ms after the alert's deadline`);
+
+    // A copy queued before any of this, with the outbox's usual half hour to
+    // live, released after the deadline: dropped, and not sent.
+    const expired = async () => (await ledgerFor(rec)).filter((x) => x === 'safety_alert:expired').length;
+    const expiredBefore = await expired();
+    const alarm = pushes.filter((p) => p.userId === rec.id && p.data.type === 'safety_alert').pop();
+    const row = await queueCopy(rec, alarm, [phone], 0);
+    await makeDue(row);
+    const mark = refusedAt.length;
+    await pushHelper.sweepPushOutbox();
+    await until(async () => (await expired()) === expiredBefore + 1, 'the release recorded as expired');
+    assert.strictEqual(refusedAt.length, mark, 'a release after the alert\'s deadline was sent');
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+    assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
+    assert.strictEqual(pushHelper.SOS_CORRECTIONS_PER_KEY, cap);
+  } finally {
+    stopPushThrough();
+  }
+});
+
+test('past its alert\'s deadline, a push the provider refuses is neither corrected nor queued', async () => {
+  // The check itself, apart from the outbox: once the window of the alert a
+  // person is checked against has closed, rule 4 sends that person nothing.
+  const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  const phone = await addPhone(rec);
+  // An alert raised six hours and a minute ago that still stands.
+  const { rows: [alert] } = await pool.query(
+    `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients, created_at)
+     VALUES ($1, 1, '{}'::int[], '[]'::jsonb, (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 millisecond'))
+     RETURNING id`,
+    [sen.id, windowMs + 60 * 1000]
+  );
+  pushThrough = true;
+  const provider = stubProvider({ refuse: (m) => m.token === phone.token });
+  try {
+    // Its alarm reaches the provider only now, and is refused.
+    await S.alertFlockMembers(io, { id: sen.id, name: sen.name }, null, 1, alert.id);
+    await until(async () => (await ledgerFor(rec)).includes('safety_alert:failed') && pushHelper._openSosSlots() === 0,
+      'the alarm\'s answer, and the check after it');
+    await sleep(150);
+    assert.strictEqual(provider.refused.length, 1, `${provider.refused.length} sends: a correction went out past the alert's deadline`);
+    assert.deepStrictEqual(await outboxFor(rec), [], 'a retry was queued past the alert\'s deadline');
+    assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
   } finally {
     stopPushThrough();
   }

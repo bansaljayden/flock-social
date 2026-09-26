@@ -461,10 +461,11 @@ test('coverage: a repeat covers what the last stand-down covered, not an alert w
   assert.deepStrictEqual(cover.contacts.map((c) => c.contact_name), ['Dad']);
 });
 
-test('a device\'s count of SOS corrections lasts as long as a stand-down can reach back', () => {
-  // pushHelper keeps no copy of routes/safety.js's window, so the two are held
-  // together here.
-  assert.strictEqual(pushHelper.SOS_CORRECTION_TTL_MS, S.CANCEL_WINDOW_MS);
+test('an alert\'s pushes are looked after, and its devices\' corrections counted, as long as a stand-down can reach back', () => {
+  // pushHelper cannot require a route, so it keeps its own copy of
+  // routes/safety.js's window, and the two are held together here: rule 5's
+  // deadline and the life of a count in sosCorrections both run on it.
+  assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, S.CANCEL_WINDOW_MS);
 });
 
 test('coverage: the all-clear is stamped with the stand-down\'s own time, on a repeat the earlier one\'s', () => {

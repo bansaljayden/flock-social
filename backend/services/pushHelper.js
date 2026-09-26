@@ -257,8 +257,9 @@ const UNCHECKABLE_RETRIED = RINGS_THROUGH_THE_NIGHT;
 //     the new alarm: the phone said "says they are OK" while the person needed
 //     help. That is the worse of the two, because it hides an emergency.
 //
-// Four rules, read off emergency_alerts: withdrawn_at (migration 084) and the
-// audience each alert recorded (flock_recipient_ids, migration 063).
+// Five rules, read off emergency_alerts: withdrawn_at (migration 084), the
+// audience each alert recorded (flock_recipient_ids, migration 063), and when
+// the alert was raised (created_at).
 //
 //   1. NO ALARM FOR AN ALERT THAT HAS BEEN STOOD DOWN. Each alarm push names
 //      its alert (alertId, which the server keeps and never sends to a device)
@@ -287,18 +288,28 @@ const UNCHECKABLE_RETRIED = RINGS_THROUGH_THE_NIGHT;
 //      thing on every device; if it was stood down, an all-clear must be. A
 //      device that says otherwise is sent the right one, only that device, and
 //      its answer is checked the same way, whatever it was. So is a device
-//      whose send failed without saying the copy never arrived, and when a
-//      device's row has gone since (a token replaced or pruned), the devices
-//      registered now take its place. The right one is the copy this process
-//      sent, or, when nothing in memory still holds it, a push built from
-//      emergency_alerts and users; an all-clear carries the time of the
+//      whose send failed without saying the copy never arrived. When a
+//      device's row has gone since (a token replaced or pruned), or a push
+//      sent to it found no row left, the devices registered now take its
+//      place, even if it was waiting on a retry of its own: that retry can no
+//      longer reach it, and is taken off it. The right one is the copy this
+//      process sent, or, when nothing in memory still holds it, a push built
+//      from emergency_alerts and users; an all-clear carries the time of the
 //      stand-down that withdrew the alert, so the app can tell the alarm it
 //      called off from a newer one, and an all-clear older than that
 //      stand-down is not the right one. A correction that reaches a device
 //      takes that device off any retry of the same push still queued for it,
 //      and never off a newer all-clear's. A correction that fails is queued
 //      like any failed push, and each device is corrected to one push a few
-//      times at most (sosCorrections), so no chain of them goes on.
+//      times at most (sosCorrections).
+//   5. NOTHING AFTER THE ALERT'S DEADLINE. An alert can be stood down for six
+//      hours from its created_at (CANCEL_WINDOW_MS in routes/safety.js), and
+//      that is as long as its pushes are looked after: rule 4 corrects nothing
+//      once the window of the alert it checks against has closed, a queued SOS
+//      push expires no later than its alert's deadline, and one released
+//      after that is dropped. The counts in sosCorrections are forgotten when
+//      that map is full, so they alone cannot end a chain of corrections that
+//      fail and are retried; the deadline does, and nothing resets it.
 //
 // A check that cannot read Postgres does not give up at once: it tries again a
 // few times first. The same step catches a rule 1 or rule 3 read that failed
@@ -368,17 +379,54 @@ async function newerAlarmReached(userId, data = {}) {
 
 // Rule 4's truth: the newest alert of the sender whose recorded audience holds
 // this person, whether it still stands, and, when it does not, when it was
-// stood down. A row from before the snapshot (NULL, migration 064) names
-// nobody and is passed over. withdrawn_at is naive UTC (migration 084), so it
-// is read as epoch milliseconds here rather than handed to a driver that would
-// read it in the server's local zone.
+// stood down; and, for rule 5, when it was raised. A row from before the
+// snapshot (NULL, migration 064) names nobody and is passed over. withdrawn_at
+// and created_at are naive UTC (migration 084, schema.sql), so they are read
+// as epoch milliseconds here rather than handed to a driver that would read
+// them in the server's local zone.
 const SOS_TRUTH_SQL = `SELECT id, withdrawn_at IS NULL AS standing,
-          FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS withdrawn_ms
+          FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS withdrawn_ms,
+          FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms
      FROM emergency_alerts
     WHERE user_id = $1
       AND $2 = ANY(flock_recipient_ids)
     ORDER BY id DESC
     LIMIT 1`;
+
+// Rule 5: how long after its created_at an alert's pushes are looked after.
+// The stand-down's own window, CANCEL_WINDOW_MS in routes/safety.js, which a
+// test holds this to, since this file cannot require a route.
+const SOS_ALERT_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+// Rule 5 for the outbox: when the alert a queued SOS push is for was raised.
+// An alarm names its alert. An all-clear, or an alarm queued before alarms
+// named theirs, is for the alert rule 4 checks this person against: the
+// sender's newest whose recorded audience holds them.
+const SOS_ALERT_RAISED_SQL = `SELECT FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms
+     FROM emergency_alerts
+    WHERE user_id = $1
+      AND (id = $3::int OR ($3::int IS NULL AND $2::int = ANY(flock_recipient_ids)))
+    ORDER BY id DESC
+    LIMIT 1`;
+
+// The moment after which the SOS push `data` describes is not sent to this
+// person again, in epoch milliseconds (rule 5). Null when there is no such
+// alert or it cannot be read, and the outbox's own expiry is all that applies.
+async function sosDeadline(userId, data = {}) {
+  const sender = actorFrom(data);
+  const recipient = Number(userId);
+  if (!sender || !Number.isInteger(recipient) || recipient <= 0) return null;
+  const alertId = data && data.type === 'safety_alert' ? alertIdOf(data) : null;
+  try {
+    const r = await pool.query(SOS_ALERT_RAISED_SQL, [sender, recipient, alertId]);
+    const row = r && r.rows && r.rows[0];
+    const raised = row ? Number(row.created_ms) : NaN;
+    return Number.isFinite(raised) ? raised + SOS_ALERT_WINDOW_MS : null;
+  } catch (err) {
+    console.error('[Push] could not read when an SOS alert was raised:', err.message);
+    return null;
+  }
+}
 
 // What rule 4 sends when nothing in memory still holds the right push: the
 // alert and its sender's name for an alarm, the name and the stand-down's time
@@ -436,20 +484,40 @@ const SOS_QUEUED_COPIES_NARROW_SQL = `UPDATE push_outbox
       AND ($6::text IS NULL OR (data->>'at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
                                 AND data->>'at' <= $6::text))`;
 
+// Queued SOS pushes from one sender to one person, taken off devices whose
+// rows have gone. Nothing queued can reach such a device again, and the
+// devices registered now have just been sent what is true in its place
+// (checkSosSlot), so a release that found its device gone must not stand in
+// for it a second time. Same shape as the two above: a row owed to no other
+// device goes, one owed to others as well is narrowed.
+const SOS_GONE_COPIES_DELETE_SQL = `DELETE FROM push_outbox
+    WHERE user_id = $1
+      AND token_ids <@ $2::int[]
+      AND data->>'type' IN ('safety_alert', 'safety_alert_cancelled')
+      AND data->>'fromUserId' = $3::text`;
+const SOS_GONE_COPIES_NARROW_SQL = `UPDATE push_outbox
+      SET token_ids = ARRAY(SELECT t FROM unnest(token_ids) AS t WHERE t <> ALL($2::int[]))
+    WHERE user_id = $1
+      AND token_ids && $2::int[]
+      AND data->>'type' IN ('safety_alert', 'safety_alert_cancelled')
+      AND data->>'fromUserId' = $3::text`;
+
 // Rule 4's register: one slot per person and sender, holding the SOS pushes
 // still on their way to that person, what each of their devices accepted
-// last, and the newest all-clear sent to them. In process on purpose: a send
-// still running exists only in the process that is running it, and this app
-// runs one (numReplicas 1 on Railway).
+// last, the devices a push that went to the provider was addressed to, and
+// the newest all-clear sent to them. In process on purpose: a send still
+// running exists only in the process that is running it, and this app runs
+// one (numReplicas 1 on Railway).
 //
 // It drains itself. A push leaves its slot when its send answers, and a send
 // always answers: the provider call settles on firebase-admin's own retries and
 // timeouts, and one still running at the 8 second deadline answers through
 // `settled`, which never rejects. The slot is deleted once its last push has
-// answered and every device it reached agrees with Postgres, or is waiting on
-// the retry its own failed correction queued. The ceilings are for what would
-// stop that. Past SOS_SLOTS_MAX a push goes out unregistered; corrections are
-// counted in sosCorrections below; a check that cannot read Postgres tries
+// answered and every device it reached agrees with Postgres, or is still
+// registered and waiting on the retry its own failed correction queued. The
+// ceilings are for what would stop that. Past SOS_SLOTS_MAX a push goes out
+// unregistered; corrections are counted in sosCorrections below and end at
+// the alert's deadline (rule 5); a check that cannot read Postgres tries
 // again after each of SOS_RECHECK_DELAYS_MS and then lets the slot go. Every
 // push itself still goes.
 const sosSlots = new Map(); // `${recipient}|${sender}` -> slot
@@ -470,19 +538,20 @@ let sosAcceptOrder = 0;
 // all that is left. A device whose row has gone since its push (a token
 // replaced or pruned) cannot be traced to the row that took its place, so the
 // devices sent to in its stead count together, on the account and the target.
-// An entry lapses after the stand-down window (CANCEL_WINDOW_MS in
-// routes/safety.js), past which nothing is left to correct; the map holds at
-// most SOS_CORRECTIONS_MAX keys, the least recently corrected out first.
+// An entry lapses after the alert window (SOS_ALERT_WINDOW_MS), past which
+// nothing is left to correct; the map holds at most SOS_CORRECTIONS_MAX keys,
+// the least recently corrected out first. A key pushed out that way starts
+// its count again, so these counts are the fine bound and not the last one:
+// rule 5's deadline is read from Postgres, and no eviction moves it.
 const sosCorrections = new Map(); // `${deviceId}|${target}` or `u${recipient}|${target}` -> { count, at }
 const SOS_CORRECTIONS_PER_KEY = 3;
 const SOS_CORRECTIONS_MAX = 5000;
-const SOS_CORRECTION_TTL_MS = 6 * 60 * 60 * 1000;
 
 // Corrections already sent under `key` inside the window.
 function correctionsSent(key) {
   const entry = sosCorrections.get(key);
   if (!entry) return 0;
-  if (Date.now() - entry.at > SOS_CORRECTION_TTL_MS) {
+  if (Date.now() - entry.at > SOS_ALERT_WINDOW_MS) {
     sosCorrections.delete(key);
     return 0;
   }
@@ -600,17 +669,19 @@ function clearCopyFor(slot, truth) {
 // Registers one SOS push, `kind` 'alarm' or 'clear', from before its checks.
 // Returns `accepted(deviceId)` and `uncertain(deviceId)`, which record, the
 // moment each happens, a device taking a copy and a send to a device failing
-// in a way that does not say whether the copy arrived; and `answered()`,
-// which records the push's answer. `correctionFor` is rule 4's target when the
-// push is a correction, and null otherwise.
+// in a way that does not say whether the copy arrived; `owed(deviceIds)`,
+// which records the devices a push that went to the provider was addressed
+// to, so that one which never answers is known to have had no row left; and
+// `answered()`, which records the push's answer. `correctionFor` is rule 4's
+// target when the push is a correction, and null otherwise.
 function holdSosSlot(kind, userId, title, body, data, correctionFor = null) {
-  const none = { accepted: () => {}, uncertain: () => {}, answered: () => {} };
+  const none = { accepted: () => {}, uncertain: () => {}, owed: () => {}, answered: () => {} };
   const key = sosSlotKey(userId, data);
   if (!key) return none;
   let slot = sosSlots.get(key);
   if (!slot) {
     if (sosSlots.size >= SOS_SLOTS_MAX) return none;
-    slot = { pending: new Set(), devices: new Map(), clear: null, round: 0, rechecks: 0 };
+    slot = { pending: new Set(), devices: new Map(), owed: new Set(), clear: null, round: 0, rechecks: 0 };
     sosSlots.set(key, slot);
   }
   const alertId = kind === 'alarm' ? alertIdOf(data) : null;
@@ -643,6 +714,12 @@ function holdSosSlot(kind, userId, title, body, data, correctionFor = null) {
     // attempt that landed and whose reply was lost. Such a device is not
     // taken to hold what it held before: the check sends it the truth.
     uncertain: (deviceId) => { note(deviceId, true); },
+    owed: (deviceIds) => {
+      for (const deviceId of deviceIds || []) {
+        const id = Number(deviceId);
+        if (Number.isInteger(id) && id > 0) slot.owed.add(id);
+      }
+    },
     answered: () => {
       if (!slot.pending.delete(token)) return;
       // The last push to answer does the checking, whatever it came to. A
@@ -701,16 +778,23 @@ function checkSosSlotLater(key, slot, round, recipient, sender) {
 
 // Rule 4, once the slot has drained: does what each device accepted last say
 // what is true? A device that says otherwise, or whose last send may or may not
-// have arrived, is sent the right push, alone.
+// have arrived, is sent the right push, alone; one that has gone, through the
+// devices registered in its place.
 async function checkSosSlot(key, slot, round, recipient, sender) {
-  // No device accepted anything while this slot was open, so nothing changed.
-  if (slot.devices.size === 0) return dropSosSlot(key, slot);
+  // No device accepted anything while this slot was open, and no push that
+  // went out was addressed to a device that may have gone: nothing changed.
+  if (slot.devices.size === 0 && slot.owed.size === 0) return dropSosSlot(key, slot);
   let truth = null;
   try {
     const r = await pool.query(SOS_TRUTH_SQL, [sender, recipient]);
     const row = r && r.rows && r.rows[0];
     truth = row
-      ? { standing: row.standing === true, alertId: Number(row.id), withdrawnMs: Number(row.withdrawn_ms) }
+      ? {
+        standing: row.standing === true,
+        alertId: Number(row.id),
+        withdrawnMs: Number(row.withdrawn_ms),
+        deadlineMs: Number(row.created_ms) + SOS_ALERT_WINDOW_MS,
+      }
       : null;
   } catch (err) {
     console.error('[Push] could not read what an SOS slot should show, will try again:', err.message);
@@ -719,6 +803,10 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
   // Something was sent while this asked, and its own answer checks again.
   if (slot.pending.size > 0 || slot.round !== round) return undefined;
   if (!truth) return dropSosSlot(key, slot);
+  // Rule 5: once the alert's window has closed nothing is corrected, whatever
+  // sosCorrections still remembers. An alert whose created_at cannot be read
+  // is taken to have no window left.
+  if (!(Date.now() < truth.deadlineMs)) return dropSosSlot(key, slot);
   // The correction, named by its alert both ways. An all-clear named by its
   // kind alone was spent by the first stand-down, and a device that took a
   // withdrawn alarm after a second stand-down was left on it.
@@ -731,21 +819,22 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
     ? last.kind === 'alarm' && last.alertId === truth.alertId
     : last.kind === 'clear'
       && (!Number.isFinite(truth.withdrawnMs) || last.stoodDownMs >= truth.withdrawnMs));
-  // Every device not on the right push, less one whose own correction to this
-  // same push failed without saying whether it arrived: that failure queued a
-  // retry of it, which follows with the outbox's backoff, and sending it again
-  // now could ring a phone it did reach.
+  // Every device not on the right push, and every device a push that went out
+  // was addressed to and that never answered, because its row had gone.
   const disagree = [];
   for (const [deviceId, last] of slot.devices) {
-    if (agrees(last)) continue;
-    if (last.uncertain && last.correctionFor === target) continue;
-    disagree.push(deviceId);
+    if (!agrees(last)) disagree.push(deviceId);
   }
-  if (disagree.length === 0) return dropSosSlot(key, slot);
-  // A device whose row has gone since (its token replaced, or pruned as dead
-  // when a correction reached it) cannot be corrected where it was. The
-  // devices registered now that this slot has heard nothing from stand in for
-  // it. Unread, the check goes on with the devices it knows.
+  const unanswered = [...slot.owed].filter((deviceId) => !slot.devices.has(deviceId));
+  if (disagree.length === 0 && unanswered.length === 0) return dropSosSlot(key, slot);
+  // Which of them are still registered is asked before any is set aside for a
+  // retry of its own below. A device whose row has gone since (its token
+  // replaced, or pruned as dead) cannot be corrected where it was, nor reached
+  // by a retry queued for it, so the devices registered now that this slot has
+  // heard nothing from stand in for it. This was asked after the setting
+  // aside, and a phone whose correction was still out when its token was
+  // replaced was set aside for a retry that then found no device and was
+  // deleted: the phone kept the alarm the person had withdrawn.
   let current = null;
   try {
     current = await firebaseService.currentDeviceIds(recipient);
@@ -753,17 +842,36 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
     console.error('[Push] could not read the devices an SOS correction can go to:', err.message);
   }
   if (slot.pending.size > 0 || slot.round !== round) return undefined;
-  // Each device within its own count, and the stand-ins for a gone device
-  // within one count on the account (sosCorrections).
+  const gone = current
+    ? [...disagree, ...unanswered].filter((deviceId) => !current.includes(deviceId))
+    : [];
+  // A device still registered whose own correction to this same push failed
+  // without saying whether it arrived is set aside: that failure queued a
+  // retry of it, which follows with the outbox's backoff, and sending it again
+  // now could ring a phone it did reach.
+  const awaitingRetry = (deviceId) => {
+    const last = slot.devices.get(deviceId);
+    return Boolean(last && last.uncertain && last.correctionFor === target);
+  };
+  // Each device within its own count, and the stand-ins for gone devices
+  // within one count on the account (sosCorrections). Unread, the check goes
+  // on with the devices it knows.
   const known = disagree.filter((deviceId) => (!current || current.includes(deviceId))
+    && !awaitingRetry(deviceId)
     && correctionsSent(`${deviceId}|${target}`) < SOS_CORRECTIONS_PER_KEY);
   const accountKey = `u${recipient}|${target}`;
-  const standIns = current && disagree.some((deviceId) => !current.includes(deviceId))
-    && correctionsSent(accountKey) < SOS_CORRECTIONS_PER_KEY
+  const standIns = gone.length > 0 && correctionsSent(accountKey) < SOS_CORRECTIONS_PER_KEY
     ? current.filter((deviceId) => !slot.devices.has(deviceId))
     : [];
   const wrong = [...known, ...standIns];
-  if (wrong.length === 0) return dropSosSlot(key, slot);
+  if (wrong.length === 0) {
+    // Only the device read can say whether one set aside, or one that never
+    // answered, has gone. Unread, it is asked again rather than let go.
+    if (!current && (unanswered.length > 0 || disagree.some(awaitingRetry))) {
+      return checkSosSlotLater(key, slot, round, recipient, sender);
+    }
+    return dropSosSlot(key, slot);
+  }
   let right = truth.standing ? alarmCopyFor(truth.alertId, recipient) : clearCopyFor(slot, truth);
   if (!right) {
     try {
@@ -775,13 +883,24 @@ async function checkSosSlot(key, slot, round, recipient, sender) {
     if (slot.pending.size > 0 || slot.round !== round) return undefined;
   }
   if (!right) return dropSosSlot(key, slot);
+  if (standIns.length > 0) {
+    // Whatever is queued for the gone devices can never reach them, and the
+    // stand-ins are sent what is true now, so the queued copies are taken off
+    // them: released, each would find its device gone and stand in again.
+    const params = [recipient, gone, String(sender)];
+    await pool.query(SOS_GONE_COPIES_DELETE_SQL, params)
+      .then(() => pool.query(SOS_GONE_COPIES_NARROW_SQL, params))
+      .catch((err) => console.error('[Push] could not drop SOS copies queued for a gone device:', err.message));
+    if (slot.pending.size > 0 || slot.round !== round) return undefined;
+    noteCorrection(accountKey);
+  }
   for (const deviceId of known) noteCorrection(`${deviceId}|${target}`);
-  if (standIns.length > 0) noteCorrection(accountKey);
   // Through deliverSos, so it is registered in this slot and its own answer
   // is checked the same way; `again` puts it under rules 1 and 3, and
   // `onlyIds` keeps it off every device that already shows the right push.
   // A correction that fails is queued like any failed push, with the outbox's
-  // own attempts and expiry; the counts above are what bound the chain.
+  // own attempts and an expiry no later than the alert's deadline; the counts
+  // above bound the chain inside that window, and rule 5 ends it there.
   await deliverSos(truth.standing ? 'alarm' : 'clear', recipient, right.title, right.body, right.data,
     { again: true, correctionFor: target, onlyIds: wrong });
   return undefined;
@@ -1432,6 +1551,19 @@ function stopOutboxSweep() {
 // when the row is released, which is what every row meant before.
 async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt, tokenIds = null) {
   try {
+    // Rule 5 of AN SOS ALARM MUST NOT OUTLIVE ITS ALL-CLEAR: an SOS push is
+    // queued to expire no later than its alert's deadline, and not queued at
+    // all once that has passed. A deadline that cannot be read leaves the
+    // expiry the caller gave, and the release asks again.
+    const sosType = data && (data.type === 'safety_alert' || data.type === 'safety_alert_cancelled');
+    if (sosType) {
+      const deadline = await sosDeadline(userId, data);
+      if (deadline !== null) {
+        if (Date.now() >= deadline) return false;
+        const cap = new Date(deadline);
+        if (!(expiresAt instanceof Date) || expiresAt > cap) expiresAt = cap;
+      }
+    }
     if (reason === 'quiet') {
       // ONE held row per conversation. Every debounce window through the
       // night used to add its own row, and the table has no dedupe, so a busy
@@ -1634,6 +1766,10 @@ async function deliverSos(kind, userId, title, body, data, opts = {}) {
     slot.answered();
     throw err;
   }
+  // A push that went to the provider for the devices it names: one of them
+  // that never answers had no row left to send to (checkSosSlot). One the
+  // checks held back went nowhere, and says nothing about any device.
+  if (result && !result.skipped && Array.isArray(opts.onlyIds)) slot.owed(opts.onlyIds);
   if (result && result.settled && typeof result.settled.then === 'function') {
     result.settled.then(() => slot.answered(), () => slot.answered());
   } else {
@@ -1673,10 +1809,18 @@ async function deliverOnce(userId, title, body, data, opts = {}) {
     return queued ? { ...out, queued: true } : out;
   }
 
-  // Rule 1 of AN SOS ALARM MUST NOT OUTLIVE ITS ALL-CLEAR: no alarm for an
-  // alert its sender has stood down, whether it is going out now, was
-  // released from the outbox, or is rule 4 sending it again. The sweep
-  // deletes a row this refuses.
+  // Rule 5 of AN SOS ALARM MUST NOT OUTLIVE ITS ALL-CLEAR: an SOS push
+  // released from the outbox after its alert's deadline is dropped, whatever
+  // expiry its row carries (enqueue caps it there, but a row can predate
+  // that). A push going out fresh is for an alert raised just now, a
+  // stand-down inside the window, or a correction rule 4 has just checked.
+  if (opts.fromOutbox && (type === 'safety_alert' || type === 'safety_alert_cancelled')) {
+    const deadline = await sosDeadline(userId, data);
+    if (deadline !== null && Date.now() >= deadline) return skip(userId, data, OUTCOME.EXPIRED);
+  }
+  // Rule 1: no alarm for an alert its sender has stood down, whether it is
+  // going out now, was released from the outbox, or is rule 4 sending it
+  // again. The sweep deletes a row this refuses.
   if (type === 'safety_alert' && (await alarmStoodDown(data))) {
     return skip(userId, data, OUTCOME.WITHDRAWN);
   }
@@ -2314,10 +2458,11 @@ module.exports = {
   _setSosRecheckDelays: (delays) => {
     sosRecheckDelays = Array.isArray(delays) ? delays : SOS_RECHECK_DELAYS_MS;
   },
-  // How many times one device is corrected to one push, and for how long that
-  // is remembered, so a test can hold the window to the stand-down's.
+  // How many times one device is corrected to one push, and the alert window
+  // that count and rule 5 both run on, so a test can hold it to the
+  // stand-down's.
   SOS_CORRECTIONS_PER_KEY,
-  SOS_CORRECTION_TTL_MS,
+  SOS_ALERT_WINDOW_MS,
   // Test seam: the debounce window is process-global state, and so is the
   // register of SOS pushes still on their way, the copies of what was sent,
   // and the count of corrections.
