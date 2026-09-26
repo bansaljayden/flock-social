@@ -2679,14 +2679,76 @@ def draw_thermal_view(pygame, screen, fonts, frame, count, live, size=None):
 
 
 
+def video_driver_candidates(env=None, has_dri=None):
+    """Which SDL video drivers to try, best first.
+
+    THIS IS WHERE THE PANEL FAILED THE FIRST TIME ONE WAS EVER PLUGGED IN. The
+    code asked for "fbcon", which is an SDL 1.2 driver name. SDL2 dropped it
+    years ago; its Linux drivers are x11, wayland, kmsdrm, offscreen and dummy.
+    Asking for a driver SDL2 does not have did not raise: it HUNG, inside
+    set_mode, so the display thread sat there forever and the one log line that
+    would have explained it never printed. From the outside the program looked
+    like it had simply stopped after pygame's banner.
+
+    Nothing caught it earlier because nothing could. This file's own README
+    said, accurately, that no panel had ever been attached to this code.
+
+    Pure and takes its environment, so the choice is tested on a machine with
+    no framebuffer at all.
+    """
+    env = os.environ if env is None else env
+    forced = (env.get('SDL_VIDEODRIVER') or '').strip()
+    if forced:
+        return [forced]
+
+    if has_dri is None:
+        has_dri = os.path.isdir('/dev/dri')
+
+    out = []
+    # A desktop session owns the screen and the only way in is through it. This
+    # matters more than it looks: a Pi showing the Raspberry Pi OS desktop is
+    # the normal state of a unit somebody has just set up, and kmsdrm cannot
+    # take the display away from a running session.
+    if env.get('WAYLAND_DISPLAY'):
+        out.append('wayland')
+    if env.get('DISPLAY'):
+        out.append('x11')
+    # No session, so talk to the hardware. This is the venue unit's case and
+    # the one a demo should end up in, because a desktop underneath is one more
+    # thing that can misbehave in front of a judge.
+    if has_dri:
+        out.append('kmsdrm')
+    # Last resort. The point is not a picture, it is that the display thread
+    # cannot take the doorway counter down with it by failing to start.
+    out.append('dummy')
+    return out
+
+
 def display_loop():
     try:
-        os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon' if os.path.exists('/dev/fb0') else 'dummy')
         import pygame
-        pygame.init()
-        screen = pygame.display.set_mode(
-            (DISPLAY_W, DISPLAY_H),
-            pygame.FULLSCREEN if os.path.exists('/dev/fb0') else 0)
+        screen = None
+        for driver in video_driver_candidates():
+            os.environ['SDL_VIDEODRIVER'] = driver
+            try:
+                pygame.display.quit()
+            except Exception:
+                pass
+            try:
+                pygame.init()
+                # (0, 0) asks the panel for its own size. Naming one here is
+                # how a remembered 720x1280 survived a panel change; the real
+                # size is read back below regardless.
+                screen = pygame.display.set_mode(
+                    (0, 0), pygame.FULLSCREEN if driver != 'dummy' else 0)
+                logger.info(f'Display is up on the "{driver}" driver')
+                break
+            except Exception as e:
+                logger.warning(f'SDL driver "{driver}" did not work: {e}')
+        if screen is None:
+            logger.error('No SDL video driver worked, so the panel stays dark. '
+                         'The sensor keeps counting and keeps pushing.')
+            return
         # What was asked for and what was granted are not the same thing. On a
         # real framebuffer FULLSCREEN gives the panel's native size whatever was
         # requested, so read it back and lay out against that. Asking is how the

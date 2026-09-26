@@ -2309,5 +2309,80 @@ class DoorwayDirection(unittest.TestCase):
         self.assertGreater(main.TOF_MARGIN_MM, 0)
         self.assertGreaterEqual(main.TOF_MIN_CLUSTER, 1)
         self.assertGreater(main.TOF_MAX_JUMP, 0)
+class VideoDriverChoice(unittest.TestCase):
+    """The panel never lit up, and this is why.
+
+    The code asked SDL for the "fbcon" driver. That is an SDL 1.2 name; SDL2
+    dropped it, and asking for a driver SDL2 does not have does not raise, it
+    hangs inside set_mode. So the display thread stopped there forever, the log
+    line that would have explained it never printed, and from outside the
+    program looked like it simply stopped after pygame's banner.
+
+    Every case below is about never asking for a driver that is not there.
+    """
+
+    def test_it_never_asks_for_an_sdl_1_driver(self):
+        for env in ({}, {'DISPLAY': ':0'}, {'WAYLAND_DISPLAY': 'wayland-0'}):
+            got = main.video_driver_candidates(env=env, has_dri=True)
+            self.assertNotIn('fbcon', got)
+            self.assertNotIn('directfb', got)
+
+    def test_every_candidate_is_a_real_sdl2_driver(self):
+        real = {'x11', 'wayland', 'kmsdrm', 'offscreen', 'dummy'}
+        for env in ({}, {'DISPLAY': ':0'}, {'WAYLAND_DISPLAY': 'wayland-0'}):
+            for d in main.video_driver_candidates(env=env, has_dri=True):
+                self.assertIn(d, real, f'{d} is not an SDL2 video driver')
+
+    def test_a_desktop_session_is_tried_before_the_hardware(self):
+        # kmsdrm cannot take the screen from a running session, and a Pi
+        # showing the desktop is the normal state of a unit somebody just
+        # set up.
+        got = main.video_driver_candidates(env={'DISPLAY': ':0'}, has_dri=True)
+        self.assertEqual(got[0], 'x11')
+        got = main.video_driver_candidates(env={'WAYLAND_DISPLAY': 'wl-0'},
+                                           has_dri=True)
+        self.assertEqual(got[0], 'wayland')
+
+    def test_a_bare_console_goes_straight_to_the_hardware(self):
+        got = main.video_driver_candidates(env={}, has_dri=True)
+        self.assertEqual(got[0], 'kmsdrm')
+
+    def test_dummy_is_always_the_last_resort(self):
+        # Not for a picture. So that a display thread which cannot start is
+        # unable to take the doorway counter down with it.
+        for env in ({}, {'DISPLAY': ':0'}):
+            for dri in (True, False):
+                got = main.video_driver_candidates(env=env, has_dri=dri)
+                self.assertEqual(got[-1], 'dummy')
+
+    def test_no_graphics_hardware_still_yields_a_choice(self):
+        got = main.video_driver_candidates(env={}, has_dri=False)
+        self.assertEqual(got, ['dummy'])
+
+    def test_an_explicit_setting_wins_outright(self):
+        # So a unit with an unusual panel can be told what to do without a
+        # code change, which is the whole reason the old line was wrong: it
+        # hardcoded one answer and there was no way to override it.
+        got = main.video_driver_candidates(env={'SDL_VIDEODRIVER': 'offscreen',
+                                                'DISPLAY': ':0'}, has_dri=True)
+        self.assertEqual(got, ['offscreen'])
+
+    def test_the_panel_size_is_asked_for_not_assumed(self):
+        # set_mode((0, 0), FULLSCREEN) returns the panel's own size. Naming a
+        # size is how a remembered 720x1280 outlived the panel it belonged to.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('def display_loop():')
+        window = source[idx:idx + 2000]
+        self.assertIn('set_mode(', window)
+        self.assertIn('(0, 0)', window)
+        self.assertNotIn('(DISPLAY_W, DISPLAY_H)', window,
+                         'the panel size is being asserted again instead of asked for')
+
+    def test_a_dark_panel_does_not_stop_the_sensor(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        idx = source.index('def display_loop():')
+        window = source[idx:idx + 2600]
+        self.assertIn('if screen is None:', window)
+        self.assertIn('return', window)
 if __name__ == '__main__':
     unittest.main()
