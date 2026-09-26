@@ -98,12 +98,12 @@ function pyStringList(source, name) {
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
-test('the exporter writes exactly the 45 columns prepare_features.py demands', () => {
-  assert.equal(HEADER_COLUMNS.length, 45);
+test('the exporter writes exactly the 48 columns prepare_features.py demands', () => {
+  assert.equal(HEADER_COLUMNS.length, 48);
   assert.deepEqual(HEADER_COLUMNS, pyStringList(PREPARE_SRC, 'EXPORT_COLUMNS'),
     'export HEADER and prepare_features.EXPORT_COLUMNS have drifted — the contract ' +
     'check exists precisely so these two agree');
-  assert.equal(new Set(HEADER_COLUMNS).size, 45, 'a column name is repeated');
+  assert.equal(new Set(HEADER_COLUMNS).size, 48, 'a column name is repeated');
 });
 
 test('rowToCsv emits one field per header column, in the header order', () => {
@@ -443,13 +443,13 @@ test('the export runs to completion on a READ-ONLY connection', async () => {
   );
 });
 
-test('every exported row carries 45 fields under the exact header', () => {
+test('every exported row carries 48 fields under the exact header', () => {
   for (const file of ['training_data.csv', 'holdout_data.csv']) {
     const csv = readCsv(path.join(outDir, file));
     assert.deepEqual(csv.header, HEADER_COLUMNS, `${file}: header`);
     for (const line of fs.readFileSync(path.join(outDir, file), 'utf8')
       .split('\n').filter(Boolean)) {
-      assert.equal(line.split(',').length, 45, `${file}: a row with the wrong field count`);
+      assert.equal(line.split(',').length, 48, `${file}: a row with the wrong field count`);
     }
   }
 });

@@ -212,8 +212,21 @@ async function fetchLiveBusyness(venueId) {
       // non-boolean (the string "false" among them) reading as "live data
       // available", which would stamp a vendor forecast as an observation.
       liveAvailable: data.analysis?.venue_live_busyness_available === true,
-      hour: data.analysis?.hour_analysis ?? null,
-      venueOpen: data.analysis?.venue_open ?? null,
+      // WHAT THE ANSWER SAYS ABOUT ITSELF, read where BestTime's documented
+      // live response puts it. This read `analysis.hour_analysis` and
+      // `analysis.venue_open` until 2026-09-26; neither key exists in the live
+      // response (hour_analysis belongs to the week forecast, venue_open to
+      // venue_info), so both were null on every call. Stored per reading by
+      // collectRealtime.js (migration 094).
+      //   hourStart        analysis.hour_start, the hour the live value is
+      //                    measured for (0-23), which is what separates a
+      //                    reading that lags the clock from one that does not
+      //   venueOpen        venue_info.venue_open, 'Open' / 'Closed' as sent
+      //   vendorLocalTime  venue_info.venue_current_localtime, the vendor's
+      //                    clock at the call, as sent
+      hourStart: data.analysis?.hour_start ?? null,
+      venueOpen: data.venue_info?.venue_open ?? data.analysis?.venue_open ?? null,
+      vendorLocalTime: data.venue_info?.venue_current_localtime ?? null,
     };
   } catch (err) {
     console.error(`[ML:BestTime] Live query error for ${venueId}:`, err.message);

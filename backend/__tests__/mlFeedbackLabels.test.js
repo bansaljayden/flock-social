@@ -196,7 +196,7 @@ test('a cell below the reporter floor is excluded, not exported', () => {
   assert.ok(feedbackCellToTrainingRow(cellOf(enough), TEST_MAP).row);
 });
 
-test('an exported feedback row is a 45-column row that names itself', () => {
+test('an exported feedback row is a 48-column row that names itself', () => {
   const rows = [
     baseCandidate({ feedback_id: 1, user_id: 1, crowd_level: 3 }),
     baseCandidate({ feedback_id: 2, user_id: 2, crowd_level: 3 }),
@@ -204,7 +204,7 @@ test('an exported feedback row is a 45-column row that names itself', () => {
   ];
   const out = feedbackCellToTrainingRow(cellOf(rows), TEST_MAP);
   const fields = exporter.rowToCsv(out.row).split(',');
-  assert.equal(fields.length, 45, 'the feedback path must not change the export contract');
+  assert.equal(fields.length, 48, 'the feedback path must not change the export contract');
   const at = (name) => fields[HEADER_COLUMNS.indexOf(name)];
 
   // Distinguishable for the rest of its life. Both the raw column and the
@@ -457,7 +457,7 @@ test('the real query joins on venue, clock and baseline, and emits one row per c
   const lines = written.join('').split('\n').filter(Boolean);
   assert.equal(lines.length, 1);
   const fields = lines[0].split(',');
-  assert.equal(fields.length, 45);
+  assert.equal(fields.length, 48);
   const at = (name) => fields[HEADER_COLUMNS.indexOf(name)];
   assert.equal(at('venue_id'), String(venueIds.a));
   assert.equal(at('day_of_week'), String(LOCAL_DOW));
@@ -537,7 +537,7 @@ test('runExport is dormant by default and refuses a flag without a mapping', asy
     const withFeedback = fs.readFileSync(path.join(outDir, 'training_data.csv'), 'utf8')
       .split('\n').filter((l) => l.includes(`,${FEEDBACK_LABEL_SOURCE},`));
     assert.equal(withFeedback.length, 1);
-    assert.equal(withFeedback[0].split(',').length, 45);
+    assert.equal(withFeedback[0].split(',').length, 48);
   } finally {
     delete process.env[FEEDBACK_ENABLE_ENV];
     delete process.env[FEEDBACK_CROWD_MAP_ENV];

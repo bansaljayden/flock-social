@@ -127,10 +127,11 @@ function pyStringList(source, name) {
 // 1. THE GROWTH ITSELF
 // ---------------------------------------------------------------------------
 
-test('the contract grew to 45 by APPENDING, so no existing column moved', () => {
+test('the contract grew to 48 by APPENDING, so no existing column moved', () => {
   assert.equal(COLUMNS_BEFORE_ROUND_20.length, 42, 'the historical list is wrong');
-  assert.equal(HEADER_COLUMNS.length, 45,
-    'round 20 added label_source and vendor_forecast_pct; round 25 added events_observed');
+  assert.equal(HEADER_COLUMNS.length, 48,
+    'round 20 added label_source and vendor_forecast_pct; round 25 added events_observed; '
+    + 'migration 094 added live_hour_start, live_venue_open and live_local_time');
   assert.deepEqual(HEADER_COLUMNS.slice(0, 42), COLUMNS_BEFORE_ROUND_20,
     'the first 42 columns must be untouched, in their original order. A count check ' +
     'cannot tell a reorder from a clean addition, and the CSV is consumed positionally ' +
@@ -138,15 +139,17 @@ test('the contract grew to 45 by APPENDING, so no existing column moved', () => 
   assert.deepEqual(HEADER_COLUMNS.slice(42, 44), ROUND_20_COLUMNS,
     'the two round 20 columns must keep indices 42 and 43. Round 25 appended AFTER them ' +
     'for the same reason round 20 appended after the original 42.');
-  assert.deepEqual(HEADER_COLUMNS.slice(44), ROUND_25_COLUMNS);
+  assert.deepEqual(HEADER_COLUMNS.slice(44, 45), ROUND_25_COLUMNS);
+  assert.deepEqual(HEADER_COLUMNS.slice(45), ['live_hour_start', 'live_venue_open', 'live_local_time'],
+    'migration 094 appended its three after round 25, on the same terms');
 });
 
-test('prepare_features.py declares the identical 45, in the identical order', () => {
+test('prepare_features.py declares the identical 48, in the identical order', () => {
   const declared = pyStringList(PREPARE_SRC, 'EXPORT_COLUMNS');
   assert.deepEqual(declared, HEADER_COLUMNS,
     'export_training_data.HEADER and prepare_features.EXPORT_COLUMNS have drifted. ' +
     'They are the same contract written twice and must be changed in the same commit.');
-  assert.equal(new Set(declared).size, 45, 'a column name is repeated');
+  assert.equal(new Set(declared).size, 48, 'a column name is repeated');
   for (const c of NEW_COLUMNS) {
     assert.equal(declared.filter((x) => x === c).length, 1,
       `${c} appears more than once in the contract`);
@@ -278,7 +281,7 @@ test('a text value in either new column still cannot shift the CSV', () => {
     else cur += c;
   }
   fields.push(cur);
-  assert.equal(fields.length, 45);
+  assert.equal(fields.length, 48);
   assert.equal(fields[HEADER_COLUMNS.indexOf('label_source')], 'live,forecast');
   assert.equal(fields[HEADER_COLUMNS.indexOf('vendor_forecast_pct')], '12');
 });
@@ -527,7 +530,7 @@ test('preflight counts the coverage instead of guessing at it', async () => {
   assert.equal(Number(cov2.with_vendor_forecast), 0);
 });
 
-test('an export from a database without migration 025 or 045 still produces 45 columns', async () => {
+test('an export from a database without migration 025 or 045 still produces 48 columns', async () => {
   // The state every restored backup and staging clone is in. The column must be
   // empty, never absent — a 43-column CSV would fail the contract check for the
   // wrong reason and send the reader looking at the exporter.
@@ -543,7 +546,7 @@ test('an export from a database without migration 025 or 045 still produces 45 c
       assert.equal(r.label_source, null);
       assert.equal(r.events_observed, null);
       const line = exporter.rowToCsv(r);
-      assert.equal(line.split(',').length, 45);
+      assert.equal(line.split(',').length, 48);
       assert.equal(at(line, 'vendor_forecast_pct'), '');
       assert.equal(at(line, 'label_source'), '');
       assert.equal(at(line, 'events_observed'), '',

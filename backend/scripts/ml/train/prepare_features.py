@@ -112,7 +112,17 @@ EXPORT_COLUMNS: List[str] = [
     'observed_date', 'label_provenance',
     'label_source', 'vendor_forecast_pct',
     'events_observed',
+    # 2026-09-26, migration 094: the live answer about itself (see below).
+    'live_hour_start', 'live_venue_open', 'live_local_time',
 ]
+
+# The last three (2026-09-26, migration 094) are what BestTime's live answer
+# says about itself: analysis.hour_start, the hour the live value is measured
+# for; venue_info.venue_open, Open or Closed, stored as a boolean; and
+# venue_info.venue_current_localtime, the vendor clock at the call. CARRIED,
+# never featurised (get_feature_columns): empty on every row collected before
+# the collector wrote them, and serving has no live answer for an hour it
+# forecasts.
 
 EXPORTER_PATH = SCRIPT_DIR / 'export_training_data.js'
 
@@ -2931,6 +2941,11 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # finding 18). Serving sets it to 1 on every prediction, so all it can
         # tell the model is a training row's label regime. See realtime_flags.
         'is_realtime',
+        # 2026-09-26 CARRIED COLUMNS (migration 094): what BestTime's live
+        # answer said about itself. Stored for analysis, not features: serving
+        # scores hours no live call has been made for, so it could never
+        # reproduce them (RETRAIN.md, the mid-October plan, Labels 3).
+        'live_hour_start', 'live_venue_open', 'live_local_time',
     }
     # The sports game-night family. It was ABLATION-ONLY until mlPredictor.js
     # computed it at serving time (code review, 2026-09-01). Since 2026-09-26

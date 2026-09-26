@@ -109,6 +109,43 @@ function classifyReading(live) {
 const clampPct = (v) => (v == null ? null : Math.max(0, Math.min(100, v)));
 
 // ---------------------------------------------------------------------------
+// WHAT THE LIVE ANSWER SAYS ABOUT ITSELF (2026-09-26, migration 094).
+//
+// BestTime's live call returns, beside the busyness, the hour the live value
+// is measured for (analysis.hour_start), whether it has the venue open
+// (venue_info.venue_open, 'Open' or 'Closed') and its own clock at the call
+// (venue_info.venue_current_localtime). All three were thrown away, and
+// RETRAIN.md needs them: live readings match the curve an hour EARLIER better
+// than the curve of their own hour, and hour_start is what tells a vendor
+// value that lags the clock from one that does not; 246 live readings sat at
+// slots whose curve says the venue is shut, and venue_open is what says
+// whether BestTime thought so too. Stored per reading as three nullable
+// columns, never guessed: anything that is not a clean value is NULL.
+// Pure, and exported so the test can pin every shape.
+// ---------------------------------------------------------------------------
+const LIVE_LOCAL_TIME_MAX = 48;
+
+function liveAnswerColumns(live) {
+  const src = live && typeof live === 'object' ? live : {};
+  const h = src.hourStart;
+  const hourStart = typeof h === 'number' && Number.isInteger(h) && h >= 0 && h <= 23 ? h : null;
+  let venueOpen = null;
+  if (src.venueOpen === true || src.venueOpen === false) venueOpen = src.venueOpen;
+  else if (typeof src.venueOpen === 'string') {
+    const t = src.venueOpen.trim().toLowerCase();
+    if (t === 'open') venueOpen = true;
+    else if (t === 'closed') venueOpen = false;
+  }
+  const lt = typeof src.vendorLocalTime === 'string' ? src.vendorLocalTime.trim() : '';
+  const localTime = lt && lt.length <= LIVE_LOCAL_TIME_MAX ? lt : null;
+  return [
+    ['live_hour_start', hourStart],
+    ['live_venue_open', venueOpen],
+    ['live_local_time', localTime],
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // THE OPEN-HOURS FILTER (2026-09-03). WHY A CALL AT 4 AM IS A CALL WASTED.
 // ---------------------------------------------------------------------------
 // Live readings are the scarce thing in the corpus: 1,198 rows out of 3.9M
@@ -252,6 +289,13 @@ async function ensureHolidayColumns() {
   // created here too because these scripts also run against databases that have
   // not booted the current server, and the INSERT below names the column.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+  // Migration 094 owns these three. Declared here too because this file
+  // deploys with the BESTTIME collector, which can run before the main
+  // service boots 094, and the INSERT below names them: a missing column
+  // would fail every insert of the sweep. Same statements as the migration.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_hour_start SMALLINT`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_venue_open BOOLEAN`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_local_time VARCHAR(48)`);
 }
 
 // One query per run, not one per venue. It reads the same weekly rows the
@@ -1199,6 +1243,8 @@ async function storeReading(venue, at, live,
     ['special_night_conf', obsSpecial?.conf ?? null],
     ['label_source', labelSource],
     ['vendor_forecast_pct', clampPct(reading.vendorForecast)],
+    // Migration 094: the answer's own hour, open state and clock.
+    ...liveAnswerColumns(live),
   ];
 
   try {
@@ -1738,7 +1784,7 @@ async function run() {
 }
 
 module.exports = {
-  run, classifyReading, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
+  run, classifyReading, liveAnswerColumns, LIVE_LOCAL_TIME_MAX, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,

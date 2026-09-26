@@ -119,9 +119,10 @@ test('a slow body that finishes inside the deadline is read, and the deadline is
         venue_forecasted_busyness: 40,
         venue_live_busyness: 70,
         venue_live_busyness_available: true,
-        hour_analysis: 21,
-        venue_open: true,
+        hour_start: 21,
+        hour_end: 22,
       },
+      venue_info: { venue_open: 'Open', venue_current_localtime: 'Friday 2026-09-25 09:23PM' },
     },
     bodyAfterMs: 19000,
   });
@@ -134,7 +135,8 @@ test('a slow body that finishes inside the deadline is read, and the deadline is
   assert.strictEqual(call.settled, true);
   assert.ifError(call.error);
   assert.deepStrictEqual(call.value, {
-    forecastedBusyness: 40, liveBusyness: 70, liveAvailable: true, hour: 21, venueOpen: true,
+    forecastedBusyness: 40, liveBusyness: 70, liveAvailable: true,
+    hourStart: 21, venueOpen: 'Open', vendorLocalTime: 'Friday 2026-09-25 09:23PM',
   });
 
   // Round 13's rule still holds: nothing is left armed once the call is done,

@@ -313,7 +313,7 @@ rm -f training_data.csv holdout_data.csv training_data.csv.partial holdout_data.
 #    production. Read-only: the exporter opens every statement inside
 #    BEGIN READ ONLY with default_transaction_read_only=on.
 node export_training_data.js
-head -1 training_data.csv | tr ',' '\n' | grep -c .     # must print 45
+head -1 training_data.csv | tr ',' '\n' | grep -c .     # must print 48
 #    From here on nothing touches the database.
 
 # 3. Features: 14-day time holdout (the default), no month epoch, live rows at
@@ -534,7 +534,8 @@ model no longer trains on rows it will never serve.
 > three shipped fixes (baseline smoothing, vendor-forecast weighting, the
 > leave-one-out baseline) never reached an artifact. **A retrain starts at the
 > export.** `prepare_features.py` now refuses a CSV that is not the current
-> 45-column shape (44 until round 25 appended `events_observed`), so this
+> 48-column shape (44 until round 25 appended `events_observed`, 45 until
+> migration 094 appended the three live-answer columns), so this
 > cannot recur silently, but do not try.
 
 For the October 2026 run use the command block in "The mid-October 2026
@@ -561,8 +562,8 @@ rm -f training_data.csv holdout_data.csv training_data.csv.partial holdout_data.
       features_train.pkl features_holdout.pkl best_model.pkl band_gate_report.json
 
 # ── 2. Full pipeline, in this order. Never start in the middle.
-node export_training_data.js                     # 45-column CSVs
-head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 45
+node export_training_data.js                     # 48-column CSVs
+head -1 training_data.csv | tr ',' '\n' | grep -c .   # must print 48
 python prepare_features.py                       # contract-checked; see below
 python train_model.py                            # LOCO CV -> best_model.pkl
 python evaluate_model.py                         # diagnostics + plots
@@ -600,7 +601,7 @@ It fails loud instead of degrading. Each of these used to be a silent skip:
 
 | It stops when | Because |
 |---|---|
-| the CSV is not the 45-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence. Round 20 appended `label_source` and `vendor_forecast_pct` as CARRIED columns (validated and pickled, never features) — a CSV without them would still train, which is why their absence has to be an error: it means the file predates the exporter |
+| the CSV is not the 48-column export | `venue_id` drives baseline smoothing, `label_provenance` drives the vendor-forecast weight; without them both were skipped in silence. Round 20 appended `label_source` and `vendor_forecast_pct` as CARRIED columns (validated and pickled, never features) — a CSV without them would still train, which is why their absence has to be an error: it means the file predates the exporter |
 | `label_source` carries a value outside `{live, forecast}`, or `label_provenance` is not what `(is_realtime, label_source)` implies, or a `forecast` row disagrees with its own `vendor_forecast_pct` | the derived column is a pure function of the raw one, so the two check each other; a mismatch means a row rejoins the weight-1.0 pool as `unknown` with nothing said |
 | a weather description is not in `WEATHER_DESCRIPTION_CODES` | guessing a group is inventing data — add the OpenWeatherMap id |
 | no `weather_condition_code` survives recovery | all ten `weather_*` features would be constant again |
