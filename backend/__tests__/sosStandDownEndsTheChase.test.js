@@ -47,8 +47,14 @@
 //     in for a newer one, a device corrected to one push without end, one
 //     device's spent history holding another's back, a replaced token
 //     starting the count again, a token replaced while its own correction was
-//     out or while its retry waited, and a chain whose counts are all
-//     forgotten, which the alert's deadline still ends;
+//     out or while its retry waited, a chain whose counts are all forgotten,
+//     which the alert's deadline still ends, and a correction still out at
+//     the send deadline whose retry was written after the check it set off;
+//   * and the alert's deadline bounds what is started, not what finishes: an
+//     all-clear accepted just inside the window, or a correction started
+//     inside it, goes out when the reads in front of it end after it, and an
+//     all-clear's retry expires with the alerts its stand-down withdrew, never
+//     with a newer alert's window;
 //   * and the times that let the app tell an alarm from the stand-down that
 //     called it off: the stand-down's socket event skips anybody a newer
 //     alarm reached, and every all-clear carries the stand-down's own time.
@@ -2317,8 +2323,9 @@ test('with every count forgotten between releases, a phone the provider keeps re
   // again for as long as it refused. Here every count is forgotten before
   // each release, which is the most any eviction can do. The alert's
   // deadline, six hours from its created_at, is read from Postgres, and is
-  // what has to end it: no correction after it, no retry queued to expire
-  // after it, and no release after it, from a row queued by any process.
+  // what has to end it: no correction started after it, no retry queued
+  // after it or to expire after it, and no release after it, from a row
+  // queued by any process.
   const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
   const cap = 3; // SOS_CORRECTIONS_PER_KEY, held to it below
   const sen = await mkUser('Sen');
@@ -2366,9 +2373,10 @@ test('with every count forgotten between releases, a phone the provider keeps re
 
     const before = refusedAt.filter((t) => t < deadline).length;
     assert.ok(before > 2 * cap + 3, `the chain has to outrun the counts to show anything (${before} sends before the deadline)`);
-    // A send already on its way at the deadline may answer just after it.
+    // A send started before the deadline can reach the provider just after
+    // it, and is let finish; one that reaches it well after was started after.
     const late = refusedAt.filter((t) => t > deadline + 500);
-    assert.strictEqual(late.length, 0, `${late.length} sends to a phone the provider keeps refusing after the alert's deadline`);
+    assert.strictEqual(late.length, 0, `${late.length} sends started after the alert's deadline to a phone the provider keeps refusing`);
     assert.deepStrictEqual(await outboxFor(rec), [], 'a retry outlived the alert\'s deadline');
     assert.ok(latestExpiry <= deadline, `a retry was queued to expire ${latestExpiry - deadline} ms after the alert's deadline`);
 
@@ -2394,7 +2402,8 @@ test('with every count forgotten between releases, a phone the provider keeps re
 
 test('past its alert\'s deadline, a push the provider refuses is neither corrected nor queued', async () => {
   // The check itself, apart from the outbox: once the window of the alert a
-  // person is checked against has closed, rule 4 sends that person nothing.
+  // person is checked against has closed, rule 4 starts no correction for
+  // that person, and the refused alarm is not queued for a retry.
   const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
   const sen = await mkUser('Sen');
   const rec = await mkUser('Rec');
@@ -2415,10 +2424,322 @@ test('past its alert\'s deadline, a push the provider refuses is neither correct
     await until(async () => (await ledgerFor(rec)).includes('safety_alert:failed') && pushHelper._openSosSlots() === 0,
       'the alarm\'s answer, and the check after it');
     await sleep(150);
-    assert.strictEqual(provider.refused.length, 1, `${provider.refused.length} sends: a correction went out past the alert's deadline`);
+    assert.strictEqual(provider.refused.length, 1, `${provider.refused.length} sends: a correction was started past the alert's deadline`);
     assert.deepStrictEqual(await outboxFor(rec), [], 'a retry was queued past the alert\'s deadline');
     assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
   } finally {
+    stopPushThrough();
+  }
+});
+
+// ===========================================================================
+// The deadline bounds what is started: a send started inside the window
+// finishes, an all-clear takes its deadline from the alerts its stand-down
+// withdrew, and a late answer's retry is written before the check it sets off
+// ===========================================================================
+
+test('an all-clear for a stand-down accepted just inside the window goes out when its lookup ends past the deadline, and its failure then starts no retry and no correction', async () => {
+  // Rule 5 bounds what is started: after the alert's deadline no correction
+  // is started, no retry is queued and nothing queued is released. A send
+  // started before it finishes. A stand-down accepted inside the window owes
+  // its all-clear to everyone the alarm reached, and dropping that all-clear
+  // because the stand-down's audience read ended a moment late would leave
+  // "needs help" on a lock screen after the person said they are OK.
+  const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  const phone = await addPhone(rec);
+  const laptop = await addPhone(rec);
+  // An alert that reached Rec six hours ago, less three seconds.
+  const { rows: [alert] } = await pool.query(
+    `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients, created_at)
+     VALUES ($1, 1, $2::int[], '[]'::jsonb, (NOW() AT TIME ZONE 'UTC') - ($3::int * INTERVAL '1 millisecond'))
+     RETURNING id, FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms`,
+    [sen.id, [rec.id], windowMs - 3000]
+  );
+  const deadline = Number(alert.created_ms) + windowMs;
+  pushThrough = true;
+  const provider = stubProvider({ refuse: (m) => m.token === laptop.token });
+  const realQuery = pool.query;
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  // The stand-down's audience read, stalled until the window has closed.
+  pool.query = function stalled(text, params) {
+    if (text === S.SOS_STAND_DOWN_SNAPSHOT_SQL) return gate.then(() => realQuery.call(pool, text, params));
+    return realQuery.apply(pool, arguments);
+  };
+  try {
+    const ok = await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    assert.ok(Date.now() < deadline, 'the stand-down has to be accepted inside the window to show anything');
+    await sleep(Math.max(0, deadline - Date.now()) + 250);
+    assert.ok(Date.now() > deadline);
+    release();
+    await until(async () => typesOn(provider, phone).length === 1 && provider.refused.length === 1,
+      'the all-clear, past the deadline');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check after it');
+    await sleep(150);
+
+    assert.deepStrictEqual(typesOn(provider, phone), ['safety_alert_cancelled'],
+      'a stand-down accepted inside the window lost its all-clear because its lookup ended after the deadline');
+    const { rows: [withdrawn] } = await realQuery.call(pool,
+      `SELECT FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS ms
+         FROM emergency_alerts WHERE id = $1`,
+      [alert.id]);
+    assert.strictEqual(msOf(provider.landed.find((m) => m.token === phone.token).data.at), Number(withdrawn.ms));
+    assert.ok((await ledgerFor(rec)).includes('safety_alert_cancelled:delivered'));
+    // The laptop refused it, past the deadline: nothing new is started for it.
+    assert.strictEqual(provider.refused.filter((m) => m.token === laptop.token).length, 1,
+      'a correction was started past the alert\'s deadline');
+    assert.deepStrictEqual(await outboxFor(rec), [], 'a retry was queued past the alert\'s deadline');
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+    assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
+  } finally {
+    pool.query = realQuery;
+    stopPushThrough();
+  }
+});
+
+test('a correction started just inside the window goes out when the reads after its check end past the deadline', async () => {
+  // The same for rule 4: the deadline is checked once, when a correction
+  // starts, and the reads after that do not ask again. A correction is what
+  // puts a device right, and one dropped half-way would leave the alarm the
+  // person withdrew on the phone.
+  const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  const phone = await addPhone(rec);
+  // An alert raised six hours ago, less three seconds, whose flock leg is
+  // about to run.
+  const { rows: [alert] } = await pool.query(
+    `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients, created_at)
+     VALUES ($1, 1, '{}'::int[], '[]'::jsonb, (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 millisecond'))
+     RETURNING id, FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms`,
+    [sen.id, windowMs - 3000]
+  );
+  const deadline = Number(alert.created_ms) + windowMs;
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  const realQuery = pool.query;
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let stalledAt = null;
+  try {
+    // Its alarm sticks at the provider, and "I'm OK" lands first.
+    rules.push(alarmTo(phone));
+    const leg = S.alertFlockMembers(io, { id: sen.id, name: sen.name }, null, 1, alert.id);
+    leg.catch(() => {});
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => typesOn(provider, phone).length === 1, 'the all-clear');
+
+    // The check's read of the devices registered now, which comes after its
+    // deadline check, stalled until the window has closed.
+    pool.query = function stalled(text, params) {
+      if (typeof text === 'string' && text.includes('SELECT id, token FROM device_tokens')
+        && Array.isArray(params) && params[1] === null) {
+        if (stalledAt === null) stalledAt = Date.now();
+        return gate.then(() => realQuery.call(pool, text, params));
+      }
+      return realQuery.apply(pool, arguments);
+    };
+    // The alarm lands after the all-clear, and the check starts a correction.
+    await letLand(take(provider, alarmTo(phone)));
+    await leg;
+    await until(async () => stalledAt !== null, 'the check past its deadline check');
+    assert.ok(stalledAt < deadline, 'the correction has to start inside the window to show anything');
+    await sleep(Math.max(0, deadline - Date.now()) + 250);
+    assert.ok(Date.now() > deadline);
+    release();
+    await until(async () => typesOn(provider, phone).length === 3, 'the all-clear again, past the deadline');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check after it');
+    await sleep(150);
+
+    assert.deepStrictEqual(typesOn(provider, phone), ['safety_alert_cancelled', 'safety_alert', 'safety_alert_cancelled'],
+      'a correction started inside the window was dropped because the reads after its check ended past the deadline');
+    const { rows: [withdrawn] } = await realQuery.call(pool,
+      `SELECT FLOOR(EXTRACT(EPOCH FROM (withdrawn_at AT TIME ZONE 'UTC')) * 1000)::bigint AS ms
+         FROM emergency_alerts WHERE id = $1`,
+      [alert.id]);
+    const last = provider.landed.filter((m) => m.token === phone.token)[2];
+    assert.strictEqual(msOf(last.data.at), Number(withdrawn.ms));
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+    assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
+  } finally {
+    pool.query = realQuery;
+    stopPushThrough();
+  }
+});
+
+test('an all-clear\'s retry expires with the alerts its stand-down withdrew, never with a newer alert\'s window', async () => {
+  // A is stood down near the end of its six hours while its all-clear is
+  // still at the provider; B, a new SOS, then reaches the same person, and
+  // the all-clear fails. Its retry took its deadline from the newest alert
+  // whose recorded audience held the person, which was B, so it expired with
+  // B's window, and a release after A's deadline sent A's all-clear. It takes
+  // it now from the alerts withdrawn at or before the all-clear's own time.
+  // The second run fails every email of B, which sets B's created_at back
+  // past the floor (routes/safety.js), to before the stand-down: created_at
+  // alone cannot tell that B came after it, and withdrawn_at can.
+  const windowMs = 6 * 60 * 60 * 1000; // SOS_ALERT_WINDOW_MS, held to it below
+  for (const emailsFail of [false, true]) {
+    const sen = await mkUser('Sen');
+    const rec = await mkUser('Rec');
+    await mkPlan(sen, [rec]);
+    await addContact(sen, 'Mum', `mum.sen.w${emailsFail ? 'f' : ''}@example.com`, '5550326');
+    const phone = await addPhone(rec);
+    pushThrough = true;
+    const { rules, hold } = holdByRules();
+    const provider = stubProvider({ hold });
+    const realSendEmail = emailService.sendEmail;
+    try {
+      // A reached Rec six hours ago, less four seconds: its window is closing.
+      const { rows: [a] } = await pool.query(
+        `INSERT INTO emergency_alerts (user_id, contacts_alerted, flock_recipient_ids, contact_recipients, created_at)
+         VALUES ($1, 1, $2::int[], '[]'::jsonb, (NOW() AT TIME ZONE 'UTC') - ($3::int * INTERVAL '1 millisecond'))
+         RETURNING FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms`,
+        [sen.id, [rec.id], windowMs - 4000]
+      );
+      const deadline = Number(a.created_ms) + windowMs;
+
+      // "I'm OK", and its all-clear sticks at the provider.
+      rules.push(clearTo(phone));
+      assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+      await until(async () => provider.held.length === 1, 'the all-clear at the provider');
+      const clearAt = provider.held[0].message.data.at;
+
+      // B reaches Rec.
+      if (emailsFail) emailService.sendEmail = async () => ({ sent: false, error: 'provider down' });
+      const second = await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } });
+      emailService.sendEmail = realSendEmail;
+      assert.strictEqual(second.status, emailsFail ? 502 : 200, JSON.stringify(second.body));
+      await until(async () => typesOn(provider, phone).includes('safety_alert'), 'B on the phone');
+      const { rows: [b] } = await pool.query(
+        `SELECT FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'UTC')) * 1000)::bigint AS created_ms
+           FROM emergency_alerts WHERE id = $1`,
+        [second.body.alertId]);
+      if (emailsFail) assert.ok(Number(b.created_ms) < msOf(clearAt), 'B\'s created_at was not set back past the stand-down');
+      assert.ok(Number(b.created_ms) + windowMs > deadline + 60 * 1000, 'B\'s window has to outlast A\'s to show anything');
+
+      // A's all-clear fails, and is queued for a retry.
+      take(provider, clearTo(phone)).fail();
+      await until(async () => (await queuedFor(rec, 'safety_alert_cancelled', phone)).length === 1, 'A\'s all-clear queued for a retry');
+      await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+      const { rows: [queued] } = await pool.query(
+        `SELECT data, FLOOR(EXTRACT(EPOCH FROM expires_at) * 1000)::bigint AS expires_ms
+           FROM push_outbox WHERE user_id = $1 AND data->>'type' = 'safety_alert_cancelled'`,
+        [rec.id]);
+      assert.strictEqual(queued.data.at, clearAt);
+      assert.ok(Number(queued.expires_ms) <= deadline,
+        `A's all-clear was queued to expire ${Number(queued.expires_ms) - deadline} ms after A's deadline`);
+
+      // B is stood down as well, so no newer alarm holds A's all-clear back.
+      assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+      await until(async () => typesOn(provider, phone).slice(-1)[0] === 'safety_alert_cancelled', 'B\'s all-clear');
+      await until(async () => pushHelper._openSosSlots() === 0, 'B\'s all-clear settled');
+      const newerAt = provider.landed.filter((m) => m.token === phone.token).slice(-1)[0].data.at;
+      assert.ok(msOf(newerAt) > msOf(clearAt), 'two stand-downs, A\'s first');
+
+      // Past A's deadline, the retry comes due.
+      await sleep(Math.max(0, deadline - Date.now()) + 300);
+      const mark = provider.landed.length;
+      await sweepUntilEmpty(rec, 2);
+      await sleep(150);
+      assert.deepStrictEqual(provider.landed.slice(mark).map((m) => [m.data.type, m.data.at]), [],
+        'A\'s all-clear went out after A\'s deadline, on B\'s');
+      assert.ok((await ledgerFor(rec)).includes('safety_alert_cancelled:expired'));
+      assert.deepStrictEqual(await outboxFor(rec), []);
+      const last = provider.landed.filter((m) => m.token === phone.token).slice(-1)[0];
+      assert.deepStrictEqual([last.data.type, last.data.at], ['safety_alert_cancelled', newerAt]);
+      assert.strictEqual(pushHelper._openSosSlots(), 0);
+      assert.strictEqual(pushHelper.SOS_ALERT_WINDOW_MS, windowMs);
+    } finally {
+      emailService.sendEmail = realSendEmail;
+      stopPushThrough();
+    }
+  }
+});
+
+test('a correction still out at the send deadline, whose phone gets a new token before it fails, has its retry written before the check, which takes it off the token that went', async () => {
+  // A send still out at the 8 second deadline answers later, through
+  // `settled`, and two things wait on that answer: the bookkeeping that
+  // queues its retry, and the check of what each device shows. They used to
+  // run side by side. The check took the gone token off whatever was queued
+  // and sent the all-clear to the token registered now, and only then was the
+  // retry for the gone token written: its release found no device, stood in
+  // for it again, and rang the phone with the all-clear a second time.
+  const sen = await mkUser('Sen');
+  const rec = await mkUser('Rec');
+  await mkPlan(sen, [rec]);
+  await addContact(sen, 'Mum', 'mum.sen.x@example.com', '5550327');
+  const phone = await addPhone(rec);
+  pushThrough = true;
+  const { rules, hold } = holdByRules();
+  const provider = stubProvider({ hold });
+  const realSend = firebaseService.sendPushToUser;
+  const realQuery = pool.query;
+  let late = null;
+  // The correction to the phone, answered the way the per-account send
+  // answers a send still out at its deadline: failed for now, and `settled`
+  // later with what it came to.
+  firebaseService.sendPushToUser = async (userId, title, body, data, opts) => {
+    if (!late && data.type === 'safety_alert_cancelled' && opts && Array.isArray(opts.onlyIds)
+      && opts.onlyIds.includes(phone.id)) {
+      let answer = null;
+      const settled = new Promise((resolve) => { answer = resolve; });
+      late = { opts, answer };
+      return { sent: 0, failed: 1, inFlight: 1, settled };
+    }
+    return realSend(userId, title, body, data, opts);
+  };
+  try {
+    // The alarm sticks at the provider, "I'm OK" lands, and the alarm lands
+    // after it; the correction, the all-clear again, is still out at its
+    // deadline.
+    rules.push(alarmTo(phone));
+    assert.strictEqual((await call('POST', '/api/safety/alert', { token: sen.token, body: { includeLocation: false } })).status, 200);
+    await until(async () => provider.held.length === 1, 'the alarm at the provider');
+    assert.strictEqual((await call('POST', '/api/safety/alert/cancel', { token: sen.token, body: {} })).status, 200);
+    await until(async () => provider.landed.length === 1, 'the all-clear');
+    await letLand(take(provider, alarmTo(phone)));
+    await until(async () => late !== null, 'the correction, still out at its deadline');
+
+    // The phone's token is replaced while the correction is out, and the
+    // retry that follows its failure is written slowly, so the order below is
+    // not left to luck.
+    await pool.query('DELETE FROM device_tokens WHERE id = $1', [phone.id]);
+    const renewed = await addPhone(rec);
+    pool.query = function slowRetry(text, params) {
+      if (typeof text === 'string' && text.includes('INSERT INTO push_outbox') && Array.isArray(params)
+        && Array.isArray(params[7]) && params[7].includes(phone.id)) {
+        return sleep(150).then(() => realQuery.call(pool, text, params));
+      }
+      return realQuery.apply(pool, arguments);
+    };
+    // It fails without saying whether it arrived, the way sendToUserDevices
+    // tells it: the device first, then the tally.
+    late.opts.onUncertain(phone.id);
+    late.answer({ sent: 0, failed: 1, retryIds: [phone.id] });
+    await until(async () => typesOn(provider, renewed).length === 1, 'the all-clear on the token registered now');
+    await until(async () => pushHelper._openSosSlots() === 0, 'the check settled');
+    await sleep(300);
+    assert.deepStrictEqual(await outboxFor(rec), [],
+      'a retry owed only to the token that went was written after the check that takes it off that token');
+    pool.query = realQuery;
+
+    await sweepUntilEmpty(rec, 4);
+    await sleep(150);
+    assert.deepStrictEqual(typesOn(provider, renewed), ['safety_alert_cancelled'],
+      'the phone was rung with the all-clear a second time');
+    assert.deepStrictEqual(await outboxFor(rec), []);
+    assert.strictEqual(pushHelper._openSosSlots(), 0);
+  } finally {
+    pool.query = realQuery;
+    firebaseService.sendPushToUser = realSend;
     stopPushThrough();
   }
 });
