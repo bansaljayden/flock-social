@@ -184,6 +184,10 @@ test.before(async () => {
 
 test.after(async () => {
   await pool?.end().catch(() => {});
+  // The shared pool buildRecentDeviation queries through, closed before the
+  // server stops so its idle connections are not cut from under it.
+  const shared = require.cache[require.resolve('../config/database')];
+  if (shared) await shared.exports.end().catch(() => {});
   await pg?.stop().catch(() => {});
   if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
@@ -422,4 +426,119 @@ test('a venue whose clock cannot be read fails the run only after the calls in f
   }
   assert.ok(!errors.some((e) => /after calling end on the pool/.test(e)),
     `a write reached an ended pool: ${errors.find((e) => /after calling end/.test(e))}`);
+});
+
+// ---------------------------------------------------------------------------
+// 5. The post-sweep precompute the nowcast reads (migration 092)
+//
+// run() ends every completed sweep with scripts/ml/buildRecentDeviation.js,
+// which now also stores each venue's newest live readings beside its offset
+// for services/mlPredictor.js (CROWD_NOWCAST_ENABLED). Pinned here, against the
+// real schema: which readings are stored and in what order, that a venue whose
+// readings aged out is set back to NULL, and that a database without the
+// column (the collector deployed before the main service booted 092) still
+// gets its offsets. The venues below are inactive, so no sweep calls them.
+// ---------------------------------------------------------------------------
+
+const PRECOMPUTE_PLACE = 'ChIJprecomputeNowcast';
+const STALE_PLACE = 'ChIJprecomputeStaleOne';
+
+async function seedPrecompute() {
+  const venue = async (place) => (await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, timezone, is_active)
+     VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, false) RETURNING id`,
+    [place, 'bt_' + place, CITY, TZ]
+  )).rows[0].id;
+  const fresh = await venue(PRECOMPUTE_PLACE);
+  const stale = await venue(STALE_PLACE);
+  const today = new Date();
+  const date = today.toISOString().slice(0, 10);
+  const dow = today.getUTCDay();
+  // A positive curve everywhere except hour 9, which reads zero.
+  for (const place of [PRECOMPUTE_PLACE, STALE_PLACE]) {
+    for (let d = 0; d < 7; d++) {
+      for (let h = 0; h < 24; h++) {
+        await pool.query(
+          `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source)
+           VALUES ($1, $2, $3, $4, 'collected')`, [place, d, h, h === 9 ? 0 : 40]);
+      }
+    }
+  }
+  const reading = (id, hour, pct, label, hoursAgo, obsDate = date, obsDow = dow) => pool.query(
+    `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                   busyness_pct, label_source, observed_date, collected_at)
+     VALUES ($1, 'realtime', 'venue_local', $2, $3, 'bar', $4, $5, $6, NOW() - make_interval(hours => $7::int))`,
+    [id, obsDow, hour, pct, label, obsDate, hoursAgo]);
+  await reading(fresh, 9, 70, 'live', 5);       // its slot's curve is zero: not an offset reading, not stored
+  await reading(fresh, 10, 20, 'live', 4);
+  await reading(fresh, 11, 30, 'live', 3);
+  await reading(fresh, 12, 40, 'live', 2);
+  await reading(fresh, 13, 50, 'live', 1);
+  await reading(fresh, 14, 99, 'forecast', 0);  // a vendor forecast, never a reading
+  // Three days old: inside the offset's 28 days, outside the readings' window.
+  const old = new Date(today.getTime() - 3 * 86400000);
+  await reading(stale, 12, 60, 'live', 72, old.toISOString().slice(0, 10), old.getUTCDay());
+  await reading(stale, 13, 65, 'live', 71, old.toISOString().slice(0, 10), old.getUTCDay());
+  return { date };
+}
+
+test('the precompute stores each venue\'s newest live readings, newest first, and NULL where none is recent', async () => {
+  const { date } = await seedPrecompute();
+  const { buildRecentDeviation, READINGS_KEPT } = require('../scripts/ml/buildRecentDeviation');
+  const quiet = console.error;
+  console.error = () => {};
+  let res;
+  try { res = await buildRecentDeviation(); } finally { console.error = quiet; }
+  assert.strictEqual(res.readings.error, null, 'the readings statement ran');
+  const row = async (place) => (await pool.query(
+    'SELECT n_readings, recent_readings FROM ml_venue_recent_deviation WHERE google_place_id = $1', [place])).rows[0];
+
+  const fresh = await row(PRECOMPUTE_PLACE);
+  assert.strictEqual(fresh.n_readings, 4, 'the offset counts the four live readings on a positive curve');
+  assert.strictEqual(READINGS_KEPT, 3);
+  assert.deepStrictEqual(fresh.recent_readings.map((r) => [r.h, r.v, r.d]), [[13, 50, date], [12, 40, date], [11, 30, date]],
+    'the newest three live readings, newest first; not the forecast, not the zero-curve slot');
+  for (const r of fresh.recent_readings) {
+    assert.ok(Number.isInteger(r.dow) && typeof r.at === 'string', 'each carries its weekday and when it was taken');
+  }
+
+  // What serving reads back is what the nowcast picks from.
+  const I = require('../services/mlPredictor')._internals;
+  const parsed = I.parseRecentReadings(fresh.recent_readings);
+  assert.strictEqual(I.pickNowcastReading(parsed, I.slotDayNumber(date) * 24 + 13).value, 40,
+    'scoring 13:00, the 13:00 reading is skipped and 12:00 is used');
+
+  const stale = await row(STALE_PLACE);
+  assert.strictEqual(stale.n_readings, 2, 'three-day-old readings still make an offset');
+  assert.strictEqual(stale.recent_readings, null, 'but nothing the nowcast could use');
+
+  // Readings that age out are cleared on the next run, not left behind.
+  await pool.query(`UPDATE ml_training_data SET collected_at = collected_at - interval '4 days'
+                     WHERE venue_id = (SELECT id FROM ml_venues WHERE google_place_id = $1)`, [PRECOMPUTE_PLACE]);
+  console.error = () => {};
+  try { await buildRecentDeviation(); } finally { console.error = quiet; }
+  assert.strictEqual((await row(PRECOMPUTE_PLACE)).recent_readings, null);
+});
+
+test('without the column (092 not yet booted), the offsets are still rebuilt', async () => {
+  const { buildRecentDeviation } = require('../scripts/ml/buildRecentDeviation');
+  await pool.query('ALTER TABLE ml_venue_recent_deviation RENAME COLUMN recent_readings TO recent_readings_hidden');
+  await pool.query("UPDATE ml_venue_recent_deviation SET updated_at = NOW() - interval '1 day'");
+  const quiet = console.error;
+  const errors = [];
+  console.error = (...a) => errors.push(a.join(' '));
+  try {
+    const res = await buildRecentDeviation();
+    assert.ok(res.written > 0, 'the offset statement still wrote');
+    assert.match(String(res.readings.error), /recent_readings/);
+    assert.ok(errors.some((e) => /Recent readings not stored \(the offset was\)/.test(e)));
+    const { rows: [r] } = await pool.query(
+      "SELECT updated_at > NOW() - interval '1 minute' AS fresh FROM ml_venue_recent_deviation WHERE google_place_id = $1",
+      [STALE_PLACE]);
+    assert.strictEqual(r.fresh, true);
+  } finally {
+    console.error = quiet;
+    await pool.query('ALTER TABLE ml_venue_recent_deviation RENAME COLUMN recent_readings_hidden TO recent_readings');
+  }
 });
