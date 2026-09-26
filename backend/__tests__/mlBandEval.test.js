@@ -303,14 +303,14 @@ const SWITCH_ENV = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENA
 
 // Runs predictBusyness over every prepared row under one environment, against
 // a pool answering from the fixture as of each row's serve moment, and returns
-// the published results in row order.
-async function runProduction(fx, prepared, env) {
+// the published results in row order. `poolOptions` go to makeFixturePool.
+async function runProduction(fx, prepared, env, poolOptions = {}) {
   const saved = Object.fromEntries(SWITCH_ENV.map((k) => [k, process.env[k]]));
   for (const k of SWITCH_ENV) delete process.env[k];
   Object.assign(process.env, env);
   const pool = require('../config/database');
   const moments = new Map();
-  const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
+  const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias), poolOptions);
   const realQuery = pool.query;
   pool.query = stub.query;
   const predictorPath = require.resolve('../services/mlPredictor');
@@ -405,7 +405,14 @@ test('the replay publishes what predictBusyness publishes, row for row, under ev
       const replay = await B.scoreArtifact(art, prepared, {
         qmap: qmap ? false : undefined, serveMode: cfg.serveMode, nowcast: cfg.nowcast,
       });
-      const production = await runProduction(fx, prepared, env);
+      // With a switch on, the pool stores offset_pct the way the real builder
+      // has it after the target hour's own sweep, that hour's reading
+      // included. A switched number must not read it, so parity here proves
+      // the served offset is the strictly-earlier one the replay measured.
+      // With both off the stored median is served as it always was, and the
+      // replay's strictly-past median is what that path is compared with.
+      const switched = cfg.serveMode !== 'model' || cfg.nowcast;
+      const production = await runProduction(fx, prepared, env, { leakyOffset: switched });
       assert.deepEqual(mismatchesOf(prepared, production, replay), [], `${label}: the replay must publish exactly what production publishes`);
       // Each switch must actually move numbers here, or agreement on it is vacuous.
       if (cfg.serveMode === 'curve_offset') {

@@ -1,0 +1,31 @@
+-- 093: the readings a venue's trailing offset is a median of, stored beside it.
+--
+-- ASCII only, like 065, 082, 091 and 092: the embedded server the boot-safety
+-- suite runs is WIN1252.
+--
+-- WHY. offset_pct is the median as of the builder's last run, and the builder
+-- runs right after each hourly sweep, so a card for hour H served after H's
+-- sweep reads an offset that includes H's own live reading, the reading that
+-- number is scored against. A number made by either serving switch
+-- (CROWD_SERVE_MODE=curve_offset, CROWD_NOWCAST_ENABLED=true) recomputes its
+-- offset strictly before the hour it scores, from this list, which is the
+-- offset scripts/ml/train/bandEval.js measured those switches on.
+--
+-- WHAT IT HOLDS. After every hourly sweep scripts/ml/buildRecentDeviation.js
+-- writes the offset's own population (label_source 'live', each against a
+-- positive curve at its own slot, inside the 28-day window), newest slot
+-- first, twenty readings plus four of slack. A JSON array of
+--   {"dev": busyness minus the curve at that slot, "d": venue-local date,
+--    "h": venue-local hour 0-23}
+-- NULL when the venue has no dated reading in the window.
+--
+-- WHO READS IT. services/mlPredictor.js, and only with a switch on. With both
+-- off the column is never selected and offset_pct is served as before.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing row reads NULL, which the reader treats as no
+-- list, so a switched number carries no offset until the builder has run. A
+-- replay is a no-op.
+-- @requires column ml_venue_recent_deviation.offset_readings
+
+ALTER TABLE ml_venue_recent_deviation ADD COLUMN IF NOT EXISTS offset_readings JSONB;
