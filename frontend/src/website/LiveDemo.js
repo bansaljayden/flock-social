@@ -5,6 +5,7 @@ import { BASE_URL } from '../services/api';
 // standing in for icons are a named tell (DESIGN-STANDARD.md H14); this is the
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
+import { numberSourcePhrase } from '../lib/crowd';
 
 // A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
 // arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
@@ -1257,7 +1258,9 @@ export default function LiveDemo() {
 
               <p className="lpd-note">
                 <span className="lpd-live-dot" aria-hidden />
-                Live from the model inside Flock{ageMs != null ? ` · updated ${agoLabel(ageMs)}` : ''}.
+                {numberSourcePhrase(selected.number_source)
+                  ? `Live from ${numberSourcePhrase(selected.number_source)}`
+                  : 'Live from the model inside Flock'}{ageMs != null ? ` · updated ${agoLabel(ageMs)}` : ''}.
                 {/* Counted off whatever the visitor can actually reach: pins
                     when there is a map, the fallback list when there is not.
                     Reading the pin count while showing the list is how "tap

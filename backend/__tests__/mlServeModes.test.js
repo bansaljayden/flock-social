@@ -439,6 +439,51 @@ test('with the switches on, the rule-engine exits answer exactly as they do off,
   assert.ok(dev.every((s) => /recent_readings/.test(s) && /offset_readings/.test(s)));
 });
 
+// ── The words that attribute a switched number ─────────────────────────────
+
+test('describeServedArithmetic names the switched arithmetic, and nothing for a number neither switch changed', async () => {
+  const { describeServedArithmetic } = crowdEngine;
+  assert.equal(describeServedArithmetic(null), null);
+  assert.equal(describeServedArithmetic({ predictionMethod: 'rule_engine_fallback', serveMode: 'curve_offset' }), null);
+  assert.equal(describeServedArithmetic({ predictionMethod: 'ml', dataSourcesUsed: ['ml_model'] }), null);
+  assert.equal(describeServedArithmetic({ predictionMethod: 'ml', serveMode: 'model', nowcast: null }), null);
+  assert.equal(describeServedArithmetic({ predictionMethod: 'ml', serveMode: 'model', nowcast: { bucket: 1 } }), 'model_live');
+  assert.equal(describeServedArithmetic({ predictionMethod: 'ml', serveMode: 'curve_offset', dataSourcesUsed: ['venue_data'] }), 'venue_pattern');
+  assert.equal(describeServedArithmetic({ predictionMethod: 'ml', serveMode: 'curve_offset', dataSourcesUsed: ['venue_data', 'recent_live_readings'] }), 'venue_pattern_live');
+
+  // Through predictBusyness: nothing with both off, and on the fixture the
+  // curve_offset answers name the pattern (with live readings wherever an
+  // offset or a reading reached the number).
+  const off = await serveFixture({});
+  assert.ok(off.out.every((r) => describeServedArithmetic(r) === null));
+  const co = await serveFixture({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' });
+  for (const r of co.out) {
+    if (r.predictionMethod !== 'ml') { assert.equal(describeServedArithmetic(r), null); continue; }
+    const live = Boolean(r.recentDeviation || r.nowcast);
+    assert.equal(describeServedArithmetic(r), live ? 'venue_pattern_live' : 'venue_pattern');
+  }
+  const mn = await serveFixture({ CROWD_NOWCAST_ENABLED: 'true' });
+  const withReading = mn.out.filter((r) => r.nowcast);
+  assert.ok(withReading.length > 0);
+  assert.ok(withReading.every((r) => describeServedArithmetic(r) === 'model_live'));
+  assert.ok(mn.out.filter((r) => !r.nowcast).every((r) => describeServedArithmetic(r) === null));
+});
+
+test('the card, Birdie, the public demo and the venue dashboard publish the arithmetic only when a switch made the number', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
+  const crowd = read('routes/crowd.js');
+  assert.match(crowd, /const numberSource = crowdEngine\.describeServedArithmetic\(crowdResult\);/);
+  assert.match(crowd, /\.\.\.\(numberSource \? \{ numberSource \} : \{\}\),/);
+  const ai = read('routes/ai.js');
+  assert.match(ai, /\.\.\.\(!ownerLive && describeServedArithmetic\(crowdResult\)\s*\? \{ crowd_method: describeServedArithmetic\(crowdResult\) \}\s*: \{\}\),/);
+  assert.match(ai, /delete result\.crowd_method;/, 'a locked forecast drops it with the rest of the reading');
+  assert.match(ai, /When get_crowd_prediction returns \\`crowd_method\\`/);
+  const demo = read('routes/publicCrowd.js');
+  assert.match(demo, /\.\.\.\(describeServedArithmetic\(scored\) \? \{ number_source: describeServedArithmetic\(scored\) \} : \{\}\),/);
+  const dash = read('routes/venueDashboard.js');
+  assert.match(dash, /\.\.\.\(crowdEngine\.describeServedArithmetic\(current\)\s*\? \{ numberSource: crowdEngine\.describeServedArithmetic\(current\) \}\s*: \{\}\),/);
+});
+
 test('predictionCoverage says which switches are on and how many answers each made', async () => {
   await withEnv({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' }, async () => {
     const c = I.__resetRecentDeviationCache;

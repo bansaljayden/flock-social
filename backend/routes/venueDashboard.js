@@ -1959,6 +1959,13 @@ router.get('/intelligence', requirePro, async (req, res) => {
       todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
       week,
       model: current.modelVersion || null,
+      // Which arithmetic made the dial's number when a serving switch changed
+      // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock
+      // crowd model v..." off `model` otherwise, which with curve_offset on
+      // would credit a model that did not run. Absent with both switches off.
+      ...(crowdEngine.describeServedArithmetic(current)
+        ? { numberSource: crowdEngine.describeServedArithmetic(current) }
+        : {}),
       generatedAt: new Date().toISOString(),
     };
     cacheSet(`intel:${ctx.google_place_id}:${clockKey}`, result);
