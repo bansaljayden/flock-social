@@ -5,7 +5,7 @@ import { BASE_URL } from '../services/api';
 // standing in for icons are a named tell (DESIGN-STANDARD.md H14); this is the
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
-import { numberSourcePhrase } from '../lib/crowd';
+import { numberSourcePhrase, hourlySourcePhrase } from '../lib/crowd';
 
 // A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
 // arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
@@ -886,6 +886,14 @@ export default function LiveDemo() {
   const chartSummary = hourly.length
     ? `Crowd forecast for the next ${hourly.length} hours, starting now: ${hourly.map(h => (h.open === false ? `${h.hour} closed` : `${h.hour} ${pct(h.score)} percent`)).join(', ')}`
     : 'Hour by hour crowd forecast';
+  // What made the numbers the note under the chart describes. The bars drawn
+  // as a crowd come first (a closed hour is a stub with no crowd in it), then
+  // the headline's source when no chart is drawn. Null with both switches
+  // off, which keeps the old words.
+  const crowdBars = hourly.filter((h) => h && h.open !== false);
+  const madeFrom = crowdBars.length
+    ? hourlySourcePhrase(crowdBars, { reader: 'visitor' })
+    : numberSourcePhrase(selected?.number_source);
   const shut = isShut(selected);
   // A failed photo is per venue, so the flag resets when the card changes.
   // Without the reset one venue with a dead ref would suppress the photo for
@@ -1258,8 +1266,15 @@ export default function LiveDemo() {
 
               <p className="lpd-note">
                 <span className="lpd-live-dot" aria-hidden />
-                {numberSourcePhrase(selected.number_source)
-                  ? `Live from ${numberSourcePhrase(selected.number_source)}`
+                {/* The note sits under the chart, so it is read off the bars
+                    drawn when there are any: while a serving switch is on,
+                    each bar carries its own source, and the next hour can be
+                    a carried reading while the evening is the venue's
+                    pattern. The headline's source answers only when no
+                    chart is drawn. With both switches off neither carries a
+                    source and the old words stand. */}
+                {madeFrom
+                  ? `Live from ${madeFrom}`
                   : 'Live from the model inside Flock'}{ageMs != null ? ` · updated ${agoLabel(ageMs)}` : ''}.
                 {/* Counted off whatever the visitor can actually reach: pins
                     when there is a map, the fallback list when there is not.

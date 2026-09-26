@@ -231,14 +231,18 @@ function describeServedArithmetic(result) {
 // WHAT MADE THE NUMBER A SURFACE ACTUALLY PUBLISHES, which is not always the
 // number the predictor served. Two things can move it after the predictor:
 //
-//   reportsBlended  verified reports from people in the room were blended in
+//   reportsBlended  verified visitor reports were blended in
 //                   (buildCalibrationAdjustment, feedbackUsed). The served
 //                   arithmetic still started the number, but it is no longer
 //                   that arithmetic's number, and 'live_reading_1h' would
 //                   then call a 35 the venue's reading of 20. The source
 //                   keeps its name with '_adjusted' after it, which the
-//                   clients and Birdie word as "adjusted by people who are
-//                   there" and never as the reading itself.
+//                   clients and Birdie word as adjusted by visitor reports
+//                   from this time of week, never as the reading itself and
+//                   never as people who are there now: the reports are any
+//                   verified ones for the same weekly slot, give or take an
+//                   hour, from the last 28 days, and none has to be from
+//                   tonight.
 //   ownerReading    the venue's own live report replaced the number
 //                   (ownerReports.applyOwnerReport, applied). Null: that
 //                   number names its own source, and none of the served

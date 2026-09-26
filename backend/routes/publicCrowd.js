@@ -492,6 +492,14 @@ async function buildCard(v, weather, clock, preScored, place) {
         // rebuilds entries field by field, so without this line the public
         // strip silently drops what mlPredictor now says about every hour.
         predictionMethod: h.predictionMethod || null,
+        // And what made this bar, for the same reason: while a serving switch
+        // is on, a bar can be the venue's pattern, a carried live reading or
+        // the model, hour by hour, and the chart's caption is read off the
+        // bars drawn (lib/crowd hourlySourcePhrase), not off the headline.
+        // predictHourlyForecast sends neither key with both switches off, so
+        // a switched-off bar keeps exactly the keys it had.
+        ...(h.numberSource ? { numberSource: h.numberSource } : {}),
+        ...(typeof h.liveReadings === 'boolean' ? { liveReadings: h.liveReadings } : {}),
         // Google's openNow wins for the "Now" bar. Published hours and reality
         // disagree often enough (holidays, private events, a late open) that
         // the bar under a "Closed right now" headline must not be drawn as a
