@@ -6,15 +6,16 @@
 // one-line fix and a re-print, not a redesign.
 //
 // ---------------------------------------------------------------------------
-// PRINT THESE TWO FIRST. Do not print a whole box yet.
+// PRINT THESE FIRST. Do not print a whole box yet.
 //
-//   part = "screen_fit_test"   about an hour, a few grams
-//   part = "slot_fit_test"     about twenty minutes
+//   this file:              part = "screen_fit_test"   about an hour
+//   flux-sensor-head.scad:  part = "head_fit_test"     about twenty minutes
 //
-// They are the two fits that decide everything else: whether the screen sits
-// flush in its cutout, and whether a hand passes cleanly through the slot with
-// the sensor seeing it. Get those right in cheap plastic before anything else
-// is printed and long before any acrylic is cut.
+// The first says whether the screen sits flush in its window with its screws
+// on their holes; the second whether the camera and the doorway counter fit
+// behind their openings. Get both right in cheap plastic before anything else
+// is printed and long before any acrylic is cut. Ready-made STL and DXF files
+// for every part are in stl/ and dxf/ beside this file.
 // ---------------------------------------------------------------------------
 
 part = "screen_fit_test";
@@ -165,7 +166,11 @@ wall            = 4.0;    // 3 mm acrylic later; 4 mm prints stronger
 bezel           = 16.0;   // border of material around the visible screen
 corner_r        = 6.0;    // rounded corners, front face only
 
-// The hand-pass slot through the top. Recessed so nothing protrudes.
+// The hand-pass slot through the top. OFF: it was there for the break beam,
+// which is gone. The doorway counter lives in the sensor head now, so the base
+// is a closed box, and a hole in its top with nothing under it reads as a
+// mistake and lets dust in. Set true to cut it again.
+hand_slot       = false;
 slot_w          = 127.0;  // 5 inch
 slot_d          = 38.0;   // 1.5 inch
 slot_from_front = 22.0;   // how far back from the front face
@@ -296,8 +301,9 @@ module front_panel() {
 module top_panel() {
     difference() {
         cube([box_w, box_d, wall]);
-        translate([(box_w - slot_w) / 2, slot_from_front, -1])
-            cube([slot_w, slot_d, wall + 2]);
+        if (hand_slot)
+            translate([(box_w - slot_w) / 2, slot_from_front, -1])
+                cube([slot_w, slot_d, wall + 2]);
     }
 }
 
