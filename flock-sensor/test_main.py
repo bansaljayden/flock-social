@@ -13,8 +13,12 @@ Each test name is the failure it prevents.
 
 import array
 import ctypes
+import hashlib
+import io
 import json
 import os
+import re
+import struct
 import sys
 import tempfile
 import time
@@ -2763,5 +2767,613 @@ class TapHandling(unittest.TestCase):
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
         loop = source[source.index('def display_loop():'):]
         self.assertIn('accept_tap(', loop)
+def _vl53_frame(distances_mm, status=5, targets=1, head_id=0x0102, foot_id=None):
+    """One 8x8 frame as the sensor would put it on the wire.
+
+    Laid out the way ST's parser walks it: a 16-byte header carrying the frame
+    id, the blocks this driver enables, and a footer whose id has to match the
+    header's. Built in host order and swapped, because the sensor sends
+    big-endian words.
+    """
+    size = main.vl53_output_config(main.VL53_RES_8X8)[1]
+    host = bytearray(size)
+    host[8], host[9] = head_id >> 8, head_id & 0xFF
+    pos = [16]
+
+    def block(bh, payload):
+        struct.pack_into('<I', host, pos[0], bh)
+        host[pos[0] + 4:pos[0] + 4 + len(payload)] = payload
+        pos[0] += 4 + len(payload)
+
+    def per_zone(v):
+        return bytes(v if isinstance(v, (list, tuple)) else [v] * 64)
+
+    block(0x54B400C0, bytes(12))                    # metadata
+    block(0x54C00040, bytes(4))                     # common data
+    block(0xDB840401, per_zone(targets))            # targets per zone
+    block(0xDF440402, struct.pack('<64h', *[d * 4 for d in distances_mm]))
+    block(0xE0840401, per_zone(status))             # target status
+    foot = head_id if foot_id is None else foot_id
+    host[size - 4], host[size - 3] = foot >> 8, foot & 0xFF
+    return main.swap4(bytes(host))
+
+
+class Vl53Framing(unittest.TestCase):
+    """The byte-level rules every buffer to and from the sensor goes through."""
+
+    def test_every_word_is_reversed(self):
+        # ST's SwapBuffer. Getting this wrong garbles every buffer identically,
+        # which is exactly the kind of wrong that looks like a dead sensor.
+        self.assertEqual(main.swap4(bytes([1, 2, 3, 4, 5, 6, 7, 8])),
+                         bytes([4, 3, 2, 1, 8, 7, 6, 5]))
+        data = bytes(range(40))
+        self.assertEqual(main.swap4(main.swap4(data)), data)
+
+    def test_a_partial_word_is_a_bug_not_padding(self):
+        with self.assertRaises(ValueError):
+            main.swap4(bytes(6))
+
+    def test_division_truncates_toward_zero_the_way_c_does(self):
+        # Python's // floors, so -5 // 4 is -2 where ST's C gives -1. The
+        # offset tables and every distance go through this.
+        self.assertEqual(main._cdiv(-5, 4), -1)
+        self.assertEqual(main._cdiv(5, 4), 1)
+        self.assertEqual(main._cdiv(-8, 4), -2)
+        self.assertEqual(main._cdiv(7, -2), -3)
+
+    def test_the_trimmed_frame_is_320_bytes(self):
+        # Worked through ST's start_ranging by hand: start 4, metadata 16,
+        # common 8, targets 68, distance 132, status 68, plus 24. The firmware
+        # reports its own figure back and start_ranging refuses a mismatch, so
+        # this number is checked again by the part itself on the first boot.
+        self.assertEqual(main.vl53_output_config(main.VL53_RES_8X8)[1], 320)
+
+    def test_no_output_set_can_exceed_st_own_buffer(self):
+        # VL53L8CX_MAX_RESULTS_SIZE with every output on and one target per
+        # zone, from vl53l8cx_api.h.
+        self.assertLessEqual(main.vl53_output_config(main.VL53_RES_8X8, 0xFFF)[1], 1452)
+
+    def test_the_output_list_keeps_all_twelve_blocks(self):
+        # The firmware is told about every block and which ones are on; a
+        # shortened list would renumber the enable bits under it.
+        output, _ = main.vl53_output_config(main.VL53_RES_8X8)
+        self.assertEqual(len(output), 12)
+        self.assertEqual(output[3], main.VL53_OUTPUT_BH[3], 'a disabled block was rewritten')
+        for i in (5, 8, 10):
+            self.assertEqual((output[i] >> 4) & 0xFFF, 64)
+
+    def test_the_enable_mask_asks_for_exactly_the_blocks_parsed(self):
+        mask = main.VL53_OUTPUT_ENABLE
+        on = [i for i in range(12) if mask >> i & 1]
+        self.assertEqual(on, [0, 1, 2, 5, 8, 10])
+        self.assertEqual(main.VL53_OUTPUT_BH[5] >> 16, main.VL53_NB_TARGET_IDX)
+        self.assertEqual(main.VL53_OUTPUT_BH[8] >> 16, main.VL53_DISTANCE_IDX)
+        self.assertEqual(main.VL53_OUTPUT_BH[10] >> 16, main.VL53_STATUS_IDX)
+
+    def test_distances_come_out_in_millimetres(self):
+        d = [1000 + z for z in range(64)]
+        self.assertEqual(main.vl53_parse_frame(_vl53_frame(d), 320), d)
+
+    def test_a_zone_with_no_target_reads_nothing(self):
+        targets = [1] * 64
+        targets[10] = 0
+        out = main.vl53_parse_frame(_vl53_frame([1500] * 64, targets=targets), 320)
+        self.assertEqual(out[10], 0)
+        self.assertEqual(out[11], 1500)
+
+    def test_only_valid_statuses_count(self):
+        status = [5] * 64
+        status[0], status[1], status[2], status[3] = 9, 4, 6, 255
+        out = main.vl53_parse_frame(_vl53_frame([1500] * 64, status=status), 320)
+        self.assertEqual(out[:4], [1500, 0, 0, 0])
+
+    def test_a_negative_distance_is_not_a_person_at_the_glass(self):
+        d = [1500] * 64
+        d[5] = -3
+        out = main.vl53_parse_frame(_vl53_frame(d), 320)
+        self.assertEqual(out[5], 0)
+
+    def test_quarter_millimetres_truncate(self):
+        host = [1500] * 64
+        raw = bytearray(main.swap4(_vl53_frame(host)))
+        # Distance block starts after header 16, metadata 16, common 8 and
+        # targets 68: its payload is at 16 + 16 + 8 + 68 + 4.
+        struct.pack_into('<h', raw, 16 + 16 + 8 + 68 + 4, 4003)
+        out = main.vl53_parse_frame(main.swap4(bytes(raw)), 320)
+        self.assertEqual(out[0], 1000)
+
+    def test_a_torn_frame_is_dropped(self):
+        # ST's check: the id at the head of the frame and at its foot differ
+        # when the read straddled two frames.
+        self.assertIsNone(main.vl53_parse_frame(
+            _vl53_frame([1500] * 64, head_id=0x0102, foot_id=0x0103), 320))
+
+    def test_a_frame_without_distances_is_dropped(self):
+        raw = bytearray(main.swap4(_vl53_frame([1500] * 64)))
+        struct.pack_into('<I', raw, 16 + 16 + 8 + 68, 0x12340402)   # not DISTANCE
+        self.assertIsNone(main.vl53_parse_frame(main.swap4(bytes(raw)), 320))
+
+
+class _FakeIoctl:
+    """Stands in for fcntl on the I2C bus. Records every transaction the way
+    the kernel receives it and fills read buffers with a counting pattern."""
+
+    def __init__(self):
+        self.transfers = []
+
+    def ioctl(self, fd, request, arg):
+        assert request == main._I2C_RDWR
+        msgs = []
+        for k in range(arg.nmsgs):
+            m = arg.msgs[k]
+            if m.flags & main._I2C_M_RD:
+                for j in range(m.len):
+                    m.buf[j] = j & 0xFF
+                msgs.append((m.addr, m.flags, m.len, None))
+            else:
+                msgs.append((m.addr, m.flags, m.len, bytes(m.buf[:m.len])))
+        self.transfers.append(msgs)
+        return 0
+
+
+class I2CPlumbing(unittest.TestCase):
+    """The ctypes layer between the driver and /dev/i2c-1."""
+
+    def bus(self):
+        b = main.I2CBus.__new__(main.I2CBus)
+        b.address, b.fd = 0x29, 3
+        return b
+
+    def test_the_kernel_constants(self):
+        self.assertEqual(main._I2C_RDWR, 0x0707)
+        self.assertEqual(main._I2C_M_RD, 0x0001)
+
+    def test_the_structures_match_the_kernel_layout(self):
+        if ctypes.sizeof(ctypes.c_void_p) != 8:
+            self.skipTest('layout pinned for 64-bit, which is what a Pi 5 runs')
+        self.assertEqual(ctypes.sizeof(main._I2cMsg), 16)
+        self.assertEqual(main._I2cMsg.buf.offset, 8)
+        self.assertEqual(ctypes.sizeof(main._I2cRdwr), 16)
+
+    def test_a_long_write_is_split_and_every_piece_says_where_it_goes(self):
+        fake = _FakeIoctl()
+        payload = bytes(range(256)) * 20
+        with mock.patch.object(main, 'fcntl', fake):
+            self.bus().write(0x0000, payload)
+        pieces = [t[0] for t in fake.transfers]
+        self.assertEqual([p[2] for p in pieces], [2050, 2050, 1026])
+        self.assertEqual([p[3][:2] for p in pieces], [b'\x00\x00', b'\x08\x00', b'\x10\x00'])
+        self.assertEqual(b''.join(p[3][2:] for p in pieces), payload)
+
+    def test_a_firmware_page_never_exceeds_the_kernel_limit(self):
+        # i2c-dev refuses any message over 8192 bytes, and a page is 32768.
+        fake = _FakeIoctl()
+        with mock.patch.object(main, 'fcntl', fake):
+            self.bus().write(0, bytes(0x8000))
+        self.assertTrue(all(t[0][2] <= 8192 for t in fake.transfers))
+        self.assertEqual(sum(t[0][2] - 2 for t in fake.transfers), 0x8000)
+
+    def test_a_read_is_one_transaction_with_a_repeated_start(self):
+        # The sensor loses the register address on a stop, so the address
+        # write and the read must be one I2C_RDWR call, not two.
+        fake = _FakeIoctl()
+        with mock.patch.object(main, 'fcntl', fake):
+            got = self.bus().read(0x2C04, 12)
+        self.assertEqual(len(fake.transfers), 1)
+        (w, r) = fake.transfers[0]
+        self.assertEqual(w, (0x29, 0, 2, b'\x2c\x04'))
+        self.assertEqual(r[:3], (0x29, main._I2C_M_RD, 12))
+        self.assertEqual(got, bytes(range(12)))
+
+
+class _FakeVl53:
+    """A scripted VL53L8CX, at the level the driver talks to its bus.
+
+    It answers the polls ST's start-up waits on, keeps the DCI settings the
+    driver writes, hands back what it was asked for, and records every write
+    in order. Knobs for each way a real part can fail.
+    """
+
+    def __init__(self, checksum=0x0C0B6C9E, frame_size=320, laser_fault=0,
+                 mcu_status=0, boots=True):
+        self.writes = []
+        self.dci = {
+            main.VL53_DCI_ZONE_CONFIG: bytes([4, 4, 0, 0, 8, 8, 0, 0]),
+            main.VL53_DCI_DSS_CONFIG: bytes(16),
+            main.VL53_DCI_FREQ_HZ: bytes(4),
+            main.VL53_DCI_RANGING_MODE: bytes(8),
+            main.VL53_DCI_TARGET_ORDER: bytes([2, 0, 0, 0]),
+            0x5440: bytes(8) + struct.pack('<H', frame_size) + bytes(2),
+            0xE0C4: bytes(6) + bytes([laser_fault, 0]),
+        }
+        self.checksum = checksum
+        self.mcu_status = mcu_status
+        self.go2 = 0x01 if boots else 0x00
+        # 492 bytes of calibration, distinct everywhere, so a shift shows.
+        self.nvm = bytes((i * 7 + 3) & 0xFF for i in range(main.VL53_NVM_SIZE))
+        self.pending = b''
+        self.ready = bytes([255, 5, 5, 0x10])
+        self.frame = b''
+
+    def write(self, reg, data):
+        data = bytes(data)
+        self.writes.append((reg, data))
+        if reg == main.VL53_UI_CMD_END - 11 and len(data) == 12:
+            index, size = (data[0] << 8) | data[1], (data[2] << 4) | (data[3] >> 4)
+            payload = self.dci.get(index, bytes(size))[:size].ljust(size, b'\0')
+            self.pending = main.swap4(bytes(4) + payload + bytes(8))
+        elif reg == 0x2FD8:
+            self.pending = self.nvm
+        elif len(data) > 12 and reg + len(data) - 1 == main.VL53_UI_CMD_END:
+            index, size = (data[0] << 8) | data[1], len(data) - 12
+            self.dci[index] = main.swap4(data[4:4 + size])
+
+    def read(self, reg, n):
+        if reg == 0x06 and n == 1:
+            return bytes([self.go2])
+        if reg == 0x21 and n == 1:
+            return bytes([0x04])
+        if reg == main.VL53_UI_CMD_STATUS and n == 4:
+            return bytes([2, 3, self.mcu_status, 0])
+        if reg == 0x2FFC and n == 4:
+            return struct.pack('>I', self.checksum)
+        if reg == main.VL53_UI_CMD_START:
+            return self.pending[:n].ljust(n, b'\0')
+        if reg == 0 and n == 4:
+            return self.ready
+        if reg == 0 and n > 4:
+            return self.frame[:n].ljust(n, b'\0')
+        if reg == 0 and n == 1:
+            return b'\xf0'
+        if reg == 1 and n == 1:
+            return b'\x0c'
+        return bytes(n)
+
+
+def _vl53_tables():
+    return main.load_vl53_tables()
+
+
+class Vl53StartUp(unittest.TestCase):
+    """ST's start-up sequence, run against the scripted fake."""
+
+    def device(self, **knobs):
+        fake = _FakeVl53(**knobs)
+        return fake, main.Vl53l8cx(fake, _vl53_tables(), sleep=lambda _s: None)
+
+    def test_it_reaches_ranging_configured_for_a_doorway(self):
+        fake, dev = self.device()
+        dev.start(15)
+        self.assertTrue(dev.ranging)
+        self.assertEqual(dev.frame_size, 320)
+        self.assertEqual(fake.dci[main.VL53_DCI_ZONE_CONFIG][:2], bytes([8, 8]))
+        self.assertEqual(fake.dci[main.VL53_DCI_FREQ_HZ][1], 15)
+        self.assertEqual(fake.dci[main.VL53_DCI_TARGET_ORDER][0], main.VL53_TARGET_ORDER_CLOSEST)
+        mode = fake.dci[main.VL53_DCI_RANGING_MODE]
+        self.assertEqual((mode[1], mode[3]), (1, 3), 'not continuous mode')
+        self.assertEqual(fake.dci[main.VL53_DCI_SINGLE_RANGE], struct.pack('<I', 0))
+        (enable,) = struct.unpack_from('<I', fake.dci[main.VL53_DCI_OUTPUT_ENABLES], 0)
+        self.assertEqual(enable, main.VL53_OUTPUT_ENABLE)
+        self.assertEqual(struct.unpack('<2I', fake.dci[main.VL53_DCI_OUTPUT_CONFIG]), (320, 13))
+        self.assertIn((main.VL53_UI_CMD_END - 3, bytes([0x00, 0x03, 0x00, 0x00])), fake.writes,
+                      'no start command sent')
+
+    def test_the_boot_follows_st_line_by_line(self):
+        # Transcribed from vl53l8cx_init in ST's vl53l8cx_api.c, independently
+        # of main.py: every single-byte write from the software reboot to the
+        # page select after the MCU boots, with the three firmware pages in
+        # place. A reordered or dropped write here is a sensor that does not
+        # start, and nothing on the bench says why.
+        expected = [
+            (0x7FFF, 0x00), (0x0009, 0x04), (0x000F, 0x40), (0x000A, 0x03),
+            (0x000C, 0x01), (0x0101, 0x00), (0x0102, 0x00), (0x010A, 0x01),
+            (0x4002, 0x01), (0x4002, 0x00), (0x010A, 0x03), (0x0103, 0x01),
+            (0x000C, 0x00), (0x000F, 0x43), (0x000F, 0x40), (0x000A, 0x01),
+            (0x7FFF, 0x00), (0x000E, 0x01), (0x7FFF, 0x02), (0x7FFF, 0x01),
+            (0x0006, 0x01), (0x7FFF, 0x00), (0x000C, 0x01), (0x7FFF, 0x00),
+            (0x0101, 0x00), (0x0102, 0x00), (0x010A, 0x01), (0x4002, 0x01),
+            (0x4002, 0x00), (0x010A, 0x03), (0x0103, 0x01), (0x400F, 0x00),
+            (0x021A, 0x43), (0x021A, 0x03), (0x021A, 0x01), (0x021A, 0x00),
+            (0x0219, 0x00), (0x021B, 0x00), (0x7FFF, 0x00), (0x7FFF, 0x01),
+            (0x7FFF, 0x09), ('page', 0x8000), (0x7FFF, 0x0A), ('page', 0x8000),
+            (0x7FFF, 0x0B), ('page', 0x5000), (0x7FFF, 0x01), (0x7FFF, 0x01),
+            (0x0006, 0x03), (0x7FFF, 0x00), (0x000C, 0x01), (0x7FFF, 0x00),
+            (0x0114, 0x00), (0x0115, 0x00), (0x0116, 0x42), (0x0117, 0x00),
+            (0x000B, 0x00), (0x000C, 0x00), (0x000B, 0x01), (0x7FFF, 0x02),
+        ]
+        fake, dev = self.device()
+        dev.init()
+        seen = []
+        for reg, data in fake.writes:
+            if reg == 0x2FD8:
+                break
+            seen.append((reg, data[0]) if len(data) == 1 else ('page', len(data)))
+        self.assertEqual(seen, expected)
+
+    def test_the_firmware_arrives_whole_and_in_order(self):
+        fake, dev = self.device()
+        dev.init()
+        pages = [d for r, d in fake.writes if r == 0 and len(d) > 1]
+        self.assertEqual(b''.join(pages), _vl53_tables()['firmware'])
+
+    def test_a_damaged_load_stops_at_the_checksum(self):
+        _, dev = self.device(checksum=0xDEADBEEF)
+        with self.assertRaisesRegex(main.Vl53l8cxError, 'checksum'):
+            dev.init()
+
+    def test_a_sensor_that_never_boots_times_out_rather_than_hanging(self):
+        _, dev = self.device(boots=False)
+        with self.assertRaisesRegex(main.Vl53l8cxError, 'timed out'):
+            dev.init()
+
+    def test_an_mcu_error_is_raised_not_carried_forward(self):
+        _, dev = self.device(mcu_status=0x80)
+        with self.assertRaisesRegex(main.Vl53l8cxError, 'MCU error'):
+            dev.init()
+
+    def test_the_8x8_calibration_is_shifted_and_footed_as_st_does(self):
+        fake, dev = self.device()
+        dev.start(15)
+        sent = [d for r, d in fake.writes if r == 0x2E18]
+        self.assertEqual(len(sent), 2, 'offsets go once at 4x4 in init and once at 8x8')
+        last = sent[-1]
+        self.assertEqual(len(last), main.VL53_OFFSET_SIZE)
+        self.assertEqual(last[:480], fake.nvm[8:488])
+        self.assertEqual(last[480:], bytes([0x00, 0x00, 0x00, 0x0F, 0x03, 0x01, 0x01, 0xE4]))
+
+    def test_the_4x4_calibration_averages_each_square_of_four(self):
+        # Rebuilt by formula rather than by the loop main.py uses: in host
+        # order the signal grid sits at 0x3C and the range grid at 0x140, and
+        # each 4x4 cell is the C-truncated mean of a 2x2 block of the 8x8.
+        host = bytearray(main.VL53_OFFSET_SIZE)
+        sig = [100000 + 37 * k for k in range(64)]
+        rng = [-(3 * k + 1) for k in range(64)]
+        struct.pack_into('<64I', host, 0x3C, *sig)
+        struct.pack_into('<64h', host, 0x140, *rng)
+        fake, dev = self.device()
+        fake.nvm = main.swap4(bytes(host)) + bytes(4)
+        dev.init()
+        first = [d for r, d in fake.writes if r == 0x2E18][0]
+        # The written buffer is the processed one moved down by 8 bytes.
+        got_sig = struct.unpack('<64I', main.swap4(first[0x3C - 8:0x3C - 8 + 256]))
+        got_rng = struct.unpack('<64h', main.swap4(first[0x140 - 8:0x140 - 8 + 128]))
+        for j in range(4):
+            for i in range(4):
+                a = 2 * i + 16 * j
+                self.assertEqual(got_sig[i + 4 * j], (sig[a] + sig[a + 1] + sig[a + 8] + sig[a + 9]) // 4)
+                total = rng[a] + rng[a + 1] + rng[a + 8] + rng[a + 9]
+                self.assertEqual(got_rng[i + 4 * j], -((-total) // 4))
+        self.assertEqual(got_sig[16:], (0,) * 48)
+        self.assertEqual(got_rng[16:], (0,) * 48)
+
+    def test_a_frame_size_the_firmware_disagrees_with_is_refused(self):
+        _, dev = self.device(frame_size=1444)
+        with self.assertRaisesRegex(main.Vl53l8cxError, '1444'):
+            dev.start(15)
+
+    def test_a_laser_safety_fault_is_refused(self):
+        _, dev = self.device(laser_fault=1)
+        with self.assertRaisesRegex(main.Vl53l8cxError, 'laser'):
+            dev.start(15)
+
+    def test_stopping_a_sensor_that_never_started_touches_nothing(self):
+        fake, dev = self.device()
+        dev.stop_ranging()
+        self.assertEqual(fake.writes, [])
+
+    def test_stop_hands_the_sensor_back(self):
+        fake, dev = self.device()
+        dev.start(15)
+        fake.go2 = 0x81
+        before = len(fake.writes)
+        dev.stop_ranging()
+        tail = [(r, d[0]) for r, d in fake.writes[before:]]
+        self.assertEqual(tail[-5:], [(0x7FFF, 0x00), (0x14, 0x00), (0x15, 0x00),
+                                     (0x09, 0x04), (0x7FFF, 0x02)])
+        self.assertFalse(dev.ranging)
+
+    def test_a_frame_is_ready_only_when_st_says_so(self):
+        fake, dev = self.device()
+        dev.start(15)
+        fake.ready = bytes([3, 5, 5, 0x10])
+        self.assertTrue(dev.data_ready())
+        self.assertFalse(dev.data_ready(), 'the same frame twice')
+        fake.ready = bytes([255, 5, 5, 0x10])
+        self.assertFalse(dev.data_ready())
+        fake.ready = bytes([4, 5, 0x42, 0x80])
+        self.assertFalse(dev.data_ready())
+        self.assertEqual(dev.fault, 0x42)
+
+    def test_a_frame_is_read_and_parsed(self):
+        fake, dev = self.device()
+        dev.start(15)
+        d = [900 + z for z in range(64)]
+        fake.frame = _vl53_frame(d)
+        self.assertEqual(dev.read_frame(), d)
+
+
+class DoorwayBackground(unittest.TestCase):
+    """The empty doorway, zone by zone."""
+
+    @staticmethod
+    def angled(near=1500, far=2900):
+        # The head looks down at the doorway at an angle: the top row of its
+        # view meets floor much further away than the bottom row.
+        return [far - (far - near) * (z // 8) / 7.0 for z in range(64)]
+
+    def seeded(self, floors, frames=None):
+        bg = main.TofBackground(hz=15)
+        for f in (frames or [floors] * main.TofBackground.SEED_FRAMES):
+            bg.observe([int(v) for v in f])
+        return bg
+
+    def test_each_zone_learns_its_own_floor(self):
+        floors = self.angled()
+        bg = self.seeded(floors)
+        self.assertTrue(bg.ready)
+        for z in range(64):
+            self.assertAlmostEqual(bg.floor[z], int(floors[z]), delta=1)
+
+    def test_somebody_walking_through_while_it_learns_does_not_move_it(self):
+        floors = [2500] * 64
+        frames = [list(floors) for _ in range(main.TofBackground.SEED_FRAMES)]
+        for f in frames[5:9]:
+            for z in (27, 28, 35, 36):
+                f[z] = 1400
+        bg = self.seeded(floors, frames)
+        self.assertEqual(bg.floor[27], 2500)
+
+    def test_a_zone_that_never_answers_takes_the_edge_of_range(self):
+        floors = [2500] * 64
+        floors[0] = 0
+        bg = self.seeded(floors)
+        self.assertEqual(bg.floor[0], main.VL53_RANGE_MM)
+
+    def test_a_person_does_not_drag_the_floor(self):
+        bg = self.seeded([2500] * 64)
+        for _ in range(30):
+            bg.observe([1400] * 64)
+        self.assertEqual(bg.floor[0], 2500)
+
+    def test_slow_change_is_followed(self):
+        bg = self.seeded([2500] * 64)
+        for _ in range(400):
+            bg.observe([2650] * 64)
+        self.assertAlmostEqual(bg.floor[0], 2650, delta=5)
+
+    def test_something_parked_in_the_doorway_joins_the_background_after_a_minute(self):
+        bg = self.seeded([2500] * 64)
+        parked = [2500] * 64
+        parked[20] = 1200
+        for _ in range(60 * 15 - 1):
+            bg.observe(parked)
+        self.assertIn(20, main.tof_occupied(parked, bg.floor))
+        bg.observe(parked)
+        self.assertNotIn(20, main.tof_occupied(parked, bg.floor))
+
+    def test_an_angled_doorway_counts_one_walk_through_as_one(self):
+        floors = self.angled()
+        bg = self.seeded(floors)
+        tracker = main.CrossingTracker()
+        for r in range(0, 7):
+            f = [int(v) for v in floors]
+            for dr in (0, 1):
+                for dc in (0, 1):
+                    z = (r + dr) * 8 + 3 + dc
+                    if r + dr < 8:
+                        f[z] = int(floors[z]) - 900
+            bg.observe(f)
+            tracker.observe(main.tof_clusters(main.tof_occupied(f, bg.floor)))
+        self.assertEqual((tracker.entries, tracker.exits), (1, 0))
+
+    def test_one_floor_for_the_whole_grid_would_see_a_crowd_in_an_empty_doorway(self):
+        # Why the background is per zone. The same empty angled doorway,
+        # against the single floor a flat mount would use, lights every near
+        # row as somebody standing there.
+        floors = [int(v) for v in self.angled()]
+        self.assertTrue(main.tof_clusters(main.tof_occupied(floors, max(floors))))
+        self.assertEqual(main.tof_occupied(floors, self.seeded(floors).floor), [])
+
+
+class DoorCounterInstall(unittest.TestCase):
+    """What has to be true on disk for the counter to start at all."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def test_the_firmware_files_are_the_ones_the_readme_names(self):
+        # A checkout with line-ending conversion, a truncated copy, or a file
+        # swapped for another driver version all load and then fail the
+        # sensor's checksum in the field. They fail here first.
+        readme = (self.HERE / 'vl53l8cx' / 'README.md').read_text(encoding='utf-8')
+        rows = re.findall(r'\| `(vl53l8cx_[a-z_]+\.bin)` \| (\d+) \| `([0-9a-f]{64})`', readme)
+        self.assertEqual(len(rows), 4)
+        for name, size, digest in rows:
+            data = (self.HERE / 'vl53l8cx' / name).read_bytes()
+            self.assertEqual(len(data), int(size), name)
+            self.assertEqual(hashlib.sha256(data).hexdigest(), digest, name)
+        tables = main.load_vl53_tables()
+        self.assertEqual(len(tables['firmware']), 0x15000)
+
+    def test_the_licence_travels_with_the_firmware(self):
+        # BSD 3-Clause lets the binaries be redistributed on condition that
+        # the notice goes with them: the library's licence, and ST's own
+        # notice from the file the tables were extracted from.
+        licence = (self.HERE / 'vl53l8cx' / 'LICENSE').read_text(encoding='utf-8')
+        self.assertIn('BSD 3-Clause License', licence)
+        self.assertIn('Redistributions in binary form', licence)
+        readme = (self.HERE / 'vl53l8cx' / 'README.md').read_text(encoding='utf-8')
+        self.assertIn('Copyright (c) 2021 STMicroelectronics.', readme)
+
+    def test_the_service_can_open_the_counters_bus(self):
+        # /dev/i2c-1 belongs to group i2c. Without it the self test, run as
+        # root, finds the counter, and the service never can.
+        unit = (self.HERE / 'flock-sensor.service').read_text(encoding='utf-8')
+        groups = re.search(r'^SupplementaryGroups=(.*)$', unit, re.M).group(1).split()
+        self.assertIn('i2c', groups)
+
+    def test_an_unset_number_is_not_reported_as_a_typo(self):
+        original = dict(main.CONFIG)
+        try:
+            main.CONFIG['TOF_MARGIN_MM'] = ''
+            with mock.patch('sys.stderr', new_callable=io.StringIO) as err:
+                self.assertEqual(main._cfg_number('TOF_MARGIN_MM', int, 100, 1500, 300), 300)
+            self.assertEqual(err.getvalue(), '')
+        finally:
+            main.CONFIG.clear()
+            main.CONFIG.update(original)
+
+
+class DoorScreen(unittest.TestCase):
+    """The door screen says what the counter it has can actually tell."""
+
+    def panel(self):
+        return main.Panel(_FakePygame(), _FakeSurface((1024, 600)), 1024, 600)
+
+    @staticmethod
+    def drawn(ui):
+        return {k[1] for k in ui._cache if isinstance(k, tuple) and len(k) == 3}
+
+    def test_both_directions_when_the_counter_knows_them(self):
+        ui = self.panel()
+        ui.door(4, [1, 2, 3], 17, 9)
+        seen = self.drawn(ui)
+        self.assertIn('Came in', seen)
+        self.assertIn('Went out', seen)
+        self.assertIn('17', seen)
+        self.assertIn('9', seen)
+
+    def test_a_beam_is_not_credited_with_directions(self):
+        ui = self.panel()
+        ui.door(4, [1, 2, 3])
+        seen = self.drawn(ui)
+        self.assertNotIn('Came in', seen)
+        self.assertIn('This sensor counts crossings, not which way they went.', seen)
+
+    def test_no_counter_says_so_instead_of_showing_zero(self):
+        ui = self.panel()
+        ui.door(0, [], live=False)
+        ui.home(0, 3, True, 60.0, True, [], door_live=False)
+        seen = self.drawn(ui)
+        self.assertIn('No doorway counter is answering.', seen)
+        self.assertIn('counter offline', seen)
+        self.assertIn('--', seen)
+
+    def test_the_door_chart_is_its_own_data(self):
+        # It once charted thermal headcounts under a doorway title.
+        source = (Path(__file__).resolve().parent / 'main.py').read_text(encoding='utf-8')
+        loop = source[source.index('def display_loop():'):]
+        self.assertIn('ui.door(ir, door_history', loop)
+
+    def test_the_door_chart_fills_without_a_network(self):
+        # Recorded at the snapshot, so a demo unit with no wifi still draws it.
+        with main._lock:
+            main._state['door_history'].clear()
+            main._state['ir_count'] = 5
+        main.snapshot()
+        with main._lock:
+            self.assertEqual(list(main._state['door_history']), [5])
+            main._state['door_history'].clear()
+
+
 if __name__ == '__main__':
     unittest.main()

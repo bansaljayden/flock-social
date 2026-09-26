@@ -14,6 +14,16 @@ Source: https://github.com/stm32duino/VL53L8CX, version 2.1.0, commit
 `a93a9d6796f2a74835a4088f225daec343153c62` (2026-07-01), file
 `src/vl53l8cx_buffers.h`.
 
+That file carries this notice, reproduced as it appears there:
+
+    Copyright (c) 2021 STMicroelectronics.
+    All rights reserved.
+
+    This software is licensed under terms that can be found in the LICENSE file
+    in the root directory of this software component.
+
+The LICENSE it refers to is the library's, copied beside this file unchanged.
+
 | File | Bytes | SHA-256 | From |
 |---|---|---|---|
 | `vl53l8cx_firmware.bin` | 86016 | `fc50ff57e426b6c43532042e08a6b4bb7dcc3dac36c9d79787c511ef074e9cda` | `VL53L8CX_FIRMWARE` |
