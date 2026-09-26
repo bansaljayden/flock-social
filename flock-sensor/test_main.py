@@ -3375,5 +3375,42 @@ class DoorScreen(unittest.TestCase):
             main._state['door_history'].clear()
 
 
+class InstallerHardwareAccess(unittest.TestCase):
+    """What setup.sh does to the hardware and the unit it installs."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def setup_text(self):
+        return (self.HERE / 'setup.sh').read_text(encoding='utf-8')
+
+    def test_the_installed_unit_keeps_every_group_the_repo_unit_asks_for(self):
+        # setup.sh rewrites SupplementaryGroups with the groups this image
+        # has. It took them from a list of its own, three long, so every
+        # installed unit lost input and render while the repo's unit looked
+        # right. The list must come from the unit file.
+        setup = self.setup_text()
+        self.assertNotRegex(setup, r'for grp in [a-z]', 'the installer has its own group list again')
+        self.assertIn("sed -n 's/^SupplementaryGroups=//p'", setup)
+        self.assertIn('for grp in ${WANTED_GROUPS}', setup)
+
+    def test_i2c_is_turned_on(self):
+        self.assertIn('raspi-config nonint do_i2c 0', self.setup_text())
+
+    def test_the_bus_rate_is_set_once_and_never_over_a_choice(self):
+        setup = self.setup_text()
+        self.assertIn("grep -q '^dtparam=i2c_arm_baudrate='", setup)
+        self.assertIn('dtparam=i2c_arm_baudrate=400000', setup)
+
+    def test_the_counter_firmware_is_installed_where_main_looks(self):
+        # main.py looks beside itself, /opt/flock-sensor/vl53l8cx.
+        setup = self.setup_text()
+        self.assertIn('"${INSTALL_DIR}/vl53l8cx/"', setup)
+        self.assertEqual(Path(main.TOF_DIR).name, 'vl53l8cx')
+
+    def test_the_firmware_is_marked_binary(self):
+        attrs = (self.HERE / 'vl53l8cx' / '.gitattributes').read_text(encoding='utf-8')
+        self.assertIn('*.bin binary', attrs)
+
+
 if __name__ == '__main__':
     unittest.main()
