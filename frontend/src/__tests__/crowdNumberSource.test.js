@@ -26,7 +26,7 @@ test('each value the server names has plain words, and anything else has none', 
 
 test('no phrase carries an em dash', () => {
   for (const v of ['venue_pattern_live', 'venue_pattern', 'model_live']) {
-    expect(numberSourcePhrase(v)).not.toMatch(/—/);
+    expect(numberSourcePhrase(v)).not.toMatch(new RegExp(String.fromCharCode(0x2014)));
   }
 });
 
