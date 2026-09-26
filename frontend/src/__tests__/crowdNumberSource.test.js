@@ -11,7 +11,10 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { numberSourcePhrase, hourlySourcePhrase, isAdjustedSource, isPatternOnlySource, peersSourcePhrase, REPORTS_ADJUSTED_WORDS } = require('../lib/crowd');
+const {
+  numberSourcePhrase, hourlySourcePhrase, isAdjustedSource, isPatternOnlySource, peersSourcePhrase, REPORTS_ADJUSTED_WORDS,
+  cardSourceLine, stripRowMethod, stripPeakBars,
+} = require('../lib/crowd');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
 
@@ -127,22 +130,15 @@ describe('the hourly chart caption comes from the bars drawn', () => {
 
 test('every surface that credits the crowd model reads the number source first', () => {
   const card = read('components/venue/ConsumerVenueCard.js');
-  expect(card).toMatch(/const madeFrom = numberSourcePhrase\(cd\.numberSource\);/);
-  // The model line and the reporters' line both defer to it; the old words
-  // remain for a response without the key.
-  expect(card).toMatch(/madeFrom \? `From \$\{madeFrom\}\.` : 'From the Flock crowd model\.'/);
-  // The switched line says when the reports are from. The line without a
-  // source is the switched-off one and keeps its words exactly.
-  expect(card).toMatch(/madeFrom \? `From \$\{madeFrom\}, \$\{REPORTS_ADJUSTED_WORDS\}\.` : `From the crowd model, \$\{REPORTS_ADJUSTED_WORDS\}\.`/);
+  // The line under the dial is chosen by lib/crowd cardSourceLine, which is
+  // exercised with real payloads below.
+  expect(card).toMatch(/\{cardSourceLine\(cd\)\}/);
   // The blended reports come from a four-week window for this time of week,
   // so no line may say the people adjusting the number are there now.
   expect(card).not.toMatch(/adjusted by people who are there/);
+  expect(card).not.toMatch(/From the crowd model, /);
   // A number that is the venue's pattern alone is not LIVE.
   expect(card).toMatch(/if \(isPatternOnlySource\(cd\.numberSource\)\) return false;/);
-  // A source that already says people adjusted it is not followed by the
-  // same words twice.
-  expect(card).toMatch(/const adjustedFrom = madeFrom && isAdjustedSource\(cd\.numberSource\) \? `From \$\{madeFrom\}\.` : null;/);
-  expect(card).toMatch(/cd\.confidenceBasis === 'user_reports' \? \(adjustedFrom \|\|/);
 
   const insights = read('components/VenueInsightCards.js');
   // The hourly charts read the bars they draw FIRST, before the current
@@ -164,8 +160,55 @@ test('every surface that credits the crowd model reads the number source first',
   expect(demo).not.toMatch(/`Live from \$\{numberSourcePhrase\(selected\.number_source\)\}`/);
 
   // The strip's caption reads each row's peak, not the model by default.
-  expect(dashboard).toMatch(/peersSourcePhrase\(\[venueStrip\.you, \.\.\.\(venueStrip\.competitors \|\| \[\]\)\]/);
+  expect(dashboard).toMatch(/peersSourcePhrase\(stripPeakBars\(\[venueStrip\.you, \.\.\.\(venueStrip\.competitors \|\| \[\]\)\]\)\)/);
+  // Each row's label reads what made its peak, not its current hour.
+  expect(dashboard).toMatch(/\{stripRowMethod\(v\) && stripRowMethod\(v\) !== 'ml' && \(/);
+  expect(dashboard).not.toMatch(/v\.method && v\.method !== 'ml'/);
   expect(dashboard).toMatch(/\{stripPeaksFrom\s*\? `Projected evening peaks within 1\.5 km, from \$\{stripPeaksFrom\}\.`\s*: "Projected evening peaks within 1\.5 km, from Flock's crowd model\."\}/);
+});
+
+describe('the card\'s line under the dial names the engine that actually scored it', () => {
+  const R = REPORTS_ADJUSTED_WORDS;
+  test('visitor reports blended into a rule-engine number never credit the crowd model', () => {
+    // No ML baseline, three verified reports: the rule engine's number,
+    // blended. Both switches off, so no numberSource.
+    for (const pm of ['rule_engine', 'rule_engine_no_baseline', 'rule_engine_fallback', 'rule_engine_baseline_refused', null, undefined]) {
+      const line = cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: pm });
+      expect(line).toBe(`From what is typical for a venue like this, ${R}.`);
+      expect(line).not.toMatch(/model/);
+    }
+  });
+
+  test('the switched-off lines for a model number keep their words exactly', () => {
+    expect(cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: 'ml' })).toBe(`From the crowd model, ${R}.`);
+    expect(cardSourceLine({ confidenceBasis: 'model_holdout', predictionMethod: 'ml' })).toBe('From the Flock crowd model.');
+    expect(cardSourceLine({ confidenceBasis: 'model_unverified_axis', predictionMethod: 'ml' })).toBe('From the Flock crowd model.');
+    expect(cardSourceLine({ confidenceBasis: 'category_pattern', predictionMethod: 'rule_engine' }))
+      .toBe('An estimate from typical patterns for this kind of place.');
+    expect(cardSourceLine({ confidenceBasis: 'owner_report', predictionMethod: 'owner_report', ownerReport: { noun: 'cafe' } }))
+      .toBe('From the cafe itself, not a Flock estimate.');
+    expect(cardSourceLine({ confidenceBasis: 'owner_report', predictionMethod: 'owner_report' }))
+      .toBe('From the venue itself, not a Flock estimate.');
+    expect(cardSourceLine(null)).toBeNull();
+  });
+
+  test('a named source says what made the number, and the reports words once', () => {
+    expect(cardSourceLine({ confidenceBasis: 'model_holdout', predictionMethod: 'ml', numberSource: 'venue_pattern' }))
+      .toBe("From this venue's usual pattern.");
+    expect(cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: 'ml', numberSource: 'live_reading_1h_adjusted' }))
+      .toBe(`From this venue's live reading taken an hour ago, ${R}.`);
+    expect(cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: 'ml', numberSource: 'venue_pattern' }))
+      .toBe(`From this venue's usual pattern, ${R}.`);
+  });
+
+  test('no card line carries an em dash', () => {
+    const payloads = [
+      { confidenceBasis: 'user_reports', predictionMethod: 'rule_engine' },
+      { confidenceBasis: 'user_reports', predictionMethod: 'ml' },
+      { confidenceBasis: 'model_holdout', predictionMethod: 'ml', numberSource: 'venue_pattern_live' },
+    ];
+    for (const p of payloads) expect(cardSourceLine(p)).not.toMatch(EM_DASH);
+  });
 });
 
 test('a visitor is never addressed as the venue in the demo\'s caption', () => {
@@ -194,12 +237,46 @@ test('only the pattern alone, adjusted or not, is a pattern-only source', () => 
 describe('the strip of nearby peaks is captioned from the rows drawn, one per venue', () => {
   const row = (numberSource, liveReadings, predictionMethod = 'ml') => ({ predictionMethod, ...(numberSource ? { numberSource } : {}), liveReadings });
 
-  test('no row with a source keeps the old caption (both switches off, or all model)', () => {
+  test('no row with a source and no rule-engine peak keeps the old caption (both switches off, or all model)', () => {
     expect(peersSourcePhrase([])).toBeNull();
     expect(peersSourcePhrase(null)).toBeNull();
     expect(peersSourcePhrase([row(null, true), row(null, false)])).toBeNull();
-    // A rule-engine row is labelled beside itself and never read here.
-    expect(peersSourcePhrase([row('venue_pattern', false, 'rule_engine_no_baseline')])).toBeNull();
+  });
+
+  test('a rule-engine peak is never captioned as the crowd model\'s', () => {
+    // Every peak the rule engine's: nothing the model made is on the strip.
+    expect(peersSourcePhrase([row(null, false, 'rule_engine_no_baseline'), row(null, false, 'rule_engine')]))
+      .toBe("what is typical for each venue's category");
+    // A source on a rule-engine row is not read as the row's arithmetic.
+    expect(peersSourcePhrase([row('venue_pattern', false, 'rule_engine_no_baseline')]))
+      .toBe("what is typical for each venue's category");
+    // Model peaks beside rule-engine ones name both.
+    expect(peersSourcePhrase([row(null, false), row(null, false, 'rule_engine_no_baseline')]))
+      .toBe('the Flock crowd model, or what is typical for the category where a row says so');
+    expect(peersSourcePhrase([row('venue_pattern', false), row(null, false, 'rule_engine')]))
+      .toBe("each venue's usual pattern, or what is typical for the category where a row says so");
+  });
+
+  test('a row whose current hour is the model\'s but whose peak is the rule engine\'s is labelled and captioned off the peak', () => {
+    const switchedRow = { name: 'Next Door', method: 'ml', peakScore: 70, peakMethod: 'rule_engine_no_baseline', peakLiveReadings: false };
+    const you = { name: 'You', method: 'ml', peakScore: 60, peakMethod: 'ml', peakNumberSource: 'venue_pattern', peakLiveReadings: false };
+    expect(stripRowMethod(switchedRow)).toBe('rule_engine_no_baseline');
+    expect(stripRowMethod(you)).toBe('ml');
+    const caption = peersSourcePhrase(stripPeakBars([you, switchedRow]));
+    expect(caption).toBe("each venue's usual pattern, or what is typical for the category where a row says so");
+    expect(peersSourcePhrase(stripPeakBars([{ ...you, peakMethod: 'rule_engine', peakNumberSource: undefined }, switchedRow])))
+      .toBe("what is typical for each venue's category");
+  });
+
+  test('with both switches off the rows keep their labels and the caption its words', () => {
+    // No row carries a peak field then: the current method decides the label
+    // and no bar reaches the caption.
+    const offRows = [{ name: 'You', method: 'ml', peakScore: 60 }, { name: 'Them', method: 'rule_engine', peakScore: 40 }];
+    expect(stripRowMethod(offRows[0])).toBe('ml');
+    expect(stripRowMethod(offRows[1])).toBe('rule_engine');
+    expect(stripPeakBars(offRows)).toEqual([]);
+    expect(peersSourcePhrase(stripPeakBars(offRows))).toBeNull();
+    expect(stripRowMethod(null)).toBeNull();
   });
 
   test('the pattern is each venue\'s, never "this venue\'s"', () => {

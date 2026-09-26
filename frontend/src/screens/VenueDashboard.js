@@ -37,7 +37,7 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
-import { hourlySourcePhrase, peersSourcePhrase } from '../lib/crowd';
+import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
 import {
   BASE_URL,
@@ -653,11 +653,11 @@ export default function VenueDashboard({
       ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
       : null;
     // What made the strip's peak bars, one per venue, from the peak source
-    // the server attaches to each row while a serving switch is on.
+    // and peak method the server attaches to each row while a serving switch
+    // is on. A rule-engine peak is read too, so a strip of category figures
+    // is never captioned as the crowd model's.
     const stripPeaksFrom = venueStrip?.available
-      ? peersSourcePhrase([venueStrip.you, ...(venueStrip.competitors || [])]
-        .filter((v) => v && typeof v.peakLiveReadings === 'boolean')
-        .map((v) => ({ predictionMethod: v.peakMethod, numberSource: v.peakNumberSource, liveReadings: v.peakLiveReadings })))
+      ? peersSourcePhrase(stripPeakBars([venueStrip.you, ...(venueStrip.competitors || [])]))
       : null;
 
     // Two plans: free and Roost. 'pro' is Roost's stored name, and 'premium'
@@ -1325,8 +1325,10 @@ export default function VenueDashboard({
                     <span style={{ flex: 1, fontSize: 'var(--t-meta)', fontWeight: v.you ? '500' : '500', color: colors.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.you ? `${v.name} (you)` : v.name}</span>
                     {/* A rule-engine number is a category-typical figure, the
                         same for every venue of its kind. It shows, labeled,
-                        and the server never draws a ranking against it. */}
-                    {v.method && v.method !== 'ml' && (
+                        and the server never draws a ranking against it. The
+                        bar is the evening's peak, so the peak's method
+                        decides while a serving switch sends one. */}
+                    {stripRowMethod(v) && stripRowMethod(v) !== 'ml' && (
                       <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', flexShrink: 0 }}>typical for its category</span>
                     )}
                     <span style={{ width: '80px', height: '6px', borderRadius: '3px', backgroundColor: 'var(--bg-hover)', overflow: 'hidden', flexShrink: 0 }}>

@@ -2196,9 +2196,18 @@ const STRIP_ORDERING_MIN_GAP = 25;
 // Rule-engine rows never claim, whatever the gap: two category priors differ
 // about the categories, not about tonight — and a prior against a model score
 // is a comparison of two different kinds of number wearing one axis.
+// The claim is about the PEAKS, so it asks what made each peak. While a
+// serving switch is on a row says so (peakMethod, sent exactly then), and a
+// row whose current hour is the model's can still draw an evening peak the
+// rule engine made for want of a pattern hour. With both switches off no row
+// carries peakMethod and the current method decides, exactly as before.
+function stripPeakMethod(row) {
+  return typeof row.peakLiveReadings === 'boolean' ? row.peakMethod : row.method;
+}
+
 function stripOrderingClaim(you, competitor) {
   if (!you || !competitor) return null;
-  if (you.method !== 'ml' || competitor.method !== 'ml') return null;
+  if (stripPeakMethod(you) !== 'ml' || stripPeakMethod(competitor) !== 'ml') return null;
   // == null before Number(): Number(null) is 0, and "no peak" scored as
   // "empty" would claim 'quieter' about a venue nothing was measured for.
   if (you.peakScore == null || competitor.peakScore == null) return null;

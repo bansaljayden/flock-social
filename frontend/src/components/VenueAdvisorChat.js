@@ -130,13 +130,31 @@ const SOURCE_LABELS = {
 };
 const sourceLabel = (s) => SOURCE_LABELS[s] || String(s || '').replace(/_/g, ' ');
 
+// WHAT MADE A FORECAST NUMBER, when a serving switch made it without the
+// model. A week-ahead peak keeps source 'model_holdout' even then, and the
+// server sends the served arithmetic beside it as numberSource (only while a
+// switch is on). These are the server template's own words for the same
+// sources (advisorPhrasing SERVED_SOURCE_PHRASES); a model-made source keeps
+// its source's label.
+const SERVED_SOURCE_LABELS = {
+  venue_pattern: "your venue's usual pattern",
+  venue_pattern_live: "your venue's usual pattern and live readings",
+};
+const CARRIED_READING = /^live_reading_([1-9]|1[0-2])h$/;
+export const answerSourceLabel = (s) => {
+  const served = s && typeof s.numberSource === 'string' ? s.numberSource : '';
+  if (Object.prototype.hasOwnProperty.call(SERVED_SOURCE_LABELS, served)) return SERVED_SOURCE_LABELS[served];
+  if (CARRIED_READING.test(served)) return 'your live readings, carried forward';
+  return sourceLabel(s && s.source);
+};
+
 // One line naming every distinct source an answer used. Answers with no
 // sources (refusals) render no line: a refusal quotes nothing.
-const sourcesLine = (sources) => {
+export const sourcesLine = (sources) => {
   if (!Array.isArray(sources) || sources.length === 0) return null;
   const seen = [];
   for (const s of sources) {
-    const label = sourceLabel(s.source);
+    const label = answerSourceLabel(s);
     if (!seen.includes(label)) seen.push(label);
   }
   return `From ${seen.join(', ')}.`;

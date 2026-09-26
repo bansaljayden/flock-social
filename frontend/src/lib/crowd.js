@@ -126,6 +126,36 @@ export const isAdjustedSource = (source) => {
   return Boolean(parsed && parsed.adjusted);
 };
 
+/**
+ * The venue card's line under the dial: where the number came from.
+ *
+ * Every published figure carries confidenceBasis, and a number a serving
+ * switch made carries numberSource too. The reporters' line has to say what
+ * the reports adjusted, and that is not always the model: a venue with no ML
+ * baseline is scored by the rule engine (predictionMethod 'rule_engine...'),
+ * and three verified reports blend into that number exactly as they blend
+ * into a model's. So the fallback reads predictionMethod before it names a
+ * base, and a rule-engine number is called what it is: typical for a venue
+ * like this one. Only 'ml' is the model; a missing method is not assumed to
+ * be. A named source is only ever sent while a serving switch is on, and it
+ * already carries the reports words when reports adjusted it, so they are
+ * not said twice.
+ */
+export const RULE_ENGINE_WORDS = 'what is typical for a venue like this';
+export const cardSourceLine = (cd) => {
+  if (!cd) return null;
+  if (cd.confidenceBasis === 'owner_report') return `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`;
+  const madeFrom = numberSourcePhrase(cd.numberSource);
+  const model = cd.predictionMethod === 'ml';
+  if (cd.confidenceBasis === 'user_reports') {
+    if (madeFrom && isAdjustedSource(cd.numberSource)) return `From ${madeFrom}.`;
+    if (madeFrom) return `From ${madeFrom}, ${REPORTS_ADJUSTED_WORDS}.`;
+    return model ? `From the crowd model, ${REPORTS_ADJUSTED_WORDS}.` : `From ${RULE_ENGINE_WORDS}, ${REPORTS_ADJUSTED_WORDS}.`;
+  }
+  if (model) return madeFrom ? `From ${madeFrom}.` : 'From the Flock crowd model.';
+  return 'An estimate from typical patterns for this kind of place.';
+};
+
 // True when the number is the venue's weekly pattern with no live reading
 // and no model run in it (curve_offset with neither an offset nor a reading),
 // adjusted or not. Such a number is not live by any reading of the word.
@@ -212,16 +242,30 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
  *
  * Same inputs as hourlySourcePhrase, one { predictionMethod, numberSource,
  * liveReadings } per bar, but the bars are several venues rather than one
- * venue's hours, so "this venue's" would be false. Only model-path bars are
- * read: a rule-engine row is labelled "typical for its category" beside
- * itself. Null when no bar carries a source, so the caption keeps the words
- * it had with both switches off.
+ * venue's hours, so "this venue's" would be false. A rule-engine bar is
+ * labelled "typical for its category" beside itself (stripRowMethod), and the
+ * caption says so too: with every peak a rule-engine one, a caption naming
+ * the crowd model would credit a model that made none of them. Null when no
+ * bar carries a source and none is the rule engine's, so the caption keeps
+ * the words it had with both switches off (no bar is passed then) and with
+ * every peak the model's own.
  */
+const CATEGORY_WORDS = "what is typical for each venue's category";
+const CATEGORY_SOME_WORDS = 'or what is typical for the category where a row says so';
 export const peersSourcePhrase = (bars) => {
   if (!Array.isArray(bars)) return null;
   const drawn = bars.filter((b) => b && b.predictionMethod === 'ml');
-  if (!drawn.some((b) => parseSource(b.numberSource))) return null;
+  const ruleRows = bars.some((b) => b && typeof b.predictionMethod === 'string' && b.predictionMethod !== 'ml');
+  if (!drawn.some((b) => parseSource(b.numberSource))) {
+    if (!ruleRows) return null;
+    if (drawn.length === 0) return CATEGORY_WORDS;
+  }
+  const phrase = modelPeersPhrase(drawn);
+  return ruleRows ? `${phrase}, ${CATEGORY_SOME_WORDS}` : phrase;
+};
 
+// The words for the model-path bars alone (at least one).
+const modelPeersPhrase = (drawn) => {
   const bases = new Set();
   let readings = 0;
   let measured = 0;
@@ -247,3 +291,25 @@ export const peersSourcePhrase = (bars) => {
   }
   return phrase;
 };
+
+/**
+ * What made the number a strip row draws, for its "typical for its category"
+ * label. The bar is the evening's peak, not the current hour, and while a
+ * serving switch is on the two can differ: a row whose current hour is the
+ * model's can draw a peak the rule engine made for want of a pattern hour.
+ * The server sends the peak's method exactly while a switch is on (gated on
+ * peakLiveReadings), and it decides then. With both switches off the row has
+ * only its current method, which decides exactly as before.
+ */
+export const stripRowMethod = (row) => {
+  if (!row) return null;
+  if (typeof row.peakLiveReadings === 'boolean') return row.peakMethod || null;
+  return row.method || null;
+};
+
+// The strip's rows as bars for peersSourcePhrase: only rows that say what
+// made their peak, which is every row while a switch is on and none with both
+// off.
+export const stripPeakBars = (rows) => (Array.isArray(rows) ? rows : [])
+  .filter((v) => v && typeof v.peakLiveReadings === 'boolean')
+  .map((v) => ({ predictionMethod: v.peakMethod, numberSource: v.peakNumberSource, liveReadings: v.peakLiveReadings }));

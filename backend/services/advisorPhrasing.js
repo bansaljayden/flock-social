@@ -711,8 +711,25 @@ function formatFactValue(fact) {
   return String(v);
 }
 
+// ONE ENTRY OF AN ANSWER'S SOURCES LIST, built one way for every mode
+// (template, phrased, and advisorFreeText's advice). The list is what the
+// chat's footer names, and a week-ahead peak a serving switch made from the
+// venue's pattern or a carried reading keeps source 'model_holdout': without
+// the served arithmetic beside it the footer said "model estimate" for a
+// number no model made. numberSource (advisorFacts makeFact) rides along
+// exactly when the fact has one, which is only while a switch is on, so a
+// switched-off answer's sources keep exactly the three keys they had.
+function answerSource(f, id = f.id) {
+  return {
+    id: f.sourceId || id,
+    source: f.source,
+    asOf: f.asOf,
+    ...(typeof f.numberSource === 'string' && f.numberSource ? { numberSource: f.numberSource } : {}),
+  };
+}
+
 function factSources(facts) {
-  return facts.map((f) => ({ id: f.sourceId || f.id, source: f.source, asOf: f.asOf }));
+  return facts.map((f) => answerSource(f));
 }
 
 // ── Fact conditioning for the LLM path ──────────────────────────────────────
@@ -1383,10 +1400,7 @@ function applyValve(raw, block) {
 
   return {
     text: dedupeAdjacentWords(rendered),
-    sources: [...used].map((id) => {
-      const f = byId.get(id);
-      return { id: f.sourceId || id, source: f.source, asOf: f.asOf };
-    }),
+    sources: [...used].map((id) => answerSource(byId.get(id), id)),
   };
 }
 
@@ -1731,6 +1745,7 @@ const internals = {
   substituteFacts,
   formatFactValue,
   factSources,
+  answerSource,
   // The owner-prose split. Any path that builds a model payload from a fact
   // block has to run this first, or owner text becomes a placeholder value on
   // that path and the digit valve stops meaning what it says.
