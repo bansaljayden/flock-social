@@ -3396,10 +3396,23 @@ class InstallerHardwareAccess(unittest.TestCase):
     def test_i2c_is_turned_on(self):
         self.assertIn('raspi-config nonint do_i2c 0', self.setup_text())
 
-    def test_the_bus_rate_is_set_once_and_never_over_a_choice(self):
-        setup = self.setup_text()
-        self.assertIn("grep -q '^dtparam=i2c_arm_baudrate='", setup)
-        self.assertIn('dtparam=i2c_arm_baudrate=400000', setup)
+    def test_the_installer_leaves_the_bus_at_its_safe_rate(self):
+        # Fast mode would load the firmware in two seconds instead of eight,
+        # and over the head's three metres of Cat6 it risks a bus that fails
+        # the checksum on every start. The trade belongs to whoever knows the
+        # cable, so the installer does not make it.
+        self.assertNotIn('i2c_arm_baudrate=400000', self.setup_text())
+
+    def test_the_counter_is_chosen_the_way_the_config_says(self):
+        plan = main.door_plan
+        self.assertEqual(plan('auto', True), 'tof')
+        self.assertEqual(plan('auto', False), 'beam')
+        # Told the counter is fitted, it runs the counter even when nothing
+        # answered at boot, and keeps retrying, rather than falling back to a
+        # beam the unit does not have and showing a live-looking zero.
+        self.assertEqual(plan('tof', False), 'tof')
+        self.assertEqual(plan('beam', True), 'beam')
+        self.assertIsNone(plan('off', True))
 
     def test_the_counter_firmware_is_installed_where_main_looks(self):
         # main.py looks beside itself, /opt/flock-sensor/vl53l8cx.
