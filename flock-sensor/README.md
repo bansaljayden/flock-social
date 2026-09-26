@@ -188,6 +188,7 @@ every row but the last.
 | MCP3008 ADC | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
 | MAX4466 microphone | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
 | 7 inch 1024x600 HDMI touchscreen, landscape (demo units only) | HDMI | none |
+| Two 3 mm LEDs, POWER green and LINK amber, each with a 330 ohm resistor | GPIO, off until `LED_POWER_GPIO` and `LED_LINK_GPIO` are set | GPIO 23 (pin 16), GPIO 24 (pin 18), ground pin 20. See The lights |
 | VL53L8CX time-of-flight doorway counter on a Pololu #3419 carrier | I2C bus 1, address 0x29. `main.py` loads its firmware at every start | VIN to 3V3 (pin 1, never 5V), GND, SDA pin 3, SCL pin 5, and the carrier's SPI/I2C pin to GND. See The doorway counter |
 
 Two things about that list that are decisions, not details.
@@ -299,6 +300,33 @@ about two. `setup.sh` does not set it, because the head sits at the end of
 three metres of Cat6, and a bus too fast for its cable fails the firmware
 checksum instead of running slowly.
 
+### The lights
+
+The base has two 3 mm LEDs in the strip under the screen, and `main.py` drives
+them once it is told which pins they are on:
+
+- **POWER**, green, is on for as long as the program runs.
+- **LINK**, amber, blinks while the head is talking (a sensor with a fresh
+  reading) and readings are going out (one delivered within the last two push
+  intervals). Either failing leaves it dark. A head whose cable has come out,
+  and a backend nobody can reach, both look on the screen like a quiet room;
+  this is the one thing that says otherwise from across the room.
+
+Each LED goes GPIO pin, then a 330 ohm resistor, then the LED's long leg; its
+short leg to ground. GPIO 23 (pin 16) and GPIO 24 (pin 18), with ground on pin
+20, are free on the Pi as this build uses it, but check them against the 4G
+HAT's pinout first (see the pin conflict below). Then, in the config:
+
+```
+LED_POWER_GPIO=23
+LED_LINK_GPIO=24
+```
+
+Both are 0 by default, which drives nothing: a pin is only switched once
+somebody has wired a light to it. A pin that already carries the counter's I2C,
+the microphone's SPI or the crossing sensor is refused, with a log line saying
+which.
+
 ### The sensor head, designed and not built
 
 The enclosure splits the device in two (`enclosure/README.md`). The Pi, the
@@ -315,8 +343,8 @@ Three things about it are still open:
   it was written.
 - **SPI over three metres of cable is untested.** `main.py` opens the MCP3008
   at 1 MHz. Try it on the bench with the real cable before building around it.
-- **The base's two indicator lights (POWER, LINK) and the head's one are holes
-  in a panel.** `main.py` drives no LED.
+- **The head's indicator light is a hole in a panel.** `main.py` drives the
+  base's two (see The lights, above) and not that one.
 
 ### Pi 5
 
