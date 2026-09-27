@@ -3758,5 +3758,59 @@ class PeopleCounterModel(unittest.TestCase):
         self.assertEqual(m.points(frame.ravel().tolist()), [])
 
 
+class SmarterMicrophone(unittest.TestCase):
+    """What minutes of loudness say, from loudness figures alone."""
+
+    def test_a_burst_at_the_rails_is_clipped(self):
+        quiet = [((i * 37) % 41) - 20 for i in range(2000)]
+        shout = [(-510 if i % 2 else 508) for i in range(2000)]
+        self.assertFalse(main.burst_clipped(quiet))
+        self.assertTrue(main.burst_clipped(shout))
+        self.assertFalse(main.burst_clipped([]))
+
+    def test_steady_and_changing(self):
+        steady = [70.0 + (i % 3) * 0.3 for i in range(120)]
+        talk = [55.0 + (12.0 if (i // 3) % 2 else 0.0) for i in range(120)]
+        self.assertEqual(main.noise_insight(steady)['character'], 'steady')
+        self.assertEqual(main.noise_insight(talk)['character'], 'changing')
+        # Too little to judge right after a start.
+        self.assertIsNone(main.noise_insight(talk[:10])['character'])
+
+    def test_how_easy_talking_is_needs_calibration(self):
+        self.assertIsNone(main.noise_insight([60.0] * 120)['talk'])
+        self.assertEqual(main.noise_insight([60.0] * 120, calibrated_db=55)['talk'], 'Easy to talk')
+        self.assertEqual(main.noise_insight([60.0] * 120, calibrated_db=84)['talk'],
+                         'Shouting to be heard')
+
+    def test_a_still_microphone_with_people_in_view_is_flagged(self):
+        flat = [41.0 + (i % 2) * 0.1 for i in range(600)]
+        self.assertIsNotNone(main.noise_insight(flat, people=5)['deaf'])
+        # An empty room is allowed to be still.
+        self.assertIsNone(main.noise_insight(flat, people=0)['deaf'])
+        self.assertIsNone(main.noise_insight(flat, people=None)['deaf'])
+        # Not before five minutes of evidence.
+        self.assertIsNone(main.noise_insight(flat[:300], people=5)['deaf'])
+
+    def test_the_screen_line_puts_a_warning_first(self):
+        line, tone = main.noise_insight_line({'character': 'steady', 'talk': None,
+                                              'deaf': 'x'}, clipped=True)
+        self.assertIn('unplugged', line)
+        self.assertEqual(tone, main.BRAND_RED)
+        line, _ = main.noise_insight_line({'character': 'changing', 'talk': 'Voices are raised',
+                                           'deaf': None})
+        self.assertEqual(line, 'Voices are raised. Rising and falling, like conversation.')
+        self.assertIsNone(main.noise_insight_line(None)[0])
+
+    def test_nothing_new_is_sent(self):
+        # The insight is for the screen. The push payload is still the same
+        # three numbers, which is what the privacy policy promises.
+        with main._lock:
+            main._state['noise_insight'] = {'character': 'changing', 'talk': None, 'deaf': None}
+            main._state['noise_clipped_at'] = time.monotonic()
+        payload = main.snapshot()
+        self.assertEqual(set(payload) - {'recorded_at', '_mono', 'device_id'},
+                         {'ir_beam_count', 'thermal_headcount', 'noise_db'})
+
+
 if __name__ == '__main__':
     unittest.main()

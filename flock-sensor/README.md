@@ -975,6 +975,30 @@ looking noise: sensor noise presented to a judge as structure would be a lie.
 160x120 is smoothscaled up to the panel, which is what makes it read as thermal
 imagery rather than a grid of squares.
 
+**The rings.** When the trained people counter is running, the picture carries a
+ring on every person it counted, so the count can be checked against the room
+at a glance: a hand at the lens should carry no ring, two people shoulder to
+shoulder should carry two. `training/README.md` says how the counter was made.
+
+## What the noise screen adds
+
+The noise screen puts one line under its word, worked out on the device from
+the loudness figures it already keeps, never from sound itself. None of it is
+sent; the push is still three numbers.
+
+- **Steady or changing.** From how far the level moves over the last minute.
+  Music, a fan or a crowd's roar hold steady; conversation rises and falls with
+  syllables and pauses.
+- **How easy it is to talk,** once the unit is calibrated against a phone meter:
+  easy under 60 dB, raised voices to 70, hard to hear across a table to 80,
+  shouting past that. These follow the speech interference levels acoustics uses.
+- **Too loud to measure.** When a burst hits the converter's limits the number
+  is a floor, and the screen says the real level is higher instead of showing
+  a figure that cannot rise any further.
+- **A microphone that has stopped hearing.** Five minutes with the level barely
+  moving while the camera sees two or more people means it is hearing only its
+  own electronics. The screen says so in red and the log records it.
+
 ## Known gaps
 
 Things that are still open, so nobody has to rediscover them.

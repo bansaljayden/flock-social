@@ -489,6 +489,15 @@ _state = {
     # burst, cannot carry the number. The panel shows the newest burst, which
     # is why the screen now moves when somebody shouts.
     'noise_window': deque(maxlen=120),
+    # Five minutes of burst levels, for the checks in noise_insight: whether
+    # the sound is steady or changing, and whether the microphone is hearing
+    # the room at all. Loudness figures only, like the window above.
+    'noise_history': deque(maxlen=600),
+    # When a burst last ran into the converter's limits, so the screen can say
+    # the real level is higher than the number.
+    'noise_clipped_at': None,
+    # What noise_insight concluded, for the screen. Never sent anywhere.
+    'noise_insight': None,
     'last_push_history': deque(maxlen=12),  # For the optional display chart
     'pushed_at': None,                      # Monotonic mark of the last delivery
     # The most recent thermal frame, and ONLY when THERMAL_VIEW_ON. On any unit
@@ -1951,6 +1960,83 @@ def noise_burst(seconds=None):
     return samples
 
 
+# A sample within this many counts of either end of the converter's range is
+# the microphone running out of room, not the room's true level. More than this
+# fraction of a burst there and the burst reads low.
+ADC_RAIL_MARGIN = 3
+CLIP_FRACTION = 0.005
+
+# The spread, in level units, between the loud and quiet tenth of a minute of
+# bursts. Below it the sound holds steady, the way music, a fan or a crowd's
+# roar does; above it the level keeps rising and falling, the way conversation
+# does, because speech comes in syllables and pauses.
+STEADY_SPREAD = 3.0
+
+# A microphone wired to a live room is never still. Five minutes with less
+# spread than this, while the camera sees people, means it is hearing only its
+# own electronics: unplugged, covered, or dead.
+DEAF_SPREAD = 0.8
+DEAF_MIN_PEOPLE = 2
+
+
+def burst_clipped(samples):
+    """True when enough of a burst hit the converter's limits to read low.
+
+    Centred samples, as noise_burst returns them. A shout an inch from a
+    MAX4466 swings the output rail to rail, and past that point a louder sound
+    cannot give a bigger number, so the figure is a floor, not a measurement.
+    """
+    if not samples:
+        return False
+    lo = -ADC_MID + ADC_RAIL_MARGIN
+    hi = 1023 - ADC_MID - ADC_RAIL_MARGIN
+    railed = sum(1 for s in samples if s <= lo or s >= hi)
+    return railed > CLIP_FRACTION * len(samples)
+
+
+def _spread(values, low, high):
+    ordered = sorted(values)
+    n = len(ordered)
+    return ordered[min(n - 1, int(high * n))] - ordered[int(low * n)]
+
+
+def noise_insight(history, people=None, calibrated_db=None):
+    """What the last minutes of loudness say, beyond how loud it is.
+
+    Works from the loudness figures alone, which are all this device keeps, so
+    it cannot and does not know what anyone said. Returns a dict for the
+    screen:
+
+      character   'steady' or 'changing', from how much the level moves.
+      talk        how easy conversation is at this level, once the unit has
+                  been calibrated against a phone meter, else None. The bands
+                  follow the speech interference levels in acoustics work: at
+                  about 60 dB people talk normally across a table, by 70 they
+                  raise their voices, by 80 they lean in and shout.
+      deaf        a sentence when the microphone looks disconnected, else None.
+    """
+    out = {'character': None, 'talk': None, 'deaf': None}
+    values = list(history)
+    minute = values[-120:]
+    if len(minute) >= 40:
+        out['character'] = ('steady' if _spread(minute, 0.1, 0.9) < STEADY_SPREAD
+                            else 'changing')
+    if calibrated_db is not None:
+        if calibrated_db < 60:
+            out['talk'] = 'Easy to talk'
+        elif calibrated_db < 70:
+            out['talk'] = 'Voices are raised'
+        elif calibrated_db < 80:
+            out['talk'] = 'Hard to hear across a table'
+        else:
+            out['talk'] = 'Shouting to be heard'
+    if (people is not None and people >= DEAF_MIN_PEOPLE and len(values) >= 600
+            and _spread(values, 0.05, 0.95) < DEAF_SPREAD):
+        out['deaf'] = (f'{people} people in view and the sound has not moved in five '
+                       'minutes. The microphone may be unplugged or covered.')
+    return out
+
+
 def noise_loop():
     while not _stop.is_set():
         started = time.monotonic()
@@ -1969,10 +2055,24 @@ def noise_loop():
                                   'being withheld. Run main.py --selftest.')
                 else:
                     db = compute_noise_db(samples)
+                    clipped = burst_clipped(samples)
                     with _lock:
                         _state['noise_window'].append(db)
+                        _state['noise_history'].append(db)
                         _state['noise_db'] = trimmed_mean(list(_state['noise_window']))
                         _state['noise_at'] = time.monotonic()
+                        if clipped:
+                            _state['noise_clipped_at'] = _state['noise_at']
+                        history = list(_state['noise_history'])
+                        people = (int(_state['thermal']) if _state['thermal_at'] is not None
+                                  and time.monotonic() - _state['thermal_at'] <= THERMAL_STALE_AFTER
+                                  else None)
+                        average = _state['noise_db']
+                    insight = noise_insight(history, people, display_decibels(average))
+                    with _lock:
+                        _state['noise_insight'] = insight
+                    if insight['deaf']:
+                        log_throttled('noise_deaf', logging.WARNING, insight['deaf'])
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
         _stop.wait(max(0.05, NOISE_BURST_EVERY - (time.monotonic() - started)))
@@ -3970,6 +4070,26 @@ def thermal_image_box(w, h, cols, rows, pad, top, reserve):
     return max(1, img_w), max(1, img_h)
 
 
+def noise_insight_line(insight, clipped=False):
+    """The one sentence the noise screen adds under its word, and its colour."""
+    if insight and insight.get('deaf'):
+        return 'The microphone may be unplugged or covered.', BRAND_RED
+    if clipped:
+        return 'Louder than the microphone can measure. The real level is higher.', BRAND_ORANGE
+    if not insight:
+        return None, BRAND_MUTED
+    parts = []
+    if insight.get('talk'):
+        parts.append(insight['talk'])
+    if insight.get('character') == 'steady':
+        parts.append('steady sound, like music or a fan')
+    elif insight.get('character') == 'changing':
+        parts.append('rising and falling, like conversation')
+    if not parts:
+        return None, BRAND_MUTED
+    return '. '.join(p[0].upper() + p[1:] for p in parts) + '.', BRAND_MUTED
+
+
 def noise_band(db):
     """The word and the colour for a level. One place, four screens."""
     if db < 50:
@@ -4337,7 +4457,7 @@ class Panel:
             self.blit_centred(self.f_body, 'Each update adds a point here.',
                               BRAND_FAINT, self.w // 2, (chart_top + self.h) // 2)
 
-    def noise(self, level, live, average=None):
+    def noise(self, level, live, average=None, insight=None, clipped=False):
         m = self.m
         pad = m['pad']
         self.header('Noise', back=True, live=live)
@@ -4350,6 +4470,7 @@ class Panel:
             a_value = noise_reading(average)[0]
             n_caption = f'{n_caption}. Minute average {a_value}.'
         top = m['header_h'] + pad
+        extra = 0
         w = self.text(self.f_big, word if live else '--', colour if live else BRAND_CREAM)
         self.screen.blit(w, (pad, top))
         if live:
@@ -4364,13 +4485,21 @@ class Panel:
             self.screen.blit(d, (self.w - pad - d.get_width(), top))
             c = self.text(self.f_body, n_caption, BRAND_MUTED)
             self.screen.blit(c, (self.w - pad - c.get_width(), top + d.get_height() + 2))
+            # What the minutes of loudness add up to, in one line under the
+            # word. A warning beats everything else on it.
+            line, tone = noise_insight_line(insight, clipped)
+            if line:
+                s = self.text(self.f_body, line, tone)
+                below = max(w.get_height(), d.get_height() + c.get_height() + 2)
+                self.screen.blit(s, (pad + 4, top + below + 6))
+                extra = s.get_height() + 10
         else:
             self.blit(self.f_body, 'microphone offline', BRAND_RED,
                       (pad + 4, top + w.get_height() + 2))
 
         # The trace, over the four bands, so a rising line means something
         # without anybody reading a number off an axis.
-        gtop = top + w.get_height() + m['font_xs'] + pad
+        gtop = top + w.get_height() + m['font_xs'] + pad + extra
         gbot = self.h - pad
         if gbot - gtop < 40:
             return
@@ -4454,7 +4583,10 @@ class Panel:
             for x, y in points:
                 cx = pad + int(x * iw / float(THERMAL_COLS))
                 cy = top + int(y * ih / float(THERMAL_ROWS))
-                self.pygame.draw.circle(self.screen, BRAND_CREAM, (cx, cy), ring, 2)
+                # Navy under cream, so the ring shows on the white of a face
+                # as well as on the dark of the room.
+                self.pygame.draw.circle(self.screen, BRAND_NAVY, (cx, cy), ring, 5)
+                self.pygame.draw.circle(self.screen, BRAND_CREAM, (cx, cy), ring - 1, 2)
         self.pygame.draw.rect(self.screen, BRAND_RULE, (pad, top, iw, ih), 1)
 
         if side:
@@ -4628,6 +4760,8 @@ def display_loop():
                 # keeps the steady figure.
                 window = _state['noise_window']
                 burst = float(window[-1]) if window else db
+                insight = _state['noise_insight']
+                clipped_at = _state['noise_clipped_at']
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 points = _state['thermal_points'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
@@ -4678,7 +4812,8 @@ def display_loop():
                     elif view == 'door':
                         ui.door(ir, door_history, *directions, live=door_live)
                     elif view == 'noise':
-                        ui.noise(burst, noise_live, average=db)
+                        ui.noise(burst, noise_live, average=db, insight=insight,
+                                 clipped=clipped_at is not None and now - clipped_at < 3.0)
                     else:
                         ui.home(ir, therm, therm_live, burst, noise_live, history,
                                 door_live=door_live)
