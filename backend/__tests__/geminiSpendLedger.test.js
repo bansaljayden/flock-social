@@ -102,6 +102,11 @@ birdieUsage.settleGeminiCall = (userId, estimated, actual) => {
 const pool = require('../config/database');
 pool.query = (sql) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
+  // Birdie refuses a user with no recorded consent (migration 099); every
+  // account in this file has given it. birdieConsent.test.js covers the refusal.
+  if (/SELECT birdie_ai_consent_at FROM users/.test(flat)) {
+    return Promise.resolve({ rows: [{ birdie_ai_consent_at: new Date('2026-09-01T00:00:00Z') }], rowCount: 1 });
+  }
   if (/FROM users WHERE id/.test(flat)) {
     return Promise.resolve({ rows: [{ name: 'Ava Lee', date_of_birth: '2000-01-01' }] });
   }

@@ -1169,6 +1169,13 @@ const DRIVERS = {
     await fab.click();
     // Expand to fullscreen: the unlabeled toggle sits right before Close.
     await page.locator('button[aria-label="Close"]').locator('xpath=preceding-sibling::button[1]').click();
+    // An account that has not yet let Birdie use Gemini is asked first, and
+    // the box stays shut until it answers. Answer the way a person would.
+    const allow = page.getByRole('button', { name: 'Allow', exact: true });
+    if (await allow.isVisible().catch(() => false)) {
+      await allow.click();
+      await allow.waitFor({ state: 'detached', timeout: 15000 });
+    }
     const input = page.locator('input[aria-label="Ask me anything"]');
     await input.waitFor({ timeout: 10000 });
     await input.fill("Where's poppin in Philadelphia rn?");

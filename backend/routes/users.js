@@ -2759,7 +2759,8 @@ router.get('/export', async (req, res) => {
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
-              phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code
+              phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code,
+              birdie_ai_consent_at
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -3041,6 +3042,10 @@ router.get('/export', async (req, res) => {
         // The friend code other people add this account by, once one has been
         // issued (migration 079). The user is shown it in the app already.
         friend_code: account.friend_code ?? null,
+        // When the user allowed Birdie to send their data to Google's Gemini,
+        // or null while they have not (migration 099). A consent record, for
+        // the same reason as phone_discoverable_at above.
+        birdie_ai_consent_at: account.birdie_ai_consent_at ?? null,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },

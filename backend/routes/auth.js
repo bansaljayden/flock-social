@@ -3017,7 +3017,10 @@ router.get('/me', authenticate, async (req, res) => {
       // person who wrote it exactly like a bio that never saved. It is content
       // the user typed about themselves, not a secret, so it belongs in the
       // response for the same reason /api/users/profile returns it.
-      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at, oauth_provider
+      // birdie_ai_consent_at tells the app whether to ask before the first
+      // Birdie message (migration 099). The sign-in responses carry it already,
+      // because they return the whole row; this is the cold-start copy.
+      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at, oauth_provider, birdie_ai_consent_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );

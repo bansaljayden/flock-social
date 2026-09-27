@@ -94,7 +94,11 @@ export default function ProfileSettings({
   BottomNav,
   SafetyButton,
   Toggle,
+  answerBirdieConsent,
   authUser,
+  birdieConsentBusy,
+  birdieConsentError,
+  birdieConsented,
   blockedError,
   blockedLoading,
   blockedUsers,
@@ -560,6 +564,28 @@ export default function ProfileSettings({
                 </div>
               </div>
             )}
+            {profileScreen === 'birdieai' && (
+              <div>
+                <div style={styles.card}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.messageSquare(colors.navy, 18)}</div>
+                    <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>Let Birdie use Google's Gemini</h2>
+                    {/* The same answer Birdie's own question records, and the
+                        way to take it back (DELETE /api/ai/consent). Off means
+                        Birdie sends nothing from the next message on, and the
+                        panel asks again the next time it opens. */}
+                    <Toggle label="Let Birdie use Google's Gemini" on={birdieConsented} onChange={() => { if (!birdieConsentBusy) answerBirdieConsent(!birdieConsented); }} />
+                  </div>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range and what you have open in Flock. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>Off means Birdie sends nothing and cannot answer. The rest of Flock works the same either way.</p>
+                  {birdieConsentError && (
+                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                      <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{birdieConsentError}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {profileScreen === 'interests' && (
               <div>
                 <div style={styles.card}>
@@ -729,6 +755,9 @@ export default function ProfileSettings({
                 // on, so it is the switch the feature runs on rather than
                 // polish. Blank, not 'Off', until the read that knows lands.
                 { l: 'Find me by phone', s: 'phonediscovery', icon: Icons.phone, v: phoneDiscoverable === null ? null : (phoneDiscoverable ? 'On' : 'Off') },
+                // Where Birdie's yes to Gemini can be taken back. The panel
+                // asks once; this is the switch that answer lives behind.
+                { l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.messageSquare, v: birdieConsented ? 'On' : 'Off' },
               ],
             },
           ].map(group => (

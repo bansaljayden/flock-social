@@ -1632,10 +1632,77 @@ Hard rules:
 - Never say "I'm broken", "I can't right now", or apologize for being down. If a tool errors, come at it from another angle or ask one clarifying question.${buildContextLine(ctx)}`;
 }
 
+router.use(authenticate);
+
+// ---------------------------------------------------------------------------
+// Consent to send personal data to Gemini (migration 099)
+// ---------------------------------------------------------------------------
+// Every Birdie turn sends the user's messages, first name, age range, what
+// they have open in the app, their area when location is on, and on request
+// their plans and friends' names to Google. App Store Guideline 5.1.2(i) asks
+// for explicit permission before personal data goes to a third-party AI, so
+// the app asks once, before the first message, and records the answer here.
+//
+// The client's question is cosmetic on its own: a cached older bundle never
+// shows it, and any client can call /chat directly. The rule that counts is
+// the refusal in /chat below, which reads this column before a meter is
+// charged or a byte reaches Gemini.
+const BIRDIE_CONSENT_REQUIRED = 'BIRDIE_CONSENT_REQUIRED';
+const BIRDIE_CONSENT_MESSAGE = "Birdie needs your OK before it sends anything to Google's Gemini. Open Birdie in the latest version of the app to answer.";
+
+const consentBody = (consentedAt) => ({
+  consented: Boolean(consentedAt),
+  consentedAt: consentedAt ? new Date(consentedAt).toISOString() : null,
+});
+
+// GET /api/ai/consent
+router.get('/consent', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT birdie_ai_consent_at FROM users WHERE id = $1', [req.user.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    res.json(consentBody(result.rows[0].birdie_ai_consent_at));
+  } catch (err) {
+    console.error('Birdie consent read error:', err);
+    res.status(500).json({ error: 'Could not read your Birdie setting. Try again.' });
+  }
+});
+
+// POST /api/ai/consent. Allow. A repeated Allow keeps the first time it was
+// given, which is the moment the record exists to show.
+router.post('/consent', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE users SET birdie_ai_consent_at = COALESCE(birdie_ai_consent_at, NOW())
+        WHERE id = $1 RETURNING birdie_ai_consent_at`,
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    res.json(consentBody(result.rows[0].birdie_ai_consent_at));
+  } catch (err) {
+    console.error('Birdie consent grant error:', err);
+    res.status(500).json({ error: 'That did not save. Try again.' });
+  }
+});
+
+// DELETE /api/ai/consent. Withdraw. Birdie stops sending anything from the
+// next message, and the app asks again the next time Birdie opens.
+router.delete('/consent', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE users SET birdie_ai_consent_at = NULL WHERE id = $1 RETURNING id',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    res.json(consentBody(null));
+  } catch (err) {
+    console.error('Birdie consent withdraw error:', err);
+    res.status(500).json({ error: 'That did not save. Try again.' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/ai/chat — Main chat endpoint (Gemini with function calling)
 // ---------------------------------------------------------------------------
-router.use(authenticate);
 
 router.post('/chat',
   [
@@ -1735,6 +1802,16 @@ router.post('/chat',
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
         return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      // NO RECORDED CONSENT, NOTHING LEAVES. Read before either meter and
+      // before Gemini, so a refused turn costs the user no message from their
+      // day and sends Google nothing. `code` is what the app answers by
+      // showing the question; the sentence is for an older app that has no
+      // question to show.
+      const consent = await pool.query('SELECT birdie_ai_consent_at FROM users WHERE id = $1', [req.user.id]);
+      if (!consent.rows[0]?.birdie_ai_consent_at) {
+        return res.status(403).json({ error: BIRDIE_CONSENT_MESSAGE, code: BIRDIE_CONSENT_REQUIRED });
       }
 
       const genAI = getGenAI();
