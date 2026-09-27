@@ -867,7 +867,14 @@ test('a plan lookup that fails withholds list numbers for that request instead o
   assert.deepStrictEqual(alts.body.alternatives, []);
 });
 
-test('a covered venue lists nothing quieter and buys no search; an opened one lists only opened neighbours', async () => {
+test('a covered venue lists nothing quieter and buys no search; an opened one lists only opened neighbours', async (t) => {
+  // The server's clock is held still for the whole case. The route keys the
+  // cached list on the hour and day it reads when the request arrives, and
+  // the seed below is keyed on the hour this test reads first; a run that
+  // straddled the top of the hour would miss its own seed and go looking for
+  // neighbours instead. Frozen at the real instant, so the forecast month and
+  // every hourly window read exactly what they would have.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   process.env.PAYWALL_ENABLED = 'true';
   meterUser();
   scriptMeter({ premium: false });
@@ -883,7 +890,8 @@ test('a covered venue lists nothing quieter and buys no search; an opened one li
 
   // A cached list holding one opened and one unopened quieter neighbour. Keyed
   // on the server's hour and day, as the route keys it: the caller's
-  // localHour/localDay never reach the key.
+  // localHour/localDay never reach the key. `new Date()` is the frozen clock
+  // above, the same instant the route reads.
   const serverNow = new Date();
   crowdRouter.__test.seedCache(`alt:PW_ALT_SEEN:${serverNow.getHours()}:${serverNow.getDay()}`, {
     currentVenue: { name: 'PW_ALT_SEEN', score: 60, label: 'Usually busy' },
