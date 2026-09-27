@@ -1,0 +1,29 @@
+-- 099: when a user agreed to Birdie sending their data to Google's Gemini.
+--
+-- ASCII only, like 065 and 091-096: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. Birdie answers by sending the user's messages, first name, age range,
+-- what they have open in the app, their area if location is on, and (when
+-- asked) their plans and friends' names to a third-party model. App Store
+-- Guideline 5.1.2(i) asks for explicit permission before personal data is
+-- shared with a third-party AI, and a line of text saying the assistant is
+-- built on Gemini is a disclosure, not a permission. The app now asks once,
+-- before the first Birdie message, and this column is the record of the answer.
+--
+-- WHO WRITES IT. POST /api/ai/consent sets it to NOW() when the user taps
+-- Allow (or turns the switch on in Settings); DELETE /api/ai/consent sets it
+-- back to NULL. Nothing else writes it.
+--
+-- WHO READS IT. POST /api/ai/chat refuses with 403 BIRDIE_CONSENT_REQUIRED
+-- while it is NULL, before any meter is charged or any byte reaches Gemini,
+-- so a cached older client that never shows the question cannot skip it.
+-- GET /api/auth/me returns it so the app knows whether to ask. The data export
+-- carries it, because a consent and its time are the user's own record.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing row reads NULL, which is the truth for all of
+-- them, since nobody has been asked yet. A replay is a no-op.
+-- @requires column users.birdie_ai_consent_at
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birdie_ai_consent_at TIMESTAMPTZ;

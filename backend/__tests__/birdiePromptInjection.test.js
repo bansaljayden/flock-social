@@ -82,6 +82,11 @@ pool.query = (sql) => {
   if (/fm\.user_id = \$2/.test(flat)) {
     return Promise.resolve({ rows: dbVoteMembership, rowCount: dbVoteMembership.length });
   }
+  // Birdie refuses a user with no recorded consent (migration 099); the user
+  // in this file has given it. birdieConsent.test.js covers the refusal.
+  if (/SELECT birdie_ai_consent_at FROM users/.test(flat)) {
+    return Promise.resolve({ rows: [{ birdie_ai_consent_at: new Date('2026-09-01T00:00:00Z') }], rowCount: 1 });
+  }
   if (/FROM users WHERE id/.test(flat)) {
     return Promise.resolve({ rows: [{ name: FULL_NAME, date_of_birth: DOB }] });
   }

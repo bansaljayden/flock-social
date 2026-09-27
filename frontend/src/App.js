@@ -5,7 +5,7 @@ import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -4734,6 +4734,7 @@ const PROFILE_SUBSCREEN_TITLES = {
   // Short, because this is a header row beside a back button. The pane's own
   // heading carries the privacy policy's exact wording; see the pane.
   phonediscovery: 'Find me by phone',
+  birdieai: 'Birdie and Google Gemini',
 };
 
 // blockGlyph lived here: a hand-rolled circle-and-slash with round caps, a
@@ -6666,6 +6667,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const outOfChirpsRef = useRef(false);
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
+  // Whether this account has let Birdie send its data to Google's Gemini
+  // (users.birdie_ai_consent_at, migration 099). Read off authUser, which the
+  // sign-in responses and GET /api/auth/me both carry, so there is one copy of
+  // the answer and it is the server's. Until it is set the panel shows the
+  // question instead of the chips and the box, and sendAiMessage sends
+  // nothing. That is the cosmetic half: POST /api/ai/chat refuses on its own
+  // (403 BIRDIE_CONSENT_REQUIRED), which is what holds for an older bundle.
+  const birdieConsented = !!authUser?.birdie_ai_consent_at;
+  const birdieConsentedRef = useRef(birdieConsented);
+  birdieConsentedRef.current = birdieConsented;
+  const [birdieConsentBusy, setBirdieConsentBusy] = useState(false);
+  const [birdieConsentError, setBirdieConsentError] = useState('');
+  // Allow (true) or withdraw (false). The panel's Allow and the switch in
+  // Settings are the two callers. authUser is patched with the server's own
+  // answer, never with a value made up here, so the two cannot disagree.
+  const answerBirdieConsent = useCallback(async (allow) => {
+    setBirdieConsentBusy(true);
+    setBirdieConsentError('');
+    try {
+      const data = allow ? await grantBirdieConsent() : await withdrawBirdieConsent();
+      if (onUserPatch) onUserPatch({ birdie_ai_consent_at: data?.consentedAt || null });
+      return true;
+    } catch (err) {
+      if (!err?.sessionExpired) setBirdieConsentError(err?.message || 'That did not save. Try again.');
+      return false;
+    } finally {
+      setBirdieConsentBusy(false);
+    }
+  }, [onUserPatch]);
 
   // Calendar
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -9879,9 +9909,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const currentAiInput = aiInputValueRef.current;
     if (!currentAiInput.trim()) return;
     if (outOfChirpsRef.current) return;
+    // Nothing goes to Gemini before the person has said yes. Every way into
+    // this function (Enter, the send button, a chip, the action row) passes
+    // here, so this one line covers them all; the words stay in the box.
+    if (!birdieConsentedRef.current) return;
     aiSendingRef.current = true;
     const userMessage = currentAiInput.trim();
-    const newMessages = [...aiMessages, { role: 'user', text: userMessage }];
+    const userEntry = { role: 'user', text: userMessage };
+    const newMessages = [...aiMessages, userEntry];
     setAiMessages(newMessages);
     aiInputValueRef.current = '';
     // The ref has to come down with the state. It did not, and the two are
@@ -9970,6 +10005,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: limitText }]);
         setAiRemaining(0);
         if ((process.env.REACT_APP_PURCHASES !== 'off')) setPaywallTrigger('birdie');
+      } else if (err?.code === 'BIRDIE_CONSENT_REQUIRED') {
+        // The server has no yes on record: withdrawn on another device, or
+        // never given on an account whose copy here was stale. Nothing was
+        // sent. Take the question back out of the thread, put it back in the
+        // box, and let the panel ask; after Allow it is one tap to resend.
+        setAiMessages(prev => prev.filter(m => m !== userEntry));
+        aiInputValueRef.current = userMessage;
+        aiInputHasTextRef.current = true;
+        setAiInputHasText(true);
+        if (aiInputRef.current) aiInputRef.current.value = userMessage;
+        if (onUserPatch) onUserPatch({ birdie_ai_consent_at: null });
       } else if (err?.code === 'CONVERSATION_TOO_LONG') {
         // Reaching here means the retry above could not make the payload any
         // smaller, so trimming is not the answer and saying "try again" would
@@ -16106,7 +16152,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     aiShareVenue,
     aiSuggestedQuestions,
     aiTyping,
+    answerBirdieConsent,
     birdieActionBusy,
+    birdieConsentBusy,
+    birdieConsentError,
+    birdieConsented,
     birdieCorner,
     canSendAi,
     closeAiChat,
@@ -16124,6 +16174,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     isPro,
     loadTrustedContacts,
     memberCountLabel,
+    openExternal,
     openVenueDetail,
     outOfChirps,
     sendAiMessage,
@@ -19043,7 +19094,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           BottomNav,
           SafetyButton,
           Toggle,
+          answerBirdieConsent,
           authUser,
+          birdieConsentBusy,
+          birdieConsentError,
+          birdieConsented,
           blockedError,
           blockedLoading,
           blockedUsers,

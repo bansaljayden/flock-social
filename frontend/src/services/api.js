@@ -3341,6 +3341,17 @@ export async function sendAiChat(messages, location, currentContext) {
   return data;
 }
 
+// Birdie's permission to send personal data to Google's Gemini (backend
+// routes/ai.js, migration 099). Both answer { consented, consentedAt }, and
+// /chat refuses with BIRDIE_CONSENT_REQUIRED until the grant has landed.
+export async function grantBirdieConsent() {
+  return request('/api/ai/consent', { method: 'POST' });
+}
+
+export async function withdrawBirdieConsent() {
+  return request('/api/ai/consent', { method: 'DELETE' });
+}
+
 // Push Notifications
 // timezone is the device's own IANA zone name, and it is what makes quiet
 // hours possible at all: the backend has no other source for a recipient's

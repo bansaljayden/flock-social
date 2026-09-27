@@ -117,7 +117,11 @@ export default function BirdiePanel({
   aiShareVenue,
   aiSuggestedQuestions,
   aiTyping,
+  answerBirdieConsent,
   birdieActionBusy,
+  birdieConsentBusy,
+  birdieConsentError,
+  birdieConsented,
   birdieCorner,
   canSendAi,
   closeAiChat,
@@ -135,6 +139,7 @@ export default function BirdiePanel({
   isPro,
   loadTrustedContacts,
   memberCountLabel,
+  openExternal,
   openVenueDetail,
   outOfChirps,
   sendAiMessage,
@@ -305,6 +310,41 @@ export default function BirdiePanel({
             </div>
           </div>
 
+          {/* ASKED ONCE, BEFORE THE FIRST MESSAGE. App Store Guideline
+              5.1.2(i): personal data goes to a third-party AI only with the
+              person's explicit permission, and the line under the bird in the
+              empty state told them the assistant is built on Gemini without
+              asking. This names the provider and every kind of data a turn can
+              carry, in the privacy policy's own terms (its #ai section), and
+              nothing reaches Gemini until Allow has landed on the server. The
+              thread, the chips, the box and the action row are not mounted
+              while it shows (the words in the box survive in aiInputValueRef,
+              which the box seeds from when it comes back), sendAiMessage
+              returns early, and POST /api/ai/chat refuses on its own. Not now
+              closes Birdie and touches nothing else in the app; the question
+              comes back the next time Birdie opens. */}
+          {!birdieConsented ? (
+            <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+              <div role="group" aria-labelledby="birdie-consent-title" style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', maxWidth: '320px', margin: '0 auto', padding: '4px 4px 8px', textAlign: 'center' }}>
+                {/* The still image, not the animated bird: a question is not
+                    the place for a rAF loop, and birdBrandMoments.test.js keeps
+                    the animated one to the two mounts that greet a chat. */}
+                <BirdieStill size={isAiPanel ? 64 : 96} eager />
+                <p id="birdie-consent-title" style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>Before Birdie answers</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range and what you have open in Flock. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Your email, your exact location and your chats with friends are not sent. Answers are generated and can be wrong.</p>
+                <button type="button" className="hit44" onClick={() => openExternal('https://www.flockcorp.com/privacy#ai')} style={{ background: 'none', border: 'none', padding: '2px 4px', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', textDecoration: 'underline', cursor: 'pointer' }}>What Birdie sends, in full</button>
+                {birdieConsentError && (
+                  <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '600', margin: 0, lineHeight: 1.4 }}>{birdieConsentError}</p>
+                )}
+                <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                  <button type="button" className="hit44" onClick={closeAiChat} disabled={birdieConsentBusy} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'default' : 'pointer' }}>Not now</button>
+                  <button type="button" className="hit44" onClick={() => answerBirdieConsent(true)} disabled={birdieConsentBusy} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'wait' : 'pointer', opacity: birdieConsentBusy ? 0.6 : 1 }}>{birdieConsentBusy ? 'Saving…' : 'Allow'}</button>
+                </div>
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.45 }}>You can turn this off later in You, under Safety and privacy.</p>
+              </div>
+            </div>
+          ) : (<>
           {/* Messages */}
           <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
             {/* Once the chat starts he steps aside: a whisper behind the
@@ -634,6 +674,7 @@ export default function BirdiePanel({
               )}
             </div>
           </div>
+          </>)}
 
           {/* Venue Share Picker */}
           {aiShareVenue && (

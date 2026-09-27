@@ -61,6 +61,11 @@ const pool = require('../config/database');
 let FEEDBACK_ROWS = [];
 pool.query = (sql) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
+  // Birdie refuses a user with no recorded consent (migration 099); the user
+  // in this file has given it. birdieConsent.test.js covers the refusal.
+  if (/SELECT birdie_ai_consent_at FROM users/.test(flat)) {
+    return Promise.resolve({ rows: [{ birdie_ai_consent_at: new Date('2026-09-01T00:00:00Z') }], rowCount: 1 });
+  }
   if (/FROM venue_feedback/.test(flat)) {
     return Promise.resolve({ rows: FEEDBACK_ROWS, rowCount: FEEDBACK_ROWS.length });
   }
