@@ -1837,6 +1837,12 @@ const EmptyMark = ({ name, height = 160, style }) => (
 // clock: a phone left open across 5 PM must say "evening" on the next tick.
 // `key={idx}` restarts the slot-machine animation on every change, which is
 // what makes it read as a spin rather than a text swap.
+//
+// Every line is a greeting. "Rounding up the group..." was one of them, and
+// on a first screen with nothing on it yet, a line ending in an ellipsis
+// reads as the app still loading something. The spin eases out and stops; it
+// used the overshoot curve DESIGN-STANDARD.md's precedence section bans, so each
+// new line bounced past its slot and back.
 const GREETINGS = [
   () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
   () => 'What\'s the move?',
@@ -1844,7 +1850,6 @@ const GREETINGS = [
   () => 'Let\'s make plans',
   () => 'Who\'s free tonight?',
   () => 'Time to link up',
-  () => 'Rounding up the group...',
 ];
 
 const CyclingGreeting = React.memo(function CyclingGreeting() {
@@ -1855,7 +1860,7 @@ const CyclingGreeting = React.memo(function CyclingGreeting() {
   }, []);
   return (
     <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
-      <div key={idx} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{GREETINGS[idx]()}</div>
+      <div key={idx} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.22, 1, 0.36, 1)' }}>{GREETINGS[idx]()}</div>
     </div>
   );
 });
@@ -16065,7 +16070,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </button>
         </div>
 
-        {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition) */}
+        {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition).
+            Not drawn when both numbers are zero. "0 flocks · 0 friends" was
+            the second line a brand-new account read, a tally of nothing, and
+            the empty state below already says there are no flocks and offers
+            Start a flock and Add friends at full size. Zero means the stats
+            read landed and said zero: while friendCount is still null the
+            line is drawn as before, so an account with friends never loses
+            it to a slow read. */}
+        {!(liveFlocks.length === 0 && friendCount === 0) && (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', fontWeight: '500', letterSpacing: '-0.1px' }}>
           <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{liveFlocks.length}</span> {liveFlocks.length === 1 ? 'flock' : 'flocks'}
           {typeof friendCount === 'number' && (<>
@@ -16073,8 +16086,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{friendCount}</span> {friendCount === 1 ? 'friend' : 'friends'}
           </>)}
         </p>
+        )}
 
-        {/* Tonight — full-width segmented pulse control (the actionable hero of the header) */}
+        {/* Tonight — full-width segmented pulse control (the actionable hero of the header).
+            Only for an account with somebody to see it. The caption under it
+            says friends see the answer, and with no friends that sentence
+            is false and the control is the first interactive thing a new
+            account meets, asking a question nobody will read. Same rule as
+            the stat line for a read still in flight: null is not zero, so
+            the control stays while friendCount is unknown. An answer already
+            set keeps it too, so it can still be changed or cleared. */}
+        {(friendCount !== 0 || myPulse) && (<>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
           <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
           <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
@@ -16125,6 +16147,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             guessed it was a mood widget or hesitated to tap. 4 AM is the
             server's own default expiry (routes/availability.js). */}
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 4px 0', textAlign: 'right' }}>Friends see your answer until it clears at 4 AM.</p>
+        </>)}
       </div>
 
       {/* Scrollable Content */}
