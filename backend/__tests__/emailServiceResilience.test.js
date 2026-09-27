@@ -151,6 +151,42 @@ test('contract: a provider 4xx (error object, no throw) settles as sent:false wi
   } finally { cap.restore(); r.restore(); emailService.resetClient(); }
 });
 
+test('contract: only a definite provider 4xx is `refused`; an abort or a 5xx is ambiguous', async () => {
+  // resend@6 never throws. It catches its own fetch failure and returns it as
+  // an error VALUE with statusCode null, and a 5xx comes back the same way. So
+  // the `error` branch sees three different facts, and `refused` (nothing
+  // left the building, safe to retry) is true of only one. Marking all three
+  // refused let the Monday digest release its marker after an abort, the
+  // duplicate send its own comment forbids, and told new users at signup that
+  // their address had bounced.
+  const cases = [
+    ['a 422 validation error', { statusCode: 422, name: 'validation_error', message: 'from is not allowed' }, true],
+    ['a 403 unverified domain', { statusCode: 403, name: 'invalid_from_address', message: 'domain is not verified' }, true],
+    ['a 429 rate limit', { statusCode: 429, name: 'rate_limit_exceeded', message: 'Too many requests' }, true],
+    ['a 500 from the API', { statusCode: 500, name: 'application_error', message: 'Internal server error.' }, false],
+    ['an abort or dead socket (resend@6 shape)',
+      { statusCode: null, name: 'application_error', message: 'Unable to fetch data. The request could not be resolved.' }, false],
+    ['an error with no status at all', { message: 'something went wrong' }, false],
+  ];
+  for (const [what, error, refused] of cases) {
+    const r = stubResend({ error });
+    const cap = captureConsole();
+    try {
+      await withEnv({ ...CLEAN_ENV, RESEND_API_KEY: 'k' }, async () => {
+        emailService.resetClient();
+        const out = await emailService.sendEmail({ to: 'a@b.co', subject: 's', html: '<p>x</p>' });
+        assert.strictEqual(out.sent, false, what);
+        assert.ok(out.error, `${what}: the reason must still be reported`);
+        assert.strictEqual(out.refused === true, refused,
+          refused
+            ? `${what} is the provider answering no, so a caller may safely retry`
+            : `${what} may already have been queued, so it must not be reported as refused`);
+        assert.notStrictEqual(out.suppressed, true, `${what} says nothing about the address`);
+      });
+    } finally { cap.restore(); r.restore(); emailService.resetClient(); }
+  }
+});
+
 test('contract: a resend module whose constructor throws still settles, not rejects', async () => {
   // Round 21. resendClient() ran outside sendEmail's try, so this exact case
   // was a rejected promise from a function documented "Never throws" — and

@@ -44,7 +44,7 @@ require.cache[jwksPath] = {
 
 // Resend recorder.
 let sentMail = [];
-let resendBehaviour = 'ok'; // 'ok' | 'error' | 'throw'
+let resendBehaviour = 'ok'; // 'ok' | 'error' | 'throw' | 'rate-limited' | 'aborted'
 const resendPath = require.resolve('resend');
 require.cache[resendPath] = {
   id: resendPath, filename: resendPath, loaded: true,
@@ -56,6 +56,15 @@ require.cache[resendPath] = {
             sentMail.push(msg);
             if (resendBehaviour === 'throw') throw new Error('resend exploded');
             if (resendBehaviour === 'error') return { data: null, error: { message: 'rejected' } };
+            // The two shapes resend@6 really returns for a transient fault. It
+            // never throws: a 429 comes back with its status, and an abort or
+            // a dead socket comes back with statusCode null.
+            if (resendBehaviour === 'rate-limited') {
+              return { data: null, error: { statusCode: 429, name: 'rate_limit_exceeded', message: 'Too many requests' } };
+            }
+            if (resendBehaviour === 'aborted') {
+              return { data: null, error: { statusCode: null, name: 'application_error', message: 'Unable to fetch data. The request could not be resolved.' } };
+            }
             return { data: { id: `mail-${sentMail.length}` }, error: null };
           },
         };
@@ -105,6 +114,8 @@ let nextVerificationId = 1;
 // Ban-evasion tombstones (migration 012, routes/users.js). The digesting is
 // covered in banEvasion.test.js; here we only need to prove auth.js CONSULTS it.
 let identityTombstoned = false;
+// Normalised address -> suppression reason (email_suppressions).
+let suppressedAddresses = new Map();
 
 const canonical = authRouter.__testing.canonicalEmail;
 const findByEmail = (email) => users.find((u) => String(u.email).toLowerCase() === String(email).toLowerCase())
@@ -292,6 +303,12 @@ pool.query = async (text, params = []) => {
   }
   if (sql.startsWith('DELETE FROM banned_identities')) return { rows: [], rowCount: 0 };
 
+  // ---- email_suppressions (the do-not-mail list sendEmail consults) --------
+  if (sql.startsWith('SELECT reason FROM email_suppressions')) {
+    const reason = suppressedAddresses.get(params[0]);
+    return reason ? { rows: [{ reason }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+
   throw new Error(`unstubbed query: ${sql.slice(0, 140)}`);
 };
 
@@ -372,6 +389,8 @@ function reset() {
   users = []; verifications = []; nextUserId = 1; nextVerificationId = 1;
   sentMail = []; disconnectedRooms = []; resendBehaviour = 'ok';
   identityTombstoned = false;
+  suppressedAddresses = new Map();
+  require('../services/emailSuppression').resetCache();
   appleConfigured = false;
   appleExchange = async () => ({ refresh_token: 'apple-refresh' });
   emailService.resetClient();
@@ -379,6 +398,13 @@ function reset() {
   // OAuth tests below present the same short literal token. Independent tests
   // must not inherit each other's spent credentials.
   require('../routes/auth').__testing.clearOauthIdentityClaims();
+}
+
+// Quiets the send path's own error lines for tests that fail sends on purpose.
+function captureConsole() {
+  const real = { log: console.log, warn: console.warn, error: console.error };
+  console.log = () => {}; console.warn = () => {}; console.error = () => {};
+  return { restore() { Object.assign(console, real); } };
 }
 
 async function withGoogle(profile, fn) {
@@ -789,6 +815,53 @@ test('a Resend outage does not fail the signup that triggered it', async () => {
   assert.strictEqual(body.verificationSent, false);
   assert.strictEqual(user.email_verified, false);
   assert.ok(body.token, 'and the user still gets a session so they can ask for a new link');
+});
+
+test('a Resend 429 or timeout is not reported as a blocked address, at signup or on resend', async () => {
+  // mailRefused makes every signup screen say "mail to it bounced or was
+  // reported as spam before" and disable "Send the link again". It was read
+  // off `refused`, which sendEmail set for every provider error, and resend@6
+  // returns a 429 and an aborted request as provider errors. So a burst of
+  // signups, or one slow Resend minute, told healthy new users their address
+  // was blacklisted and took away the one button that would have fixed it.
+  const cap = captureConsole();
+  try {
+    for (const behaviour of ['rate-limited', 'aborted', 'error']) {
+      reset();
+      resendBehaviour = behaviour;
+      const { res, body, token } = await signupUnverified();
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(body.verificationSent, false, `${behaviour}: nothing was delivered`);
+      assert.strictEqual(body.mailRefused, false,
+        `${behaviour}: a provider fault told a healthy address it had bounced or been reported as spam`);
+
+      // Out of the sixty-second gap, so the resend route reaches the send.
+      verifications[0].created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const again = await post('/api/auth/resend-verification', {}, token);
+      assert.strictEqual(again.status, 200);
+      const againBody = await again.json();
+      assert.strictEqual(againBody.verificationSent, false);
+      assert.strictEqual(againBody.mailRefused, false, `${behaviour}: the resend route said the same wrong thing`);
+    }
+  } finally { cap.restore(); }
+});
+
+test('an address on the do-not-mail list IS reported as refused, so the screen can say why', async () => {
+  // The case mailRefused exists for, kept true while the one above is fixed.
+  const cap = captureConsole();
+  try {
+    reset();
+    suppressedAddresses.set('bounced@example.com', 'bounce');
+    const { res, body, token } = await signupUnverified({ email: 'bounced@example.com' });
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(body.verificationSent, false);
+    assert.strictEqual(body.mailRefused, true);
+    assert.strictEqual(sentMail.length, 0, 'the provider was never asked');
+
+    verifications[0].created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const again = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual((await again.json()).mailRefused, true);
+  } finally { cap.restore(); }
 });
 
 test('nothing is mailed to a non-routable placeholder address', () => {

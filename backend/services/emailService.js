@@ -726,16 +726,34 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <hell
       { signal: upstreamSignal('email') }
     );
     // `refused: true` means the provider ANSWERED and declined, so no message
-    // left the building. That is a different fact from the catch below, where
-    // the request was in flight when it was aborted or the socket died and
-    // nobody knows whether Resend accepted it. A caller that retries (the
-    // Monday digest releases its send marker) has to be able to tell them
-    // apart, because retrying the ambiguous one is how a person gets the same
-    // email twice and Flock gets billed twice.
+    // left the building. That is a different fact from a request that was in
+    // flight when it was aborted or the socket died, where nobody knows
+    // whether Resend accepted it. A caller that retries (the Monday digest
+    // releases its send marker) has to be able to tell them apart, because
+    // retrying the ambiguous one is how a person gets the same email twice and
+    // Flock gets billed twice.
+    //
+    // THE SDK DOES NOT THROW FOR EITHER ONE, so `error` alone cannot say which.
+    // resend@6 catches its own fetch failures and returns them as a value:
+    //   * a 4xx status (bad key, unverified domain, validation, 429 rate
+    //     limit): the API answered no. Nothing was queued. Refused.
+    //   * a 5xx status: the API broke while handling the request, and whether
+    //     it queued the message first is not something the answer says.
+    //   * statusCode null: fetch itself failed. That is the 8s deadline
+    //     aborting or a dead socket, which is exactly the ambiguous case, and
+    //     it arrives here rather than in the catch below.
+    // This marked all three refused. So an abort released the digest's marker
+    // (the duplicate send the digest's comment says must not happen), and
+    // signup, which read `refused` as "this address is blocked", told a new
+    // user during a Resend blip that their mail had bounced or been reported
+    // as spam, and disabled their resend button. Only a definite 4xx is a
+    // refusal now; signup reads `suppressed` for the blocked-address case.
     if (error) {
       console.error('[email] Resend error for', shown, JSON.stringify(error));
       noteSendFailure(error.message || 'send failed');
-      return { sent: false, error: error.message || 'send failed', refused: true };
+      const status = error.statusCode;
+      const answeredNo = Number.isInteger(status) && status >= 400 && status < 500;
+      return { sent: false, error: error.message || 'send failed', ...(answeredNo ? { refused: true } : {}) };
     }
     console.log('[email] sent to', shown, 'id:', data?.id);
     health.sent += 1;
