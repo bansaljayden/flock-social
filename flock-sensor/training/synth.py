@@ -511,6 +511,20 @@ def scene_full(rng):
     if rng.random() < 0.2:
         # Column stripes, which a Lepton shows between flat field corrections.
         t += rng.normal(0, 0.12, (1, COLS)).astype(np.float32)
+    # Real footage is never flat colour. Graded against real frames, owl-2
+    # (trained on flat shapes) read the texture of a real room, of hair and of
+    # clothing as more people. Blotches at three scales, from pixel grain to
+    # patches of floor, each with its own strength.
+    for sigma, most in ((0.8, 0.35), (2.5, 0.6), (8.0, 0.8)):
+        n = gaussian_filter(rng.normal(0, 1, (ROWS, COLS)).astype(np.float32), sigma)
+        t += n / max(float(n.std()), 1e-6) * rng.uniform(0, most)
+    if rng.random() < 0.15:
+        # A coarser sensor, or a far-off scene: detail lost into blocks and
+        # smoothed back up, the way low-resolution thermal footage looks.
+        from scipy.ndimage import zoom
+        f = int(rng.integers(2, 6))
+        small = t[:ROWS - ROWS % f, :COLS - COLS % f].reshape(ROWS // f, f, COLS // f, f).mean(axis=(1, 3))
+        t = zoom(small, (ROWS / small.shape[0], COLS / small.shape[1]), order=1)[:ROWS, :COLS]
     if rng.random() < 0.1:
         # A few dead or stuck pixels.
         for _ in range(int(rng.integers(1, 6))):

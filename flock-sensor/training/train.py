@@ -18,6 +18,7 @@ works, slowly.
 
 import argparse
 import json
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -47,21 +48,68 @@ def flip(t, objects):
     return t[:, ::-1].copy(), out
 
 
+ALL_KNOWN = np.ones(K, dtype=np.float32)
+PEOPLE_ONLY = np.eye(K, dtype=np.float32)[0]
+
+
+def real_frame(real, rng):
+    """One real training frame at Lepton size, with its people.
+
+    real is the 'train' part of the cache real_cache.py builds from public,
+    commercially licensed datasets (never their test splits):
+      tp   PUT Thermo Presence, MLX90640 32x24 from the ceiling, degrees C,
+           a point per person
+      otp  OpenThermalPose2, side view, 8-bit, a box and head per person
+    Only people are labelled in them, so only the people map is graded.
+    """
+    from scipy.ndimage import zoom
+    if rng.random() < 0.5:
+        i = int(rng.integers(len(real['tp_img'])))
+        t = zoom(real['tp_img'][i].astype(np.float32), (5, 5), order=1)
+        t = t + rng.normal(0, 1.5)
+        objects = [{'cls': 'person', 'x': x * 5 + 2.5, 'y': y * 5 + 2.5,
+                    'box': (x * 5 - 10, y * 5 - 10, x * 5 + 15, y * 5 + 15)}
+                   for x, y in real['tp_pts'][i]]
+        boxes = False
+    else:
+        i = int(rng.integers(len(real['otp_img'])))
+        g = real['otp_img'][i].astype(np.float32) / 255.0
+        # 8-bit frames carry no temperatures; a plausible room-to-skin range,
+        # different every time, so no one mapping is learned as the truth.
+        lo, span = rng.uniform(16, 28), rng.uniform(8, 16)
+        t = lo + (g ** rng.uniform(0.8, 1.25)) * span
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
+                   for box, (hx, hy) in real['otp_people'][i]]
+        boxes = True
+    t = t.astype(np.float32)
+    if rng.random() < 0.5:
+        t, objects = flip(t, objects)
+    return t, objects, boxes
+
+
 class Frames(IterableDataset):
-    def __init__(self, seed):
-        self.seed = seed
+    def __init__(self, seed, real_path=None, real_share=0.0):
+        self.seed, self.real_path, self.real_share = seed, real_path, real_share
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
+        real = pickle.load(open(self.real_path, 'rb'))['train'] if self.real_path else None
         while True:
-            t, objects = synth.scene_full(rng)
-            if rng.random() < 0.5:
-                t, objects = flip(t, objects)
+            known, boxes = ALL_KNOWN, True
+            if real is not None and rng.random() < self.real_share:
+                t, objects, boxes = real_frame(real, rng)
+                known = PEOPLE_ONLY
+            else:
+                t, objects = synth.scene_full(rng)
+                if rng.random() < 0.5:
+                    t, objects = flip(t, objects)
             heat, ltrb, mask = synth.targets(objects)
+            if not boxes:
+                mask = np.zeros_like(mask)
             yield (torch.from_numpy(synth.model_input(t)), torch.from_numpy(heat),
-                   torch.from_numpy(ltrb), torch.from_numpy(mask))
+                   torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known))
 
 
 def peaks(prob, threshold=PEAK_THRESHOLD):
@@ -73,6 +121,17 @@ def peaks(prob, threshold=PEAK_THRESHOLD):
 def held_out(n, seed=12345):
     rng = np.random.default_rng(seed)
     return [synth.scene_full(rng) for _ in range(n)]
+
+
+def real_held_out(path, split, n=600, seed=5):
+    """Real frames from a split training never saw, as (celsius, objects)."""
+    real = pickle.load(open(path, 'rb'))[split]
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        t, objects, _ = real_frame(real, rng)
+        out.append((t, objects))
+    return out
 
 
 def predict(net, frames, device, threshold=PEAK_THRESHOLD):
@@ -180,6 +239,9 @@ def main(argv=None):
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--width', type=int, default=24)
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--real', default=None,
+                    help='real_cache.pkl: public, commercially licensed real frames to mix in')
+    ap.add_argument('--real-share', type=float, default=0.35)
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',
@@ -202,9 +264,13 @@ def main(argv=None):
     print(f'{params:,} parameters on {device}', flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
-    loader = DataLoader(Frames(args.seed), batch_size=args.batch, num_workers=args.workers,
+    loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0),
+                        batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)
+    # Chosen on real frames as much as generated ones: a model that is
+    # perfect on drawings and wrong in a real room is the failure this guards.
+    real_val = real_held_out(args.real, 'val') if args.real else []
     best = None
     start = 0
     # A run picks up where it stopped. A training run is half an hour of a
@@ -219,11 +285,12 @@ def main(argv=None):
         print(f'resuming at step {start}', flush=True)
     t0 = time.time()
     running = 0.0
-    for step, (x, heat, ltrb, mask) in enumerate(loader, start + 1):
+    for step, (x, heat, ltrb, mask, known) in enumerate(loader, start + 1):
         x, heat = x.to(device, non_blocking=True), heat.to(device, non_blocking=True)
         ltrb, mask = ltrb.to(device, non_blocking=True), mask.to(device, non_blocking=True)
+        known = known.to(device, non_blocking=True)
         logits, raw = net(x)
-        loss = focal_loss(logits, heat) + box_loss(raw, ltrb, mask)
+        loss = focal_loss(logits, heat, known=known) + box_loss(raw, ltrb, mask)
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
@@ -232,11 +299,15 @@ def main(argv=None):
         running = 0.98 * running + 0.02 * loss.item() if step > 1 else loss.item()
         if step % 500 == 0 or step == args.steps:
             s, _ = evaluate(net, val, device)
+            r = evaluate(net, real_val, device)[0] if real_val else None
             rate = (step - start) * args.batch / (time.time() - t0)
             print(f'step {step} loss {running:.3f} exact {s["exact"]} within1 {s["within_one"]} '
-                  f'mae {s["mean_abs_error"]} ({rate:.0f} frames/s)', flush=True)
-            if best is None or s['mean_abs_error'] < best:
-                best = s['mean_abs_error']
+                  f'mae {s["mean_abs_error"]}' + (f' | real exact {r["exact"]} within1 '
+                  f'{r["within_one"]} mae {r["mean_abs_error"]}' if r else '') +
+                  f' ({rate:.0f} frames/s)', flush=True)
+            mark = s['mean_abs_error'] + (r['mean_abs_error'] if r else 0.0)
+            if best is None or mark < best:
+                best = mark
                 torch.save(net.state_dict(), out / 'best.pt')
             torch.save({'net': net.state_dict(), 'opt': opt.state_dict(),
                         'sched': sched.state_dict(), 'step': step, 'best': best},
