@@ -3852,6 +3852,17 @@ const SERVE_MEASURED = Object.freeze({
   }),
 });
 
+// THE HEADLINE FOR THE CONFIGURATION AS A WHOLE, as opposed to SERVE_MEASURED's
+// per-number within-15. servedAccuracy.json holds what bandEval measured for
+// curve_offset + nowcast on the same 4,183 held-out readings (within one band,
+// within 10, MAE, bias, and the same readings as served before the switches).
+// It describes the numbers only while both switches are on, so this returns
+// null otherwise and nothing that quotes it (Birdie's prompt) says it.
+const SERVED_ACCURACY = Object.freeze(require('./servedAccuracy.json'));
+function servedAccuracyHeadline() {
+  return serveMode() === 'curve_offset' && nowcastEnabled() ? SERVED_ACCURACY : null;
+}
+
 // The venue-local slot a timestamp names: days since the epoch of its local
 // date, times 24, plus its local hour. The same local getters buildFeatureMap
 // reads the hour with, so the nowcast and the model always agree on which
@@ -4868,6 +4879,11 @@ module.exports = {
   // and same contract as eventBudgetStatus: a non-consuming read for
   // routes/admin.js, never a gate. See the note above predictionCoverage.
   predictionCoverage,
+  // The measured headline for the serving configuration, or null when the
+  // switches it was measured on are not both on. Read by routes/ai.js so
+  // Birdie can answer "how accurate is it" with a figure that describes the
+  // numbers it is actually handing out.
+  servedAccuracyHeadline,
   estimateCapacity,
   estimateWait,
   findBestTime,
@@ -5056,6 +5072,8 @@ module.exports = {
     NOWCAST_WEIGHTS,
     SERVE_MEASURED,
     SERVE_MEASURED_POPULATION,
+    SERVED_ACCURACY,
+    servedAccuracyHeadline,
     venueSlotOf,
     slotDayNumber,
     nowcastBucket,
