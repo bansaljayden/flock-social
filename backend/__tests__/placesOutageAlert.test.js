@@ -24,6 +24,10 @@ let queries = [];
 let sent = [];
 let claimTaken = false;    // has today's ledger row already been claimed?
 let sendShouldFail = false;
+// What a real failed send looks like. sendEmail never throws; it RESOLVES
+// { sent: false, ... }, and a stub that only threw hid a claim that no real
+// failure ever released.
+let sendResult = null;
 
 pool.query = async (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
@@ -42,8 +46,9 @@ pool.query = async (sql, params) => {
 
 emailService.sendEmail = async (msg) => {
   if (sendShouldFail) throw new Error('resend is down');
+  if (sendResult) return sendResult;
   sent.push(msg);
-  return { id: 'msg_1' };
+  return { sent: true, id: 'msg_1' };
 };
 
 const { runPlacesOutageAlert } = require('../services/placesOutageAlert');
@@ -62,6 +67,7 @@ test.beforeEach(() => {
   sent = [];
   claimTaken = false;
   sendShouldFail = false;
+  sendResult = null;
   process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
 });
 
@@ -128,6 +134,32 @@ test('A FAILED SEND RELEASES THE CLAIM, or one bad minute buys a silent day', as
   sendShouldFail = false;
   await runPlacesOutageAlert(UNHEALTHY);
   assert.strictEqual(sent.length, 1);
+});
+
+test('a send that RESOLVES as failed releases the claim and is not reported as mailed', async () => {
+  // The shape every real failure takes: Resend answering 429 or 5xx, the 8s
+  // deadline aborting, or no key. The release used to sit only in a catch, so
+  // these kept the claim, answered { mailed: true }, and every run for the
+  // rest of the UTC day said 'already-sent-today' during a Places outage.
+  for (const failure of [
+    { sent: false, error: 'Too many requests', refused: true },
+    { sent: false, error: 'This operation was aborted' },
+    { sent: false, skipped: true },
+  ]) {
+    queries = [];
+    sent = [];
+    claimTaken = false;
+    sendResult = failure;
+    const out = await runPlacesOutageAlert(UNHEALTHY);
+    assert.deepStrictEqual(out, { failed: true }, `${JSON.stringify(failure)} was reported as ${JSON.stringify(out)}`);
+    assert.strictEqual(deletes().length, 1, `${JSON.stringify(failure)} did not release the claim`);
+    assert.strictEqual(claimTaken, false);
+
+    sendResult = null;
+    const retry = await runPlacesOutageAlert(UNHEALTHY);
+    assert.deepStrictEqual(retry, { mailed: true }, 'the next run mails instead of answering already-sent-today');
+    assert.strictEqual(sent.length, 1);
+  }
 });
 
 test('no configured address is reported, not swallowed', async () => {

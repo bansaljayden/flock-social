@@ -110,13 +110,23 @@ async function runPlacesOutageAlert(status) {
     );
     if (claim.rows.length === 0) return { skipped: 'already-sent-today' };
 
+    // sendEmail never throws: a refusal, a 429 or 5xx, the 8s deadline and a
+    // missing key all come back as { sent: false }. So the RESULT decides
+    // whether the claim stands. Releasing only inside a catch meant a failed
+    // send kept the claim, answered { mailed: true }, and every 15-minute run
+    // after it said 'already-sent-today' until midnight UTC. The catch stays
+    // for a sendEmail that does throw, and is treated the same way.
+    let result;
     try {
-      await sendEmail({
+      result = await sendEmail({
         to: to[0],
         subject: 'Google Places is down for Flock',
         text: body(h),
       });
     } catch (sendErr) {
+      result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
+    }
+    if (!result || result.sent !== true) {
       // Release the claim. Holding it after a failed send buys a full day of
       // silence from the one thing whose entire job is to break silence, and a
       // duplicate email costs nothing by comparison. Same rule, same reason as
@@ -125,7 +135,9 @@ async function runPlacesOutageAlert(status) {
         'DELETE FROM ops_alert_ledger WHERE alert_key = $1 AND sent_on = CURRENT_DATE',
         [ALERT_KEY]
       ).catch(() => {});
-      throw sendErr;
+      const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
+      console.error(`[PlacesHealth] Places failing, and the alert was NOT delivered (${why}). The next run will try again.`);
+      return { failed: true };
     }
 
     console.error(`[PlacesHealth] Places failing (${h.consecutiveFailures} in a row). Alert mailed.`);

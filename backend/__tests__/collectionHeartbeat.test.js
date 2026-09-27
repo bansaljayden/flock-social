@@ -55,13 +55,17 @@ pool.query = async (text) => {
 
 const sent = [];
 // The service destructures sendEmail at require time, so the stub has to be
-// installed before it loads and cannot be swapped later: a flag is how a test
-// makes this one throw.
+// installed before it loads and cannot be swapped later: flags are how a test
+// makes this one fail. The stub keeps the real contract. sendEmail never
+// throws; a failed send RESOLVES { sent: false, ... }, and a stub that only
+// ever threw is how a claim that no real failure released stayed green here.
 let sendThrows = false;
+let sendResult = null;
 require('../services/emailService').sendEmail = async (msg) => {
   if (sendThrows) throw new Error('resend is down');
+  if (sendResult) return sendResult;
   sent.push(msg);
-  return { id: 'test' };
+  return { sent: true, id: 'test' };
 };
 
 const hb = require('../services/collectionHeartbeat');
@@ -165,6 +169,40 @@ test('a failed send releases the day claim instead of buying silence', async () 
   sendThrows = false;
   await hb.runCollectionHeartbeat();
   assert.strictEqual(sent.length, 1, 'the retry sends once the provider recovers');
+});
+
+test('a send that RESOLVES as failed releases the claim too, and is not logged as mailed', async () => {
+  // The shape every real failure takes. sendEmail never throws: a 429, a 5xx,
+  // the 8s deadline and the per-recipient cap all come back as a value. The
+  // release used to live only in a catch, so none of these reached it and the
+  // rest of the day's sweeps were silent about a collector that had stopped.
+  for (const failure of [
+    { sent: false, error: 'Too many requests', refused: true },
+    { sent: false, error: 'This operation was aborted' },
+    { sent: false, error: 'per-recipient daily cap', refused: true },
+    { sent: false, skipped: true },
+  ]) {
+    hb.__test.reset();
+    ledger.clear();
+    sent.length = 0;
+    freshRows = 0;
+    sendResult = failure;
+    const logged = [];
+    const realError = console.error;
+    console.error = (...a) => logged.push(a.join(' '));
+    try {
+      await hb.runCollectionHeartbeat();
+    } finally {
+      console.error = realError;
+    }
+    assert.strictEqual(ledger.size, 0, `${JSON.stringify(failure)} kept the day's claim, so nothing retries until tomorrow`);
+    assert.ok(!logged.some((l) => /Alert mailed/.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
+    assert.ok(logged.some((l) => /NOT delivered/.test(l)), 'the failure is said out loud');
+
+    sendResult = null;
+    await hb.runCollectionHeartbeat();
+    assert.strictEqual(sent.length, 1, 'the next sweep mails once the provider recovers');
+  }
 });
 
 test('the kill switch works and defaults open', () => {

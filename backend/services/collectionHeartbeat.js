@@ -115,8 +115,16 @@ async function runCollectionHeartbeat() {
        RETURNING sent_on`
     );
     if (claim.rows.length === 0) return;
+    // sendEmail never throws. A provider refusal, a 429 or 5xx, the 8s
+    // deadline, a missing key and the per-recipient cap all come back as
+    // { sent: false }, so the RESULT is what decides whether the claim
+    // stands. This used to release only inside a catch, which no failed send
+    // ever reached: the claim held, the log said "Alert mailed.", and every
+    // later sweep that day stayed quiet about a broken collector. The catch
+    // stays for a sendEmail that does throw, and is treated the same way.
+    let result;
     try {
-      await sendEmail({
+      result = await sendEmail({
         to: to[0],
         subject: {
           stopped: 'Flock data collection has stopped',
@@ -138,15 +146,22 @@ async function runCollectionHeartbeat() {
         ].join('\n'),
       });
     } catch (sendErr) {
+      result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
+    }
+    if (!result || result.sent !== true) {
       // Release the claim. Holding it after a failed send would buy a full
       // day of silence from the one service whose entire job is to break
       // silence, and a duplicate email costs nothing by comparison
-      // (2026-09-01 review).
+      // (2026-09-01 review). The money hub's "last heartbeat alert" date is
+      // read from this row too, so a held claim also claimed a mail that
+      // never went out.
       await pool.query(
         `DELETE FROM ops_alert_ledger
           WHERE alert_key = 'collection_heartbeat' AND sent_on = CURRENT_DATE`
       ).catch(() => {});
-      throw sendErr;
+      const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
+      console.error(`[HEARTBEAT] Collection ${state}, and the alert was NOT delivered (${why}). The next sweep will try again.`);
+      return;
     }
     console.error(`[HEARTBEAT] Collection ${state}: ${fresh} realtime rows over ${hours} distinct hours in ${WINDOW_HOURS}h. Alert mailed.`);
   } catch (err) {
