@@ -118,9 +118,13 @@ def main(argv=None):
     ap.add_argument('--steps', type=int, default=30000)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--lr', type=float, default=2e-3)
-    ap.add_argument('--workers', type=int, default=14)
+    # Not every core: at fourteen workers plus the GPU the machine this was
+    # first trained on stopped responding.
+    ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--width', type=int, default=24)
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--name', default='owl-1',
+                    help='the name this model is known by on the unit and in the report')
     args = ap.parse_args(argv)
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -136,9 +140,20 @@ def main(argv=None):
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)
     best = None
+    start = 0
+    # A run picks up where it stopped. A training run is half an hour of a
+    # machine at full load, and losing it to a freeze or a reboot meant
+    # starting again from nothing.
+    if (out / 'last.pt').exists():
+        ck = torch.load(out / 'last.pt', map_location=device)
+        net.load_state_dict(ck['net'])
+        opt.load_state_dict(ck['opt'])
+        sched.load_state_dict(ck['sched'])
+        start, best = ck['step'], ck['best']
+        print(f'resuming at step {start}', flush=True)
     t0 = time.time()
     running = 0.0
-    for step, (x, y) in enumerate(loader, 1):
+    for step, (x, y) in enumerate(loader, start + 1):
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
         loss = focal_loss(net(x), y)
         opt.zero_grad(set_to_none=True)
@@ -149,12 +164,15 @@ def main(argv=None):
         running = 0.98 * running + 0.02 * loss.item() if step > 1 else loss.item()
         if step % 500 == 0 or step == args.steps:
             s, _ = evaluate(net, val, device)
-            rate = step * args.batch / (time.time() - t0)
+            rate = (step - start) * args.batch / (time.time() - t0)
             print(f'step {step} loss {running:.3f} exact {s["exact"]} within1 {s["within_one"]} '
                   f'mae {s["mean_abs_error"]} ({rate:.0f} frames/s)', flush=True)
             if best is None or s['mean_abs_error'] < best:
                 best = s['mean_abs_error']
                 torch.save(net.state_dict(), out / 'best.pt')
+            torch.save({'net': net.state_dict(), 'opt': opt.state_dict(),
+                        'sched': sched.state_dict(), 'step': step, 'best': best},
+                       out / 'last.pt')
         if step >= args.steps:
             break
 
@@ -162,7 +180,7 @@ def main(argv=None):
     test = held_out(3000, seed=999)
     model_score, _ = evaluate(net, test, device)
     rule_score = score([len(p) for _, p in test], rule_counts(test))
-    report = {'parameters': params, 'steps': args.steps, 'model': model_score, 'rule': rule_score}
+    report = {'name': args.name, 'parameters': params, 'steps': args.steps, 'model': model_score, 'rule': rule_score}
     (out / 'report.json').write_text(json.dumps(report, indent=2))
     export(net, out / 'people.onnx')
     print(json.dumps(report, indent=2))
