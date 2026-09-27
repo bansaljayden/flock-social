@@ -83,10 +83,22 @@
 	     profile picture (`handlePhotoUpload`), flock chat (`handleChatImageSelect`),
 	     DM (`handleDmImageSelect`). The venue logo is NOT one of them: it is
 	     picked from the venue's own Google listing photos, never the library.
-	     Nothing in the app ever writes an image back to the library, so there is
-	     deliberately no NSPhotoLibraryAddUsageDescription. -->
+	     Writing to the library has its own string, below. -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Flock uses your photo library when you pick a photo to send in a flock chat or a direct message or to set as your profile picture.</string>
+	<!-- Photo library, add only. No native code writes a photo, but two things
+	     the web view shows can, and both run inside this app's own process:
+	       1. "Share the night" on a finished plan (App.js `shareNightRecap`)
+	          draws a PNG and hands it to navigator.share as a file. WebKit
+	          presents that as a UIActivityViewController in the app, so the
+	          sheet's Save Image is a library write by Flock, not by the sheet.
+	       2. Long-pressing a full-size photo in a chat offers Save to Photos,
+	          which is the same write.
+	     Without this string iOS either leaves Save Image out of the sheet or
+	     stops the app when it is chosen. It was left out once on the belief
+	     that the share sheet carries its own permission; it does not. -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Flock saves an image to your photo library only when you choose to save one, like the card from Share the night.</string>
 	<!-- Contacts, read only, and only phone numbers.
 
 	     WHAT ASKS FOR IT. One thing:
