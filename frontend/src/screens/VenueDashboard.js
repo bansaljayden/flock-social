@@ -165,6 +165,18 @@ export const WEEKLY_DIGEST_DESCRIPTION = "A short email every Monday morning wit
 // back to another plan's sentence after any save.
 export const mergeSavedProfile = (prev, saved) => (saved ? { ...(prev || {}), ...saved } : prev);
 
+// THE POST A DEAL BOX IS THE DEAL'S TITLE, AND ONLY ITS TITLE. It used to send
+// the one line it has as both title and description, which went wrong twice.
+// POST /api/venue-dashboard/promotions caps a title at 80 characters and the
+// box had no cap, so a deal of 81 or more was refused with "Title is required
+// (max 80 characters)", naming a field this card does not have. And every deal
+// that did post showed its sentence twice on the venue card, once bold as the
+// title and again as the description under it. The box now stops at the
+// server's own limit and posts a title with no description, so the deal reads
+// once. The Promotions tab form is where a longer description goes.
+export const QUICK_DEAL_MAX = 80;
+export const quickDealBody = (text, timeSlot) => ({ title: text, timeSlot, days: 'Daily' });
+
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
   // with screens that are not this one, so they stay there and come in here.
@@ -1532,13 +1544,19 @@ export default function VenueDashboard({
               and posts from the Promotions tab, which is open to everyone. */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
             <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
-            <SearchInputLocal aria-label="Deal description"
+            <SearchInputLocal aria-label="Deal"
               type="text"
+              maxLength={QUICK_DEAL_MAX}
               initialValue={dealDescription}
               onCommit={setDealDescription}
               placeholder="e.g., 2-for-1 drinks until 8pm"
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             />
+            {/* The limit, shown once it is close, so a box that stops taking
+                letters says why instead of looking stuck. */}
+            {dealDescription.length >= QUICK_DEAL_MAX - 20 && (
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '-4px 0 8px', textAlign: 'right' }}>{dealDescription.length}/{QUICK_DEAL_MAX}</p>
+            )}
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
                 <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
@@ -1561,12 +1579,7 @@ export default function VenueDashboard({
               if (!text) return;
               setDealDescription('');
               try {
-                const created = await createVenuePromotion({
-                  title: text,
-                  description: text,
-                  timeSlot: dealTimeSlot,
-                  days: 'Daily',
-                });
+                const created = await createVenuePromotion(quickDealBody(text, dealTimeSlot));
                 setPromotions(prev => [created, ...prev]);
                 showToast(venueIsVerified ? 'Deal posted. It is on your venue card now.' : 'Saved. It goes on your card once your venue is verified.', 'success');
                 setVenueTab('promotions');
@@ -1710,7 +1723,13 @@ export default function VenueDashboard({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{promo.title}</h4>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
+                        {/* A deal from the Post a Deal card has a title and no
+                            description, so there is no second line to draw;
+                            one it posted earlier carries its title again as
+                            the description, which is not a second line either. */}
+                        {(promo.description || promo.desc) && (promo.description || promo.desc) !== promo.title ? (
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
+                        ) : null}
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>

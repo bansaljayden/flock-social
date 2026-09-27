@@ -4231,7 +4231,10 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title || !form.desc} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title && form.desc ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
+          {/* Only the title is required, as it is on the server. A deal from the
+              Post a Deal card has no description, and requiring one here left
+              the owner unable to save any edit to it without inventing one. */}
+          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title.trim()} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title.trim() ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title.trim() ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
