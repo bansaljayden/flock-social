@@ -170,7 +170,19 @@ async function dispatch(sql, params) {
     // A slot that contains a no_show cannot count as attended.
     const flakeWins = /NOT ev\.slot_flaked/.test(attendedClause);
 
-    const when = (f) => new Date(f.event_time || f.created_at).getTime();
+    // When a plan happened, read the way the arriving statement reads it. With
+    // GREATEST(event_time, created_at) a plan is never earlier than its row,
+    // so a time backdated at creation counts as the moment the plan was made;
+    // without it the stored event_time is trusted, which is what let create
+    // and rerun pick their own past slot.
+    const floored = /GREATEST\(f\.event_time, f\.created_at\)/.test(flat)
+      && /GREATEST\(f3\.event_time, f3\.created_at\)/.test(flat);
+    const when = (f) => {
+      const made = new Date(f.created_at).getTime();
+      if (!f.event_time) return made;
+      const ev = new Date(f.event_time).getTime();
+      return floored ? Math.max(ev, made) : ev;
+    };
     const started = (f) => when(f) <= Date.now();
     const slotOf = (f, fallback) =>
       (slotted && slotSeconds ? `s${Math.floor(when(f) / 1000 / slotSeconds)}` : `row${fallback}`);
@@ -317,10 +329,12 @@ async function call(method, p, body) {
 // The farm: a flock that exists only in the database, created by A, accepted
 // by B. Seeded directly because POST / is not the finding; what it costs the
 // attacker is one authenticated request per flock either way.
-function seedPairFlock(id, a, b, { status = 'confirmed', eventTime = new Date().toISOString() } = {}) {
+function seedPairFlock(id, a, b, {
+  status = 'confirmed', eventTime = new Date().toISOString(), createdAt = new Date().toISOString(),
+} = {}) {
   world.flocks.set(id, {
     id, creator_id: a, status, name: 'Farm', venue_id: null,
-    event_time: eventTime, created_at: new Date().toISOString(),
+    event_time: eventTime, created_at: createdAt,
   });
   world.members.push(
     { flock_id: id, user_id: a, status: 'accepted', attendance: 'unmarked' },
@@ -415,6 +429,43 @@ test('FIXED A2: nine farm cycles cannot dilute a real flake, because they are on
   assertQueriesUnderstood();
 });
 
+test('FIXED A5: nine plans CREATED for nine different past slots are still one slot', async () => {
+  // A2 with the one input it left to the attacker. PUT refuses an event_time
+  // earlier than the row, but POST / and POST /:id/rerun take any ISO time,
+  // so each farm flock was created for its own past four-hour slot: every one
+  // had already "started", and every one was a new slot. Nine loops turned a
+  // real 0-of-1 into 90. The flocks here are what those creates leave behind:
+  // made right now, each dated into a different slot weeks ago.
+  const A = 63;
+  const B = 64;
+  world.flocks.set(820, {
+    id: 820, creator_id: 99, status: 'completed', name: 'Real plan', venue_id: 'ChIJreal0000000002',
+    event_time: new Date(Date.now() - 86400e3).toISOString(), created_at: new Date(Date.now() - 172800e3).toISOString(),
+  });
+  world.members.push(
+    { flock_id: 820, user_id: A, status: 'accepted', attendance: 'no_show' },
+    { flock_id: 820, user_id: 99, status: 'accepted', attendance: 'attended' },
+  );
+
+  CURRENT_USER = { id: A, name: 'Mallory', email_verified: true, role: 'user' };
+  const weeksAgo = Date.now() - 30 * 86400e3;
+  for (let i = 0; i < 9; i += 1) {
+    const id = 821 + i;
+    seedPairFlock(id, A, B, { eventTime: new Date(weeksAgo + i * 4 * 3600e3).toISOString() });
+    await call('PUT', `/api/flocks/${id}`, { status: 'completed' });
+    await call('POST', `/api/flocks/${id}/attendance`, {
+      attendance: [{ userId: A, attended: true }, { userId: B, attended: true }],
+    });
+  }
+
+  assert.deepStrictEqual(world.users.get(A), {
+    reliability_score: 50, total_plans_joined: 2, total_plans_attended: 1,
+  }, 'a plan counts as happening no earlier than it was made, so the nine are one burst');
+  assert.match(tallySql, /GREATEST\(f\.event_time, f\.created_at\) <= \(NOW\(\) AT TIME ZONE 'UTC'\) AS started/,
+    'the started clock reads the floored moment too');
+  assertQueriesUnderstood();
+});
+
 test('FIXED A3: a slot that contains a no_show can never be counted as attended', async () => {
   // The slot rule would have been a BETTER flake eraser than the bug it
   // replaces if it kept an arbitrary member of each slot: one farm flock timed
@@ -455,8 +506,12 @@ test('FIXED A4: two real plans in different slots on the same day both count', a
   const B = 69;
   CURRENT_USER = { id: A, name: 'Ada', email_verified: true, role: 'user' };
 
-  seedPairFlock(840, A, B, { eventTime: new Date(Date.now() - 9 * 3600e3).toISOString() });
-  seedPairFlock(841, A, B, { eventTime: new Date(Date.now() - 3600e3).toISOString() });
+  // Both made the day before, the way a real day of plans is: a plan's moment
+  // is never read as earlier than the row (FIXED A5), so a double-header
+  // seeded as made right now would be one slot by construction.
+  const yesterday = new Date(Date.now() - 86400e3).toISOString();
+  seedPairFlock(840, A, B, { eventTime: new Date(Date.now() - 9 * 3600e3).toISOString(), createdAt: yesterday });
+  seedPairFlock(841, A, B, { eventTime: new Date(Date.now() - 3600e3).toISOString(), createdAt: yesterday });
   for (const id of [840, 841]) {
     await call('PUT', `/api/flocks/${id}`, { status: 'completed' });
     await call('POST', `/api/flocks/${id}/attendance`, {
@@ -561,10 +616,12 @@ test('FIXED C: a user marked no_show cannot leave the completed flock, so the fl
   const P = 83;   // the flake's puppet, for the recompute trigger
 
   // 1. A real completed flock. The host marks M as a no-show. This is the
-  //    entire purpose of the anti-flake system.
+  //    entire purpose of the anti-flake system. Made before the evening it was
+  //    for, as a real plan is: a row dated after its own event would be read
+  //    as happening when it was made (FIXED A5), which is right now.
   world.flocks.set(1000, {
     id: 1000, creator_id: H, status: 'completed', name: 'Dinner', venue_id: 'ChIJreal0000000002',
-    event_time: new Date(Date.now() - 86400e3).toISOString(), created_at: new Date().toISOString(),
+    event_time: new Date(Date.now() - 86400e3).toISOString(), created_at: new Date(Date.now() - 172800e3).toISOString(),
   });
   world.members.push(
     { flock_id: 1000, user_id: H, status: 'accepted', attendance: 'unmarked' },
