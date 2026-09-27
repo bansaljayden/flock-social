@@ -17,7 +17,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
-import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession } from './services/api';
+import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession, primeBootReads, takeBootRead } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
@@ -6578,11 +6578,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   //
   // Named so the retry on the Nest and Messages error cards runs the same read
   // the screen ran, rather than a second, slightly different one.
+  //
+  // THE FIRST READ AFTER A COLD LAUNCH IS ALREADY IN FLIGHT. The list was asked
+  // for beside /api/auth/me (primeBootReads in services/api.js), and
+  // takeBootRead hands it out once. It is taken whether or not an invite was
+  // redeemed, so an invite path forgets it too, but only used when none was: a
+  // redemption has just changed this account's plans, so a list read before it
+  // is stale and the read goes out again.
   const loadFlocks = useCallback(() => {
     setFlocksLoading(true);
     setFlocksError('');
     return redeemPendingInvite()
-      .then((invite) => getFlocks().then((data) => ({ data, invite })))
+      .then((invite) => {
+        const primed = takeBootRead('flocks');
+        return ((!invite && primed) || getFlocks()).then((data) => ({ data, invite }));
+      })
       .then(({ data, invite }) => {
         const mapped = (data.flocks || []).map(f => ({
           id: f.id,
@@ -14447,6 +14457,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // delete a conversation, refetch the list, and the deleted conversation
   // came back. Refetches used to be rare (error recovery); the reconnect
   // catch-up runs one on every return from the background.
+  //
+  // The first read after a cold launch takes the list asked for beside
+  // /api/auth/me (primeBootReads in services/api.js), handed out once; every
+  // later read, and that one when nothing was primed, goes out afresh.
   const deletedDmUserIdsRef = useRef(deletedDmUserIds);
   deletedDmUserIdsRef.current = deletedDmUserIds;
   const loadDmConversations = useCallback(() => {
@@ -14458,7 +14472,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const since = retractionsRef.current.seq;
     setDmsLoading(true);
     setDmsError('');
-    return getDMConversations()
+    return (takeBootRead('dms') || getDMConversations())
       .then(data => {
         if (overtaken()) return;
         const hidden = deletedDmUserIdsRef.current;
@@ -20445,6 +20459,12 @@ const FlockApp = () => {
     // flock-settings-loaded listener still reaches an already-mounted screen,
     // and pullSettings is idempotent and guards on isLoggedIn. It only stops
     // the Nest waiting on them.
+    //
+    // The plan list and the DM list go out at the same moment, rather than
+    // after /me answers and the whole signed-in tree has mounted, which put
+    // the plan list last of eleven requests (primeBootReads in services/api.js
+    // has the measurement, and the rules for when a primed read is not used).
+    primeBootReads();
     getCurrentUser()
       .then((data) => {
         beginSession(data.user || data);

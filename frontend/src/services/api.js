@@ -607,6 +607,9 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   const held = keepInviteHandoff ? holdInviteHandoff() : [];
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
   try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
+  // The lists read at boot for this session (primeBootReads) are memory, not
+  // storage, and belong to it all the same.
+  dropBootReads();
   held.forEach(([key, value]) => {
     try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
   });
@@ -2623,6 +2626,67 @@ export async function removeReaction(messageId, emoji) {
 // DMs
 export async function getDMConversations() {
   return request('/api/dm');
+}
+
+/**
+ * THE TWO LISTS THE FIRST SCREEN DRAWS, ASKED FOR BESIDE /api/auth/me.
+ *
+ * The plan list used to be the last of eleven requests at a cold launch. The
+ * outer App holds the splash on getCurrentUser(), mounts FlockAppInner only
+ * once that answers, and only then does the mount effect call loadFlocks,
+ * which first settles any pending invite and only then asks for the list.
+ * Measured on the local stack (150 ms round trip, 4x CPU slowdown), GET
+ * /api/flocks started about 440 ms after /me did, and the server answers it
+ * in a few milliseconds, so all of that was waiting in line. The DM list
+ * waited the same way.
+ *
+ * primeBootReads fires both at the moment /me goes out, when a stored session
+ * exists. takeBootRead hands each one out ONCE, to the first loader that asks,
+ * and forgets it; a second call, a read taken after BOOT_READ_TTL_MS, or one
+ * taken under a different token than it was sent with gets null, and the
+ * caller reads afresh as it always did. Nothing is stored anywhere but this
+ * module's memory, so the sign-out sweep above has nothing new to clear, and
+ * clearLocalSession drops the held reads as well.
+ *
+ * A 401 on a primed read is the 401 /me gets at the same moment, and the
+ * expiry notice is latched (sessionExpiryAnnounced), so it is still said once.
+ * A primed read that failed on the wire with no answer from the server is not
+ * handed on as a failure: the phone may be back on signal by the time the
+ * list is wanted, so the taker gets a fresh read instead. One the server
+ * answered with an error is handed on, because asking again at once would get
+ * the same answer.
+ */
+const BOOT_READ_TTL_MS = 10000;
+const BOOT_READERS = { flocks: getFlocks, dms: getDMConversations };
+let bootReads = null;
+
+export function primeBootReads() {
+  bootReads = null;
+  const token = getToken();
+  if (!token) return;
+  const reads = {};
+  Object.keys(BOOT_READERS).forEach((key) => {
+    const promise = BOOT_READERS[key]();
+    // Held, not awaited: a read nobody ends up taking (a boot refused with a
+    // 403, a session that ends first) must not surface as an unhandled
+    // rejection.
+    promise.catch(() => {});
+    reads[key] = promise;
+  });
+  bootReads = { at: Date.now(), token, reads };
+}
+
+export function takeBootRead(key) {
+  const held = bootReads;
+  if (!held || !held.reads[key]) return null;
+  const promise = held.reads[key];
+  delete held.reads[key];
+  if (Date.now() - held.at > BOOT_READ_TTL_MS || getToken() !== held.token) return null;
+  return promise.catch((err) => (err && err.status ? Promise.reject(err) : BOOT_READERS[key]()));
+}
+
+export function dropBootReads() {
+  bootReads = null;
 }
 
 // `before` is a message-id cursor: the route answers with the newest rows

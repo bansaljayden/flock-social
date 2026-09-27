@@ -1414,6 +1414,9 @@ describe('two reads of the DM list answering out of order', () => {
       setDmsLoading: (value) => state.loading.push(value),
       setDmsError: (message) => { state.error = message; },
       getDMConversations: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+      // No read primed at boot here, so every call goes to the wire
+      // (bootListReads.test.js runs the primed case).
+      takeBootRead: () => null,
       deletedDmUserIdsRef: { current: [] },
       setDeletedDmUserIds: setterOn(state, 'deleted'),
       setDirectMessages: setterOn(state, 'threads'),
@@ -1687,6 +1690,7 @@ describe('a DM list read from before a block does not put the blocked person bac
       setDmsLoading: noop,
       setDmsError: noop,
       getDMConversations: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+      takeBootRead: () => null,
       deletedDmUserIdsRef: { get current() { return state.deleted; } },
       setDeletedDmUserIds: setterOn(state, 'deleted'),
       setDirectMessages: setterOn(state, 'threads'),
