@@ -1209,11 +1209,19 @@ const apiLimiter = countOncePerRequest(isDev ? (_req, _res, next) => next() : ra
   message: { error: 'Too many requests, please try again later' },
 }), 'apiLimiter');
 
+// The credential doors only. GET /me, both sign-outs and the verification
+// resend run for an account that is already signed in, and the address key
+// put every phone on one school's Wi-Fi into a single 10-a-minute bucket for
+// its app launches, so the eleventh cold start got a 429 and the unreachable
+// screen, and real sign-ins on that network were refused with it. Those
+// routes skip this and are charged to apiLimiter, mounted beside it below.
+// routes/auth.js owns the list (SIGNED_IN_ROUTES) and says what may join it.
 const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => authRoutes.isSignedInRoute(req),
   message: { error: 'Too many login attempts, please try again later' },
 });
 
@@ -1517,7 +1525,10 @@ const digestOptOutLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
-app.use('/api/auth', authLimiter, authRoutes);
+// apiLimiter as well as authLimiter: the signed-in routes on this router skip
+// authLimiter (see its declaration) and must not come out with no ceiling at
+// all. It is the one shared apiLimiter bucket, charged once per request.
+app.use('/api/auth', authLimiter, apiLimiter, authRoutes);
 app.use('/api/venues', venueSearchLimiter, venueSearchRoutes); // Before /api catch-all — photo proxy needs no auth
 app.use('/api/flocks', apiLimiter, flockRoutes);
 // Mount routes that use NON-JWT auth (or no auth at all) BEFORE the messageRoutes
