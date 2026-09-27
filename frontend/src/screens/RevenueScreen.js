@@ -76,7 +76,7 @@ import {
   updateAdminExpense,
 } from '../services/api';
 
-// One reconciled line's save form. Amount and date only; the note is optional
+// One reconciled line's save form. Amount, date, and a note that is optional
 // and short. Saving posts through the admin route and then the parent refetches
 // the whole costs payload, so what the card shows afterwards is what the server
 // merged, never what this form thinks it sent.
@@ -90,13 +90,18 @@ const localToday = () => {
 function ReconciledLineForm({ line, onSaved, colors }) {
   const [usd, setUsd] = React.useState(Number.isFinite(line.usdPerMonth) ? String(line.usdPerMonth) : '');
   const [asOf, setAsOf] = React.useState(localToday());
+  // Starts empty rather than holding the line's current note: a note describes
+  // one invoice, and saving a new amount under the old one's words is what put
+  // the September explanation beside every later figure. Left empty, the saved
+  // entry carries no note at all (costModel.readReconciled).
+  const [note, setNote] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
   const save = async () => {
     setBusy(true);
     setErr('');
     try {
-      await saveAdminReconciled({ id: line.id, usdPerMonth: Number(usd), asOf });
+      await saveAdminReconciled({ id: line.id, usdPerMonth: Number(usd), asOf, note: note.trim() || undefined });
       if (onSaved) onSaved();
     } catch (e) {
       setErr((e && e.message) || 'Could not save');
@@ -115,6 +120,7 @@ function ReconciledLineForm({ line, onSaved, colors }) {
           <input aria-label={`Paid amount for ${line.label}`} type="number" min="0" step="0.01" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} style={{ ...input, width: '110px' }} />
         </label>
         <input aria-label={`Invoice date for ${line.label}`} type="date" value={asOf} max={localToday()} onChange={(e) => setAsOf(e.target.value)} style={input} />
+        <input aria-label={`Note for ${line.label}`} type="text" maxLength={500} placeholder="Note, optional" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...input, flex: '1 1 160px' }} />
         <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
       </div>
       {err && <span style={{ ...small, color: 'var(--accent-red-text, #EF4444)' }}>{err}</span>}
