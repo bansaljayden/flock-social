@@ -104,6 +104,13 @@ You will know because the alert is distinct: the email subject starts with
      offender can destroy the evidence at any moment.
    - The story purge keeps rows only while a report is `open`/`under_review`;
      after resolution the row is deleted on the normal retention schedule.
+   - Deleting a plan (the host deleting or leaving it, the last member
+     leaving, or the host deleting their account) cascades its chat and guest
+     answers away. Before it does, a copy of each message or guest answer an
+     `open`/`under_review` report names is kept in `content_report_evidence`
+     (migration 110), and the console shows that copy. The copy still goes
+     with its author's account, like the message it replaces, so it is not a
+     reason to wait.
 
    Export now, to an encrypted disk or encrypted archive OFF the production
    database, access limited to you. Image bytes live inline in the rows as
@@ -118,6 +125,8 @@ You will know because the alert is distinct: the email subject starts with
    \copy (SELECT * FROM stories WHERE id = <CONTENT_ID>) TO 'story.csv' CSV HEADER
    \copy (SELECT * FROM messages WHERE id = <CONTENT_ID>) TO 'message.csv' CSV HEADER
    \copy (SELECT * FROM direct_messages WHERE id = <CONTENT_ID>) TO 'dm.csv' CSV HEADER
+   -- A message or guest answer whose plan was deleted lives here instead:
+   \copy (SELECT * FROM content_report_evidence WHERE content_id = <CONTENT_ID>) TO 'saved_copy.csv' CSV HEADER
    -- Context: the uploader's account and their other recent content. For a
    -- content_type of 'profile' there IS no content_id - the account row below
    -- is the reported content, and profile_image_url is the reported image.

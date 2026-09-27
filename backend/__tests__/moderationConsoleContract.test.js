@@ -127,6 +127,7 @@ test('the console renders the evidence the queue sends', () => {
   for (const field of [
     'content_excerpt', 'content_excerpt_clipped', 'content_has_image',
     'content_image_url', 'content_image_deferred', 'content_is_hidden', 'content_missing',
+    'content_preserved',
   ]) {
     assert.ok(adminSrc.includes(`AS ${field}`), `GET /api/admin/reports no longer selects ${field}; this test is out of date.`);
     assert.ok(

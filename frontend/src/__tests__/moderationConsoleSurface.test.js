@@ -725,6 +725,21 @@ describe('every action the server can still honour is on the card', () => {
     expect(screen.getByText('That content no longer exists. Dismiss the report.')).toBeInTheDocument();
   });
 
+  test('a copy kept from a deleted plan is shown, with no takedown and the reason why', async () => {
+    // The plan was deleted after the report came in and the server kept the
+    // reported message for review (migration 110). The words are evidence and
+    // stay on the card; Hide is gone, because there is no live row to hide and
+    // the server refuses it; the ban stays, because the author still exists.
+    onlyReport({ content_preserved: true, content_excerpt: 'kept words' });
+    await renderConsole();
+
+    expect(screen.getByText('kept words')).toBeInTheDocument();
+    expect(screen.getByText(/The plan this was in has been deleted\. This is the copy kept for review/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();
+  });
+
   test('a report naming no user offers no ban', async () => {
     onlyReport({ reported_user_id: null, reported_user_name: null, content_type: 'guest_rsvp' });
     await renderConsole();

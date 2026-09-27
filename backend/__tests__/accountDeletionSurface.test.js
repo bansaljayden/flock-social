@@ -694,6 +694,9 @@ function stubQuery(text, params = []) {
   }
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
+  // Other people's reported content in the plans the deletion cascades is
+  // copied out first (utils/reportEvidence.js). Nothing here is reported.
+  if (has('INSERT INTO content_report_evidence')) return { rows: [], rowCount: 0 };
   if (has('UPDATE venue_reviews')) {
     deletionOrder.push(q.replace(/\s+/g, ' ').trim());
     return { rows: [], rowCount: 0 };

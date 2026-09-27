@@ -481,6 +481,7 @@ async function handle(text, params = []) {
     return { rows: [], rowCount: 0 };
   }
   if (sql.startsWith('DELETE FROM messages')) return { rows: [], rowCount: 0 };
+  if (sql.startsWith('INSERT INTO content_report_evidence')) return { rows: [], rowCount: 0 };
   if (sql.startsWith('DELETE FROM users WHERE id = $1')) {
     const i = db.users.findIndex((u) => u.id === params[0]);
     if (i === -1) return { rows: [], rowCount: 0 };
