@@ -1016,6 +1016,157 @@ describe('only you can do these: the operator\'s own steps', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// NEEDS ATTENTION. The first card on the Overview gathers every live problem
+// the payload carries, each linking to the card it came from, so a morning
+// look finds a stopped collector or an open dispute without scrolling past
+// the lot. With nothing wrong it is one line that says when it was checked.
+// A source that was asked and did not answer is a row, because it checked
+// nothing; one that is not connected is not.
+// ---------------------------------------------------------------------------
+describe('needs attention: every live problem at the top, each linking to its card', () => {
+  const attentionCard = () => screen.getByRole('heading', { name: /needs? you$/ }).parentElement;
+  const rowsIn = (card) => Array.from(card.children).filter((el) => el.tagName === 'DIV');
+  const setItems = (state) => OWNER_ACTIONS.items.map((s) => (s.checkedBy === 'server' ? { ...s, state } : s));
+  // CONNECTED with everything put right: no price disagreement, no open
+  // dispute, every step the server checks done, and no bill due this week.
+  const QUIET = {
+    ...CONNECTED,
+    revenue: { ...CONNECTED.revenue, stripe: { ...CONNECTED.revenue.stripe, disputes: { status: 'ok', open: 0, openAmountCents: 0, openOtherCurrency: 0, truncated: false } } },
+    pricing: { ...CONNECTED.pricing, mismatches: 0 },
+    ownerActions: { ...OWNER_ACTIONS, items: setItems('done'), counts: { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 } },
+  };
+  const stripeWith = (over) => ({ ...QUIET.revenue.stripe, ...over });
+  const withRevenue = (over) => ({ ...QUIET, revenue: { ...QUIET.revenue, ...over } });
+
+  afterEach(() => {
+    delete Element.prototype.scrollIntoView;
+  });
+
+  test('with nothing wrong it is one line, with the time it was checked, and it comes first', async () => {
+    await renderHub(QUIET);
+    const line = screen.getByText(/^Nothing needs you\. Checked at .+\.$/);
+    // One line: no heading, no rows, no links.
+    const card = line.parentElement;
+    expect(card.children).toHaveLength(1);
+    expect(within(card).queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('heading', { name: /needs? you$/ })).toBeNull();
+    // First on the page, above the month.
+    expect(card.nextSibling.textContent).toMatch(/^September 2026/);
+    expect(card.parentElement.firstChild).toBe(card);
+  });
+
+  test('each problem is a row with its own words, worst first, and each jumps to its card', async () => {
+    Element.prototype.scrollIntoView = jest.fn();
+    await renderHub(CONNECTED);
+    const card = attentionCard();
+    expect(within(card).getByText('3 things need you')).toBeInTheDocument();
+    const labels = rowsIn(card).map((r) => r.firstChild.firstChild.firstChild.textContent);
+    expect(labels).toEqual(['Price disagreements', 'Disputes to answer', 'Steps only you can take']);
+
+    const prices = hubRow('Price disagreements');
+    expect(within(prices).getByText('1')).toBeInTheDocument();
+    expect(within(prices).getByRole('link', { name: 'Go to Prices' })).toHaveAttribute('href', '#hub-prices');
+    const disputes = hubRow('Disputes to answer');
+    expect(within(disputes).getByText('2')).toBeInTheDocument();
+    expect(disputes.textContent).toMatch(/\$3\.99 at stake in dollars, and 1 more in another currency\. Each has a deadline in the Stripe dashboard\./);
+    const steps = hubRow('Steps only you can take');
+    expect(within(steps).getByText('2 to do')).toBeInTheDocument();
+    // The optional step is not a problem; the two that are, are named.
+    expect(steps.textContent).toMatch(/Database on Railway's private network; RevenueCat webhook\./);
+    expect(steps.textContent).not.toMatch(/Error reporting/);
+
+    // Every target exists on the page, and a jump scrolls that card into view
+    // without writing a hash into the address bar.
+    for (const link of within(card).getAllByRole('link')) {
+      const id = link.getAttribute('href').slice(1);
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+    fireEvent.click(within(disputes).getByRole('link', { name: 'Go to Revenue' }));
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(Element.prototype.scrollIntoView.mock.instances[0]).toBe(document.getElementById('hub-revenue'));
+    expect(within(document.getElementById('hub-revenue')).getByRole('heading', { name: 'Revenue' })).toBeInTheDocument();
+    expect(window.location.hash).toBe('');
+    fireEvent.click(within(steps).getByRole('link', { name: 'Go to the steps' }));
+    expect(Element.prototype.scrollIntoView.mock.instances[1]).toBe(screen.getByRole('heading', { name: 'Only you can do these' }).parentElement);
+    // Plain sentences.
+    expect(card.textContent).not.toMatch(/—/);
+  });
+
+  // One payload per trigger: the row's label, value and a phrase of its note,
+  // and the card it jumps to.
+  const TRIGGERS = [
+    ['a stopped collector', { ...QUIET, health: { ...HEALTH, collector: { ...HEALTH.collector, state: 'stopped', minutesSinceLatest: 3000 } } },
+      'Crowd collector', 'Stopped', /No live crowd row for 2 days\. It runs every hour/, 'hub-health'],
+    ['a late collector', { ...QUIET, health: { ...HEALTH, collector: { ...HEALTH.collector, state: 'late', minutesSinceLatest: 300 } } },
+      'Crowd collector', 'Late', /No live crowd row for 5 hours\./, 'hub-health'],
+    ['a collector that could not be read', { ...QUIET, health: { ...HEALTH, collector: { status: 'error', reason: 'The collector tables could not be read.' } } },
+      'Crowd collector', 'Not read', /The collector tables could not be read\./, 'hub-health'],
+    ['BestTime not answering', { ...QUIET, crowdData: { ...CROWD_DATA, besttime: { status: 'error', reason: 'BestTime answered 503, a fault on its side.' } } },
+      'BestTime', 'Not read', /BestTime answered 503, a fault on its side\./, 'hub-crowd'],
+    ['a BestTime key BestTime calls invalid', { ...QUIET, crowdData: { ...CROWD_DATA, besttime: { ...CROWD_DATA.besttime, key: { healthy: false, status: 'Error', valid: false, active: true } } } },
+      'BestTime', 'Key not working', /BestTime says status Error, valid false, active true\./, 'hub-crowd'],
+    ['a price disagreement', { ...QUIET, pricing: { ...QUIET.pricing, mismatches: 2 } },
+      'Price disagreements', '2', /The Prices card says each one in words\./, 'hub-prices'],
+    ['a failed Pro renewal', withRevenue({ stripe: stripeWith({ subscriptions: { ...CONNECTED.revenue.stripe.subscriptions, pro: summary({ live: 2, pastDue: 1 }) } }) }),
+      'Past due, Flock Pro', '1', /A renewal failed and Stripe is retrying it\./, 'hub-revenue'],
+    ['a Roost renewal Stripe gave up on', withRevenue({ stripe: stripeWith({ subscriptions: { ...CONNECTED.revenue.stripe.subscriptions, roost: summary({ unpaid: 1 }) } }) }),
+      'Unpaid, Roost', '1', /Stripe stopped retrying a failed renewal/, 'hub-revenue'],
+    ['Pro accounts RevenueCat finds nothing live for', withRevenue({ revenuecat: { ...CONNECTED.revenue.revenuecat, subscribers: { ...CONNECTED.revenue.revenuecat.subscribers, premiumWithNothingLive: 2 } } }),
+      'Pro accounts with nothing live', '2', /RevenueCat shows no live subscription for them\./, 'hub-revenue'],
+    ['a model that is not loaded', { ...QUIET, model: { ...MODEL, version: { status: 'ok', value: '2.6.0-starling', source: 'artifact', loaded: false } } },
+      'Crowd model', 'Not loaded', /It loads on the first forecast after a deploy/, 'hub-model'],
+    ['a bill that may be counted twice', { ...QUIET, costs: { ...COSTS, possibleDoubles: [{ codeLineId: 'railway', codeLabel: 'Railway (backend and Postgres)', expenseId: 4, expenseLabel: 'Railway, Pro' }] } },
+      'Bills possibly counted twice', '1', /Railway, Pro on the list and Railway \(backend and Postgres\) in the code\./, 'hub-costs'],
+    ['a test key while the paywall is on', withRevenue({ stripe: stripeWith({ mode: 'test' }), flags: { paywallEnabled: true, venueBillingEnabled: false, proWebCheckoutEnabled: true } }),
+      'Stripe test key', 'Selling', /The paywall and web checkout are on while the Stripe key is a test key/, 'hub-revenue'],
+    ['Stripe asked and not answering', withRevenue({ stripe: { status: 'error', reason: 'Stripe refused the key (401).', cached: false } }),
+      'Stripe', 'Not read', /Stripe refused the key \(401\)\. Disputes, failed renewals and prices were not checked\./, 'hub-revenue'],
+    ['Stripe answering for some lists', withRevenue({ stripe: stripeWith({ disputes: { status: 'error', reason: 'Stripe did not answer in time.' } }) }),
+      'Stripe', 'Read in part', /Stripe answered, but its disputes could not be read, so that was not checked\./, 'hub-revenue'],
+    ['RevenueCat asked and not answering', withRevenue({ revenuecat: { status: 'error', reason: 'RevenueCat answered 500.' } }),
+      'RevenueCat', 'Not read', /RevenueCat answered 500\. Pro accounts with nothing live were not checked\./, 'hub-revenue'],
+    ['an expense list that could not be read', { ...QUIET, expenses: { ...EXPENSES, status: 'error', rows: [] } },
+      'Expenses', 'Not read', /renewals and bills counted twice were not checked\./, 'hub-expenses'],
+  ];
+
+  test.each(TRIGGERS)('%s is a row that says so', async (_why, payload, label, value, note, target) => {
+    await renderHub(payload);
+    const card = attentionCard();
+    expect(within(card).getByText('1 thing needs you')).toBeInTheDocument();
+    const row = within(card).getByText(label).parentElement.parentElement;
+    expect(within(row).getByText(value)).toBeInTheDocument();
+    expect(row.textContent).toMatch(note);
+    expect(within(row).getByRole('link')).toHaveAttribute('href', `#${target}`);
+    expect(document.getElementById(target)).not.toBeNull();
+  });
+
+  test('a source that is not connected is not a problem', async () => {
+    const quietSteps = { ...OWNER_ACTIONS, items: setItems('done'), counts: { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 } };
+    await renderHub({ ...NOT_CONNECTED, ownerActions: quietSteps, crowdData: { ...CROWD_DATA, besttime: { status: 'not_connected', reason: 'BESTTIME_API_KEY is not set on the server, so nothing here can read BestTime.' } } });
+    expect(screen.getByText(/^Nothing needs you\. Checked at .+\.$/)).toBeInTheDocument();
+  });
+
+  test('a test key with nothing on sale is not a problem', async () => {
+    await renderHub(withRevenue({ stripe: stripeWith({ mode: 'test' }), flags: { paywallEnabled: false, venueBillingEnabled: false, proWebCheckoutEnabled: false } }));
+    expect(screen.getByText(/^Nothing needs you\. Checked at .+\.$/)).toBeInTheDocument();
+  });
+
+  test('a bill renewing this week is listed apart and is not counted as a problem', async () => {
+    const soon = { expenseId: 9, label: 'Example Host, Pro', on: '2026-09-28', estimated: false, amountCents: 2000, currency: 'USD', cadence: 'monthly' };
+    await renderHub({ ...QUIET, costs: { ...COSTS, upcoming: [...COSTS.upcoming, soon] } });
+    const card = attentionCard();
+    expect(within(card).getByRole('heading', { name: 'Nothing needs you' })).toBeInTheDocument();
+    expect(within(card).getByText('Renewing in the next 7 days')).toBeInTheDocument();
+    const row = within(card).getByText('Example Host, Pro').parentElement.parentElement;
+    expect(within(row).getByText('$20.00')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Renews in 3 days, Sep 28\./);
+    expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
+    // Oct 16 is 21 days out, past the week, and stays on the Costs card only.
+    expect(within(card).queryByText('Example Tool, Team')).toBeNull();
+  });
+});
+
 describe('a hub that does not load shows nothing rather than a guess', () => {
   test('no numbers, the reason, and a way to ask again', async () => {
     api.getAdminMoneyHub.mockRejectedValue(new Error('Something went wrong on our end. Try again.'));
