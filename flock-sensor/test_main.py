@@ -3812,5 +3812,110 @@ class SmarterMicrophone(unittest.TestCase):
                          {'ir_beam_count', 'thermal_headcount', 'noise_db'})
 
 
+class PeopleInside(unittest.TestCase):
+    """The doorway and the camera, combined into one estimate with a range."""
+
+    def test_in_minus_out_is_the_estimate(self):
+        t = main.OccupancyTracker(empty_minutes=20)
+        t.update(0, door_in=0, door_out=0, seen=0)
+        e = t.update(30, door_in=10, door_out=3, seen=2)
+        self.assertEqual(e['occupancy'], 7)
+        self.assertLessEqual(e['low'], 7)
+        self.assertGreaterEqual(e['high'], 7)
+
+    def test_the_camera_is_a_floor(self):
+        t = main.OccupancyTracker()
+        t.update(0, door_in=0, door_out=0, seen=0)
+        # The doorway missed people; the camera sees five.
+        e = t.update(30, door_in=2, door_out=0, seen=5)
+        self.assertEqual(e['occupancy'], 5)
+        self.assertGreaterEqual(e['low'], 5)
+
+    def test_more_out_than_in_never_goes_negative(self):
+        t = main.OccupancyTracker()
+        t.update(0, door_in=0, door_out=0, seen=0)
+        self.assertEqual(t.update(30, door_in=1, door_out=4, seen=0)['occupancy'], 0)
+
+    def test_the_range_widens_with_crossings(self):
+        t = main.OccupancyTracker()
+        t.update(0, door_in=0, door_out=0, seen=None)
+        small = t.update(30, door_in=6, door_out=2, seen=None)
+        big = t.update(60, door_in=406, door_out=398, seen=None)
+        self.assertGreater(big['high'] - big['low'], small['high'] - small['low'])
+
+    def test_a_still_empty_room_resets_the_drift(self):
+        t = main.OccupancyTracker(empty_minutes=20)
+        t.update(0, door_in=0, door_out=0, seen=0)
+        # A night of counting leaves three people the doorway never saw leave.
+        t.update(30, door_in=300, door_out=297, seen=0)
+        self.assertEqual(t.update(60, door_in=300, door_out=297, seen=0)['occupancy'], 3)
+        e = None
+        for s in range(90, 60 * 22, 30):
+            e = t.update(s, door_in=300, door_out=297, seen=0)
+        self.assertEqual(e['occupancy'], 0)
+        self.assertEqual(e['high'], 0)
+
+    def test_someone_on_camera_stops_the_reset(self):
+        t = main.OccupancyTracker(empty_minutes=20)
+        t.update(0, door_in=0, door_out=0, seen=0)
+        t.update(30, door_in=4, door_out=0, seen=1)
+        for s in range(60, 60 * 30, 30):
+            e = t.update(s, door_in=4, door_out=0, seen=1)
+        self.assertEqual(e['occupancy'], 4)
+
+    def test_without_a_doorway_counter_it_is_the_camera(self):
+        t = main.OccupancyTracker()
+        e = t.update(0, crossings=0, seen=10)
+        self.assertEqual(e['occupancy'], 10)
+        self.assertLess(e['low'], 10)
+        self.assertIsNone(t.update(30, crossings=0, seen=None))
+
+    def test_how_long_people_stay(self):
+        # Twenty inside and ten arriving (and ten leaving) every ten minutes:
+        # an hour's arrivals are 60, so each stays 20 / (1 per minute) = 20.
+        t = main.OccupancyTracker()
+        t.update(0, door_in=0, door_out=0, seen=20)
+        e = None
+        for k in range(1, 61):
+            n = (k * 10) // 10
+            e = t.update(k * 60, door_in=n, door_out=n, seen=None)
+        self.assertIsNotNone(e['dwell_minutes'])
+        self.assertAlmostEqual(e['dwell_minutes'], 20, delta=3)
+        # Too early to say.
+        self.assertIsNone(main.OccupancyTracker().update(0, door_in=0, door_out=0,
+                                                         seen=3)['dwell_minutes'])
+
+    def test_the_sentence_on_the_door_screen(self):
+        self.assertIsNone(main.occupancy_line(None))
+        self.assertEqual(main.occupancy_line({'occupancy': 4, 'low': 4, 'high': 4,
+                                              'dwell_minutes': None}), '4 inside.')
+        self.assertEqual(main.occupancy_line({'occupancy': 12, 'low': 10, 'high': 14,
+                                              'dwell_minutes': 45}),
+                         'About 12 inside, 10 to 14. People stay about 45 min.')
+
+    def test_the_estimate_is_sent_as_counts(self):
+        with mock.patch.object(main, '_occupancy', main.OccupancyTracker()):
+            with main._lock:
+                main._state['thermal'] = 6
+                main._state['thermal_at'] = time.monotonic()
+                main._state['door_source'] = 'tof'
+                main._state['door_in'], main._state['door_out'] = 0, 0
+            try:
+                main.snapshot()
+                with main._lock:
+                    main._state['door_in'], main._state['door_out'] = 9, 1
+                payload = main.snapshot()
+            finally:
+                with main._lock:
+                    main._state['door_source'] = None
+                    main._state['thermal_at'] = None
+        # Six already inside when counting began, then nine in and one out.
+        self.assertEqual(payload['occupancy'], 14)
+        self.assertLessEqual(payload['occupancy_low'], 14)
+        self.assertGreaterEqual(payload['occupancy_high'], 14)
+        for key in ('occupancy', 'occupancy_low', 'occupancy_high'):
+            self.assertIsInstance(payload[key], int)
+
+
 if __name__ == '__main__':
     unittest.main()
