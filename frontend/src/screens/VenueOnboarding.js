@@ -523,7 +523,7 @@ export default function VenueOnboarding({
               <button className="hit44" onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
             ) : (
               /* THE EXIT (2026-08-27). A consumer who tapped "Run a venue?
-                 Log in here" out of curiosity was trapped: step 0's only
+                 Sign in here" out of curiosity was trapped: step 0's only
                  control was Let's Go, advancing requires claiming a real
                  Google Places business, and the true escapes were
                  force-quitting the app or crashing the screen. This walks

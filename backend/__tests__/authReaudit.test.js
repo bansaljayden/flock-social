@@ -1200,7 +1200,7 @@ test('an unvouched Google sign-in does not evict a squat on its way to being ref
     () => post('/api/auth/google', { access_token: 'opaque', date_of_birth: '2000-01-01' })
   );
   // The existing-row branch refuses an unvouched token before the create path
-  // is reached at all (409, "log in the way you originally signed up"). Either
+  // is reached at all (409, "sign in the way you originally signed up"). Either
   // refusal is fine; what must never happen is the squat being released for
   // a caller the server is about to turn away.
   assert.strictEqual(res.status, 409);

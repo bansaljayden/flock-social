@@ -525,7 +525,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       </p>
 
       <button type="button" className="auth-venue" onClick={onSwitchToVenueLogin}>
-        Run a venue? <span>Log in here</span>
+        Run a venue? <span>Sign in here</span>
       </button>
     </AuthShell>
   );

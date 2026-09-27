@@ -68,7 +68,7 @@ describe('ProPage never hardcodes a price', () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     expect(getProStatus).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(/\$\s?\d/);
-    const link = screen.getByRole('link', { name: 'Log in to continue' });
+    const link = screen.getByRole('link', { name: 'Sign in to continue' });
     expect(link.getAttribute('href')).toBe('/app');
     expect(screen.queryByRole('button', { name: /Get Pro/ })).toBeNull();
   });
@@ -83,7 +83,7 @@ describe('ProPage never hardcodes a price', () => {
     expect(container.textContent).toContain('Best value');
     expect(container.textContent).not.toMatch(/most popular/i);
     expect(getProStatus).not.toHaveBeenCalled();
-    const link = screen.getByRole('link', { name: 'Log in to continue' });
+    const link = screen.getByRole('link', { name: 'Sign in to continue' });
     link.addEventListener('click', (e) => e.preventDefault());
     act(() => { link.click(); });
     expect(JSON.parse(window.sessionStorage.getItem('flock_return_after_sign_in')).path).toBe('/pro');

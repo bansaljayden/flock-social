@@ -250,7 +250,7 @@ export default function ProPage() {
         )}
         <BeforeYouPay plan={null} />
         {/* Back to this page after signing in (lib/returnAfterSignIn.js). */}
-        <a className="pro-cta" href="/app" onClick={() => rememberReturnAfterSignIn('/pro')}>Log in to continue</a>
+        <a className="pro-cta" href="/app" onClick={() => rememberReturnAfterSignIn('/pro')}>Sign in to continue</a>
       </>
     );
   } else if (phase === 'loading') {

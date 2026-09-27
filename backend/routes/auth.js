@@ -3116,7 +3116,7 @@ router.post('/logout', authenticateAllowExpired, [
         }
       }
     }
-    res.json({ message: 'Logged out successfully' });
+    res.json({ message: 'Signed out' });
   } catch (err) {
     console.error('Logout error:', err);
     res.status(500).json({ error: 'Failed to sign out this device' });
@@ -3463,7 +3463,7 @@ router.post('/google', [
       if (existing) {
         if (existing.oauth_provider || !emailVerified) {
           return res.status(409).json({
-            error: 'An account with this email already exists. Log in the way you originally signed up.',
+            error: 'An account with this email already exists. Sign in the way you originally signed up.',
           });
         }
         // Round 15: a claim of a BANNED row silently handed the ban to the
@@ -3485,7 +3485,7 @@ router.post('/google', [
         if (decision === 'refuse') {
           console.warn(`[auth] refused Google claim of account ${existing.id}: verified address does not match ${maskAddress(email)}`);
           return res.status(409).json({
-            error: 'An account with this email already exists. Log in the way you originally signed up.',
+            error: 'An account with this email already exists. Sign in the way you originally signed up.',
           });
         }
         if (decision === 'claim') claimTarget = existing;
@@ -3679,7 +3679,7 @@ router.post('/google', [
     // gives when it is not raced.
     if (err.code === '23505') {
       return res.status(409).json({
-        error: 'An account with this email already exists. Log in the way you originally signed up.',
+        error: 'An account with this email already exists. Sign in the way you originally signed up.',
       });
     }
     if (err.message?.includes('Token used too late') || err.message?.includes('Invalid token')) {
@@ -3904,7 +3904,7 @@ router.post('/apple', [
       if (existingByEmail) {
         if (existingByEmail.oauth_provider || !appleEmailVerified) {
           return res.status(409).json({
-            error: 'An account with this email already exists. Log in the way you originally signed up.',
+            error: 'An account with this email already exists. Sign in the way you originally signed up.',
           });
         }
         // Round 15: same refusal as the Google branch — never hand a banned
@@ -3921,7 +3921,7 @@ router.post('/apple', [
         if (decision === 'refuse') {
           console.warn(`[auth] refused Apple claim of account ${existingByEmail.id}: verified address does not match ${maskAddress(email)}`);
           return res.status(409).json({
-            error: 'An account with this email already exists. Log in the way you originally signed up.',
+            error: 'An account with this email already exists. Sign in the way you originally signed up.',
           });
         }
         if (decision === 'claim') {
@@ -4148,7 +4148,7 @@ router.post('/apple', [
     // gives when it is not raced.
     if (err.code === '23505') {
       return res.status(409).json({
-        error: 'An account with this email already exists. Log in the way you originally signed up.',
+        error: 'An account with this email already exists. Sign in the way you originally signed up.',
       });
     }
     if (err.name === 'TokenExpiredError') {

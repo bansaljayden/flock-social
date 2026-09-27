@@ -290,7 +290,10 @@ export default function ProfileSettings({
                 <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
                   <div>
-                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>Emergency Contacts</p>
+                    {/* Titled for what it explains. It said "Emergency
+                        Contacts" directly above a section titled "Trusted
+                        Contacts", two names for one list on one screen. */}
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>How SOS works</p>
                     {/* Both audiences. The flock leg (routes/safety.js,
                         alertFlockMembers) rings everyone on a confirmed plan
                         with you whose time is within twelve hours, with the
@@ -905,7 +908,10 @@ export default function ProfileSettings({
             </button>
             <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
-              <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log out</span>
+              {/* "Sign out", the verb the button above it and every session
+                  message in App.js already use. "Log out" under "Sign out
+                  everywhere" read as two different kinds of action. */}
+              <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Sign out</span>
             </button>
             {/* Your data, before you decide anything else about the account.
                 It sits above Delete on purpose: somebody who has come to this
@@ -1061,7 +1067,7 @@ export default function ProfileSettings({
                 {deleteNeedsReauth && (
                   <div role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
                     {/* Guideline 5.1.1(v) wants deletion easy to finish, and
-                        "log out, sign back in, then come straight here" sent
+                        "sign out, sign back in, then come straight here" sent
                         the person out of the app to do it. Where this device
                         can run the account's own sign-in, it runs here: a
                         fresh session is the proof the server asked for, the
@@ -1080,7 +1086,7 @@ export default function ProfileSettings({
                         />
                       </>
                     ) : (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>Your account uses Google or Apple to sign in, and this session is older than five minutes. Log out, sign back in, then come straight here. Your account can still be deleted.</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>Your account uses Google or Apple to sign in, and this session is older than five minutes. Sign out, sign back in, then come straight here. Your account can still be deleted.</p>
                     )}
                   </div>
                 )}

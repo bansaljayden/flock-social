@@ -177,7 +177,8 @@ describe('the native path is used on native iOS and nowhere else', () => {
     render(React.createElement(Screen, { onLoginSuccess: jest.fn() }));
     expect(googleButton()).toBeNull();
     // Email sign-in is still there, so the screen is never left without a way in.
-    expect(screen.getByRole('button', { name: /Sign in/ })).toBeTruthy();
+    // Anchored, because the venue link below it now reads "Sign in here" too.
+    expect(screen.getByRole('button', { name: /^Sign in$/ })).toBeTruthy();
   });
 
   test('the same absence does not hide anything on the web', () => {
