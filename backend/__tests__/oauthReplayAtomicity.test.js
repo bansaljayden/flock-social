@@ -474,6 +474,46 @@ test('R4-A1: a needsDob refusal releases the claim — Apple', async () => {
   assert.ok(retry.json().token);
 });
 
+// The sign-in screen now finishes a new Apple account with the credentials
+// from the FIRST sheet: on the year 403 it holds identityToken,
+// authorizationCode and fullName in memory and posts them again with the year,
+// instead of sending the person through Apple's sheet twice. That only works
+// while two things stay true here, so they are pinned together, with Apple
+// configured the way production is: the refusal happens BEFORE the one-use
+// authorization code is exchanged, and it releases the identity token.
+test('the year 403 spends nothing, so the same Apple sheet can finish the account', async () => {
+  reset();
+  appleIsConfigured = true;
+  const identityToken = appleToken({ sub: 'a-onesheet', email: 'onesheet@icloud.com' });
+  const sheet = {
+    identityToken,
+    authorizationCode: 'apple-code-onesheet',
+    fullName: { givenName: 'Sam', familyName: 'Lee' },
+  };
+
+  const refused = await post('/api/auth/apple', sheet);
+  assert.strictEqual(refused.status, 403);
+  assert.strictEqual(refused.json().needsDob, true);
+  assert.strictEqual(refused.json().dobGranularity, 'year');
+  assert.strictEqual(appleExchangeCalls, 0,
+    'the code was exchanged before the date check, so the one-use code is gone and the retry must fail');
+  assert.strictEqual(users.length, 0);
+
+  const finished = await post('/api/auth/apple', {
+    ...sheet, date_of_birth: '2000-12-31', dob_granularity: 'year',
+  });
+  assert.strictEqual(finished.status, 200);
+  assert.ok(finished.json().token);
+  assert.strictEqual(appleExchangeCalls, 1, 'the code is exchanged exactly once, on the post that creates the row');
+  assert.strictEqual(users.length, 1);
+  assert.strictEqual(users[0].name, 'Sam Lee', 'the name from the first sheet reaches the account');
+
+  // And the finished credential is spent: the release on refusal did not make
+  // a used one replayable.
+  const replay = await post('/api/auth/apple', { ...sheet, date_of_birth: '2000-12-31', dob_granularity: 'year' });
+  assert.strictEqual(replay.status, 401);
+});
+
 test('R4-A1: a simulated upstream/database blip releases the claim — both providers', async () => {
   for (const provider of ['google', 'apple']) {
     reset();

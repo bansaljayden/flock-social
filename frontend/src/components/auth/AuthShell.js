@@ -511,6 +511,16 @@ const AUTH_CSS = `
 }
 .auth-link:hover { text-decoration-color: ${AUTH.cream}; }
 
+/* The sign-in screen's Apple step: the year field and a Continue button in
+   the place the Apple button was, after Apple's sheet has already been done
+   once. It sits under the provider buttons, so it gets the same gap they
+   have from each other, and a line that says what is being asked. */
+.auth-apple-step { margin-top: 18px; }
+.auth-step-line {
+  margin: 0 0 12px 2px;
+  font-size: 15px; font-weight: 600; line-height: 1.4; color: ${AUTH.cream};
+}
+
 .auth-legal {
   margin: 14px 0 0; font-size: 12.5px; line-height: 1.6;
   color: ${AUTH.cream2}; text-align: center;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { login, trackAuthScreen, RESET_DONE_KEY } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
@@ -81,6 +81,38 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // What actually gets sent, whichever field is on screen.
   const dobToSend = askYearOnly ? birthYearToDob(birthYear) : dob;
 
+  // THE APPLE STEP. A new Apple account comes back 403 asking for a year, and
+  // the credentials from that sheet can be sent again with it (the reason is
+  // written out above makeResume in AppleSignInButton.js). While that is true
+  // the year field moves down to where the Apple button was, which is where
+  // the person is looking at 375x667, and a Continue button takes the place of
+  // the Apple button.
+  //   null      no Apple step on screen
+  //   'resume'  holding this sheet's credentials; Continue sends them again
+  //   'retap'   they are gone (timed out, or the server said no); the Apple
+  //             button is back and carries the year, so one more sheet ends it
+  // The handle itself lives in a ref, never in state, so nothing that reads
+  // component state can reach it, and it is dropped the moment it is used.
+  const [appleStep, setAppleStep] = useState(null);
+  const [appleError, setAppleError] = useState('');
+  const [appleBusy, setAppleBusy] = useState(false);
+  const appleResume = useRef(null);
+  const leaveAppleStep = () => {
+    appleResume.current = null;
+    setAppleStep(null);
+    setAppleError('');
+  };
+  useEffect(() => {
+    if (appleStep !== 'resume') return;
+    const field = document.getElementById('login-apple-year');
+    if (!field) return;
+    // preventScroll off on purpose: focusing is also what brings the field
+    // into view on a short screen. scrollIntoView is the backstop for a
+    // WebView that focuses without scrolling.
+    field.focus();
+    if (typeof field.scrollIntoView === 'function') field.scrollIntoView({ block: 'center' });
+  }, [appleStep]);
+
   // -------------------------------------------------------------------------
   // WHY A DATE TYPED HERE IS NOT THE SAME AS A DATE TYPED ON SIGNUP
   //
@@ -119,6 +151,59 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const dobUnderMin = dobAge !== null && dobAge < MIN_AGE;
   const dobNeedsCheck = needsDob && dobUnderMin && dobConfirmed !== dob;
 
+  // Continue on the Apple step: the same credentials, now with the year.
+  const continueApple = async () => {
+    if (appleBusy) return;
+    setAppleError('');
+    const sendDob = birthYearToDob(birthYear);
+    // Same local checks the signup screen makes before its Apple sheet: an
+    // empty field, and a year nobody alive can have. Neither names an age.
+    if (!sendDob) {
+      setAppleError('Add the year you were born.');
+      document.getElementById('login-apple-year')?.focus();
+      return;
+    }
+    const years = ageFromDob(sendDob);
+    if (years === null || years < 0) {
+      setAppleError('That year does not look right. Check it and try again.');
+      document.getElementById('login-apple-year')?.focus();
+      return;
+    }
+    const resume = appleResume.current;
+    // Used once, whatever happens next.
+    appleResume.current = null;
+    setAppleBusy(true);
+    try {
+      if (!resume) throw Object.assign(new Error('Apple sign-in timed out'), { expired: true });
+      const data = await resume(sendDob, 'year');
+      leaveAppleStep();
+      onLoginSuccess(data.user);
+    } catch (err) {
+      // Never reached the server (offline, connection refused): the same
+      // credentials are still good, so Continue stays and can be tapped again.
+      if (err?.isNetworkError && !err?.isTimeout && !err?.expired) {
+        appleResume.current = resume;
+        setAppleError(err.message);
+        return;
+      }
+      // Otherwise the credentials are gone. Put the Apple button back; it
+      // carries the year now, so one more sheet finishes the account.
+      setAppleStep('retap');
+      // A code past Apple's five minutes, a lapsed identity token (401), a
+      // failed code exchange (503) and a request that timed out all mean the
+      // same thing to the person: the sheet has to be done again. Anything
+      // else is the server's answer word for word, which keeps the under-13
+      // refusal exactly what it was.
+      const status = err?.status;
+      const timedOut = err?.expired || err?.isTimeout || status === 401 || status === 503 || !status;
+      setAppleError(timedOut
+        ? 'Apple sign-in did not finish in time. Tap Continue with Apple to try again. Your year is still filled in.'
+        : (err?.message || 'Apple sign-in failed'));
+    } finally {
+      setAppleBusy(false);
+    }
+  };
+
   // Custom-styled Google button (the rendered GIS button ignores dark theming
   // when it shows the personalized "Continue as ..." variant). The hook picks
   // the path: native Google Sign-In on iOS, the GIS browser flow everywhere
@@ -127,6 +212,8 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     onSuccess: onLoginSuccess,
     onError: (msg, err) => {
       if (err?.data?.needsDob) {
+        // Google's own ask takes the field back up to the form.
+        leaveAppleStep();
         setNeedsDob(true);
         setDobGranularity(err.data.dobGranularity || null);
         setError(err.data.dobGranularity === 'year'
@@ -190,6 +277,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         // every session and lock a real person out permanently. The full-date
         // field is the only one this path may show.
         setDobGranularity(null);
+        leaveAppleStep();
         setError(needsDob && !askYearOnly && dob
           ? err.message
           : 'One more thing: add your date of birth below to continue.');
@@ -254,7 +342,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         {/* The retry field the error message points at. It sits first so
             "below" in that copy is literally true, and so it is the next
             thing under the reader's eye on the email, Google and Apple paths. */}
-        {needsDob && (
+        {needsDob && !appleStep && (
           askYearOnly ? (
             <BirthYearField
               id="login-dob"
@@ -414,9 +502,39 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           Continue with Apple on this screen — a reviewer, say — used to get a
           message pointing at a field that was not on the page and a button
           that could never send it, which is a dead end on the first screen of
-          the app. Same field, same retry as the Google and email paths. */}
+          the app.
+
+          That first 403 is now finished in place (see THE APPLE STEP above):
+          the year field and a Continue button appear where this button was,
+          and Continue sends the same Apple credentials again with the year.
+          No second Apple sheet. */}
+      {appleStep && (
+        <div className="auth-apple-step" id="login-apple-step">
+          <AuthError>{appleError}</AuthError>
+          <p className="auth-step-line" id="login-apple-step-line">
+            One more step: the year you were born.
+          </p>
+          <BirthYearField
+            id="login-apple-year"
+            hintId="login-apple-year-hint"
+            value={birthYear}
+            onChange={(v) => { setBirthYear(v); setAppleError(''); }}
+          />
+        </div>
+      )}
+
+      {appleStep === 'resume' ? (
+        <button
+          type="button"
+          className="auth-primary"
+          disabled={appleBusy}
+          onClick={continueApple}
+        >
+          {appleBusy ? 'Signing in…' : 'Continue'}
+        </button>
+      ) : (
       <AppleSignInButton
-        onSuccess={onLoginSuccess}
+        onSuccess={(user) => { leaveAppleStep(); onLoginSuccess(user); }}
         dob={needsDob && dobToSend ? dobToSend : undefined}
         dobGranularity={askYearOnly ? 'year' : undefined}
         /* Returning false stops the native sheet before it opens. Apple's flow
@@ -429,20 +547,38 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           document.getElementById('login-dob-check')?.focus();
           return false;
         }}
-        onError={(m, err) => {
+        onError={(m, err, resume) => {
           if (err?.data?.needsDob) {
+            // Read off the answer, not off screen state: askYearOnly is the
+            // PREVIOUS render's value, which is how the first message used to
+            // say "date of birth" over a field labelled "Year of birth".
+            const granularity = err.data.dobGranularity || null;
             setNeedsDob(true);
-            setDobGranularity(err.data.dobGranularity || null);
+            setDobGranularity(granularity);
+            if (granularity === 'year' && resume) {
+              appleResume.current = resume;
+              setError('');
+              setAppleError('');
+              setAppleStep('resume');
+              return;
+            }
+            leaveAppleStep();
             setError(needsDob && dobToSend
               ? m
-              : askYearOnly
+              : granularity === 'year'
                 ? 'Add the year you were born below, then tap Continue with Apple again.'
                 : 'Add your date of birth below, then tap Continue with Apple again.');
+          } else if (appleStep) {
+            // The retap after a timeout, answered by the server: show it
+            // next to the button that was tapped. Under-13 lands here, with
+            // the server's own words, exactly as it did before.
+            setAppleError(m);
           } else {
             setError(m);
           }
         }}
       />
+      )}
 
       {/* Guideline 1.2 / EULA consent, worded exactly as SignupScreen words
           it. The Google and Apple buttons above CREATE an account for anyone
