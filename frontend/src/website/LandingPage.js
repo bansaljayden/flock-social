@@ -699,7 +699,8 @@ export default function LandingPage() {
           <p className="lp-demo-proof" id="try">
             The map, the pins, and the numbers are live, made the same way they
             are in the app. Tested against 4,183 real live readings they had not
-            seen, 78.8% of Flock's crowd numbers landed within one crowd level.
+            seen, 78.8% of Flock's crowd numbers landed within one crowd level
+            and 53.8% within 10 points.
           </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always
