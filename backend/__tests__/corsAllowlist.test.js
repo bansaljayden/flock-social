@@ -228,7 +228,7 @@ test('the refusal carries a 4xx status, so Sentry does not capture it and the ha
   // The origin callback exactly as server.js writes it, lifted rather than
   // restated for the same reason buildAllowlist above is lifted.
   const callbackSrc = /origin: \(origin, callback\) => \{[\s\S]*?\n {2}\},/.exec(
-    serverSrc.slice(serverSrc.indexOf('app.use(cors({'))
+    serverSrc.slice(serverSrc.indexOf('const corsOptions = {'))
   );
   assert.ok(callbackSrc, 'the cors origin callback has moved or been renamed');
   const originCallback = new Function(

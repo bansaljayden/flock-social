@@ -429,7 +429,7 @@ test('nothing cors answers or refuses gets past the backstop, because the backst
 
   // Finally, the source order that makes it true in the real file.
   const backstopAt = SRC.indexOf('app.use(globalBackstopLimiter);');
-  const corsAt = SRC.indexOf('app.use(cors({');
+  const corsAt = SRC.indexOf('app.use(cors(');
   assert.ok(backstopAt > 0 && corsAt > 0, 'the backstop or the cors mount has been renamed');
   assert.ok(backstopAt < corsAt,
     'globalBackstopLimiter is mounted AFTER cors again. cors answers preflights itself and turns a '

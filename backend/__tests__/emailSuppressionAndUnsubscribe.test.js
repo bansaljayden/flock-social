@@ -400,7 +400,7 @@ function request(app, method, path, { headers = {}, body } = {}) {
       }, (res) => {
         let text = '';
         res.on('data', (c) => { text += c; });
-        res.on('end', () => { server.close(); resolve({ status: res.statusCode, text }); });
+        res.on('end', () => { server.close(); resolve({ status: res.statusCode, text, headers: res.headers }); });
       });
       req.on('error', (e) => { server.close(); reject(e); });
       if (body !== undefined) req.write(body);
@@ -647,4 +647,99 @@ test('the webhook path gets a parser that keeps the raw bytes, or its signature 
   assert.match(src, /EMAIL_EVENTS_BODY_ROUTE/, 'no scoped parser row for the webhook path');
   assert.match(src, /emailWebhookParser[\s\S]{0,400}?req\.rawBody = buf/,
     'the webhook parser must capture the raw body via body-parser verify');
+});
+
+// ===========================================================================
+// 7. The confirm button gets past server.js's cors, not just past the router
+// ===========================================================================
+// Every test above mounts the router on a bare app, which is how the button
+// was found broken in the product while this file stayed green. A browser puts
+// an Origin header on every form POST, same-origin included: `null` under
+// helmet's `Referrer-Policy: no-referrer`, or the API's own origin. Neither is
+// on the allowlist, so the real cors mount answered 403 {"error":"Not allowed
+// by CORS"} and the opt-out never ran. Only a provider's one-click POST, which
+// carries no Origin, got through. These tests run server.js's own allowlist and
+// cors mount, lifted from the source, in front of the real routers.
+
+function appBehindServerCors() {
+  const src = require('node:fs').readFileSync(require.resolve('../server.js'), 'utf8');
+  const start = src.indexOf('const allowedOrigins = [');
+  const mountAt = src.indexOf('app.use(cors(', start);
+  // Through the end of the mount statement, however many lines it spans.
+  const tail = /\)\);\r?\n/.exec(src.slice(mountAt));
+  assert.ok(start > 0 && mountAt > start && tail, 'the cors block in server.js has moved; retarget this lift');
+  const mountEnd = mountAt + tail.index + 3;
+  const app = express();
+  // eslint-disable-next-line no-new-func
+  new Function('app', 'cors', 'process', 'console', src.slice(start, mountEnd))(
+    app, require('cors'), { env: {} }, { log() {}, warn() {}, error() {} }
+  );
+  app.use(express.urlencoded({ extended: true }));
+  app.use('/api/unsubscribe', require('../routes/unsubscribe'));
+  app.use('/api/venue-digest', require('../routes/venueDigest'));
+  app.post('/api/flocks', (_req, res) => res.json({ reached: true }));
+  app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
+  // Stands in for the CORS_REFUSED branch of server.js's error handler.
+  app.use((err, _req, res, _next) => {
+    if (err && err.type === 'cors.origin.refused') return res.status(403).json({ error: 'Not allowed by CORS' });
+    return res.status(500).json({ error: String(err && err.message) });
+  });
+  return app;
+}
+
+const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
+
+test('the confirm button works from the page: Origin null and the API origin both reach the opt-out', async () => {
+  const cases = [
+    ['Origin null (helmet sends no-referrer)', { ...FORM, origin: 'null' }],
+    ['the API origin itself', { ...FORM, host: 'api.flockcorp.com', origin: 'https://api.flockcorp.com' }],
+  ];
+  for (const [what, headers] of cases) {
+    resetWorld();
+    const token = unsub.mintUnsubscribeToken('clicker@example.com');
+    const res = await request(appBehindServerCors(), 'POST',
+      `/api/unsubscribe?token=${encodeURIComponent(token)}`, { headers, body: '' });
+    assert.strictEqual(res.status, 200,
+      `${what}: the button was answered ${res.status} ${res.text}. That is the reader who clicked `
+      + '"Take me off the list" and kept getting mail.');
+    assert.match(res.text, /off the list/i);
+    assert.strictEqual(suppressionRows.get('clicker@example.com'), 'unsubscribe', `${what}: nothing was recorded`);
+    assert.strictEqual(res.headers['access-control-allow-origin'], undefined,
+      `${what}: a same-origin page needs no CORS headers, and handing one to "null" would let any sandboxed frame read the answer`);
+  }
+});
+
+test('the digest opt-out button reaches its router through the same cors mount', async () => {
+  const cap = silence();
+  try {
+    for (const headers of [
+      { ...FORM, origin: 'null' },
+      { ...FORM, host: 'api.flockcorp.com', origin: 'https://api.flockcorp.com' },
+    ]) {
+      // A bad token is enough: the router's own 400 page proves the request
+      // got past cors, where the refusal is a 403 JSON body.
+      const res = await request(appBehindServerCors(), 'POST', '/api/venue-digest/opt-out?token=nonsense',
+        { headers, body: '' });
+      assert.strictEqual(res.status, 400, `origin ${headers.origin} answered ${res.status} ${res.text}`);
+      assert.match(res.headers['content-type'] || '', /html/);
+      assert.ok(!/Not allowed by CORS/.test(res.text));
+    }
+  } finally { cap.restore(); }
+});
+
+test('the exemption is only those two pages and only their own origin', async () => {
+  resetWorld();
+  const token = unsub.mintUnsubscribeToken('kept@example.com');
+  const path = `/api/unsubscribe?token=${encodeURIComponent(token)}`;
+  for (const [what, method, url, headers] of [
+    ['a foreign site posting to the unsubscribe page', 'POST', path, { ...FORM, origin: 'https://evil.example' }],
+    ['an Origin naming a host other than the one addressed', 'POST', path,
+      { ...FORM, host: 'api.flockcorp.com', origin: 'https://other.example' }],
+    ['Origin null on any other API path', 'POST', '/api/flocks', { ...FORM, origin: 'null' }],
+    ['a path that only starts with the same letters', 'POST', '/api/unsubscribe-other', { ...FORM, origin: 'null' }],
+  ]) {
+    const res = await request(appBehindServerCors(), method, url, { headers, body: '' });
+    assert.strictEqual(res.status, 403, `${what} answered ${res.status}; the allowlist must still refuse it`);
+  }
+  assert.strictEqual(suppressionRows.size, 0, 'a refused request must not have written anything');
 });
