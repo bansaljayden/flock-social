@@ -272,6 +272,38 @@ describe('App.js', () => {
   });
 });
 
+describe('what Birdie is asked to leave out', () => {
+  const api = jest.requireActual('../services/api');
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; });
+  const sentBody = async () => {
+    global.fetch = jest.fn(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/json' },
+      json: () => Promise.resolve({ text: 'go at 9', venues: [] }),
+      text: () => Promise.resolve('{"text":"go at 9","venues":[]}'),
+    }));
+    await api.sendAiChat([{ role: 'user', text: 'hi' }], null, null);
+    const call = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/ai/chat'));
+    return JSON.parse(call[1].body);
+  };
+
+  test('off: every Birdie turn says the build sells nothing', async () => {
+    setFlag('off');
+    expect((await sentBody()).purchases).toBe('off');
+  });
+
+  test('unset: the request is as before, with no purchases field', async () => {
+    setFlag(undefined);
+    expect('purchases' in (await sentBody())).toBe(false);
+  });
+
+  test('the field is set behind the literal gate', () => {
+    expect(read('services', 'api.js')).toContain("if (process.env.REACT_APP_PURCHASES === 'off') body.purchases = 'off';");
+  });
+});
+
 describe('Birdie and the venue card', () => {
   test('the Birdie limit keeps its sentence and loses its button', () => {
     const src = read('components', 'birdie', 'BirdiePanel.js');

@@ -353,6 +353,34 @@ test('the free-tier line is still accurate and still tier-scoped', () => {
   assert.ok(!/free tier/.test(paid), 'a paying subscriber is being pitched the free tier');
 });
 
+test('a client that sells nothing gets no plan name, no pitch and a neutral limit, on every tier and bracket', () => {
+  // The App Store build sends purchases: 'off' (frontend/src/lib/purchasesBuild.js).
+  // Birdie then describes the same limits without naming a plan or offering
+  // one, and is told not to talk about anything for sale even if asked.
+  for (const ageBracket of BRACKETS) {
+    for (const freeTier of [true, false]) {
+      const label = `ageBracket=${ageBracket} freeTier=${freeTier}`;
+      const text = buildSystemPrompt('Jay', {}, { ageBracket, freeTier, salesOff: true });
+      assert.ok(!/\bPro\b/.test(text), `${label}: the plan is named`);
+      assert.ok(!/You can mention/.test(text), `${label}: a pitch is still allowed`);
+      assert.ok(!/free tier/.test(text), `${label}: the tier is described as a plan`);
+      assert.ok(!/150/.test(text), `${label}: the paid allowance is described`);
+      assert.match(text, /Never mention a paid plan, a subscription, an upgrade, a price or anything for sale, even if they ask about one\./, `${label}: no instruction against sales talk`);
+      assert.match(text, /past this account's limit for now/, `${label}: no neutral limit line`);
+      assert.ok(!text.includes('—'), `${label}: em dash`);
+      // Everything else in the prompt is the same prompt.
+      assert.ok(text.startsWith('You are Birdie, the assistant inside Flock'), label);
+    }
+  }
+  const free = buildSystemPrompt('Jay', {}, { ageBracket: 'adult', freeTier: true, salesOff: true });
+  assert.match(free, /no crowd reading, that venue is past this account's limit for now: say so plainly and never guess how busy it is/,
+    'the spent-month rule was lost with the sales copy');
+  // Unset, the web prompt is exactly as before.
+  const web = buildSystemPrompt('Jay', {}, { ageBracket: 'adult', freeTier: true });
+  assert.strictEqual(web, buildSystemPrompt('Jay', {}, { ageBracket: 'adult', freeTier: true, salesOff: false }));
+  assert.match(web, /then it is Flock Pro/);
+});
+
 test('the prompt still opens as Birdie', () => {
   // __tests__/geminiSpendLedger.test.js and __tests__/paidCallBudgets.test.js
   // both assert /You are Birdie/ off the wire. Keep the string.
