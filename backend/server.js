@@ -540,7 +540,7 @@ const isAllowedOrigin = (origin) => allowedOrigins.includes(origin);
 // handshake itself, and giving it a status would suggest it flows through here.
 const CORS_REFUSED = 'cors.origin.refused';
 
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
@@ -554,7 +554,57 @@ app.use(cors({
     }
   },
   credentials: true,
-}));
+};
+
+// THE TWO EMAILED OPT-OUT PAGES POST TO THEMSELVES, AND A BROWSER NAMES THAT POST.
+//
+// GET /api/unsubscribe and GET /api/venue-digest/opt-out render an HTML page
+// whose button is a form that POSTs back to the same URL. A browser attaches an
+// Origin header to every form POST, same-origin included, and what it writes
+// there is never on the allowlist above:
+//   * `null`, because helmet below sends `Referrer-Policy: no-referrer`, and
+//     the Fetch standard serialises a non-GET request's origin as "null" under
+//     that policy (Chrome and Firefox both do);
+//   * otherwise this API's own origin, https://api.flockcorp.com.
+// So the button was answered 403 {"error":"Not allowed by CORS"}, the opt-out
+// never ran, and the unsubscribe the email footer promises (a CAN-SPAM
+// obligation) failed for every reader whose mail client opens the link in a
+// browser: Outlook, Yahoo, anything without RFC 8058 one-click. One-click kept
+// working only because a provider's server-to-server POST carries no Origin.
+//
+// Neither value belongs on the allowlist itself. `null` is also what a
+// sandboxed iframe on any site sends, and the rest of the API must keep
+// refusing it. So the exemption is narrow: a POST to one of these two page
+// prefixes, from `null` or from this host, passes through cors with NO CORS
+// headers at all. The page is same-origin HTML and needs none, and a
+// cross-origin script still cannot read the answer. That admits nothing new:
+// the signed token in the query string is the whole authorisation on both
+// routes, and whoever holds it can already POST it from curl with no Origin.
+// Any other Origin on these paths is still refused.
+//
+// "This host" is read from the Host header rather than from PUBLIC_API_URL, so
+// it holds on the Railway hostname and on a laptop as well as in production.
+// Host is caller-controlled, but a caller that can set it is not a browser, and
+// a non-browser can leave Origin off entirely.
+const SELF_POSTING_PAGES = ['/api/unsubscribe', '/api/venue-digest'];
+
+function isOwnPageFormPost(req) {
+  if (req.method !== 'POST') return false;
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string') return false;
+  // Express matches mount paths case-insensitively, so this does too.
+  const p = String(req.path || '').toLowerCase();
+  if (!SELF_POSTING_PAGES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`))) return false;
+  if (origin === 'null') return true;
+  try {
+    return new URL(origin).host === String(req.headers.host || '').toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+// `origin: false` makes cors call next() without touching the response.
+app.use(cors((req, callback) => callback(null, isOwnPageFormPost(req) ? { origin: false } : corsOptions)));
 
 // ---------------------------------------------------------------------------
 // Security & parsing middleware
