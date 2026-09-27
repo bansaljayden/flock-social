@@ -180,11 +180,21 @@ September (their `month` is 9, everyone else's is 3, 4 or 5).
    because the card is judged per venue-hour. **Done 2026-09-26**, default on,
    `FLOCK_RUN_LENGTH_WEIGHTS=off` to ablate; the weekly anchor weight under
    `auto` is solved against the divided total (rehearsed below).
-3. **Record what BestTime says the reading is about.** `collectRealtime.js`
-   discards `hour_analysis` and `venue_open` from the live response. Storing
-   them (a migration and a collector change) is what separates the one-hour lag
-   in cause 4 from a labelling problem, and explains the 246 readings (81% of
-   them non-zero) at slots whose curve says the venue is shut.
+3. **Record what BestTime says the reading is about.** **Done 2026-09-26**
+   (migration 094, on the collector deploy path). The live response has no
+   `hour_analysis` and no `analysis.venue_open`; bestTimeService read both from
+   those keys, so both were null on every call. What it does carry, per
+   BestTime's documentation, is `analysis.hour_start` (the hour the live value
+   is measured for), `venue_info.venue_open` ('Open' / 'Closed') and
+   `venue_info.venue_current_localtime`. The collector now stores them as
+   `live_hour_start`, `live_venue_open` and `live_local_time` on every realtime
+   row, and the export carries them as columns 46-48. They are NOT features:
+   no stored reading has them yet, so the band replay cannot measure them, and
+   serving has no live answer for an hour it forecasts. Their use is to
+   separate the one-hour lag in cause 4 from a labelling problem (compare
+   `live_hour_start` with the row's `hour`) and to explain the 246 readings
+   (81% of them non-zero) at slots whose curve says the venue is shut; re-test
+   them as features only once a month of readings carries them.
 4. Drop Beijing (2,057 rows, a statistically empty cross-validation fold).
 
 ### Features
@@ -211,15 +221,39 @@ each needing a twin in `mlPredictor.buildFeatureMap` in the same change (the
 load-time coverage check refuses an artifact whose features serving cannot
 build) and a parity test like `__tests__/mlSmoothingParity.test.js`:
 
-- `last_live_dev`, `last_live_age_h`: the venue's most recent live reading
-  strictly before the slot, as a deviation from its own slot's curve, and its
-  age in hours (missing: age 99, deviation 0). Past-only by construction. This
-  is cause 2, learned instead of hard-coded.
-- `recent_offset`, `recent_offset_n`: the trailing 28-day median deviation that
-  serving currently adds at a fixed weight of 0.5 after the model; as a
-  feature, the model learns how far to trust it. Remove the post-hoc add for
-  the artifact that learns it.
-- `curve_prev_hour`: the weekly curve one hour earlier (cause 4).
+**All three families below are done (2026-09-26)**, with serving twins, parity
+suites and a leak test; "The live features, rehearsed" further down has the
+numbers.
+
+- `last_live_dev`, `last_live_age_h`: the venue's newest live reading from a
+  slot strictly before the row's (pickNowcastReading, the nowcast's own
+  choice, within 12 hours) as a LEVEL against the row's served curve, the
+  way the nowcast carries it, and its age in hours (missing: age 99,
+  deviation 0). Measured against the target hour's curve and not the
+  reading's own hour's for the reason the nowcast is: 81% of consecutive
+  readings are identical, so a reading predicts the next as a level. This is
+  cause 2, learned instead of hard-coded.
+- `recent_offset`, `recent_offset_n`: the strictly-past trailing offset
+  (trailingOffsetBefore, the one a switched number reads) and its count. An
+  artifact that lists `recent_offset` is not handed the offset again after
+  the model (`mlPredictor.artifactLearnsOffset`).
+- `curve_prev_hour`: the served curve one clock hour earlier (cause 4).
+- The six `sports_*` columns, which until now had no serving twin and were
+  ablation-only: `mlPredictor.sportsFeatureValues` over a cached read of
+  `ml_sports_events`. They are features whenever `train/sports_events.csv` is
+  present (`FLOCK_SPORTS_FEATURES=0/1` overrides).
+
+Where each is computed: `prepare_features.add_live_features` and
+`add_sports_features`; `mlPredictor.liveFeatureValues` and
+`sportsFeatureValues`, read only for an artifact whose `feature_names` lists
+them (v2.6.0-starling lists none, and `mlServeModes.test.js` pins its
+responses and statements under every switch configuration to the ones
+recorded before the change). Tests: `mlLiveFeatureParity`, `mlSportsParity`,
+`mlFeatureFamiliesServe` (predictBusyness hands the graph the vector the band
+replay builds) and `train/test_live_features.py` (every reading at or after a
+row's slot, its own label included, is changed and none of the row's values
+may move). The export needed no change for them: every column they read is
+already in it.
 
 Fixed before the run (2026-09-26): the neighbour features' training arithmetic
 (cause 7) is serving's; `__tests__/mlNeighborParity.test.js` pins it.
@@ -287,10 +321,11 @@ figure is read without what it costs to fake.
 
 ### The commands, in order
 
-Pre-work in code before the export: the three nowcast features with their
-serving twins (not done). Done on 2026-09-26 and rehearsed below: the neighbour
-arithmetic (cause 7), `is_realtime` out of X, and the run-length weights
-(default on). Done in this change: the time holdout, the band
+Pre-work in code before the export: all done. On 2026-09-26: the live and
+sports feature families with their serving twins, the event columns the
+collector stores (serving's own computation), BestTime's live-answer signals
+(migration 094), the neighbour arithmetic (cause 7), `is_realtime` out of X,
+and the run-length weights (default on). Earlier: the time holdout, the band
 gate, the served-baseline smoothing parity and the anchor weight switch.
 
 ```bash
@@ -314,6 +349,11 @@ rm -f training_data.csv holdout_data.csv training_data.csv.partial holdout_data.
 #    BEGIN READ ONLY with default_transaction_read_only=on.
 node export_training_data.js
 head -1 training_data.csv | tr ',' '\n' | grep -c .     # must print 48
+#    The game schedule, same owner, same read-only rule. With the file present
+#    the six sports_* columns are features (FLOCK_SPORTS_FEATURES=0 to ablate).
+#    Refresh the table first (see "The game schedule" below): the local copy
+#    ends before September 2026 and lit only 292 of the training rows.
+node exportSportsEvents.js
 #    From here on nothing touches the database.
 
 # 3. Features: 14-day time holdout (the default), no month epoch, live rows at
@@ -338,7 +378,9 @@ CROWD_QMAP_ENABLED=false python quick_eval.py
 MODEL_VERSION=2.8.0-starling python export_model.py
 
 # 7. Band gate: writes ship_gate.band_gate, sets overall_pass = point AND band.
-node bandEval.js --gate --out=band_gate_report.json
+#    The incumbent is scored as production serves it: curve_offset + nowcast
+#    since 2026-09-25. Beating the model alone is not the bar.
+node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --out=band_gate_report.json
 
 # 8. Verify the artifact the way production reads it, then read the verdict.
 cd ../../..
@@ -480,6 +522,87 @@ incumbent and the curve by clear margins on the band gate and still be refused
 there. Keep it, or make it advisory whenever the band gate is required (the
 band gate's "beats the weekly curve" asks the same question on the population
 the card is scored on). This change keeps it binding.
+
+### Packed rooms under the serving switches (2026-09-26): no change shipped
+
+Packed is the one band the switches made worse: within one band 69.5% for the
+model as served before them against 57.6% for curve_offset + nowcast, over all
+eight dates. On the scored dates (09-06..08, 594 Packed readings of 4,183)
+production is 53.0% within one band. Of the 279 Packed readings it misses by
+two or more bands, 109 have no reading within 12 hours, 148 had a reading the
+hour(s) before that was Steady or lower (the vendor value jumped), 22 had a
+high reading three or more hours old, and none had a high reading one hour
+old. The nowcast cannot see a jump before it happens, so most of the gap is
+not reachable by reweighting.
+
+Every candidate below was fitted on 09-01..05 (MAE, weight grid 0..1 by 0.05)
+and scored on 09-06..08 against production, date-block bootstrap over the
+three dates (points, [CI95]):
+
+| candidate | w10 | w1b | Packed w1b |
+|---|---|---|---|
+| A: separate nowcast weights when the carried reading is Packed (fitted 1 / 1 / 0.15 / 0) | +0.12 [0, 0.26] | −0.10 [−0.17, 0] | 0 [0, 0] |
+| A': the same when the reading is at the venue's own curve peak | +0.10 [0, 0.17] | 0 | 0 |
+| B: offset weight split by sign (fitted +0, −0.55) | +0.60 [0.08, 3.06] | +0.84 [0.29, 2.90] | −1.52 [−3.67, 1.96] |
+| C: full offset where the curve is at the venue's peak (fitted 0.95) | 0 | +0.02 [0, 0.16] | 0 |
+| D: a Packed reading floors the number at a fraction of it (fitted 0.10) | +0.02 | 0 | 0 |
+| E: carry the curve's change since the reading's hour (fitted rho 0) | 0 | 0 | 0 |
+
+None improves Packed without costing overall within-10 or within one band, so
+nothing changed and SERVE_MEASURED stands. B is the one real gain in the
+table, overall, and it costs Packed; it is recorded here as the first thing to
+re-test on the October export, not shipped. The trained model with the live
+features (rehearsed below) is the other route to Packed: it can learn per
+category and hour when a high reading persists.
+
+### The event columns a live reading stores (2026-09-26)
+
+A census of the 8,006 live readings in the local export: `event_size` 0%
+filled, `nearest_event_attendance` and `total_nearby_attendance` 0 on every
+row (185 + 115 readings with an event nearby carried NULL, trained as 0). The
+collector sized an event only from the capacity Ticketmaster prints, which it
+almost never does, counted one event and took the nearest that started in the
+window. Serving, for the same listing, counts every event within 2 km ongoing
+at the hour and sizes each by the printed capacity or else the size class
+`estimateTmAttendance` assigns by segment and venue name (the same function
+`collectEvents.estimateAttendance` used for the spring corpus). The collector
+now writes serving's own values (`services/eventFeatures.buildEventResult`,
+moved out of mlPredictor unchanged; `mlEventCollectionParity.test.js` drives
+both real paths over 400 listings). No number is invented: an unmeasured
+lookup is still NULL, and `event_size` stays a carried capacity column, not a
+feature. Readings collected before the collector redeploys keep the old
+semantics (1,467 live rows with an event in the local export); the October run
+should either train on them as they are or cut event rows before the deploy
+date, and the band gate decides. The three user-feedback columns stay constant
+and stay in the plan's drop list.
+
+### The game schedule has no refresh
+
+`collectSportsSchedules.js` runs on no schedule: costModel.js calls it a
+monthly chore, and the local `sports_events.csv` (2026-08-30) holds 540 games
+from 2025-08-16 with 12 dated in early September. A model trained with the
+sports family reads `ml_sports_events` at serve time (cached six hours), so a
+stale table serves "no game" on game nights. Proposal, not built: call it once
+a day from the hourly BESTTIME run (the first run after 04:00 local), for the
+current and next season only, a few dozen SportsDB requests on the flat $9
+key and no BestTime credits. Until then run it by hand before the October
+export and at least monthly after a sports-feature artifact ships.
+
+### Context-feature parity, checked (2026-09-26)
+
+`mlContextFeatureParity.test.js` runs prepare_features and buildFeatureMap
+over one grid of live rows in every configured city and a year of chosen
+dates (special nights, holiday eves, federal holidays, school breaks), for 62
+calendar, weather and event columns: 0 disagreements after the float32 cast.
+It found one skew, fixed: training filled and differenced temperatures with
+unrounded climate norms while serving reads the two-decimal ones the artifact
+ships (922 values differed before the fix). On the 8,006 real live readings,
+the exported `is_holiday` and `is_school_break` equal `config.isHoliday` /
+`isSchoolBreak` of `observed_date`, and the special-night and holiday-eve
+values training derives from the row's city equal what serving derives from
+the venue's coordinates, on every row. One difference stays and is not
+arithmetic: the collector records the weather at the city centre, serving
+reads it at the venue.
 
 ## The band evaluation (`train/bandEval.js`, 2026-09-25)
 
