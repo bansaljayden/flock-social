@@ -151,7 +151,9 @@ class Canvas:
 def room(rng):
     """Background: walls and floor near the room's temperature, with the slow
     gradients, furniture and windows every real room has."""
-    amb = rng.uniform(15.0, 30.0)
+    # Up to 34C: a packed summer room, where a person is barely warmer than
+    # the air and a threshold sees nothing at all.
+    amb = rng.uniform(12.0, 34.0)
     t = np.full((H, W), amb, dtype=np.float32)
     # Floor and wall at slightly different temperatures, split at a horizon.
     horizon = rng.uniform(0.1, 0.7) * H
@@ -192,6 +194,8 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
     metres. Returns the head's canvas position and radius, and the torso box,
     so the label can be decided from what is actually visible."""
     s = F_PX * SS / d                      # canvas px per metre
+    if rng.random() < 0.12:
+        s *= rng.uniform(0.6, 0.8)          # a child
     skin = rng.uniform(31.0, 35.0)
     cloth = _clothing(rng, amb, skin)
     hair = amb + (skin - amb) * rng.uniform(0.35, 0.85)
@@ -266,6 +270,10 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
         hair_cover = rng.uniform(0.2, 0.6)
         c.paint(ellipse(hx, hy - head_ry * (1 - hair_cover), head_rx * 1.02, head_ry * hair_cover),
                 hair, owner=pid)
+        if rng.random() < 0.15:
+            # A hat or a hood leaves only the face warm.
+            hat = amb + (skin - amb) * rng.uniform(0.1, 0.35)
+            c.paint(ellipse(hx, hy - head_ry * 0.45, head_rx * 1.15, head_ry * 0.7), hat, owner=pid)
     torso_box = (hx - torso_w / 2, neck_y, hx + torso_w / 2, torso_cy + torso_h / 2)
     return (hx, hy, max(head_rx, head_ry)), torso_box
 
@@ -455,6 +463,36 @@ def scene_full(rng):
             hand_near_lens(c, rng, amb, new_id('hand'))
     if rng.random() < 0.2:
         add_distractor()
+    # A table or a bar in front of people: it hides whoever is behind it, so
+    # it takes their pixels, and what shows of them decides their label.
+    if n and not overhead and rng.random() < 0.3:
+        for _ in range(int(rng.integers(1, 3))):
+            ty = rng.uniform(0.45, 0.95) * H
+            c.paint(rect(rng.uniform(0, W), ty, rng.uniform(80, 300), rng.uniform(25, 70),
+                         corner=3), amb + rng.normal(-0.3, 0.6), owner=OCCLUDER)
+    # A reflection in a window or a glossy wall: shaped like a person, a few
+    # degrees warm, and not a person. Nobody gets a label for it.
+    if rng.random() < 0.12:
+        gx, gy = rng.uniform(0.1, 0.9) * W, rng.uniform(0.15, 0.6) * H
+        gs = F_PX * SS / rng.uniform(1.5, 5.0)
+        ghost = amb + rng.uniform(1.0, 4.0)
+        c.paint(rect(gx, gy + 0.35 * gs, 0.36 * gs, 0.5 * gs, corner=0.06 * gs), ghost - 0.5)
+        c.paint(ellipse(gx, gy, 0.08 * gs, 0.11 * gs), ghost)
+
+    # A camera mounted a little crooked.
+    if rng.random() < 0.3:
+        from scipy.ndimage import rotate
+        angle = rng.normal(0, 4.0)
+        c.t = rotate(c.t, angle, reshape=False, order=1, mode='nearest')
+        c.owner = rotate(c.owner, angle, reshape=False, order=0, mode='constant', cval=-1)
+        # The label points turn with the picture.
+        rad = np.radians(-angle)
+        ca, sa = np.cos(rad), np.sin(rad)
+        turned = []
+        for pid, (hx, hy, hr), torso in visible:
+            dx, dy = hx - W / 2, hy - H / 2
+            turned.append((pid, (W / 2 + dx * ca - dy * sa, H / 2 + dx * sa + dy * ca, hr), torso))
+        visible = turned
 
     # Down to the camera's resolution, then its optics and its electronics.
     t = c.t.reshape(ROWS, SS, COLS, SS).mean(axis=(1, 3))
@@ -466,6 +504,17 @@ def scene_full(rng):
     t += rng.normal(0, 1, (1, COLS)).astype(np.float32) * rng.uniform(0, 0.04)
     t += rng.normal(0, rng.uniform(0.02, 0.08), (ROWS, COLS))      # temporal noise
     t += rng.normal(0, 1.8)                                        # absolute error
+    # Gain: an uncalibrated unit, or a surface that is not a perfect emitter,
+    # reads warm things a little hotter or cooler than they are.
+    med = float(np.median(t))
+    t = med + (t - med) * rng.uniform(0.85, 1.15)
+    if rng.random() < 0.2:
+        # Column stripes, which a Lepton shows between flat field corrections.
+        t += rng.normal(0, 0.12, (1, COLS)).astype(np.float32)
+    if rng.random() < 0.1:
+        # A few dead or stuck pixels.
+        for _ in range(int(rng.integers(1, 6))):
+            t[rng.integers(0, ROWS), rng.integers(0, COLS)] = rng.choice([-10.0, 80.0])
     t = np.round(t * 100) / 100
 
     # Labels from what is actually visible in the final frame.
