@@ -1721,7 +1721,8 @@ export function handOverPushTokenForSignOut(token) {
 }
 
 export async function logout() {
-  const token = getToken() || endedSessionToken;
+  const storedToken = getToken();
+  const token = storedToken || endedSessionToken;
   endedSessionToken = null;
   const refreshToken = getRefreshToken();
   const pushToken = signOutPushToken;
@@ -1742,11 +1743,13 @@ export async function logout() {
       ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
     }).catch(() => null)
     : null;
-  // With no token, the path that removed it has already made the call on the
-  // invite handoff (handleSessionExpiry, when a stored session is found dead at
-  // boot and App.js endSession lands here second), and this clear must not
-  // undo it. A token in hand is a session somebody is leaving: everything goes.
-  clearLocalSession({ keepInviteHandoff: !token && !sessionSeenLive });
+  // With no STORED token, the path that removed it has already made the call
+  // on the invite handoff (handleSessionExpiry, when a stored session is found
+  // dead at boot and App.js endSession lands here second), and this clear must
+  // not undo it. The token that session died holding (endedSessionToken) rides
+  // along only so the server can drop the push row; it is not a live session.
+  // A stored token is a session somebody is leaving: everything goes.
+  clearLocalSession({ keepInviteHandoff: !storedToken && !sessionSeenLive });
   if (told) await told;
 }
 
