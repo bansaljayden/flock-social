@@ -471,3 +471,23 @@ test('the gate scores the incumbent under the serving switches production has, o
   const src = fs.readFileSync(path.join(ML_DIR, 'train', 'bandEval.js'), 'utf8');
   assert.match(src, /const theirs = inc \? await scoreArtifact\(inc, prepared, \{ qmap, \.\.\.incumbentServe \}\)/);
 });
+
+test('the schedule loads when EITHER artifact reads the sports features, the incumbent included', () => {
+  const { _internals: I } = require('../services/mlPredictor');
+  const withSports = { I, meta: { feature_names: ['hour', 'sports_game_today', 'sports_evening_game'] } };
+  const without = { I, meta: { feature_names: ['hour', 'day_of_week'] } };
+  assert.deepEqual(B.sportsScheduleReaders(without, null), []);
+  assert.deepEqual(B.sportsScheduleReaders(without, without), []);
+  assert.deepEqual(B.sportsScheduleReaders(withSports, null), ['candidate']);
+  // The case that used to score the incumbent on no-game defaults.
+  assert.deepEqual(B.sportsScheduleReaders(without, withSports), ['incumbent']);
+  assert.deepEqual(B.sportsScheduleReaders(withSports, withSports), ['candidate', 'incumbent']);
+  // main() decides on this helper, with both artifacts loaded before it.
+  const src = fs.readFileSync(path.join(ML_DIR, 'train', 'bandEval.js'), 'utf8');
+  const mainSrc = src.slice(src.indexOf('async function main('));
+  const incIdx = mainSrc.indexOf('const inc = incumbentDir ? await loadArtifact(incumbentDir) : null;');
+  const readersIdx = mainSrc.indexOf('const sportsReaders = sportsScheduleReaders(art, inc);');
+  assert.ok(incIdx !== -1 && readersIdx > incIdx);
+  assert.match(mainSrc, /if \(sportsReaders\.length\) \{/);
+  assert.ok(!/if \(art\.I\.artifactReadsSportsFeatures\(art\.meta\)\) \{/.test(mainSrc), 'the candidate-only check is gone');
+});
