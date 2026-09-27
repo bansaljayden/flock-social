@@ -154,6 +154,10 @@ def room(rng):
     # Up to 34C: a packed summer room, where a person is barely warmer than
     # the air and a threshold sees nothing at all.
     amb = rng.uniform(12.0, 34.0)
+    if rng.random() < 0.2:
+        # Hot rooms again, on purpose: the stress test found them a hole
+        # (47% on owl-3), and a packed summer bar is when the count matters.
+        amb = rng.uniform(29.0, 34.0)
     t = np.full((H, W), amb, dtype=np.float32)
     # Floor and wall at slightly different temperatures, split at a horizon.
     horizon = rng.uniform(0.1, 0.7) * H
@@ -279,7 +283,7 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
             c.paint(capsule(shoulder_x, shoulder_y, ex, ey, 0.045 * s), cloth, owner=pid)
             c.paint(capsule(ex, ey, hx2, hy2, 0.04 * s), cloth, owner=pid)
             c.paint(ellipse(hx2, hy2, 0.045 * s, 0.05 * s), skin - rng.uniform(0.5, 2.5), owner=pid)
-            if rng.random() < 0.3:
+            if rng.random() < 0.6:
                 c.paint(rect(hx2, hy2 - 0.05 * s, 0.07 * s, 0.1 * s, corner=0.01 * s),
                         rng.uniform(40, 65), owner=pid)
         else:
@@ -438,7 +442,7 @@ def _people_count(rng):
         return 2
     if r < 0.76:
         return int(rng.integers(3, 6))
-    if r < 0.94:
+    if r < 0.92:
         return int(rng.integers(6, 13))
     return int(rng.integers(13, 26))
 
