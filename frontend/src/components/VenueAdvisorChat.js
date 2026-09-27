@@ -787,9 +787,14 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       // not go through. Try again", with a Try again that could not work
       // (chat audit, 2026-09-05). A 4xx with a real sentence renders as a
       // quiet answer; the error row stays for 5xx and the network.
-      const said = [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12
-        ? err.message.trim()
-        : null;
+      // The App Store build names no plan, so a plan refusal (the server's
+      // "needs a venue plan upgrade") is reworded there like the locked state.
+      const planRefusal = Number(err?.status) === 403 && err?.data?.code === 'UPGRADE_REQUIRED';
+      const said = planRefusal && process.env.REACT_APP_PURCHASES === 'off'
+        ? 'This is not turned on for your venue.'
+        : [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12
+          ? err.message.trim()
+          : null;
       setThread((t) => t.map((turn) => (turn.key === key
         ? (said ? { ...turn, status: 'done', answer: { mode: 'refusal', text: said } } : { ...turn, status: 'error' })
         : turn)));
