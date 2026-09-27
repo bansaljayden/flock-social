@@ -1291,6 +1291,22 @@ router.get('/dm/messages/:id/image',
         // 404, not 403: a stranger must not learn the message id exists.
         return res.status(404).json({ error: 'Photo not found' });
       }
+      // The pair rules every other DM read in this file applies, and the one
+      // read that was missing them. After a block, either way, GET /dm/:userId
+      // answers an empty thread and reactions, votes and pins are refused, but
+      // this route checked only that the caller was in the conversation, so the
+      // blocked side could still pull the full resolution original of every
+      // photo in it by message id, from a cached thread or by counting. A banned
+      // counterpart's photos stayed readable here the same way while the thread
+      // read hid them. Same 404 as a stranger gets, and the same rule the flock
+      // twin above closed: a screen-level fix is not an access rule.
+      const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      if (await isBlockedBetween(req.user.id, counterpart)) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+      if (await counterpartyIsBanned(req.user.id, counterpart)) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
       if (!dm.rows[0].image_url) return res.status(404).json({ error: 'Photo not found' });
       res.json({ image: dm.rows[0].image_url });
     } catch (err) {
