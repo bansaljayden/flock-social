@@ -651,6 +651,9 @@ test('a guest vote fans out to each member personally, never to the flock room',
       vote_count: 3,       // 2 members + 1 guest, the shared tally's own arithmetic
       guest_count: 1,
       voters: ['Ava', 'Ben'],
+      // Whether this row holds the recipient's own vote. Both recipients
+      // voted for it; a names array cannot say which name is theirs.
+      mine: true,
     });
   }
 });

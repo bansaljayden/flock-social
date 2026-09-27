@@ -591,3 +591,36 @@ test('HELD: an INVITED member who has not accepted cannot vote', async () => {
   assert.strictEqual((await vote('Bo picks')).status, 403);
   assertQueriesUnderstood();
 });
+
+test('FIXED W: two members with one name are told apart, in the reply and in every event', async () => {
+  // The reply and new_vote carry voter NAMES, and the app took the row with
+  // its own name in it for its own vote. Two members called Alex: the other
+  // Alex's pick read as this one's, "needs your vote" cleared for somebody
+  // who had not voted, and the quick vote refused that venue. Each payload is
+  // built for one recipient, so each says which row holds that recipient's
+  // own vote.
+  as(1, 'Alex'); as(2, 'Bo'); as(3, 'Alex');
+  world.members.push(
+    { user_id: 1, status: 'accepted' }, { user_id: 2, status: 'accepted' }, { user_id: 3, status: 'accepted' },
+  );
+  world.votes.push({ user_id: 1, venue_name: 'Kome', venue_id: null });
+  const emits = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emits.push({ room, event, payload }) }) });
+  try {
+    as(3, 'Alex');
+    const r = await vote('Ramen');
+    assert.strictEqual(r.status, 201, r.text);
+    const mineIn = (votes) => Object.fromEntries(votes.map((v) => [v.venue_name, v.mine]));
+    assert.deepStrictEqual(mineIn(r.body.votes), { Kome: false, Ramen: true },
+      'the voter\'s own reply: their vote is Ramen, whatever the other Alex picked');
+    const sentTo = (room) => emits.find((e) => e.room === room && e.event === 'new_vote').payload.votes;
+    assert.deepStrictEqual(mineIn(sentTo('user:1')), { Kome: true, Ramen: false }, 'the other Alex keeps their own');
+    assert.deepStrictEqual(mineIn(sentTo('user:2')), { Kome: false, Ramen: false }, 'Bo voted nowhere');
+    // The names themselves are unchanged, and nobody's id travels.
+    assert.deepStrictEqual(r.body.votes.map((v) => v.voters), [['Alex'], ['Alex']]);
+    assert.ok(!JSON.stringify(emits).includes('"id"'), 'no voter id in any payload');
+  } finally {
+    app.set('io', null);
+  }
+  assertQueriesUnderstood();
+});

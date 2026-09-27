@@ -2351,14 +2351,16 @@ function registerHandlers(io, socket) {
         }
         return s;
       };
-      const tailor = (invisible) => tailorVotes(rows, invisible);
+      // Per recipient, `mine` included: which row holds that recipient's own
+      // vote, which a names array cannot say (routes/venues.js tailorVotes).
+      const tailor = (invisible, viewerId) => tailorVotes(rows, invisible, { viewerId });
 
-      socket.emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisibleOf(user.id)) });
+      socket.emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisibleOf(user.id), user.id) });
       for (const uid of memberIds) {
         if (uid === user.id) continue;
         const invisible = invisibleOf(uid);
         if (invisible.has(user.id)) continue;
-        io.to(`user:${uid}`).emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisible) });
+        io.to(`user:${uid}`).emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisible, uid) });
       }
     } catch (err) {
       console.error('vote_venue error:', err);
