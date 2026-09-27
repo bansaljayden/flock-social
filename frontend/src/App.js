@@ -4941,6 +4941,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResultsSort, setSearchResultsSort] = useState('rating');
   const searchTimerRef = useRef(null);
+  // What the search box says now, and which search started last, so a search
+  // that answers late can tell it is no longer wanted. See doVenueSearch.
+  const venueQueryRef = useRef('');
+  const venueSearchSeqRef = useRef(0);
+  useEffect(() => { venueQueryRef.current = venueQuery; }, [venueQuery]);
   // Null until a read lands, so the events screen can tell "nothing is on near
   // you" apart from "we could not ask". See fetchFeaturedEvents.
   const [featuredEvents, setFeaturedEvents] = useState(null);
@@ -5366,8 +5371,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
   }, [categorizeVenue, crowdPredictions]);
 
+  // ONLY THE SEARCH FOR WHAT THE BOX SAYS NOW MAY WRITE. The clear X, the
+  // results overlay's X, Recenter and the All chip set the query straight to ''
+  // without passing through handleVenueQueryChange, so the 800 ms debounce was
+  // still armed and a search already in flight was still awaited. Either one
+  // then reopened the dropdown with the old results under an empty box and
+  // replaced the nearby pins the clear had just asked for with the old query's.
+  // Two searches could also land out of order (a cache hit answers at once
+  // while an older uncached one is still out) and the older one won. So a
+  // search that no longer matches the box does nothing, and after its await a
+  // search writes only if it is still the newest and still matches.
   const doVenueSearch = useCallback(async (q) => {
-    if (!q.trim() || q.trim().length < 2) { setVenueResults([]); return; }
+    if (venueQueryRef.current !== q) return;
+    const seq = ++venueSearchSeqRef.current;
+    const current = () => seq === venueSearchSeqRef.current && venueQueryRef.current === q;
+    // The spinner belongs to the newest search, so an older one still out
+    // does not switch it off under this one, and this one switches it off
+    // however it ends.
+    if (!q.trim() || q.trim().length < 2) { setVenueResults([]); setVenueSearching(false); return; }
     const enhanced = enhanceQuery(q);
     const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
     const cacheKey = `${enhanced}|${loc || ''}`;
@@ -5376,6 +5397,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
       const venues = cached.data;
+      setVenueSearching(false);
       setVenueResults(venues);
       if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); requestCrowdScores(venues); }
       setShowSearchDropdown(true);
@@ -5387,7 +5409,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const data = await searchVenues(enhanced, loc);
       const venues = data.venues || [];
+      // Cached either way: the answer is right for its query even when that
+      // query is no longer the one on screen.
       searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
+      if (!current()) return;
       setVenueResults(venues);
       setVenueLoadError('');
       if (venues.length > 0) {
@@ -5404,6 +5429,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
     } catch (err) {
       console.error('Venue search error:', err);
+      if (!current()) return;
       // Same for a search that failed: the banner says why, the map is not
       // still showing somewhere else.
       setAllVenues([]);
@@ -5420,7 +5446,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast('Slow down! Try again in a few seconds', 'error');
       }
     } finally {
-      setVenueSearching(false);
+      // Still the newest search even when the box was cleared under it, and
+      // then nothing newer is coming to let go of the spinner.
+      if (seq === venueSearchSeqRef.current) setVenueSearching(false);
     }
   }, [enhanceQuery, venuesToMapPins, userLocation, showToast, requestCrowdScores]);
 
