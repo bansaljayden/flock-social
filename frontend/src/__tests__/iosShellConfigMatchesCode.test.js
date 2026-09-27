@@ -29,6 +29,7 @@ const IOS_APP = ['frontend', 'ios', 'App', 'App'];
 
 const infoPlist = read(...IOS_APP, 'Info.plist');
 const entitlements = read(...IOS_APP, 'App.entitlements');
+const privacyManifest = read(...IOS_APP, 'PrivacyInfo.xcprivacy');
 
 const capConfigTs = read('frontend', 'capacitor.config.ts');
 const pbxproj = read('frontend', 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
@@ -160,6 +161,7 @@ describe('the shell config files are well formed', () => {
   test.each([
     ['Info.plist', infoPlist],
     ['App.entitlements', entitlements],
+    ['PrivacyInfo.xcprivacy', privacyManifest],
   ])('%s parses as XML', (name, xml) => parses(xml));
 
   testGenerated(g('the generated config.xml parses as XML'), () => parses(generatedXml()));
@@ -796,6 +798,238 @@ describe('capacitor.config.ts and the copy under ios/ agree', () => {
     expect([...generatedConfig().packageClassList].sort()).toEqual(
       Object.values(PLUGIN_CLASSES).sort()
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6b. The privacy manifest, against the native code that is actually linked.
+// ---------------------------------------------------------------------------
+// Apple's required-reason check (the ITMS-91053 "Missing API declaration"
+// email) reads the App binary, and SwiftPM links every plugin target in
+// PLUGIN_CLASSES into that binary statically. A plugin that calls a
+// required-reason API and ships no manifest of its own is therefore an
+// undeclared call by the APP. Two sign-in plugins did exactly that with
+// UserDefaults while the submission notes said no manifest was needed.
+//
+// So the plugins' iOS sources are scanned, and the categories they reach must
+// equal the categories PrivacyInfo.xcprivacy declares. The next plugin that
+// touches UserDefaults, a file timestamp, boot time, disk space or the active
+// keyboards fails here on the commit that adds it.
+
+// Apple's required-reason categories, with the symbols that put code in each
+// (developer.apple.com, "Describing use of required reason API").
+const REQUIRED_REASON_APIS = {
+  NSPrivacyAccessedAPICategoryUserDefaults: /\b(?:NS)?UserDefaults\b/,
+  NSPrivacyAccessedAPICategoryFileTimestamp:
+    /\b(?:creationDate|modificationDate|fileModificationDate|contentModificationDateKey|creationDateKey|getattrlist|getattrlistbulk|fgetattrlist|getattrlistat)\b|\b(?:stat|fstat|fstatat|lstat)\s*\(/,
+  NSPrivacyAccessedAPICategorySystemBootTime: /\b(?:systemUptime|mach_absolute_time)\b/,
+  NSPrivacyAccessedAPICategoryDiskSpace:
+    /\b(?:volumeAvailableCapacity\w*|volumeTotalCapacity\w*|systemFreeSize|systemSize|statfs|statvfs|fstatfs|fstatvfs)\b/,
+  NSPrivacyAccessedAPICategoryActiveKeyboards: /\bactiveInputModes\b/,
+};
+
+// The reason codes Apple accepts per category, from the same page.
+const ALLOWED_REASONS = {
+  NSPrivacyAccessedAPICategoryUserDefaults: ['CA92.1', '1C8F.1', 'C56D.1', 'AC6B.1'],
+  NSPrivacyAccessedAPICategoryFileTimestamp: ['DDA9.1', 'C617.1', '3B52.1', '0A2A.1'],
+  NSPrivacyAccessedAPICategorySystemBootTime: ['35F9.1', '8FFB.1', '3D61.1'],
+  NSPrivacyAccessedAPICategoryDiskSpace: ['85F4.1', 'E174.1', '7D9E.1', 'B728.1'],
+  NSPrivacyAccessedAPICategoryActiveKeyboards: ['3EC4.1', '54BD.1'],
+};
+
+// Apple's NSPrivacyCollectedDataType and purpose enumerations, verbatim. Note
+// the lower-case "or" in PhotosorVideos, which is Apple's spelling.
+const APPLE_DATA_TYPES = [
+  'Name', 'EmailAddress', 'PhoneNumber', 'PhysicalAddress', 'OtherUserContactInfo',
+  'Health', 'Fitness', 'PaymentInfo', 'CreditInfo', 'OtherFinancialInfo',
+  'PreciseLocation', 'CoarseLocation', 'SensitiveInfo', 'Contacts',
+  'EmailsOrTextMessages', 'PhotosorVideos', 'AudioData', 'GameplayContent',
+  'CustomerSupport', 'OtherUserContent', 'BrowsingHistory', 'SearchHistory',
+  'UserID', 'DeviceID', 'PurchaseHistory', 'ProductInteraction', 'AdvertisingData',
+  'OtherUsageData', 'CrashData', 'PerformanceData', 'OtherDiagnosticData',
+  'EnvironmentScanning', 'Hands', 'Head', 'OtherDataTypes',
+].map((t) => `NSPrivacyCollectedDataType${t}`);
+const APPLE_PURPOSES = [
+  'ThirdPartyAdvertising', 'DeveloperAdvertising', 'Analytics',
+  'ProductPersonalization', 'AppFunctionality', 'Other',
+].map((p) => `NSPrivacyCollectedDataTypePurpose${p}`);
+
+/** A plist element as a plain value; a dict that repeats a key throws. */
+const plistValue = (el) => {
+  switch (el.tagName) {
+    case 'dict': {
+      const out = {};
+      const kids = [...el.children];
+      for (let i = 0; i < kids.length; i += 2) {
+        const key = kids[i].textContent;
+        if (kids[i].tagName !== 'key') throw new Error(`dict entry ${i} is <${kids[i].tagName}>, not <key>`);
+        if (Object.prototype.hasOwnProperty.call(out, key)) throw new Error(`duplicate key ${key}`);
+        out[key] = plistValue(kids[i + 1]);
+      }
+      return out;
+    }
+    case 'array': return [...el.children].map(plistValue);
+    case 'string': return el.textContent;
+    case 'true': return true;
+    case 'false': return false;
+    case 'integer': return Number(el.textContent);
+    default: throw new Error(`unexpected plist element <${el.tagName}>`);
+  }
+};
+const parsePlist = (xml) => {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  expect(doc.documentElement.tagName).toBe('plist');
+  return plistValue(doc.documentElement.firstElementChild);
+};
+
+// Every native source file the App binary links: each plugin's ios/ tree (its
+// test targets excluded, they never link) plus the app's own AppDelegate.
+const NATIVE_SOURCE = /\.(swift|m|mm|h|c)$/;
+const nativeSources = () => {
+  const files = [];
+  const walk = (dir, owner) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!/Tests?$/.test(e.name)) walk(full, owner);
+      } else if (NATIVE_SOURCE.test(e.name)) {
+        files.push({ owner, file: path.relative(REPO, full), text: fs.readFileSync(full, 'utf8') });
+      }
+    }
+  };
+  for (const pkgName of Object.keys(PLUGIN_CLASSES)) {
+    const iosDir = path.join(REPO, 'frontend', 'node_modules', ...pkgName.split('/'), 'ios');
+    const before = files.length;
+    walk(iosDir, pkgName);
+    // A package that moved its sources would otherwise make this scan pass
+    // on nothing.
+    if (files.length === before) throw new Error(`${pkgName} has no native sources under ios/`);
+  }
+  files.push({ owner: 'App', file: path.join(...IOS_APP, 'AppDelegate.swift'), text: appDelegate });
+  return files;
+};
+// Comments are prose, and one plugin's comment says "Save the JSON string to
+// UserDefaults"; a category is used when CODE names the API.
+const withoutComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+describe('the privacy manifest ships, and declares what the linked code does', () => {
+  test('PrivacyInfo.xcprivacy is in the App target\'s Copy Bundle Resources phase, once', () => {
+    // A manifest that is not a bundle resource is a file in the repository
+    // and nothing else: Apple reads it from the .app.
+    const refs = [...pbxproj.matchAll(/(\w{24}) \/\* PrivacyInfo\.xcprivacy \*\/ = \{isa = PBXFileReference;[^}]*\bpath = PrivacyInfo\.xcprivacy;[^}]*\};/g)];
+    expect(refs).toHaveLength(1);
+    const refId = refs[0][1];
+    const builds = [...pbxproj.matchAll(new RegExp(`(\\w{24}) /\\* PrivacyInfo\\.xcprivacy in Resources \\*/ = \\{isa = PBXBuildFile; fileRef = ${refId} `, 'g'))];
+    expect(builds).toHaveLength(1);
+    const buildId = builds[0][1];
+
+    // The file reference sits in the App group, whose path is App/, so it
+    // resolves to ios/App/App/PrivacyInfo.xcprivacy, the file read above.
+    const appGroup = pbxproj.match(/\/\* App \*\/ = \{\s*isa = PBXGroup;\s*children = \(([\s\S]*?)\);\s*path = App;/);
+    expect(appGroup).not.toBeNull();
+    expect(appGroup[1]).toContain(`${refId} /* PrivacyInfo.xcprivacy */`);
+
+    const target = pbxproj.match(/\/\* App \*\/ = \{\s*isa = PBXNativeTarget;[\s\S]*?buildPhases = \(([\s\S]*?)\);/);
+    expect(target).not.toBeNull();
+    const resourcesPhaseId = target[1].match(/(\w{24}) \/\* Resources \*\//)[1];
+    const phase = pbxproj.match(new RegExp(`${resourcesPhaseId} /\\* Resources \\*/ = \\{\\s*isa = PBXResourcesBuildPhase;[\\s\\S]*?files = \\(([\\s\\S]*?)\\);`));
+    expect(phase).not.toBeNull();
+    expect(phase[1]).toContain(`${buildId} /* PrivacyInfo.xcprivacy in Resources */`);
+  });
+
+  test('the manifest uses only Apple\'s keys, types, purposes and reason codes', () => {
+    const manifest = parsePlist(privacyManifest);
+    expect(Object.keys(manifest).sort()).toEqual([
+      'NSPrivacyAccessedAPITypes', 'NSPrivacyCollectedDataTypes',
+      'NSPrivacyTracking', 'NSPrivacyTrackingDomains',
+    ]);
+    // No tracking, so no tracking domains; the ATT assertions above agree.
+    expect(manifest.NSPrivacyTracking).toBe(false);
+    expect(manifest.NSPrivacyTrackingDomains).toEqual([]);
+
+    const seen = new Set();
+    for (const entry of manifest.NSPrivacyCollectedDataTypes) {
+      expect(Object.keys(entry).sort()).toEqual([
+        'NSPrivacyCollectedDataType', 'NSPrivacyCollectedDataTypeLinked',
+        'NSPrivacyCollectedDataTypePurposes', 'NSPrivacyCollectedDataTypeTracking',
+      ]);
+      expect(APPLE_DATA_TYPES).toContain(entry.NSPrivacyCollectedDataType);
+      expect(seen.has(entry.NSPrivacyCollectedDataType)).toBe(false);
+      seen.add(entry.NSPrivacyCollectedDataType);
+      expect(typeof entry.NSPrivacyCollectedDataTypeLinked).toBe('boolean');
+      expect(entry.NSPrivacyCollectedDataTypeTracking).toBe(false);
+      expect(entry.NSPrivacyCollectedDataTypePurposes.length).toBeGreaterThan(0);
+      for (const p of entry.NSPrivacyCollectedDataTypePurposes) expect(APPLE_PURPOSES).toContain(p);
+    }
+
+    for (const entry of manifest.NSPrivacyAccessedAPITypes) {
+      expect(Object.keys(entry).sort()).toEqual(['NSPrivacyAccessedAPIType', 'NSPrivacyAccessedAPITypeReasons']);
+      const allowed = ALLOWED_REASONS[entry.NSPrivacyAccessedAPIType];
+      expect(allowed).toBeDefined();
+      expect(entry.NSPrivacyAccessedAPITypeReasons.length).toBeGreaterThan(0);
+      for (const r of entry.NSPrivacyAccessedAPITypeReasons) expect(allowed).toContain(r);
+    }
+  });
+
+  test('every required-reason API the linked native code calls is declared, and nothing else is', () => {
+    const used = {};
+    for (const { owner, file, text } of nativeSources()) {
+      const code = withoutComments(text);
+      for (const [category, re] of Object.entries(REQUIRED_REASON_APIS)) {
+        if (re.test(code)) (used[category] ||= []).push(`${owner}: ${file}`);
+      }
+    }
+    // The scan has to see the calls that made this manifest necessary, or it
+    // is proving nothing.
+    expect((used.NSPrivacyAccessedAPICategoryUserDefaults || []).join('\n'))
+      .toMatch(/@capacitor-community\/apple-sign-in/);
+    expect((used.NSPrivacyAccessedAPICategoryUserDefaults || []).join('\n'))
+      .toMatch(/@capgo\/capacitor-social-login/);
+
+    const declared = parsePlist(privacyManifest).NSPrivacyAccessedAPITypes
+      .map((e) => e.NSPrivacyAccessedAPIType);
+    // Left side: what the binary calls. Right side: what the manifest says.
+    // A category on the left only is the upload email; on the right only, a
+    // declaration nothing needs.
+    expect(Object.keys(used).sort()).toEqual([...declared].sort());
+  });
+
+  test('the collected data types are the App Privacy answers, and each one has code behind it', () => {
+    const collected = Object.fromEntries(
+      parsePlist(privacyManifest).NSPrivacyCollectedDataTypes.map((e) => [
+        e.NSPrivacyCollectedDataType.replace('NSPrivacyCollectedDataType', ''),
+        { linked: e.NSPrivacyCollectedDataTypeLinked, purposes: e.NSPrivacyCollectedDataTypePurposes.map((p) => p.replace('NSPrivacyCollectedDataTypePurpose', '')).sort() },
+      ])
+    );
+    // The same grid as the App Privacy answers in App Store Connect. Every
+    // type is linked (every API call is authenticated by user id), and the
+    // only purposes are app functionality and first-party analytics. Changing
+    // a row here means changing that answer too.
+    const AF = ['AppFunctionality'];
+    expect(collected).toEqual({
+      Name: { linked: true, purposes: AF },
+      EmailAddress: { linked: true, purposes: AF },
+      PhoneNumber: { linked: true, purposes: AF },
+      OtherFinancialInfo: { linked: true, purposes: AF },
+      PreciseLocation: { linked: true, purposes: AF },
+      Contacts: { linked: true, purposes: AF },
+      PhotosorVideos: { linked: true, purposes: AF },
+      OtherUserContent: { linked: true, purposes: AF },
+      UserID: { linked: true, purposes: ['Analytics', 'AppFunctionality'] },
+      DeviceID: { linked: true, purposes: AF },
+      ProductInteraction: { linked: true, purposes: ['Analytics'] },
+      OtherDataTypes: { linked: true, purposes: AF },
+    });
+
+    // The rows the shell itself can prove: a location read, a camera and a
+    // photo picker, an address book read, a push token, and the analytics
+    // client, each of which is the reason for its row.
+    expect(hasKey(infoPlist, 'NSLocationWhenInUseUsageDescription')).toBe(true);
+    expect(hasKey(infoPlist, 'NSCameraUsageDescription')).toBe(true);
+    expect(hasKey(infoPlist, 'NSPhotoLibraryUsageDescription')).toBe(true);
+    expect(hasKey(infoPlist, 'NSContactsUsageDescription')).toBe(true);
+    expect(hasKey(entitlements, 'aps-environment')).toBe(true);
+    expect(read('frontend', 'src', 'index.js')).toMatch(/import\('posthog-js'\)/);
   });
 });
 
