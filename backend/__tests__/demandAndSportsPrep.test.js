@@ -102,9 +102,9 @@ test('the sports collector reads its key from the environment and tracks both si
 
 test('the sports verify path proves the key without touching the database', () => {
   const verifyIdx = SPORTS.indexOf("process.argv.includes('--verify')");
-  const poolIdx = SPORTS.indexOf('new Pool', SPORTS.indexOf('async function main'));
+  const poolIdx = SPORTS.indexOf('new Pool', SPORTS.indexOf('async function cli'));
   assert.ok(verifyIdx !== -1 && poolIdx !== -1);
-  assert.ok(verifyIdx < poolIdx, 'the verify branch returns before any pool exists inside main');
+  assert.ok(verifyIdx < poolIdx, 'the verify branch returns before any pool exists inside cli');
 });
 
 test('the sports event instant comes from the UTC timestamp, never the local pair', () => {

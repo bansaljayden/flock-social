@@ -12,6 +12,14 @@
 //   node scripts/ml/collectSportsSchedules.js --seasons=2025-2026,2026-2027
 //   node scripts/ml/collectSportsSchedules.js                   (default: the seasons covering the frozen corpus plus now)
 //
+// It also refreshes itself: collectRealtime.js calls refreshSportsIfDue()
+// at the end of every hourly run, which pulls the seasons in play today
+// (currentSeasons) whenever the table's newest row is more than 20 hours
+// old, so in practice once a day. Serving (mlPredictor.sportsFeatureValues)
+// and training both read ml_sports_events, and a table nobody refreshes
+// serves "no game" on game nights. That path never throws; a SportsDB
+// outage is a log line, never a lost crowd collection.
+//
 // Costs: SPORTSDB_API_KEY is a flat $9/mo subscription with a 100 req/min
 // limit; a full run here is a few dozen requests total, so there is no bill
 // to guard, only politeness (250ms between calls). This is deliberately a
@@ -29,22 +37,23 @@
 // happens it is a new entry in TRACKED, not a new script.
 // ---------------------------------------------------------------------------
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
-
-const { Pool } = require('pg');
+// Requiring this module does nothing: no .env load, no pool, no request.
+// The collector requires it for refreshSportsIfDue, and the CLI's setup
+// lives in cli() below, behind require.main.
 const { sleep } = require('./config');
 
-if (!process.env.DATABASE_URL && process.env.PGHOST) {
-  const host = process.env.PGHOST;
-  const port = process.env.PGPORT || 5432;
-  const user = process.env.PGUSER || 'postgres';
-  const pass = process.env.PGPASSWORD || '';
-  const db = process.env.PGDATABASE || 'railway';
-  process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+// Read at call time, not at load, so a key set after the module loaded
+// (tests, or a process that loads .env later) is the one used.
+function apiKey() {
+  return process.env.SPORTSDB_API_KEY || '';
 }
 
-const API_KEY = process.env.SPORTSDB_API_KEY;
 const BASE = 'https://www.thesportsdb.com/api/v1/json';
+const PAUSE_MS = 250;
+// The hourly collector refreshes when the newest row is older than this.
+// 20 hours rather than 24 so a daily refresh that ran a little late one day
+// does not slip a whole extra hour every day after it.
+const FRESH_HOURS = 20;
 
 // The five Philadelphia pro teams from the RETRAIN.md scope. search is the
 // exact string handed to searchteams.php; league is a sanity pin so a
@@ -82,13 +91,29 @@ const DEFAULT_SEASONS = {
   'NCAA Division 1': ['2026'],
 };
 
+// The seasons in play on a given date, computed so they never go stale the
+// way a hardcoded list does. The football seasons are named for the year
+// they start (September) and run into the next year's February, so January
+// and February still belong to last year's season. The winter leagues span
+// two years and open their new schedule over the summer, so from July on
+// the upcoming season is the one worth pulling. Everything else is played
+// within one calendar year. Months are 1 based and read in UTC; a day's
+// slip at a boundary costs nothing because the refresh runs daily.
+function currentSeasons(league, now = new Date()) {
+  const y = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
+  if (league === 'NFL' || league === 'NCAA Division 1') return String(month >= 3 ? y : y - 1);
+  if (league === 'NBA' || league === 'NHL') return month >= 7 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+  return String(y);
+}
+
 async function get(pathAndQuery) {
-  const res = await fetch(`${BASE}/${API_KEY}/${pathAndQuery}`);
+  const res = await fetch(`${BASE}/${apiKey()}/${pathAndQuery}`);
   if (!res.ok) throw new Error(`SportsDB ${res.status} on ${pathAndQuery}`);
   return res.json();
 }
 
-async function resolveTeam(t) {
+async function resolveTeam(t, pauseMs = PAUSE_MS) {
   const data = await get(`searchteams.php?t=${encodeURIComponent(t.search)}`);
   const teams = data.teams || [];
   const hit = teams.find((x) => x.strTeam === t.search && x.strLeague === t.league);
@@ -103,7 +128,7 @@ async function resolveTeam(t) {
   let stadiumLat = null;
   let stadiumLon = null;
   if (hit.idVenue) {
-    await sleep(250);
+    await sleep(pauseMs);
     try {
       const vd = await get(`lookupvenue.php?id=${encodeURIComponent(hit.idVenue)}`);
       const venue = (vd.venues || [])[0];
@@ -170,8 +195,136 @@ function eventInstant(ev) {
   return null;
 }
 
-async function main() {
-  if (!API_KEY) {
+// Resolve the tracked teams, then one schedule pull per (league, season),
+// filtered to tracked teams on EITHER side, so shared leagues (two tracked
+// teams meeting each other) are fetched once and written once per team
+// perspective. seasonsFor(league) answers the seasons to pull for a
+// SportsDB league name. Throws on any SportsDB or database failure; the
+// callers decide whether that is fatal (the CLI) or a log line (the daily
+// refresh).
+async function refreshSportsSchedules(pool, seasonsFor, log = console.log, { pauseMs = PAUSE_MS } = {}) {
+  const resolved = [];
+  for (const t of TRACKED) {
+    resolved.push(await resolveTeam(t, pauseMs));
+    await sleep(pauseMs);
+  }
+  log('[ML:Sports] Teams resolved:');
+  for (const t of resolved) {
+    log(`  ${t.key}: ${t.teamId} (${t.league}), arena ${t.stadium} @ ${t.stadiumLat},${t.stadiumLon}`);
+  }
+
+  const byLeague = new Map();
+  for (const t of resolved) {
+    if (!byLeague.has(t.leagueId)) byLeague.set(t.leagueId, { league: t.league, code: t.code, teams: [] });
+    byLeague.get(t.leagueId).teams.push(t);
+  }
+
+  let written = 0;
+  for (const [leagueId, entry] of byLeague) {
+    const seasons = seasonsFor(entry.league) || [];
+    for (const season of seasons) {
+      const data = await get(`eventsseason.php?id=${leagueId}&s=${encodeURIComponent(season)}`);
+      await sleep(pauseMs);
+      const events = data.events || [];
+      log(`[ML:Sports] ${entry.league} ${season}: ${events.length} league events fetched.`);
+      for (const ev of events) {
+        for (const t of entry.teams) {
+          const isHome = ev.idHomeTeam === t.teamId;
+          const isAway = ev.idAwayTeam === t.teamId;
+          if (!isHome && !isAway) continue;
+          const instant = eventInstant(ev);
+          const marketDate = instant ? MARKET_DATE_FMT.format(instant) : (ev.dateEventLocal || ev.dateEvent || null);
+          const marketTime = instant ? MARKET_TIME_FMT.format(instant) : (ev.strTimeLocal || ev.strTime || null);
+          await pool.query(
+            `INSERT INTO ml_sports_events
+               (sportsdb_event_id, league, season, team_key, is_home, opponent,
+                event_utc, event_local_date, event_local_time, venue_name,
+                venue_lat, venue_lon, raw_status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (sportsdb_event_id) DO UPDATE SET
+               event_utc = EXCLUDED.event_utc,
+               event_local_date = EXCLUDED.event_local_date,
+               event_local_time = EXCLUDED.event_local_time,
+               venue_name = EXCLUDED.venue_name,
+               venue_lat = EXCLUDED.venue_lat,
+               venue_lon = EXCLUDED.venue_lon,
+               raw_status = EXCLUDED.raw_status,
+               collected_at = NOW()`,
+            [
+              // Two tracked teams meeting each other is one event id; the
+              // suffix keeps one row per team perspective without
+              // inventing a second real event.
+              `${ev.idEvent}:${t.key}`,
+              entry.code,
+              season,
+              t.key,
+              isHome,
+              isHome ? ev.strAwayTeam : ev.strHomeTeam,
+              instant,
+              marketDate,
+              marketTime,
+              ev.strVenue || (isHome ? t.stadium : null),
+              isHome ? t.stadiumLat : null,
+              isHome ? t.stadiumLon : null,
+              ev.strStatus || null,
+            ]
+          );
+          written++;
+        }
+      }
+    }
+  }
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n, MIN(event_local_date) AS lo, MAX(event_local_date) AS hi FROM ml_sports_events');
+  log(`[ML:Sports] Done. ${written} rows upserted this run; table holds ${rows[0].n} (${rows[0].lo} to ${rows[0].hi}).`);
+  return { written, total: rows[0].n };
+}
+
+// THE DAILY REFRESH, called at the end of every hourly collector run.
+// Skips without a key (says so, because a missing key is otherwise
+// invisible) and while the table's newest row is younger than FRESH_HOURS,
+// so the SportsDB requests happen about once a day. NEVER throws: the
+// collector's crowd readings are already committed by the time this runs,
+// and nothing about a schedule refresh may fail that run. Every outcome is
+// returned as a status for the tests and logged for the operator.
+async function refreshSportsIfDue(pool, { now = new Date(), log = console.log, pauseMs = PAUSE_MS } = {}) {
+  try {
+    if (!apiKey()) {
+      log('[ML:Sports] Schedule refresh skipped: SPORTSDB_API_KEY is not set on this service.');
+      return { status: 'no_key' };
+    }
+    const { rows } = await pool.query('SELECT MAX(collected_at) AS last FROM ml_sports_events');
+    const last = rows[0] && rows[0].last ? new Date(rows[0].last) : null;
+    const ageHours = last ? (now.getTime() - last.getTime()) / 3600000 : null;
+    if (ageHours != null && ageHours < FRESH_HOURS) {
+      log(`[ML:Sports] Schedule refresh skipped: newest row is ${ageHours.toFixed(1)}h old (refreshes after ${FRESH_HOURS}h).`);
+      return { status: 'fresh', ageHours };
+    }
+    log(`[ML:Sports] Schedule refresh due (${ageHours == null ? 'table empty' : `newest row ${ageHours.toFixed(1)}h old`}).`);
+    const result = await refreshSportsSchedules(pool, (league) => [currentSeasons(league, now)], log, { pauseMs });
+    return { status: 'refreshed', ...result };
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    try {
+      log(`[ML:Sports] Schedule refresh failed, crowd collection unaffected: ${message}`);
+    } catch (_) {
+      // A logger that throws must not turn a swallowed failure into a thrown one.
+    }
+    return { status: 'error', error: message };
+  }
+}
+
+async function cli() {
+  require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+  if (!process.env.DATABASE_URL && process.env.PGHOST) {
+    const host = process.env.PGHOST;
+    const port = process.env.PGPORT || 5432;
+    const user = process.env.PGUSER || 'postgres';
+    const pass = process.env.PGPASSWORD || '';
+    const db = process.env.PGDATABASE || 'railway';
+    process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
+  }
+
+  if (!apiKey()) {
     console.error('[ML:Sports] SPORTSDB_API_KEY not set (backend/.env).');
     process.exitCode = 1;
     return;
@@ -190,96 +343,30 @@ async function main() {
     return;
   }
 
+  const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 
+  const seasonsFor = seasonsArg
+    ? () => seasonsArg.split('=')[1].split(',')
+    : (league) => DEFAULT_SEASONS[league] || [];
   try {
-    const resolved = [];
-    for (const t of TRACKED) {
-      resolved.push(await resolveTeam(t));
-      await sleep(250);
-    }
-    console.log('[ML:Sports] Teams resolved:');
-    for (const t of resolved) {
-      console.log(`  ${t.key}: ${t.teamId} (${t.league}), arena ${t.stadium} @ ${t.stadiumLat},${t.stadiumLon}`);
-    }
-
-    // One schedule pull per (league, season), filtered to tracked teams on
-    // EITHER side, so shared leagues (two tracked teams meeting each other)
-    // are fetched once and written once per team perspective.
-    const byLeague = new Map();
-    for (const t of resolved) {
-      if (!byLeague.has(t.leagueId)) byLeague.set(t.leagueId, { league: t.league, code: t.code, teams: [] });
-      byLeague.get(t.leagueId).teams.push(t);
-    }
-
-    let written = 0;
-    for (const [leagueId, entry] of byLeague) {
-      const seasons = seasonsArg
-        ? seasonsArg.split('=')[1].split(',')
-        : DEFAULT_SEASONS[entry.league] || [];
-      for (const season of seasons) {
-        const data = await get(`eventsseason.php?id=${leagueId}&s=${encodeURIComponent(season)}`);
-        await sleep(250);
-        const events = data.events || [];
-        console.log(`[ML:Sports] ${entry.league} ${season}: ${events.length} league events fetched.`);
-        for (const ev of events) {
-          for (const t of entry.teams) {
-            const isHome = ev.idHomeTeam === t.teamId;
-            const isAway = ev.idAwayTeam === t.teamId;
-            if (!isHome && !isAway) continue;
-            const instant = eventInstant(ev);
-            const marketDate = instant ? MARKET_DATE_FMT.format(instant) : (ev.dateEventLocal || ev.dateEvent || null);
-            const marketTime = instant ? MARKET_TIME_FMT.format(instant) : (ev.strTimeLocal || ev.strTime || null);
-            await pool.query(
-              `INSERT INTO ml_sports_events
-                 (sportsdb_event_id, league, season, team_key, is_home, opponent,
-                  event_utc, event_local_date, event_local_time, venue_name,
-                  venue_lat, venue_lon, raw_status)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-               ON CONFLICT (sportsdb_event_id) DO UPDATE SET
-                 event_utc = EXCLUDED.event_utc,
-                 event_local_date = EXCLUDED.event_local_date,
-                 event_local_time = EXCLUDED.event_local_time,
-                 venue_name = EXCLUDED.venue_name,
-                 venue_lat = EXCLUDED.venue_lat,
-                 venue_lon = EXCLUDED.venue_lon,
-                 raw_status = EXCLUDED.raw_status,
-                 collected_at = NOW()`,
-              [
-                // Two tracked teams meeting each other is one event id; the
-                // suffix keeps one row per team perspective without
-                // inventing a second real event.
-                `${ev.idEvent}:${t.key}`,
-                entry.code,
-                season,
-                t.key,
-                isHome,
-                isHome ? ev.strAwayTeam : ev.strHomeTeam,
-                instant,
-                marketDate,
-                marketTime,
-                ev.strVenue || (isHome ? t.stadium : null),
-                isHome ? t.stadiumLat : null,
-                isHome ? t.stadiumLon : null,
-                ev.strStatus || null,
-              ]
-            );
-            written++;
-          }
-        }
-      }
-    }
-    const { rows } = await pool.query('SELECT COUNT(*)::int AS n, MIN(event_local_date) AS lo, MAX(event_local_date) AS hi FROM ml_sports_events');
-    console.log(`[ML:Sports] Done. ${written} rows upserted this run; table holds ${rows[0].n} (${rows[0].lo} to ${rows[0].hi}).`);
+    await refreshSportsSchedules(pool, seasonsFor);
   } finally {
     await pool.end();
   }
 }
 
-main().catch((err) => {
-  console.error('[ML:Sports] Fatal:', err.message);
-  process.exitCode = 1;
-});
+module.exports = {
+  currentSeasons, refreshSportsSchedules, refreshSportsIfDue,
+  parseStrMap, TRACKED, DEFAULT_SEASONS, FRESH_HOURS,
+};
+
+if (require.main === module) {
+  cli().catch((err) => {
+    console.error('[ML:Sports] Fatal:', err.message);
+    process.exitCode = 1;
+  });
+}

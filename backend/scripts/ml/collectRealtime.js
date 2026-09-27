@@ -17,6 +17,7 @@ const {
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
 const { buildRecentDeviation } = require('./buildRecentDeviation');
+const { refreshSportsIfDue } = require('./collectSportsSchedules');
 const { requireSlotIndex } = require('./collectWeekly');
 
 // Migration 024's realtime arbiter. Same reasoning as collectWeekly's: a
@@ -1813,6 +1814,15 @@ async function run() {
         console.error('[ML:Realtime] Recent-deviation refresh failed:', err.message);
       }
     }
+
+    // THE GAME SCHEDULE, refreshed about once a day from here because
+    // nothing else runs collectSportsSchedules.js, and serving and training
+    // both read ml_sports_events. It checks its own freshness (20 hours) and
+    // key, so most hours it is one SELECT. Holdout runs do it too: the table
+    // is not city scoped and the check makes a second caller harmless.
+    // refreshSportsIfDue never throws; the readings above are committed
+    // whatever it does.
+    await refreshSportsIfDue(pool);
   } finally {
     await pool.end().catch(() => {});
   }

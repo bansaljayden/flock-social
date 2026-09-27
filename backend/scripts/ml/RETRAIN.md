@@ -663,17 +663,25 @@ should either train on them as they are or cut event rows before the deploy
 date, and the band gate decides. The three user-feedback columns stay constant
 and stay in the plan's drop list.
 
-### The game schedule has no refresh
+### The game schedule refreshes from the hourly collector (2026-09-26)
 
-`collectSportsSchedules.js` runs on no schedule: costModel.js calls it a
-monthly chore, and the local `sports_events.csv` (2026-08-30) holds 540 games
-from 2025-08-16 with 12 dated in early September. A model trained with the
-sports family reads `ml_sports_events` at serve time (cached six hours), so a
-stale table serves "no game" on game nights. Proposal, not built: call it once
-a day from the hourly BESTTIME run (the first run after 04:00 local), for the
-current and next season only, a few dozen SportsDB requests on the flat $9
-key and no BestTime credits. Until then run it by hand before the October
-export and at least monthly after a sports-feature artifact ships.
+`collectSportsSchedules.js` ran on no schedule until 2026-09-26, and the local
+copy of `ml_sports_events` held 12 September games. A model trained with the
+sports family reads that table at serve time (cached six hours), so a stale
+table serves "no game" on game nights. Now `collectRealtime.js` calls
+`refreshSportsIfDue(pool)` at the end of every hourly run, after the
+recent-deviation rebuild and inside its try, holdout runs included. It skips
+when `SPORTSDB_API_KEY` is unset on the collector service (and logs that it
+did) or when `MAX(collected_at)` is under 20 hours old, so it pulls about once
+a day: the seasons `currentSeasons()` names for today (football by start year
+with January and February still last season's, NBA and NHL switching to the
+next season in July, the rest by calendar year), a few dozen SportsDB requests
+on the flat $9 key and no BestTime credits. It never throws; a SportsDB outage
+is a log line and the crowd rows are already committed. The collector service
+needs `SPORTSDB_API_KEY` for this to do anything, which the log line reports
+every hour it is missing. The by-hand CLI (`--verify`, `--seasons=`, the
+corpus-covering defaults) still works, and is still the way to backfill
+seasons older than the current one. Tests: `mlSportsRefresh`.
 
 ### Context-feature parity, checked (2026-09-26)
 
@@ -1875,7 +1883,9 @@ stamp false with no_observation_date, the migration's own vocabulary for a
 typical week. Standing chore for the five months: re-run
 collectSportsSchedules.js monthly, because the NBA and NHL 2026-27
 schedules were only partially published at first pull and reschedules
-drift.
+drift. Since 2026-09-26 the hourly collector does this daily for the
+current seasons (see "The game schedule refreshes from the hourly
+collector").
 
 ## Ticketmaster backfill: CLOSED, impossible (measured 2026-09-01)
 
