@@ -1937,6 +1937,16 @@ const openExternal = (u) => {
 // upload with no progress bar behind it.
 const CHAT_IMAGE_MAX_EDGE = 1600;
 const CHAT_IMAGE_MAX_CHARS = 700 * 1024;
+// What a PICKED file may weigh before it is read. It bounds nothing that is
+// sent: prepareChatImage takes a chat or DM photo to the two limits above and
+// the profile crop draws a 400px square, so this only keeps a file the web
+// view cannot sensibly decode from being read into memory. It was 5 MB, left
+// over from when the raw data URL went out as is, and that refused the
+// full-resolution JPEG iOS hands a file input for a 24 or 48 MP photo from the
+// phone's own camera, which the resize would have taken to 700 KB.
+const PICKED_PHOTO_MAX_MB = 25;
+const PICKED_PHOTO_MAX_BYTES = PICKED_PHOTO_MAX_MB * 1024 * 1024;
+const PICKED_PHOTO_TOO_BIG = `That photo is too big. Pick one under ${PICKED_PHOTO_MAX_MB} MB.`;
 // What the in-chat viewfinder asks its track for. Module scope so the hook
 // that uses it keeps a stable dependency list.
 const CAMERA_RES = { width: { ideal: 2560 }, height: { ideal: 1440 } };
@@ -12403,7 +12413,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const handleChatImageSelect = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('That photo is too big. Pick one under 5 MB.', 'error'); return; }
+    if (file.size > PICKED_PHOTO_MAX_BYTES) { showToast(PICKED_PHOTO_TOO_BIG, 'error'); return; }
     const reader = new FileReader();
     reader.onload = () => {
       prepareChatImage(reader.result).then(({ dataUrl, error }) => {
@@ -12667,8 +12677,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('Please upload a JPEG, PNG, GIF, or WebP image.', 'error');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      showToast('Image must be under 5 MB.', 'error');
+    if (file.size > PICKED_PHOTO_MAX_BYTES) {
+      showToast(PICKED_PHOTO_TOO_BIG, 'error');
       return;
     }
 
@@ -15011,7 +15021,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const handleDmImageSelect = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('That photo is too big. Pick one under 5 MB.', 'error'); return; }
+    if (file.size > PICKED_PHOTO_MAX_BYTES) { showToast(PICKED_PHOTO_TOO_BIG, 'error'); return; }
     const reader = new FileReader();
     reader.onload = () => {
       prepareChatImage(reader.result).then(({ dataUrl, error }) => {
