@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 25, 2026';
+const EFFECTIVE_DATE = 'September 27, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -562,8 +562,11 @@ export default function TermsOfService() {
           You may stop using Flock and delete your account at any time from the app (You
           &rarr; Delete account, at the bottom of that tab) or via our <a href="/delete-account">account deletion page</a>.
           Deleting your account also deletes every flock you created, including its chat,
-          RSVPs, and votes, for everyone who was in it, and it removes your direct message
-          threads from the other person's app as well. Deletion is irreversible. Our{' '}
+          RSVPs, and votes, for everyone who was in it, except a plan whose bill split
+          somebody else paid and somebody besides you still owes on, which passes to the
+          person who paid. It
+          also removes your direct message threads from the other person's app. Deletion is
+          irreversible. Our{' '}
           <a href="/privacy">Privacy Policy</a> lists exactly what is erased and the few
           things that survive.
         </p>

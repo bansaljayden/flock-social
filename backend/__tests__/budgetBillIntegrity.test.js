@@ -61,6 +61,11 @@
 //  13. A PUSH CARRYING A QUARANTINED BILL'S FIGURE is never sent: not from the
 //      outbox, where one queued before 089 kept its body, and not fresh. The
 //      boot deletes such a push a restore brings back.
+//  14. A CREATOR DELETING THEIR ACCOUNT DOES NOT TAKE A BILL OTHERS STILL OWE
+//      ON. flocks.creator_id cascades, so the plan, the bill and every share
+//      went with the account. A plan where one member still owes another is
+//      handed to the payer first and survives; every other plan the account
+//      created still goes, and its members are told.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1417,4 +1422,87 @@ test('a push a restore brings back for a quarantined bill is deleted by the boot
   const [, sql] = verify.INVARIANTS.find(([n]) => /queued push/.test(n)) || [];
   assert.ok(sql, 'verify-backup has no invariant for queued pushes');
   assert.equal(Number((await one(sql)).n), 0);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. A creator deleting their account does not take a bill others still owe on
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ACCOUNT_PASSWORD = 'delete-proof-9';
+// DELETE /api/users/me asks for the account password first.
+async function withPassword(user) {
+  await pool.query('UPDATE users SET password = $2 WHERE id = $1', [user.id, await require('bcrypt').hash(ACCOUNT_PASSWORD, 4)]);
+  return user;
+}
+const deleteAccount = (user) => call('DELETE', '/api/users/me', { token: user.token, body: { password: ACCOUNT_PASSWORD } });
+const planExists = async (flockId) => (await pool.query('SELECT 1 FROM flocks WHERE id = $1', [flockId])).rowCount === 1;
+
+test('a creator who deletes their account while others still owe hands the plan to the payer, and the bill survives', async () => {
+  // Carol creates the plan, Alice pays, Bob and Dave settle, Carol and Eve
+  // still owe. flocks.creator_id cascades, so the deletion took the plan, the
+  // bill and every share: Eve's debt to Alice and the record that Bob and
+  // Dave paid, all gone.
+  const carol = await withPassword(await mkUser('Carol'));
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const dave = await mkUser('Dave');
+  const eve = await mkUser('Eve');
+  const flockId = await mkFlock(carol, [alice, bob, dave, eve], { budget: false, ghost: false });
+  const posted = await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: 250, tipPercent: 0, splitType: 'equal', paidBy: alice.id },
+  });
+  assert.equal(posted.status, 201, posted.text);
+  for (const u of [bob, dave]) {
+    assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: u.token })).status, 200);
+  }
+  // The plan's own delete door refuses her while money is owed on it.
+  assert.equal((await call('DELETE', `/api/flocks/${flockId}`, { token: carol.token })).status, 409);
+
+  emits.length = 0;
+  const gone = await deleteAccount(carol);
+  assert.equal(gone.status, 200, gone.text);
+  assert.equal((await pool.query('SELECT 1 FROM users WHERE id = $1', [carol.id])).rowCount, 0, 'the account is gone');
+
+  const plan = await one('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+  assert.ok(plan, 'the plan and the bill in it were cascaded away');
+  assert.equal(plan.creator_id, alice.id, 'the plan went to the person who is owed');
+  const read = await call('GET', `/api/billing/${flockId}`, { token: eve.token });
+  assert.equal(read.status, 200, read.text);
+  assert.deepEqual(
+    read.body.bill.shares.map((s) => [s.name, s.settled]).sort(),
+    [['Alice', true], ['Bob', true], ['Dave', true], ['Eve', false]],
+    'every share but the deleted account\'s own is still on the bill, paid or not'
+  );
+  assert.equal(read.body.bill.hasPayer, true);
+  assert.ok(!emits.some((e) => e.event === 'flock_deleted' && e.payload.flockId === flockId),
+    'nobody is told a plan that survived is off');
+});
+
+test('a plan where nobody else is owed still goes with its creator, and its members are told', async () => {
+  const carol = await withPassword(await mkUser('Carol'));
+  const alice = await mkUser('Alice');
+  const eve = await mkUser('Eve');
+  const opts = { budget: false, ghost: false };
+
+  // Carol paid and Eve owes her: once Carol is gone there is nobody to owe.
+  const carolPaid = await mkFlock(carol, [alice, eve], opts);
+  assert.equal((await call('POST', `/api/billing/${carolPaid}/create`, {
+    token: carol.token, body: { totalAmount: 90, tipPercent: 0, splitType: 'equal', paidBy: carol.id },
+  })).status, 201);
+  // Alice paid and only Carol still owes her: Carol's share goes with her.
+  const onlyCarolOwes = await mkFlock(carol, [alice, eve], opts);
+  assert.equal((await call('POST', `/api/billing/${onlyCarolOwes}/create`, {
+    token: alice.token, body: { totalAmount: 90, tipPercent: 0, splitType: 'equal', paidBy: alice.id },
+  })).status, 201);
+  assert.equal((await call('POST', `/api/billing/${onlyCarolOwes}/settle`, { token: eve.token })).status, 200);
+  // No bill at all.
+  const noBill = await mkFlock(carol, [alice], opts);
+
+  emits.length = 0;
+  const gone = await deleteAccount(carol);
+  assert.equal(gone.status, 200, gone.text);
+  for (const [label, id] of [['carol paid', carolPaid], ['only carol owes', onlyCarolOwes], ['no bill', noBill]]) {
+    assert.equal(await planExists(id), false, `${label}: the plan survived with nobody owed on it`);
+    assert.ok(emits.some((e) => e.event === 'flock_deleted' && e.payload.flockId === id), `${label}: its members were not told`);
+  }
 });

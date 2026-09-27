@@ -311,6 +311,18 @@ describe('deletion copy matches the deletion path', () => {
     expect(deletePage).toMatch(/every flock you created/i);
     expect(terms).toMatch(/deletes every flock you created/i);
 
+    // With one exception, made before the cascade can reach it: a plan whose
+    // bill somebody else paid and is still owed on goes to that payer
+    // (HAND_ON_OWED_PLANS_SQL), so the debt between two other people is not
+    // erased with the account. Every page that says the plans go says so.
+    const users = read('backend', 'routes', 'users.js');
+    expect(users).toMatch(/SET creator_id = heir\.user_id/);
+    expect(users).toMatch(/await client\.query\(HAND_ON_OWED_PLANS_SQL, \[req\.user\.id\]\)/);
+    expect(deletePage).toMatch(/the plan\s+goes\s+to\s+the\s+person\s+who\s+paid/);
+    expect(terms).toMatch(/passes\s+to\s+the\s+person\s+who\s+paid/);
+    expect(privacy).toMatch(/handed to the person who paid instead of being deleted/);
+    expect(read('frontend', 'src', 'screens', 'ProfileSettings.js')).toMatch(/passes to the person who paid/);
+
     // A DM row belongs to both people: either account being deleted takes the
     // thread with it, which is why both pages say so.
     expect(schema).toMatch(
