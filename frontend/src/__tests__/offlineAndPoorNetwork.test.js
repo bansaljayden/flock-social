@@ -29,7 +29,7 @@
  * can see undoes the release and never schedules another one.
  */
 
-import request, { uploadProfileImage } from '../services/api';
+import request, { uploadProfileImage, markReachable, isOffline } from '../services/api';
 import { voteForVenue } from '../services/api';
 import * as socketApi from '../services/socket';
 import { io } from 'socket.io-client';
@@ -375,6 +375,66 @@ describe('what the app can tell the user', () => {
     expect(err.isNetworkError).toBe(true);
     expect(typeof err.message).toBe('string');
     expect(err.message.length).toBeGreaterThan(0);
+  });
+
+  // THE OFFLINE GATE'S "Try again" USED TO PROVE THE NETWORK TO ITSELF ALONE.
+  // navigator.onLine stuck false on a network that works is the state the
+  // gate's button exists to disprove. Its probe succeeded, the gate went away,
+  // and request() kept refusing every call at the top of its loop with
+  // "You're offline", with the one screen that explains that gone. The probe's
+  // answer now reaches request(), and holds until the browser itself reports a
+  // change, which is newer evidence than the probe.
+  test('a Try again that got an answer overrules a stuck navigator.onLine, until the browser reports a change', async () => {
+    const ok = () => global.fetch.mockImplementation((url, opts) => Promise.resolve(streamingRes({
+      chunks: ['{"flocks":[]}'],
+      signal: opts.signal,
+    })));
+    try {
+      setOnline(false);
+      expect(isOffline()).toBe(true);
+      expect((await rejection(request('/api/flocks'))).isOffline).toBe(true);
+      expect(global.fetch).not.toHaveBeenCalled();
+
+      // What OfflineGate does when its probe gets any answer at all.
+      markReachable();
+      expect(isOffline()).toBe(false);
+      ok();
+      await expect(request('/api/flocks')).resolves.toEqual({ flocks: [] });
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // The browser says offline again. That outranks the probe.
+      window.dispatchEvent(new Event('offline'));
+      expect(isOffline()).toBe(true);
+      expect((await rejection(request('/api/flocks'))).isOffline).toBe(true);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      // Module state: leave no override behind for the tests after this one.
+      window.dispatchEvent(new Event('online'));
+    }
+  });
+
+  test('without a probe, a stuck navigator.onLine still refuses before sending', async () => {
+    setOnline(false);
+    const err = await rejection(request('/api/flocks'));
+    expect(err.isOffline).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('the gate tells api.js before it hides, and starts from the same answer', () => {
+    // eslint-disable-next-line global-require
+    const fs = require('fs');
+    // eslint-disable-next-line global-require
+    const path = require('path');
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+    const gate = app.slice(app.indexOf('const OfflineGate = () => {'), app.indexOf('<FlockBirdGame />'));
+    expect(gate).toContain('useState(() => isDeviceOffline())');
+    const probe = gate.indexOf("await fetch(`${BASE_URL}/api/auth/me`, { cache: 'no-store' });");
+    const told = gate.indexOf('markReachable();');
+    const hidden = gate.indexOf('setOffline(false);', probe);
+    expect(probe).toBeGreaterThan(-1);
+    expect(told).toBeGreaterThan(probe);
+    expect(told).toBeLessThan(hidden);
+    expect(app).toMatch(/markReachable, isOffline as isDeviceOffline \} from '\.\/services\/api';/);
   });
 });
 
