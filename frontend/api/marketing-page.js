@@ -163,7 +163,7 @@ const PAGE_BLOCKS = {
     ["li", "Every spot near you, scored the same way"],
     ["li", "A quieter pick nearby when your first choice is slammed"],
     ["li", "Three reports from people at a venue move its score for that night and hour"],
-    ["p", "The map, the pins, and the numbers are live, made the same way they are in the app. Tested against 4,183 real live readings they had not seen, 78.8% of Flock's crowd numbers landed within one crowd level."],
+    ["p", "The map, the pins, and the numbers are live, made the same way they are in the app. Tested against 4,183 real live readings they had not seen, 78.8% of Flock's crowd numbers landed within one crowd level and 53.8% within 10 points."],
     ["h2", "“Idk, you pick.” Birdie picks."],
     ["p", "Ask Birdie the way you’d ask a friend who knows the city. It comes back with real places near you."],
     ["p", "Birdie is AI. It runs on Google Gemini, and the crowd numbers it quotes are the app’s own."],
