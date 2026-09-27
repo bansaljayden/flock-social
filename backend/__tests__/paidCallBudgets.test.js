@@ -373,13 +373,19 @@ test('an alternatives request served from warm caches charges nothing', async ()
     'a request that made no Google call was charged for one');
 });
 
-test('the alternatives cache key holds nothing the caller chooses', async () => {
+test('the alternatives cache key holds nothing the caller chooses', async (t) => {
   // The venue's own clock overrides the caller's localHour and localDay before
   // anything is scored, so every (hour, day) a client sends asks the same
   // question. Keyed on them, each new pair was a fresh entry in the map every
   // card shares, and with the details and neighbour search already warm it
   // cost the caller no Places unit to write one. Only the first request here
   // may score anything; the rest must be the cached answer.
+  //
+  // The key does carry the SERVER's hour, so the server's clock is held still
+  // for the case: a run straddling the top of the hour would otherwise see a
+  // new key for a reason this test is not about and re-score. Frozen at the
+  // real instant, so the budget windows read what they would have.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const first = await get('/api/crowd/PLACE_ALT_KEY/alternatives?localHour=1&localDay=1');
   assert.strictEqual(first.status, 200);
   const scoredOnce = predictorCalls.length;
