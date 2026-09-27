@@ -113,6 +113,7 @@ export default function ProfileSettings({
   exportError,
   exportNeedsReauth,
   exportPassword,
+  exportReady,
   exportingData,
   flocks,
   flocksError,
@@ -890,15 +891,21 @@ export default function ProfileSettings({
                     that signs in with a password gets the box; the others get
                     the rule, said before the tap. Unknown (an older payload)
                     keeps the box. */}
-                {!exportNeedsReauth && authUser?.sign_in_method && authUser.sign_in_method !== 'password' && (
+                {!exportReady && !exportNeedsReauth && authUser?.sign_in_method && authUser.sign_in_method !== 'password' && (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>You sign in with {authUser.sign_in_method === 'apple' ? 'Apple' : 'Google'}. If it has been more than five minutes since you signed in, Flock will ask you to sign in again first.</p>
+                )}
+                {/* The export came back after its tap was spent (App.js
+                    exportHeldRef). Identity is already proven and the data is
+                    in hand, so the box goes and one more tap hands it over. */}
+                {exportReady && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>Your data is ready. Tap Save my data to choose where it goes.</p>
                 )}
                 {/* Typed in the box, published to App.js on a pause, the way
                     every other field on this screen works. Get my data reads
                     the password from App.js on the tap and the box publishes a
                     pending value on pointerdown, so the tap cannot send the
                     password a character short. */}
-                {!exportNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
+                {!exportReady && !exportNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
                   <SearchInputLocal
                     type="password"
                     autoComplete="current-password"
@@ -915,7 +922,7 @@ export default function ProfileSettings({
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button className="hit44 glass-btn glass-secondary" disabled={exportingData} onClick={() => setShowExportData(false)} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button className="hit44 glass-btn glass-primary" disabled={exportingData || exportNeedsReauth} onClick={handleExportData} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: 'none', backgroundColor: colors.navy, color: '#ffffff', fontWeight: '700', cursor: exportingData ? 'default' : 'pointer' }}>{exportingData ? 'Preparing…' : 'Get my data'}</button>
+                  <button className="hit44 glass-btn glass-primary" disabled={exportingData || exportNeedsReauth} onClick={handleExportData} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: 'none', backgroundColor: colors.navy, color: '#ffffff', fontWeight: '700', cursor: exportingData ? 'default' : 'pointer' }}>{exportingData ? 'Preparing…' : exportReady ? 'Save my data' : 'Get my data'}</button>
                 </div>
               </div>
             </div>

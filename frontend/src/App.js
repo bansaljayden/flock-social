@@ -7782,6 +7782,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [exportError, setExportError] = useState('');
   const [exportNeedsReauth, setExportNeedsReauth] = useState(false);
   const [exportingData, setExportingData] = useState(false);
+  // An export that arrived after its tap was spent, held so a second tap can
+  // hand it over without spending another export slot. The ref holds the data,
+  // the flag is what the sheet renders from; both go when the sheet closes.
+  const exportHeldRef = useRef(null);
+  const [exportReady, setExportReady] = useState(false);
 
   // In-app account deletion (Apple 5.1.1(v))
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
@@ -13472,24 +13477,45 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      reauthRequired 'password' when it wants one and 'reauth' when an OAuth
      account's session is too old to count as proof. Treating either as an error
      would tell somebody their export failed when the server was asking a
-     question. Same shape the delete flow already uses. */
+     question. Same shape the delete flow already uses.
+     A held export (see exportHeldRef) skips the request and goes straight to
+     delivery with nothing awaited in front of it, so the share sheet or the
+     clipboard gets this tap's own activation. */
   const handleExportData = useCallback(async () => {
+    const held = exportHeldRef.current;
     setExportingData(true);
     setExportError('');
     try {
-      const payload = await exportMyData(exportPassword || undefined);
-      // Fetched here rather than imported at the top of the file. This handler
-      // is already awaiting the server, so the chunk arrives alongside a
-      // request that takes far longer, and a failure to fetch it lands in the
-      // same catch below that a failed delivery does.
-      const { deliverExport } = await import('./services/dataExport');
+      let payload;
+      let deliverExport;
+      if (held) {
+        ({ payload, deliverExport } = held);
+      } else {
+        payload = await exportMyData(exportPassword || undefined);
+        // Fetched here rather than imported at the top of the file. This handler
+        // is already awaiting the server, so the chunk arrives alongside a
+        // request that takes far longer, and a failure to fetch it lands in the
+        // same catch below that a failed delivery does.
+        ({ deliverExport } = await import('./services/dataExport'));
+      }
       const how = await deliverExport(payload);
+      if (how === 'needs-tap') {
+        // The data is here, but waiting for it spent the tap, so the share
+        // sheet and the clipboard both said no. Held, and the button becomes
+        // Save my data, whose tap hands it over without another export slot.
+        exportHeldRef.current = { payload, deliverExport };
+        setExportReady(true);
+        return;
+      }
       if (how === 'cancelled') {
         // They saw the share sheet and said no. The export slot is spent, so
         // say what happened rather than closing the sheet on a success toast.
+        if (held) { setExportError('Nothing was saved. Tap Save my data to open the share sheet again.'); return; }
         setExportError('Nothing was saved. Tap Get my data to open the share sheet again.');
         return;
       }
+      exportHeldRef.current = null;
+      setExportReady(false);
       setShowExportData(false);
       setExportPassword('');
       // Say which of the three actually happened. "Downloaded" after a
@@ -13522,6 +13548,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setExportingData(false);
     }
   }, [exportPassword, showToast]);
+
+  // A held export does not outlive the sheet: it is every message and every
+  // contact in one object, and closing the sheet is the person saying no.
+  useEffect(() => {
+    if (showExportData) return;
+    exportHeldRef.current = null;
+    setExportReady(false);
+  }, [showExportData]);
 
   const handleShareLocationWithContacts = useCallback(async () => {
     if (trustedContacts.length === 0) {
@@ -17987,6 +18021,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           exportError,
           exportNeedsReauth,
           exportPassword,
+          exportReady,
           exportingData,
           flocks,
           flocksError,

@@ -38,15 +38,22 @@ const API = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'u
 
 const PAYLOAD = { generated_at: '2026-08-26T00:00:00.000Z', flocks: [{ name: 'Friday' }] };
 
-/** A navigator/document stand-in with only the pieces each branch needs. */
-function harness({ canShare = false, shareImpl, clipboard = true, dom = true } = {}) {
+/**
+ * A navigator/document stand-in with only the pieces each branch needs.
+ * `native` is the Capacitor shell, which HAS a DOM: WKWebView has document,
+ * Blob and URL.createObjectURL, so the shell is modelled with dom left on.
+ * `clipboardImpl` replaces the copy, for a clipboard that refuses.
+ */
+function harness({ canShare = false, shareImpl, clipboard = true, clipboardImpl, dom = true, native = false } = {}) {
   const calls = { shared: 0, clicked: 0, copied: 0, downloadName: null, blobType: null };
   const nav = {};
   if (shareImpl || canShare) {
     nav.canShare = () => canShare;
     nav.share = async (...args) => { calls.shared += 1; if (shareImpl) return shareImpl(...args); return undefined; };
   }
-  if (clipboard) nav.clipboard = { writeText: async () => { calls.copied += 1; } };
+  if (clipboard) {
+    nav.clipboard = { writeText: async (...args) => { if (clipboardImpl) return clipboardImpl(...args); calls.copied += 1; return undefined; } };
+  }
 
   const anchor = {
     href: '', style: {},
@@ -59,8 +66,11 @@ function harness({ canShare = false, shareImpl, clipboard = true, dom = true } =
   const BlobCtor = dom ? function BlobStub(parts, opts) { calls.blobType = opts && opts.type; } : undefined;
   const FileCtor = function FileStub(parts, name, opts) { this.name = name; this.type = opts && opts.type; };
 
-  return { calls, deps: { nav, doc, urlApi, BlobCtor, FileCtor } };
+  return { calls, deps: { nav, doc, urlApi, BlobCtor, FileCtor, native } };
 }
+
+/** What WebKit throws when a share or a copy comes after the tap was spent. */
+const notAllowed = () => Object.assign(new Error('The request is not allowed by the user agent'), { name: 'NotAllowedError' });
 
 describe('the payload itself', () => {
   it('is pretty-printed, because a person is going to open it', () => {
@@ -130,7 +140,6 @@ describe('the three routes out, in order', () => {
   });
 
   it('lands on the clipboard when there is no DOM to download with', async () => {
-    // The shell case: no anchor download, no plugin, no file system.
     const { calls, deps } = harness({ canShare: false, dom: false });
     const how = await deliverExport(PAYLOAD, deps);
     expect(how).toBe('copied');
@@ -140,6 +149,69 @@ describe('the three routes out, in order', () => {
   it('throws rather than reporting success when no route exists at all', async () => {
     const { deps } = harness({ canShare: false, dom: false, clipboard: false });
     await expect(deliverExport(PAYLOAD, deps)).rejects.toThrow(/could not be saved/i);
+  });
+});
+
+describe('inside the native shell', () => {
+  // The shell has a DOM, so the anchor rung used to run there: Capacitor's
+  // navigation delegate hands a blob: URL to UIApplication.open, which does
+  // nothing with it, and cancels. click() did not throw, the rung answered
+  // 'downloaded', and the person was told their data was downloaded when no
+  // file existed anywhere.
+  it('never answers downloaded, because the anchor saves nothing there', async () => {
+    const { calls, deps } = harness({ canShare: false, native: true });
+    const how = await deliverExport(PAYLOAD, deps);
+    expect(calls.clicked).toBe(0);
+    expect(how).toBe('copied');
+    expect(calls.copied).toBe(1);
+  });
+
+  it('a share refused for any reason goes to the clipboard, not the anchor', async () => {
+    const { calls, deps } = harness({ canShare: true, native: true, shareImpl: () => { throw new Error('not supported'); } });
+    const how = await deliverExport(PAYLOAD, deps);
+    expect(calls.clicked).toBe(0);
+    expect(how).toBe('copied');
+  });
+
+  it('a share and a copy both refused for a spent tap answer needs-tap, not success', async () => {
+    // The export request and the chunk import come first, and WebKit gives the
+    // sheet and the clipboard only to the tap's own activation.
+    const { calls, deps } = harness({
+      canShare: true, native: true,
+      shareImpl: () => { throw notAllowed(); },
+      clipboardImpl: () => { throw notAllowed(); },
+    });
+    const how = await deliverExport(PAYLOAD, deps);
+    expect(how).toBe('needs-tap');
+    expect(calls.clicked).toBe(0);
+  });
+
+  it('a spent tap with no share sheet at all is still needs-tap', async () => {
+    const { deps } = harness({ canShare: false, native: true, clipboardImpl: () => { throw notAllowed(); } });
+    expect(await deliverExport(PAYLOAD, deps)).toBe('needs-tap');
+  });
+
+  it('a clipboard failure that is not about the tap is still an error', async () => {
+    const { deps } = harness({ canShare: false, native: true, clipboardImpl: () => { throw new Error('clipboard broke'); } });
+    await expect(deliverExport(PAYLOAD, deps)).rejects.toThrow('clipboard broke');
+  });
+
+  it('the share sheet is asked before anything is awaited, so a fresh tap reaches it', async () => {
+    // What the second tap relies on. Save my data calls this straight from the
+    // tap, and the call to share has to happen inside that same turn.
+    const { calls, deps } = harness({ canShare: true, native: true });
+    const pending = deliverExport(PAYLOAD, deps);
+    expect(calls.shared).toBe(1);
+    expect(await pending).toBe('shared');
+  });
+});
+
+describe('on the web, a spent tap still ends in a file', () => {
+  it('a share refused for the tap falls through to the download', async () => {
+    const { calls, deps } = harness({ canShare: true, shareImpl: () => { throw notAllowed(); } });
+    const how = await deliverExport(PAYLOAD, deps);
+    expect(how).toBe('downloaded');
+    expect(calls.clicked).toBe(1);
   });
 });
 
@@ -204,5 +276,25 @@ describe('the screen', () => {
 
   it('clears the typed password once the export succeeds', () => {
     expect(handler).toContain("setExportPassword('')");
+  });
+
+  it('holds an export whose tap was spent, and the next tap sends it with nothing awaited first', () => {
+    // needs-tap keeps the payload and the delivery function; it does not close
+    // the sheet or say anything was saved.
+    const needsTap = handler.slice(handler.indexOf("if (how === 'needs-tap') {"));
+    expect(needsTap).toMatch(/^if \(how === 'needs-tap'\) \{[\s\S]{0,400}exportHeldRef\.current = \{ payload, deliverExport \};\s*setExportReady\(true\);\s*return;/);
+    // The held branch takes both from the ref. The request and the chunk
+    // import live only in the other branch, so the tap's activation reaches
+    // deliverExport unspent.
+    expect(handler).toMatch(/if \(held\) \{\s*\(\{ payload, deliverExport \} = held\);\s*\} else \{\s*payload = await exportMyData\(/);
+    const held = handler.slice(handler.indexOf('const held = exportHeldRef.current;'), handler.indexOf('const how = await deliverExport(payload);'));
+    expect(held.slice(0, held.indexOf('} else {'))).not.toMatch(/\bawait\b/);
+    // And it is dropped when the sheet closes.
+    expect(APP).toMatch(/if \(showExportData\) return;\s*exportHeldRef\.current = null;\s*setExportReady\(false\);/);
+  });
+
+  it('says the data is ready and names the button that saves it', () => {
+    expect(APP).toContain("exportReady ? 'Save my data' : 'Get my data'");
+    expect(APP).toContain('Your data is ready. Tap Save my data to choose where it goes.');
   });
 });
