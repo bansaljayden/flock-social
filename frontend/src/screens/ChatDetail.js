@@ -202,12 +202,14 @@ import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel'
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 
 /* A half-written message, per flock, for the length of the session.
-   Module scope because App.js unmounts this screen on every navigation,
-   and keyed by flock id because ONE shared box is the original bug: the
+   Outside this screen because App.js unmounts it on every navigation, and
+   keyed by flock id because ONE shared box is the original bug: the
    composer text lives in a single ref in App.js that the DM composer
    reads too, so an unkeyed draft is a group sentence sitting in a private
-   thread. Cleared for a flock when its draft is sent or emptied. */
-const FLOCK_DRAFTS = new Map();
+   thread. Keyed by the account as well, and emptied at sign-out, because
+   a Map here outlived the session that wrote it: lib/flockDrafts.js says
+   how that put one account's sentence in the next account's box. */
+import { readFlockDraft, keepFlockDraft } from '../lib/flockDrafts';
 
 /* STABLE IDENTITY, LATEST CLOSURE: components/chat/useStableFn.js, with the
    whole explanation of what it is for and what it does NOT cover.
@@ -953,8 +955,11 @@ export default function ChatDetail({
        unmount that every screen change causes (App.js renders one screen at a
        time through ScreenSlot). Module scope, not localStorage: a draft is
        worth a trip back to the same flock in the same session, not worth
-       persisting a half-written sentence to disk. */
-    const [draft, setDraft] = React.useState(() => FLOCK_DRAFTS.get(selectedFlockId) || '');
+       persisting a half-written sentence to disk. Filed under the account
+       that wrote it (lib/flockDrafts.js), so a phone handed to somebody
+       else never opens their box on this person's words. */
+    const draftAccountId = authUser?.id;
+    const [draft, setDraft] = React.useState(() => readFlockDraft(draftAccountId, selectedFlockId));
     /* The mirror, readable from the effect below without widening its deps. */
     const draftRef = React.useRef('');
     const writeDraft = React.useCallback((next) => {
@@ -970,11 +975,11 @@ export default function ChatDetail({
       const id = selectedFlockId;
       if (!id || restoredForRef.current === id) return;
       restoredForRef.current = id;
-      const stashed = FLOCK_DRAFTS.get(id) || '';
+      const stashed = readFlockDraft(draftAccountId, id);
       if (!stashed) return;
       writeDraft(stashed);
       setChatInput(stashed);
-    }, [selectedFlockId, writeDraft, setChatInput]);
+    }, [selectedFlockId, draftAccountId, writeDraft, setChatInput]);
 
     const hadTextRef = React.useRef(false);
     React.useEffect(() => {
@@ -1141,10 +1146,7 @@ export default function ChatDetail({
          which setChatInput above has already emptied, so keeping this
          screen's own copy against this flock's id costs nothing and returns
          the text when the same thread is opened again. */
-      if (selectedFlockId) {
-        const keep = draftRef.current;
-        if (keep) FLOCK_DRAFTS.set(selectedFlockId, keep); else FLOCK_DRAFTS.delete(selectedFlockId);
-      }
+      if (selectedFlockId) keepFlockDraft(draftAccountId, selectedFlockId, draftRef.current);
       restoredForRef.current = null;
       writeDraft('');
       /* THE SAME HOLE, and here it predates the rebuild. `shareImageToChat`
