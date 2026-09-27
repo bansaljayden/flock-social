@@ -57,6 +57,7 @@ import React from 'react';
 import { FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES } from '../components/ui/FormBits';
 import { submitVenueFeedback } from '../services/api';
 import { lsGet } from '../lib/storage';
+import { isNightOver } from '../lib/planNight';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
@@ -196,6 +197,11 @@ export default function FlockDetail({
     // banner that could never be cleared and asked everyone to rate a night
     // that did not happen.
     const isDone = flock.status === 'completed';
+    // A locked-in plan an hour past its time, which the host has not slid to
+    // done. Most never do, and the sweep completes the plan only once the
+    // server has stopped verifying reports on it, so the feedback card below
+    // waits for this OR done (lib/planNight.js has the whole account).
+    const nightOver = isNightOver(flock);
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
     // completed the night hours after it ended and there was no sheet to skip.
@@ -521,8 +527,9 @@ export default function FlockDetail({
 
           {/* Post-hangout feedback prompt, only once the night happened.
               isDone and not isCompleted: a cancelled plan has no night to
-              rate (see isDone above). */}
-          {isDone && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
+              rate (see isDone above). nightOver asks while a report still
+              counts, rather than the morning after it stopped. */}
+          {(isDone || nightOver) && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: '0 0 10px' }}>How was {flock.venue}?</p>
 

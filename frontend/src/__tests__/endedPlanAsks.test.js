@@ -12,6 +12,13 @@
 //   refuses it with a 409). flockSweep cancels every plan nobody locked in, so
 //   this was the most common way a plan ended.
 //
+//   A LOCKED-IN PLAN ASKS HOW IT WAS AN HOUR AFTER ITS TIME, not only once it
+//   is completed. Most hosts never slide "done", so most plans are completed
+//   by the sweep 12 hours after their time, and routes/feedback.js stops
+//   verifying a member's report at exactly that point. The card used to appear
+//   just after the answer stopped counting. lib/planNight.js decides the hour,
+//   and the Nest's chip reads the same function.
+//
 // The screen is rendered for real, from its own parameter list, so a prop
 // added to it arrives here as a function and cannot quietly take a falsy
 // branch that makes a test pass for the wrong reason.
@@ -165,5 +172,64 @@ describe('a cancelled plan', () => {
     render(React.createElement(FlockDetail, detailProps(endedFlock('cancelled'))));
     expect(screen.getAllByText('Cancelled').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Do Friday again' })).toBeInTheDocument();
+  });
+});
+
+describe('a locked-in plan whose night is over', () => {
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+
+  test('asks how it was an hour after its time, before anyone slides done', () => {
+    const lastNight = endedFlock('confirmed', { eventTime: hoursAgo(2) });
+    for (const viewer of [HOST, MEMBER]) {
+      render(React.createElement(FlockDetail, detailProps(lastNight, { authUser: { id: viewer } })));
+      expect(screen.getByText('How was The Vault?')).toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  test('is not asked while the night is still on, or before it starts', () => {
+    for (const eventTime of [hoursAgo(0.5), hoursAgo(-3)]) {
+      render(React.createElement(FlockDetail, detailProps(endedFlock('confirmed', { eventTime }))));
+      expect(screen.queryByText('How was The Vault?')).toBeNull();
+      cleanup();
+    }
+  });
+
+  test('is not asked of a plan nobody locked in, whose night may not have happened', () => {
+    render(React.createElement(FlockDetail, detailProps(endedFlock('voting', { eventTime: hoursAgo(2) }))));
+    expect(screen.queryByText('How was The Vault?')).toBeNull();
+  });
+
+  test('is asked once: an answered or skipped plan stays answered', () => {
+    const lastNight = endedFlock('confirmed', { eventTime: hoursAgo(2) });
+    render(React.createElement(FlockDetail, detailProps(lastNight, { submittedFeedback: new Set([lastNight.id]) })));
+    expect(screen.queryByText('How was The Vault?')).toBeNull();
+  });
+
+  test('still leaves attendance to the done step, which the server takes only once completed', () => {
+    render(React.createElement(FlockDetail, detailProps(endedFlock('confirmed', { eventTime: hoursAgo(2) }))));
+    expect(screen.queryByText('Who showed up?')).toBeNull();
+    expect(screen.getByText('Night done? Slide to complete')).toBeInTheDocument();
+  });
+});
+
+describe('the Nest reads the same hour', () => {
+  const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+  const i = APP.indexOf('const HomeScreen = () => {');
+  const home = APP.slice(i, i + 40000);
+
+  test('a plan is flagged from the shared helper, only with a venue to rate and no answer yet', () => {
+    expect(APP).toMatch(/import \{ isNightOver \} from '\.\/lib\/planNight';/);
+    expect(home).toMatch(/askHowItWas: isNightOver\(f\) && !!f\.venueId && !submittedFeedback\.has\(f\.id\),/);
+  });
+
+  test('its chip asks instead of saying Locked In', () => {
+    expect(home).toMatch(/f\.askHowItWas \? 'How was it\?' : 'Locked In'/);
+    // Behind the statuses that already have their own word.
+    expect(home).toMatch(/f\.status === 'cancelled' \? 'Cancelled' : f\.askHowItWas \? 'How was it\?'/);
+  });
+
+  test('the card still opens the plan screen, where the question lives', () => {
+    expect(home).toMatch(/onClick=\{\(\) => \{ setSelectedFlockId\(f\.id\); setCurrentScreen\('detail'\); \}\}/);
   });
 });
