@@ -1136,7 +1136,7 @@ export default function LandingPage() {
             </p>
             <div className="lp-cta-row">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
-              <a className="lp-btn lp-btn-ghost lp-btn-lg" href="/app">Log in</a>
+              <a className="lp-btn lp-btn-ghost lp-btn-lg" href="/app">Sign in</a>
             </div>
             <form className="lp-form" onSubmit={join}>
               {/* A real <label>, not an aria-label. Same accessible name, but

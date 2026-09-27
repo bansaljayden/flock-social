@@ -86,7 +86,7 @@ export default function SiteFooter({
               <h3>Product</h3>
               <ul>
                 <li><a href="/signup">Create an account</a></li>
-                <li><a href="/app">Log in</a></li>
+                <li><a href="/app">Sign in</a></li>
                 <li><a href="#how">How it works</a></li>
                 <li><a href="#crowds">Crowd levels</a></li>
                 <li><a href="#safety">Safety</a></li>

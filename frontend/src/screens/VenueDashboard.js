@@ -859,7 +859,7 @@ export default function VenueDashboard({
                 {tierBadge[venueData.tier].label}
               </span>
               )}
-              <button aria-label="Log out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button aria-label="Sign out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.logout('white', 14)}
               </button>
             </div>

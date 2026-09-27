@@ -306,7 +306,7 @@ test('an OAuth account creation that loses the same race is told the mailbox is 
     );
     const res = await post(pathname, body);
     assert.strictEqual(res.status, 409, `${pathname}: ${JSON.stringify(res.json())}`);
-    assert.strictEqual(res.json().error, 'An account with this email already exists. Log in the way you originally signed up.');
+    assert.strictEqual(res.json().error, 'An account with this email already exists. Sign in the way you originally signed up.');
   }
 });
 
