@@ -4585,7 +4585,14 @@ class Panel:
                       (half, vy + v.get_height() + 4))
             line = occupancy_line(occupancy)
             if line:
-                self.blit(self.f_body, line, BRAND_CREAM, (pad, vy + v.get_height() + 4))
+                # The left column ends at the divider. On a narrow panel the
+                # stay time is dropped before the line runs into it.
+                s = self.text(self.f_body, line, BRAND_CREAM)
+                if s.get_width() > half - 3 * pad:
+                    s = self.text(self.f_body,
+                                  occupancy_line(dict(occupancy, dwell_minutes=None)),
+                                  BRAND_CREAM)
+                self.screen.blit(s, (pad, vy + v.get_height() + 4))
         else:
             # What this number is and is not. It was once labelled "Entered
             # Today", which it has never been, and a judge asking the obvious
