@@ -237,6 +237,17 @@ router.put('/promotions/:id', [
     // rows) stays distinguishable from "taken down" (a row whose UPDATE half is
     // missing) with no window between the check and the write. Same shape as the
     // verify route in routes/admin.js.
+    //
+    // THE DESCRIPTION CAN BE EMPTIED. Absent or null still means "leave it
+    // alone", like every other field here, but an empty string now clears it.
+    // It used to be bound as `description || null`, so an owner who emptied
+    // the box and pressed Save was told it saved and got the old text back.
+    // The description is the one optional field a deal has (the title is
+    // required, and the time slot and days are always a choice from a list),
+    // and the deals the Post a Deal card posted before it stopped carry their
+    // title again as the description: the edit form opens those with the box
+    // empty, and saving has to be able to take the copy away, or the first
+    // retitle turns a hidden duplicate into a stale second line.
     const { title, description, timeSlot, days } = req.body;
     const { rows } = await pool.query(
       `WITH target AS (
@@ -246,7 +257,7 @@ router.put('/promotions/:id', [
        upd AS (
          UPDATE venue_promotions SET
            title = COALESCE($1, title),
-           description = COALESCE($2, description),
+           description = CASE WHEN $2::text IS NULL THEN description ELSE NULLIF($2::text, '') END,
            time_slot = COALESCE($3, time_slot),
            days = COALESCE($4, days),
            updated_at = NOW()
@@ -256,7 +267,9 @@ router.put('/promotions/:id', [
        )
        SELECT t.is_hidden AS target_hidden, u.*
        FROM target t LEFT JOIN upd u ON true`,
-      [title || null, description || null, timeSlot || null, days || null, req.params.id, req.user.id]
+      // freeText has already made a present description a trimmed string, so
+      // this is null (leave it) or text, and '' (clear it) survives the bind.
+      [title || null, description ?? null, timeSlot || null, days || null, req.params.id, req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Promotion not found' });
     const row = rows[0];

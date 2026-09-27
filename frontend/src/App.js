@@ -4190,9 +4190,23 @@ function useSaveInFlight(onSave) {
   return [saving, save];
 }
 
+// The description an edit starts from. A deal the Post a Deal card posted
+// before it stopped sending its one line twice carries its title again as the
+// description, which the venue card and the owner's list already hide. The
+// form opens those with the box empty, so saving clears the copy (PUT
+// /promotions treats an empty description as "clear it"). Opened with the
+// copy in the box, a retitle would leave the old sentence behind as a second
+// line that no longer matches the title, and both lists would show it again.
+export const promoEditDescription = (editing) => {
+  const desc = (editing && (editing.description || editing.desc)) || '';
+  // The same test both lists use to hide it, so what the form drops is
+  // exactly what they were already not showing.
+  return desc && desc === editing.title ? '' : desc;
+};
+
 export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
-    ? { title: editing.title || '', desc: editing.description || editing.desc || '', time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
+    ? { title: editing.title || '', desc: promoEditDescription(editing), time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
     : { title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
   const [saving, save] = useSaveInFlight(onSave);
 
