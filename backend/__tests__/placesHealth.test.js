@@ -15,6 +15,7 @@ const assert = require('node:assert');
 
 const {
   recordPlacesResult,
+  isPlaceNotFoundAnswer,
   placesHealthStatus,
   __resetPlacesHealth,
   FAILURE_STREAK_ALARM,
@@ -197,6 +198,39 @@ test('a cached Places answer is never recorded as health', () => {
   // And it must be above the shared failure check, which both branches reach.
   const sharedCheck = src.indexOf('if (!searchResponse.ok || searchData.error) {');
   assert.ok(sharedCheck > recordAt, 'the record is inside the else branch, not after the join');
+});
+
+test('only NOT_FOUND is read as Google answering about a place id', () => {
+  // A retired id answers NOT_FOUND, and that is Google working. Counted as a
+  // failure, one tap on a stale saved venue built the streak that mailed
+  // "Google Places is down". Everything else that says no keeps counting,
+  // INVALID_ARGUMENT included, because a dead API key answers with it.
+  for (const [httpStatus, error, want, what] of [
+    [404, { code: 404, status: 'NOT_FOUND', message: 'Requested entity was not found.' }, true, 'Places (New) NOT_FOUND'],
+    [0, { status: 'NOT_FOUND' }, true, 'NOT_FOUND with no HTTP status to hand'],
+    [0, { code: 404, message: 'not found' }, true, 'a 404 code with no status word'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.' }, false, 'a dead API key'],
+    [429, { code: 429, status: 'RESOURCE_EXHAUSTED' }, false, 'the September quota clamp'],
+    [403, { code: 403, status: 'PERMISSION_DENIED' }, false, 'billing or key restriction'],
+    [503, { code: 503, status: 'UNAVAILABLE' }, false, 'Google down'],
+    [404, null, false, 'no error body at all'],
+    [200, undefined, false, 'a success'],
+  ]) {
+    assert.strictEqual(isPlaceNotFoundAnswer(httpStatus, error), want, what);
+  }
+});
+
+test('every Place Details caller that reads Google\'s error body counts NOT_FOUND as health', () => {
+  // routes/publicCrowd.js did this first, inline (`resp.status === 404`). The
+  // others share the one predicate so they cannot drift apart again.
+  const fs = require('fs');
+  const path = require('path');
+  for (const rel of ['services/placeDetailsCache.js', 'routes/ai.js', 'routes/badge.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+    assert.match(src, /isPlaceNotFoundAnswer\(/, `${rel} records a retired place id as a Places failure again`);
+  }
+  const demo = fs.readFileSync(path.join(__dirname, '..', 'routes', 'publicCrowd.js'), 'utf8');
+  assert.match(demo, /if \(resp\.status === 404\) recordPlacesResult\(true\);/);
 });
 
 test('a missing API key is NOT an outage', () => {

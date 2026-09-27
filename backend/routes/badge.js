@@ -12,7 +12,7 @@ const { upstreamSignal } = require('../utils/upstream');
 const { isPlaceIdShaped } = require('../utils/places');
 const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget');
 // Outage detection for the public venue badge. See utils/placesHealth.js.
-const { recordPlacesResult } = require('../utils/placesHealth');
+const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
 const { weekdayOffset, venueLocalNow } = require('../services/crowdEngine');
 // The venue's IANA zone off the Places payload (utils/venueZone.js).
@@ -388,7 +388,11 @@ router.get('/:placeId.svg',
         signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
       });
       const p = await r.json();
-      recordPlacesResult(r.ok && !p.error, p.error?.status || `HTTP ${r.status}`);
+      // NOT_FOUND is Google answering about a claimed venue whose listing it
+      // retired, and the badge is embedded on the venue's own site, so every
+      // visitor would otherwise count one more Places failure.
+      recordPlacesResult(r.ok && !p.error || isPlaceNotFoundAnswer(r.status, p.error),
+        p.error?.status || `HTTP ${r.status}`);
       if (p.error) return res.status(404).send('');
 
       const venue = {

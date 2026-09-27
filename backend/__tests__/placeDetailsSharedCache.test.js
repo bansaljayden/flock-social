@@ -72,6 +72,7 @@ delete process.env.PAYWALL_ENABLED;
 
 const placesBudget = require('../utils/placesBudget');
 const { placesBudgetStatus, __resetPlacesBudget } = placesBudget;
+const { placesHealthStatus, __resetPlacesHealth } = require('../utils/placesHealth');
 
 // --- scripted pg ------------------------------------------------------------
 const pool = require('../config/database');
@@ -141,6 +142,10 @@ const OLD_CROWD_MASK = 'id,displayName,formattedAddress,rating,userRatingCount,p
 
 let detailCalls = [];   // every https://places.googleapis.com/v1/places/<id> GET
 let failNextWith = null; // { body } to return instead of PLACE
+let failNextStatus = 200; // the HTTP status failNextWith arrives under
+// Place ids Google has retired. Every request for one answers the way Places
+// (New) does: HTTP 404 with a NOT_FOUND error body.
+let goneIds = new Set();
 // A HELD-OPEN UPSTREAM. Google takes a couple of hundred milliseconds; a stub
 // that resolves in the same microtask does not, and a fetch that returns
 // instantly makes the CACHE look sufficient because the leader has already
@@ -154,9 +159,15 @@ global.fetch = (url, opts) => {
   if (u.startsWith('https://places.googleapis.com/v1/places/')) {
     detailCalls.push({ url: u, mask: opts?.headers?.['X-Goog-FieldMask'] || '' });
     const gate = detailGate;
+    const askedFor = decodeURIComponent(u.slice('https://places.googleapis.com/v1/places/'.length).split('?')[0]);
+    if (goneIds.has(askedFor)) {
+      const notFound = { error: { code: 404, message: 'Requested entity was not found.', status: 'NOT_FOUND' } };
+      return Promise.resolve({ ok: false, status: 404, json: async () => notFound });
+    }
     const body = failNextWith || PLACE;
-    if (failNextWith) failNextWith = null;
-    const respond = () => ({ ok: true, status: 200, json: async () => body });
+    const status = failNextWith ? failNextStatus : 200;
+    if (failNextWith) { failNextWith = null; failNextStatus = 200; }
+    const respond = () => ({ ok: status >= 200 && status < 300, status, json: async () => body });
     if (gate) return gate.then(respond);
     return Promise.resolve(respond());
   }
@@ -194,8 +205,11 @@ test.beforeEach(() => {
   venueSearchRouter.__test.clearVenueCache();
   detailCalls = [];
   failNextWith = null;
+  failNextStatus = 200;
+  goneIds = new Set();
   detailGate = null;
   venuesHandedToTheModel = [];
+  __resetPlacesHealth();
 });
 
 // A promise plus the handle that settles it, so a test can decide when the
@@ -507,7 +521,11 @@ test('a served-from-cache request is answered even when the budget is exhausted'
 
 test('a Google error body is a 502 and is NOT cached — the next request retries', async () => {
   const placeId = uniqueId();
-  failNextWith = { error: { message: 'NOT_FOUND' } };
+  // A transient refusal. NOT_FOUND used to be the example here and is not any
+  // more: that one is Google's final word on the id, and is pinned below as a
+  // 404 that is remembered.
+  failNextWith = { error: { code: 503, status: 'UNAVAILABLE', message: 'The service is currently unavailable.' } };
+  failNextStatus = 503;
 
   const failed = await get(`/api/venues/details?place_id=${placeId}`);
   assert.strictEqual(failed.status, 502, failed.text);
@@ -577,4 +595,88 @@ test('an unreachable upstream says real words on the detail card, and stays off 
   // And neither failure was cached.
   const healthy = await get(`/api/venues/details?place_id=${placeId}`);
   assert.strictEqual(healthy.status, 200, healthy.text);
+});
+
+// ===========================================================================
+// PART 6 — a place id Google has retired is an answer, not an outage.
+// ===========================================================================
+// A flock's saved venue whose listing Google dropped answers NOT_FOUND. That
+// was recorded as a Places FAILURE and answered 502, the crowd card's 502 was
+// retried twice by the client, and failures are never cached, so one tap was
+// three paid calls and three failures in a row: FAILURE_STREAK_ALARM, and the
+// operator got "Google Places is down for Flock" while Places was healthy.
+
+test('a retired place id is a 404 on both cards, counts as Places answering, and is not bought again', async () => {
+  const placeId = uniqueId();
+  goneIds.add(placeId);
+
+  const details = await get(`/api/venues/details?place_id=${placeId}`);
+  assert.strictEqual(details.status, 404, details.text);
+  assert.strictEqual(details.body.error, 'This venue is no longer listed on Google, so its details cannot load.');
+  assert.ok(!/try again/i.test(details.text), 'a retry cannot succeed, so the words must not suggest one');
+  assert.strictEqual(detailCalls.length, 1);
+  assert.strictEqual(charged(), 1);
+
+  // The crowd card, opened in the same tap, and the client's retries of it.
+  for (let i = 0; i < 3; i += 1) {
+    const crowd = await get(`/api/crowd/${placeId}?localHour=20&localDay=5`);
+    assert.strictEqual(crowd.status, 404, `a 502 here is retried by the client: ${crowd.text}`);
+  }
+  // And the detail sheet opened again later in the session.
+  assert.strictEqual((await get(`/api/venues/details?place_id=${placeId}`)).status, 404);
+
+  assert.strictEqual(detailCalls.length, 1, 'Google already said this id names nothing; asking again bought the same answer');
+  assert.strictEqual(charged(), 1, 'a remembered answer costs the user none of their hourly venue lookups');
+
+  const health = placesHealthStatus();
+  assert.strictEqual(health.consecutiveFailures, 0,
+    'NOT_FOUND is Google answering; counted as a failure it built the streak that mailed "Places is down"');
+  assert.strictEqual(health.unhealthy, false);
+  assert.ok(health.totalOk >= 1, 'the one real answer was recorded as health');
+});
+
+test('a remembered NOT_FOUND expires, so an id Google answered in error comes back', async () => {
+  const placeId = uniqueId();
+  goneIds.add(placeId);
+  assert.strictEqual((await get(`/api/venues/details?place_id=${placeId}`)).status, 404);
+  assert.strictEqual(placeDetailsCache.isGonePlace(placeId), true);
+
+  goneIds.delete(placeId);
+  placeDetailsCache.__test.ageGone(placeId, placeDetailsCache.GONE_PLACE_TTL);
+  assert.strictEqual(placeDetailsCache.willCostUpstreamCall(placeId), true, 'an expired entry is a real call again, and is charged');
+  const back = await get(`/api/venues/details?place_id=${placeId}`);
+  assert.strictEqual(back.status, 200, back.text);
+  assert.strictEqual(detailCalls.length, 2);
+});
+
+test('INVALID_ARGUMENT still counts as a Places failure and is never remembered, because a dead key looks like that', async () => {
+  // Google answers a bad or rotated API key with 400 INVALID_ARGUMENT. That is
+  // one of the outages the alarm exists to report, so only NOT_FOUND is read as
+  // Google answering about the id.
+  for (let i = 0; i < 3; i += 1) {
+    const placeId = uniqueId();
+    failNextWith = { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.' } };
+    failNextStatus = 400;
+    const out = await get(`/api/venues/details?place_id=${placeId}`);
+    assert.strictEqual(out.status, 502, out.text);
+    assert.strictEqual(placeDetailsCache.isGonePlace(placeId), false);
+  }
+  assert.strictEqual(placeDetailsCache.__test.goneSize(), 0);
+  const health = placesHealthStatus();
+  assert.strictEqual(health.consecutiveFailures, 3);
+  assert.strictEqual(health.unhealthy, true, 'three key refusals in a row is the outage, and must still alarm');
+});
+
+test('Birdie asking about a retired id is told the venue is not found, and that is recorded as health', async () => {
+  const { executeTool } = require('../routes/ai').__testables;
+  const placeId = uniqueId();
+  goneIds.add(placeId);
+  for (let i = 0; i < 3; i += 1) {
+    const out = await executeTool('get_crowd_prediction', { place_id: placeId }, 7, {});
+    assert.deepStrictEqual(out, { error: 'Venue not found' });
+  }
+  const health = placesHealthStatus();
+  assert.strictEqual(health.consecutiveFailures, 0,
+    'an id the model carried from an old conversation is not Places being down');
+  assert.strictEqual(health.unhealthy, false);
 });

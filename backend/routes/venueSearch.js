@@ -427,6 +427,9 @@ function isPhotoRefShaped(ref) {
 // that teaches buildHttpError to keep a JSON `error` string it was given.
 const SEARCH_OFF = 'Venue search is turned off right now. Nothing you typed caused it, and retrying will not help.';
 const DETAILS_OFF = 'Venue pages are turned off right now. Nothing you tapped caused it, and retrying will not help.';
+// Google no longer has a listing under this venue's id (shapeDetails). Said
+// plainly, with no suggestion to retry, because a retry gets the same answer.
+const VENUE_GONE = 'This venue is no longer listed on Google, so its details cannot load.';
 const PHOTOS_OFF = 'Venue photos are turned off right now. Retrying will not bring them back.';
 // The one sentence for "Google did not answer", whichever way it failed to.
 // Named rather than repeated because runTextSearch now has four exits that mean
@@ -1338,6 +1341,14 @@ router.get('/details',
 // of picking one of the two behaviours for both callers.
 function shapeDetails(out) {
   if (!out.ok) {
+    // Google answered that this place id names nothing: a listing that closed,
+    // moved or was merged, usually on a venue a flock saved weeks ago. That is
+    // an answer, not an outage, so it is a 404 and not the 502 below. A 502
+    // told the user to try again in a moment, which cannot work, and every
+    // retry was another paid call for the same answer.
+    if (out.kind === 'not_found') {
+      return { status: 404, error: VENUE_GONE };
+    }
     // Same rule as runTextSearch above: Google's own message is logged, never
     // returned. It used to be the body of this 502, so a venue whose listing
     // Google had retired answered the detail sheet with "Places API: NOT_FOUND"

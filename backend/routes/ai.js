@@ -48,7 +48,7 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
 // Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
-const { recordPlacesResult } = require('../utils/placesHealth');
+const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
@@ -816,7 +816,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         },
       });
       const p = await resp.json();
-      recordPlacesResult(resp.ok && !p.error, p.error?.status || `HTTP ${resp.status}`);
+      // A NOT_FOUND is Google answering about the id Birdie passed, which the
+      // model can invent or carry from an old conversation. It is health, not
+      // an outage, or a few of those in a row mailed "Places is down".
+      recordPlacesResult(resp.ok && !p.error || isPlaceNotFoundAnswer(resp.status, p.error),
+        p.error?.status || `HTTP ${resp.status}`);
       if (p.error) return { error: 'Venue not found' };
 
       // WHOSE CLOCK: the VENUE's, not Railway's UTC and not the caller's phone.
