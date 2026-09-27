@@ -57,6 +57,19 @@ test('a saved row wins over the code constant for its line and moves the block d
   assert.equal(r.asOf, '2026-09-15', 'the block is dated by the newest line actually used');
 });
 
+test('a saved row with no note carries no note, never the code note about another invoice', async () => {
+  // The dashboard form records an amount and a date. The code constant's note
+  // describes the $31.19 invoice of 2026-09-01 specifically, so falling back to
+  // it printed that sentence under a $48.20 October figure.
+  rows = [{ line_id: firstId, usd_per_month: '48.20', as_of: '2026-10-02', note: null, updated_at: 'x' }];
+  const r = await costModel.readReconciled(pool);
+  const l = r.lines.find((x) => x.id === firstId);
+  assert.equal(l.source, 'dashboard');
+  assert.equal(l.usdPerMonth, 48.2);
+  assert.equal(l.note, null);
+  assert.ok(CODE.lines[0].note, 'the code line does carry a note, so this is not vacuous');
+});
+
 test('a row for an unknown line id is ignored rather than invented into the block', async () => {
   rows = [{ line_id: 'not-a-line', usd_per_month: '999', as_of: '2026-09-15', note: null }];
   const r = await costModel.readReconciled(pool);

@@ -467,7 +467,12 @@ async function readReconciled(pool) {
         label: l.label,
         usdPerMonth: row.usdPerMonth,
         asOf: row.asOf,
-        note: row.note || l.note,
+        // The row's own note or none. The code note is not a fallback for it:
+        // it is written about ONE invoice (the $31.19 paid on 2026-09-01), so
+        // borrowing it put "A $31.19 invoice was paid..." under every later
+        // figure recorded here, and a money panel showed two contradictory
+        // amounts for the same line.
+        note: row.note || null,
         source: 'dashboard',
       };
     }

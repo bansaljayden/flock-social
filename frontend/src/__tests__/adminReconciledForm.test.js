@@ -42,7 +42,7 @@ describe('the paid-invoice form on the Reconciled card', () => {
 
   test('saving posts through the API client and then refetches the merged payload', () => {
     expect(screen).toContain("import { saveAdminReconciled } from '../services/api';");
-    expect(screen).toContain('await saveAdminReconciled({ id: line.id, usdPerMonth: Number(usd), asOf });');
+    expect(screen).toContain('await saveAdminReconciled({ id: line.id, usdPerMonth: Number(usd), asOf, note: note.trim() || undefined });');
     expect(screen).toContain('if (onSaved) onSaved();');
     expect(screen).not.toMatch(/fetch\(['"`][^'"`]*costs\/reconciled/);
   });
@@ -51,6 +51,17 @@ describe('the paid-invoice form on the Reconciled card', () => {
     expect(api).toContain("return request('/api/admin/costs/reconciled', {");
     expect(api).toContain("method: 'POST',");
     expect(api).toContain('body: JSON.stringify({ id, usdPerMonth, asOf, note }),');
+  });
+
+  test('the form has its own note, starting empty, so a new invoice never inherits an old one\'s words', () => {
+    // The form used to send no note at all, the server stored NULL, and the
+    // card fell back to the code note about the $31.19 September invoice under
+    // whatever figure was recorded next. The server side of that is pinned in
+    // backend/__tests__/costReconciled.test.js; this is the field.
+    const form = screen.slice(screen.indexOf('function ReconciledLineForm('), screen.indexOf('// THE MONEY HUB'));
+    expect(form).toContain("const [note, setNote] = React.useState('');");
+    expect(form).toMatch(/<input aria-label=\{`Note for \$\{line\.label\}`\} type="text" maxLength=\{500\}[^>]*value=\{note\}/);
+    expect(form).not.toContain('React.useState(line.note');
   });
 
   test('the amount cannot be saved empty and the date cannot be in the future', () => {
