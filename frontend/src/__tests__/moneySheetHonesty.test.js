@@ -88,7 +88,7 @@ test('the reconnect catch-up re-reads the money state of the open chat', () => {
   expect(app).toMatch(/const loadMoneyState = useCallback\(\(flockId\) => \{/);
   // Votes and the roster ride along since 2026-09-04: both are socket-only
   // with no replay, so a pocketed phone came back to a stale tally.
-  expect(app).toMatch(/read = \(\) => \{ loadFlockMessages\(flockId, \{ keepOlder: true \}\); loadMoneyState\(flockId\); loadFlockVotes\(flockId\); refreshFlockRoster\(flockId\); \};/);
+  expect(app).toMatch(/read = \(anchor\) => \{ loadFlockMessages\(flockId, \{ keepOlder: true, anchor \}\); loadMoneyState\(flockId\); loadFlockVotes\(flockId\); refreshFlockRoster\(flockId\); \};/);
 });
 
 // ---------------------------------------------------------------------------

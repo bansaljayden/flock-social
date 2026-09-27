@@ -767,7 +767,7 @@ test('reaching the top of the scrollback is not permanent', () => {
   // the session: leave, come back to the newest fifty, and the control that
   // reaches the other two hundred and fifty is not on the screen.
   // A keepOlder read that leaves a gap truncates too (mergeHistory, point 3).
-  expect(appSource).toMatch(/if \(!keepOlder \|\| pageAgainstHeld\(msgs, held\) === 'gap'\) \{\s*setFlockAtTop\(t => \{/);
+  expect(appSource).toMatch(/if \(!keepOlder \|\| pageAgainstHeld\(msgs, reach\) === 'gap'\) \{\s*setFlockAtTop\(t => \{/);
   expect(appSource).toMatch(/delete next\[flockId\];/);
 });
 
@@ -828,7 +828,7 @@ test('the DM scrollback flag is reset the way the flock one is', () => {
   // Same bug, other thread: nothing cleared dmAtTop and a non-keepOlder read
   // truncates to one page, so re-entering a long DM hid "Load earlier
   // messages" for the rest of the session (guest and DM audit, 2026-09-05).
-  expect(appSource).toMatch(/if \(!keepOlder \|\| pageAgainstHeld\(msgs, held\) === 'gap'\) \{\s*setDmAtTop\(t => \{/);
+  expect(appSource).toMatch(/if \(!keepOlder \|\| pageAgainstHeld\(msgs, reach\) === 'gap'\) \{\s*setDmAtTop\(t => \{/);
   expect(appSource).toMatch(/delete next\[userId\];/);
 });
 

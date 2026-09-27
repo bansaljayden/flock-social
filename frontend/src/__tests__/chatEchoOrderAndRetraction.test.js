@@ -87,6 +87,11 @@
  *      back and the scrollback was spliced under them, hiding the ones in
  *      between where "Load earlier" could never reach. A full page that
  *      reaches nothing on screen replaces it and puts "Load earlier" back.
+ *      And "on screen" is measured before the socket dropped: one message
+ *      that arrived live between the reconnect and the read sat above the
+ *      hole, shared the page, and made it look joined. The reconnect sampler
+ *      keeps the lists as they stood while the socket was last up, and the
+ *      catch-up measures its page against that (heldBeforeDrop, `reach`).
  *
  * App.js cannot be imported (it is the whole app), so its pure helpers are
  * lifted out by name and run, the way chatSurface.test.js and
@@ -203,7 +208,7 @@ const HELPERS = [
   'SERVER_ID_MAX', 'isServerId', 'sameSend', 'newClientId', 'echoMatches', 'newestServerId',
   'sendLandedAs', 'landedSends', 'orderByServerId', 'retractedSince', 'retractedIdsIn',
   'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction',
-  'DM_PAGE_SIZE', 'heldServerIds', 'pageAgainstHeld', 'mergeHistory',
+  'DM_PAGE_SIZE', 'heldServerIds', 'pageAgainstHeld', 'heldBeforeDrop', 'mergeHistory',
   'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'mapDmRow', 'messagePreview',
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
   'writeFailedFlockMessages', 'persistFailedFlockMessage', 'removeFailedFlockMessage',
@@ -804,12 +809,12 @@ describe('a history read older than an unsend, a takedown or a block', () => {
     const flockLoader = between(appSource, 'const loadFlockMessages = useCallback', '// The DM twin of loadFlockMessages');
     expect(flockLoader).toMatch(/const since = retractionsRef\.current\.seq;/);
     expect(flockLoader).toMatch(/retractedSince\(retractionsRef\.current\.log, since, 'flock'\)/);
-    expect(flockLoader).toMatch(/mergeHistory\(localWithFailed, msgs, \{ keepOlder, drop, held \}\)/);
+    expect(flockLoader).toMatch(/mergeHistory\(localWithFailed, msgs, \{ keepOlder, drop, held, reach \}\)/);
     // The pins that ride with the read are filtered by the same drop.
     expect(flockLoader).toMatch(/const gone = retractedIdsIn\(msgs, drop\);/);
     const dmLoader = between(appSource, 'const loadDmMessages = useCallback', '// ── Scrollback ──');
     expect(dmLoader).toMatch(/if \(drop && drop\.senders\.has\(String\(userId\)\)\) return;/);
-    expect(dmLoader).toMatch(/mergeHistory\(d\.messages, msgs, \{ keepOlder, drop, held \}\)/);
+    expect(dmLoader).toMatch(/mergeHistory\(d\.messages, msgs, \{ keepOlder, drop, held, reach \}\)/);
   });
 
   test('every retraction is logged: unsend both ways, takedown, and block', () => {
@@ -2144,5 +2149,239 @@ describe('a catch-up after more than a page of messages leaves no hidden hole', 
     await done;
     expect(ids(r.state.threads[0].messages)).toEqual(Array.from({ length: 50 }, (_, i) => 131 + i));
     expect(r.state.atTop[5]).toBeUndefined();
+  });
+
+  // The rows on screen before the drop, as the reconnect sampler keeps them.
+  const snapshotOf = ({ flock = null, dm = null } = {}) => ({
+    flocks: flock ? [{ id: 7, messages: flock }] : [],
+    dms: dm ? [{ userId: 5, messages: dm }] : [],
+  });
+
+  test('a row that arrived live after the reconnect does not make the page look joined', () => {
+    // Up to 100 on screen when the socket dropped. It came back, the room was
+    // rejoined, and 181 arrived live before the catch-up read went out, so
+    // 181 is on screen as the read leaves. The page is 132 to 181.
+    const before = run(51, 100);
+    const local = [...before, row(181, 'live', { senderId: 2 })];
+    const held = H.heldServerIds(local);
+    // Measured against what is on screen as the read goes out, the page joins
+    // on 181 alone, and 101 to 131 would stay hidden under it.
+    expect(H.pageAgainstHeld(run(132, 181), held)).toBe('joins');
+    const reach = H.heldBeforeDrop(snapshotOf({ flock: before }), { flockId: 7 });
+    expect(H.pageAgainstHeld(run(132, 181), reach)).toBe('gap');
+    const merged = H.mergeHistory(local, run(132, 181), { keepOlder: true, held, reach });
+    expect(ids(merged)).toEqual(ids(run(132, 181)));
+  });
+
+  test('a send that settled over HTTP while the socket was down proves nothing either', () => {
+    // The socket was down, so the send went over HTTP and its row, 150, came
+    // back with the answer. Others' messages from 101 to 149 never arrived.
+    const before = run(51, 100);
+    const local = [...before, row(150, 'mine, over HTTP')];
+    const merged = H.mergeHistory(local, run(131, 180), {
+      keepOlder: true, held: H.heldServerIds(local), reach: H.heldBeforeDrop(snapshotOf({ flock: before }), { flockId: 7 }),
+    });
+    expect(ids(merged)).toEqual(ids(run(131, 180)));
+  });
+
+  test('a page that reaches a row from before the drop still keeps the scrollback under it', () => {
+    const before = run(1, 140);
+    const local = [...before, row(181, 'live', { senderId: 2 })];
+    const merged = H.mergeHistory(local, run(132, 181), {
+      keepOlder: true, held: H.heldServerIds(local), reach: H.heldBeforeDrop(snapshotOf({ flock: before }), { flockId: 7 }),
+    });
+    expect(ids(merged)).toEqual(ids(run(1, 181)));
+  });
+
+  test('heldBeforeDrop: the one conversation, settled rows only, and nothing without a snapshot', () => {
+    const flock = [row(10, 'a'), row(11, 'b'), bubble(1700000000401, 'sending'), bubble(1700000000402, 'failed', { failed: true })];
+    const dm = [H.mapDmRow(dmSrv(40), ME)];
+    const snap = snapshotOf({ flock, dm });
+    expect([...H.heldBeforeDrop(snap, { flockId: 7 })]).toEqual([10, 11]);
+    expect([...H.heldBeforeDrop(snap, { dmId: 5 })]).toEqual([40]);
+    // A conversation it does not have held nothing then.
+    expect(H.heldBeforeDrop(snap, { flockId: 8 }).size).toBe(0);
+    expect(H.heldBeforeDrop(snap, { dmId: 6 }).size).toBe(0);
+    // Never seen up: nothing on screen is known to predate the drop, so a
+    // full page never joins it.
+    const none = H.heldBeforeDrop(null, { flockId: 7 });
+    expect(none.size).toBe(0);
+    expect(H.pageAgainstHeld(run(1, 50), none)).toBe('gap');
+  });
+
+  test('the flock loader measures a catch-up page against the anchor it is handed', async () => {
+    const before = run(51, 100);
+    const r = liftedFlockLoader([{ id: 7, pins: [], messages: [...before, row(181, 'live', { senderId: 2 })] }], { atTop: { 7: true } });
+    const done = r.load(7, { keepOlder: true, anchor: H.heldServerIds(before) });
+    r.reads[0].resolve({ messages: wire(132, 181), readers: [], pins: [] });
+    await done;
+    expect(ids(r.state.flocks[0].messages)).toEqual(ids(run(132, 181)));
+    expect(r.state.atTop[7]).toBeUndefined();
+  });
+
+  test('the DM loader measures its catch-up against the anchor too', async () => {
+    const before = Array.from({ length: 50 }, (_, i) => H.mapDmRow(dmSrv(51 + i), ME));
+    const local = [...before, H.mapDmRow(dmSrv(181), ME)];
+    const r = liftedDmLoader([{ userId: 5, name: 'Bo', unread: 0, messages: local }], { atTop: { 5: true } });
+    const done = r.load(5, { keepOlder: true, anchor: H.heldServerIds(before) });
+    r.reads[0].resolve({ messages: Array.from({ length: 50 }, (_, i) => dmSrv(132 + i)) });
+    await done;
+    expect(ids(r.state.threads[0].messages)).toEqual(Array.from({ length: 50 }, (_, i) => 132 + i));
+    expect(r.state.atTop[5]).toBeUndefined();
+  });
+
+  // The reconnect sampler's tick, lifted and run: `connected` is the socket,
+  // `flocks` and `dms` what the two state mirrors hold at that sample.
+  function liftedSampler() {
+    const state = { connected: true, flocks: [], dms: [], ticks: 0 };
+    const refs = {
+      socketAliveRef: { current: null },
+      catchUpOwedRef: { current: false },
+      heldWhileUpRef: { current: null },
+    };
+    const sample = runLifted(`return ${liftListener(appSource, 'const id = setInterval(')};`, {
+      getSocket: () => ({ connected: state.connected }),
+      ...refs,
+      flocksRef: { get current() { return state.flocks; } },
+      directMessagesRef: { get current() { return state.dms; } },
+      setReconnectTick: setterOn(state, 'ticks'),
+    });
+    return { state, refs, sample };
+  }
+
+  test('the sampler keeps the lists as they stood while the socket was up, and holds them from the drop to the catch-up', () => {
+    const s = liftedSampler();
+    const up = [{ id: 7, messages: run(51, 100) }];
+    s.state.flocks = up;
+    s.sample();
+    expect(s.refs.heldWhileUpRef.current.flocks).toBe(up);
+    expect(s.state.ticks).toBe(0);
+
+    // Down: a send settles over HTTP. Not taken.
+    s.state.connected = false;
+    s.state.flocks = [{ id: 7, messages: [...run(51, 100), row(150, 'mine, over HTTP')] }];
+    s.sample();
+    s.sample();
+    expect(s.refs.heldWhileUpRef.current.flocks).toBe(up);
+
+    // Back: a catch-up is owed, and live rows land above the hole. Still not taken.
+    s.state.connected = true;
+    s.state.flocks = [{ id: 7, messages: [...run(51, 100), row(150, 'mine'), row(181, 'live', { senderId: 2 })] }];
+    s.sample();
+    expect(s.state.ticks).toBe(1);
+    expect(s.refs.catchUpOwedRef.current).toBe(true);
+    s.sample();
+    expect(s.refs.heldWhileUpRef.current.flocks).toBe(up);
+
+    // The catch-up read went out: the snapshot moves on at the next sample.
+    s.refs.catchUpOwedRef.current = false;
+    const now = [{ id: 7, messages: run(132, 181) }];
+    s.state.flocks = now;
+    s.sample();
+    expect(s.refs.heldWhileUpRef.current.flocks).toBe(now);
+  });
+
+  test('a socket that was down from the first sample leaves no snapshot to join', () => {
+    const s = liftedSampler();
+    s.state.connected = false;
+    s.state.flocks = [{ id: 7, messages: run(1, 50) }];
+    s.sample();
+    s.state.connected = true;
+    s.sample();
+    expect(s.state.ticks).toBe(1);
+    expect(s.refs.heldWhileUpRef.current).toBeNull();
+  });
+
+  // runCatchUp, lifted and run. `reads` is every history read it starts.
+  function liftedCatchUp({ target, snapshot, owed = true, readAt = {}, visibility = 'visible' }) {
+    const reads = [];
+    const timers = [];
+    const refs = {
+      catchUpPendingRef: { current: false },
+      catchUpTargetRef: { current: target },
+      historyReadAtRef: { current: readAt },
+      catchUpTimerRef: { current: null },
+      runCatchUpRef: { current: null },
+      heldWhileUpRef: { current: snapshot },
+      catchUpOwedRef: { current: owed },
+    };
+    const runCatchUp = runLifted(`${liftCallback(appSource, 'runCatchUp')}\nreturn runCatchUp;`, {
+      useCallback: (fn) => fn,
+      document: { visibilityState: visibility },
+      loadFlockMessages: (id, opts) => reads.push(['flock', id, opts]),
+      loadMoneyState: () => {},
+      loadFlockVotes: () => {},
+      refreshFlockRoster: () => {},
+      loadDmMessages: (id, opts) => reads.push(['dm', id, opts]),
+      CATCHUP_MIN_GAP_MS: 12000,
+      clearTimeout: () => {},
+      setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+      heldBeforeDrop: H.heldBeforeDrop,
+      ...refs,
+    });
+    refs.runCatchUpRef.current = runCatchUp;
+    return { reads, timers, refs, runCatchUp };
+  }
+
+  test('the flock catch-up hands its loader the rows from before the drop, and the snapshot is let go', () => {
+    const c = liftedCatchUp({
+      target: { screen: 'chatDetail', flockId: 7, dmId: null },
+      snapshot: snapshotOf({ flock: run(51, 100) }),
+    });
+    c.runCatchUp();
+    expect(c.reads).toHaveLength(1);
+    const [kind, id, opts] = c.reads[0];
+    expect([kind, id, opts.keepOlder]).toEqual(['flock', 7, true]);
+    expect([...opts.anchor]).toEqual(ids(run(51, 100)));
+    expect(c.refs.catchUpOwedRef.current).toBe(false);
+  });
+
+  test('the DM catch-up does the same', () => {
+    const before = [H.mapDmRow(dmSrv(40), ME), H.mapDmRow(dmSrv(41), ME)];
+    const c = liftedCatchUp({ target: { screen: 'dmDetail', flockId: null, dmId: 5 }, snapshot: snapshotOf({ dm: before }) });
+    c.runCatchUp();
+    expect(c.reads).toHaveLength(1);
+    expect(c.reads[0][0]).toBe('dm');
+    expect(c.reads[0][2].keepOlder).toBe(true);
+    expect([...c.reads[0][2].anchor]).toEqual([40, 41]);
+    expect(c.refs.catchUpOwedRef.current).toBe(false);
+  });
+
+  test('a deferred or hidden catch-up keeps the snapshot held until its read goes out', () => {
+    // Throttled behind a read of this chat a moment ago.
+    const c = liftedCatchUp({
+      target: { screen: 'chatDetail', flockId: 7, dmId: null },
+      snapshot: snapshotOf({ flock: run(51, 100) }),
+      readAt: { 'flock:7': Date.now() },
+    });
+    c.runCatchUp();
+    expect(c.reads).toHaveLength(0);
+    expect(c.timers).toHaveLength(1);
+    expect(c.refs.catchUpOwedRef.current).toBe(true);
+    // The window passes and the deferred read goes out, measured against the
+    // same rows.
+    c.refs.historyReadAtRef.current['flock:7'] = 0;
+    c.refs.catchUpTimerRef.current = null;
+    c.timers[0].fn();
+    expect(c.reads).toHaveLength(1);
+    expect([...c.reads[0][2].anchor]).toEqual(ids(run(51, 100)));
+    expect(c.refs.catchUpOwedRef.current).toBe(false);
+
+    const hidden = liftedCatchUp({
+      target: { screen: 'chatDetail', flockId: 7, dmId: null },
+      snapshot: snapshotOf({ flock: run(51, 100) }),
+      visibility: 'hidden',
+    });
+    hidden.runCatchUp();
+    expect(hidden.reads).toHaveLength(0);
+    expect(hidden.refs.catchUpPendingRef.current).toBe(true);
+    expect(hidden.refs.catchUpOwedRef.current).toBe(true);
+  });
+
+  test('with no conversation open nothing is owed, so the snapshot can move on', () => {
+    const c = liftedCatchUp({ target: { screen: 'main', flockId: null, dmId: null }, snapshot: snapshotOf({ flock: run(51, 100) }) });
+    c.runCatchUp();
+    expect(c.reads).toHaveLength(0);
+    expect(c.refs.catchUpOwedRef.current).toBe(false);
   });
 });

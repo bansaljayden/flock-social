@@ -2323,6 +2323,15 @@ const noteRetraction = (ref, entry) => {
 //    loaders put "Load earlier" back so the rest is one tap away. A page
 //    shorter than a full one is the whole conversation, so a row below it is
 //    one the server no longer has, and it goes too.
+//    AND "ON SCREEN" MEANS BEFORE THE SOCKET DROPPED, for the catch-up
+//    (`reach`, heldBeforeDrop). The room is rejoined the moment the socket is
+//    back, but the catch-up read goes out a sample or more later, up to the
+//    throttle's twelve seconds, and for as long as the tab stays hidden. A
+//    message that arrives live in between sits ABOVE the hole, and so does a
+//    send that settled over HTTP while the socket was down, so a page that
+//    shared only such a row with the screen looked joined and the scrollback
+//    was spliced under it with the hole still there. Only a row that was on
+//    screen before the drop proves the page reaches back past the hole.
 // One shape for a stored row, wherever it was read from. Both message screens
 // now have two readers each, the entry read and the older-page read behind
 // "Load earlier messages", and two copies of a mapping are two chances for a
@@ -2458,12 +2467,15 @@ const heldServerIds = (messages) => {
   return held;
 };
 
-// Where a history page stands against what was on screen when it went out.
+// Where a history page stands against rows that were already on screen.
 // 'whole': the server sent less than a full page, so it has nothing older.
 // 'joins': a row it sent was already on screen, so what is on screen below it
 // continues it. 'gap': a full page that reaches none of it, so rows between
 // the two were never loaded. Null when the caller could not say what was held.
 // Counted on the page as the server sent it, before anything is dropped.
+// `held` is the rows the page has to reach: for a catch-up, the ones on
+// screen before the socket dropped (heldBeforeDrop), because a row that
+// arrived live after the reconnect sits above the hole and proves nothing.
 const pageAgainstHeld = (history, held) => {
   if (!held) return null;
   const rows = history || [];
@@ -2471,12 +2483,27 @@ const pageAgainstHeld = (history, held) => {
   return rows.some((h) => held.has(h.id)) ? 'joins' : 'gap';
 };
 
+// What one conversation had on screen before the socket dropped, as
+// heldServerIds counts it, out of the snapshot of the two lists the reconnect
+// sampler keeps (heldWhileUpRef in App). A conversation the snapshot does not
+// have held nothing then. No snapshot at all means the socket has not been
+// seen up since the app started, so nothing on screen is known to predate
+// the drop: an empty set, which a full page never joins.
+const heldBeforeDrop = (snapshot, { flockId = null, dmId = null } = {}) => {
+  if (!snapshot) return new Set();
+  const conv = flockId != null
+    ? (snapshot.flocks || []).find((f) => f.id === flockId)
+    : (snapshot.dms || []).find((d) => d.userId === dmId);
+  return heldServerIds(conv && conv.messages);
+};
+
 // `drop` is what was retracted after this read went out (retractedSince): a
 // response older than an unsend, a takedown or a block does not get to put
 // those rows, or quotes of them, back. `held` is heldServerIds as the read went
 // out, or null from a caller that cannot say, which keeps points 2 and 3 as
-// they were before either knew about it.
-const mergeHistory = (local, history, { keepOlder = false, drop = null, held = null } = {}) => {
+// they were before either knew about it. `reach` is what point 3 measures the
+// page against, `held` unless the caller knows better (heldBeforeDrop).
+const mergeHistory = (local, history, { keepOlder = false, drop = null, held = null, reach = held } = {}) => {
   const hist = dropRetracted(history || [], drop);
   const mine = local || [];
   const settled = (m) => !m.pending && !m.failed;
@@ -2498,7 +2525,7 @@ const mergeHistory = (local, history, { keepOlder = false, drop = null, held = n
   if (newestId === null) return [...hist, ...unsettled];
 
   // Point 3: scrollback stays only under a page that reaches it.
-  const place = pageAgainstHeld(history, held);
+  const place = pageAgainstHeld(history, reach);
   const older = keepOlder && (place === null || place === 'joins')
     ? mine.filter((m) => settled(m) && isServerId(m.id) && m.id < oldestId)
     : [];
@@ -9850,7 +9877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // One flock-chat history read, shared by screen entry and the reconnect
   // catch-up so the two cannot drift in how they merge.
-  const loadFlockMessages = useCallback((flockId, { showSpinner = false, keepOlder = false } = {}) => {
+  const loadFlockMessages = useCallback((flockId, { showSpinner = false, keepOlder = false, anchor = null } = {}) => {
     historyReadAtRef.current[`flock:${flockId}`] = Date.now();
     // This read's place in line (historyReadSeqRef). Once a later read of the
     // same chat has started, this answer, success or failure, changes nothing.
@@ -9862,6 +9889,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // the answer lacks is one the server no longer has, and a full page that
     // shares none of it has a gap under it (mergeHistory, points 2 and 3).
     const held = heldServerIds((flocksRef.current.find(f => f.id === flockId) || {}).messages);
+    // What the page has to reach to keep the scrollback under it: the rows on
+    // screen before the socket dropped when the catch-up passes them
+    // (`anchor`, heldBeforeDrop), since `held` by now includes live rows
+    // above the hole.
+    const reach = anchor || held;
     if (showSpinner) setMessagesLoading(true);
     setMessagesError('');
     return getMessages(flockId)
@@ -9887,10 +9919,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // long chat hid "Load earlier messages" for the rest of the session:
         // leave the chat, come back to the newest fifty, and the control that
         // reaches the other two hundred and fifty is not on the screen. A
-        // keepOlder read whose full page reaches nothing on screen truncates
+        // keepOlder read whose full page reaches none of `reach` truncates
         // the same way (mergeHistory, point 3), so the rows it skipped are
         // one "Load earlier" away.
-        if (!keepOlder || pageAgainstHeld(msgs, held) === 'gap') {
+        if (!keepOlder || pageAgainstHeld(msgs, reach) === 'gap') {
           setFlockAtTop(t => {
             if (!t[flockId]) return t;
             const next = { ...t };
@@ -9932,7 +9964,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held }), readers, pins };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held, reach }), readers, pins };
         }));
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
@@ -9965,7 +9997,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
 
   // The DM twin of loadFlockMessages, for the same two callers.
-  const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false } = {}) => {
+  const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false, anchor = null } = {}) => {
     historyReadAtRef.current[`dm:${userId}`] = Date.now();
     // The flock twin's place in line: an answer a later read of this thread
     // has overtaken changes nothing, a stale "blocked" included.
@@ -9973,8 +10005,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     historyReadSeqRef.current[`dm:${userId}`] = turn;
     const overtaken = () => historyReadSeqRef.current[`dm:${userId}`] !== turn;
     const since = retractionsRef.current.seq;
-    // The flock twin's `held`, for the same two rules.
+    // The flock twin's `held` and `reach`, for the same two rules.
     const held = heldServerIds((directMessagesRef.current.find(d => d.userId === userId) || {}).messages);
+    const reach = anchor || held;
     if (showSkeleton) setDmMessagesLoading(true);
     setDmMessagesError('');
     return getDMs(userId)
@@ -10008,8 +10041,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // page, so the pages exist again, and the exhausted flag has to go
         // or one walk to the top hid "Load earlier messages" for the rest of
         // the session on every re-entry (guest and DM audit, 2026-09-05). And
-        // the flock twin's gap: a full page that reaches nothing on screen.
-        if (!keepOlder || pageAgainstHeld(msgs, held) === 'gap') {
+        // the flock twin's gap: a full page that reaches none of `reach`.
+        if (!keepOlder || pageAgainstHeld(msgs, reach) === 'gap') {
           setDmAtTop(t => {
             if (!t[userId]) return t;
             const next = { ...t };
@@ -10041,7 +10074,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             }];
           }
           return prev.map(d => d.userId === userId
-            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop, held }), unread: 0 }
+            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop, held, reach }), unread: 0 }
             : d);
         });
         // The DM half of the delivery receipt, and the flock twin's comment
@@ -10280,15 +10313,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // reconnect itself takes longer than a sample in every real case.
   const socketAliveRef = useRef(null); // null until the first sample
   const [reconnectTick, setReconnectTick] = useState(0);
+  // WHAT WAS ON SCREEN BEFORE THE SOCKET DROPPED, for the catch-up to measure
+  // its page against (heldBeforeDrop, mergeHistory point 3): the two lists as
+  // the latest sample that found the socket up saw them. While it is up, every
+  // row on screen came from a read or arrived live in order, so nothing in the
+  // snapshot sits above a hole. Not taken while it is down, because a send
+  // that settles over HTTP then is newer than messages this device never
+  // received. And not taken from the sample that sees it come back until the
+  // catch-up read goes out (catchUpOwedRef): live rows land above the hole
+  // from the moment the room is rejoined. References to state the app already
+  // holds, not copies.
+  const heldWhileUpRef = useRef(null);
+  const catchUpOwedRef = useRef(false);
   useEffect(() => {
     const id = setInterval(() => {
       const live = !!getSocket()?.connected;
+      if (live && socketAliveRef.current !== false && !catchUpOwedRef.current) {
+        heldWhileUpRef.current = { flocks: flocksRef.current, dms: directMessagesRef.current };
+      }
       if (socketAliveRef.current === live) return;
       const firstSample = socketAliveRef.current === null;
       socketAliveRef.current = live;
       // A first connect is not a RE-connect: the screen that needs history
       // fetches its own on entry.
-      if (live && !firstSample) setReconnectTick(n => n + 1);
+      if (live && !firstSample) {
+        catchUpOwedRef.current = true;
+        setReconnectTick(n => n + 1);
+      }
     }, SOCKET_SAMPLE_MS);
     return () => clearInterval(id);
   }, []);
@@ -10317,12 +10368,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // off the top of what the user is already reading.
       // Votes, joins and leaves are socket-only with no replay, so a pocketed
       // phone came back to the tally and roster from before.
-      read = () => { loadFlockMessages(flockId, { keepOlder: true }); loadMoneyState(flockId); loadFlockVotes(flockId); refreshFlockRoster(flockId); };
+      read = (anchor) => { loadFlockMessages(flockId, { keepOlder: true, anchor }); loadMoneyState(flockId); loadFlockVotes(flockId); refreshFlockRoster(flockId); };
     } else if (screen === 'dmDetail' && dmId) {
       key = `dm:${dmId}`;
-      read = () => loadDmMessages(dmId, { keepOlder: true });
+      read = (anchor) => loadDmMessages(dmId, { keepOlder: true, anchor });
     }
-    if (!key) return; // no conversation open, nothing to catch up on
+    // No conversation open, nothing to catch up on. Nothing is owed either:
+    // the next one opened reads fresh, so the snapshot can move on.
+    if (!key) {
+      catchUpOwedRef.current = false;
+      return;
+    }
     const waitMs = CATCHUP_MIN_GAP_MS - (Date.now() - (historyReadAtRef.current[key] || 0));
     if (waitMs <= 0) {
       // A deferred read is now redundant — this one covers the same window.
@@ -10330,7 +10386,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         clearTimeout(catchUpTimerRef.current);
         catchUpTimerRef.current = null;
       }
-      read();
+      // The page keeps the scrollback under it only if it reaches a row that
+      // was on screen before the drop (heldWhileUpRef), not one that arrived
+      // live since. Taken as the read goes out, and the sampler is free to
+      // move the snapshot on after it. A read that fails leaves the list as
+      // it was, which is what a failed catch-up has always done; the next
+      // time the chat is opened it is read fresh.
+      const anchor = heldBeforeDrop(heldWhileUpRef.current, screen === 'chatDetail' ? { flockId } : { dmId });
+      catchUpOwedRef.current = false;
+      read(anchor);
       return;
     }
     // Throttled, not cancelled. A reconnect landing seconds after a screen-entry
