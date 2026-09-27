@@ -1315,7 +1315,10 @@ describe('the venue verification queue is on the screen that decides it', () => 
     expect(screen.queryByText('Venues waiting')).toBeNull();
   });
 
-  test('Verify PUTs verified:true to that claim', async () => {
+  test('Verify PUTs verified:true to that claim, naming the place the card showed', async () => {
+    // The place id is what binds the grant to what the admin checked. Without
+    // it the server verified whatever the claim named by the time of the
+    // click, and an owner can re-point a claim at a competitor at any moment.
     routes[REPORTS] = () => respond(queueBody([]));
     routes[ACTIONS] = () => respond({ actions: [] });
     routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
@@ -1325,7 +1328,32 @@ describe('the venue verification queue is on the screen that decides it', () => 
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     const put = calls.find((c) => c.method === 'PUT');
     expect(put.path).toBe('/api/admin/venues/7/verify');
-    expect(JSON.parse(put.body)).toEqual({ verified: true });
+    expect(JSON.parse(put.body)).toEqual({ verified: true, googlePlaceId: 'ChIJplace' });
+  });
+
+  test("the card links Google's own page for the place, not only what the owner typed", async () => {
+    // The name and address on the card are owner-typed and stay put when the
+    // claim is re-pointed, so the listing itself has to be one click away.
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [aClaim()] });
+    await renderConsole();
+    const link = screen.getByText('See this listing on Google Maps');
+    expect(link.getAttribute('href')).toBe('https://www.google.com/maps/place/?q=place_id:ChIJplace');
+    expect(link.getAttribute('rel')).toMatch(/noopener/);
+  });
+
+  test("a claim that moved since the card loaded is refused on that card, in the server's words", async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
+    routes['/api/admin/venues/7/verify'] = () => respond(
+      { error: 'This claim now names Google place ChIJother, not the one you checked. Nothing was changed. Reload the claim and check the listing it names now.', code: 'CLAIM_CHANGED' },
+      { ok: false, status: 409 },
+    );
+    await renderConsole();
+    fireEvent.click(screen.getByText('Verify'));
+    await waitFor(() => expect(screen.getByText(/now names Google place ChIJother/)).toBeInTheDocument());
   });
 
   test('Decline sends verified:false EXPLICITLY, because an absent key verifies', async () => {
@@ -1351,7 +1379,7 @@ describe('the venue verification queue is on the screen that decides it', () => 
     fireEvent.click(screen.getByText('Verify'));
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(JSON.parse(calls.find((c) => c.method === 'PUT').body))
-      .toEqual({ verified: true, reason: 'called the landline' });
+      .toEqual({ verified: true, googlePlaceId: 'ChIJplace', reason: 'called the landline' });
   });
 
   test('a refusal is shown on the claim it is about, not thrown away in an alert', async () => {

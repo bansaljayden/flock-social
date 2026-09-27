@@ -134,13 +134,13 @@ test.beforeEach(() => { issued = []; mutationRows = 1; });
 
 // ── admin: verify ─────────────────────────────────────────────────────────────
 test('PUT /admin/venues/:profileId/verify — non-numeric id is 404, never reaches the UPDATE', async () => {
-  const { status } = await req('PUT', '/api/admin/venues/abc/verify', ADMIN_TOKEN(), { verified: true });
+  const { status } = await req('PUT', '/api/admin/venues/abc/verify', ADMIN_TOKEN(), { verified: true, googlePlaceId: 'ChIJtest' });
   assert.strictEqual(status, 404);
   assert.ok(!targetQueryIssued('UPDATE venue_profiles SET verified'), 'UPDATE must not run for a bad id');
 });
 
 test('PUT /admin/venues/:profileId/verify — numeric id still works (no over-blocking)', async () => {
-  const { status, json } = await req('PUT', '/api/admin/venues/42/verify', ADMIN_TOKEN(), { verified: true });
+  const { status, json } = await req('PUT', '/api/admin/venues/42/verify', ADMIN_TOKEN(), { verified: true, googlePlaceId: 'ChIJtest' });
   assert.strictEqual(status, 200);
   assert.strictEqual(json.verified, true);
   assert.ok(targetQueryIssued('UPDATE venue_profiles SET verified'));
@@ -148,7 +148,7 @@ test('PUT /admin/venues/:profileId/verify — numeric id still works (no over-bl
 
 test('PUT /admin/venues/:profileId/verify — numeric id that matches nothing is 404', async () => {
   mutationRows = 0;
-  const { status } = await req('PUT', '/api/admin/venues/999/verify', ADMIN_TOKEN(), { verified: true });
+  const { status } = await req('PUT', '/api/admin/venues/999/verify', ADMIN_TOKEN(), { verified: true, googlePlaceId: 'ChIJtest' });
   assert.strictEqual(status, 404);
 });
 

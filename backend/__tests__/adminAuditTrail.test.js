@@ -218,7 +218,7 @@ const VERIFIED_ROW = { id: 7, business_name: 'The Bar', verified: true, google_p
 
 test('verifying a venue audits venue_verified, from the session, atomically', async () => {
   handlers = [verifyReturns(VERIFIED_ROW)];
-  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 200, res.text);
   assert.deepStrictEqual(res.body, { id: 7, business_name: 'The Bar', verified: true });
 
@@ -244,20 +244,20 @@ test('un-verifying still works and both directions share the one statement', asy
 
 test('the verify reason is optional, bound, and refused when it is not text', async () => {
   handlers = [verifyReturns(VERIFIED_ROW)];
-  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, reason: 'LLC docs checked' });
+  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A', reason: 'LLC docs checked' });
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(log[0].params[3], 'LLC docs checked');
 
   handlers = [verifyReturns(VERIFIED_ROW)];
   log = [];
-  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(log[0].params[3], null, 'no reason is NULL, not the string "undefined"');
 
   for (const bad of [['x'], { a: 1 }, 5, true]) {
     handlers = [verifyReturns(VERIFIED_ROW)];
     log = [];
-    res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, reason: bad });
+    res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A', reason: bad });
     assert.strictEqual(res.status, 400, `reason ${JSON.stringify(bad)} was accepted`);
     assert.strictEqual(res.body.error, 'reason must be text');
     assert.deepStrictEqual(log, [], 'a refused body must not reach the database');
@@ -265,19 +265,19 @@ test('the verify reason is optional, bound, and refused when it is not text', as
 
   handlers = [verifyReturns(VERIFIED_ROW)];
   log = [];
-  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, reason: 'x'.repeat(1001) });
+  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A', reason: 'x'.repeat(1001) });
   assert.strictEqual(res.status, 400);
   assert.match(res.body.error, /too long/);
 });
 
 test('a refused verify (conflict) and a missing profile keep their answers', async () => {
   handlers = [verifyReturns({ id: null, business_name: null, verified: null, google_place_id: 'PLACE_A', conflict_user_id: 42 })];
-  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 409);
   assert.strictEqual(res.body.code, 'PLACE_ALREADY_VERIFIED');
 
   handlers = [verifyReturns(null)];
-  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 404);
 });
 

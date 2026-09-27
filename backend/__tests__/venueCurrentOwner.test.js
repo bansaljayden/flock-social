@@ -29,6 +29,10 @@
 // out on the day it ran, decided again by 087, and 7. a reply sent while its
 // author's account is being deleted.
 //
+// And one about who becomes the owner: 8. an admin's verify lands only on the
+// listing the admin checked. An owner who re-pointed the claim at another
+// business after asking used to be verified as that business.
+//
 // These are properties of SQL (which rows a join keeps), so a scripted fake
 // cannot prove them: it answers whatever it was told to. The routes and
 // services run here unmodified against the real schema.
@@ -73,6 +77,8 @@ const venueDashboardRoutes = require('../routes/venueDashboard');
 const checkinRoutes = require('../routes/checkin');
 const sensorRoutes = require('../routes/sensors');
 const userRoutes = require('../routes/users');
+const venueProfileRoutes = require('../routes/venueProfile');
+const adminRoutes = require('../routes/admin');
 const advisorFacts = require('../services/advisorFacts');
 const lastNightVerdict = require('../services/lastNightVerdict');
 const { migrate } = require('../db/migrate');
@@ -97,6 +103,8 @@ test.before(async () => {
   app.use('/api/checkin', checkinRoutes);
   app.use('/api/sensors', sensorRoutes);
   app.use('/api/users', userRoutes);
+  app.use('/api/venue-profile', venueProfileRoutes);
+  app.use('/api/admin', adminRoutes);
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -639,5 +647,90 @@ test("an owner's reply cannot land between their account deletion's erase and th
   for (const r of rows) {
     assert.strictEqual(r.venue_reply, null, `review ${r.id} still carries the words of a deleted account`);
     assert.strictEqual(r.venue_reply_user_id, null);
+  }
+});
+
+// ── 8. a verify lands on the listing the admin checked ──────────────────────
+//
+// The whole path, through the real routes: the owner asks to be verified for
+// the place they run, the admin loads the queue and checks that place, and in
+// between the owner re-points the claim at a competitor nobody has verified
+// and asks again. The decision the admin sends names the place they checked,
+// so it must refuse, and the competitor must still be claimable by the person
+// who actually runs it.
+
+test('a verify decided on one listing never makes the claimant owner of another', async () => {
+  // The two notices this path sends (to the operator, then to the owner) are
+  // not under test, and this suite must never mail anyone.
+  const emailService = require('../services/emailService');
+  const realSend = emailService.sendEmail;
+  emailService.sendEmail = async () => ({ sent: false, skipped: true });
+  try {
+    const CHECKED = 'ChIJverifyBindChecked01';
+    const RIVAL = 'ChIJverifyBindRival0001';
+    const owner = await user('Claimant');
+    const rivalOwner = await user('Rival owner');
+    const { rows: [adminRow] } = await testPool.query(
+      `INSERT INTO users (email, password, name, role, email_verified)
+       VALUES ('verify-bind-admin@example.com', 'x', 'Admin', 'admin', true) RETURNING id`
+    );
+    const admin = adminRow.id;
+    const profileId = await claim(owner, CHECKED, { verified: false, name: 'The Claimant Bar' });
+
+    const asked = await call('POST', '/api/venue-profile/request-verification', { as: owner });
+    assert.strictEqual(asked.status, 200, asked.text);
+
+    // What the admin has in front of them.
+    const queue = await call('GET', '/api/admin/venues/unverified', { as: admin });
+    assert.strictEqual(queue.status, 200, queue.text);
+    const card = queue.body.venues.find((v) => v.id === profileId);
+    assert.strictEqual(card.google_place_id, CHECKED);
+
+    // The switch, and a fresh request, while the admin is checking.
+    const moved = await call('PUT', '/api/venue-profile', { as: owner, body: { googlePlaceId: RIVAL } });
+    assert.strictEqual(moved.status, 200, moved.text);
+    const again = await call('POST', '/api/venue-profile/request-verification', { as: owner });
+    assert.strictEqual(again.status, 200, again.text);
+
+    // A grant that names no place is refused outright.
+    const bare = await call('PUT', `/api/admin/venues/${profileId}/verify`, { as: admin, body: { verified: true } });
+    assert.strictEqual(bare.status, 400, bare.text);
+
+    // The decision on the card that was checked.
+    const decided = await call('PUT', `/api/admin/venues/${profileId}/verify`, {
+      as: admin, body: { verified: true, googlePlaceId: card.google_place_id },
+    });
+    assert.strictEqual(decided.status, 409, decided.text);
+    assert.strictEqual(decided.body.code, 'CLAIM_CHANGED');
+    assert.strictEqual(decided.body.googlePlaceId, RIVAL, 'the refusal does not name the listing the claim holds now');
+
+    const { rows: [after] } = await testPool.query(
+      'SELECT verified, verification_requested_at FROM venue_profiles WHERE id = $1',
+      [profileId]
+    );
+    assert.strictEqual(after.verified, false, 'the claimant became the verified owner of a place nobody checked');
+    assert.notStrictEqual(after.verification_requested_at, null, 'a refused decision closed the request it never decided');
+    const { rows: audits } = await testPool.query(
+      "SELECT 1 FROM moderation_actions WHERE content_type = 'venue_profile' AND content_id = $1",
+      [profileId]
+    );
+    assert.strictEqual(audits.length, 0, 'the audit log records a verification that did not happen');
+
+    // The business that was nearly taken is still claimable by its owner.
+    const rivalProfile = await claim(rivalOwner, RIVAL, { verified: false, name: 'The Rival Bar' });
+    const rivalAsks = await call('POST', '/api/venue-profile/request-verification', { as: rivalOwner });
+    assert.strictEqual(rivalAsks.status, 200, rivalAsks.text);
+    const rivalVerified = await call('PUT', `/api/admin/venues/${rivalProfile}/verify`, {
+      as: admin, body: { verified: true, googlePlaceId: RIVAL },
+    });
+    assert.strictEqual(rivalVerified.status, 200, rivalVerified.text);
+    assert.strictEqual(rivalVerified.body.verified, true);
+
+    // The grant above is the binding refusing a stale check and not every
+    // check. Declining the moved claim needs no place at all.
+    const declined = await call('PUT', `/api/admin/venues/${profileId}/verify`, { as: admin, body: { verified: false } });
+    assert.strictEqual(declined.status, 200, declined.text);
+  } finally {
+    emailService.sendEmail = realSend;
   }
 });
