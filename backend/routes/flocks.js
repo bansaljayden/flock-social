@@ -1617,6 +1617,13 @@ router.put('/:id',
       // own coordinates. $2 and $4 are cast the same way everywhere they
       // appear, because a parameter read as two types is refused whole
       // (42P08; __tests__/sqlParameterTypes.test.js prepares this).
+      //
+      // confirmed_at (migration 099) is stamped on the move INTO confirmed
+      // only: `status` on the right of the SET is the row's value before this
+      // write. A plan already confirmed and sent 'confirmed' again is not a
+      // new confirmation, and one confirmed before the column existed must not
+      // be stamped with today. COALESCE keeps the first stamp through a trip
+      // back to planning. The socket's select_venue stamps it the same way.
       const runFlockUpdate = (db) => db.query(
         `UPDATE flocks
          SET name = COALESCE($1, name),
@@ -1635,6 +1642,8 @@ router.put('/:id',
                                     THEN $8::text ELSE COALESCE($8::text, venue_photo_url) END,
              event_time = COALESCE($9, event_time),
              status = COALESCE($10::text, status),
+             confirmed_at = CASE WHEN $10::text = 'confirmed' AND status IS DISTINCT FROM 'confirmed'
+                                 THEN COALESCE(confirmed_at, NOW()) ELSE confirmed_at END,
              updated_at = NOW()
          WHERE id = $11
            AND ($10::text IS NULL OR $10::text = status OR status IS NULL OR status NOT IN ('completed', 'cancelled'))
@@ -1759,6 +1768,10 @@ router.put('/:id',
             [flockId]
           );
           const ff = updated;
+          // Minutes from creation to the host CLOSING the plan, after the
+          // night, whatever the column's name says. The admin analytics reads
+          // a real time to confirm from flocks.confirmed_at (migration 099)
+          // and no longer shows this one.
           const minutesElapsed = Math.round((Date.now() - new Date(ff.created_at).getTime()) / 60000);
 
           let stallPoint = 'completed';

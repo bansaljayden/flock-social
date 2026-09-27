@@ -3533,8 +3533,8 @@ export default function RevenueScreen({
           {activeTab === 'research' && (() => {
             const demoMode = researchDemoMode;
             const data = demoMode ? {
-              totalFlocks: 2340, completionRate: 78, avgGroupSize: 4.8, budgetAdoptionRate: 72,
-              avgTimeToConfirmation: 5, totalUsers: 8500, newUsersThisWeek: 247,
+              totalFlocks: 2340, completionRate: 78, endedPlans: 2104, avgGroupSize: 4.8, budgetAdoptionRate: 72,
+              timeToConfirm: { medianHours: 5.2, plans: 1210, minPlans: 10 }, totalUsers: 8500, newUsersThisWeek: 247,
               stallPointDistribution: [
                 { stall_point: 'completed', count: 1825 }, { stall_point: 'venue', count: 198 },
                 { stall_point: 'rsvp', count: 164 }, { stall_point: 'confirmation', count: 98 },
@@ -3582,31 +3582,61 @@ export default function RevenueScreen({
             }
 
             const stallColors = { completed: colors.steel, venue: '#F59E0B', rsvp: '#EF4444', confirmation: '#4a7ba7', budget: '#3B82F6' };
-            const stallTotal = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0) || 1;
+            const stallCount = (data.stallPointDistribution || []).reduce((s, p) => s + parseInt(p.count), 0);
+            const stallTotal = stallCount || 1;
             // A field the response did not carry is not a zero either, so it
             // says so rather than rendering one.
             const has = (v) => typeof v === 'number' && Number.isFinite(v);
             const stat = (v, render) => (has(v) ? render(v) : 'No data');
+            const plans = (n) => `${n.toLocaleString()} ${n === 1 ? 'plan' : 'plans'}`;
+            // WHAT EACH OF THESE COUNTS, under its figure. "Completion Rate" and
+            // "Where Flocks Stall" sat side by side and counted different plans:
+            // the rate is every plan that ended, closed by a host or by the
+            // sweep once its time passed (services/flockSweep.js), and the stall
+            // split is research_analytics, which only a host closing a plan by
+            // hand writes. "Time to Confirm" printed the minutes from creation
+            // to that closing, after the night, in the thousands. The time now
+            // comes from flocks.confirmed_at (migration 099), which only plans
+            // confirmed since it existed carry, so it waits for enough of them;
+            // the server withholds the median under its floor and so does this.
+            const ttc = data.timeToConfirm;
+            const ttcShown = !!ttc && has(ttc.medianHours) && has(ttc.plans) && has(ttc.minPlans) && ttc.plans >= ttc.minPlans;
+            const hoursWords = (h) => (h < 1 ? `${Math.max(1, Math.round(h * 60))}m` : h < 48 ? `${h.toFixed(1)}h` : `${(h / 24).toFixed(1)}d`);
+            let ttcNote = null;
+            if (ttcShown) ttcNote = `median from making a plan to confirming it, over ${plans(ttc.plans)}`;
+            else if (ttc && has(ttc.plans) && has(ttc.minPlans)) ttcNote = `Not enough plans confirmed since this was recorded: ${ttc.plans.toLocaleString()} of ${ttc.minPlans.toLocaleString()}.`;
+            let endedNote = null;
+            if (has(data.endedPlans)) {
+              endedNote = data.endedPlans === 0
+                ? 'No plan has ended yet.'
+                : `of ${plans(data.endedPlans)} that ended, including ones closed automatically once their time passed`;
+            }
             const statCards = [
               { label: 'Total Flocks', value: stat(data.totalFlocks, (v) => v.toLocaleString()), color: colors.navy },
-              { label: 'Completion Rate', value: stat(data.completionRate, (v) => `${v}%`), color: colors.steel },
+              { label: 'Confirmed before it ended', value: stat(data.completionRate, (v) => `${v}%`), color: colors.steel, note: endedNote },
               { label: 'Avg Group Size', value: stat(data.avgGroupSize, (v) => v), color: colors.navy },
               { label: 'Budget Adoption', value: stat(data.budgetAdoptionRate, (v) => `${v}%`), color: colors.steel },
-              { label: 'Time to Confirm', value: stat(data.avgTimeToConfirmation, (v) => `${v}m`), color: colors.navy },
-              { label: 'Total Users', value: stat(data.totalUsers, (v) => v.toLocaleString()), color: colors.navy },
+              { label: 'Time to Confirm', value: ttcShown ? hoursWords(ttc.medianHours) : ttc ? 'Not yet' : 'No data', color: colors.navy, note: ttcNote },
+              { label: 'Total Users', value: stat(data.totalUsers, (v) => v.toLocaleString()), color: colors.navy, note: 'people accounts, not venue owners, admins or banned accounts' },
             ];
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                {/* Two across on a phone rather than three, so a label and
+                    the line under it saying what it counts have room. */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
                   {statCards.map(s => (
-                    <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
+                    <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)', minWidth: 0 }}>
                       <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: s.color, margin: '0 0 2px' }}>{s.value}</p>
                       <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</p>
+                      {s.note && <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.35, overflowWrap: 'anywhere' }}>{s.note}</p>}
                     </div>
                   ))}
                 </div>
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Where Flocks Stall</h3>
+                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Where Flocks Stall</h3>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.4 }}>
+                    Plans a host closed by hand: {plans(stallCount)}. A plan closed automatically once its time passed is not in this.
+                  </p>
                   {(data.stallPointDistribution || []).map(p => {
                     const pct = Math.round((parseInt(p.count) / stallTotal) * 100);
                     return (
@@ -3643,6 +3673,7 @@ export default function RevenueScreen({
                   <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.steel, margin: 0 }}>
                     {has(data.newUsersThisWeek) ? `+${data.newUsersThisWeek.toLocaleString()}` : 'No data'}
                   </p>
+                  <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People accounts made in the last 7 days.</p>
                 </div>
                 {modeToggle}
               </div>

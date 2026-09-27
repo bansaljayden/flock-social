@@ -3606,6 +3606,9 @@ function registerHandlers(io, socket) {
         return;
       }
 
+      // confirmed_at (migration 099) on the move into confirmed only, keeping
+      // the first stamp, the rule PUT /api/flocks/:id keeps: re-picking the
+      // venue of a plan that is already confirmed is not a new confirmation.
       // A NEW VENUE IS ONE BLOCK, the rule PUT /api/flocks/:id follows. This
       // event carries a name, an address and a place id and nothing else, and
       // it wrote those three over a row that kept the old venue's
@@ -3633,7 +3636,9 @@ function registerHandlers(io, socket) {
                                  THEN NULL ELSE venue_rating END,
              venue_photo_url = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
                                     THEN NULL ELSE venue_photo_url END,
-             status = 'confirmed', updated_at = NOW()
+             status = 'confirmed',
+             confirmed_at = CASE WHEN status IS DISTINCT FROM 'confirmed' THEN COALESCE(confirmed_at, NOW()) ELSE confirmed_at END,
+             updated_at = NOW()
          WHERE id = $4 AND status NOT IN ('completed', 'cancelled')
          RETURNING venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url`,
         [venue_name, venue_address, venue_id, flockId]
