@@ -219,9 +219,9 @@ const gonePlaceIds = new Map();
 
 /**
  * Remember that Google answered this place id with "no such place" (see
- * isPlaceNotFoundAnswer in utils/placesHealth.js). Exported for routes/ai.js,
- * which makes its own Place Details call; this module's own fetch calls it
- * directly.
+ * isPlaceNotFoundAnswer in utils/placesHealth.js). This module's own fetch
+ * calls it; routes/ai.js reads Place Details through that fetch and only
+ * asks isGonePlace before charging a lookup.
  *
  * @param {string} placeId
  */
