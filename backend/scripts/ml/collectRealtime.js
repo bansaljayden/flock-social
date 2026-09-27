@@ -1757,6 +1757,15 @@ async function run() {
   // provenance audit throws), and the old form skipped pool.end() on any throw,
   // leaving the process alive on an open pool with nothing left to do.
   try {
+    // THE API, CHECKED FROM OUTSIDE IT. This service is the one thing that
+    // runs every hour and is not the API process, so it is the one thing that
+    // can say the API is down or crash-looping; Railway only calls
+    // /api/health at deploy time. One GET, ten seconds at most, and it never
+    // throws or stops the sweep (services/apiUptimeCheck.js). Required here
+    // rather than at the top so the collector's own tests never load the
+    // email stack.
+    // eslint-disable-next-line global-require
+    await require('../../services/apiUptimeCheck').runApiUptimeCheck({ db: pool });
     await collectRealtime();
     // Refresh baselines. This used to be a second, hand-written copy of
     // buildBaselines.js's statement that had drifted from it: no

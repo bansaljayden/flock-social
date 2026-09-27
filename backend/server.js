@@ -1158,8 +1158,17 @@ app.use(express.urlencoded({ extended: true, limit: DEFAULT_JSON_BODY_BYTES }));
 // (config/database.js — sized for request traffic, not for this): a health
 // check that takes 10 seconds to say "down" has answered nobody. A pool that
 // cannot return SELECT 1 inside 1.5s is not serving users either — outage and
-// saturation both deserve the 503, and Railway routing away from a saturated
-// instance is the correct response to saturation too.
+// saturation both deserve the 503.
+//
+// WHAT RAILWAY DOES WITH IT, which is less than this comment used to assume.
+// railway.json names this path as the healthcheck, and Railway calls it only
+// at the START of a deployment, to decide whether the new build goes live. It
+// does not poll it afterwards and routes nothing away from a failing instance.
+// So a database that dies at 3pm is found by two other things: the server's
+// own once-a-minute probe (boot() below, services/dbOutageAlert.js), which
+// emails when it stays down, and the hourly collector's GET of this endpoint
+// from outside the process (services/apiUptimeCheck.js), which is the only
+// one that can speak when this process is down entirely.
 //
 // State TRANSITIONS are logged once each, not per poll: hours of a 5-second
 // "still down" cadence would bury the one line that says when it started.
@@ -2347,6 +2356,7 @@ let heartbeatKickoff = null;
 let modelWarmKickoff = null;
 let costHeartbeatInterval = null;
 let costHeartbeatKickoff = null;
+let dbWatchInterval = null;
 
 async function boot() {
   try {
@@ -2395,6 +2405,19 @@ async function boot() {
       require('./services/mlPredictor').init().catch(() => {});
     } catch { /* the predictor falls back to the rule engine on its own */ }
   }, 5 * 1000);
+
+  // The database, asked once a minute by the server itself, because nothing
+  // else asks: Railway calls /api/health only at deploy time. Three failed
+  // probes in a row email the operator directly, without the ops ledger that
+  // lives in the database that is down, and one more email says when it is
+  // back (services/dbOutageAlert.js). unref'd, so it never holds a finished
+  // process open.
+  const { createDbWatch, DB_WATCH_INTERVAL_MS } = require('./services/dbOutageAlert');
+  const dbWatch = createDbWatch({ probe: probeDbHealth });
+  dbWatchInterval = setInterval(() => {
+    dbWatch.tick().catch((e) => console.error('[db-watch] tick failed:', e && e.message));
+  }, DB_WATCH_INTERVAL_MS);
+  dbWatchInterval.unref();
 
   // Collection heartbeat — hourly, watches the DATA rather than the cron:
   // if no realtime rows landed in ~a day, one email a day goes out until it
@@ -2582,6 +2605,9 @@ function shutdown(signal) {
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   if (heartbeatKickoff) clearTimeout(heartbeatKickoff);
   if (modelWarmKickoff) clearTimeout(modelWarmKickoff);
+  // First to go after the timers above: a probe into a pool that is being
+  // closed would read as the database going down on every deploy.
+  if (dbWatchInterval) clearInterval(dbWatchInterval);
   if (costHeartbeatInterval) clearInterval(costHeartbeatInterval);
   if (costHeartbeatKickoff) clearTimeout(costHeartbeatKickoff);
   if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);
