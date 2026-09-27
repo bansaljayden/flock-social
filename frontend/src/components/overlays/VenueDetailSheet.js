@@ -348,7 +348,10 @@ const VenueDetailSheet = ({
                           it already does for a guest RSVP. */}
                       <button aria-label="Report promotion" className="hit44" onClick={() => setModerationTarget({ userName: 'this venue', contentType: 'venue_promotion', contentId: p.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report promotion">{Icons.flag('currentColor', 13)}</button>
                     </div>
-                    {p.description && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
+                    {/* Not when it only repeats the title. The Post a Deal card
+                        used to send its one line as both, so the deals it
+                        posted before it stopped read the same sentence twice. */}
+                    {p.description && p.description !== p.title && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{p.description}</p>}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{p.time_slot}{p.days ? ` · ${p.days}` : ''}</p>
                   </div>
                 ))}
