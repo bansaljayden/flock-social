@@ -72,7 +72,12 @@ def real_frame(real, rng):
                    for x, y in real['tp_pts'][i]]
         boxes = False
     else:
-        i = int(rng.integers(len(real['otp_img'])))
+        # Frames with two or more people drawn three times as often: groups
+        # seen from the side are where owl-3 undercounted.
+        if '_w' not in real:
+            w = np.array([3.0 if len(p) >= 2 else 1.0 for p in real['otp_people']])
+            real['_w'] = w / w.sum()
+        i = int(rng.choice(len(real['otp_img']), p=real['_w']))
         g = real['otp_img'][i].astype(np.float32) / 255.0
         # 8-bit frames carry no temperatures; a plausible room-to-skin range,
         # different every time, so no one mapping is learned as the truth.
@@ -108,7 +113,14 @@ class Frames(IterableDataset):
             heat, ltrb, mask = synth.targets(objects)
             if not boxes:
                 mask = np.zeros_like(mask)
-            yield (torch.from_numpy(synth.model_input(t)), torch.from_numpy(heat),
+            x = synth.model_input(t)
+            # Absolute temperature is not always to be trusted: an 8-bit real
+            # frame's temperatures are made up, and an uncalibrated Lepton's are
+            # a few degrees out. Now and then it is skewed, so the model leans on
+            # warmth relative to the room as well.
+            if rng.random() < (0.6 if known is PEOPLE_ONLY else 0.2):
+                x[0] = x[0] * rng.uniform(0.7, 1.3) + rng.uniform(-0.8, 0.8)
+            yield (torch.from_numpy(x), torch.from_numpy(heat),
                    torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known))
 
 

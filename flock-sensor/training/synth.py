@@ -189,8 +189,15 @@ def room(rng):
 # ---------------------------------------------------------------------------
 
 def _clothing(rng, amb, skin):
-    """Clothing surface: a t-shirt reads near skin, a coat near the room."""
-    return amb + (skin - amb) * rng.uniform(0.2, 0.7)
+    """Clothing surface, as a share of the way from the room to the skin.
+
+    Measured indoors at 22C: a T-shirt outfit reads 29.5C, spring and autumn
+    layers 26.9C, a winter outfit 25.1C, which is 0.6 to 0.75 of the way to
+    skin for a T-shirt, 0.4 to 0.55 for a sweater, 0.25 to 0.4 for a jacket.
+    """
+    k = rng.choice([rng.uniform(0.6, 0.75), rng.uniform(0.4, 0.55), rng.uniform(0.25, 0.4)],
+                   p=[0.45, 0.35, 0.2])
+    return amb + (skin - amb) * k
 
 
 def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
@@ -203,7 +210,10 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
     s = F_PX * SS / d                      # canvas px per metre
     if child if child is not None else rng.random() < 0.12:
         s *= rng.uniform(0.6, 0.8)          # a child
-    skin = rng.uniform(31.0, 35.0)
+    # Skin follows the room: a forehead reads 33.4C at 22C air and moves
+    # 0.14C for every degree of room, measured. Drawn at random before, so a
+    # hot room had people no warmer than in a cool one.
+    skin = min(36.5, 33.4 + 0.14 * (amb - 22.0) + rng.normal(0, 0.8))
     cloth = _clothing(rng, amb, skin)
     if coat if coat is not None else rng.random() < 0.08:
         # A winter coat reads barely above the room.
@@ -213,7 +223,8 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
         # A real unit missed a bare torso filling its view because every
         # person it had learned from wore clothes cooler than skin.
         cloth = skin - rng.uniform(0.3, 1.8)
-    hair = amb + (skin - amb) * rng.uniform(0.35, 0.85)
+    # Hair insulates: a crown reads 3 to 10C over the room, short hair warmer.
+    hair = min(skin - 0.5, amb + rng.uniform(3.0, 10.0))
     pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
     head_rx, head_ry = 0.083 * s * rng.uniform(0.9, 1.1), 0.115 * s * rng.uniform(0.9, 1.1)
     view = view or rng.choice(['front', 'back', 'side'], p=[0.5, 0.3, 0.2])
@@ -406,7 +417,10 @@ def distractor(c, rng, amb, oid=-1, kind=None):
         paint(ellipse(x, y, 0.06 * s, 0.06 * s), amb + (t - amb) * 0.25)
         paint(ellipse(x, y, 0.03 * s, 0.03 * s), t)
     elif kind == 'pet':
-        fur = amb + (34 - amb) * rng.uniform(0.3, 0.65)
+        # Fur reads near the room (a short coat about 5C over it, a long one
+        # 2.5C), but eyes and ears run 35 to 38C: a dog or cat is a cool body
+        # with a few hot points, which is nothing like a person.
+        fur = amb + rng.choice([rng.uniform(3.5, 6.5), rng.uniform(1.5, 4.0)])
         big = rng.uniform(0.6, 1.3)
         paint(ellipse(x, y, 0.25 * s * big, 0.12 * s * big, rng.normal(0, 0.2)), fur)
         hx = x + rng.choice([-1, 1]) * 0.27 * s * big
@@ -416,8 +430,14 @@ def distractor(c, rng, amb, oid=-1, kind=None):
                 lx = x + fb * 0.15 * s * big
                 paint(capsule(lx + side * 0.02 * s, y + 0.05 * s * big, lx, y + 0.22 * s * big,
                                 0.025 * s * big), fur - rng.uniform(0, 2))
+        hot = rng.uniform(35.0, 38.0)
+        paint(ellipse(hx - 0.02 * s * big, y - 0.1 * s * big, 0.014 * s * big, 0.014 * s * big), hot)
+        paint(ellipse(hx + 0.02 * s * big, y - 0.1 * s * big, 0.014 * s * big, 0.014 * s * big), hot)
+        paint(ellipse(hx, y - 0.15 * s * big, 0.02 * s * big, 0.03 * s * big), hot - rng.uniform(0, 2))
     elif kind == 'seat':
-        paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s), amb + rng.uniform(1.5, 5.0))
+        # Just left: 4 to 8C over the room on fabric, fading over minutes.
+        paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s),
+              amb + rng.uniform(4.0, 8.0) * rng.uniform(0.2, 1.0))
     elif kind == 'plate':
         paint(ellipse(x, y, 0.13 * s, 0.05 * s), rng.uniform(38, 60))
     elif kind == 'sun':
