@@ -1781,7 +1781,10 @@ async function fetchVenueBasics(placeId, userId) {
       // both to the server clock — mirrors the crowd.js field mask. timeZone
       // (Place Details Pro, the offset's own tier, so free on this Enterprise
       // mask) gives each forecast hour the offset in force at that hour.
-      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes,timeZone',
+      // primaryType is what the strip compares the venue against (see
+      // stripComparisonTypes). Place Details Pro, the tier of utcOffsetMinutes,
+      // so free on this Enterprise mask like timeZone.
+      'X-Goog-FieldMask': 'id,displayName,rating,userRatingCount,priceLevel,types,primaryType,location,currentOpeningHours,utcOffsetMinutes,timeZone',
     },
     signal: upstreamSignal('places'), // round 12 — see utils/upstream.js
   });
@@ -1805,6 +1808,9 @@ async function fetchVenueBasics(placeId, userId) {
     // call and then threw it away.
     price_level: priceLevelToNum(p.priceLevel),
     types: p.types || [],
+    // Google's one word for what the place is ('cafe', 'brewery'), or null
+    // when the listing does not carry one.
+    primary_type: typeof p.primaryType === 'string' && p.primaryType ? p.primaryType : null,
     location: p.location || null,
     isOpen: p.currentOpeningHours?.openNow ?? null,
     // Nullable: Google omits it for some places, and callers fall back to the
@@ -1979,6 +1985,39 @@ router.get('/intelligence', requirePro, async (req, res) => {
   }
 });
 
+// WHAT THE STRIP COMPARES A VENUE AGAINST.
+//
+// Bars, clubs and restaurants compare against whichever of those three the
+// listing carries, as they always have. Everything else used to fall through
+// to `['bar']`, so a coffee shop on Roost opened its strip to a list of the
+// bars within 1.5 km, "projected busier than you tonight", a category it does
+// not compete with, on a plan it pays for. Roost serves any kind of venue
+// (the rule services/advisorFacts.js already writes down for its hours), so
+// the comparison set is the venue's own kind: Google's primaryType, always a type
+// searchNearby accepts, and failing that the first specific type on the
+// listing. When the listing names neither, there is nothing honest to
+// compare against, and the strip says so instead of borrowing a category.
+const STRIP_NIGHTLIFE_TYPES = ['bar', 'night_club', 'restaurant'];
+// Google's catch-all tags. Nearly every listing carries some of them, they say
+// nothing about what a place competes as, and searchNearby does not take them
+// as a filter.
+const GENERIC_PLACE_TYPES = new Set([
+  'establishment', 'point_of_interest', 'food', 'store', 'health', 'finance',
+  'place_of_worship', 'general_contractor', 'political', 'geocode', 'premise',
+  'subpremise', 'landmark', 'natural_feature', 'plus_code', 'street_address',
+  'route', 'intersection', 'neighborhood', 'locality', 'sublocality', 'postal_code',
+  'country', 'colloquial_area', 'town_square', 'floor', 'room', 'post_box',
+]);
+function stripComparisonTypes(venue) {
+  const types = Array.isArray(venue?.types) ? venue.types : [];
+  const nightlife = STRIP_NIGHTLIFE_TYPES.filter((t) => types.includes(t));
+  if (nightlife.length) return nightlife;
+  if (typeof venue?.primary_type === 'string' && venue.primary_type) return [venue.primary_type];
+  const own = types.find((t) => typeof t === 'string' && t && !GENERIC_PLACE_TYPES.has(t)
+    && !/^(administrative_area_level_|sublocality_level_|postal_code_)/.test(t));
+  return own ? [own] : null;
+}
+
 // GET /api/venue-dashboard/strip — you vs the venues around you, tonight.
 // Google Popular Times cannot do this: it is per-venue, read-only, no API.
 router.get('/strip', requirePro, async (req, res) => {
@@ -2002,8 +2041,15 @@ router.get('/strip', requirePro, async (req, res) => {
     if (me === BUDGET_EXCEEDED) return budgetRefusal(res, req.user.id);
     if (!me?.location) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
 
-    // Same-category venues within walking distance.
-    const wanted = ['bar', 'night_club', 'restaurant'].filter((t) => me.types.includes(t));
+    // Same-category venues within walking distance. Decided before the search
+    // is charged, so a listing with no kind to compare buys no search.
+    const includedTypes = stripComparisonTypes(me);
+    if (!includedTypes) {
+      return res.json({
+        available: false,
+        reason: 'Your Google listing does not say what kind of place this is, so there is nothing to compare it against.',
+      });
+    }
     // Round 9: searchNearby is a second paid call — charge it separately.
     if (!allowPlacesSearch(req.user.id)) return budgetRefusal(res, req.user.id);
     const nearbyRes = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
@@ -2020,7 +2066,7 @@ router.get('/strip', requirePro, async (req, res) => {
         'X-Goog-FieldMask': 'places.id,places.displayName,places.types,places.location,places.priceLevel,places.rating,places.userRatingCount,places.currentOpeningHours,places.utcOffsetMinutes,places.timeZone',
       },
       body: JSON.stringify({
-        includedTypes: wanted.length ? wanted : ['bar'],
+        includedTypes,
         maxResultCount: 8,
         locationRestriction: {
           circle: { center: { latitude: me.location.latitude, longitude: me.location.longitude }, radius: 1500 },
@@ -2729,4 +2775,6 @@ module.exports.__test = {
   STRIP_ORDERING_MIN_GAP,
   // The live number's one-a-minute wording (__tests__/ownerSurfaceHardening.test.js).
   oneAMinuteRefusal,
+  // What the strip compares a venue against (__tests__/stripComparisonSet.test.js).
+  stripComparisonTypes,
 };
