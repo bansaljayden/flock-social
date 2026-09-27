@@ -200,14 +200,55 @@ describe('the You tab', () => {
     await waitFor(() => expect(setPaywallTrigger).toHaveBeenCalledWith('settings'));
   });
 
-  test('the Pro row, the crowd alerts Pro badge and the deletion note are all gated', () => {
+  test('the Pro row is gated', () => {
     const src = read('screens', 'ProfileSettings.js');
     expect(src).toContain(`{${ON} && <ProRow `);
-    expect(src).toContain(`{${ON} && entitlements?.paywallEnabled && !isPro ? (`);
-    expect(src).toContain(`{${ON} && (entitlements?.paywallEnabled || isPro) && (`);
     // Deletion itself is untouched: the sheet, its confirm word and the call.
     expect(src).toContain('Delete your account?');
     expect(src).toMatch(/deleteAccount\(/);
+  });
+
+  // The crowd alerts row: from the "Crowd alerts" label to the end of its
+  // control. The backend sends that push only to Pro while the paywall is on
+  // (services/crowdAlerts.js), so an account without it never gets a switch.
+  const alertsRow = () => {
+    const src = read('screens', 'ProfileSettings.js');
+    const at = src.indexOf('>Crowd alerts</span>');
+    return src.slice(at, src.indexOf('<Toggle label="Crowd alerts"', at) + 200);
+  };
+
+  test('crowd alerts, account without them: unset keeps the Pro button, off says so plainly with no switch', () => {
+    const row = alertsRow();
+    // The entitlement check decides first, in every build.
+    expect(row).toContain(`{entitlements?.paywallEnabled && !isPro ? (\n                  ${ON} ? (\n                    <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')}`);
+    // Off, that branch renders nothing where the switch would be...
+    expect(row).toContain('Pro\n                    </button>\n                  ) : null\n                ) : (\n                  <Toggle label="Crowd alerts" on={crowdAlertsOn}');
+    // ...and the line under the label says the alerts are not available.
+    expect(row).toContain(`{entitlements?.paywallEnabled && !isPro && process.env.REACT_APP_PURCHASES === 'off' ? "Crowd alerts aren't available on this account" : "A heads up before your flock's venue gets busy"}`);
+    expect("Crowd alerts aren't available on this account").not.toMatch(/Pro|upgrade|\$\d|price|buy/i);
+    // Exactly one switch, reached only when the account gets the alerts.
+    expect(row.split('<Toggle ').length - 1).toBe(1);
+  });
+
+  // The deletion sheet's subscription note, from its comment to the inputs.
+  const deletionNote = () => {
+    const src = read('screens', 'ProfileSettings.js');
+    const at = src.indexOf('{/* Only once there is a subscription to speak of;');
+    return src.slice(at, src.indexOf('{/* Both inputs below close the keyboard on Return', at));
+  };
+  const NEUTRAL_NOTE = 'Deleting your account does not cancel a subscription paid through the App Store. Cancel it first in the Settings app: tap your name, then Subscriptions.';
+
+  test('deletion, unset: the note is exactly as before, shown with the paywall on or to a subscriber', () => {
+    const note = deletionNote();
+    expect(note).toContain(`{${ON} ? ((entitlements?.paywallEnabled || isPro) && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>`);
+  });
+
+  test('deletion, off: a subscriber still gets the App Store warning and how to cancel, with nothing sold', () => {
+    const note = deletionNote();
+    expect(note).toContain(`)) : (isPro && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>${NEUTRAL_NOTE}</p>\n                ))}`);
+    expect(NEUTRAL_NOTE).not.toMatch(/Pro|flockcorp|\$\d|price|buy|http/i);
+    expect(NEUTRAL_NOTE).toMatch(/does not cancel a subscription paid through the App Store/);
+    expect(NEUTRAL_NOTE).toMatch(/Settings app: tap your name, then Subscriptions/);
   });
 });
 
