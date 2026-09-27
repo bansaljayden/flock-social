@@ -257,6 +257,9 @@ const adminRouter = require('../routes/admin');
 const moneyHub = require('../services/moneyHub');
 const billing = require('../services/proBilling');
 const { STATED_PRICES } = require('../services/statedPrices');
+// The in-memory Places ledger GET /costs reads, charged directly by the one
+// test that needs calls on it.
+const placesBudget = require('../utils/placesBudget');
 
 const app = express();
 app.use(express.json());
@@ -1035,6 +1038,35 @@ test('GET /costs carries the list\'s totals, so the Costs tab reads tooling from
   assert.strictEqual(r.body.expenses.toolingMonthlyUsd, 20);
   assert.strictEqual(r.body.fixed.toolingMonthlyUsd, 0, 'no tooling bill is written into the code any more');
   assert.ok(r.body.expenses.burnMonthlyUsd > r.body.fixed.effectiveMonthlyUsd);
+});
+
+test('GET /costs prices Text Search and Place Details from the ledger\'s own photo share', async () => {
+  // costModel.test.js pins what buildObserved does with the count the route
+  // hands it, placesPhotoCallsThisProcess: the photo proxy's share of the
+  // same in-memory ledger, so the difference is exactly the other calls.
+  // This pins the route handing it over. Without that line the remainder has
+  // nothing in its own window to subtract and the line reads unmeasured, and
+  // the old subtraction of the durable day count (stubbed at 1 above) gives
+  // 7 here instead of 5.
+  placesBudget.__resetPlacesBudget();
+  try {
+    for (let i = 0; i < 5; i += 1) assert.strictEqual(placesBudget.allowGlobalPlacesCall(1), true);
+    for (let i = 0; i < 3; i += 1) assert.strictEqual(placesBudget.allowGlobalPlacesCall(1, { photo: true }), true);
+    handlers = [
+      [/FROM business_expenses/, () => ({ rows: [], rowCount: 0 })],
+      [/FROM cost_reconciled/, () => ({ rows: [], rowCount: 0 })],
+      [/.*/, () => ({ rows: [], rowCount: 0 })],
+    ];
+    const r = await req('GET', '/api/admin/costs');
+    assert.strictEqual(r.status, 200, r.text);
+    const other = r.body.observed.lines.find((l) => l.id === 'places-other');
+    assert.ok(other, 'the Text Search and Place Details line is on the panel');
+    assert.strictEqual(other.count, 5, 'eight calls on the ledger, three of them photos');
+    assert.ok(Number.isFinite(other.usd) && other.usd > 0, 'and it is priced, not left at zero');
+    assert.ok(!r.body.observed.unmeasuredLines.includes('places-other'));
+  } finally {
+    placesBudget.__resetPlacesBudget();
+  }
 });
 
 test('net and break-even: this month, the burn, and how many would cover it', async () => {
