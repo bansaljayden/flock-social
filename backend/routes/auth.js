@@ -949,7 +949,9 @@ async function inspectReset(rawToken) {
   const { rows } = await pool.query(
     `SELECT r.id, r.user_id, r.verifier_hash, r.email, r.used_at, r.expires_at,
             u.email AS current_email, u.oauth_provider, u.is_banned,
-            (u.password IS NOT NULL) AS has_password
+            (u.password IS NOT NULL) AS has_password,
+            (u.venmo_username IS NOT NULL OR u.cashapp_cashtag IS NOT NULL
+              OR u.zelle_identifier IS NOT NULL) AS has_payment_handles
        FROM password_resets r
        JOIN users u ON u.id = r.user_id
       WHERE r.selector = $1`,
@@ -1013,8 +1015,26 @@ async function consumeReset(rawToken, newPassword) {
   // than `= FALSE` because migration 001 added the column nullable, and a NULL
   // compared with `=` is NULL, which would refuse every legitimate reset on a
   // row that predates a backfill.
+  //
+  // THE PAYMENT HANDLES GO WITH THE OLD PASSWORD, for the reason the Google
+  // claim gives at R5-H3 below. A reset is the other way the owner of an
+  // address takes a squatted row back: the squatter registers the address,
+  // somebody clicks the stray confirmation mail, the row is verified, the
+  // squatter writes their own venmo_username, cashapp_cashtag and
+  // zelle_identifier onto it, and the real owner, told "Email already
+  // registered" at signup, uses Forgot password. The bump below ends the
+  // squatter's sessions and the new password ends their credential, and
+  // neither one removes the handles, so every bill split the owner ran from
+  // then on would have told their friends to pay the squatter. Nothing here
+  // can tell that owner from somebody who simply forgot their password, so
+  // both lose the handles. ACCEPTED COST, the same one the claim took: a
+  // genuine user types their handles into Settings once more after a reset.
+  // The response says so (see POST /reset-password), so they are not left to
+  // find out from a bill split with no payment links on it.
   const updated = await pool.query(
-    `UPDATE users SET password = $1, token_version = token_version + 1, updated_at = NOW()
+    `UPDATE users SET password = $1, token_version = token_version + 1,
+            venmo_username = NULL, cashapp_cashtag = NULL, zelle_identifier = NULL,
+            updated_at = NOW()
       WHERE id = $2 AND oauth_provider IS NULL AND is_banned IS NOT TRUE AND LOWER(email) = LOWER($3)
       RETURNING id`,
     [hashed, row.user_id, row.current_email]
@@ -1030,7 +1050,15 @@ async function consumeReset(rawToken, newPassword) {
   );
 
   console.warn(`[auth] password reset completed for user ${row.user_id}`);
-  return { ok: true, userId: row.user_id, email: row.current_email };
+  // Read before the write, so it can say whether the UPDATE above took
+  // anything away. Only whether: the screen tells the person to add their
+  // handles again, and has no business naming the ones that were there.
+  return {
+    ok: true,
+    userId: row.user_id,
+    email: row.current_email,
+    paymentHandlesCleared: row.has_payment_handles === true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2716,7 +2744,15 @@ router.post('/reset-password', [
     // No session is issued here on purpose. Somebody who just proved they can
     // read the mailbox should sign in with the password they chose, which is
     // also the moment they find out whether it saved.
-    res.json({ message: 'Password updated. Sign in with your new password.' });
+    //
+    // paymentHandlesCleared: consumeReset removed the Venmo, Cash App and
+    // Zelle details the row held (see the UPDATE there for why). Sent only
+    // when there were some, so the done screen can say to add them again
+    // rather than leave the first bill split to discover it.
+    res.json({
+      message: 'Password updated. Sign in with your new password.',
+      ...(result.paymentHandlesCleared ? { paymentHandlesCleared: true } : {}),
+    });
   } catch (err) {
     console.error('Reset password error:', err);
     res.status(500).json({ error: 'Could not set a new password. Try again in a moment.' });
