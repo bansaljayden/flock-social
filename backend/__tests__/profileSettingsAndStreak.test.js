@@ -18,6 +18,15 @@
 // against a migrated embedded Postgres, holds one save open between its first
 // statement and its answer while a second save runs to completion, and reads
 // back what was stored.
+//
+// THE PROFILE STREAK, IN THE PERSON'S OWN DAYS
+// ---------------------------------------------------------------------------
+// GET /api/users/stats bucketed activity by UTC date and walked back from a
+// UTC "today", so an evening in the Americas split at UTC midnight: two
+// messages minutes apart counted as two days, and two evenings in a row read
+// as a gap. It also counted every flock_members row, and an invite row is
+// stamped when somebody ELSE sends the invite. Date arithmetic and zone rules
+// are Postgres's here, so these run on the same embedded server.
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -58,6 +67,9 @@ let seq = 0;
 // answer is kept from the route until release() (or a timeout, so a version of
 // the route that took a row lock and waited could not wedge the file).
 let gate = null;
+// When set, the streak read refuses any zone but UTC, the way a Postgres whose
+// zone table lacks a name ICU accepted would.
+let refuseStreakZone = false;
 function holdNextSettingsStatement() {
   let reached;
   let release;
@@ -86,6 +98,11 @@ test.before(async () => {
 
   const query = pool.query;
   pool.query = async function heldQuery(...args) {
+    if (refuseStreakZone && typeof args[0] === 'string' && /AS today/.test(args[0])
+        && Array.isArray(args[1]) && args[1][1] !== 'UTC') {
+      // What Postgres answers for a zone name it does not know.
+      throw Object.assign(new Error(`time zone "${args[1][1]}" not recognized`), { code: '22023' });
+    }
     const out = await query.apply(this, args);
     const g = gate;
     if (g && !g.taken && typeof args[0] === 'string' && /user_settings/.test(args[0])) {
@@ -213,4 +230,142 @@ test('a save that would push the merged blob past the cap is refused and changes
   const huge = await save(gus, { d: 'z'.repeat(9000) });
   assert.equal(huge.status, 400);
   assert.equal(huge.body.error, 'Settings payload too large');
+});
+
+// ── The profile streak ───────────────────────────────────────────────────────
+// America/Phoenix keeps UTC-7 all year, so every wall-clock time below lands on
+// the same UTC date whatever the season: 16:00 there is 23:00 UTC the same day,
+// and 17:05 or 18:00 there is past midnight UTC, the next day. The moments are
+// placed relative to today in Phoenix, so the file means the same thing on
+// whatever day it runs.
+const PHOENIX = 'America/Phoenix';
+const statsFor = (user, qs = `?tz=${encodeURIComponent(PHOENIX)}`) =>
+  call('GET', `/api/users/stats${qs}`, { token: user.token });
+
+let hostFlockId = null;
+async function hostFlock() {
+  if (hostFlockId) return hostFlockId;
+  // Created by somebody else and with no membership rows, so the messages sent
+  // in it are the only activity a test's person has.
+  const host = await mkUser('Host');
+  const { rows } = await pool.query(
+    "INSERT INTO flocks (name, creator_id, status) VALUES ('Tacos', $1, 'planning') RETURNING id",
+    [host.id]
+  );
+  hostFlockId = rows[0].id;
+  return hostFlockId;
+}
+
+// A message sent at `clock` (HH:MM) in `zone`, `daysAgo` local days before
+// today there, stored the way the app stores it: naive UTC.
+async function messageAt(user, zone, daysAgo, clock) {
+  await pool.query(
+    `INSERT INTO messages (flock_id, sender_id, message_text, created_at)
+     VALUES ($4, $5, 'hi',
+       ((date_trunc('day', NOW() AT TIME ZONE $1::text) - make_interval(days => $2::int) + $3::interval)
+         AT TIME ZONE $1::text) AT TIME ZONE 'UTC')`,
+    [zone, daysAgo, clock, await hostFlock(), user.id]
+  );
+}
+
+test('the streak counts the person\'s own days: two evenings in a row are a streak of two', async () => {
+  // The day before yesterday at 4 PM (23:00 UTC that day) and yesterday at
+  // 6 PM (01:00 UTC today). In UTC days those are two apart with a gap.
+  const maya = await mkUser('Maya');
+  await messageAt(maya, PHOENIX, 2, '16:00');
+  await messageAt(maya, PHOENIX, 1, '18:00');
+  const r = await statsFor(maya);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.streak, 2, 'two consecutive local evenings must be a two-day streak');
+});
+
+test('two messages either side of UTC midnight on one evening are one day, not two', async () => {
+  const noa = await mkUser('Noa');
+  await messageAt(noa, PHOENIX, 1, '16:55');
+  await messageAt(noa, PHOENIX, 1, '17:05');
+  const r = await statsFor(noa);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.streak, 1, 'one evening counted as two days');
+});
+
+test('an invite nobody answered, or one that was declined, is not a day of activity', async () => {
+  const ora = await mkUser('Ora');
+  const host = await mkUser('Inviter');
+  const mkPlan = async () => (await pool.query(
+    "INSERT INTO flocks (name, creator_id, status) VALUES ('Plan', $1, 'planning') RETURNING id", [host.id]
+  )).rows[0].id;
+  // Invited yesterday and today, and one declined today. joined_at is stamped
+  // when the invite is written, which is somebody else acting.
+  await pool.query(
+    `INSERT INTO flock_members (flock_id, user_id, status, joined_at)
+     VALUES ($1, $3, 'invited', (NOW() AT TIME ZONE 'UTC') - INTERVAL '1 day'),
+            ($2, $3, 'invited', NOW() AT TIME ZONE 'UTC')`,
+    [await mkPlan(), await mkPlan(), ora.id]
+  );
+  await pool.query(
+    "INSERT INTO flock_members (flock_id, user_id, status, joined_at) VALUES ($1, $2, 'declined', NOW() AT TIME ZONE 'UTC')",
+    [await mkPlan(), ora.id]
+  );
+  let r = await statsFor(ora);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.streak, 0, 'invites the person never accepted kept a streak alive');
+
+  // Accepting one is a join, and today counts.
+  await pool.query(
+    "INSERT INTO flock_members (flock_id, user_id, status, joined_at) VALUES ($1, $2, 'accepted', NOW() AT TIME ZONE 'UTC')",
+    [await mkPlan(), ora.id]
+  );
+  r = await statsFor(ora);
+  assert.equal(r.body.streak, 1);
+});
+
+test('without ?tz the streak uses the zone the device last reported, and a zone nobody knows is UTC', async () => {
+  const pia = await mkUser('Pia');
+  await pool.query(
+    `INSERT INTO device_tokens (user_id, token, device_type, timezone, timezone_reported_at)
+     VALUES ($1, $2, 'ios', $3, NOW())`,
+    [pia.id, `tok-${pia.id}-${Date.now()}`, PHOENIX]
+  );
+  await messageAt(pia, PHOENIX, 2, '16:00');
+  await messageAt(pia, PHOENIX, 1, '18:00');
+  const r = await statsFor(pia, '');
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.streak, 2, 'an older build that sends no zone should still be counted in its device\'s days');
+
+  // A zone that is not one, from the query and from the device row, is never
+  // handed to Postgres: the profile answers, counted in UTC.
+  const quinn = await mkUser('Quinn');
+  await pool.query(
+    `INSERT INTO device_tokens (user_id, token, device_type, timezone, timezone_reported_at)
+     VALUES ($1, $2, 'web', 'Mars/Olympus''; --', NOW())`,
+    [quinn.id, `tok-${quinn.id}-${Date.now()}`]
+  );
+  await pool.query(
+    "INSERT INTO messages (flock_id, sender_id, message_text) VALUES ($1, $2, 'now')",
+    [await hostFlock(), quinn.id]
+  );
+  for (const qs of ['?tz=Not%2FAZone', '?tz[]=America%2FPhoenix', '']) {
+    const q = await statsFor(quinn, qs);
+    assert.equal(q.status, 200, `${qs}: ${q.text}`);
+    assert.equal(q.body.streak, 1, `${qs}: a message sent just now is today's activity in any zone`);
+  }
+});
+
+test('a zone ICU accepts and Postgres does not is counted in UTC rather than failing the profile', async () => {
+  // The code the route falls back on is the one this Postgres really uses.
+  await assert.rejects(pool.query("SELECT NOW() AT TIME ZONE 'Mars/Olympus'"), { code: '22023' });
+
+  const rae = await mkUser('Rae');
+  await pool.query(
+    "INSERT INTO messages (flock_id, sender_id, message_text) VALUES ($1, $2, 'now')",
+    [await hostFlock(), rae.id]
+  );
+  refuseStreakZone = true;
+  try {
+    const r = await statsFor(rae);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.streak, 1);
+  } finally {
+    refuseStreakZone = false;
+  }
 });
