@@ -1409,7 +1409,12 @@ _THERMAL_WINDOW = 15
 # the number took half a minute to settle. With a screen the loop runs four
 # times a second, which the trained counter manages on one Pi 5 core; the
 # median then spans about four seconds.
-THERMAL_EVERY = 0.25 if THERMAL_VIEW_ON else 2.0
+#
+# Now as fast as the camera: a Lepton delivers about nine frames a second, and
+# read_frame waits for the next one, so on a screen unit this is a floor, not
+# a pace. Every frame is counted and the fifteen-reading median spans under
+# two seconds, which is what makes a hand read as a hand the moment it moves.
+THERMAL_EVERY = 0.1 if THERMAL_VIEW_ON else 2.0
 _thermal_window = deque(maxlen=_THERMAL_WINDOW)
 
 def _import_onnxruntime_quietly():
@@ -1464,9 +1469,11 @@ class PeopleModel:
         import numpy as np
         ort = _import_onnxruntime_quietly()
         opts = ort.SessionOptions()
-        # One core. The Pi has four and the display, the microphone and the
-        # doorway counter all want theirs.
-        opts.intra_op_num_threads = 1
+        # One core on a venue unit, which counts every two seconds and has
+        # nothing to hurry for. Two on a unit with a screen, which counts every
+        # frame the camera sends; the display, the microphone and the doorway
+        # counter keep the other two.
+        opts.intra_op_num_threads = 2 if THERMAL_VIEW_ON else 1
         opts.inter_op_num_threads = 1
         self.np = np
         self.session = ort.InferenceSession(str(path), opts,
@@ -5816,8 +5823,8 @@ def selftest():
             if model is None:
                 print('    people counter : heat-cluster rule (see the log line above)')
             else:
-                # Timed on this Pi and this frame, because the screen reads the
-                # camera four times a second and the counter has to keep up.
+                # Timed on this Pi and this frame, because the screen counts
+                # every frame the camera sends and the counter has to keep up.
                 started = time.monotonic()
                 for _ in range(10):
                     people, things = model.read(frame)
