@@ -99,12 +99,29 @@ router.use(requireAdmin);
 //
 // Tells everyone still waiting that the app is out, 100 at a time, once each.
 // Idempotent by column, not by memory: a row is picked only while
-// announced_at IS NULL and it has not already converted to an account, and it
-// is stamped the moment its email is either sent or is never going to be sent
-// (suppressed by the do-not-mail list, or an invalid address). Transient
-// failures (provider error, keyless deploy, per-recipient daily cap) leave
-// the row unstamped so the next run retries it. Run it repeatedly until
-// `remaining` is zero; each call bounds its own blast radius at 100 sends.
+// announced_at IS NULL and it has not already converted to an account. Run it
+// repeatedly until `remaining` is zero; each call bounds its own blast radius
+// at 100 sends.
+//
+// CLAIM BEFORE THE SEND, the rule services/venueDigest.js already follows. The
+// row used to be stamped only after its email came back, so two things mailed
+// the launch email twice. A batch is up to 100 sends of up to 8 seconds each,
+// so a slow Resend day runs one call for minutes, the operator's client gives
+// up, they run it again as this comment tells them to, and the second run
+// picked every row the first had not stamped yet. And a send Resend accepted
+// after the 8 second abort comes back as { sent: false, error } with no
+// `refused`, which read as a failure, so the next run mailed that address
+// again. Now each row is stamped as it is taken, one at a time and skipping
+// rows another run holds, and the stamp is taken back only when the email
+// certainly did not leave: `skipped` (no RESEND_API_KEY) or `refused` (the
+// provider answered no, or the per-recipient cap). A suppressed or invalid
+// address keeps its stamp because it will never be sendable. An outcome
+// nobody can know (an abort, a 5xx) keeps it too: one person missing a launch
+// email is a smaller harm than a second copy of it, which costs sender
+// reputation and draws spam reports. Rows are claimed one at a time rather
+// than 100 at once so a deploy that kills a run strands at most the one row it
+// was sending.
+const WAITLIST_ANNOUNCE_BATCH = 100;
 //
 // The emailService namespace is required lazily here rather than destructured
 // at the top of the file so the launch email can be stubbed in tests and so
@@ -138,36 +155,54 @@ router.post('/waitlist/announce', async (req, res) => {
       });
     }
 
-    const batch = await pool.query(
-      `SELECT id, email FROM waitlist
-        WHERE announced_at IS NULL AND converted_user_id IS NULL
-        ORDER BY id
-        LIMIT 100`
-    );
-
+    let claimed = 0;
     let sent = 0;
     let suppressed = 0;
     let failed = 0;
-    for (const row of batch.rows) {
+    let unknown = 0;
+    // The last id this run took. A row released below is left for the next
+    // run rather than claimed again by this one, which would send to one
+    // refusing address a hundred times over.
+    let after = 0;
+    while (claimed < WAITLIST_ANNOUNCE_BATCH) {
+      const claim = await pool.query(
+        `UPDATE waitlist SET announced_at = NOW()
+          WHERE id = (SELECT id FROM waitlist
+                       WHERE announced_at IS NULL AND converted_user_id IS NULL AND id > $1
+                       ORDER BY id
+                       LIMIT 1
+                       FOR UPDATE SKIP LOCKED)
+          RETURNING id, email`,
+        [after]
+      );
+      const row = claim.rows[0];
+      if (!row) break;
+      claimed += 1;
+      after = row.id;
       const outcome = await emailService.sendWaitlistLaunchEmail({ to: row.email });
-      const permanent = outcome.sent
-        || outcome.suppressed
-        || (outcome.refused && outcome.error === 'invalid recipient');
-      if (outcome.sent) sent += 1;
-      else if (permanent) suppressed += 1;
-      else failed += 1;
-      if (permanent) {
-        await pool.query('UPDATE waitlist SET announced_at = NOW() WHERE id = $1', [row.id]);
+      if (outcome.sent) {
+        sent += 1;
+      } else if (outcome.suppressed || (outcome.refused && outcome.error === 'invalid recipient')) {
+        suppressed += 1;
+      } else if (outcome.skipped || outcome.refused) {
+        await pool.query('UPDATE waitlist SET announced_at = NULL WHERE id = $1', [row.id]);
+        failed += 1;
+      } else {
+        unknown += 1;
+        console.warn(`[admin] waitlist #${row.id}: the launch email's outcome is unknown (${outcome.error || 'no result'}). It stays marked announced, so it is not sent again.`);
       }
     }
 
     res.json({
       dry_run: false,
-      batch: batch.rows.length,
+      batch: claimed,
       sent,
       suppressed,
+      // Certainly not sent, and left for the next run.
       failed,
-      remaining: Math.max(0, summary.pending - sent - suppressed),
+      // May or may not have been sent, and not retried.
+      unknown,
+      remaining: Math.max(0, summary.pending - claimed + failed),
     });
   } catch (err) {
     console.error('[admin] waitlist announce failed:', err);
