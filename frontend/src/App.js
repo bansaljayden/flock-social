@@ -14324,8 +14324,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // this used to fall into the "password is not right" branch.
         setExportError(err?.message || 'Too many tries. Wait a few minutes and try again.');
       } else if (reauth === 'reauth') {
+        // The sheet says what to do and offers the account's own sign-in in
+        // place (components/auth/OAuthReconfirm.js), so there is no second
+        // sentence to put under it.
         setExportNeedsReauth(true);
-        setExportError('For your security, sign out and back in, then try again.');
+        setExportError('');
       } else if (reauth === 'password') {
         setExportError(exportPassword
           ? 'That password is not right. Try again.'

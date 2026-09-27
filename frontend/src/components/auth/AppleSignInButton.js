@@ -117,7 +117,11 @@ const makeResume = ({ identityToken, fullName, authorizationCode }) => {
 // able to stop the tap rather than undo what it did.
 // `dobGranularity` (optional): 'year' when `dob` was derived from a typed
 // birth year, so the server can refuse to write it onto an existing account.
-const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize }) => {
+// `className` / `style` (optional): the auth screens' .auth-provider look is
+// the default; that stylesheet only exists while AuthShell is mounted, so a
+// caller inside the app (OAuthReconfirm, in the delete and export dialogs)
+// passes the same look inline. The title stays Apple's own either way.
+const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize, className = 'auth-provider', style }) => {
   const [busy, setBusy] = useState(false);
 
   if (!isNativeIos()) return null;
@@ -181,10 +185,10 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
   return (
     <button
       type="button"
-      className="auth-provider"
+      className={className}
       onClick={handleClick}
       disabled={busy}
-      style={{ color: '#000000' }}
+      style={{ ...style, color: '#000000' }}
     >
       <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ marginTop: '-2px' }}>
         <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
