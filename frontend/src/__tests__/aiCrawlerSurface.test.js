@@ -383,10 +383,24 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(llms).toContain('across 30 cities');
     expect(meta.feature_names).toHaveLength(106);
     expect(llms).toContain('106 input signals');
-    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.06, 2);
-    expect(llms).toContain('2.06 points');
-    expect(meta.ship_gate.realtime_rows).toBe(67249);
-    expect(llms).toContain('67,249');
+  });
+
+  // The served-number figures lead the section now, and they are pinned to the
+  // file that records what the serving configuration measured, the same way
+  // the corpus figures are pinned to the model's metadata.
+  test('the served-number figures match servedAccuracy.json', () => {
+    const served = JSON.parse(read(path.join(
+      FRONTEND, '..', 'backend', 'services', 'servedAccuracy.json'
+    )));
+    const flat = llms.replace(/\s+/g, ' ');
+    expect(served.rows).toBe(4183);
+    expect(flat).toContain('4,183 real live readings');
+    expect(flat).toContain(`${served.within_one_band}% of Flock's crowd numbers landed within one crowd level`);
+    expect(flat).toContain(`${served.within_10}% within 10 points`);
+    expect(flat).toContain(`scored ${served.before.within_one_band}% and ${served.before.within_10}%`);
+    expect(flat).toContain(`average miss was ${served.mae.toFixed(1)} points, down from ${served.before.mae.toFixed(1)}`);
+    expect(Math.abs(served.bias)).toBeLessThan(2);
+    expect(flat).toContain(`${served.reading_one_hour_earlier.within_one_band}% of numbers landed within one crowd level`);
   });
 
   // AUDIT 2026-08-26. The five figures above were pinned; the sentence that

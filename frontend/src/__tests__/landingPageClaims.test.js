@@ -149,19 +149,23 @@ describe('the page only sells things that exist', () => {
     expect(app).toMatch(/getVenueIntelligence\(/);
   });
 
-  test('the crowd-model figures in the demo proof line match the shipped model', () => {
-    // The same pinning AboutPage's five figures get, because these two are now
-    // on the highest-traffic page on the site. A retrain that changes the
-    // corpus must change this sentence.
-    const meta = JSON.parse(fs.readFileSync(
-      path.join(REPO, 'backend', 'scripts', 'ml', 'models', 'model_metadata.json'),
+  test('the accuracy figures in the demo proof line match what the serving configuration measured', () => {
+    // The same pinning AboutPage's figures get, because these two are on the
+    // highest-traffic page on the site. A re-measurement that changes them
+    // must change this sentence.
+    const served = JSON.parse(fs.readFileSync(
+      path.join(REPO, 'backend', 'services', 'servedAccuracy.json'),
       'utf8'
     ));
     const copy = visible.replace(/\s+/g, ' ');
 
-    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(1.9, 5);
-    expect(meta.training_cities.length).toBe(30);
-    expect(copy).toMatch(/1\.9 million\s*venue-hour observations across 30 cities/);
+    expect(served.rows).toBe(4183);
+    expect(copy).toMatch(/Tested against 4,183 real live readings they had not seen/);
+    expect(copy).toContain(`${served.within_one_band}% of Flock's crowd numbers landed within one crowd level`);
+    // The pins are the served numbers, and with the configuration production
+    // runs the trained model does not make them, so the line must not credit
+    // them to the model's training corpus.
+    expect(copy).not.toMatch(/same model that ships inside Flock/);
   });
 
   test('nothing on the page claims a team that does not exist', () => {

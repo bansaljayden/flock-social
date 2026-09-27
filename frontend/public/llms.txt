@@ -54,21 +54,32 @@ Updated: September 25, 2026.
 
 ## Key facts about the crowd model
 
-Each of these is taken from the metadata of the model that ships in the product,
-as of the August 18, 2026 training run (version 2.6.0 "Starling").
+How the crowd numbers in the app perform, measured on 4,183 real live readings
+held out from September 6 to 8, 2026:
 
-- Flock trains and serves its own crowd-prediction model (gradient-boosted trees,
-  XGBoost, exported to ONNX). It is not a wrapper around another provider's
-  busyness chart.
-- The model predicts hourly venue busyness from 106 input signals: time patterns,
-  weather, nearby events, venue category, and how that specific venue usually runs.
+- Flock collects live busyness readings every hour. Each venue's number is its
+  own usual pattern for that hour, moved by its newest live readings.
+- 78.8% of Flock's crowd numbers landed within one crowd level of the live
+  reading, and 53.8% within 10 points. Before the September 2026 upgrade the
+  same readings scored 58.5% and 28.6%.
+- The average miss was 17.1 points, down from 30.6, with no systematic lean
+  high or low.
+- Where the venue had a live reading from the hour before, 91.7% of numbers
+  landed within one crowd level.
+- When Flock has no pattern for a venue yet, a rule-based engine answers and
+  the number is tagged with the engine that produced it.
+
+Flock also trains its own crowd-prediction model (gradient-boosted trees,
+XGBoost, exported to ONNX). These figures are taken from its metadata,
+as of the August 18, 2026 training run (version 2.6.0 "Starling"):
+
+- It reads 106 input signals: time patterns, weather, nearby events, venue
+  category, and how that specific venue usually runs.
 - It was trained on 1,934,988 venue-hour observations across 30 cities.
 - It was evaluated on 395,464 held-out venue-hour observations from three cities
   the model never trained on: Barcelona, Miami, and Tokyo.
-- On the realtime slice of that holdout (67,249 observations), it reduces mean
-  absolute error by 2.06 points against the popular-times baseline it started from.
-- When the model has no baseline for a venue yet, a rule-based engine answers
-  and the prediction is tagged with the engine that produced it.
+- A new version replaces the numbers above only after it beats them on days
+  held out of its training.
 
 ## Who it is for
 
@@ -89,7 +100,7 @@ year per location, bought on flockcorp.com, with a 14-day free trial; a venue
 account created before September 25, 2026 is emailed at least 30 days before it
 can be charged anything. The venue tools that ship are a
 dashboard an owner signs into, holding the flocks that chose their venue, their
-own hour-by-hour forecast from the same crowd model, replies to reviews, and a
+own hour-by-hour forecast, the same one the app shows, replies to reviews, and a
 deal they can put on their own venue card for groups that open it. Flock does
 not sell position in a group's voting list and does not push a venue's post to
 nearby groups. Neither exists.

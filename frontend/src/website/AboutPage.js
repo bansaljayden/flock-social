@@ -17,8 +17,11 @@ const READABLE = { color: 'var(--pp-ink-2)' };
 // The public why-does-this-exist page: what users get, why venues pay, and
 // what the forecast model actually is. Every claim on this page is real and
 // verifiable in the product (DESIGN-STANDARD.md C1: never advertise what doesn't
-// ship). The numbers quoted for the model come from the committed
-// model_metadata.json holdout evaluation. The rehearsal pitch with sourced
+// ship). The accuracy figures for the numbers users see come from
+// backend/services/servedAccuracy.json (the serving configuration, scored on
+// held-out live readings); the training-corpus figures for the model come from
+// the committed model_metadata.json. Both are pinned against those files in
+// marketingSiteAccessibility.test.js. The rehearsal pitch with sourced
 // market stats lives OUTSIDE this repository, on purpose.
 // PER-ROUTE <meta name="description">. CRA has no server rendering, so
 // public/index.html is the response for every route and its one static
@@ -111,16 +114,25 @@ export default function AboutPage() {
       <section>
         <h2>Our crowd model</h2>
         <p>
-          Flock runs its own machine-learning crowd model, not a wrapper around
-          someone else's chart. It predicts how busy a venue will be, hour by hour,
-          from 106 signals: time patterns, weather, nearby events, venue category,
-          and how that specific spot actually behaves. It was trained on 1.9 million
-          venue-hour observations across 30 cities and scored on another 395,000 in
-          three cities it never trained on. Where it earns its place is live
-          conditions: on 67,000 realtime observations it cuts the average error by
-          2.1 points against the popular-times baseline it started from.
-          When the model has no baseline for a venue yet, a rule-based engine
-          answers and the app records which engine did.
+          Flock pulls live busyness readings every hour and sets each one against
+          how that venue usually runs at that hour. The number you see moves with
+          the venue's newest readings, so a slow Friday or a sudden rush shows up
+          the same night. Tested against 4,183 real live readings it had not seen,
+          from September 6 to 8, 2026, 78.8% of Flock's crowd numbers landed within
+          one crowd level of the reading and 53.8% within 10 points. The average
+          miss was 17 points, with no lean high or low. When a venue had a live
+          reading from the hour before, 92% landed within one level. The same
+          readings scored 58.5% within one level before the September upgrade.
+        </p>
+        <p>
+          Flock also trains its own machine-learning crowd model. The current
+          version reads 106 signals, among them time patterns, weather, nearby
+          events and venue category. It was trained on 1.9 million venue-hour
+          observations across 30 cities and scored on another 395,000 in three
+          cities it never trained on. A new version replaces the numbers above
+          only after it beats them on days held out of its training. Where Flock
+          has no pattern for a venue yet, a rule-based engine answers from what is
+          typical for that kind of place, and the app records which engine did.
         </p>
         <p>
           Busyness charts you've seen elsewhere measure who already showed up.
@@ -167,7 +179,7 @@ export default function AboutPage() {
           That's the business: the planning side stays free for you and your
           friends, and Roost, the paid plan for venues, adds the venue's own
           hour-by-hour demand curve and the week ahead from the same crowd
-          model. No venue is being charged today. There is a paid plan for
+          numbers the app shows. No venue is being charged today. There is a paid plan for
           people as well, Flock Pro, with more Birdie and more crowd forecasts,
           and it is not on sale to the public today. If you run a venue and
           want in early, email{' '}
