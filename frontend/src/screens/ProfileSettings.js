@@ -64,6 +64,8 @@ import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import EditProfileForm from '../components/EditProfileForm';
 import { isNativeShell } from '../lib/nativeShell';
+// REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, no
+// subscription note. lib/purchasesBuild.js has the rules.
 
 export default function ProfileSettings({
   // Module-level helpers, constants and components that live in App.js and are
@@ -806,7 +808,7 @@ export default function ProfileSettings({
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Crowd alerts</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>A heads up before your flock's venue gets busy</span>
                 </div>
-                {entitlements?.paywallEnabled && !isPro ? (
+                {(process.env.REACT_APP_PURCHASES !== 'off') && entitlements?.paywallEnabled && !isPro ? (
                   <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: '999px', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                     Pro
                   </button>
@@ -817,7 +819,7 @@ export default function ProfileSettings({
             </div>
           </div>
 
-            <ProRow isPro={isPro} entitlements={entitlements} colors={colors} setPaywallTrigger={setPaywallTrigger} showToast={showToast} />
+            {(process.env.REACT_APP_PURCHASES !== 'off') && <ProRow isPro={isPro} entitlements={entitlements} colors={colors} setPaywallTrigger={setPaywallTrigger} showToast={showToast} />}
             {/* .glass-danger paints this solid red with white text (both !important),
                 so the icon must be white too — colors.red on red was invisible. */}
             {/* Every device at once. The server route has existed since the
@@ -907,7 +909,7 @@ export default function ProfileSettings({
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Only once there is a subscription to speak of; Apple expects
                     the sheet to say deletion does not cancel one. */}
-                {(entitlements?.paywallEnabled || isPro) && (
+                {(process.env.REACT_APP_PURCHASES !== 'off') && (entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
                 )}
                 {/* Both inputs below close the keyboard on Return
@@ -1223,7 +1225,13 @@ const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
  *
  * Exported for __tests__/purchaseSurfacesTruth.test.js, which renders it.
  */
-export function ProRow({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
+export function ProRow(props) {
+  // Nothing at all, and no /status read, in a REACT_APP_PURCHASES=off build.
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return null;
+  return <ProRowInner {...props} />;
+}
+
+function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
   const native = isNativeShell();
   const [status, setStatus] = React.useState(null);
   const [statusFailed, setStatusFailed] = React.useState(false);

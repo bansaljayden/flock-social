@@ -271,10 +271,15 @@ function endNativeGoogleSession() {
  */
 function endNativePurchasesSession() {
   try {
-    if (!isNativeShell()) return;
-    import('./purchases')
-      .then((m) => m.endPurchasesSession())
-      .catch(() => { /* the local wipe has already happened */ });
+    // A REACT_APP_PURCHASES=off build never started RevenueCat, so there is
+    // nothing to sign out of, and the literal test keeps the purchases chunk
+    // out of that build (lib/purchasesBuild.js).
+    if (process.env.REACT_APP_PURCHASES !== 'off') {
+      if (!isNativeShell()) return;
+      import('./purchases')
+        .then((m) => m.endPurchasesSession())
+        .catch(() => { /* the local wipe has already happened */ });
+    }
   } catch (_) { /* same */ }
 }
 
@@ -1174,6 +1179,15 @@ export async function getEntitlements() {
   return request('/api/entitlements');
 }
 
+// The Pro and Roost billing calls below refuse without asking the server in a
+// build made with REACT_APP_PURCHASES=off (lib/purchasesBuild.js). Nothing in
+// that build calls them; this keeps the routes out of it as well.
+function purchasesOffInThisBuild() {
+  const err = new Error('This is not available in the app.');
+  err.code = 'PURCHASES_OFF';
+  return Promise.reject(err);
+}
+
 // Flock Pro bought on the web (backend/routes/pro.js). Stripe is the checkout,
 // RevenueCat stays the one record of who is Pro, so /status and /api/entitlements
 // agree once the purchase has been told to RevenueCat.
@@ -1183,6 +1197,7 @@ export async function getEntitlements() {
 // page must then show no price at all. A 503 with retryable means the plan
 // state is unknown, which the GET retry above already rides out.
 export async function getProStatus() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/status');
 }
 
@@ -1195,6 +1210,7 @@ export async function getProStatus() {
 // after paying; options.code applies a promotion code from a shared link. The
 // server checks all three against fixed shapes.
 export async function startProCheckout(plan, options = {}) {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   const body = { plan };
   if (options.from) body.from = options.from;
   if (options.from === 'forecast' && options.place) body.place = options.place;
@@ -1209,10 +1225,12 @@ export async function startProCheckout(plan, options = {}) {
 // POST /api/pro/cancel and /resume -> { cancelAtPeriodEnd, periodEnd }. Flock's
 // own buttons for a web subscription, since Stripe's portal is for adults.
 export async function cancelProSubscription() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/cancel', { method: 'POST', retry: false });
 }
 
 export async function resumeProSubscription() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/resume', { method: 'POST', retry: false });
 }
 
@@ -1220,12 +1238,14 @@ export async function resumeProSubscription() {
 // subscriber cancels or changes their card. 404 NO_WEB_SUBSCRIPTION when this
 // account never bought on the web.
 export async function openProPortal() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/portal', { method: 'POST', retry: false });
 }
 
 // POST /api/pro/confirm { sessionId } after Stripe sends the buyer back to
 // /app?pro=success&session_id=cs_... -> { complete, isPremium }.
 export async function confirmProCheckout(sessionId) {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/confirm', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
@@ -1242,6 +1262,7 @@ export async function confirmProCheckout(sessionId) {
 // plans is empty whenever checkout is off, and the dashboard then shows no
 // price from it.
 export async function getVenueBillingStatus() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/status');
 }
 
@@ -1249,6 +1270,7 @@ export async function getVenueBillingStatus() {
 // ALREADY_SUBSCRIBED, PLAN_ALREADY_GRANTED and 503 CHECKOUT_OFF arrive as
 // err.code. retry: false because a replay would open a second session.
 export async function startVenueCheckout(plan) {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/checkout', {
     method: 'POST',
     body: JSON.stringify({ plan }),
@@ -1258,12 +1280,14 @@ export async function startVenueCheckout(plan) {
 
 // POST /api/venue-billing/portal -> { url } of the Stripe customer portal.
 export async function openVenuePortal() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/portal', { method: 'POST', retry: false });
 }
 
 // POST /api/venue-billing/confirm { sessionId } after Stripe sends the owner
 // back to /app?venue_billing=success&session_id=cs_... -> { complete, tier }.
 export async function confirmVenueCheckout(sessionId) {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/confirm', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),

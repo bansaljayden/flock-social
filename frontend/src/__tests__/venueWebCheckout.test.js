@@ -178,7 +178,7 @@ describe('the return from Stripe', () => {
 
   test('App.js reads the return once at module scope and reloads the venue plan', () => {
     const app = read('App.js');
-    expect(app).toMatch(/let VENUE_BILLING_RETURN = readVenueBillingReturn\(\);/);
+    expect(app).toContain("let VENUE_BILLING_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readVenueBillingReturn() : null;");
     expect(app).toMatch(/VENUE_BILLING_RETURN = null;/);
     expect(app).toMatch(/settleVenueCheckout\(\{ sessionId: ret\.sessionId, confirm: confirmVenueCheckout \}\)/);
   });

@@ -41,7 +41,7 @@ describe('Birdie at the daily cap', () => {
 
 describe('the locked venue card', () => {
   test('one row names what is behind it instead of a heading over nothing', () => {
-    const locked = card.indexOf('{cd?.forecastAccess?.locked ? (\n                  <m.div');
+    const locked = card.indexOf("{cd?.forecastAccess?.locked && !(process.env.REACT_APP_PURCHASES !== 'off') ? (\n                  <m.div");
     const heading = card.indexOf('Expected Crowd by Hour');
     expect(locked).toBeGreaterThan(-1);
     expect(locked).toBeLessThan(heading);
@@ -55,7 +55,7 @@ describe('the locked venue card', () => {
 
 describe('crowd alerts on a free account', () => {
   test('with the paywall on and no Pro, the row opens Pro instead of showing a switch', () => {
-    expect(profile).toMatch(/\{entitlements\?\.paywallEnabled && !isPro \? \(\n\s*<button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick=\{\(\) => setPaywallTrigger\('settings'\)\}/);
+    expect(profile).toMatch(/\{\(process\.env\.REACT_APP_PURCHASES !== 'off'\) && entitlements\?\.paywallEnabled && !isPro \? \(\n\s*<button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick=\{\(\) => setPaywallTrigger\('settings'\)\}/);
     // The switch itself is unchanged for everyone else.
     expect(profile).toContain('<Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />');
   });

@@ -428,7 +428,7 @@ describe('the return from Stripe', () => {
 
   test('App.js reads the return once at module scope and re-reads entitlements', () => {
     const app = read('App.js');
-    expect(app).toMatch(/let PRO_RETURN = readProReturn\(\);/);
+    expect(app).toContain("let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readProReturn() : null;");
     expect(app).toMatch(/settleProCheckout\(\{/);
     expect(app).toMatch(/showToast\("You're Pro\."\)/);
     const effect = app.slice(app.indexOf('const ret = PRO_RETURN;'), app.indexOf('}, [refreshEntitlements, showToast, openVenueDetail]);'));
@@ -465,7 +465,7 @@ describe('the You tab Flock Pro row', () => {
   const src = require('fs').readFileSync(
     require('path').join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8'
   ).replace(/\r\n/g, '\n');
-  const row = src.slice(src.indexOf('function ProRow('), src.indexOf('\n}\n', src.indexOf('function ProRow(')));
+  const row = src.slice(src.indexOf('function ProRowInner('), src.indexOf('\n}\n', src.indexOf('function ProRowInner(')));
 
   test('the web row cancels and un-cancels through Flock, and the portal is for the card', () => {
     const web = row.slice(row.indexOf('// Manage shows whenever'));

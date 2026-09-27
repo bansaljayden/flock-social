@@ -575,9 +575,9 @@ export default function BirdiePanel({
                   <p style={{ flex: 1, minWidth: 0, margin: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                     {Number.isFinite(entitlements?.birdie?.limit) ? `You've used today's ${entitlements.birdie.limit} messages.` : "You've used today's messages."} They come back {chirpsBackText(aiResetsAt)}.
                   </p>
-                  <button type="button" className="hit44 glass-btn glass-primary" onClick={() => setPaywallTrigger('birdie')} style={{ padding: '8px 12px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '700', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {(process.env.REACT_APP_PURCHASES !== 'off') && <button type="button" className="hit44 glass-btn glass-primary" onClick={() => setPaywallTrigger('birdie')} style={{ padding: '8px 12px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '700', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     Get Flock Pro
-                  </button>
+                  </button>}
                 </div>
               ) : (
               /* Action buttons row. Labels never wrap ("My Flocks" broke onto
