@@ -134,6 +134,21 @@ function getToken() {
 // to it, under a flock* key, so every sign-out path that wipes one wipes the
 // other (clearLocalSession's sweep). It is only ever sent to /api/auth/refresh
 // and to /api/auth/logout, never on an ordinary request.
+//
+// AN ACCEPTED COST, WRITTEN DOWN SO NOBODY MISTAKES IT FOR AN OVERSIGHT. A
+// script that runs in this page and reads storage used to get an access token
+// good for a day at most. Next to it now is a credential that renews for up to
+// sixty days of idleness. The alternative, an httpOnly cookie, does not reach
+// the app that launches: the iOS shell calls api.flockcorp.com from
+// capacitor://localhost, a different site, and WKWebView does not send
+// third-party cookies. Flock sets no auth cookie at all (see the sign-out note
+// below). What bounds the damage instead: the credential rotates on every use
+// and the server ends the whole sign-in the moment a spent one, or a second
+// answer to one, is presented (backend/services/refreshTokens.js), so a stolen
+// copy lasts only until the real device next renews, about daily while it is
+// in use. A sign-out, a password change or "sign out everywhere" ends it at
+// once, and the page runs under a script-src CSP (vercel.json, and the meta
+// tag in public/index.html for the shell). Weakening any of these reopens it.
 const REFRESH_TOKEN_KEY = 'flockRefreshToken';
 // When THIS device received the access token it holds, by its own clock. The
 // token's remaining life is worked out from this and the token's own lifetime
@@ -165,6 +180,7 @@ function setRefreshToken(value) {
 function storeSession(data) {
   setToken(data.token);
   setRefreshToken(data && data.refreshToken);
+  endedSessionToken = null;
   scheduleRenewal();
 }
 
@@ -641,12 +657,24 @@ function badResponseGuard(res, data, method) {
 // expired" over a sign-out the user asked for is a lie with a toast on it.
 const AUTH_FLOW_PREFIXES = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple', '/api/auth/logout'];
 let sessionExpiryAnnounced = false;
+// The access token a session died holding, for the ONE logout() that follows.
+// The wipe below runs first, so App.js's teardown (endSession, on
+// 'flock-session-expired') reached logout() with no token and never told the
+// server anything, and this device's push row stayed registered to the
+// account. POST /api/auth/logout accepts a token that has only run out
+// (backend/middleware/auth.js authenticateAllowExpired), so this is enough for
+// it to delete the row. Taken and cleared by that logout(), and cleared by the
+// next sign-in, so it can never ride along with a later session's sign-out.
+let endedSessionToken = null;
 const SESSION_EXPIRED_COPY = 'Your session expired. Sign in again to pick up where you left off.';
 
 function handleSessionExpiry(endpoint, hadToken, data) {
   if (!hadToken) return false;
   if (AUTH_FLOW_PREFIXES.some((p) => endpoint.startsWith(p))) return false;
   if (data && typeof data === 'object' && data.reauthRequired) return false;
+  // Kept for the sign-out App.js runs on the event below (see
+  // endedSessionToken), which the wipe would otherwise leave with no token.
+  endedSessionToken = getToken();
   // A dead token is a sign-out, so it clears what a sign-out clears. Dropping
   // only the token here was the second half-clearing path that let the
   // previous user's location and deleted-DM list outlive their session.
@@ -783,7 +811,14 @@ async function performRenewal() {
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flock-token-refreshed'));
     return 'ok';
   }
-  if (res.status === 401 || res.status === 403) {
+  // A 400 is the server refusing a credential it cannot even read (not a
+  // string, or wider than any it issues), which no retry can fix: kept, it
+  // was renewed every minute for ever while every request failed with the
+  // server's "sign in again" message and never actually signed the person
+  // out. Only when the answer is our API's JSON, so a gateway's page is
+  // still read as the network rather than as a verdict on the credential.
+  const unreadable = res.status === 400 && data && data !== PARSE_FAILED && typeof data === 'object';
+  if (res.status === 401 || res.status === 403 || unreadable) {
     // Refused for good: revoked, replayed, expired, from before a password
     // change, or a ban. Keeping it would only mean asking again.
     setRefreshToken(null);
@@ -1452,7 +1487,12 @@ export async function getCurrentUser() {
 // token_version (logoutAll below).
 //
 // NEVER RENEWS. This runs beside the wipe, and a renewal answered after the
-// wipe would write a session back onto the device (mayRenewBefore).
+// wipe would write a session back onto the device (mayRenewBefore). So the
+// token it sends may have run out, and the server takes one that has (only
+// run out: revoked is still refused). When the session already died on this
+// device (handleSessionExpiry wiped it before App.js called this), it sends
+// the token that session died holding (endedSessionToken), so the push row
+// still goes with it.
 //
 // FAILURE BEHAVIOR, which is the whole point: the local wipe is synchronous and
 // runs whether the server answers, refuses, or never hears us. A user hitting
@@ -1471,7 +1511,8 @@ export function handOverPushTokenForSignOut(token) {
 }
 
 export async function logout() {
-  const token = getToken();
+  const token = getToken() || endedSessionToken;
+  endedSessionToken = null;
   const refreshToken = getRefreshToken();
   const pushToken = signOutPushToken;
   signOutPushToken = null;
