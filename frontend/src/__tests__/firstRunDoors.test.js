@@ -45,6 +45,54 @@ test('a fresh install opens on sign-in, and both doors stay reachable', () => {
   expect(login).toMatch(/onClick=\{onSwitchToSignup\}/);
 });
 
+// THE DOOR A DEAD STORED SESSION USED TO SHUT. The invite page's Join and the
+// site's Create account send somebody with no account to /signup. When that
+// browser held a token an earlier visit had left to expire, the boot's 401 ran
+// endSession, which sent every ending to the sign-in form, so the person was
+// shown the wrong form under their thumb. endSession is lifted out of App.js
+// and RUN with its collaborators stubbed, so this follows the code and not its
+// spelling.
+describe('which auth screen a session ending leaves', () => {
+  const src = app.replace(/\r\n/g, '\n');
+  const start = src.indexOf('const endSession = useCallback(');
+  const fnStart = src.indexOf('(note, opts) => {', start);
+  const fnEnd = src.indexOf('\n  }, []);', fnStart);
+  const fnText = src.slice(fnStart, fnEnd + '\n  }'.length);
+
+  const run = (ranHere) => {
+    const screens = [];
+    const ref = (current) => ({ current });
+    // eslint-disable-next-line no-new-func
+    const make = new Function(
+      'sessionEndedRef', 'sessionEndedByRevokeRef', 'sessionLiveRef',
+      'unregisterPushToken', 'forgetDeliveredNotifications', 'disconnectSocket', 'logout',
+      'setAuthUser', 'setAuthScreen', 'setVenueLoginFlag', 'setSessionNote',
+      `return ${fnText};`,
+    );
+    const endSession = make(
+      ref(false), ref(false), ref(ranHere),
+      () => Promise.resolve(), () => {}, () => {}, () => Promise.resolve(),
+      () => {}, (s) => screens.push(s), () => {}, () => {},
+    );
+    endSession('Your session expired. Sign in again to pick up where you left off.');
+    return screens;
+  };
+
+  test('the extraction found the function it is meant to run', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(fnStart).toBeGreaterThan(start);
+    expect(fnText).toContain('setAuthScreen(');
+  });
+
+  test('after a session that ran on this page, back to sign-in', () => {
+    expect(run(true)).toEqual(['login']);
+  });
+
+  test('at a boot that finds the stored session already dead, the screen the page opened on stays', () => {
+    expect(run(false)).toEqual([]);
+  });
+});
+
 test('every ask for location on a first run carries the control', () => {
   // The window is wide enough for the three-sentence gate (the ask, the
   // wait, the failure) that sits between the heading and the control.
