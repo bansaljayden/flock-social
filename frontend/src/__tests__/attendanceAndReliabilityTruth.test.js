@@ -34,7 +34,11 @@ test('the sheet reopens showing what was recorded, not everybody ticked', () => 
 test('a saved sheet clears the banner that asks for it', () => {
   // attendanceOwed tests for 'unmarked', so the save has to write the answer
   // into the roster this screen holds or the prompt survives its own answer.
-  expect(detail).toMatch(/const attendanceOwed = isCompleted && acceptedMembers\.some\(m => typeof m === 'object' && \(m\.attendance \|\| 'unmarked'\) === 'unmarked'\);/);
+  // isDone, not isCompleted: isCompleted covers a cancelled plan, and the
+  // server refuses attendance on anything but 'completed', so a banner gated
+  // on it could never be answered.
+  expect(detail).toMatch(/const isDone = flock\.status === 'completed';/);
+  expect(detail).toMatch(/const attendanceOwed = isDone && acceptedMembers\.some\(m => typeof m === 'object' && \(m\.attendance \|\| 'unmarked'\) === 'unmarked'\);/);
   expect(appAndSheet).toMatch(/\{ \.\.\.m, attendance: attendanceChecks\[m\.id\] \? 'attended' : 'no_show' \}/);
 });
 
