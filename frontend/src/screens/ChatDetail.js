@@ -1339,6 +1339,24 @@ export default function ChatDetail({
     const billSplitQuarantined = isQuarantinedBill(billSplit);
     const billSplitIsShell = !!billSplit && billSplit.hasPayer === false && !billSplitQuarantined;
     const billSplitIsEstimate = billSplitIsShell && isEstimateBill(billSplit);
+    /* WHERE THE COMPOSER'S "Split the bill" TILE LANDS. It used to set
+       showCreateBill and nothing else. Every reader of that flag sits inside
+       the cash pool sheet, which the tile never opened, so the tap closed the
+       plus sheet and showed nothing. The flag stayed up, and the next Cash
+       pool opened titled "Split the Bill" with every budget section hidden.
+
+       The tile opens the sheet now, and opens the form in it only where the
+       sheet's own Split the Bill buttons would: not over a failed money read
+       (the form rewrites a live bill), not over a quarantined bill (the
+       server refuses to post over it), not over a bill somebody has paid (the
+       form does not draw over one), and on a budget plan only once it is
+       confirmed or done and this member has answered or the budget has
+       closed. Anywhere else the sheet opens on what is there, the bill or the
+       budget, rather than on a form that cannot be sent. */
+    const billFormOffered = !moneyError && !billSplitQuarantined && (!billSplit || billSplitIsShell)
+      && (!flock.budgetEnabled
+        || ((flock.status === 'confirmed' || flock.status === 'completed')
+          && !!(budgetStatus?.userSubmitted || budgetStatus?.budgetLocked)));
     /* The viewer's own figure before a bill exists, for the card's shell
        state. It is the settled budget ceiling, which is the same number
        POST /ghost-commit answers with, so the card and the budget band cannot
@@ -3500,12 +3518,13 @@ export default function ChatDetail({
              ended: the server refuses both on a finished plan, so the tiles
              are not offered to be refused. */
           onOpenVote={planClosed ? undefined : () => { setPlusOpen(false); setShowVotePanel(true); loadPopularVenues(); }}
-          onSplitBill={() => { setPlusOpen(false); setShowCreateBill(true); }}
+          onSplitBill={() => { setPlusOpen(false); setShowChatPool(true); setShowCreateBill(billFormOffered); }}
           onAskBirdie={() => { setPlusOpen(false); openBirdie(); }}
           /* The four the header rail used to hold. Same handlers, same order
              of use, one tap further from the thumb's resting place instead of
-             two taps behind a pill. */
-          onCashPool={() => { setPlusOpen(false); setShowChatPool(true); }}
+             two taps behind a pill. Cash pool opens on the pool, never on a
+             bill form some earlier path left up. */
+          onCashPool={() => { setPlusOpen(false); setShowCreateBill(false); setShowChatPool(true); }}
           onInviteFriends={planClosed ? undefined : () => {
             setPlusOpen(false);
             setShowFlockInviteModal(true);

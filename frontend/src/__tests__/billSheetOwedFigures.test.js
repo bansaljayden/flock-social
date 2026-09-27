@@ -812,3 +812,94 @@ describe('the header counts the rows the viewer cannot see from the server\'s ta
     expect(screen.getByLabelText('Open bill split details').textContent).toContain('settled');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. The composer's "Split the bill" tile opens something
+// ---------------------------------------------------------------------------
+/* The tile set showCreateBill and nothing else. Every reader of that flag
+   sits inside the cash pool sheet, which the tile never opened, so the tap
+   closed the plus sheet onto nothing, and the flag stayed up for the next
+   Cash pool, which then opened as "Split the Bill" with the budget hidden.
+   Both flags live in App.js, so a wrapper holds them as real state here: with
+   jest.fn setters a tap that sets one flag and not the other would pass. */
+describe('the composer\'s Split the bill tile', () => {
+  function MoneyState({ startWithForm = false, ...over }) {
+    const [showChatPool, setShowChatPool] = React.useState(false);
+    const [showCreateBill, setShowCreateBill] = React.useState(startWithForm);
+    return React.createElement(ChatDetail, chatProps({
+      ...over, showChatPool, setShowChatPool, showCreateBill, setShowCreateBill,
+    }));
+  }
+  const tap = (label) => {
+    fireEvent.click(screen.getByLabelText('More to send'));
+    fireEvent.click(within(screen.getByTestId('composer-plus-sheet')).getByRole('button', { name: label }));
+  };
+  const planning = { ...FLOCK, status: 'planning' };
+  const budgetPlan = { ...FLOCK, status: 'planning', budgetEnabled: true };
+  const openBudget = {
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
+    submissionCount: 0, totalMembers: 3, userSubmitted: false, userAmount: null, userSkipped: false,
+  };
+
+  test('with no budget and no bill, it opens the form on any plan', () => {
+    // Fails without the fix: nothing opens, so there is no "Who paid?".
+    render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: () => planning }));
+    tap('Split the bill');
+    expect(screen.getByText('Who paid?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create Split' })).toBeTruthy();
+  });
+
+  test('over a bill somebody paid, it opens the sheet on that bill and no form', () => {
+    render(React.createElement(MoneyState, {
+      getSelectedFlock: () => planning,
+      billSplit: bill([share(1, 'Ava', 100, { settled: true, outstanding: 0 }), share(9, 'Jay', 100)]),
+    }));
+    tap('Split the bill');
+    expect(screen.queryByText('Who paid?')).toBeNull();
+    expect(screen.getByRole('button', { name: /Settle Up/ }).textContent).toBe('Settle Up · $100.00');
+  });
+
+  test('over a money read that failed, it opens on the failure and not on a form', () => {
+    // The form rewrites a live bill through ON CONFLICT DO UPDATE, so it is
+    // never offered over a bill nobody has seen.
+    render(React.createElement(MoneyState, {
+      billSplit: null,
+      getSelectedFlock: () => planning,
+      moneyError: 'The money side of this plan did not load.',
+    }));
+    tap('Split the bill');
+    expect(screen.queryByText('Who paid?')).toBeNull();
+    expect(screen.getByText('The money side of this plan did not load.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  test('on a budget plan that is still open, it opens the budget question, as the sheet would', () => {
+    render(React.createElement(MoneyState, {
+      billSplit: null, getSelectedFlock: () => budgetPlan, budgetStatus: openBudget,
+    }));
+    tap('Split the bill');
+    expect(screen.queryByText('Who paid?')).toBeNull();
+    expect(screen.getByText('What\'s your budget tonight?')).toBeTruthy();
+  });
+
+  test('on a confirmed budget plan this member has answered, it opens the form', () => {
+    render(React.createElement(MoneyState, {
+      billSplit: null,
+      getSelectedFlock: () => ({ ...budgetPlan, status: 'confirmed' }),
+      budgetStatus: { ...openBudget, userSubmitted: true, userAmount: 40, submissionCount: 1 },
+    }));
+    tap('Split the bill');
+    expect(screen.getByText('Who paid?')).toBeTruthy();
+  });
+
+  test('Cash pool opens on the pool, not on a bill form left up from before', () => {
+    // The state the old tile left behind: the flag up and the sheet shut.
+    render(React.createElement(MoneyState, {
+      startWithForm: true, billSplit: null, getSelectedFlock: () => budgetPlan, budgetStatus: openBudget,
+    }));
+    tap('Cash pool');
+    expect(screen.getByText('Group Budget')).toBeTruthy();
+    expect(screen.getByText('What\'s your budget tonight?')).toBeTruthy();
+    expect(screen.queryByText('Who paid?')).toBeNull();
+  });
+});
