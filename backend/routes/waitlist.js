@@ -127,7 +127,14 @@ router.post('/',
         if (outcome.skipped) refundWaitlistSend();
       }
 
-      res.status(201).json({ success: true, message: isNew ? "You're on the list." : "You're already on the list." });
+      // alreadyOnList is the machine-readable half of the message, so the
+      // homepage form can tell a repeat visitor they were already signed up
+      // without matching on the wording of a sentence.
+      res.status(201).json({
+        success: true,
+        alreadyOnList: !isNew,
+        message: isNew ? "You're on the list." : "You're already on the list.",
+      });
     } catch (err) {
       console.error('[Waitlist] Error:', err);
       res.status(500).json({ error: 'Server error' });

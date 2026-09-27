@@ -14083,7 +14083,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setTrustedContacts(prev => prev.filter(c => c.id !== contactId));
       showToast('Contact removed');
     } catch (err) {
-      showToast('Could not remove that contact. Try again.', 'error');
+      // 404 "Contact not found" means it is already gone, most often removed
+      // on another device while this list sat open. That is the outcome the
+      // tap asked for, and every retry would 404 again, so the row leaves the
+      // list the same way a withdrawn friend request does.
+      if (err?.status === 404) {
+        setTrustedContacts(prev => prev.filter(c => c.id !== contactId));
+        showToast('Contact removed');
+        return;
+      }
+      // Any other failure keeps the row and says why: the server's sentence
+      // when it wrote one, or api.js's plain line for a dropped connection.
+      showToast(err?.message || 'Could not remove that contact. Try again.', 'error');
     }
   }, [showToast]);
 

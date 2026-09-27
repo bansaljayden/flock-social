@@ -303,6 +303,10 @@ test('dedupe: an address already on the list gets its polite 201 and no second e
       assert.strictEqual(first.status, 201, first.text);
       assert.strictEqual(second.status, 201, second.text);
       assert.match(second.body.message, /already/i);
+      // The homepage form reads this flag, not the sentence, to tell a repeat
+      // visitor they were already signed up.
+      assert.strictEqual(first.body.alreadyOnList, false);
+      assert.strictEqual(second.body.alreadyOnList, true);
       assert.strictEqual(r.sends.length, 1, 'the duplicate must not be mailed again');
     });
   } finally { r.restore(); emailService.resetClient(); }
