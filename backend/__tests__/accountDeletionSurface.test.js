@@ -534,6 +534,9 @@ test('the delete-account page names every survivor a reader could have', () => {
   assert.match(DELETE_PAGE, /stop pointing at you rather than being\s*\n?\s*deleted/,
     "the bill split's payer and the invite link's author survive emptied, and the policy " +
     'says so, so this page has to as well');
+  // A plan the account created survives it when somebody else is still owed on
+  // its bill (HAND_ON_OWED_PLANS_SQL in routes/users.js).
+  assert.match(DELETE_PAGE, /A plan you created whose bill split somebody else paid and somebody besides you\s+still owes on/);
 });
 
 test('the delete-account page and the privacy policy agree on what survives', () => {
@@ -544,7 +547,7 @@ test('the delete-account page and the privacy policy agree on what survives', ()
   // delete page is claiming something the policy no longer backs; if the policy
   // adds one, this test is where somebody notices the delete page is behind.
   for (const claim of [/do-not-mail list/, /Reports filed about content/, /ban tombstone/i,
-    /One row per finished plan/i, /emptied rather than removed/]) {
+    /One row per finished plan/i, /emptied rather than removed/, /A plan you created that is still being settled up/]) {
     assert.match(policy, claim,
       'PrivacyPolicy.js no longer states a survivor that DeleteAccount.js repeats. Two ' +
       'pages that disagree about what deletion means is its own defect.'
@@ -610,6 +613,8 @@ let emitted;
 let blockedBoth;
 let failTransaction;
 let unmodelled;
+// The owned plans the deletion hands on rather than cascades.
+let handedOn = [];
 // The Stripe customers the account holds, Pro (users) and Roost
 // (venue_profiles), and whether the row was actually deleted.
 let proCustomer = null;
@@ -670,6 +675,12 @@ function stubQuery(text) {
   // touch (routes/users.js, ACCOUNT_FLOCK_LOCKS_SQL); here, the plans it owns.
   if (has('SELECT id FROM flocks') && has('FOR UPDATE')) {
     return { rows: OWNED.map((f) => ({ id: f.id })), rowCount: OWNED.length };
+  }
+  // Then the plans it hands to another member because one of them is still
+  // owed on the bill (HAND_ON_OWED_PLANS_SQL). None by default; the database
+  // side of that choice is driven in budgetBillIntegrity.test.js.
+  if (has('SET creator_id = heir.user_id')) {
+    return { rows: handedOn.map((id) => ({ id })), rowCount: handedOn.length };
   }
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
@@ -732,6 +743,7 @@ async function deleteAccountAs(opts = {}) {
   pushed.length = 0;
   unmodelled = [];
   blockedBoth = opts.blocked || [];
+  handedOn = opts.handedOn || [];
   failTransaction = Boolean(opts.failTransaction);
   failForget = Boolean(opts.failForget);
   pushConfigured = opts.pushConfigured !== false;
@@ -787,6 +799,20 @@ test('only plans that have not happened interrupt anyone with a push', async () 
   // No flockId: the row is gone, so pushHelper's visibility gate would find no
   // flock and suppress every send, and there is no screen left to open.
   assert.deepEqual(pushed[0].data, { type: 'flock_cancelled' });
+});
+
+test('a plan handed on because somebody is still owed on its bill is not announced as off', async () => {
+  // Plan 200 survives the deletion under another member (HAND_ON_OWED_PLANS_SQL).
+  // The list of plans to announce is read before the transaction decides that,
+  // so without the trim its members were told "Friday at Kome is off" about a
+  // plan that is still on, and their app dropped it until the next reload.
+  const res = await deleteAccountAs({ handedOn: [200] });
+  assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
+  assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+  const deletes = emitted.filter((e) => e.event === 'flock_deleted');
+  assert.deepEqual(deletes.map((e) => e.payload.flockId), [201], 'only the plan that really went is announced');
+  assert.deepEqual(deletes.map((e) => e.room), ['user:23']);
+  assert.deepEqual(pushed, [], 'and nobody is pushed "Plan cancelled" for the plan that survived');
 });
 
 test('a member who blocked the deleter is not sent a payload naming them', async () => {

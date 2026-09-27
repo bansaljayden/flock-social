@@ -10,7 +10,7 @@ import SiteFooter from './SiteFooter';
 // revocation) and an undated commitment is one nobody can tell has changed.
 // It moves on its own, not with the other three, because its words move on
 // their own. Bump it in the same edit that changes what this page promises.
-const EFFECTIVE_DATE = 'September 22, 2026';
+const EFFECTIVE_DATE = 'September 27, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // Public account-deletion page (Google Play requires a public URL where users
@@ -133,9 +133,13 @@ export default function DeleteAccount() {
         <p>
           It also deletes <strong>every flock you created</strong>, and everything inside
           those flocks: the whole chat, the RSVPs, and the votes, for every person who was
-          in them. They are not moved to another owner. Flocks you only joined are left
+          in them. They are not moved to another owner, with one exception. If a plan you
+          created has a bill split that somebody else paid, and somebody besides you still
+          owes them, the plan goes to the person who paid, so the record of what is owed is
+          not lost. Your messages, RSVP, votes and share of that bill are deleted all the
+          same. Flocks you only joined are left
           alone; you are removed from them, and the messages you sent in them go with you.
-          The people who were going to a plan you created are told it is off: in the app if
+          The people who were going to a plan that is deleted are told it is off: in the app if
           they have it open, and by notification if they do not. Nobody is left holding a plan
           that no longer exists.
         </p>
@@ -191,6 +195,11 @@ export default function DeleteAccount() {
             deleted: who paid, on a bill split inside a plan you did not create, and who made
             an invite link that somebody else's flock still holds. Neither says anything about
             you once your account is gone.
+          </li>
+          <li>
+            A plan you created whose bill split somebody else paid and somebody besides you
+            still owes on, as described above. It goes to the person who paid, and its name,
+            time and place stay with it. Nothing of yours inside it does.
           </li>
         </ul>
       </section>

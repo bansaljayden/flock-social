@@ -3076,8 +3076,57 @@ const ACCOUNT_FLOCK_LOCKS_SQL = `SELECT id FROM flocks
    ORDER BY id
    FOR UPDATE`;
 
+// A PLAN WHERE ONE PERSON STILL OWES ANOTHER IS HANDED ON, NOT CASCADED.
+//
+// flocks.creator_id is ON DELETE CASCADE, and the bill and its shares cascade
+// from the plan (migration 001), so deleting an account took the bill of every
+// plan it created. Carol creates the plan, Alice fronts dinner at $50 each,
+// Bob and Dave settle, Carol and Eve still owe. Carol cannot delete the plan:
+// both of its delete doors refuse while money is owed (routes/flocks.js
+// outstandingBillFor). She deleted her account instead, and the cascade did
+// what that refusal exists to stop. Alice's sheet 404s, Eve's debt to her is
+// gone, and so is the record that Bob and Dave paid. The deletion cannot be
+// refused (Apple 5.1.1(v)), so the plan is given to somebody else first and
+// survives the DELETE below. Everything that is the account's own still goes:
+// its messages above, and its membership, votes, budget answer and bill share
+// through their own cascades.
+//
+// Narrower than outstandingBillFor on purpose, because this account's rows are
+// about to go anyway. A plan is kept only when somebody OTHER than this account
+// is owed by somebody else who is not this account. Its own unsettled share
+// cascades away with it, and on a bill it paid for there is nobody left to be
+// owed once it is gone. Shells (paid_by NULL) and quarantined bills hold no
+// debt anybody can settle, as outstandingBillFor says of both. Every other plan
+// it created cascades as it always has, and its members are told it is off.
+//
+// The plan goes to the person the money is owed to, who is on it by
+// construction (a payer who is owed cannot leave, memberBoundToBill), and to
+// the longest-standing accepted member if that is ever not so. Runs after
+// ACCOUNT_FLOCK_LOCKS_SQL, which already holds every plan this account
+// created, so no bill can be posted or settled between the choice and the
+// DELETE.
+const HAND_ON_OWED_PLANS_SQL = `UPDATE flocks f
+   SET creator_id = heir.user_id, updated_at = NOW()
+  FROM (SELECT DISTINCT ON (bs.flock_id) bs.flock_id, fm.user_id
+          FROM bill_splits bs
+          JOIN flocks pf ON pf.id = bs.flock_id AND pf.creator_id = $1
+          JOIN flock_members fm ON fm.flock_id = bs.flock_id
+           AND fm.status = 'accepted' AND fm.user_id <> $1
+         WHERE bs.paid_by IS NOT NULL
+           AND bs.paid_by <> $1
+           AND bs.quarantined IS NOT TRUE
+           AND EXISTS (SELECT 1 FROM bill_split_shares bss
+                        WHERE bss.bill_id = bs.id
+                          AND bss.settled IS NOT TRUE
+                          AND bss.user_id <> $1
+                          AND bss.user_id <> bs.paid_by)
+         ORDER BY bs.flock_id, (fm.user_id = bs.paid_by) DESC, fm.id) heir
+ WHERE f.id = heir.flock_id
+RETURNING f.id`;
+
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
-// Hard-deletes the user row; ON DELETE CASCADE removes their flocks, memberships,
+// Hard-deletes the user row; ON DELETE CASCADE removes their flocks (all but
+// the ones HAND_ON_OWED_PLANS_SQL gives to another member first), memberships,
 // messages, DMs, friendships, budgets, trusted contacts, device tokens, settings,
 // etc. (a few FKs are ON DELETE SET NULL, which de-attribute content rather than
 // delete it). Required for Apple Guideline 5.1.1(v) and Google Play's account-
@@ -3335,6 +3384,10 @@ async function deleteAccount(req, res) {
     const client = await pool.connect();
     let deleted;
     let tombstoned = false;
+    // Plans this account created that survive it, because one member still
+    // owes another on their bill (HAND_ON_OWED_PLANS_SQL). They are not
+    // cancelled, so nobody in them is told they are.
+    let handedOn = new Set();
     // What the LOCKED read said, not the stale fetch at the top — the audit line
     // and the retention purge below both key off "was this account banned", and
     // after the re-read that answer is only correct inside the transaction.
@@ -3346,6 +3399,11 @@ async function deleteAccount(req, res) {
       // locked in id order. See ACCOUNT_FLOCK_LOCKS_SQL for the deadlock this
       // turns into a wait.
       await client.query(ACCOUNT_FLOCK_LOCKS_SQL, [req.user.id]);
+
+      // Under those locks, and before the DELETE whose cascade would take
+      // them: a plan where somebody is still owed goes to another member.
+      const kept = await client.query(HAND_ON_OWED_PLANS_SQL, [req.user.id]);
+      handedOn = new Set(((kept && kept.rows) || []).map((r) => r.id));
 
       await client.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]);
       await client.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]);
@@ -3456,6 +3514,11 @@ async function deleteAccount(req, res) {
     // 076). After the COMMIT and never able to fail the deletion: see
     // recordGraceSpentIdentity.
     await recordGraceSpentIdentity(account);
+
+    // A plan that was handed on is not off. The list above was read before the
+    // transaction decided which plans survive, so it is trimmed here, before
+    // either half of the fan-out reads it.
+    if (handedOn.size > 0) cancelledFlocks = cancelledFlocks.filter((f) => !handedOn.has(f.id));
 
     // The socket half of the cancellation fan-out read above. After the COMMIT,
     // so a rolled-back deletion never tells anybody their plan is off, and with
@@ -3589,4 +3652,6 @@ module.exports.__testing = {
   // against the catalog: every table a plan delete cascades into that also
   // names a user must be in it.
   ACCOUNT_FLOCK_LOCKS_SQL,
+  // So a scripted harness can answer it by identity rather than by pattern.
+  HAND_ON_OWED_PLANS_SQL,
 };

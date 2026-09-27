@@ -206,6 +206,8 @@ function handle(text, params = []) {
   // Its first statement locks every plan it will touch (routes/users.js,
   // ACCOUNT_FLOCK_LOCKS_SQL). This fixture owns no plans.
   if (has('SELECT id FROM flocks') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
+  // And hands none on for a bill still owed (HAND_ON_OWED_PLANS_SQL).
+  if (has('SET creator_id = heir.user_id')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   // A venue owner's review replies are erased with the account (migration 083).
