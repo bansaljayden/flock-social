@@ -157,6 +157,59 @@ describe('the question the home card should have been asking', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   1b. Which vote is the reader's, when a flockmate has the same name
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const normalizeVotes = (() => {
+  const source = liftModuleConst('normalizeVotes');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${source}\nreturn normalizeVotes;`)();
+})();
+
+describe('the reader\'s vote is found by who they are, not by their name', () => {
+  // The vote POST reply and every new_vote event carry voter NAMES, and two
+  // members can share one. The server marks the row that holds the reader's
+  // own vote (`mine`); the name alone decided before, so the other Alex's
+  // vote read as 'You'.
+  const me = { id: 7, name: 'Alex' };
+
+  it('the lift found a real function, not an empty slice', () => {
+    expect(typeof normalizeVotes).toBe('function');
+    expect(liftModuleConst('normalizeVotes').length).toBeGreaterThan(200);
+  });
+
+  it('another Alex voting is not the reader voting', () => {
+    const votes = normalizeVotes([{ venue_name: 'Kome', voters: ['Alex'], mine: false }], me);
+    expect(votes[0].voters).toEqual(['Alex']);
+    expect(hasCastMyVote({ votes })).toBe(false);
+  });
+
+  it('the reader\'s own row says You, and only that row', () => {
+    const votes = normalizeVotes([
+      { venue_name: 'Kome', voters: ['Alex'], mine: false },
+      { venue_name: 'Ramen', voters: ['Bo', 'Alex'], mine: true },
+    ], me);
+    expect(votes.map((v) => v.voters)).toEqual([['Alex'], ['Bo', 'You']]);
+    expect(hasCastMyVote({ votes })).toBe(true);
+  });
+
+  it('two Alexes on the same row are You and Alex, not You twice', () => {
+    const votes = normalizeVotes([{ venue_name: 'Kome', voters: ['Alex', 'Alex'], mine: true }], me);
+    expect(votes[0].voters).toEqual(['You', 'Alex']);
+  });
+
+  it('the GET\'s id rows are still read by id', () => {
+    const votes = normalizeVotes([{ venue_name: 'Kome', voters: [{ id: 8, name: 'Alex' }, { id: 7, name: 'Alex' }] }], me);
+    expect(votes[0].voters).toEqual(['Alex', 'You']);
+  });
+
+  it('a payload from a server without the mark keeps the name reading it always had', () => {
+    const votes = normalizeVotes([{ venue_name: 'Kome', voters: ['Alex'] }], me);
+    expect(votes[0].voters).toEqual(['You']);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
    2. The card is built from that question
    ═══════════════════════════════════════════════════════════════════════════ */
 

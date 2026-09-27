@@ -289,7 +289,17 @@ async function collectVoteRows(flockId) {
 // from (members + guests); guest_count lets the UI say "+2 guests".
 // voterObjects keeps the { id, name } rows the GET has always returned; the
 // POST/DELETE and socket payloads stay a names array.
-function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
+//
+// `mine` IS WHICH ROW HOLDS THE RECIPIENT'S OWN VOTE, and a names array
+// cannot say. The app found its own vote by matching its display name, and
+// names are not unique: with two members called Alex, the other Alex's vote
+// read as this one's, "needs your vote" went away for somebody who had not
+// voted, and the quick vote refused the venue the other Alex picked because
+// it already said "You". Every payload is built for one recipient already, so
+// the recipient's id (`viewerId`) is enough to say which row is theirs. It
+// names nobody else and carries no id; the GET's { id, name } rows already let
+// the app match by id, so it goes only on the names shape.
+function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null } = {}) {
   // Sorted on the SOURCE rows, not on the wire objects: the tiebreak needs
   // member_count, and member_count is not part of the wire shape (payload
   // equality is pinned by __tests__/arrayShapeSweep.test.js, and adding a field
@@ -304,7 +314,7 @@ function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
       || (b.member_count - a.member_count))
     .map(v => {
       const visible = v.voter_rows.filter(p => !invisible.has(p.id));
-      return {
+      const row = {
         venue_name: v.venue_name,
         venue_id: v.venue_id,
         // Members count themselves; guests count up to the roster's own size
@@ -313,6 +323,10 @@ function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
         guest_count: v.guest_count,
         voters: voterObjects ? visible : visible.map(p => p.name),
       };
+      if (!voterObjects && viewerId != null) {
+        row.mine = v.voter_rows.some(p => Number(p.id) === Number(viewerId));
+      }
+      return row;
     });
 }
 
@@ -330,7 +344,7 @@ async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
         flockId: parseInt(flockId, 10),
         voter: { userId: req.user.id, name: req.user.name },
         venue_name,
-        votes: tailorVotes(rows, invisible),
+        votes: tailorVotes(rows, invisible, { viewerId: uid }),
       });
     }
   }
@@ -458,7 +472,7 @@ router.post('/:id/vote',
 
       // Re-voting for the venue you already picked is a no-op, not an error:
       // the client re-sends its current pick whenever the vote list changes.
-      res.status(changed ? 201 : 200).json({ vote, votes: tailorVotes(rows, myInvisible) });
+      res.status(changed ? 201 : 200).json({ vote, votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) });
     } catch (err) {
       console.error('Vote error:', err);
       res.status(500).json({ error: 'Failed to vote' });
@@ -557,7 +571,7 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
     // Nothing removed means nothing changed, so peers get no event.
     const myInvisible = await broadcastVotes(req, flockId, rows, removed.rows[0]?.venue_name || null, removed.rows.length > 0);
 
-    res.json({ removed: removed.rows.length, votes: tailorVotes(rows, myInvisible) });
+    res.json({ removed: removed.rows.length, votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) });
   } catch (err) {
     console.error('Unvote error:', err);
     res.status(500).json({ error: 'Failed to remove vote' });
@@ -625,7 +639,7 @@ async function broadcastGuestVote(io, flockId, venue_name) {
         flockId: parseInt(flockId, 10),
         voter: { guest: true },
         venue_name,
-        votes: tailorVotes(rows, sets.get(uid) || new Set()),
+        votes: tailorVotes(rows, sets.get(uid) || new Set(), { viewerId: uid }),
       });
     }
   } catch (err) {

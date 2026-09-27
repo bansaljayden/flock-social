@@ -2610,6 +2610,16 @@ const guestRsvpId = (g) => {
 // POST + the new_vote socket event). The UI reads { venue, type, voters, ... }
 // with the signed-in user shown as 'You'. Everything that lands in flock.votes
 // goes through here so peer votes stop rendering as undefined venues.
+//
+// A NAME IS NOT WHO YOU ARE. A names array was read as "the one that matches
+// my display name is me", and names are not unique: with two members called
+// Alex, the other Alex's vote came back as 'You', "needs your vote" cleared
+// for somebody who had not voted, and the quick vote refused that venue
+// because the row already said You. The server now says which row holds the
+// reader's own vote (`mine`, backend routes/venues.js tailorVotes), so on a
+// names row exactly one matching name becomes 'You', and only on that row;
+// a second Alex on the same row stays Alex. The name match is kept only for a
+// payload without `mine`, which is a server from before it.
 const normalizeVotes = (raw, me, previous = []) => {
   if (!Array.isArray(raw)) return Array.isArray(previous) ? previous : [];
   const myId = me?.id != null ? String(me.id) : null;
@@ -2618,12 +2628,20 @@ const normalizeVotes = (raw, me, previous = []) => {
     .map((v) => {
       const venue = v.venue || v.venue_name || '';
       const prior = (Array.isArray(previous) ? previous : []).find((p) => p.venue === venue);
+      // How many of this row's names may still be read as the reader: one
+      // when the server says the row is theirs, none when it says not, and
+      // null (every match, the old reading) when it says nothing.
+      let meLeft = typeof v.mine === 'boolean' ? (v.mine ? 1 : 0) : null;
       return {
         venue,
         type: v.type || prior?.type || 'Venue',
         place_id: v.place_id || v.venue_id || prior?.place_id || null,
         voters: (v.voters || []).map((p) => {
-          if (typeof p === 'string') return myName && p === myName ? 'You' : p;
+          if (typeof p === 'string') {
+            if (!myName || p !== myName || meLeft === 0) return p;
+            if (meLeft !== null) meLeft -= 1;
+            return 'You';
+          }
           if (!p || typeof p !== 'object') return '';
           if (myId != null && String(p.id) === myId) return 'You';
           return p.name || '';
