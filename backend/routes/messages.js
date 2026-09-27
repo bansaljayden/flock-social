@@ -398,19 +398,51 @@ async function broadcastPins(req, flockId) {
  * only what this reader sees would let them pin a fourth onto every other
  * member's bar, so the count stays whole. What changes is the answer: "Unpin
  * one first" over a bar with two pins on it was an instruction nobody could
- * follow. Neutral words on purpose, since the hidden pin can be from someone
- * who blocked this reader and that is theirs to know, not this sentence's.
+ * follow.
+ *
+ * ONLY THE READER'S OWN BLOCKS ARE EVER MENTIONED. A banned sender's pin holds
+ * no seat (the count skips it), so a hidden pin that is counted is hidden by a
+ * block, in one direction or the other. When the reader blocked its author,
+ * the reader already knows, and saying a pin is out of sight tells them
+ * nothing new. When its author blocked the reader, the same sentence would be
+ * the server announcing a block the reader was never told about, so that pin
+ * is left out of the sentence's count, and a bar hidden only that way gets
+ * the plain sentence. A pin whose author and reader blocked each other is the
+ * reader's own block as far as the reader can tell, and is counted with it.
+ *
+ * One statement, with the live-pin filters of the seat count in POST
+ * /flocks/:id/pins, and each row says which side of a block hides it: the two
+ * block legs of getInvisibleUserIds, asked of the handful of pinned authors
+ * instead of read as a whole set. Run by the route only after it has released
+ * its transaction client, so a refusal never holds one pool connection while
+ * it waits for another.
  *
  * Never throws: failing to word the refusal must not turn it into a 500, so
  * the plain sentence is the fallback.
  */
-async function pinLimitMessage(flockId, userId, held) {
+async function pinLimitMessage(flockId, userId) {
   const plain = `Only ${MAX_PINS} messages can be pinned. Unpin one first.`;
   try {
-    const seen = (await readFlockPinRows(flockId, await getInvisibleUserIds(userId))).length;
-    const hidden = held - seen;
-    if (hidden <= 0) return plain;
-    return `Only ${MAX_PINS} messages can be pinned, including ${hidden === 1 ? 'one' : hidden} you can't see. `
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM user_blocks b
+                       WHERE b.blocker_id = $2 AND b.blocked_id = m.sender_id) AS hidden_by_me,
+              EXISTS (SELECT 1 FROM user_blocks b
+                       WHERE b.blocker_id = m.sender_id AND b.blocked_id = $2) AS hidden_by_them
+         FROM pinned_messages
+         JOIN messages m ON m.id = pinned_messages.message_id
+        WHERE pinned_messages.flock_id = $1
+          AND m.is_hidden IS NOT TRUE
+          AND m.sender_deleted_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM users su
+             WHERE su.id = m.sender_id AND su.is_banned IS TRUE
+          )`,
+      [flockId, userId]
+    );
+    const mine = rows.filter((r) => r.hidden_by_me === true).length;
+    const seen = rows.filter((r) => r.hidden_by_me !== true && r.hidden_by_them !== true).length;
+    if (mine === 0) return plain;
+    return `Only ${MAX_PINS} messages can be pinned, including ${mine === 1 ? 'one' : mine} you can't see. `
       + (seen > 0 ? 'Unpin one first, or ask someone else in the plan to.' : 'Ask someone else in the plan to unpin one.');
   } catch {
     return plain;
@@ -470,6 +502,11 @@ router.post('/flocks/:id/pins',
          tapping Pin on the SAME message within a second of each other is the
          ordinary case and must be a no-op rather than a 23505 the catch turns
          into a 500. */
+      // Set when the bar is full. The refusal is worded after the client is
+      // released (pinLimitMessage reads through the pool), so a burst of
+      // refusals on a saturated pool cannot each hold one connection while
+      // waiting on a second.
+      let full = false;
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -503,23 +540,27 @@ router.post('/flocks/:id/pins',
                              ))`,
           [flockId]
         );
-        const held = existing.rows[0].n;
-        if (held >= MAX_PINS) {
+        if (existing.rows[0].n >= MAX_PINS) {
+          full = true;
           await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: await pinLimitMessage(flockId, req.user.id, held) });
+        } else {
+          await client.query(
+            `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (flock_id, message_id) DO NOTHING`,
+            [flockId, messageId, req.user.id]
+          );
+          await client.query('COMMIT');
         }
-        await client.query(
-          `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (flock_id, message_id) DO NOTHING`,
-          [flockId, messageId, req.user.id]
-        );
-        await client.query('COMMIT');
       } catch (txErr) {
         await client.query('ROLLBACK').catch(() => {});
         throw txErr;
       } finally {
         client.release();
+      }
+
+      if (full) {
+        return res.status(409).json({ error: await pinLimitMessage(flockId, req.user.id) });
       }
 
       const invisible = await getInvisibleUserIds(req.user.id);
