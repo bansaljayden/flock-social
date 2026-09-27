@@ -196,6 +196,38 @@ test('the one-a-minute rule still refuses, from inside the transaction', async (
   assert.equal(contextCaptures.length, 0, 'and no training-context capture fires for a reading that does not exist');
 });
 
+test('the one-a-minute refusal says when to try again, never that a reading is live', async () => {
+  // Cleared rows count toward the minute (clearing must not buy a fresh post),
+  // so the row that refuses this may be one the owner just took down. The
+  // card then says users see the forecast, and a refusal reading "The last
+  // one is still live" told the owner a number was showing that nobody could
+  // see. The wait is true whether the reading is live, cleared or suppressed.
+  const place = freshPlace();
+  handlers = busyNowHandlers(place, { last_minute: 1, last_day: 3, wait_seconds: 42 });
+  const r = await call('POST', '/api/venue-dashboard/busy-now', { percent: 30 });
+  assert.equal(r.status, 429, r.text);
+  assert.equal(r.body.error, 'One update a minute. You can set a new number in 42 seconds.');
+  assert.doesNotMatch(r.body.error, /live/i);
+
+  // The wait is read in the same statement as the counts, off the newest row.
+  const q = log.find((x) => /AS last_minute/.test(x.text));
+  assert.match(q.text, /MAX\(created_at\) \+ INTERVAL '60 seconds' - NOW\(\)/);
+  assert.match(q.text, /AS wait_seconds/);
+  assert.doesNotMatch(q.text, /retracted/, 'a cleared reading stopped counting toward the minute');
+});
+
+test('the wait is said sensibly at its edges', () => {
+  const { oneAMinuteRefusal } = require('../routes/venueDashboard').__test;
+  assert.equal(oneAMinuteRefusal(1), 'One update a minute. You can set a new number in 1 second.');
+  assert.equal(oneAMinuteRefusal(0.2), 'One update a minute. You can set a new number in 1 second.');
+  assert.equal(oneAMinuteRefusal(60), 'One update a minute. You can set a new number in 60 seconds.');
+  // A row stamped ahead of the clock is not an hour's wait.
+  assert.equal(oneAMinuteRefusal(3600), 'One update a minute. You can set a new number in 60 seconds.');
+  for (const unreadable of [null, undefined, 'soon', 0, -5]) {
+    assert.equal(oneAMinuteRefusal(unreadable), 'One update a minute. You can set a new number in under a minute.');
+  }
+});
+
 test('the daily cap still refuses, and the capture never runs on a refusal', async () => {
   const place = freshPlace();
   handlers = busyNowHandlers(place, { last_minute: 0, last_day: 999 });
