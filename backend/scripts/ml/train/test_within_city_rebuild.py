@@ -109,6 +109,115 @@ def test_the_old_fixed_ladder_is_gone():
     assert 'filter_and_weight_like_prepare_features(train_df)' in body
 
 
+# --- The rest of main()'s train branch: the sports columns, the live-feature
+# policy and the time holdout. The rebuild once skipped all three, so a
+# sports-on or live-off features_train.pkl, or any run with the default
+# 14-day time holdout, was refused by verify_rebuild.
+
+def _body(src, start, end_marker):
+    body = src[src.index(start):]
+    return body[:body.index(end_marker)]
+
+
+def _train_feature_steps(body):
+    """The ordered add_* steps a body applies to train_df, pf. prefix dropped."""
+    import re
+    return re.findall(r'train_df(?:, \w+)? = (?:pf\.)?(add_\w+)\(train_df\b', body)
+
+
+def test_the_rebuild_builds_every_feature_step_main_builds_in_the_same_order():
+    here = Path(__file__).parent
+    main_src = _body((here / 'prepare_features.py').read_text(encoding='utf-8'),
+                     'def main():', "venue_metadata['temp_norms']")
+    rebuild_src = _body((here / 'within_city_eval.py').read_text(encoding='utf-8'),
+                        'def rebuild_training_frame(', 'def verify_rebuild(')
+    want = _train_feature_steps(main_src)
+    got = _train_feature_steps(rebuild_src)
+    assert 'add_sports_features' in want and 'add_live_features' in want, want
+    assert got == want, (got, want)
+
+
+def test_the_rebuild_applies_the_live_policy_and_the_time_holdout_before_any_row_drops():
+    src = (Path(__file__).parent / 'within_city_eval.py').read_text(encoding='utf-8')
+    body = _body(src, 'def rebuild_training_frame(', 'def verify_rebuild(')
+    policy = body.index('apply_live_feature_policy()')
+    cut = body.index('time_holdout_like_prepare_features(train_df, holdout_dates)')
+    dropna = body.index("train_df.dropna(subset=['busyness_pct'])")
+    first_feature = body.index('pf.add_temporal_features(train_df)')
+    assert policy < cut < dropna < first_feature
+
+
+def _with_policy(value, fn):
+    saved = (pf.LIVE_FEATURE_POLICY, set(pf.DROPPED_FEATURES), dict(pf.DROP_REASONS))
+    pf.LIVE_FEATURE_POLICY = value
+    try:
+        return fn()
+    finally:
+        pf.LIVE_FEATURE_POLICY = saved[0]
+        pf.DROPPED_FEATURES.clear()
+        pf.DROPPED_FEATURES.update(saved[1])
+        pf.DROP_REASONS.clear()
+        pf.DROP_REASONS.update(saved[2])
+
+
+def test_live_features_off_drops_the_five_exactly_as_main_does():
+    cols = {n: [1.0] for n in pf.LIVE_FEATURE_NAMES}
+    cols.update({'hour': [20], 'busyness_pct': [40.0]})
+    df = pd.DataFrame(cols)
+
+    def off():
+        wce.apply_live_feature_policy()
+        return pf.get_feature_columns(df), dict(pf.DROP_REASONS)
+
+    def on():
+        wce.apply_live_feature_policy()
+        return pf.get_feature_columns(df)
+
+    feats_off, reasons = _with_policy('off', off)
+    assert not set(pf.LIVE_FEATURE_NAMES) & set(feats_off), feats_off
+    assert 'hour' in feats_off
+    # The reason main() records, word for word.
+    assert all(reasons[n] == 'FLOCK_LIVE_FEATURES=off (ablation)' for n in pf.LIVE_FEATURE_NAMES)
+    feats_on = _with_policy('on', on)
+    assert set(pf.LIVE_FEATURE_NAMES) <= set(feats_on), feats_on
+
+
+def test_the_policy_is_part_of_the_cache_key():
+    assert _with_policy('off', wce.rebuild_cache_key) != _with_policy('on', wce.rebuild_cache_key)
+
+
+def _dated(date, city, source='live', realtime=1):
+    return {'is_realtime': realtime, 'label_source': source, 'observed_date': date, 'city': city,
+            'busyness_pct': 40.0}
+
+
+def test_the_time_holdout_is_cut_as_main_cuts_it_over_both_frames():
+    saved = {k: os.environ.pop(k, None) for k in (pf.TIME_HOLDOUT_FROM_ENV, pf.TIME_HOLDOUT_DAYS_ENV)}
+    try:
+        days = pd.date_range('2026-09-01', '2026-09-30').strftime('%Y-%m-%d')
+        train = pd.DataFrame(
+            [_dated(d, 'philly') for d in days[:25]]
+            + [_dated(d, 'philly', source='forecast') for d in days[:25]]
+            + [_dated(None, 'philly', source='', realtime=0)] * 3)
+        # The holdout city's newest live reading is later than training's, so
+        # the cut is five days deeper than training's own dates would put it.
+        holdout = pd.DataFrame([_dated(d, 'miami') for d in days])
+        got = wce.time_holdout_like_prepare_features(
+            train.copy(), holdout[['is_realtime', 'label_source', 'observed_date']])
+        th = pf.resolve_time_holdout([train, holdout])
+        want, _ = pf.split_time_holdout(train.copy(), th['from_date'])
+        assert th['from_date'] == '2026-09-17', th
+        assert list(got.index) == list(want.index)
+        assert got['observed_date'].dropna().max() == '2026-09-16'
+        # Weekly rows stay; every realtime row on or after the cut leaves.
+        assert int((got['is_realtime'] == 0).sum()) == 3
+        assert len(got) == len(train) - 2 * (25 - 16)
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith('test_') and callable(fn)]
     failed = 0
