@@ -400,14 +400,17 @@ test('firebase.js does not keep its own copy of the auth-token key', () => {
     firebaseCode, /import \{[^}]*getToken as getAuthToken[^}]*\} from '\.\/api'/,
     'services/firebase.js does not take the auth token from api.js'
   );
-  // The VALUE, not a boolean. The push session watcher compares the current
-  // token with the last one it handled to tell "already registered this
+  // A VALUE, not a boolean. The push session watcher compares the current
+  // sign-in with the last one it handled to tell "already registered this
   // session" from "a different account is signed in now", and an account switch
   // in another tab never passes through a logged-out state for isLoggedIn() to
-  // notice.
+  // notice. It keys on the sign-in the token belongs to (lib/sessionIdentity.js
+  // signInKey), not the raw token string, so the daily renewal of the same
+  // sign-in is not taken for a new session.
   assert.match(firebaseCode, /getAuthToken\(\)/, 'firebase.js imports the token reader but does not call it');
+  assert.match(firebaseCode, /signInKey\(token\)/, 'the session key is no longer derived from the sign-in the token belongs to');
   assert.match(
-    firebaseCode, /handledAuthToken === authToken/,
+    firebaseCode, /handledSession === session/,
     'the session watcher stopped comparing token values; an account switch would no longer re-register this device'
   );
 });

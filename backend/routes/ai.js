@@ -867,10 +867,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       }
       const details = await fetchPlaceDetails(placeId);
       if (!details.ok) {
-        // Google's own error body is a place it does not know. Anything else
-        // is Google not answering, which is not the same sentence: told "not
-        // found", the model would tell the user the venue does not exist.
-        return details.kind === 'api'
+        // 'not_found' is Google saying this id names no place (the cache has
+        // remembered it, and it is health, not an outage). Anything else is
+        // Google not answering, a quota or key error included, which is not the
+        // same sentence: told "not found", the model would tell the user the
+        // venue does not exist.
+        return details.kind === 'not_found'
           ? { error: 'Venue not found' }
           : { error: 'Could not reach Google Places for that venue right now. Try again in a little while.' };
       }
