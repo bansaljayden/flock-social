@@ -777,3 +777,27 @@ describe('a cancelled plan is called cancelled where it is still listed', () => 
     expect(detail.slice(Math.max(0, invite - 900), invite)).toContain('{!isCompleted && (');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. Lock it in carries the voted venue's own coordinates
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('locking in a venue voted from a shared card', () => {
+  test('sends the coordinates the card carries in the shape the server stores', () => {
+    // A card that came back through the server carries latitude/longitude
+    // (backend/utils/venuePayload.js). Reading only lat/lng sent none, so the
+    // plan kept pointing at whatever venue it had before.
+    const card = {
+      id: 104, sender: 'Bo', senderId: MEMBER, text: '', sentAt: '2026-09-25T20:00:00',
+      message_type: 'venue_card',
+      venue_data: { name: "Joe's Bar", place_id: 'pj1', addr: '2 Joe St', latitude: 40.72, longitude: -73.99 },
+      reactions: [],
+    };
+    const updateFlockVenue = jest.fn(() => Promise.resolve(true));
+    mount({ flock: { votes: [{ venue: "Joe's Bar", place_id: 'pj1', voters: ['Bo'] }], messages: [card] }, updateFlockVenue });
+    fireEvent.click(screen.getByRole('button', { name: 'Lock it in' }));
+    expect(updateFlockVenue).toHaveBeenCalledWith(1, expect.objectContaining({
+      name: "Joe's Bar", place_id: 'pj1', addr: '2 Joe St', lat: 40.72, lng: -73.99, status: 'confirmed',
+    }));
+  });
+});
