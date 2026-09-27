@@ -52,18 +52,34 @@ ALL_KNOWN = np.ones(K, dtype=np.float32)
 PEOPLE_ONLY = np.eye(K, dtype=np.float32)[0]
 
 
+def _eight_bit(g, rng):
+    """An 8-bit frame carries no temperatures; a plausible room-to-skin range,
+    different every time, so no one mapping is learned as the truth."""
+    lo, span = rng.uniform(16, 28), rng.uniform(8, 16)
+    return lo + (g ** rng.uniform(0.8, 1.25)) * span
+
+
 def real_frame(real, rng, groups_x3=True):
     """One real training frame at Lepton size, with its people.
 
-    real is the 'train' part of the cache real_cache.py builds from public,
-    commercially licensed datasets (never their test splits):
-      tp   PUT Thermo Presence, MLX90640 32x24 from the ceiling, degrees C,
-           a point per person
-      otp  OpenThermalPose2, side view, 8-bit, a box and head per person
+    real is one split of the cache built from public datasets whose licences
+    allow commercial use (never their test splits):
+      tp   PUT Thermo Presence (MIT): MLX90640 32x24 from the ceiling, degrees
+           C, a point per person
+      otp  OpenThermalPose2 (MIT): side view, 8-bit, a box and head per person
+      aau  AAU Trimodal (CC BY): a wall-mounted camera in meeting rooms, up
+           to three people, 8-bit, a box per person
+      ss   SenSys 2021 low-resolution set (CC BY): 32x24 rooms with working
+           laptops and other hot objects, a box per person
     Only people are labelled in them, so only the people map is graded.
     """
     from scipy.ndimage import zoom
-    if rng.random() < 0.5:
+    sources = [('tp', 0.35), ('otp', 0.3), ('aau', 0.25), ('ss', 0.1)]
+    sources = [(k, w) for k, w in sources if f'{k}_img' in real]
+    weights = np.array([w for _, w in sources])
+    src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
+    boxes = True
+    if src == 'tp':
         i = int(rng.integers(len(real['tp_img'])))
         t = zoom(real['tp_img'][i].astype(np.float32), (5, 5), order=1)
         t = t + rng.normal(0, 1.5)
@@ -71,9 +87,9 @@ def real_frame(real, rng, groups_x3=True):
                     'box': (x * 5 - 10, y * 5 - 10, x * 5 + 15, y * 5 + 15)}
                    for x, y in real['tp_pts'][i]]
         boxes = False
-    else:
-        # Frames with two or more people drawn three times as often: groups
-        # seen from the side are where owl-3 undercounted.
+    elif src == 'otp':
+        # Frames with two or more people drawn three times as often in
+        # training: groups seen from the side are where owl-3 undercounted.
         if not groups_x3:
             i = int(rng.integers(len(real['otp_img'])))
         else:
@@ -81,14 +97,20 @@ def real_frame(real, rng, groups_x3=True):
                 w = np.array([3.0 if len(p) >= 2 else 1.0 for p in real['otp_people']])
                 real['_w'] = w / w.sum()
             i = int(rng.choice(len(real['otp_img']), p=real['_w']))
-        g = real['otp_img'][i].astype(np.float32) / 255.0
-        # 8-bit frames carry no temperatures; a plausible room-to-skin range,
-        # different every time, so no one mapping is learned as the truth.
-        lo, span = rng.uniform(16, 28), rng.uniform(8, 16)
-        t = lo + (g ** rng.uniform(0.8, 1.25)) * span
+        t = _eight_bit(real['otp_img'][i].astype(np.float32) / 255.0, rng)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
                    for box, (hx, hy) in real['otp_people'][i]]
-        boxes = True
+    elif src == 'aau':
+        i = int(rng.integers(len(real['aau_img'])))
+        t = _eight_bit(real['aau_img'][i].astype(np.float32) / 255.0, rng)
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
+                   for box, (hx, hy) in real['aau_people'][i]]
+    else:
+        i = int(rng.integers(len(real['ss_img'])))
+        t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
+        objects = [{'cls': 'person', 'x': hx * 5, 'y': hy * 5,
+                    'box': tuple(v * 5 for v in box)}
+                   for box, (hx, hy) in real['ss_people'][i]]
     t = t.astype(np.float32)
     if rng.random() < 0.5:
         t, objects = flip(t, objects)
