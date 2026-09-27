@@ -226,6 +226,34 @@ function ProOfferCard({ offer }) {
   );
 }
 
+// What the waitlist form says when the request comes back. The form used to
+// print whatever the Error carried, so a dropped connection read as the
+// browser's own "Load failed" (Safari) or "Failed to fetch" (Chrome), and a
+// 500 read as the backend's literal "Server error", which is a placeholder in
+// the route pattern's catch block and not a sentence for a person. While the
+// app is in review this form is where the App Store badge points, so it is the
+// one way in for every iPhone visitor.
+//
+// 400 and 429 carry sentences the route wrote for the visitor ("Valid email is
+// required", "Too many signups from this connection..."), so those are shown.
+// Everything else that failed gets one plain line. A repeat signup is a 201
+// with alreadyOnList set, and it says so instead of welcoming them again.
+const WAITLIST_JOINED = 'You’re on the list. You’ll get an email when it opens up.';
+const WAITLIST_ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
+const WAITLIST_FAILED = 'Could not sign you up. Try again in a moment.';
+const WAITLIST_OFFLINE = 'Couldn’t reach Flock. Check your connection and try again.';
+
+export function waitlistReply(status, data) {
+  if (status >= 200 && status < 300) {
+    return { msg: data && data.alreadyOnList ? WAITLIST_ALREADY : WAITLIST_JOINED, bad: false };
+  }
+  const said = data && typeof data.error === 'string' ? data.error.trim() : '';
+  if ((status === 400 || status === 429) && said && said !== 'Server error') {
+    return { msg: said, bad: true };
+  }
+  return { msg: WAITLIST_FAILED, bad: true };
+}
+
 export default function LandingPage() {
   const proOffer = useProOffer();
   const [email, setEmail] = useState('');
@@ -333,20 +361,31 @@ export default function LandingPage() {
     setMsg('');
     setMsgBad(false);
     try {
-      const res = await fetch(`${API}/api/waitlist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: value }),
-      });
+      let res;
+      try {
+        res = await fetch(`${API}/api/waitlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: value }),
+        });
+      } catch {
+        // fetch rejects only when no response arrived at all: offline, a
+        // dropped connection, DNS. Its message is the browser's, not ours.
+        setMsg(WAITLIST_OFFLINE);
+        setMsgBad(true);
+        return;
+      }
+      // A gateway error page is HTML, and a body that will not parse is
+      // treated as saying nothing rather than as a failure of its own.
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
       // Same register fix as the lead above: the confirmation says what the
       // reader gets, not who is sending it.
-      setMsg("You’re on the list. You’ll get an email when it opens up.");
-      setMsgBad(false);
-      setEmail('');
-    } catch (err) {
-      setMsg(err.message || 'Could not sign you up. Try again in a moment.');
+      const reply = waitlistReply(res.status, data);
+      setMsg(reply.msg);
+      setMsgBad(reply.bad);
+      if (!reply.bad) setEmail('');
+    } catch {
+      setMsg(WAITLIST_FAILED);
       setMsgBad(true);
     } finally {
       setBusy(false);
