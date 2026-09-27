@@ -791,13 +791,20 @@ const rearmMapLibreMapView = () => {
    case where that never happens. Failures are swallowed, because a prefetch
    that does not land just means the lazy fetches it on tap, which is exactly
    where this started. */
+/* A METERED CONNECTION: save-data on, or a 2g-class link. Nothing speculative
+   goes out on one. Shared by warmScreenChunks and the unread-plan read-ahead in
+   FlockAppInner (prefetchUnreadThread), so the two cannot disagree about what
+   counts. */
+const onMeteredConnection = () => {
+  const c = typeof navigator !== 'undefined'
+    && (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
+  return !!(c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || '')));
+};
 const warmScreenChunks = () => {
   /* NOT ON A METERED CONNECTION. A prefetch is speculative traffic the person
      did not ask for, and this is the same rule AuthShell.js already applies to
      the login video. On save-data or 2g the lazy simply fetches on tap. */
-  const c = typeof navigator !== 'undefined'
-    && (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
-  if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return;
+  if (onMeteredConnection()) return;
 
   const go = () => {
     /* THE MESSAGES LIST BEFORE EITHER OF THEM. It is the tab people open
@@ -6562,6 +6569,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // not affected; a restart shows the card once more, which is right if the
   // person who blocked them has since left. Entries are `${accountId}:${flockId}`.
   const refusedInvitesRef = useRef(new Set());
+  // The unread-plan read-ahead (prefetchUnreadThread, beside loadFlockMessages
+  // further down). Reached through a ref because loadFlocks is declared long
+  // before the history bookkeeping that function shares.
+  const prefetchUnreadRef = useRef(null);
 
   // Fetch flocks from API on mount.
   //
@@ -6731,6 +6742,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         } else if (invite) {
           openJoinedFlock(invite);
         }
+        // One unread plan's thread, read ahead on idle, in the list's own
+        // order (prefetchUnreadThread says which and why).
+        prefetchUnreadRef.current?.(fresh.map((f) => f.id));
       })
       .catch((err) => {
         // The list on screen is NOT cleared. A failed refresh must not delete
@@ -10216,6 +10230,73 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .finally(() => { if (showSpinner) setMessagesLoading(false); });
   }, []);
+
+  // ONE UNREAD PLAN, READ AHEAD WHILE NOBODY IS WAITING. The plan list arrives
+  // with every thread empty (loadFlocks maps `messages: []`) and already knows
+  // which plans have unread messages, so somebody who opens the app because a
+  // plan has new messages and taps straight in got a skeleton waiting on a
+  // history read: about 190 ms of a 500 ms first open, measured on the local
+  // stack. After each list read lands, the first plan in the list's own order
+  // (the server's, most recently updated first) that has unread messages and
+  // no thread held here is read on idle, so that open paints from memory. The
+  // screen entry reads it again as always, so what was drawn is refreshed.
+  //
+  // NOT THROUGH loadFlockMessages. That function owns the loading and error
+  // state of whichever chat is open, and a read nobody asked for must not put
+  // a skeleton or a failure line on a screen that is about some other plan.
+  // What it shares is the bookkeeping that keeps reads honest: the stamp the
+  // catch-up throttle reads, the sequence that lets a later read of the same
+  // plan overtake this one, and the retraction log, so an unsend or a block
+  // that lands while this is out is not undone by its answer. And it is no
+  // read receipt: the history route records delivery, which is true of a
+  // thread on this phone, and the unread badge moves only when the chat opens.
+  //
+  // One plan per list read, only when the browser is idle, and never on a
+  // metered connection or while the app is hidden.
+  const prefetchUnreadThread = useCallback((order) => {
+    if (onMeteredConnection()) return;
+    const go = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      // Chosen at idle time, from the list as it stands then: a plan opened
+      // or read since the list landed is no longer a candidate.
+      const held = flocksRef.current || [];
+      const target = (order || [])
+        .map((id) => held.find((f) => f.id === id))
+        .find((f) => f && f.memberStatus === 'accepted' && (f.unread || 0) > 0 && !(f.messages && f.messages.length));
+      if (!target) return;
+      const key = `flock:${target.id}`;
+      // A read of this plan is already out or has landed (the person opened
+      // it meanwhile), and that read is the one that counts.
+      if (historyReadAtRef.current[key]) return;
+      historyReadAtRef.current[key] = Date.now();
+      const turn = (historyReadSeqRef.current[key] || 0) + 1;
+      historyReadSeqRef.current[key] = turn;
+      const overtaken = () => historyReadSeqRef.current[key] !== turn;
+      const since = retractionsRef.current.seq;
+      getMessages(target.id)
+        .then((data) => {
+          if (overtaken()) return;
+          const msgs = (data.messages || []).map((m) => mapFlockRow(m, meRef.current?.id));
+          const drop = retractedSince(retractionsRef.current.log, since, 'flock');
+          const gone = retractedIdsIn(msgs, drop);
+          const pins = Array.isArray(data.pins) ? dropRetractedPins(data.pins, gone, drop) : [];
+          const readers = Array.isArray(data.readers) ? data.readers : [];
+          setFlocks((prev) => prev.map((f) => (f.id !== target.id ? f
+            : { ...f, messages: mergeHistory(f.messages || [], msgs, { drop }), readers, pins })));
+        })
+        .catch(() => {
+          // A miss costs the skeleton on open, which is where this started,
+          // and must not count as a read to the catch-up throttle.
+          if (!overtaken()) historyReadAtRef.current[key] = 0;
+        });
+    };
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(go, { timeout: 4000 });
+    } else {
+      setTimeout(go, 1500);
+    }
+  }, []);
+  prefetchUnreadRef.current = prefetchUnreadThread;
 
   // The DM twin of loadFlockMessages, for the same two callers.
   const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false, anchor = null } = {}) => {
