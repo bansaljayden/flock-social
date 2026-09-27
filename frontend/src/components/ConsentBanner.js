@@ -1,5 +1,5 @@
 import React from 'react';
-import { setConsent, consentUnanswered } from '../services/analyticsConsent';
+import { setConsent, consentUnanswered, onConsentChange } from '../services/analyticsConsent';
 import { isNativeShell } from '../lib/nativeShell';
 
 /**
@@ -17,7 +17,11 @@ import { isNativeShell } from '../lib/nativeShell';
  * when there is no cookie would be its own small lie.
  *
  * DECLINING IS FREE. Nothing about the site changes, nothing is gated, and the
- * bar does not come back. That is the whole point of asking.
+ * bar does not come back to the account that answered, while it stays signed
+ * in or when it signs straight back in on the same page
+ * (services/analyticsConsent.js, WHOSE ANSWER IT IS). That is the whole point
+ * of asking. A different account signing in on the same phone is a different
+ * person, and is asked for itself.
  *
  * IT NEVER COVERS THE TAB BAR. Inside the app the bar used to sit on top of
  * the bottom navigation (fixed at the bottom, above everything by z-index),
@@ -90,6 +94,20 @@ export default function ConsentBanner({ onAnswer }) {
   const [inApp] = React.useState(() => isNativeShell());
   // In the app, nothing until the tab bar is there. See the note above WEB_COPY.
   const waiting = inApp && clearance === 0;
+
+  // THE ANSWER BELONGS TO AN ACCOUNT, so it can change under a bar that is
+  // already mounted: a session ending takes it away, and the same account
+  // signing in again on this page gets it back (services/analyticsConsent.js,
+  // WHOSE ANSWER IT IS). Read once at mount, as this used to be, the bar stayed
+  // closed after one person's answer and the next account on a shared phone
+  // was never asked. Reopened with no clearance, so in the app it waits for the
+  // next tab bar rather than floating over the sign-in screen at the height of
+  // the last one.
+  React.useEffect(() => onConsentChange(() => {
+    const unanswered = consentUnanswered();
+    if (unanswered) setClearance(0);
+    setOpen(unanswered);
+  }), []);
 
   React.useEffect(() => {
     if (!open) return undefined;

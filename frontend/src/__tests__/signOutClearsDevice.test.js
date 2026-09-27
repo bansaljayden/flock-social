@@ -308,24 +308,24 @@ describe('what stays on the device', () => {
     expect(localStorage.getItem('flock_notif_denied')).toBe('true');
   });
 
-  it('keeps the answer to the analytics bar, which is the browser\'s and not the account\'s', async () => {
-    // Sweeping it asked the question again after every sign-out and every
-    // 24h expiry, and switched off the PostHog reset for the next account.
-    // analyticsConsentSignOut.test.js holds the rest of that story.
+  it('takes the answer to the analytics bar, which in the app is the account\'s', async () => {
+    // Kept, it identified the next account on a shared phone to PostHog on
+    // the last one's yes. The same account signing straight back in gets its
+    // answer back from memory; analyticsConsentSignOut.test.js holds that.
     seedDevice();
-    localStorage.setItem('flock_analytics_consent', 'no');
+    localStorage.setItem('flock_analytics_consent', 'yes');
     global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
 
     await logout();
 
-    expect(localStorage.getItem('flock_analytics_consent')).toBe('no');
+    expect(localStorage.getItem('flock_analytics_consent')).toBeNull();
   });
 
-  it('pins the keep-list to exactly those five, so a personal key cannot be added quietly', () => {
+  it('pins the keep-list to exactly those four, so a personal key cannot be added quietly', () => {
     const m = API.match(/const KEEP_ON_SIGN_OUT = new Set\(\[([\s\S]*?)\]\);/);
     expect(m).not.toBeNull();
     const kept = (m[1].match(/'[^']+'/g) || []).map((s) => s.slice(1, -1)).sort();
-    expect(kept).toEqual(['flock-theme', 'flock-theme-mode', 'flock_map_type', 'flock_notif_denied', 'flock_analytics_consent'].sort());
+    expect(kept).toEqual(['flock-theme', 'flock-theme-mode', 'flock_map_type', 'flock_notif_denied'].sort());
   });
 
   it('every kept key is one pullSettings overwrites for the next account', () => {

@@ -1,5 +1,12 @@
-// Consent, read live on every capture. See the gate in withPostHog below.
-import { hasAnalyticsConsent } from './analyticsConsent';
+// Consent, read live on every capture. See the gate in withPostHog below. The
+// other three carry the answer from one session to the next sign-in of the
+// same account and no other (analyticsConsent.js, WHOSE ANSWER IT IS).
+import {
+  hasAnalyticsConsent,
+  holdConsentAtSignOut,
+  restoreConsentFor,
+  announceConsentChange,
+} from './analyticsConsent';
 import { lsGet, lsSet, lsRemove } from '../lib/storage';
 // Which sign-in a token belongs to (lib/sessionIdentity.js): a renewal keeps
 // it, a sign-out or an account switch does not.
@@ -122,7 +129,13 @@ function track(event, props) {
 let signedInUserId = null;
 
 function rememberSignedInUser(user) {
-  if (user?.id !== undefined && user?.id !== null) signedInUserId = String(user.id);
+  if (user?.id === undefined || user?.id === null) return;
+  signedInUserId = String(user.id);
+  // The analytics answer the last session on this page took with it comes
+  // back here, and only when this is the same account. Anyone else finds the
+  // question unanswered and is asked. Before the identify that follows, so a
+  // restored yes names the account and anything else sends nothing.
+  restoreConsentFor(signedInUserId);
 }
 
 function identifyUser(user) {
@@ -184,6 +197,26 @@ const TOKEN_RECEIVED_KEY = 'flockTokenReceivedAt';
 
 function getRefreshToken() {
   return lsGet(REFRESH_TOKEN_KEY);
+}
+
+// What the stored token says about itself: its payload, decoded and NOT
+// verified. Only the server can say whether a token is good, and nothing here
+// decides that. The question a session that is ending can still ask of it is
+// whose it was (userId), for the analytics answer. A boot that finds the
+// session already dead has had no answer from the server to learn that from.
+// Null for anything that is not a readable JWT.
+function storedTokenClaims() {
+  try {
+    const token = getToken();
+    if (typeof token !== 'string') return null;
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+    return claims && typeof claims === 'object' ? claims : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 // Whether the session in storage has been seen working in this page load: a
@@ -269,10 +302,20 @@ function storeSession(data) {
  *                                session found already dead at boot, where
  *                                they belong to whoever is holding the
  *                                device now (holdInviteHandoff below)
+ *     flock_analytics_consent    the answer to the analytics bar. In the app it
+ *                                is consent for an ACCOUNT's activity, so the
+ *                                next account is asked for itself: kept, it
+ *                                identified B to PostHog on A's yes. The same
+ *                                account signing in again on this page gets
+ *                                its answer back without being asked, from a
+ *                                copy held in memory only
+ *                                (services/analyticsConsent.js, WHOSE ANSWER
+ *                                IT IS), so no account id is left on the
+ *                                device to say who used it.
  *
  *   KEPT — device facts, nothing personal in them. The three display ones are
  *   overwritten by pullSettings() the moment the next account signs in; the
- *   last two are about the browser, not the account:
+ *   last one is about the browser, not the account:
  *     flock-theme, flock-theme-mode   dark/light. Dropping it means the next
  *                                     person gets a flash of the wrong theme
  *                                     for zero privacy gain.
@@ -281,23 +324,6 @@ function storeSession(data) {
  *                                     permission. That is true of the handset
  *                                     regardless of who holds it; clearing it
  *                                     just re-prompts into a denial.
- *     flock_analytics_consent         the answer to the analytics bar
- *                                     (services/analyticsConsent.js). Not
- *                                     overwritten by pullSettings: it is not an
- *                                     account setting. It is consent to store
- *                                     and send from THIS browser, the thing
- *                                     ePrivacy asks about, and on the web it is
- *                                     usually given before any account exists.
- *                                     Sweeping it broke the banner's one
- *                                     promise, that declining is remembered and
- *                                     the bar does not come back: every
- *                                     sign-out and every 24h expiry asked again.
- *                                     It also switched off the PostHog reset
- *                                     below for the next account, which is how
- *                                     the next person on a shared phone was
- *                                     recorded as the last one. The reset still
- *                                     runs on every sign-out, so a kept yes
- *                                     carries no identity across accounts.
  *
  * sessionStorage is not written anywhere in the app today. It is swept on the
  * same rule anyway so a future writer is covered by default rather than by
@@ -309,7 +335,6 @@ const KEEP_ON_SIGN_OUT = new Set([
   'flock-theme-mode',
   'flock_map_type',
   'flock_notif_denied',
-  'flock_analytics_consent',
 ]);
 
 function sweepStore(store) {
@@ -464,15 +489,28 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   // Round 3: without reset, activity on a shared device stays attributed to
   // the previous account, and the next login can merge identities.
   //
+  // AND THEN OFF. A reset alone left the SDK running under a fresh anonymous
+  // id, and it records page views on every history change by itself
+  // (POSTHOG_PRIVACY_CONFIG in index.js), so the next person's sign-in screen
+  // and first screens were sent before they had been asked anything. The opt
+  // out stops that until a yes turns it back on (startAnalytics in index.js).
+  // It comes after the reset because a reset clears the SDK's opt state.
+  //
   // ASKED FOR BEFORE THE SWEEP, because withPostHog reads the consent answer
-  // at the moment it is called and that answer is a flock* key. Called after
-  // the sweep, as it was, it read a consent the sweep had just deleted and
-  // returned without resetting: the SDK kept the last account's identified id,
-  // and the next yes on the same page initialised straight back into it. The
-  // answer is kept now (KEEP_ON_SIGN_OUT), and this order means the reset no
-  // longer depends on that. The reset itself still lands after the sweep, a
-  // microtask later, so it cannot come between Log out and the wipe.
-  withPostHog((posthog) => posthog.reset());
+  // at the moment it is called, the answer is a flock* key, and the sweep
+  // removes it. Asked for after, the gate found nothing and returned, and the
+  // SDK kept the last account's identified id. The calls themselves still land
+  // after the sweep, a microtask later, so they cannot come between Log out
+  // and the wipe.
+  withPostHog((posthog) => {
+    posthog.reset();
+    posthog.opt_out_capturing();
+  });
+  // The answer leaves with the session, and waits in memory for this account
+  // to sign in again on this page (analyticsConsent.js, WHOSE ANSWER IT IS).
+  // A boot that finds the stored session already dead never heard from the
+  // server whose it was, so the token's own claim names it.
+  holdConsentAtSignOut(signedInUserId || storedTokenClaims()?.userId);
   signedInUserId = null;
   const held = keepInviteHandoff ? holdInviteHandoff() : [];
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
@@ -480,6 +518,9 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   held.forEach(([key, value]) => {
     try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
   });
+  // No answer is in force now, so the bar opens again, for whoever signs in
+  // next (it waits for the tab bar in the app).
+  announceConsentChange();
   // LAST, and after the storage sweep has already run, so nothing this touches
   // can come between a user tapping Log out and their data leaving the device.
   endNativeGoogleSession();

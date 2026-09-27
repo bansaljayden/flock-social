@@ -14,6 +14,7 @@ import { act, render } from '@testing-library/react';
 jest.mock('../services/analyticsConsent', () => ({
   consentUnanswered: () => true,
   setConsent: jest.fn(),
+  onConsentChange: () => () => {},
 }));
 
 const ConsentBanner = require('../components/ConsentBanner').default;
