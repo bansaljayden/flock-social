@@ -167,8 +167,14 @@ test('every Places field mask in routes/ and services/ resolves — an unresolve
   // services/placeDetailsCache.js, halving that SKU. Two masks became one; the
   // field list did not change. The floor is also what stops a broken regex from
   // turning this whole file green by finding nothing.
-  assert.ok(masks.length >= 10,
-    `expected at least 10 Places field masks under routes/ and services/, found ${masks.length}`);
+  //
+  // NINE since 2026-09-27, and the one that went is the same kind of saving.
+  // Birdie's crowd tool in ai.js sent its own Place Details mask, a strict
+  // subset of the shared one, and bought its own call for a payload the card
+  // had often just cached. It reads services/placeDetailsCache.js now, so its
+  // model inputs come through the shared mask this file already sweeps.
+  assert.ok(masks.length >= 9,
+    `expected at least 9 Places field masks under routes/ and services/, found ${masks.length}`);
 
   for (const { file, line, mask } of masks) {
     assert.ok(mask, `${file}:${line} — could not resolve the mask; extend resolveMask()`);
@@ -180,8 +186,8 @@ test('every Places field mask in routes/ and services/ resolves — an unresolve
 test('every venue-shaped mask still asks for the three model inputs', () => {
   const venueShaped = collectMasks().filter((m) => m.mask && m.mask.includes(VENUE_SHAPED));
 
-  assert.ok(venueShaped.length >= 10,
-    `expected at least 10 venue-shaped masks, found ${venueShaped.length}`);
+  assert.ok(venueShaped.length >= 9,
+    `expected at least 9 venue-shaped masks, found ${venueShaped.length}`);
 
   // The shared one is named explicitly. It is the mask the crowd model's serving
   // path now eats from, and it is the only one that lives outside routes/, so a

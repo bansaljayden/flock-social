@@ -615,11 +615,13 @@ test('every mask that feeds the crowd model asks for timeZone, and only on masks
   // the offset (the search's venues are scored through the batch), plus the
   // badge, which scores through the predictor and used to estimate its clock
   // from the longitude. (Birdie's search mask is text for the model, and the
-  // crowd tool refetches details.)
+  // crowd tool reads the details cache's payload, so the cache's mask is the
+  // one that has to carry the zone for it. It sent a mask of its own until
+  // 2026-09-27, which is why this count was eight.)
   const feeding = masks.filter(([rel, mask]) =>
     fields(mask).includes('utcOffsetMinutes') || rel === 'routes/badge.js');
-  assert.equal(feeding.length, 8,
-    `expected the details cache, crowd alternatives, Birdie details, the demo, the dashboard's two, the badge and the app's search; found ${feeding.map(([r]) => r).join(', ')}`);
+  assert.equal(feeding.length, 7,
+    `expected the details cache, crowd alternatives, the demo, the dashboard's two, the badge and the app's search; found ${feeding.map(([r]) => r).join(', ')}`);
   for (const [rel, mask] of feeding) {
     assert.ok(fields(mask).includes('timeZone'), `${rel}: ${mask} does not ask for timeZone`);
   }

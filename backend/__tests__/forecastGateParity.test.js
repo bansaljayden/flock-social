@@ -903,8 +903,8 @@ test('one turn spends one view per new venue the model looks at, the same as the
   process.env.PAYWALL_ENABLED = 'true';
   const uid = CURRENT_USER.id;
   notPremium();
-  // Six characters at least: Birdie refuses an id no Google place id could be
-  // (utils/places.js isPlaceIdShaped) before it charges or calls anything.
+  // Shaped like place ids: the tool refuses an id that could not be Google's
+  // before it spends or caches anything, the same as the card's route.
   const results = await birdieCrowd(['VENUE_1', 'VENUE_2', 'VENUE_3', 'VENUE_4']);
   assert.strictEqual(results.length, 4, 'the model did not actually make four lookups');
   for (const r of results) assert.ok(r.best_time, 'a venue inside the allowance was refused');

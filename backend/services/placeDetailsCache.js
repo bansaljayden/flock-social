@@ -89,10 +89,10 @@
 // THE LEDGER: CHARGED ONCE PER REAL UPSTREAM FETCH, NEVER ON A HIT.
 // ---------------------------------------------------------------------------
 // This module does NOT charge utils/placesBudget.js itself, deliberately. The
-// two callers charge different ceilings for different reasons — routes/crowd.js
-// charges 1 for the card and 2 for /alternatives (Details + Text Search), and
-// venueSearch charges 1 — and a module that charged on their behalf would have
-// to know all of that. What it owns instead is the ONE question they cannot
+// callers charge different ceilings for different reasons — routes/crowd.js
+// charges 1 for the card and 2 for /alternatives (Details + Text Search),
+// venueSearch charges 1, and Birdie's crowd tool charges 1 — and a module that
+// charged on their behalf would have to know all of that. What it owns instead is the ONE question they cannot
 // answer for themselves: `willCostUpstreamCall(placeId)`, true exactly when
 // fetchPlaceDetails would issue a new paid Google request. A caller charges when
 // that is true and does not when it is false, which is placesBudget's own rule
@@ -117,17 +117,22 @@
 // undercounts precisely when things are going wrong.
 // ---------------------------------------------------------------------------
 
-// WHO SHARES THIS, AND WHO DELIBERATELY DOES NOT. The two consumers are
+// WHO SHARES THIS, AND WHO DELIBERATELY DOES NOT. The consumers are
 // routes/venueSearch.js GET /details and routes/crowd.js, which are the two
-// halves of one screen and both charge allowPlacesSearch against the SAME
-// authenticated user. routes/badge.js, routes/publicCrowd.js and the Birdie
-// tool in routes/ai.js also fetch Place Details, and they are NOT wired in here
-// — not because it would not save calls, but because it would move money across
-// a line utils/placesBudget.js draws on purpose. The first two charge
-// allowGlobalPlacesCall, which enforces UNAUTH_DAILY (M5-1): the reserve that
-// keeps unauthenticated traffic from spending the signed-in product's day. A
-// shared cache between the two ledgers means an unauthenticated request can be
-// served a payload an account paid for and vice versa, so the reserve stops
+// halves of one screen, and Birdie's get_crowd_prediction tool in routes/ai.js.
+// All three charge allowPlacesSearch against the authenticated caller, so a
+// hit served to one of them was paid for on the same ledger. Birdie was once
+// listed below among the callers kept out, but the reason given there was only
+// ever true of the other two: it charges the signed-in ledger, not the
+// unauthenticated one, and keeping it out meant a question about a venue whose
+// card was open bought a second Enterprise call for the same payload.
+// routes/badge.js and routes/publicCrowd.js also fetch Place Details, and they
+// are NOT wired in here — not because it would not save calls, but because it
+// would move money across a line utils/placesBudget.js draws on purpose. They
+// charge allowGlobalPlacesCall, which enforces UNAUTH_DAILY (M5-1): the reserve
+// that keeps unauthenticated traffic from spending the signed-in product's day.
+// A shared cache between the two ledgers means an unauthenticated request can
+// be served a payload an account paid for and vice versa, so the reserve stops
 // being an accounting fact. If that is ever wanted it needs its own argument
 // about which ledger a cache hit belongs to, not an extra import. The Birdie
 // tool does share one thing, the gonePlaceIds memory below, and the note there

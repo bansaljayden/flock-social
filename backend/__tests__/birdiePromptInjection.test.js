@@ -180,8 +180,15 @@ const aiRouter = require('../routes/ai');
 // minutes at module scope (2026-09-01), so without this the first case's
 // venues would be served to every later case and the assertions about a
 // bounded name, stripped characters and a thrown tool would all be reading
-// stale data rather than the mocked response they set up.
-test.beforeEach(() => aiRouter.__clearBirdieSearchCache());
+// stale data rather than the mocked response they set up. The crowd tool reads
+// the shared Place Details cache for the same reason and with the same effect:
+// every crowd case here asks about PLACE_CLEAN, and each sets up its own
+// listing for it.
+const placeDetailsCache = require('../services/placeDetailsCache');
+test.beforeEach(() => {
+  aiRouter.__clearBirdieSearchCache();
+  placeDetailsCache.__test.reset();
+});
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
