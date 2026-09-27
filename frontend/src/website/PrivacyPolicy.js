@@ -365,7 +365,7 @@ export default function PrivacyPolicy() {
               <p>Every 30 seconds it sends these numbers, and nothing else:</p>
               <ul>
                 <li><strong>Doorway crossings:</strong> how many times someone crossed the doorway since the last reading, in either direction. Depending on the unit, it counts them with an infrared beam across the doorway or with an infrared distance sensor that looks down at it.</li>
-                <li><strong>Warm bodies in view:</strong> a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It learned from computer-generated thermal images and from public research collections of thermal images whose licenses allow this use. It has never been trained on anything a Flux sensor saw, and it names kinds of things, never who anyone is. A device without the model counts heat clusters instead.</li>
+                <li><strong>Warm bodies in view:</strong> a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It was trained on more than two million thermal images, none of them from a Flux sensor, and it names kinds of things, never who anyone is. A device without the model counts heat clusters instead.</li>
                 <li><strong>Estimated people inside:</strong> the doorway count and the warm-bodies count combined on the device into one number with a likely range, and how long people typically stay. These are counts, worked out on the device.</li>
                 <li><strong>Ambient loudness:</strong> one loudness level, the typical level over the last minute.</li>
               </ul>
