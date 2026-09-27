@@ -3721,12 +3721,18 @@ export default function ChatDetail({
                         Locking now sets the group number from the amounts already shared and closes the budget. Anyone who has not answered will not be able to.
                       </p>
                     )}
-                    {isCreator && !budgetStatus?.budgetLocked && (
+                    {/* No reminder once the plan has ended. Nobody can answer
+                        a finished plan's budget (POST /submit refuses it with
+                        FLOCK_CLOSED, and so does /remind now), so the push
+                        would only ask people for something they cannot do. */}
+                    {isCreator && !budgetStatus?.budgetLocked && (budgetStatus?.isReady || !planClosed) && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                         {budgetStatus?.isReady && (
                           <button className="hit44 glass-btn glass-primary" onClick={async () => { try { const d = await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true, ceiling: d?.ceiling ?? prev?.ceiling })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
                         )}
-                        <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
+                        {!planClosed && (
+                          <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
+                        )}
                       </div>
                     )}
                     {/* THE ONE WAY OFF A SETTLED NUMBER. The ceiling is published
@@ -3735,8 +3741,11 @@ export default function ChatDetail({
                         group's budget for good. The creator can start over:
                         every answer goes and the next number is a first
                         publication (routes/budget.js POST /reset). Quiet, under
-                        the number, and it says what it costs before the tap. */}
-                    {isCreator && budgetStatus?.budgetLocked && !showCreateBill && (
+                        the number, and it says what it costs before the tap.
+                        Not on a plan that has ended: starting over asks
+                        everyone again, and nobody can answer a finished plan,
+                        so the server refuses it (FLOCK_CLOSED). */}
+                    {isCreator && budgetStatus?.budgetLocked && !showCreateBill && !planClosed && (
                       <div style={{ marginBottom: '12px' }}>
                         <button
                           className="hit44"

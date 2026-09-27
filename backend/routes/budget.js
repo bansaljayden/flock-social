@@ -1162,7 +1162,7 @@ router.post('/:flockId/reset',
       try {
         await client.query('BEGIN');
         const flockResult = await client.query(
-          'SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
+          'SELECT creator_id, budget_enabled, budget_locked, status FROM flocks WHERE id = $1 FOR UPDATE',
           [flockId]
         );
         if (flockResult.rows.length === 0) {
@@ -1172,6 +1172,17 @@ router.post('/:flockId/reset',
         if (flockResult.rows[0].creator_id !== userId) {
           await client.query('ROLLBACK');
           return res.status(403).json({ error: 'Only the flock creator can start the budget over' });
+        }
+        // Starting over means asking everyone again, and a finished plan takes
+        // no answer from anyone: /submit, the guest link and the ghost commit
+        // all refuse it. So on a plan that has ended this deleted every answer,
+        // the published number and the estimates taken from it, and told the
+        // room "everyone can answer again" about answers nobody could give.
+        // Finishing a plan never closes its budget, so the lock alone does not
+        // catch it.
+        if (flockResult.rows[0].status === 'completed' || flockResult.rows[0].status === 'cancelled') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'This plan is finished, so its budget cannot be started over', code: 'FLOCK_CLOSED' });
         }
         if (!flockResult.rows[0].budget_enabled) {
           await client.query('ROLLBACK');
@@ -1251,7 +1262,7 @@ router.post('/:flockId/remind',
 
       // Verify creator
       const flockResult = await pool.query(
-        'SELECT creator_id, name, budget_enabled, budget_locked FROM flocks WHERE id = $1',
+        'SELECT creator_id, name, budget_enabled, budget_locked, status FROM flocks WHERE id = $1',
         [flockId]
       );
       if (flockResult.rows.length === 0) {
@@ -1272,6 +1283,14 @@ router.post('/:flockId/remind',
       // twin, and that is the one shape the design standard names outright.
       if (flockResult.rows[0].budget_locked) {
         return res.status(409).json({ error: 'The budget is closed, so there is nothing left to remind anyone about' });
+      }
+      // The same push, on a plan that has ended. Finishing a plan never closes
+      // its budget (services/flockSweep.js and PUT /flocks move the status and
+      // leave budget_locked alone), so the lock check above let it through and
+      // every member who had not answered was buzzed to submit a budget that
+      // POST /submit then refuses with FLOCK_CLOSED.
+      if (flockResult.rows[0].status === 'completed' || flockResult.rows[0].status === 'cancelled') {
+        return res.status(409).json({ error: 'This plan is finished, so there is nothing to remind anyone about', code: 'FLOCK_CLOSED' });
       }
 
       // Rate limit: 1 reminder per flock per 5 minutes.

@@ -242,8 +242,8 @@ async function dispatch(text, params = [], sink) {
   if (has('SELECT id, name, status FROM flocks WHERE id = $1')) {
     return { rows: [{ id: Number(params[0]), name: 'Dinner', status: 'planning' }], rowCount: 1 };
   }
-  if (has('SELECT creator_id, name, budget_enabled, budget_locked FROM flocks')) {
-    return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true, budget_locked: false }], rowCount: 1 };
+  if (has('SELECT creator_id, name, budget_enabled, budget_locked, status FROM flocks')) {
+    return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true, budget_locked: false, status: 'planning' }], rowCount: 1 };
   }
   if (has('FROM flock_members fm JOIN users u ON u.id = fm.user_id')) {
     return { rows: [{ id: 2, name: 'Bob' }], rowCount: 1 };
