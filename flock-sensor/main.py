@@ -191,6 +191,10 @@ DEFAULTS = {
     # rule. The threshold is how sure the model has to be that a point is a
     # person: higher misses people half out of view, lower counts a pet.
     'THERMAL_MODEL': 'auto',
+    # The estimate of people inside goes back to zero once the doorway has
+    # been still and the camera has seen nobody for this many minutes. Raise
+    # it for a room where people sit out of the camera's view for long spells.
+    'OCCUPANCY_EMPTY_MINUTES': '20',
     'THERMAL_MODEL_THRESHOLD': '0.4',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
@@ -288,6 +292,7 @@ if THERMAL_MODEL not in ('auto', 'off'):
     THERMAL_MODEL = 'auto'
 THERMAL_MODEL_THRESHOLD = _cfg_number('THERMAL_MODEL_THRESHOLD', float, 0.1, 0.95, 0.4)
 PEOPLE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people.onnx'
+OCCUPANCY_EMPTY_MINUTES = _cfg_number('OCCUPANCY_EMPTY_MINUTES', int, 2, 240, 20)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -512,6 +517,9 @@ _state = {
     'thermal_points': None,
     # Which counter produced the thermal count: 'model' or 'rule'.
     'thermal_counter': None,
+    # The newest estimate of people inside, for the panel: a dict from
+    # OccupancyTracker.update, or None before there is one.
+    'occupancy': None,
 }
 _stop = threading.Event()
 
@@ -2298,6 +2306,118 @@ def _retry_after_seconds(body):
     return float(value)
 
 
+# ---------------------------------------------------------------------------
+# People inside: the doorway and the camera, combined
+#
+# Neither signal answers "how many people are in here" alone. The doorway
+# counter knows who came in and who went out, so its running difference is the
+# number inside, but every miscount stays in that difference until something
+# corrects it, and by closing a busy night is off by a few. The camera sees
+# only the people in its view, so it is a floor, never the whole room.
+#
+# Together: the doorway's running difference is the estimate, the camera's
+# count is the least it can be (anybody seen is inside), and a room that has
+# been still at the door and empty on camera for OCCUPANCY_EMPTY_MINUTES is
+# empty, which wipes whatever error the doorway had built up. The range says
+# how far that error could have grown since the estimate was last pinned to a
+# fact: a few percent of the crossings counted since.
+#
+# How long people stay comes from Little's law: the average number inside
+# equals the rate people arrive times how long each stays, so the stay is the
+# one divided by the other. It needs enough arrivals in the last hour to mean
+# anything and is withheld until there are.
+# ---------------------------------------------------------------------------
+
+# A top-down distance counter miscounts a few crossings in a hundred; the
+# range widens by this share of every crossing since the last reset.
+DOOR_MISCOUNT = 0.03
+# The camera-only range, when there is no doorway counter to lean on.
+SEEN_MISCOUNT = 0.15
+OCCUPANCY_MAX = 5000
+DWELL_MIN_ARRIVALS = 4
+
+
+class OccupancyTracker:
+    def __init__(self, empty_minutes=None):
+        self.empty_seconds = 60 * (OCCUPANCY_EMPTY_MINUTES if empty_minutes is None
+                                   else empty_minutes)
+        self.inside = 0
+        self.last_in = None
+        self.last_out = None
+        self.since_reset = 0
+        self.still_since = None
+        self.arrivals = deque()     # (time, people who came in)
+        self.levels = deque()       # (time, estimate)
+
+    def update(self, now, door_in=None, door_out=None, crossings=0, seen=None):
+        """One reading. door_in/door_out are the directional counter's running
+        totals, or None when it has none; crossings is the beam's count for
+        this reading; seen is the camera's count, or None when it is stale.
+        Returns {'occupancy', 'low', 'high', 'dwell_minutes'} or None."""
+        directional = door_in is not None and door_out is not None
+        moved = 0
+        if directional:
+            came = max(0, door_in - self.last_in) if self.last_in is not None else 0
+            went = max(0, door_out - self.last_out) if self.last_out is not None else 0
+            self.last_in, self.last_out = door_in, door_out
+            self.inside = max(0, self.inside + came - went)
+            self.since_reset += came + went
+            moved = came + went
+            self.arrivals.append((now, came))
+        else:
+            moved = crossings
+            # A beam cannot tell in from out; about half its crossings are
+            # people arriving.
+            self.arrivals.append((now, crossings / 2.0))
+
+        if seen is not None and seen > self.inside:
+            self.inside = seen
+
+        if seen == 0 and moved == 0:
+            if self.still_since is None:
+                self.still_since = now
+            elif now - self.still_since >= self.empty_seconds:
+                self.inside, self.since_reset = 0, 0
+        else:
+            self.still_since = None
+
+        if directional:
+            est = self.inside
+            spread = math.ceil(DOOR_MISCOUNT * self.since_reset)
+            low = max(seen or 0, est - spread)
+            high = est + spread
+        elif seen is not None:
+            est = seen
+            spread = math.ceil(SEEN_MISCOUNT * seen)
+            low, high = max(0, est - spread), est + spread
+        else:
+            return None
+        est, low, high = (min(OCCUPANCY_MAX, int(v)) for v in (est, low, high))
+
+        self.levels.append((now, est))
+        hour = now - 3600
+        while self.arrivals and self.arrivals[0][0] < hour:
+            self.arrivals.popleft()
+        while self.levels and self.levels[0][0] < hour:
+            self.levels.popleft()
+        return {'occupancy': est, 'low': low, 'high': high,
+                'dwell_minutes': self.dwell_minutes(now)}
+
+    def dwell_minutes(self, now):
+        arrived = sum(n for _, n in self.arrivals)
+        if arrived < DWELL_MIN_ARRIVALS or len(self.levels) < 2:
+            return None
+        span = now - self.levels[0][0]
+        if span < 1800:
+            return None
+        average = sum(v for _, v in self.levels) / float(len(self.levels))
+        per_minute = arrived / (span / 60.0)
+        return max(1, min(1440, int(round(average / per_minute))))
+
+
+_occupancy = OccupancyTracker()
+
+
 def snapshot():
     """Take a reading and hand its IR crossings to exactly one payload.
 
@@ -2315,6 +2435,8 @@ def snapshot():
         noise = float(_state['noise_db'])
         noise_at = _state['noise_at']
         _state['ir_count'] = 0
+        door_source = _state['door_source']
+        door_in, door_out = _state['door_in'], _state['door_out']
         # Recorded when the reading is taken, not when it is delivered, so the
         # panel's chart fills on a unit with no network, which is every demo.
         _state['door_history'].append(ir)
@@ -2339,6 +2461,22 @@ def snapshot():
                       'channel_health ' + json.dumps(health) +
                       ' consecutive pushes reporting 0 because the channel is stale, '
                       'not because the room is quiet')
+
+    seen = (thermal if thermal_at is not None
+            and time.monotonic() - thermal_at <= THERMAL_STALE_AFTER else None)
+    directional = door_source == 'tof'
+    estimate = _occupancy.update(time.monotonic(),
+                                 door_in if directional else None,
+                                 door_out if directional else None,
+                                 crossings=ir, seen=seen)
+    with _lock:
+        _state['occupancy'] = estimate
+    if estimate is not None:
+        payload['occupancy'] = estimate['occupancy']
+        payload['occupancy_low'] = estimate['low']
+        payload['occupancy_high'] = estimate['high']
+        if estimate['dwell_minutes'] is not None:
+            payload['dwell_minutes'] = estimate['dwell_minutes']
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:
@@ -4070,6 +4208,19 @@ def thermal_image_box(w, h, cols, rows, pad, top, reserve):
     return max(1, img_w), max(1, img_h)
 
 
+def occupancy_line(estimate):
+    """The door screen's sentence about people inside, or None."""
+    if not estimate:
+        return None
+    n, low, high = estimate['occupancy'], estimate['low'], estimate['high']
+    line = f'About {n} inside' if low != high else f'{n} inside'
+    if low != high:
+        line += f', {low} to {high}'
+    if estimate.get('dwell_minutes'):
+        line += f'. People stay about {estimate["dwell_minutes"]} min'
+    return line + '.'
+
+
 def noise_insight_line(insight, clipped=False):
     """The one sentence the noise screen adds under its word, and its colour."""
     if insight and insight.get('deaf'):
@@ -4408,7 +4559,7 @@ class Panel:
         for p in pts:
             self.pygame.draw.circle(self.screen, BRAND_CREAM, (int(p[0]), int(p[1])), 3)
 
-    def door(self, ir, history, came_in=None, went_out=None, live=True):
+    def door(self, ir, history, came_in=None, went_out=None, live=True, occupancy=None):
         m = self.m
         pad = m['pad']
         self.header('Through the door', back=True)
@@ -4432,6 +4583,9 @@ class Panel:
                 self.blit(self.f_big, str(n), BRAND_CREAM, (x, vy))
             self.blit(self.f_body, 'Since the counter started', BRAND_MUTED,
                       (half, vy + v.get_height() + 4))
+            line = occupancy_line(occupancy)
+            if line:
+                self.blit(self.f_body, line, BRAND_CREAM, (pad, vy + v.get_height() + 4))
         else:
             # What this number is and is not. It was once labelled "Entered
             # Today", which it has never been, and a judge asking the obvious
@@ -4768,6 +4922,7 @@ def display_loop():
                 door_history = list(_state['door_history'])
                 came_in, went_out = _state['door_in'], _state['door_out']
                 door_source = _state['door_source']
+                occupancy = _state['occupancy']
 
             therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
             noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
@@ -4810,7 +4965,8 @@ def display_loop():
                     if view == 'thermal':
                         ui.thermal(frame, therm, therm_live, points)
                     elif view == 'door':
-                        ui.door(ir, door_history, *directions, live=door_live)
+                        ui.door(ir, door_history, *directions, live=door_live,
+                                occupancy=occupancy)
                     elif view == 'noise':
                         ui.noise(burst, noise_live, average=db, insight=insight,
                                  clipped=clipped_at is not None and now - clipped_at < 3.0)

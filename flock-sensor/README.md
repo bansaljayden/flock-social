@@ -95,13 +95,17 @@ design choice below follows from that.
 
 ## What it collects (and what it cannot)
 
-Three numbers, every 30 seconds:
+Three numbers every 30 seconds, and from version 1.15 up to four more, every
+one of them a count worked out on the device:
 
 | Field | What it is | How it is measured |
 |---|---|---|
 | `ir_beam_count` | Doorway crossings since the last reading | A VL53L8CX time-of-flight sensor over the doorway, an 8x8 grid of distances; or an infrared sensor on one GPIO pin. Each crossing counts once, in either direction |
-| `thermal_headcount` | Warm bodies in the camera's field of view | Heat clusters in a 160×120 thermal grid |
+| `thermal_headcount` | People in the camera's field of view | The trained counter in `models/people.onnx`, or heat clusters in the 160×120 thermal grid when it is not installed |
 | `noise_db` | Ambient loudness | RMS level from a microphone |
+| `occupancy` | Estimated people inside | The doorway's in minus out, never less than the camera's count, reset when the room has been still and empty (`OccupancyTracker`). The camera's count alone on a unit without a directional doorway counter |
+| `occupancy_low`, `occupancy_high` | The likely range around it | Widens by a few percent of the crossings since the last reset |
+| `dwell_minutes` | How long people typically stay | Little's law over the last hour; left out until an hour has enough arrivals |
 
 **It counts. It cannot identify anyone.**
 
