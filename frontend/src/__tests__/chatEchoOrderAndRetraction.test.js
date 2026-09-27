@@ -79,6 +79,14 @@
  *      if the newest state still shows it sending, and the toast and the copy
  *      in the reload store follow what that update decided, as the render
  *      commits (settleSendFailures).
+ *   21. The newest message unsent, or taken down, while the phone's socket was
+ *      down: nobody told this device, the next read came back without it, and
+ *      the merge carried it across as a row "newer than the page". Only a row
+ *      that arrived after the read went out rides across it now (`held`).
+ *   22. A catch-up after more than a page of messages: the newest fifty came
+ *      back and the scrollback was spliced under them, hiding the ones in
+ *      between where "Load earlier" could never reach. A full page that
+ *      reaches nothing on screen replaces it and puts "Load earlier" back.
  *
  * App.js cannot be imported (it is the whole app), so its pure helpers are
  * lifted out by name and run, the way chatSurface.test.js and
@@ -194,7 +202,8 @@ function liftCallback(source, name) {
 const HELPERS = [
   'SERVER_ID_MAX', 'isServerId', 'sameSend', 'newClientId', 'echoMatches', 'newestServerId',
   'sendLandedAs', 'landedSends', 'orderByServerId', 'retractedSince', 'retractedIdsIn',
-  'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction', 'mergeHistory',
+  'saidByAny', 'withoutBlockedQuote', 'dropRetracted', 'dropRetractedPins', 'noteRetraction',
+  'DM_PAGE_SIZE', 'heldServerIds', 'pageAgainstHeld', 'mergeHistory',
   'sameContentId', 'applyTakedownToFlocks', 'mapFlockRow', 'mapDmRow', 'messagePreview',
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
   'writeFailedFlockMessages', 'persistFailedFlockMessage', 'removeFailedFlockMessage',
@@ -493,8 +502,8 @@ const srv = (id, text, { senderId = ME, name = 'Ava', type = 'text', thumb = nul
 
 // loadFlockMessages, lifted and run, with the request left open until a test
 // answers it: reads[n] is the nth read's { resolve, reject }.
-function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }]) {
-  const state = { flocks, errors: [], acks: [] };
+function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop = {} } = {}) {
+  const state = { flocks, errors: [], acks: [], atTop };
   const reads = [];
   const retractionsRef = { current: { seq: 0, log: [] } };
   const load = runLifted(`${liftCallback(appSource, 'loadFlockMessages')}\nreturn loadFlockMessages;`, {
@@ -510,10 +519,12 @@ function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }]) {
     retractedSince: H.retractedSince,
     readFailedFlockMessages: H.readFailedFlockMessages,
     flocksRef: { get current() { return state.flocks; } },
+    heldServerIds: H.heldServerIds,
+    pageAgainstHeld: H.pageAgainstHeld,
     isServerId: H.isServerId,
     landedSends: H.landedSends,
     writeFailedFlockMessages: H.writeFailedFlockMessages,
-    setFlockAtTop: () => {},
+    setFlockAtTop: setterOn(state, 'atTop'),
     retractedIdsIn: H.retractedIdsIn,
     dropRetractedPins: H.dropRetractedPins,
     setFlocks: setterOn(state, 'flocks'),
@@ -793,12 +804,12 @@ describe('a history read older than an unsend, a takedown or a block', () => {
     const flockLoader = between(appSource, 'const loadFlockMessages = useCallback', '// The DM twin of loadFlockMessages');
     expect(flockLoader).toMatch(/const since = retractionsRef\.current\.seq;/);
     expect(flockLoader).toMatch(/retractedSince\(retractionsRef\.current\.log, since, 'flock'\)/);
-    expect(flockLoader).toMatch(/mergeHistory\(localWithFailed, msgs, \{ keepOlder, drop \}\)/);
+    expect(flockLoader).toMatch(/mergeHistory\(localWithFailed, msgs, \{ keepOlder, drop, held \}\)/);
     // The pins that ride with the read are filtered by the same drop.
     expect(flockLoader).toMatch(/const gone = retractedIdsIn\(msgs, drop\);/);
     const dmLoader = between(appSource, 'const loadDmMessages = useCallback', '// ── Scrollback ──');
     expect(dmLoader).toMatch(/if \(drop && drop\.senders\.has\(String\(userId\)\)\) return;/);
-    expect(dmLoader).toMatch(/mergeHistory\(d\.messages, msgs, \{ keepOlder, drop \}\)/);
+    expect(dmLoader).toMatch(/mergeHistory\(d\.messages, msgs, \{ keepOlder, drop, held \}\)/);
   });
 
   test('every retraction is logged: unsend both ways, takedown, and block', () => {
@@ -1529,6 +1540,8 @@ describe('a send delivered while its echo was lost never comes back as a failed 
       retractedSince: H.retractedSince,
       readFailedFlockMessages: H.readFailedFlockMessages,
       flocksRef,
+      heldServerIds: H.heldServerIds,
+      pageAgainstHeld: H.pageAgainstHeld,
       isServerId: H.isServerId,
       landedSends: H.landedSends,
       writeFailedFlockMessages: H.writeFailedFlockMessages,
@@ -1778,6 +1791,8 @@ describe("a send's failure is decided by the newest state, whatever the transpor
       retractedSince: H.retractedSince,
       readFailedFlockMessages: H.readFailedFlockMessages,
       flocksRef,
+      heldServerIds: H.heldServerIds,
+      pageAgainstHeld: H.pageAgainstHeld,
       isServerId: H.isServerId,
       landedSends: H.landedSends,
       writeFailedFlockMessages: H.writeFailedFlockMessages,
@@ -1965,5 +1980,169 @@ describe("a send's failure is decided by the newest state, whatever the transpor
     await run.readWith(delivered);
     run.render();
     expect(run.ids()).toEqual([20, 21]);
+  });
+});
+
+// loadDmMessages, lifted the way liftedFlockLoader is: reads[n] is the nth
+// read's { resolve, reject }, and the thread list and "Load earlier" flags are
+// plain state.
+function liftedDmLoader(threads, { atTop = {} } = {}) {
+  const state = { threads, atTop, blocked: {}, errors: [], acks: [] };
+  const reads = [];
+  const load = runLifted(`${liftCallback(appSource, 'loadDmMessages')}\nreturn loadDmMessages;`, {
+    useCallback: (fn) => fn,
+    historyReadAtRef: { current: {} },
+    historyReadSeqRef: { current: {} },
+    retractionsRef: { current: { seq: 0, log: [] } },
+    directMessagesRef: { get current() { return state.threads; } },
+    heldServerIds: H.heldServerIds,
+    pageAgainstHeld: H.pageAgainstHeld,
+    setDmMessagesLoading: () => {},
+    setDmMessagesError: (e) => { if (e) state.errors.push(e); },
+    getDMs: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+    setDmBlocked: setterOn(state, 'blocked'),
+    setDirectMessages: setterOn(state, 'threads'),
+    retractedSince: H.retractedSince,
+    mapDmRow: H.mapDmRow,
+    meRef: { current: { id: ME } },
+    setDmAtTop: setterOn(state, 'atTop'),
+    dropRetracted: H.dropRetracted,
+    mergeHistory: H.mergeHistory,
+    sendDmAck: (userId) => state.acks.push(userId),
+  });
+  return { state, reads, load };
+}
+
+// A DM row as GET /api/dm/:userId sends it.
+const dmSrv = (id, { senderId = 5 } = {}) => ({
+  id, sender_id: senderId, receiver_id: senderId === ME ? 5 : ME, sender_name: senderId === ME ? 'Ava' : 'Bo',
+  message_text: `d${id}`, message_type: 'text', created_at: AT,
+});
+
+// ---------------------------------------------------------------------------
+// 21. A newer row this device held, missing from the answer
+// ---------------------------------------------------------------------------
+describe('a message unsent while the socket was down does not come back with the next read', () => {
+  test('a newer row that was on screen when the read went out, and is not in its answer, goes', () => {
+    // Bob's 900 was the newest in the flock and on screen. He unsent it while
+    // the phone was locked, so the event went to a socket that was not there.
+    const local = [row(899, 'a', { senderId: 2 }), row(900, 'unsent while locked', { senderId: 2 })];
+    const held = H.heldServerIds(local);
+    const merged = H.mergeHistory(local, [row(898, 'z', { senderId: 2 }), row(899, 'a', { senderId: 2 })], { held });
+    expect(merged.map((m) => m.id)).toEqual([898, 899]);
+  });
+
+  test('a newer row that arrived after the read went out still rides across it', () => {
+    // Point 2's race: the server built the page before 901 existed.
+    const before = [row(899, 'a', { senderId: 2 })];
+    const held = H.heldServerIds(before);
+    const merged = H.mergeHistory([...before, row(901, 'live', { senderId: 2 })], [row(899, 'a', { senderId: 2 })], { held });
+    expect(merged.map((m) => m.id)).toEqual([899, 901]);
+  });
+
+  test('a bubble its echo settled while the read was out counts as arrived', () => {
+    const sending = bubble(1700000000301, 'omw', { afterId: 899 });
+    const held = H.heldServerIds([row(899, 'a'), sending]);
+    expect([...held]).toEqual([899]);
+    const settledNow = { ...sending, id: 902, pending: false };
+    expect(H.mergeHistory([row(899, 'a'), settledNow], [row(899, 'a')], { held }).map((m) => m.id)).toEqual([899, 902]);
+  });
+
+  test('a caller that cannot say what it held keeps the rule it had', () => {
+    const local = [row(899, 'a'), row(900, 'b')];
+    expect(H.mergeHistory(local, [row(899, 'a')]).map((m) => m.id)).toEqual([899, 900]);
+  });
+
+  test('the flock catch-up, end to end', async () => {
+    const run = liftedFlockLoader([{
+      id: 7, pins: [], messages: [row(899, 'a', { senderId: 2 }), row(900, 'unsent while locked', { senderId: 2 })],
+    }]);
+    const done = run.load(7, { keepOlder: true });
+    run.reads[0].resolve({ messages: [srv(898, 'z', { senderId: 2 }), srv(899, 'a', { senderId: 2 })], readers: [], pins: [] });
+    await done;
+    expect(run.state.flocks[0].messages.map((m) => m.id)).toEqual([898, 899]);
+  });
+
+  test('the DM twin, end to end: the screen-entry read drops it too', async () => {
+    const run = liftedDmLoader([{ userId: 5, name: 'Bo', unread: 0, messages: [H.mapDmRow(dmSrv(40), ME), H.mapDmRow(dmSrv(41), ME)] }]);
+    const done = run.load(5);
+    run.reads[0].resolve({ messages: [dmSrv(39), dmSrv(40)] });
+    await done;
+    expect(run.state.threads[0].messages.map((m) => m.id)).toEqual([39, 40]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 22. A catch-up page that does not reach what was on screen
+// ---------------------------------------------------------------------------
+describe('a catch-up after more than a page of messages leaves no hidden hole', () => {
+  const run = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => row(from + i, `m${from + i}`, { senderId: 2 }));
+  const wire = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => srv(from + i, `m${from + i}`, { senderId: 2 }));
+  const ids = (rows) => rows.map((m) => m.id);
+
+  test('where a page stands: whole, joins, gap, or unknown', () => {
+    const held = H.heldServerIds(run(51, 100));
+    expect(H.pageAgainstHeld(run(131, 180), held)).toBe('gap');
+    expect(H.pageAgainstHeld(run(91, 140), held)).toBe('joins');
+    expect(H.pageAgainstHeld(run(131, 140), held)).toBe('whole');
+    expect(H.pageAgainstHeld(run(131, 180), null)).toBeNull();
+    expect(H.DM_PAGE_SIZE).toBe(50);
+  });
+
+  test('scrollback is not spliced under a full page that reaches none of it', () => {
+    // Rows up to 100 on screen, the phone locked, 101 to 180 arrived. The
+    // route answers with the newest fifty.
+    const local = run(51, 100);
+    const merged = H.mergeHistory(local, run(131, 180), { keepOlder: true, held: H.heldServerIds(local) });
+    expect(ids(merged)).toEqual(ids(run(131, 180)));
+  });
+
+  test('a live row that landed during the read does not make the page look joined', () => {
+    // 181 came over the socket the moment the room was re-entered, and the
+    // page was built after it. It is on screen now, but it was not held.
+    const local = run(51, 100);
+    const held = H.heldServerIds(local);
+    const merged = H.mergeHistory([...local, row(181, 'live', { senderId: 2 })], run(132, 181), { keepOlder: true, held });
+    expect(ids(merged)).toEqual(ids(run(132, 181)));
+  });
+
+  test('a page that reaches what was on screen keeps the scrollback under it', () => {
+    const local = run(1, 140);
+    const merged = H.mergeHistory(local, run(131, 180), { keepOlder: true, held: H.heldServerIds(local) });
+    expect(ids(merged)).toEqual(ids(run(1, 180)));
+  });
+
+  test('a short page is the whole conversation, so a row under it is one the server no longer has', () => {
+    const local = [row(5, 'unsent while locked', { senderId: 2 }), ...run(10, 11)];
+    const merged = H.mergeHistory(local, run(10, 11), { keepOlder: true, held: H.heldServerIds(local) });
+    expect(ids(merged)).toEqual([10, 11]);
+  });
+
+  test('the flock loader puts "Load earlier" back when it drops the scrollback', async () => {
+    const r = liftedFlockLoader([{ id: 7, pins: [], messages: run(51, 100) }], { atTop: { 7: true } });
+    const done = r.load(7, { keepOlder: true });
+    r.reads[0].resolve({ messages: wire(131, 180), readers: [], pins: [] });
+    await done;
+    expect(ids(r.state.flocks[0].messages)).toEqual(ids(run(131, 180)));
+    expect(r.state.atTop[7]).toBeUndefined();
+  });
+
+  test('and leaves it alone when the page joins up', async () => {
+    const r = liftedFlockLoader([{ id: 7, pins: [], messages: run(1, 140) }], { atTop: { 7: true } });
+    const done = r.load(7, { keepOlder: true });
+    r.reads[0].resolve({ messages: wire(131, 180), readers: [], pins: [] });
+    await done;
+    expect(ids(r.state.flocks[0].messages)).toEqual(ids(run(1, 180)));
+    expect(r.state.atTop[7]).toBe(true);
+  });
+
+  test('the DM twin drops the scrollback and puts "Load earlier" back', async () => {
+    const local = Array.from({ length: 50 }, (_, i) => H.mapDmRow(dmSrv(51 + i), ME));
+    const r = liftedDmLoader([{ userId: 5, name: 'Bo', unread: 0, messages: local }], { atTop: { 5: true } });
+    const done = r.load(5, { keepOlder: true });
+    r.reads[0].resolve({ messages: Array.from({ length: 50 }, (_, i) => dmSrv(131 + i)) });
+    await done;
+    expect(ids(r.state.threads[0].messages)).toEqual(Array.from({ length: 50 }, (_, i) => 131 + i));
+    expect(r.state.atTop[5]).toBeUndefined();
   });
 });
