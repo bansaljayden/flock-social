@@ -54,6 +54,10 @@ const PAUSE_MS = 250;
 // 20 hours rather than 24 so a daily refresh that ran a little late one day
 // does not slip a whole extra hour every day after it.
 const FRESH_HOURS = 20;
+// The daily refresh's whole budget: about 30 requests at a 250 ms pause
+// normally take well under a minute, and the hourly collector has to be done
+// before the next tick.
+const REFRESH_BUDGET_MS = 3 * 60 * 1000;
 
 // The five Philadelphia pro teams from the RETRAIN.md scope. search is the
 // exact string handed to searchteams.php; league is a sanity pin so a
@@ -107,8 +111,21 @@ function currentSeasons(league, now = new Date()) {
   return String(y);
 }
 
+// One request's whole life, headers AND body. A response that keeps
+// trickling an unfinished body would otherwise hold the hourly collector
+// open until its three-hour watchdog, and Railway skips the cron ticks a
+// still-running run overlaps.
+const REQUEST_TIMEOUT_MS = 15000;
+
+// The whole refresh's budget, set by refreshSportsSchedules for the length
+// of one call. Every request checks it first, so a slow but never-failing
+// SportsDB cannot stretch the refresh past it one 15 s request at a time.
+let activeDeadline = Infinity;
+
 async function get(pathAndQuery) {
-  const res = await fetch(`${BASE}/${apiKey()}/${pathAndQuery}`);
+  if (Date.now() > activeDeadline) throw new Error('SportsDB refresh ran out of its time budget');
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const res = await fetch(`${BASE}/${apiKey()}/${pathAndQuery}`, { signal });
   if (!res.ok) throw new Error(`SportsDB ${res.status} on ${pathAndQuery}`);
   return res.json();
 }
@@ -202,7 +219,16 @@ function eventInstant(ev) {
 // SportsDB league name. Throws on any SportsDB or database failure; the
 // callers decide whether that is fatal (the CLI) or a log line (the daily
 // refresh).
-async function refreshSportsSchedules(pool, seasonsFor, log = console.log, { pauseMs = PAUSE_MS } = {}) {
+async function refreshSportsSchedules(pool, seasonsFor, log = console.log, { pauseMs = PAUSE_MS, budgetMs = Infinity } = {}) {
+  activeDeadline = Date.now() + budgetMs;
+  try {
+    return await refreshWithinBudget(pool, seasonsFor, log, pauseMs);
+  } finally {
+    activeDeadline = Infinity;
+  }
+}
+
+async function refreshWithinBudget(pool, seasonsFor, log, pauseMs) {
   const resolved = [];
   for (const t of TRACKED) {
     resolved.push(await resolveTeam(t, pauseMs));
@@ -292,15 +318,26 @@ async function refreshSportsIfDue(pool, { now = new Date(), log = console.log, p
       log('[ML:Sports] Schedule refresh skipped: SPORTSDB_API_KEY is not set on this service.');
       return { status: 'no_key' };
     }
-    const { rows } = await pool.query('SELECT MAX(collected_at) AS last FROM ml_sports_events');
-    const last = rows[0] && rows[0].last ? new Date(rows[0].last) : null;
-    const ageHours = last ? (now.getTime() - last.getTime()) / 3600000 : null;
-    if (ageHours != null && ageHours < FRESH_HOURS) {
-      log(`[ML:Sports] Schedule refresh skipped: newest row is ${ageHours.toFixed(1)}h old (refreshes after ${FRESH_HOURS}h).`);
-      return { status: 'fresh', ageHours };
+    // Fresh means EVERY tracked league was refreshed recently, judged by the
+    // STALEST league's newest row. The table's overall newest row is not
+    // enough: a refresh that wrote the NFL and then failed on the NBA would
+    // look fresh for a day while the NBA stayed stale. A league with no rows
+    // at all counts as due, so its next refresh retries it.
+    const { rows } = await pool.query('SELECT league, MAX(collected_at) AS last FROM ml_sports_events GROUP BY league');
+    const lastByLeague = new Map(rows.map((r) => [r.league, r.last ? new Date(r.last) : null]));
+    const expected = [...new Set(TRACKED.map((t) => t.code))];
+    let stalest = null;
+    for (const code of expected) {
+      const last = lastByLeague.get(code);
+      const age = last ? (now.getTime() - last.getTime()) / 3600000 : Infinity;
+      if (stalest == null || age > stalest.age) stalest = { code, age };
     }
-    log(`[ML:Sports] Schedule refresh due (${ageHours == null ? 'table empty' : `newest row ${ageHours.toFixed(1)}h old`}).`);
-    const result = await refreshSportsSchedules(pool, (league) => [currentSeasons(league, now)], log, { pauseMs });
+    if (stalest && stalest.age < FRESH_HOURS) {
+      log(`[ML:Sports] Schedule refresh skipped: every league refreshed within ${stalest.age.toFixed(1)}h (refreshes after ${FRESH_HOURS}h).`);
+      return { status: 'fresh', ageHours: stalest.age };
+    }
+    log(`[ML:Sports] Schedule refresh due (${stalest.age === Infinity ? `${stalest.code} has no rows` : `${stalest.code} last refreshed ${stalest.age.toFixed(1)}h ago`}).`);
+    const result = await refreshSportsSchedules(pool, (league) => [currentSeasons(league, now)], log, { pauseMs, budgetMs: REFRESH_BUDGET_MS });
     return { status: 'refreshed', ...result };
   } catch (err) {
     const message = err && err.message ? err.message : String(err);

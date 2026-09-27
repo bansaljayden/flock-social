@@ -28,13 +28,22 @@ const {
 
 const NOW = new Date('2026-09-26T12:00:00Z');
 
-function stubPool({ lastCollected = null } = {}) {
+// lastCollected stamps every tracked league; byLeague overrides single
+// leagues (a value of null leaves that league with no rows at all).
+function stubPool({ lastCollected = null, byLeague = {} } = {}) {
   const calls = [];
   return {
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/MAX\(collected_at\)/.test(sql)) return { rows: [{ last: lastCollected }] };
+      if (/MAX\(collected_at\)/.test(sql)) {
+        if (lastCollected == null && Object.keys(byLeague).length === 0) return { rows: [] };
+        const codes = [...new Set(TRACKED.map((t) => t.code))];
+        const rows = codes
+          .map((league) => ({ league, last: league in byLeague ? byLeague[league] : lastCollected }))
+          .filter((r) => r.last != null);
+        return { rows };
+      }
       if (/COUNT\(\*\)/.test(sql)) return { rows: [{ n: calls.filter((c) => /INSERT INTO ml_sports_events/.test(c.sql)).length, lo: null, hi: null }] };
       return { rows: [] };
     },
@@ -127,6 +136,49 @@ test('a table refreshed inside 20 hours is left alone', async () => {
   assert.strictEqual(res.status, 'fresh');
   assert.strictEqual(pool.calls.length, 1, 'one freshness SELECT and nothing else');
   assert.ok(logs.some((m) => /skipped/.test(m)));
+});
+
+test('one league left stale by a half-finished refresh makes the whole refresh due', async () => {
+  // The NFL wrote this morning; the NBA failed a day ago. The table's newest
+  // row is fresh, which is exactly why freshness is judged league by league.
+  const recent = new Date(NOW.getTime() - 2 * 3600000);
+  const old = new Date(NOW.getTime() - 30 * 3600000);
+  const { fetchStub } = stubSportsDb();
+  const logs = [];
+  const res = await withEnv('test-key', () => withFetch(fetchStub, () =>
+    refreshSportsIfDue(stubPool({ lastCollected: recent, byLeague: { NBA: old } }), { now: NOW, log: (m) => logs.push(m), pauseMs: 0 })));
+  assert.strictEqual(res.status, 'refreshed', logs.join('\n'));
+  assert.ok(logs.some((m) => /NBA last refreshed 30\.0h ago/.test(m)), logs.join('\n'));
+
+  // A league with no rows at all is due too.
+  const res2 = await withEnv('test-key', () => withFetch(stubSportsDb().fetchStub, () =>
+    refreshSportsIfDue(stubPool({ lastCollected: recent, byLeague: { MLS: null } }), { now: NOW, log: () => {}, pauseMs: 0 })));
+  assert.strictEqual(res2.status, 'refreshed');
+});
+
+test('a request that never finishes is cut off and the refresh reports an error instead of hanging', async () => {
+  const src = fs.readFileSync(MODULE_PATH, 'utf8');
+  // Every request carries its own abort deadline covering headers and body.
+  assert.match(src, /AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/);
+  assert.match(src, /fetch\(`\$\{BASE\}\/\$\{apiKey\(\)\}\/\$\{pathAndQuery\}`, \{ signal \}\)/);
+  // And the daily refresh has an overall budget.
+  assert.match(src, /budgetMs: REFRESH_BUDGET_MS/);
+
+  // Behaviour: a fetch that honours its signal and never resolves otherwise.
+  const hanging = (url, opts) => new Promise((resolve, reject) => {
+    opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+  });
+  const realTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () => realTimeout.call(AbortSignal, 20);
+  try {
+    const logs = [];
+    const res = await withEnv('test-key', () => withFetch(hanging, () =>
+      refreshSportsIfDue(stubPool({ lastCollected: new Date(NOW.getTime() - 30 * 3600000) }), { now: NOW, log: (m) => logs.push(m), pauseMs: 0 })));
+    assert.strictEqual(res.status, 'error');
+    assert.ok(logs.some((m) => /crowd collection unaffected/.test(m)), logs.join('\n'));
+  } finally {
+    AbortSignal.timeout = realTimeout;
+  }
 });
 
 test('no key means no request and a log line saying why', async () => {
