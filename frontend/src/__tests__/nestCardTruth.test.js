@@ -294,12 +294,35 @@ describe('joining from an invite card', () => {
    * Build the real handler with stand ins. `useCallback` is the identity, and
    * the returned harness reports everything the handler touched.
    */
-  function buildAccept({ acceptRejects = null, invite, heldGuestTokens = [] } = {}) {
-    const calls = { accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [], buzzes: 0 };
+  function buildAccept({ acceptRejects = null, invite, heldGuestTokens = [], acceptGate = null, loadGate = null } = {}) {
+    const calls = {
+      accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [], buzzes: 0,
+      // Every value acceptingInviteId took, in order, and every navigation.
+      accepting: [], selected: [], screens: [],
+      // What the screen held at the moment the chat was asked to open.
+      loadedBeforeOpen: [],
+    };
     let flocks = [];
     let pending = invite ? [invite] : [];
     const refused = new Set();
+    // Where the person is. The Messages tab by default, which is where the
+    // invite cards live; a test moves it to model somebody tapping away.
+    const joinNavRef = { current: { screen: 'main', tab: 'chat' } };
+    const acceptingInviteRef = { current: null };
     const source = liftCallback('handleAcceptFlockInvite');
+    // The navigation step is its own callback, lifted and run too, so the
+    // "only if they are still here" rule is the real one and not a stand-in.
+    const openSource = liftCallback('openChatAfterJoin');
+    // eslint-disable-next-line no-new-func
+    const openChatAfterJoin = new Function(
+      'useCallback', 'joinNavRef', 'setSelectedFlockId', 'setCurrentScreen',
+      `${openSource}\nreturn openChatAfterJoin;`
+    )(
+      (fn) => fn,
+      joinNavRef,
+      (id) => { calls.selected.push(id); calls.loadedBeforeOpen.push(calls.loadFlocks); },
+      (s) => { calls.screens.push(s); },
+    );
     // The accept carries the guest identities this device holds for the
     // signed-in person (services/inviteHandoff.js storedGuestTokens), read off
     // meRef, so both are handed in alongside the rest. refusedInvitesRef is
@@ -312,6 +335,7 @@ describe('joining from an invite card', () => {
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
       'refusedInvitesRef',
       'hapticSuccess',
+      'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin',
       `${source}\nreturn handleAcceptFlockInvite;`
     );
     const handler = factory(
@@ -319,26 +343,45 @@ describe('joining from an invite card', () => {
       (id, tokens) => {
         calls.accepted.push(id);
         calls.carried.push(tokens);
+        if (acceptGate) return acceptGate.then(() => (acceptRejects ? Promise.reject(acceptRejects) : {}));
         return acceptRejects ? Promise.reject(acceptRejects) : Promise.resolve({});
       },
       pending,
       (fn) => { pending = typeof fn === 'function' ? fn(pending) : fn; },
       (fn) => { flocks = typeof fn === 'function' ? fn(flocks) : fn; },
       (message, type) => calls.toasts.push({ message, type }),
-      () => { calls.loadFlocks += 1; },
+      () => {
+        // loadFlocks resolves when the list has landed. The count moves when
+        // it lands, not when it is asked, so "opened after the refetch" is
+        // something this harness can tell apart from "opened after asking".
+        const land = () => { calls.loadFlocks += 1; };
+        return loadGate ? loadGate.then(land) : Promise.resolve().then(land);
+      },
       (err, action) => { calls.verifyChecked.push(action); return false; },
       (opts) => { calls.identityAsked.push(opts); return heldGuestTokens; },
       { current: { id: 5, name: 'Sam Rivera' } },
       { current: refused },
       () => { calls.buzzes += 1; },
+      acceptingInviteRef,
+      (v) => { calls.accepting.push(v); },
+      joinNavRef,
+      openChatAfterJoin,
     );
     return {
       handler,
       calls,
       refused,
+      joinNavRef,
       get flocks() { return flocks; },
       get pending() { return pending; },
     };
+  }
+
+  /** A promise and the function that settles it, to hold a request open. */
+  function gate() {
+    let open;
+    const promise = new Promise((resolve) => { open = resolve; });
+    return { promise, open };
   }
 
   /** What GET /api/flocks actually returns for a flock you were invited to. */
@@ -456,7 +499,7 @@ describe('joining from an invite card', () => {
     const handler = new Function(
       'useCallback', 'acceptFlockInvite', 'declinedFlockInvites', 'setDeclinedFlockInvites',
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
-      'refusedInvitesRef',
+      'refusedInvitesRef', 'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin', 'hapticSuccess',
       `${liftCallback('handleRejoinDeclinedFlock')}\nreturn handleRejoinDeclinedFlock;`
     )(
       (fn) => fn,
@@ -470,6 +513,11 @@ describe('joining from an invite card', () => {
       () => [],
       { current: { id: 5, name: 'Sam Rivera' } },
       { current: refused },
+      { current: null },
+      () => {},
+      { current: { screen: 'main', tab: 'chat' } },
+      () => { throw new Error('a refused join opens nothing'); },
+      () => { throw new Error('a refused join does not buzz success'); },
     );
     return handler(41).then(() => {
       expect(declined).toEqual([]);
@@ -488,5 +536,92 @@ describe('joining from an invite card', () => {
     for (const name of ['handleAcceptFlockInvite', 'handleRejoinDeclinedFlock']) {
       expect(liftCallback(name)).toContain('refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);');
     }
+  });
+
+  // ── The tap answers at once, and the join ends inside the plan ──────────
+  //
+  // The check mark did nothing visible until the server replied, which invites
+  // a second tap, and a join then left the person on the list to find the new
+  // row before they could vote or answer the budget.
+
+  it('the card is marked joining from the tap until the server answers, then cleared', async () => {
+    const g = gate();
+    const h = buildAccept({ invite: PREVIEW, acceptGate: g.promise });
+    const done = h.handler(41);
+    // Marked before the request has answered: this is the visible response.
+    expect(h.calls.accepting).toEqual([41]);
+    g.open();
+    await done;
+    expect(h.calls.accepting).toEqual([41, null]);
+  });
+
+  it('a second tap while the join is out sends nothing', async () => {
+    const g = gate();
+    const h = buildAccept({ invite: PREVIEW, acceptGate: g.promise });
+    const first = h.handler(41);
+    await h.handler(41);
+    g.open();
+    await first;
+    expect(h.calls.accepted).toEqual([41]);
+  });
+
+  it('a successful join opens the plan\'s chat, after the full row has landed', async () => {
+    const h = buildAccept({ invite: PREVIEW });
+    await h.handler(41);
+    expect(h.calls.selected).toEqual([41]);
+    expect(h.calls.screens).toEqual(['chatDetail']);
+    // The chat would otherwise draw the trimmed preview: a budget plan with
+    // "Split the Bill" where the budget form belongs.
+    expect(h.calls.loadedBeforeOpen).toEqual([1]);
+  });
+
+  it('somebody who tapped away while it joined is left where they went', async () => {
+    const g = gate();
+    const h = buildAccept({ invite: PREVIEW, loadGate: g.promise });
+    const done = h.handler(41);
+    h.joinNavRef.current = { screen: 'main', tab: 'home' };
+    g.open();
+    await done;
+    expect(h.calls.screens).toEqual([]);
+    // The join itself still happened and still said so.
+    expect(h.calls.toasts[0].message).toBe('Joined Budget night!');
+  });
+
+  it('a refused join opens nothing, keeps the card, and lets the next tap through', async () => {
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: new Error('Flock is full') });
+    await h.handler(41);
+    expect(h.calls.screens).toEqual([]);
+    expect(h.pending.map((f) => f.id)).toEqual([41]);
+    expect(h.calls.accepting).toEqual([41, null]);
+    await h.handler(41);
+    expect(h.calls.accepted).toEqual([41, 41]);
+  });
+
+  it('a plan that closed in the meantime takes its card away and opens nothing', async () => {
+    const closed = Object.assign(new Error('This plan is no longer open'), { status: 409 });
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: closed });
+    await h.handler(41);
+    expect(h.pending).toEqual([]);
+    expect(h.calls.screens).toEqual([]);
+    expect(h.calls.accepting).toEqual([41, null]);
+  });
+
+  it('re-joining a declined plan holds and lands the same way', () => {
+    const source = liftCallback('handleRejoinDeclinedFlock');
+    expect(source).toContain('if (acceptingInviteRef.current != null) return;');
+    expect(source).toContain('setAcceptingInviteId(flockId);');
+    expect(source).toMatch(/await loadFlocks\(\);\s+if \(from\) openChatAfterJoin\(flockId, from\);/);
+    expect(source).toMatch(/finally \{\s+acceptingInviteRef\.current = null;\s+setAcceptingInviteId\(null\);/);
+  });
+
+  it('the invite LINK still opens through inviteHandoff, not through the card\'s callback', () => {
+    // A local named openJoinedFlock inside the component would shadow the
+    // import of the same name, so loadFlocks's `openJoinedFlock(invite)` for a
+    // redeemed invite link would call the card's two-argument callback
+    // instead. The build's unused-import warning is the only other thing that
+    // notices, so nothing in App.js may declare that name.
+    expect(APP).toMatch(/import \{[^}]*\bopenJoinedFlock\b[^}]*\} from '\.\/services\/inviteHandoff';/);
+    expect(APP).not.toMatch(/const openJoinedFlock\b/);
+    expect(APP).toMatch(/\n\s+openJoinedFlock\(invite\);/);
   });
 });

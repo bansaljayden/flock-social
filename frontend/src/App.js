@@ -6967,7 +6967,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // guest and a member, until the server was handed the guest identity to
   // retire. storedGuestTokens says which identities on this device are this
   // person's (services/inviteHandoff.js); the server matches only this plan's.
+  //
+  // THE TAP ANSWERS AT ONCE, AND THE JOIN ENDS INSIDE THE PLAN. The check mark
+  // used to do nothing visible until the server replied, which on a bar's
+  // network is long enough to invite a second tap, and a successful join then
+  // left the person on the list to find the new row and open it before they
+  // could vote or answer the budget. Now acceptingInviteId marks the card
+  // "Joining" and disables its buttons (and every other invite's, since the
+  // join is about to open a chat and one join at a time is the honest
+  // promise) for as long as the request is out. The card stays put rather
+  // than being lifted off the list first: with nothing on screen where the
+  // tap landed until the chat opens, a slow join reads as an invite that
+  // vanished. On success the full row is fetched BEFORE the chat opens, so
+  // the chat never draws the trimmed preview's defaults (a budget plan showing
+  // Split the Bill), and then the chat opens, unless the person has already
+  // gone somewhere else, in which case they are left where they chose to be.
+  const [acceptingInviteId, setAcceptingInviteId] = useState(null);
+  const acceptingInviteRef = useRef(null);
+  // Where the person is when the join lands, read then rather than closed over.
+  const joinNavRef = useRef(null);
+  joinNavRef.current = { screen: currentScreen, tab: currentTab };
+  // Not named openJoinedFlock: that is services/inviteHandoff.js's, imported
+  // at the top of this file and called by loadFlocks for the invite LINK, and
+  // a local of the same name would quietly take over that call.
+  const openChatAfterJoin = useCallback((flockId, from) => {
+    const now = joinNavRef.current;
+    if (!now || now.screen !== from.screen || now.tab !== from.tab) return;
+    setSelectedFlockId(flockId);
+    setCurrentScreen('chatDetail');
+  }, []);
+
   const handleAcceptFlockInvite = useCallback(async (flockId) => {
+    if (acceptingInviteRef.current != null) return;
+    acceptingInviteRef.current = flockId;
+    setAcceptingInviteId(flockId);
+    const from = joinNavRef.current ? { ...joinNavRef.current } : null;
     try {
       await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
       // After the server says yes, not before: the RSVP is the one step here
@@ -6979,10 +7013,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted', status: invite.status || 'voting' }]);
       }
       showToast(`Joined ${invite?.name || 'flock'}!`);
-      // Deliberately not awaited before the toast, and its failure is
-      // loadFlocks's own to report. The join already happened server side, so
-      // a refetch that misses must not read as a join that did not.
-      loadFlocks();
+      // Awaited now, because the chat opens on the row it lands. It does not
+      // reject: loadFlocks reports its own failure on the list, and the join
+      // already happened server side, so a refetch that misses must not read
+      // as a join that did not. The optimistic row above is what the chat
+      // falls back to then.
+      await loadFlocks();
+      if (from) openChatAfterJoin(flockId, from);
     } catch (err) {
       if (needsEmailVerification(err, 'join a flock')) return;
       // The plan is gone or finished: the card leaves instead of staying
@@ -7004,15 +7041,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return;
       }
       showToast(err.message || 'Failed to accept invite', 'error');
+    } finally {
+      acceptingInviteRef.current = null;
+      setAcceptingInviteId(null);
     }
-  }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks]);
+  }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks, openChatAfterJoin]);
 
   // Change your mind after declining. POST /api/flocks/:id/join accepts a
   // declined membership row the same as an invited one (the server flips any
   // non-accepted status to accepted), so re-joining is the same call. The flock
-  // moves out of the declined list and into the accepted one; loadFlocks lands
-  // the full row a moment later.
+  // moves out of the declined list and into the accepted one, the full row is
+  // fetched, and the chat opens, the same way an accepted invite does.
   const handleRejoinDeclinedFlock = useCallback(async (flockId) => {
+    if (acceptingInviteRef.current != null) return;
+    acceptingInviteRef.current = flockId;
+    setAcceptingInviteId(flockId);
+    const from = joinNavRef.current ? { ...joinNavRef.current } : null;
     try {
       // Same accept, so the same retirement of this person's link answer.
       await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
@@ -7025,7 +7069,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           : [...prev, { ...invite, memberStatus: 'accepted' }]);
       }
       showToast(`Joined ${invite?.name || 'flock'}!`);
-      loadFlocks();
+      await loadFlocks();
+      if (from) openChatAfterJoin(flockId, from);
     } catch (err) {
       if (needsEmailVerification(err, 'join a flock')) return;
       // The same refusal as on an invite card, and the same answer: the
@@ -7037,8 +7082,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return;
       }
       showToast(err.message || 'Failed to join', 'error');
+    } finally {
+      acceptingInviteRef.current = null;
+      setAcceptingInviteId(null);
     }
-  }, [declinedFlockInvites, showToast, needsEmailVerification, loadFlocks]);
+  }, [declinedFlockInvites, showToast, needsEmailVerification, loadFlocks, openChatAfterJoin]);
 
   // ── Past flocks ────────────────────────────────────────────────────────
   // Completed and cancelled flocks, fetched when the Past screen opens.
@@ -18898,6 +18946,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           flocksError,
           flocksLoading,
           getRelativeTime,
+          acceptingInviteId,
           handleAcceptFlockInvite,
           handleDeclineFlockInvite,
           handleRejoinDeclinedFlock,

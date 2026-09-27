@@ -102,6 +102,9 @@ export default function ChatListScreen({
   flocksError,
   flocksLoading,
   getRelativeTime,
+  // The invite being joined right now, or null. Set from the tap until the
+  // server answers; App.js's handleAcceptFlockInvite explains the rest.
+  acceptingInviteId,
   handleAcceptFlockInvite,
   handleDeclineFlockInvite,
   handleRejoinDeclinedFlock,
@@ -294,9 +297,15 @@ export default function ChatListScreen({
                 // tap drops you on a list and leaves you to work out which row
                 // the buzz was about.
                 const tapped = highlightedInviteId === f.id;
+                // A join in flight. Both buttons on every invite hold still
+                // until it answers: this one is being answered, and a second
+                // join would race the chat the first one is about to open.
+                const joining = acceptingInviteId === f.id;
+                const inviteBusy = acceptingInviteId != null;
                 return (
                 <div
                   key={`invite-${f.id}`}
+                  aria-busy={joining || undefined}
                   ref={tapped ? (el) => { if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } : undefined}
                   style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: tapped ? '2px solid #F59E0B' : '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: tapped ? '0 0 0 4px rgba(245,158,11,0.18)' : '0 2px 12px rgba(245,158,11,0.08)' }}
                 >
@@ -321,16 +330,20 @@ export default function ChatListScreen({
                         </button>
                       ) : f.host}
                     </p>
-                    {/* A decision needs the when, the where and the who. */}
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {f.time && f.time !== 'TBD' ? f.time : 'Time still open'} · {f.venue && f.venue !== 'TBD' ? f.venue : 'Venue still open'} · {f.memberCount || 1} going
+                    {/* A decision needs the when, the where and the who. While
+                        the join is out, this line says so instead: it is the
+                        answer to the tap, in the place the tap landed. */}
+                    <p role={joining ? 'status' : undefined} style={{ fontSize: 'var(--t-meta)', color: joining ? 'var(--text-secondary)' : 'var(--text-tertiary)', fontWeight: joining ? '600' : undefined, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {joining
+                        ? 'Joining…'
+                        : <>{f.time && f.time !== 'TBD' ? f.time : 'Time still open'} · {f.venue && f.venue !== 'TBD' ? f.venue : 'Venue still open'} · {f.memberCount || 1} going</>}
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button aria-label="Decline invite" className="hit44" onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button aria-label="Decline invite" className="hit44" disabled={inviteBusy} onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: inviteBusy ? 'default' : 'pointer', opacity: inviteBusy ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.x(colors.textTertiary, 14)}
                     </button>
-                    <button aria-label="Accept invite" className="hit44" onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button aria-label="Accept invite" className="hit44" disabled={inviteBusy} onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: joining ? 'wait' : inviteBusy ? 'default' : 'pointer', opacity: inviteBusy && !joining ? 0.5 : joining ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.check('white', 14)}
                     </button>
                   </div>
@@ -479,7 +492,9 @@ export default function ChatListScreen({
                     <h2 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>You said you could not make it{f.host ? `. From ${f.host}` : ''}</p>
                   </div>
-                  <button aria-label={`Join ${f.name}`} className="hit44 glass-btn glass-navy" onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Join</button>
+                  {/* Same hold as an invite card: one join at a time, and the
+                      button says it is working rather than sitting still. */}
+                  <button aria-label={acceptingInviteId === f.id ? `Joining ${f.name}` : `Join ${f.name}`} className="hit44 glass-btn glass-navy" disabled={acceptingInviteId != null} onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: acceptingInviteId === f.id ? 'wait' : acceptingInviteId != null ? 'default' : 'pointer', opacity: acceptingInviteId != null && acceptingInviteId !== f.id ? 0.5 : 1, flexShrink: 0, position: 'relative', overflow: 'hidden' }}>{acceptingInviteId === f.id ? 'Joining…' : 'Join'}</button>
                 </div>
               ))}
             </>
