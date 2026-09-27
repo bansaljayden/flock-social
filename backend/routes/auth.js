@@ -2415,7 +2415,10 @@ router.post('/signup', signupValidation, async (req, res) => {
       } else {
         const sendResult = await sendVerification(user, req.ip);
         verificationSent = sendResult.sent === true;
-        mailRefused = sendResult.refused === true;
+        // `suppressed`, not `refused`. `refused` only says nothing left the
+        // building, and a Resend 429 is that too; reading it here told a
+        // healthy address it had bounced and took its resend button away.
+        mailRefused = sendResult.suppressed === true;
       }
     } catch (mailErr) {
       console.error('[auth] verification send failed at signup:', mailErr.message);
@@ -2560,7 +2563,8 @@ router.post('/resend-verification', authenticate, async (req, res) => {
     }
 
     const sendResult = await mailVerificationLink(user, claim.token);
-    res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true, mailRefused: sendResult.refused === true });
+    // mailRefused is the do-not-mail list only, for the reason given at signup.
+    res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true, mailRefused: sendResult.suppressed === true });
   } catch (err) {
     console.error('Resend verification error:', err);
     res.status(500).json({ error: 'Could not send a new link' });

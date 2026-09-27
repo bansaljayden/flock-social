@@ -47,8 +47,11 @@ test('a deletion refused over billing keeps its sentence on the web and carries 
 });
 
 test('a refused address is told why, and not offered another try', () => {
-  expect(auth).toMatch(/mailRefused = sendResult\.refused === true;/);
-  expect(auth).toMatch(/verificationSent: sendResult\.sent === true, mailRefused: sendResult\.refused === true \}\);/);
+  // The do-not-mail list, and only that. `refused` also covers a Resend 429,
+  // which is not a reason to tell anybody their address bounced.
+  expect(auth).toMatch(/mailRefused = sendResult\.suppressed === true;/);
+  expect(auth).toMatch(/verificationSent: sendResult\.sent === true, mailRefused: sendResult\.suppressed === true \}\);/);
+  expect(auth).not.toMatch(/mailRefused(?: =|:) sendResult\.refused/);
   expect(signup).toMatch(/We cannot mail this address: mail to it bounced or was reported as spam before\. Email social@flockcorp\.com from it and we will clear that\./);
   expect(signup).toMatch(/disabled=\{resendCooldown > 0 \|\| mailRefused\}/);
 });
