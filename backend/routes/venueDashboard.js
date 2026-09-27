@@ -2246,6 +2246,17 @@ function stripOrderingClaim(you, competitor) {
 // rows for the export path).
 const OWNER_REPORT_DAILY_CAP = 48;
 
+// The one-a-minute refusal, with the wait in it. Clamped to 1..60 so a row
+// stamped ahead of the clock (a hand-inserted one, say) cannot read as an
+// hour's wait, and anything unreadable says "under a minute", which is always
+// true when this refusal fires.
+function oneAMinuteRefusal(waitSeconds) {
+  const n = Number(waitSeconds);
+  if (!Number.isFinite(n) || n <= 0) return 'One update a minute. You can set a new number in under a minute.';
+  const s = Math.min(60, Math.max(1, Math.ceil(n)));
+  return `One update a minute. You can set a new number in ${s === 1 ? '1 second' : `${s} seconds`}.`;
+}
+
 // What the owner's dashboard needs to render the control truthfully: the
 // reading users currently see (null when expired, retracted or suppressed) and
 // whether the venue is strike-suppressed — in which case a fresh reading is
@@ -2345,15 +2356,24 @@ router.post('/busy-now', [
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('owner_busy:' || $1::text))", [String(req.user.id)]);
 
+      // wait_seconds: how long until the newest reading is a minute old, which
+      // is when the next one is allowed. Retracted rows count toward both
+      // ceilings on purpose (clearing must not buy a fresh post, see
+      // abuseOwnerSliderStrikes.test.js), so the refusal may not say a reading
+      // is live: the one it counts may have just been cleared, or be
+      // suppressed, and the owner was then told a number was showing that no
+      // user could see. It says when to try again instead, which is true in
+      // every one of those states.
       const { rows: [recent] } = await client.query(
         `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '60 seconds')::int AS last_minute,
-                COUNT(*)::int AS last_day
+                COUNT(*)::int AS last_day,
+                CEIL(EXTRACT(EPOCH FROM (MAX(created_at) + INTERVAL '60 seconds' - NOW())))::int AS wait_seconds
            FROM venue_owner_reports
           WHERE venue_user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
         [req.user.id]
       );
       if ((recent?.last_minute || 0) > 0) {
-        refusal = { status: 429, body: { error: 'One update a minute. The last one is still live.' } };
+        refusal = { status: 429, body: { error: oneAMinuteRefusal(recent?.wait_seconds) } };
       } else if ((recent?.last_day || 0) >= OWNER_REPORT_DAILY_CAP) {
         refusal = { status: 429, body: { error: 'Daily limit reached. The number falls back to the forecast on its own.' } };
       } else {
@@ -2707,4 +2727,6 @@ module.exports.__test = {
   // threshold, so the test asserts the shipped arithmetic, not a copy.
   stripOrderingClaim,
   STRIP_ORDERING_MIN_GAP,
+  // The live number's one-a-minute wording (__tests__/ownerSurfaceHardening.test.js).
+  oneAMinuteRefusal,
 };
