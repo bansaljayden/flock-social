@@ -356,9 +356,72 @@ function raiseEmailAlarm(key, message, extra) {
     } catch (err) {
       // No Sentry in this build. The console line stands on its own.
     }
+    pageEmailAlarm(key, extra);
     return true;
   } catch (err) {
     return false;
+  }
+}
+
+// THE HALF OF THE EMAIL ALARM THAT REACHES A PERSON. Both lines above are dead
+// ends on this deployment: the Railway log nobody reads, and a Sentry that is
+// off while SENTRY_DSN is unset. This alarm cannot be mailed, because email is
+// the thing that failed, so it goes to the admins' phones as a push through
+// services/opsAlert.js and nowhere else.
+//
+// The push names the condition, never the address: two of the keys carry a
+// recipient, and a lock screen is not the place for somebody else's email.
+// The ledger key drops the address for the same reason, so every
+// 'locked-out:<address>' shares one push a day.
+const EMAIL_ALARM_PUSH = {
+  failing: (extra) => ({
+    title: 'Flock email is failing',
+    body: `The last ${Number(extra && extra.consecutiveFailures) || CONSECUTIVE_FAILURES_BEFORE_ALARM} emails all failed, so verification, password reset and SOS emails are not arriving. Check the Resend key and the sending domain.`,
+  }),
+  'no-key': () => ({
+    title: 'Flock email is off',
+    body: 'RESEND_API_KEY is not set on the server, so no email is being sent, including SOS alerts to trusted contacts.',
+  }),
+  cap: (extra) => ({
+    title: 'An email was held back',
+    body: `A ${String((extra && extra.category) || 'transactional').slice(0, 40)} email hit the per-address daily cap. The Railway log has the details under EMAIL.`,
+  }),
+  'locked-out': () => ({
+    title: 'Someone cannot get their email',
+    body: 'A verification or password reset email was refused because the address is on the do-not-mail list. The Railway log has the details under EMAIL.',
+  }),
+  'emergency-loop': () => ({
+    title: 'Emergency emails are repeating',
+    body: 'One address has been sent many emergency emails in 24 hours. Check the SOS cooldown. The Railway log has the details under EMAIL.',
+  }),
+};
+
+// condition class -> the UTC day it was last paged. The ledger dedupes too;
+// this saves the database a claim per distinct address on a bad day.
+const alarmPaged = new Map();
+
+function pageEmailAlarm(key, extra) {
+  try {
+    const kind = String(key).split(':')[0];
+    const day = utcDay();
+    if (alarmPaged.get(kind) === day) return;
+    alarmPaged.set(kind, day);
+    const words = EMAIL_ALARM_PUSH[kind]
+      ? EMAIL_ALARM_PUSH[kind](extra)
+      : { title: 'Flock email alarm', body: 'An email alarm was raised. The Railway log has the details under EMAIL.' };
+    // Lazy: opsAlert requires this module for its own email leg.
+    // eslint-disable-next-line global-require
+    const { opsAlert } = require('./opsAlert');
+    opsAlert({
+      key: `email_${kind}`,
+      subject: words.title,
+      text: words.body,
+      push: words,
+      legs: ['push'],
+      tag: '[email-alarm]',
+    }).catch(() => {});
+  } catch (err) {
+    // The alarm is allowed to say nothing; it is not allowed to stop a send.
   }
 }
 
@@ -407,6 +470,7 @@ function emailHealthStatus() {
 
 function resetEmailHealth() {
   alarmSaid.clear();
+  alarmPaged.clear();
   health.day = null;
   health.attempted = 0;
   health.sent = 0;

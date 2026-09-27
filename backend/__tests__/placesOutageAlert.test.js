@@ -83,7 +83,7 @@ test('a healthy Places sends nothing and does not touch the ledger', async () =>
 
 test('an outage mails once, and the mail says what is broken for users', async () => {
   const out = await runPlacesOutageAlert(UNHEALTHY);
-  assert.deepStrictEqual(out, { mailed: true });
+  assert.deepStrictEqual(out, { sent: true, legs: ['email'] });
   assert.strictEqual(sent.length, 1);
 
   const msg = sent[0];
@@ -199,6 +199,45 @@ test('it reads live health when handed nothing', async () => {
 
   for (let i = 0; i < 5; i += 1) recordPlacesResult(false, 'HTTP 429');
   const loud = await runPlacesOutageAlert();
-  assert.deepStrictEqual(loud, { mailed: true });
+  assert.deepStrictEqual(loud, { sent: true, legs: ['email'] });
   __resetPlacesHealth();
+});
+
+test('the outage also reaches the admins as a push, through the shared ops sender', async () => {
+  // The email alone reaches an inbox that might not be opened until the
+  // evening. services/opsAlert.js adds a push to each ADMIN_USER_IDS account.
+  const pushHelper = require('../services/pushHelper');
+  const saved = pushHelper.pushAlways;
+  const pushes = [];
+  pushHelper.pushAlways = async (userId, title, body, data) => {
+    pushes.push({ userId, title, body, data });
+    return { sent: 1, failed: 0 };
+  };
+  process.env.ADMIN_USER_IDS = '42';
+  try {
+    const out = await runPlacesOutageAlert(UNHEALTHY);
+    assert.deepStrictEqual(out, { sent: true, legs: ['email', 'push'] });
+    assert.strictEqual(pushes.length, 1);
+    assert.strictEqual(pushes[0].userId, 42);
+    assert.strictEqual(pushes[0].data.type, 'ops_alert');
+    assert.match(pushes[0].title, /Places/);
+    assert.match(pushes[0].body, /12 calls in a row over 4 hours/);
+  } finally {
+    pushHelper.pushAlways = saved;
+    delete process.env.ADMIN_USER_IDS;
+  }
+});
+
+test('a Resend refusal answered softly is not mistaken for a sent alert', async () => {
+  // sendEmail fails SOFT with { sent: false }. The old code only caught a
+  // throw, so a dead key held the day's claim and the outage went unreported.
+  const saved = emailService.sendEmail;
+  emailService.sendEmail = async () => ({ sent: false, error: 'API key is invalid' });
+  try {
+    const out = await runPlacesOutageAlert(UNHEALTHY);
+    assert.deepStrictEqual(out, { failed: true });
+    assert.strictEqual(deletes().length, 1, 'the claim was released');
+  } finally {
+    emailService.sendEmail = saved;
+  }
 });

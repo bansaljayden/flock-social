@@ -13,29 +13,21 @@
 //     "Sentry DISABLED: SENTRY_DSN is unset" on every deploy.
 //
 // So an alarm that only did those two things would have detected the outage
-// perfectly and still told nobody. This is the channel that works,
-// copied deliberately from services/collectionHeartbeat.js rather than
-// invented: same MODERATION_ALERT_EMAIL recipients, same ops_alert_ledger
-// dedupe, same release-the-claim-on-failure rule.
+// perfectly and still told nobody. This is the channel that works:
+// services/opsAlert.js, the one sender every ops alert shares. Email to
+// MODERATION_ALERT_EMAIL, a push to each ADMIN_USER_IDS account, the
+// ops_alert_ledger dedupe, and the release-the-claim-on-failure rule.
 //
 // WHY THE LEDGER AND NOT AN IN-MEMORY FLAG. Migration 058 was written because
 // the heartbeat's "already sent today" lived in process RAM and two deploys on
 // 2026-09-01 mailed the operator twice in an hour about one condition. The money
-// watch's sayOnceToday has exactly that shape, so the EMAIL claim goes through
+// watch's sayOnceToday has exactly that shape, so the alert's claim goes through
 // Postgres and survives every restart. The log line can repeat; an inbox may
 // not.
-const pool = require('../config/database');
-const { sendEmail } = require('./emailService');
 const { placesHealthStatus } = require('../utils/placesHealth');
+const { opsAlert, alertAddresses } = require('./opsAlert');
 
 const ALERT_KEY = 'places_outage';
-
-function alertAddresses() {
-  return String(process.env.MODERATION_ALERT_EMAIL || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.includes('@'));
-}
 
 /** "4 hours", "12 minutes", "less than a minute". */
 function forPhrase(ms) {
@@ -82,9 +74,9 @@ function body(h) {
 }
 
 /**
- * Mail once a day while Places is failing. Never throws, never refuses a
- * request, never touches a counter — a watchdog that can break the thing it
- * watches is worse than no watchdog.
+ * Tell a person once a day while Places is failing. Never throws, never
+ * refuses a request, never touches a counter: a watchdog that can break the
+ * thing it watches is worse than no watchdog.
  *
  * @param {object} [status] injectable for tests; defaults to the live reading.
  */
@@ -92,56 +84,18 @@ async function runPlacesOutageAlert(status) {
   try {
     const h = status || placesHealthStatus();
     if (!h.unhealthy) return { skipped: 'healthy' };
-
-    const to = alertAddresses();
-    if (to.length === 0) {
-      console.error('[PlacesHealth] Places is failing and MODERATION_ALERT_EMAIL is unset; nobody was mailed.');
-      return { skipped: 'no-recipient' };
-    }
-
-    // Claim today's slot durably BEFORE mailing. No row back means an earlier
-    // run (or an earlier boot) already claimed it today.
-    const claim = await pool.query(
-      `INSERT INTO ops_alert_ledger (alert_key, sent_on)
-       VALUES ($1, CURRENT_DATE)
-       ON CONFLICT (alert_key, sent_on) DO NOTHING
-       RETURNING sent_on`,
-      [ALERT_KEY]
-    );
-    if (claim.rows.length === 0) return { skipped: 'already-sent-today' };
-
-    // sendEmail never throws: a refusal, a 429 or 5xx, the 8s deadline and a
-    // missing key all come back as { sent: false }. So the RESULT decides
-    // whether the claim stands. Releasing only inside a catch meant a failed
-    // send kept the claim, answered { mailed: true }, and every 15-minute run
-    // after it said 'already-sent-today' until midnight UTC. The catch stays
-    // for a sendEmail that does throw, and is treated the same way.
-    let result;
-    try {
-      result = await sendEmail({
-        to: to[0],
-        subject: 'Google Places is down for Flock',
-        text: body(h),
-      });
-    } catch (sendErr) {
-      result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
-    }
-    if (!result || result.sent !== true) {
-      // Release the claim. Holding it after a failed send buys a full day of
-      // silence from the one thing whose entire job is to break silence, and a
-      // duplicate email costs nothing by comparison. Same rule, same reason as
-      // services/collectionHeartbeat.js.
-      await pool.query(
-        'DELETE FROM ops_alert_ledger WHERE alert_key = $1 AND sent_on = CURRENT_DATE',
-        [ALERT_KEY]
-      ).catch(() => {});
-      const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
-      console.error(`[PlacesHealth] Places failing, and the alert was NOT delivered (${why}). The next run will try again.`);
-      return { failed: true };
-    }
-
-    console.error(`[PlacesHealth] Places failing (${h.consecutiveFailures} in a row). Alert mailed.`);
-    return { mailed: true };
+    // The claim, the two legs and the release on a failed send all live in
+    // services/opsAlert.js now, the same code the heartbeats use.
+    return await opsAlert({
+      key: ALERT_KEY,
+      subject: 'Google Places is down for Flock',
+      text: body(h),
+      push: {
+        title: 'Google Places is down',
+        body: `Venue search and photos are failing: ${h.consecutiveFailures} calls in a row over ${forPhrase(h.failingForMs)}.`,
+      },
+      tag: '[PlacesHealth]',
+    });
   } catch (err) {
     console.error('[PlacesHealth] alert failed:', err && err.message ? err.message : err);
     return { failed: true };

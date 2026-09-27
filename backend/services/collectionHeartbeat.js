@@ -38,11 +38,13 @@
 // 2026-09-01 mailed the operator twice inside an hour because each restart forgot
 // it had already sent. The INSERT ... ON CONFLICT DO NOTHING is the whole
 // mutex: only the caller whose insert lands sends the email, atomically,
-// across restarts and replicas alike.
+// across restarts and replicas alike. That claim, the send and the release on
+// a failed send are services/opsAlert.js's now, shared with every other ops
+// alert, which also adds a push to each ADMIN_USER_IDS account.
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
-const { sendEmail } = require('./emailService');
+const { opsAlert } = require('./opsAlert');
 
 const WINDOW_HOURS = 26;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -62,13 +64,6 @@ const MIN_HEALTHY_ROWS = 1000;
 // for half a day: at that point roughly 1,800 rows are still inside the
 // window and the row floor alone would say nothing.
 const MIN_HEALTHY_HOURS = 12;
-
-function alertAddresses() {
-  return String(process.env.MODERATION_ALERT_EMAIL || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.includes('@'));
-}
 
 function heartbeatEnabled() {
   // Default ON wherever email can actually send; the sweep itself is one
@@ -101,69 +96,40 @@ async function runCollectionHeartbeat() {
     // which is a throttle wall or an expiring key, not a dead job.
     const state = fresh === 0 ? 'stopped' : (rowsLow ? 'degraded' : 'stalled');
 
-    const to = alertAddresses();
-    if (to.length === 0) {
-      console.error(`[HEARTBEAT] Collection ${state} (${fresh} rows over ${hours}h in ${WINDOW_HOURS}h) and MODERATION_ALERT_EMAIL is unset; nobody was mailed.`);
-      return;
-    }
-    // Claim today's send slot durably before mailing. No row back means an
-    // earlier boot already claimed it today.
-    const claim = await pool.query(
-      `INSERT INTO ops_alert_ledger (alert_key, sent_on)
-       VALUES ('collection_heartbeat', CURRENT_DATE)
-       ON CONFLICT (alert_key, sent_on) DO NOTHING
-       RETURNING sent_on`
-    );
-    if (claim.rows.length === 0) return;
-    // sendEmail never throws. A provider refusal, a 429 or 5xx, the 8s
-    // deadline, a missing key and the per-recipient cap all come back as
-    // { sent: false }, so the RESULT is what decides whether the claim
-    // stands. This used to release only inside a catch, which no failed send
-    // ever reached: the claim held, the log said "Alert mailed.", and every
-    // later sweep that day stayed quiet about a broken collector. The catch
-    // stays for a sendEmail that does throw, and is treated the same way.
-    let result;
-    try {
-      result = await sendEmail({
-        to: to[0],
-        subject: {
-          stopped: 'Flock data collection has stopped',
-          stalled: 'Flock data collection has stopped firing',
-          degraded: 'Flock data collection is failing partway',
+    // The claim is taken before the send and released if nothing reached
+    // anybody, so a failed send never buys a day of silence from the one
+    // service whose entire job is to break silence (2026-09-01 review). The
+    // key stays 'collection_heartbeat': services/moneyHub.js reads the date of
+    // the last alert by it.
+    const out = await opsAlert({
+      key: 'collection_heartbeat',
+      subject: {
+        stopped: 'Flock data collection has stopped',
+        stalled: 'Flock data collection has stopped firing',
+        degraded: 'Flock data collection is failing partway',
+      }[state],
+      text: [
+        {
+          stopped: `No live crowd observations have landed in ml_training_data in the last ${WINDOW_HOURS} hours.`,
+          stalled: `${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, but only across ${hours} distinct hours out of ${WINDOW_HOURS}. The hourly run has stopped firing and what is in the window is the tail of the last good hours.`,
+          degraded: `Only ${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, against roughly 3,000 expected. The hourly run is starting and dying partway.`,
         }[state],
-        text: [
-          {
-            stopped: `No live crowd observations have landed in ml_training_data in the last ${WINDOW_HOURS} hours.`,
-            stalled: `${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, but only across ${hours} distinct hours out of ${WINDOW_HOURS}. The hourly run has stopped firing and what is in the window is the tail of the last good hours.`,
-            degraded: `Only ${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, against roughly 3,000 expected. The hourly run is starting and dying partway.`,
-          }[state],
-          '',
-          'The BestTime pull (Railway service BESTTIME, cron 7 * * * *, hourly) has likely failed.',
-          'Check, in order: the Railway service logs, the BestTime subscription state,',
-          'and whether the last deploy changed scripts/ml/collectRealtime.js.',
-          '',
-          'This alert repeats at most once a day while collection stays broken.',
-        ].join('\n'),
-      });
-    } catch (sendErr) {
-      result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
+        '',
+        'The BestTime pull (Railway service BESTTIME, cron 7 * * * *, hourly) has likely failed.',
+        'Check, in order: the Railway service logs, the BestTime subscription state,',
+        'and whether the last deploy changed scripts/ml/collectRealtime.js.',
+        '',
+        'This alert repeats at most once a day while collection stays broken.',
+      ].join('\n'),
+      push: {
+        title: 'Data collection is down',
+        body: `${fresh} live crowd rows over ${hours} of the last ${WINDOW_HOURS} hours. The hourly BestTime pull has likely failed.`,
+      },
+      tag: '[HEARTBEAT]',
+    });
+    if (out.sent) {
+      console.error(`[HEARTBEAT] Collection ${state}: ${fresh} realtime rows over ${hours} distinct hours in ${WINDOW_HOURS}h.`);
     }
-    if (!result || result.sent !== true) {
-      // Release the claim. Holding it after a failed send would buy a full
-      // day of silence from the one service whose entire job is to break
-      // silence, and a duplicate email costs nothing by comparison
-      // (2026-09-01 review). The money hub's "last heartbeat alert" date is
-      // read from this row too, so a held claim also claimed a mail that
-      // never went out.
-      await pool.query(
-        `DELETE FROM ops_alert_ledger
-          WHERE alert_key = 'collection_heartbeat' AND sent_on = CURRENT_DATE`
-      ).catch(() => {});
-      const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
-      console.error(`[HEARTBEAT] Collection ${state}, and the alert was NOT delivered (${why}). The next sweep will try again.`);
-      return;
-    }
-    console.error(`[HEARTBEAT] Collection ${state}: ${fresh} realtime rows over ${hours} distinct hours in ${WINDOW_HOURS}h. Alert mailed.`);
   } catch (err) {
     // The heartbeat must never take the app down with it.
     console.error('[HEARTBEAT] sweep failed:', err && err.message ? err.message : err);

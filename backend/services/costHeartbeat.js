@@ -21,11 +21,13 @@
 // rather than in RAM so a redeploy cannot re-mail, release the claim if the
 // send fails, and never let the sweep take the app down. The sweep runs every
 // SWEEP_INTERVAL_MS but the ledger keys are per calendar day, so the effect
-// is at most one email per condition per day regardless of the interval.
+// is at most one alert per condition per day regardless of the interval. The
+// claim and the send are services/opsAlert.js's, which also pushes the alert
+// to each ADMIN_USER_IDS account.
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
-const { sendEmail } = require('./emailService');
+const { opsAlert } = require('./opsAlert');
 const costModel = require('./costModel');
 // Accessed through the module object rather than destructured, so a test can
 // stub photoStore.photoSpendStatus after this file is loaded and the sweep
@@ -35,13 +37,6 @@ const photoStore = require('./photoStore');
 const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const RECONCILED_STALE_DAYS = 35;
 const PHOTO_WARN_FRACTION = 0.9;
-
-function alertAddresses() {
-  return String(process.env.MODERATION_ALERT_EMAIL || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.includes('@'));
-}
 
 function costHeartbeatEnabled() {
   // Shares the collection heartbeat's kill switch, because a person turning
@@ -57,47 +52,6 @@ function daysSince(isoDate, now = new Date()) {
   const t = Date.parse(`${isoDate}T00:00:00Z`);
   if (!Number.isFinite(t)) return null;
   return Math.floor((now.getTime() - t) / 86400000);
-}
-
-// Claim today's slot for one alert key. Resolves true only for the caller
-// whose insert landed; that caller sends, everyone else stays quiet.
-async function claimToday(alertKey) {
-  const claim = await pool.query(
-    `INSERT INTO ops_alert_ledger (alert_key, sent_on)
-     VALUES ($1, CURRENT_DATE)
-     ON CONFLICT (alert_key, sent_on) DO NOTHING
-     RETURNING sent_on`,
-    [alertKey]
-  );
-  return claim.rows.length > 0;
-}
-
-async function releaseToday(alertKey) {
-  await pool
-    .query(`DELETE FROM ops_alert_ledger WHERE alert_key = $1 AND sent_on = CURRENT_DATE`, [alertKey])
-    .catch(() => {});
-}
-
-// True only when the mail actually left. sendEmail never throws: a refusal, a
-// 429 or 5xx, the 8s deadline, a missing key and the per-recipient cap all
-// come back as { sent: false }. Releasing only inside a catch meant none of
-// those ever released, so a failed send kept the day's claim, logged "Alert
-// mailed.", and the sweeps after it stayed quiet until tomorrow. That is the
-// day the photo alert exists to buy. The catch stays for a sendEmail that does
-// throw, and is treated the same way.
-async function mailOnce(alertKey, to, subject, lines) {
-  if (!(await claimToday(alertKey))) return false;
-  let result;
-  try {
-    result = await sendEmail({ to, subject, text: lines.join('\n') });
-  } catch (sendErr) {
-    result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
-  }
-  if (result && result.sent === true) return true;
-  await releaseToday(alertKey);
-  const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
-  console.error(`[COST-HEARTBEAT] ${subject}, and the alert was NOT delivered (${why}). The next sweep will try again.`);
-  return false;
 }
 
 // The two checks, split out so a test can drive each with plain inputs and
@@ -152,7 +106,6 @@ function photoFinding(status) {
 async function runCostHeartbeat() {
   try {
     if (!costHeartbeatEnabled()) return;
-    const to = alertAddresses();
 
     const findings = [];
     // The merged block: a dashboard entry wins over the code constant.
@@ -167,14 +120,12 @@ async function runCostHeartbeat() {
     }
     findings.push(photoFinding(photo));
 
+    // One alert per finding, each under its own ledger key, through the sender
+    // every ops alert shares (services/opsAlert.js). A failed send releases
+    // that finding's claim and never stops the next finding from going out.
     for (const f of findings) {
       if (!f) continue;
-      if (to.length === 0) {
-        console.error(`[COST-HEARTBEAT] ${f.subject}, and MODERATION_ALERT_EMAIL is unset; nobody was mailed.`);
-        continue;
-      }
-      const sent = await mailOnce(f.key, to[0], f.subject, f.lines);
-      if (sent) console.error(`[COST-HEARTBEAT] ${f.subject}. Alert mailed.`);
+      await opsAlert({ key: f.key, subject: f.subject, text: f.lines.join('\n'), tag: '[COST-HEARTBEAT]' });
     }
   } catch (err) {
     // The heartbeat must never take the app down with it.
