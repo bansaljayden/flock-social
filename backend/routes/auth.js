@@ -2860,6 +2860,47 @@ router.post('/login', loginValidation, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// The routes on this router that are NOT a door to an account
+// ---------------------------------------------------------------------------
+// server.js mounts authLimiter, 10 requests a minute per ADDRESS, in front of
+// this whole router. That is the right meter for the doors that take a
+// credential (login, signup, the Google and Apple sign-ins, the password
+// reset, the verification link): nobody is identified yet, so an address is
+// the only key there is, and it is the only bound on the bcrypt compare.
+//
+// It is the wrong meter for the routes below, and it was charging them too.
+// Every one of them runs behind `authenticate`, so the caller is a verified
+// account, and GET /me is what every app launch sends first. Everyone on a
+// school's or a venue's Wi-Fi shares one public address, so ten cold starts
+// in a minute used up the bucket: the eleventh phone got a 429, App.js read it
+// as the network being down and showed the unreachable screen, retrying /me
+// every 15 seconds into the same empty bucket, and anybody on that network
+// trying to actually sign in was refused as well. These routes skip
+// authLimiter and are metered by apiLimiter like every other signed-in route
+// (server.js mounts both here), plus the per-account backstop.
+//
+// A route belongs on this list only if a signed-in account is what it acts
+// for. A route that takes a credential must never be added: skipping the
+// address meter there hands a password guesser the whole thread.
+// __tests__/authLimiterScope.test.js holds every entry to that.
+const SIGNED_IN_ROUTES = new Set([
+  'GET /me',
+  'POST /logout',
+  'POST /logout-all',
+  'POST /resend-verification',
+]);
+
+// Matched the way Express routes: case insensitive, a trailing slash optional,
+// and HEAD answered by the GET handler. A spelling this misses is charged to
+// authLimiter, which is the safe direction to be wrong in.
+function isSignedInRoute(req) {
+  const method = req.method === 'HEAD' ? 'GET' : String(req.method || '').toUpperCase();
+  let p = String(req.path || '').toLowerCase();
+  while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  return SIGNED_IN_ROUTES.has(`${method} ${p}`);
+}
+
 // GET /api/auth/me
 router.get('/me', authenticate, async (req, res) => {
   try {
@@ -3991,6 +4032,10 @@ module.exports = router;
 // exports rather than __testing: routes/users.js is a caller, not a test.
 module.exports.canonicalEmail = canonicalEmail;
 module.exports.EMAIL_CANONICAL_SQL = EMAIL_CANONICAL_SQL;
+// server.js's authLimiter skips these (see SIGNED_IN_ROUTES above). A named
+// export for the same reason as the two above: server.js is a caller.
+module.exports.isSignedInRoute = isSignedInRoute;
+module.exports.SIGNED_IN_ROUTES = SIGNED_IN_ROUTES;
 
 // Exported for backend/__tests__/authSurface.test.js. The SQL half of the
 // canonical match (EMAIL_MATCH_SQL) is verified by inspection against

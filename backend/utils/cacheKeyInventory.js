@@ -1343,6 +1343,7 @@ const LIMITERS = [
     key: 'req.ip (express-rate-limit default)',
     message: 'Too many requests, please try again later',
     mounts: [
+      '/api/auth',
       '/api/flocks', '/api/guest', '/api/badge', '/api/sensors', '/api/checkin',
       '/api/waitlist', '/api/public', '/api/users', '/api', '/api/stories',
       '/api/friends', '/api/safety', '/api/crowd', '/api/feedback', '/api/weather',
@@ -1363,7 +1364,7 @@ const LIMITERS = [
     mounts: ['/api/auth'],
     protects: 'the pure-JS bcrypt compare, which is denominated in milliseconds of the only thread, and the signup/login/reset doors generally',
     verdict: 'SAFE',
-    why: 'The address is the CORRECT dimension here and the only one available: there is no authenticated identity at a login, a signup or a password reset, so an account key would be a key the caller mints for free. Round 4 R4-A2: this is the only bound on the bcrypt compare. The NAT cost is real and accepted — ten sign-ins a minute for a whole school is tight — and is the reason routes/auth.js layers per-address AND per-canonical-email counters underneath rather than leaning on this alone.',
+    why: 'The address is the CORRECT dimension here and the only one available: there is no authenticated identity at a login, a signup or a password reset, so an account key would be a key the caller mints for free. Round 4 R4-A2: this is the only bound on the bcrypt compare. The NAT cost is real and accepted — ten sign-ins a minute for a whole school is tight — and is the reason routes/auth.js layers per-address AND per-canonical-email counters underneath rather than leaning on this alone. That acceptance covers the credential doors ONLY, and for a while it covered more: mounted on the whole router with no skip, this also metered GET /me, which every app launch sends, so ten cold starts behind one school or venue address emptied the bucket and the eleventh phone got a 429 that App.js reads as the network being down. skip() now exempts the routes routes/auth.js lists in SIGNED_IN_ROUTES (GET /me, both sign-outs, the verification resend), all of which run behind authenticate, and apiLimiter is mounted beside this one so they keep a ceiling. __tests__/authLimiterScope.test.js holds that list to routes that mount authenticate.',
   },
   {
     name: 'venueSearchLimiter',
