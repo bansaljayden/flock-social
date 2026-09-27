@@ -1618,6 +1618,30 @@ router.put('/:id',
             await client.query('UPDATE guest_rsvps SET reconfirmed_at = NULL WHERE flock_id = $1', [flockId]);
             reconfirmReset = true;
           }
+          // THE SHARED LINK FOLLOWS THE PLAN TO ITS NEW TIME. A link's
+          // deadline is the later of fourteen days from minting and the plan's
+          // time plus seven (POST /:id/invite-link, migration 028), and it
+          // was read once, at minting. So a Friday plan pushed three weeks out
+          // kept a link that died two weeks before the night, and everyone
+          // who opened the one already in the group chat was told the invite
+          // had closed on a plan that was still on; sharing again minted a
+          // different token, which left that one dead. The same expression,
+          // against the time this transaction just wrote, and only ever
+          // later: moving a plan earlier shortens nothing. Revoked links stay
+          // revoked, and a link that has already lapsed stays lapsed, so a
+          // reschedule never brings a dead credential back.
+          if (result.rowCount > 0 && event_time !== undefined && event_time !== null) {
+            await client.query(
+              `UPDATE flock_invite_links il
+                  SET expires_at = GREATEST(il.expires_at, (f.event_time AT TIME ZONE 'UTC') + INTERVAL '7 days')
+                 FROM flocks f
+                WHERE f.id = il.flock_id
+                  AND il.flock_id = $1
+                  AND il.revoked = false
+                  AND il.expires_at > NOW()`,
+              [flockId]
+            );
+          }
           await client.query('COMMIT');
         } catch (txErr) {
           await client.query('ROLLBACK').catch(() => {});

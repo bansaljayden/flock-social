@@ -123,6 +123,9 @@ async function dispatch(sql, params) {
     if (p[9] != null) f.status = p[9];
     return { rows: [{ ...f, created_at: f.created_at, budget_ceiling: null, budget_enabled: false }], rowCount: 1 };
   }
+  // A moved time carries the plan's share link along with it. No flock in
+  // this world has a link, so the statement matches nothing.
+  if (/^UPDATE flock_invite_links il SET expires_at = GREATEST/.test(flat)) return { rows: [], rowCount: 0 };
   // Research-analytics side effects of a completion. Modelled, not swallowed.
   if (/^SELECT COUNT\(\*\) AS cnt FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
     return { rows: [{ cnt: String(acceptedCount(Number(p[0]))) }], rowCount: 1 };
