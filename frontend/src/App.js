@@ -7683,7 +7683,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // One read mark per open thread per 1.5 s while messages arrive live,
   // because each PUT fans a badge push out to every device (notifications
   // audit, 2026-09-05). Keyed by the other person's id; the timer that fires
-  // carries the newest id seen.
+  // carries the newest id seen, and the server marks everything from that
+  // person up to it (PUT /api/dm/:messageId/read), so the ids a burst skipped
+  // are read too rather than left on the badge.
   const dmReadTimersRef = useRef({});
   const [deletedDmUserIds, setDeletedDmUserIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_deleted_dms') || '[]'); } catch { return []; }

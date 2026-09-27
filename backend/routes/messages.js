@@ -2450,21 +2450,43 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     // a route whose entire job is "flip a boolean" can never be a content read
     // again. No caller reads anything but the ack (App.js calls this for live
     // arrivals while the thread is open; the ack is all it uses).
+    //
+    // EVERYTHING FROM THAT PERSON UP TO THIS ID, not this one row. The app
+    // marks once per 1.5 s per open thread (the badge push fans out to every
+    // device) and sends the newest id it saw, so in a burst ("omg", then "look
+    // at this") only the last one was marked. The first stayed unread, went
+    // on the app icon while the thread was on screen and came back on the
+    // list's row after the next reload. Bounded by the named row's own sender
+    // and by its id, so a mark in one thread never reads another thread and
+    // never a message that had not arrived yet. The older rows are swept the
+    // way GET /dm/:userId sweeps on open, hidden ones included: nothing of
+    // theirs comes back (the answer is the named row's ack), and an unhide
+    // then restores a message already read instead of a badge. The named row
+    // itself keeps the takedown predicate, and the 404 below is still decided
+    // by it alone.
     const result = await pool.query(
       `UPDATE direct_messages SET read_status = TRUE
-       WHERE id = $1 AND receiver_id = $2
-         AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
+       WHERE receiver_id = $2
+         AND (
+           (id = $1 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL)
+           OR (id < $1 AND read_status = FALSE AND sender_id = (
+             SELECT t.sender_id FROM direct_messages t
+              WHERE t.id = $1 AND t.receiver_id = $2
+                AND COALESCE(t.is_hidden, false) = false AND t.sender_deleted_at IS NULL
+           ))
+         )
        RETURNING id, read_status`,
       [messageId, req.user.id]
     );
 
-    if (result.rows.length === 0) {
+    const named = result.rows.find((r) => Number(r.id) === messageId);
+    if (!named) {
       // Same answer for "no such message", "not yours" and "taken down" — the
       // status code must not tell a holder of the id which one it was.
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    res.json({ message: result.rows[0] });
+    res.json({ message: named });
     pushBadgeSync(req.user.id).catch(() => {});
   } catch (err) {
     console.error('Mark read error:', err);
