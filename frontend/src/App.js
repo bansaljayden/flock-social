@@ -4164,10 +4164,37 @@ const dropContentById = (rows, contentId) => {
   return kept.length === rows.length ? rows : kept;
 };
 
-const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
+// A DOUBLE TAP ON CREATE USED TO POST THE DEAL (OR THE EVENT) TWICE. onSave
+// awaits the network and the parent closes the modal only once it resolves, so
+// for the whole round trip Create stayed enabled over the same form, and both
+// routes are a plain INSERT with nothing unique behind them: a second tap, or a
+// retap on a slow request, was a second public promotion. The Post Deal button
+// fixed this for itself by clearing its box; a form cannot clear itself, so
+// these hold the button while a save is in flight. The ref is the guard, read
+// synchronously on every tap; the state is only what greys the button out, and
+// it is released on a refusal so the owner can fix the text and try again.
+function useSaveInFlight(onSave) {
+  const inFlight = React.useRef(false);
+  const [saving, setSaving] = React.useState(false);
+  const save = React.useCallback(async (form) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      await onSave(form);
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  }, [onSave]);
+  return [saving, save];
+}
+
+export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
     ? { title: editing.title || '', desc: editing.description || editing.desc || '', time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
     : { title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+  const [saving, save] = useSaveInFlight(onSave);
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
@@ -4204,17 +4231,18 @@ const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, c
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="hit44 glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title || !form.desc} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title && form.desc ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title || !form.desc} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title && form.desc ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title && form.desc ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
   );
 });
 
-const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, colors }) {
+export const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
     ? { title: editing.title || '', date: editing.date || editing.event_date || '', time: editing.time || editing.event_time || '', capacity: (editing.capacity || '').toString() }
     : { title: '', date: '', time: '', capacity: '' });
+  const [saving, save] = useSaveInFlight(onSave);
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
@@ -4236,7 +4264,7 @@ const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, c
         </div>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="hit44 glass-btn glass-navy" onClick={() => onSave(form)} disabled={!form.title} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: form.title ? 'pointer' : 'not-allowed' }}>{editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
