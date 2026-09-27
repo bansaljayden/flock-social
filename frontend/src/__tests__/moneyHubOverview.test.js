@@ -220,6 +220,19 @@ const OWNER_ACTIONS = {
   counts: { todo: 2, optionalTodo: 1, done: 2, unknown: 0, checkYourself: 5 },
 };
 
+// People accounts, as the server counts them: fourteen New York days ending
+// today, rolling weeks, a first-week share over 40 accounts, and last week's
+// plans. Every figure is a count.
+const PEOPLE_DAYS = [3, 0, 5, 2, 1, 0, 4, 6, 2, 3, 0, 7, 5, 2].map((n, i) => ({ day: `2026-09-${String(12 + i).padStart(2, '0')}`, n }));
+const PEOPLE = {
+  status: 'ok',
+  asOf: '2026-09-25T13:27:00.000Z',
+  signups: { days: PEOPLE_DAYS, todayYmd: '2026-09-25', last7: 25, prior7: 15 },
+  activation: { cohort: 40, activated: 17, percent: 42.5, fromDays: 8, toDays: 37, windowDays: 7, minForShare: 10 },
+  active: { last7: 61, prior7: 55 },
+  plans: { madeLast7: 12, madePrior7: 8, passedLast7: 10, confirmedLast7: 7, confirmedPercent: 70, guestAnswersLast7: 23, guestAnswersPrior7: 15, minForShare: 10 },
+};
+
 const BASE = {
   generatedAt: '2026-09-25T13:27:00.000Z',
   month: { label: 'September 2026', startYmd: '2026-09-01', todayYmd: '2026-09-25', daysInMonth: 30, dayOfMonth: 25, tz: 'America/New_York' },
@@ -229,6 +242,7 @@ const BASE = {
   crowdData: CROWD_DATA,
   model: MODEL,
   health: HEALTH,
+  people: PEOPLE,
   ownerActions: OWNER_ACTIONS,
 };
 
@@ -896,11 +910,12 @@ describe('only you can do these: the operator\'s own steps', () => {
   const replaceSteps = (changes) => OWNER_ACTIONS.items.map((s) => (changes[s.id] ? { ...s, ...changes[s.id] } : s));
   const DB = "Database on Railway's private network";
 
-  test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the month', async () => {
+  test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the month and its people', async () => {
     await renderHub(CONNECTED);
     const card = stepsCard();
-    // Second on the page, straight after the month's figures.
-    expect(card.previousSibling.textContent).toMatch(/^September 2026/);
+    // Straight after the month's figures and the people behind them.
+    expect(card.previousSibling).toBe(screen.getByRole('heading', { name: 'People' }).parentElement);
+    expect(card.previousSibling.previousSibling.textContent).toMatch(/^September 2026/);
     expect(within(card).getByText('Checked by the server')).toBeInTheDocument();
     expect(within(card).getByText('2 to do, 1 optional step not done, 2 done.')).toBeInTheDocument();
 
@@ -1017,6 +1032,122 @@ describe('only you can do these: the operator\'s own steps', () => {
 });
 
 // ---------------------------------------------------------------------------
+// PEOPLE. Signups by New York day, the share of new accounts that start or
+// join a plan in their first week, how many people used Flock this week, and
+// last week's plans, all counts from the server. A share under the server's
+// floor arrives null and must be drawn as its two counts, never a percentage;
+// a week with nothing in it says so in words.
+// ---------------------------------------------------------------------------
+describe('people: signups, first weeks, the active and their plans', () => {
+  const peopleCard = () => screen.getByRole('heading', { name: 'People' }).parentElement;
+  const withPeople = (people) => ({ ...CONNECTED, people });
+  const percentsIn = (el) => el.textContent.match(/\d+(\.\d+)?%/g);
+
+  test('right after the month, every figure with what it counts, and a bar for each New York day', async () => {
+    await renderHub(CONNECTED);
+    const card = peopleCard();
+    expect(card.previousSibling.textContent).toMatch(/^September 2026/);
+    expect(card.textContent).toMatch(/People accounts only: not venue owners, admins or banned accounts\./);
+
+    // Fourteen bars, the busiest one full height, a day with nobody new a
+    // flat stub, today lighter; the label reads out every day's count.
+    const strip = within(card).getByRole('img');
+    expect(strip).toHaveAttribute('aria-label', 'Signups each day: Sep 12 3, Sep 13 0, Sep 14 5, Sep 15 2, Sep 16 1, Sep 17 0, Sep 18 4, Sep 19 6, Sep 20 2, Sep 21 3, Sep 22 0, Sep 23 7, Sep 24 5, today 2.');
+    const bars = Array.from(strip.children);
+    expect(bars).toHaveLength(14);
+    expect(bars[11].style.height).toBe('48px');
+    expect(bars[1].style.height).toBe('2px');
+    expect(bars[13].style.opacity).toBe('0.55');
+    expect(bars[13]).toHaveAttribute('title', 'Today so far: 2');
+    expect(within(card).getByText('Busiest day 7')).toBeInTheDocument();
+    expect(within(card).getByText('Today so far')).toBeInTheDocument();
+
+    const signups = hubRow('Signups, last 7 days');
+    expect(within(signups).getByText('25')).toBeInTheDocument();
+    expect(signups.textContent).toMatch(/15 in the 7 days before\. Both count back from now, so a morning never reads as a drop\. The bars are New York days\./);
+    const first = hubRow('Made or accepted a plan in their first week');
+    expect(within(first).getByText('43%')).toBeInTheDocument();
+    expect(first.textContent).toMatch(/17 of the 40 accounts made 8 to 37 days ago made a plan or accepted one within 7 days of signing up\./);
+    const active = hubRow('Used Flock, last 7 days');
+    expect(within(active).getByText('61')).toBeInTheDocument();
+    expect(active.textContent).toMatch(/55 in the 7 days before\. Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in\./);
+    expect(within(hubRow('Plans made, last 7 days')).getByText('12')).toBeInTheDocument();
+    expect(hubRow('Plans made, last 7 days').textContent).toMatch(/8 in the 7 days before\./);
+    const confirmed = hubRow('Confirmed before their time');
+    expect(within(confirmed).getByText('70%')).toBeInTheDocument();
+    expect(confirmed.textContent).toMatch(/Of the 10 plans whose time came in the last 7 days, 7 had been confirmed\./);
+    const guests = hubRow('Guest answers from share links');
+    expect(within(guests).getByText('23')).toBeInTheDocument();
+    expect(guests.textContent).toMatch(/15 in the 7 days before\./);
+    expect(percentsIn(card)).toEqual(['43%', '70%']);
+    expect(card.textContent).not.toMatch(/—/);
+  });
+
+  test('under the floor a share is its two counts, never a percentage', async () => {
+    await renderHub(withPeople({
+      ...PEOPLE,
+      activation: { ...PEOPLE.activation, cohort: 6, activated: 2, percent: null },
+      plans: { ...PEOPLE.plans, passedLast7: 3, confirmedLast7: 1, confirmedPercent: null },
+    }));
+    const card = peopleCard();
+    expect(within(hubRow('Made or accepted a plan in their first week')).getByText('2 of 6')).toBeInTheDocument();
+    expect(hubRow('Made or accepted a plan in their first week').textContent).toMatch(/The share shows from 10 accounts\./);
+    expect(within(hubRow('Confirmed before their time')).getByText('1 of 3')).toBeInTheDocument();
+    expect(hubRow('Confirmed before their time').textContent).toMatch(/Of the 3 plans whose time came in the last 7 days, 1 had been confirmed\. The share shows from 10 plans\./);
+    expect(percentsIn(card)).toBeNull();
+  });
+
+  test('a share that arrives under the floor anyway is still not drawn', async () => {
+    // The server withholds it; this pins the screen's own half of the rule.
+    await renderHub(withPeople({
+      ...PEOPLE,
+      activation: { ...PEOPLE.activation, cohort: 4, activated: 3, percent: 75 },
+      plans: { ...PEOPLE.plans, passedLast7: 2, confirmedLast7: 2, confirmedPercent: 100 },
+    }));
+    const card = peopleCard();
+    expect(within(hubRow('Made or accepted a plan in their first week')).getByText('3 of 4')).toBeInTheDocument();
+    expect(within(hubRow('Confirmed before their time')).getByText('2 of 2')).toBeInTheDocument();
+    expect(percentsIn(card)).toBeNull();
+  });
+
+  test('a quiet fortnight says so in words, with fourteen flat bars and no share', async () => {
+    await renderHub(withPeople({
+      ...PEOPLE,
+      signups: { ...PEOPLE.signups, days: PEOPLE_DAYS.map((d) => ({ ...d, n: 0 })), last7: 0, prior7: 0 },
+      activation: { ...PEOPLE.activation, cohort: 0, activated: 0, percent: null },
+      active: { last7: 0, prior7: 0 },
+      plans: { ...PEOPLE.plans, madeLast7: 0, madePrior7: 0, passedLast7: 0, confirmedLast7: 0, confirmedPercent: null, guestAnswersLast7: 0, guestAnswersPrior7: 0 },
+    }));
+    const card = peopleCard();
+    expect(within(card).getByText('Nobody signed up in the last 14 days.')).toBeInTheDocument();
+    expect(within(card).getByText('Nobody new')).toBeInTheDocument();
+    for (const bar of within(card).getByRole('img').children) expect(bar.style.height).toBe('2px');
+    expect(within(hubRow('Made or accepted a plan in their first week')).getByText('None yet')).toBeInTheDocument();
+    expect(hubRow('Made or accepted a plan in their first week').textContent).toMatch(/No people account is 8 to 37 days old, so no first week has finished inside the window\./);
+    expect(within(hubRow('Confirmed before their time')).getByText('None')).toBeInTheDocument();
+    expect(within(hubRow('Signups, last 7 days')).getByText('0')).toBeInTheDocument();
+    expect(percentsIn(card)).toBeNull();
+  });
+
+  test('a failed read says could not load with the server\'s reason and draws no figure', async () => {
+    await renderHub(withPeople({ status: 'error', reason: 'The account and plan tables could not be read, so there are no people figures to show.' }));
+    const card = peopleCard();
+    expect(within(card).getByText('Could not load')).toBeInTheDocument();
+    expect(within(card).getByText(/The account and plan tables could not be read/)).toBeInTheDocument();
+    expect(within(card).queryByRole('img')).toBeNull();
+    expect(within(card).queryByText('Signups, last 7 days')).toBeNull();
+    expect(card.textContent).not.toMatch(/\d/);
+  });
+
+  test('a server from before this block draws no People card', async () => {
+    const { people, ...older } = CONNECTED;
+    expect(people).toBeDefined();
+    await renderHub(older);
+    expect(screen.queryByRole('heading', { name: 'People' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // NEEDS ATTENTION. The first card on the Overview gathers every live problem
 // the payload carries, each linking to the card it came from, so a morning
 // look finds a stopped collector or an open dispute without scrolling past
@@ -1107,7 +1238,7 @@ describe('needs attention: every live problem at the top, each linking to its ca
     ['a BestTime key BestTime calls invalid', { ...QUIET, crowdData: { ...CROWD_DATA, besttime: { ...CROWD_DATA.besttime, key: { healthy: false, status: 'Error', valid: false, active: true } } } },
       'BestTime', 'Key not working', /BestTime says status Error, valid false, active true\./, 'hub-crowd'],
     ['a price disagreement', { ...QUIET, pricing: { ...QUIET.pricing, mismatches: 2 } },
-      'Price disagreements', '2', /The Prices card says each one in words\./, 'hub-prices'],
+      'Price disagreements', '2', /A store's price, the RevenueCat offering and what the code states do not all agree\./, 'hub-prices'],
     ['a failed Pro renewal', withRevenue({ stripe: stripeWith({ subscriptions: { ...CONNECTED.revenue.stripe.subscriptions, pro: summary({ live: 2, pastDue: 1 }) } }) }),
       'Past due, Flock Pro', '1', /A renewal failed and Stripe is retrying it\./, 'hub-revenue'],
     ['a Roost renewal Stripe gave up on', withRevenue({ stripe: stripeWith({ subscriptions: { ...CONNECTED.revenue.stripe.subscriptions, roost: summary({ unpaid: 1 }) } }) }),
