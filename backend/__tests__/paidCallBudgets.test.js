@@ -108,12 +108,21 @@ authMod.authenticate = (req, _res, next) => { req.user = CURRENT_USER; next(); }
 const mlPredictor = require('../services/mlPredictor');
 const mlInternals = mlPredictor._internals;
 const realPredictBusyness = mlPredictor.predictBusyness;
-mlPredictor.predictBusyness = async () => ({
-  score: 55, label: 'Moderate', confidence: 60, factors: {},
-  dataSourcesUsed: ['ml_model'], predictionMethod: 'ml', modelVersion: 'test',
-});
-mlPredictor.predictHourlyForecast = async (_v, _w, startHour, count) =>
-  Array.from({ length: count || 12 }, (_, i) => ({ hour: `${(startHour + i) % 24}`, score: 55, label: 'Moderate' }));
+// The options each predictor call was handed, because the options carry the
+// account the predictor's own paid lookups (Ticketmaster, the venue and
+// neighbour reads, the hourly weather) are charged to.
+let predictorCalls = [];
+mlPredictor.predictBusyness = async (venue, _w, _ts, options) => {
+  predictorCalls.push({ fn: 'predictBusyness', placeId: venue && venue.place_id, options });
+  return {
+    score: 55, label: 'Moderate', confidence: 60, factors: {},
+    dataSourcesUsed: ['ml_model'], predictionMethod: 'ml', modelVersion: 'test',
+  };
+};
+mlPredictor.predictHourlyForecast = async (venue, _w, startHour, count, _base, options) => {
+  predictorCalls.push({ fn: 'predictHourlyForecast', placeId: venue && venue.place_id, options });
+  return Array.from({ length: count || 12 }, (_, i) => ({ hour: `${(startHour + i) % 24}`, score: 55, label: 'Moderate' }));
+};
 
 // --- Gemini, faked ----------------------------------------------------------
 // ai.js destructures GoogleGenAI at load, so the class is replaced on the
@@ -211,6 +220,7 @@ test.beforeEach(() => {
   queries = [];
   handlers = [];
   weatherCalls = [];
+  predictorCalls = [];
   googleCalls = [];
   chatCreates = [];
   sendCalls = [];
@@ -507,6 +517,23 @@ test('Birdie’s get_weather tool charges the caller, since the model relays the
   assert.ok(out && !out.error);
   assert.deepStrictEqual(weatherCalls[0].opts, { userId: 42 },
     'a user can steer Birdie into arbitrary coordinates repeatedly');
+});
+
+test('Birdie’s crowd tool charges the predictor’s paid lookups to the caller', async () => {
+  // The predictor's per-account legs (EVENT_USER_DAILY, the venue lookup and
+  // neighbour budgets, the hourly weather) apply only to a call that names an
+  // account. Birdie named none, so a user asking about venue after venue spent
+  // the process-wide event budget with no ceiling of their own, while the card
+  // for the same venue has always passed the caller.
+  const out = await executeTool('get_crowd_prediction', { place_id: 'PLACE_A' }, 42, { includeForecast: true });
+  assert.ok(out && !out.error, `the tool failed: ${out && out.error}`);
+  const busyness = predictorCalls.find((c) => c.fn === 'predictBusyness');
+  const hourly = predictorCalls.find((c) => c.fn === 'predictHourlyForecast');
+  assert.ok(busyness && hourly, 'the tool scores the venue and walks its day');
+  assert.deepStrictEqual(busyness.options, { userId: 42 },
+    'the headline score ran with no account, so its event and venue lookups were charged to nobody');
+  assert.deepStrictEqual(hourly.options, { userId: 42 },
+    'the 24-hour walk ran with no account, so its event prefetch and hourly weather were charged to nobody');
 });
 
 // ---------------------------------------------------------------------------

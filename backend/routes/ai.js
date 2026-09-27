@@ -929,7 +929,16 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         ? await getWeather(lat, lon, { userId })
         : null;
 
-      const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
+      // Charged to the steering account for the same reason as the weather
+      // above. Without an id the predictor's own per-account legs never apply
+      // (services/mlPredictor.js: a missing userId is reserved for background
+      // producers like crowdAlerts), so every Ticketmaster lookup, venue
+      // lookup and neighbour scan this made landed on the process-wide ledgers
+      // alone. One account asking about venue after venue could then spend the
+      // whole day's event budget for everyone, which is the exact thing
+      // EVENT_USER_DAILY exists to stop. routes/crowd.js passes the caller on
+      // the same two calls.
+      const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime, { userId });
 
       // The owner's live reading outranks the MODEL here for the same reason
       // it does on the card (services/ownerReports.js): Birdie quoting the
@@ -1122,7 +1131,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
         // Birdie must never suggest an hour that already passed, and its answer
         // has to agree with the score it quotes in the same sentence.
-        const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime);
+        // The caller again: the 24-hour walk prefetches the day's events and
+        // the hourly weather, and both meter an account only when told which.
+        const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime, { userId });
         const next12 = fullDay.slice(0, 12);
         // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
         // Indexes still line up with fullDay for the best-time exclusion. Both
