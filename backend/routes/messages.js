@@ -389,6 +389,34 @@ async function broadcastPins(req, flockId) {
   }
 }
 
+/**
+ * What a refused pin says, for the person asking.
+ *
+ * THE SEATS ARE THE FLOCK'S, THE BAR IS THE READER'S. A block keeps a pin of
+ * the other person's message off this reader's bar while it still holds one of
+ * the three seats for everybody else, who can see it and unpin it. Counting
+ * only what this reader sees would let them pin a fourth onto every other
+ * member's bar, so the count stays whole. What changes is the answer: "Unpin
+ * one first" over a bar with two pins on it was an instruction nobody could
+ * follow. Neutral words on purpose, since the hidden pin can be from someone
+ * who blocked this reader and that is theirs to know, not this sentence's.
+ *
+ * Never throws: failing to word the refusal must not turn it into a 500, so
+ * the plain sentence is the fallback.
+ */
+async function pinLimitMessage(flockId, userId, held) {
+  const plain = `Only ${MAX_PINS} messages can be pinned. Unpin one first.`;
+  try {
+    const seen = (await readFlockPinRows(flockId, await getInvisibleUserIds(userId))).length;
+    const hidden = held - seen;
+    if (hidden <= 0) return plain;
+    return `Only ${MAX_PINS} messages can be pinned, including ${hidden === 1 ? 'one' : hidden} you can't see. `
+      + (seen > 0 ? 'Unpin one first, or ask someone else in the plan to.' : 'Ask someone else in the plan to unpin one.');
+  } catch {
+    return plain;
+  }
+}
+
 // POST /api/flocks/:id/pins - pin a message
 router.post('/flocks/:id/pins',
   authenticate,
@@ -453,18 +481,32 @@ router.post('/flocks/:id/pins',
         // moderator hide now delete the row as well; this is what keeps a
         // row left over from before that, or from a delete that failed, from
         // holding a seat.
+        //
+        // A BANNED SENDER'S PIN IS NOT LIVE EITHER. A ban hides nothing in
+        // storage, but every member's invisible set carries every banned
+        // account (utils/blocks.js getInvisibleUserIds), so every read drops
+        // that pin and nobody is ever sent its id to unpin it. Counted, it
+        // held a seat for the whole flock for good, and three of them closed
+        // the bar. If the ban is lifted the pin shows again and the bar can
+        // hold four until somebody unpins one, which is rare and recoverable;
+        // a seat nobody can free is neither.
         const existing = await client.query(
           `SELECT COUNT(*)::int AS n FROM pinned_messages
             WHERE flock_id = $1
               AND EXISTS (SELECT 1 FROM messages m
                            WHERE m.id = pinned_messages.message_id
                              AND m.is_hidden IS NOT TRUE
-                             AND m.sender_deleted_at IS NULL)`,
+                             AND m.sender_deleted_at IS NULL
+                             AND NOT EXISTS (
+                               SELECT 1 FROM users su
+                                WHERE su.id = m.sender_id AND su.is_banned IS TRUE
+                             ))`,
           [flockId]
         );
-        if (existing.rows[0].n >= MAX_PINS) {
+        const held = existing.rows[0].n;
+        if (held >= MAX_PINS) {
           await client.query('ROLLBACK').catch(() => {});
-          return res.status(409).json({ error: `Only ${MAX_PINS} messages can be pinned. Unpin one first.` });
+          return res.status(409).json({ error: await pinLimitMessage(flockId, req.user.id, held) });
         }
         await client.query(
           `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)

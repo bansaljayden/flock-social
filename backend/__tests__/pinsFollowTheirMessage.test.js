@@ -194,6 +194,12 @@ test('the three-pin ceiling counts only pins whose message is still there', asyn
   assert.match(count, /m\.is_hidden IS NOT TRUE/);
   assert.match(count, /m\.sender_deleted_at IS NULL/);
   assert.match(count, /flock_id = \$1/);
+  // A banned member's pin is dropped from every member's read, because every
+  // invisible set carries every banned account, so nobody is ever handed its
+  // id to unpin it. Counted, it held one of the three seats for good.
+  assert.match(count, /su\.id = m\.sender_id AND su\.is_banned IS TRUE/);
+  assert.ok(count.indexOf('is_banned') > count.indexOf('m.id = pinned_messages.message_id'),
+    'the banned test belongs to the pinned message, inside its EXISTS');
 });
 
 // ---------------------------------------------------------------------------
