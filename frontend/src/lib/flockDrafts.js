@@ -22,7 +22,20 @@
 
 const drafts = new Map();
 
+// Moved on by every clear. The chat screen files what is in its box when it
+// is taken away without its own exit (a notification tap into another plan,
+// or the account going), and on a sign-out that happens AFTER the clear: Log
+// out empties the store first and the screen goes with the account a render
+// later. A draft filed by a screen that opened before the clear is refused,
+// or the sweep would be undone the moment it ran.
+let generation = 0;
+
 const keyFor = (accountId, flockId) => `${accountId}:${flockId}`;
+
+/** Which clear the store is on, for a screen to hold from when it opened. */
+export function flockDraftGeneration() {
+  return generation;
+}
 
 /** What this account last left in this plan's box, or ''. */
 export function readFlockDraft(accountId, flockId) {
@@ -30,9 +43,13 @@ export function readFlockDraft(accountId, flockId) {
   return drafts.get(keyFor(accountId, flockId)) || '';
 }
 
-/** File a draft under its account and plan. An empty one removes the entry. */
-export function keepFlockDraft(accountId, flockId, text) {
-  if (accountId == null || flockId == null) return;
+/**
+ * File a draft under its account and plan. An empty one removes the entry.
+ * `since` is the generation the writer opened under; a draft from before the
+ * last clear is not filed.
+ */
+export function keepFlockDraft(accountId, flockId, text, since = generation) {
+  if (accountId == null || flockId == null || since !== generation) return;
   if (text) drafts.set(keyFor(accountId, flockId), text);
   else drafts.delete(keyFor(accountId, flockId));
 }
@@ -40,4 +57,5 @@ export function keepFlockDraft(accountId, flockId, text) {
 /** Every draft on the device, gone. Called by api.js clearLocalSession. */
 export function clearFlockDrafts() {
   drafts.clear();
+  generation += 1;
 }

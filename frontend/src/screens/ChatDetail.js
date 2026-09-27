@@ -209,7 +209,7 @@ import useKeyboardComposer from '../hooks/useKeyboardComposer';
    thread. Keyed by the account as well, and emptied at sign-out, because
    a Map here outlived the session that wrote it: lib/flockDrafts.js says
    how that put one account's sentence in the next account's box. */
-import { readFlockDraft, keepFlockDraft } from '../lib/flockDrafts';
+import { readFlockDraft, keepFlockDraft, flockDraftGeneration } from '../lib/flockDrafts';
 
 /* STABLE IDENTITY, LATEST CLOSURE: components/chat/useStableFn.js, with the
    whole explanation of what it is for and what it does NOT cover.
@@ -968,8 +968,10 @@ export default function ChatDetail({
     }, []);
     /* Put the stashed sentence back into App.js's shared ref too, or the
        box would show text that Send does not read. Safe because
-       leaveChatScreen empties that ref on the way out, so it is only ever
-       loaded while this exact thread is on screen. */
+       leaveChatScreen empties that ref on the way out, and App.js's
+       leaveOpenThread empties it on every other way the thread goes (a
+       notification tap included), so it is only ever loaded while this
+       exact thread is on screen. */
     const restoredForRef = React.useRef(null);
     React.useEffect(() => {
       const id = selectedFlockId;
@@ -980,6 +982,24 @@ export default function ChatDetail({
       writeDraft(stashed);
       setChatInput(stashed);
     }, [selectedFlockId, draftAccountId, writeDraft, setChatInput]);
+
+    /* TAKEN AWAY WITHOUT ITS OWN EXIT, and the draft is still filed. App.js
+       keys this screen on the plan, so a notification tap or a Birdie card
+       that moves an open chat to another plan unmounts this one without
+       leaveChatScreen ever running, and so does a tap that lands on another
+       tab. What was typed is kept against THIS plan the way leaveChatScreen
+       keeps it, and App.js empties the shared composer on its side
+       (leaveOpenThread), so none of it reaches the next conversation. A null
+       restoredForRef means leaveChatScreen already ran and filed it. The
+       generation is the one this screen opened under: a sign-out in between
+       means the draft belongs to a session that is over (lib/flockDrafts.js). */
+    React.useEffect(() => {
+      const openedUnder = flockDraftGeneration();
+      return () => {
+        const id = restoredForRef.current;
+        if (id) keepFlockDraft(draftAccountId, id, draftRef.current, openedUnder);
+      };
+    }, [draftAccountId]);
 
     const hadTextRef = React.useRef(false);
     React.useEffect(() => {

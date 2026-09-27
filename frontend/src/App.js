@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -14928,6 +14928,65 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => clearInterval(interval);
   }, [dmSharingLocation, hasUserLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── A CONVERSATION CHANGED UNDER AN OPEN CHAT ──────────────────────────
+  //
+  // Every exit a chat screen draws runs that screen's own leave
+  // (leaveChatScreen, leaveDmScreen): the shared composer is emptied, a photo
+  // waiting to go is dropped, the reply bar and the sheets close, and a DM
+  // location share ends. A notification tap, or a Birdie card, moves the app
+  // from an open chat straight to another conversation or another tab and runs
+  // neither. Both screens are keyed on their conversation now (renderScreen),
+  // so what they hold themselves starts over, but everything below is held up
+  // here, and it rode across: Alice's photo sat armed in Bob's composer with
+  // the sentence written to her, and one tap on Send delivered both to him.
+  //
+  // So whenever the open conversation stops being the one on screen, by any
+  // route, this puts down what those two functions put down. After a screen's
+  // own exit it finds nothing left to clear. A flock draft is not lost: the
+  // chat screen files it against its plan as it unmounts. A DM draft is
+  // dropped, the way leaveDmScreen drops it.
+  const leaveOpenThread = useCallback(() => {
+    setChatInput('');
+    setPendingImage(null);
+    setShowImagePreview(false);
+    setFlockReplyingTo(null);
+    setShowReactionPicker(null);
+    setShowFlockMenu(false);
+    setShowLeaveConfirm(false);
+    setShowChatSearch(false);
+    setChatSearch('');
+    setShowVotePanel(false);
+    setChatNavOpen(false);
+    setDmPendingImage(null);
+    setShowDmImagePreview(false);
+    setDmReplyingTo(null);
+    setShowDmReactionPicker(null);
+    setShowDmMenu(false);
+    setShowDeleteDmConfirm(false);
+    setShowDmChatSearch(false);
+    setDmChatSearch('');
+    setShowDmVotePanel(false);
+    setShowDmVenueSearch(false);
+    setDmNavOpen(false);
+    if (dmSharingLocation) {
+      dmStopSharingLocation(dmSharingLocation);
+      setDmSharingLocation(null);
+    }
+  }, [setChatInput, dmSharingLocation]);
+  // Which conversation is open, or null when no chat screen is up.
+  const openThread = currentScreen === 'chatDetail' && selectedFlockId != null
+    ? `flock:${selectedFlockId}`
+    : (currentScreen === 'dmDetail' && selectedDmId != null ? `dm:${selectedDmId}` : null);
+  const openThreadRef = useRef(openThread);
+  // A layout effect, so the clear lands before the next screen's own passive
+  // effects run: the flock chat loads the new plan's saved draft into the
+  // composer in one of those, and a clear after it would wipe that draft.
+  React.useLayoutEffect(() => {
+    const was = openThreadRef.current;
+    openThreadRef.current = openThread;
+    if (was && was !== openThread) leaveOpenThread();
+  }, [openThread, leaveOpenThread]);
+
   // DM typing indicators
   useEffect(() => {
     // Reset on every thread change. Both listeners below are keyed on the open
@@ -17564,8 +17623,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         updateFlockVenue,
         updateFlockVotes,
       };
+      // KEYED ON THE PLAN. Without a key a notification tap from one open chat
+      // into another reused this screen, and everything it holds for itself
+      // (the draft in the box, an open sheet, a photo up in the viewer) came
+      // along into the other conversation. The key is on the boundary so the
+      // element below stays the spread the extraction contract pins. What
+      // App.js holds for the composer is put down by leaveOpenThread.
       return (
-        <React.Suspense fallback={<ScreenChunkFallback chat />}>
+        <React.Suspense key={`flock:${selectedFlockId}`} fallback={<ScreenChunkFallback chat />}>
           <ChatDetail {...chatDetailProps} />
         </React.Suspense>
       );
@@ -17682,8 +17747,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // cold start, or a partner who deleted their account, left a blank screen
       // with no way out. The flock twin has had MissingFlockPanel for this.
       if (!selectedDm) return <MissingDmPanel />;
+      // Keyed on the person, for the reason the flock chat above is keyed on
+      // the plan: a tap on Bob's notification while Alice's thread was open
+      // reused this screen, and the sentence written to Alice was still in the
+      // box in Bob's thread.
       return (
-        <React.Suspense fallback={<ScreenChunkFallback chat />}>
+        <React.Suspense key={`dm:${selectedDmId}`} fallback={<ScreenChunkFallback chat />}>
           <DmDetail {...dmDetailProps} />
         </React.Suspense>
       );

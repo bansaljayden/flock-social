@@ -1392,10 +1392,12 @@ export default function DmDetail({
            event, so one function serves the whole sequence. */
         onTouch={keyboard.dismissOnDrag}
         rows={dmRows}
-        /* The other person's id. App.js mounts this screen with no key, so a
-           jump straight from one conversation into another reuses the
-           component; without this the second thread would inherit the first
-           one's scroll position and its unread count. */
+        /* The other person's id. App.js mounted this screen with no key, so a
+           jump straight from one conversation into another reused the
+           component and the second thread inherited the first one's scroll
+           position and its unread count. It is keyed on the person now, which
+           remounts it; this stays so the list's own reset never depends on
+           how the screen above it happens to be mounted. */
         threadKey={selectedDmId}
         myId={myDmId}
         ownName="You"
