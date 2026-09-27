@@ -14,6 +14,10 @@ import { tokenClaims, sameSignIn } from '../lib/sessionIdentity';
 // The one "is this the app" answer (lib/nativeShell.js), for the RevenueCat
 // half of sign-out. Already in the entry chunk through index.js, so free here.
 import { isNativeShell } from '../lib/nativeShell';
+// The flock chat's half-written messages, held in memory for the session. The
+// sign-out below empties them (lib/flockDrafts.js says why they cannot live in
+// the chat screen, where this file could not reach them).
+import { clearFlockDrafts } from '../lib/flockDrafts';
 
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
@@ -534,6 +538,10 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   held.forEach(([key, value]) => {
     try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
   });
+  // And what was never in storage to sweep: a sentence typed into a flock chat
+  // and left there. Signing out does not reload the page, so it sat in memory
+  // and came back in the next account's box for any plan both of them are in.
+  clearFlockDrafts();
   // No answer is in force now, so the bar opens again, for whoever signs in
   // next (it waits for the tab bar in the app).
   announceConsentChange();
