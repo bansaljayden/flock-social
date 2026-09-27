@@ -61,6 +61,9 @@ function dispatch(sql, params) {
   // The accept asks whether anybody on the roster has a block with the joiner
   // (utils/blocks.js). Nobody in this file has one.
   if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
+  // Every plan delete copies what an open report names before it cascades
+  // (utils/reportEvidence.js). Nobody in this file has reported anything.
+  if (/^\s*INSERT INTO content_report_evidence/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
     if (re.test(sql)) {

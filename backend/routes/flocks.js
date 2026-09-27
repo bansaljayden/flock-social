@@ -29,6 +29,8 @@ const { broadcastGuestVote } = require('./venues');
 const { reconfirmState, RECONFIRM_MEMBER_WRITE_SQL } = require('../utils/reconfirm');
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
+// What a report names is copied out before a plan delete cascades it away.
+const { PRESERVE_REPORTED_PLAN_CONTENT_SQL, reportedPlanContentInsert } = require('../utils/reportEvidence');
 const {
   emitToFlockExcludingBlocked,
   emitToFlockMembers,
@@ -2021,6 +2023,12 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
           [flockId, req.user.id]
         )).rows.map((m) => m.user_id);
       }
+      // REPORTED CONTENT OUTLIVES THE PLAN. The DELETE below cascades every
+      // message and guest answer in it away, and the host is the person with
+      // the most reason to delete a plan whose chat somebody has reported. So
+      // what an open report names is copied first, in this transaction, where
+      // the moderation console still finds it (utils/reportEvidence.js).
+      await client.query(PRESERVE_REPORTED_PLAN_CONTENT_SQL, [flockId]);
       const removed = await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       // Same two-statement window as PUT: the ownership check read a row that
       // was gone by the time this ran. Reporting "Flock deleted" for a DELETE
@@ -3444,6 +3452,17 @@ router.post('/:id/decline', param('id').isInt({ min: 1, max: INT4_MAX }).withMes
   }
 });
 
+// The reported-content copy a member's leave takes when it is about to empty
+// the plan ($1 the plan, $2 the leaver): the leaver has a row to delete and no
+// other accepted member remains, the two conditions the leave's DELETE of the
+// plan asks.
+const LAST_LEAVE_PRESERVE_SQL = reportedPlanContentInsert(
+  (col) => `${col} = $1`,
+  `EXISTS (SELECT 1 FROM flock_members lf WHERE lf.flock_id = $1 AND lf.user_id = $2)
+   AND NOT EXISTS (SELECT 1 FROM flock_members lo
+                    WHERE lo.flock_id = $1 AND lo.status = 'accepted' AND lo.user_id <> $2)`
+);
+
 // POST /api/flocks/:id/leave - Leave a flock
 router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
@@ -3553,7 +3572,10 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
             [flockId, req.user.id]
           )).rows.map((m) => m.user_id);
         }
-        // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
+        // Creator leaving deletes the entire flock (cascade removes members,
+        // messages, votes), so what an open report names is kept first, as
+        // in DELETE /:id.
+        await client.query(PRESERVE_REPORTED_PLAN_CONTENT_SQL, [flockId]);
         await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
         await client.query('COMMIT');
       } catch (txErr) {
@@ -3668,6 +3690,13 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
           await leaveClient.query('ROLLBACK TO SAVEPOINT leave_audience');
         }
       }
+      // THE LAST ONE OUT DELETES THE PLAN, so it keeps what an open report
+      // names first, as DELETE /:id does (utils/reportEvidence.js), and only
+      // when this leave is the one that empties it: the leaver has a row and
+      // nobody else accepted remains. That is the statement below's own
+      // condition, and it cannot change in between, because every write that
+      // makes someone an accepted member waits on the row lock this holds.
+      await leaveClient.query(LAST_LEAVE_PRESERVE_SQL, [flockId, req.user.id]);
       left = await leaveClient.query(
         `WITH gone AS (
            DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1

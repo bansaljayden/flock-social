@@ -22,6 +22,12 @@
 //    plan had moved and the old window stayed open with its answers counting.
 //    They are one transaction now.
 //
+// 3. A PLAN DELETE AND THE REPORTS FILED IN IT. messages and guest_rsvps
+//    cascade away with their plan, so deleting a plan took reported content
+//    with it and the moderator opened the report to nothing. What an open
+//    report names is now copied out in the delete's own transaction
+//    (migration 110), on every door that deletes a plan.
+//
 // Real routes on a real migrated Postgres, because both defects are about what
 // the server does with locks and transactions, and a scripted pool can only
 // assert the order of statements it was written to expect. The interleavings
@@ -88,6 +94,9 @@ test.before(async () => {
   app.set('io', null);
   app.use('/api/flocks', require('../routes/flocks'));
   app.use('/api/users', users);
+  // The moderation console's readers, for section 3: what a moderator is shown
+  // once the plan a report was filed in is gone.
+  app.use('/api/admin', require('../routes/admin'));
   server = await new Promise((resolve) => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -421,4 +430,190 @@ test('a plan edit whose night-of reset fails changes nothing and says so, and on
   assert.equal(after.reconfirm_opened_at, null);
   assert.ok(after.members.every((m) => m.reconfirmed_at === null), 'every member answer cleared');
   assert.ok(after.guests.every((g) => g.reconfirmed_at === null), 'every guest answer cleared');
+});
+
+// ---------------------------------------------------------------------------
+// 3. REPORTED CONTENT OUTLIVES THE PLAN IT WAS POSTED IN
+// ---------------------------------------------------------------------------
+
+async function mkModerator() {
+  const mod = await mkUser('Mod');
+  await pool.query("UPDATE users SET role = 'admin' WHERE id = $1", [mod.id]);
+  return mod;
+}
+
+async function postIn(flockId, author, { text = '', type = 'text', venue = null, image = null } = {}) {
+  const { rows } = await pool.query(
+    `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [flockId, author.id, text, type, venue ? JSON.stringify(venue) : null, image]
+  );
+  return rows[0].id;
+}
+
+async function guestIn(flockId, name) {
+  const { rows } = await pool.query(
+    `INSERT INTO guest_rsvps (flock_id, name, status) VALUES ($1, $2, 'in') RETURNING id`, [flockId, name]
+  );
+  return rows[0].id;
+}
+
+async function report(reporter, author, type, contentId, status = 'open') {
+  const { rows } = await pool.query(
+    `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, status)
+     VALUES ($1, $2, $3, $4, 'harassment', $5) RETURNING id`,
+    [reporter.id, author ? author.id : null, type, contentId, status]
+  );
+  return rows[0].id;
+}
+
+const IMAGE = 'data:image/png;base64,iVBORw0KGgo=';
+
+// One plan with everything a report can name in it, and the reports: open ones
+// on a venue card, a photo and a guest's name, and two that must not be kept,
+// one on a message a moderator already resolved and nothing at all on the rest.
+async function reportedPlan({ host, abuser, reporter, roster }) {
+  const flockId = await planWith(host, roster, []);
+  const ids = {
+    card: await postIn(flockId, abuser, {
+      text: 'look', type: 'venue_card', venue: { name: 'Bad Place', addr: '1 Main St', category: 'bar' },
+    }),
+    photo: await postIn(flockId, host, { type: 'image', image: IMAGE }),
+    judged: await postIn(flockId, abuser, { text: 'already judged' }),
+    plain: await postIn(flockId, abuser, { text: 'nobody reported this' }),
+    guest: await guestIn(flockId, 'Rude Name'),
+    quiet: await guestIn(flockId, 'Cass'),
+  };
+  const reports = {
+    card: await report(reporter, abuser, 'flock_message', ids.card),
+    photo: await report(reporter, host, 'flock_message', ids.photo, 'under_review'),
+    judged: await report(reporter, abuser, 'flock_message', ids.judged, 'resolved'),
+    guest: await report(reporter, null, 'guest_rsvp', ids.guest),
+  };
+  return { flockId, ids, reports };
+}
+
+const keptCopies = async (ids) => (await pool.query(
+  `SELECT content_type, content_id FROM content_report_evidence
+    WHERE (content_type = 'flock_message' AND content_id = ANY($1))
+       OR (content_type = 'guest_rsvp' AND content_id = ANY($2))`,
+  [[ids.card, ids.photo, ids.judged, ids.plain], [ids.guest, ids.quiet]]
+)).rows.map((r) => `${r.content_type}:${r.content_id}`).sort();
+
+async function queueCard(mod, reportId) {
+  const res = await call('GET', '/api/admin/reports?limit=1000', { token: mod.token });
+  assert.equal(res.status, 200, res.text);
+  const card = res.body.reports.find((r) => r.id === reportId);
+  assert.ok(card, `report ${reportId} is in the queue`);
+  return card;
+}
+
+// Every door that deletes a plan, and who the roster has to hold for that door
+// to be the one that deletes it. The last member out only deletes a plan whose
+// host is not in the roster any more.
+const PLAN_DOORS = [
+  {
+    door: 'the host deletes the plan',
+    roster: ({ host, abuser, reporter }) => [host, abuser, reporter],
+    run: (flockId, { host }) => call('DELETE', `/api/flocks/${flockId}`, { token: host.token }),
+  },
+  {
+    door: 'the host leaves the plan',
+    roster: ({ host, abuser, reporter }) => [host, abuser, reporter],
+    run: (flockId, { host }) => call('POST', `/api/flocks/${flockId}/leave`, { token: host.token }),
+  },
+  {
+    door: 'the last member leaves the plan',
+    roster: ({ abuser }) => [abuser],
+    run: (flockId, { abuser }) => call('POST', `/api/flocks/${flockId}/leave`, { token: abuser.token }),
+  },
+];
+
+for (const { door, roster, run } of PLAN_DOORS) {
+  test(`when ${door}, what an open report names is kept, and the moderator still sees it`, async () => {
+    const people = {
+      host: await mkUser('Host'), abuser: await mkUser('Abuser'), reporter: await mkUser('Reporter'),
+    };
+    const mod = await mkModerator();
+    const { flockId, ids, reports } = await reportedPlan({ ...people, roster: roster(people) });
+
+    const res = await run(flockId, people);
+    assert.equal(res.status, 200, `${door}: ${res.text}`);
+    assert.equal(await count('SELECT COUNT(*)::int AS n FROM flocks WHERE id = $1', [flockId]), 0, 'the plan is gone');
+    assert.equal(await count('SELECT COUNT(*)::int AS n FROM messages WHERE flock_id = $1', [flockId]), 0);
+
+    // Exactly what an open or under-review report names: not the message a
+    // moderator already resolved, not what nobody reported.
+    assert.deepEqual(await keptCopies(ids), [
+      `flock_message:${ids.card}`, `flock_message:${ids.photo}`, `guest_rsvp:${ids.guest}`,
+    ].sort());
+
+    const card = await queueCard(mod, reports.card);
+    assert.equal(card.content_missing, false, 'the report no longer points at nothing');
+    assert.equal(card.content_preserved, true);
+    assert.match(card.content_excerpt, /look/);
+    assert.match(card.content_excerpt, /Venue card: Bad Place/, 'the venue card reads as it did live');
+    assert.equal(card.content_author_id, people.abuser.id);
+
+    const photo = await queueCard(mod, reports.photo);
+    assert.equal(photo.content_preserved, true);
+    assert.equal(photo.content_has_image, true);
+    const image = await call('GET', `/api/admin/reports/${reports.photo}/image`, { token: mod.token });
+    assert.equal(image.status, 200, image.text);
+    assert.equal(image.body.imageUrl, IMAGE, 'the photo itself survived');
+
+    const guest = await queueCard(mod, reports.guest);
+    assert.equal(guest.content_preserved, true);
+    assert.equal(guest.content_excerpt, 'Rude Name');
+
+    const text = await call('GET', `/api/admin/reports/${reports.card}/content`, { token: mod.token });
+    assert.equal(text.status, 200, text.text);
+    assert.match(text.body.text, /Venue card: Bad Place/);
+
+    // A report a moderator already closed keeps nothing, as the story purge.
+    const judged = await queueCard(mod, reports.judged);
+    assert.equal(judged.content_missing, true);
+    assert.equal(judged.content_preserved, false);
+  });
+}
+
+test('a leave that does not empty the plan copies nothing, and the chat stays where it is', async () => {
+  const people = {
+    host: await mkUser('Host'), abuser: await mkUser('Abuser'), reporter: await mkUser('Reporter'),
+  };
+  // The host is not in the roster, so the abuser leaving is a member's leave,
+  // and the reporter is still in: the plan stays.
+  const { flockId, ids } = await reportedPlan({ ...people, roster: [people.abuser, people.reporter] });
+  const res = await call('POST', `/api/flocks/${flockId}/leave`, { token: people.abuser.token });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.body.deleted, false);
+  assert.deepEqual(await keptCopies(ids), [], 'a copy is only for a plan that is going');
+  assert.equal(await count('SELECT COUNT(*)::int AS n FROM messages WHERE flock_id = $1', [flockId]), 4);
+});
+
+test("the host's account deletion keeps other people's reported content from the plans it takes, and a copy still goes with its author", async () => {
+  const people = {
+    host: await mkUser('Host'), abuser: await mkUser('Abuser'), reporter: await mkUser('Reporter'),
+  };
+  const mod = await mkModerator();
+  const { flockId, ids, reports } = await reportedPlan({
+    ...people, roster: [people.host, people.abuser, people.reporter],
+  });
+
+  const del = await call('DELETE', '/api/users/me', { token: people.host.token, body: { password: PASSWORD } });
+  assert.equal(del.status, 200, del.text);
+  assert.equal(await count('SELECT COUNT(*)::int AS n FROM flocks WHERE id = $1', [flockId]), 0);
+  // The host's own photo goes with the host's account, as an account deletion
+  // always takes its author's messages (MODERATION-LEGAL.md step 2). Somebody
+  // else's reported words, and a guest's reported name, do not go with it.
+  assert.deepEqual(await keptCopies(ids), [`flock_message:${ids.card}`, `guest_rsvp:${ids.guest}`].sort());
+  assert.equal((await queueCard(mod, reports.card)).content_preserved, true);
+  assert.equal((await queueCard(mod, reports.photo)).content_missing, true);
+
+  // And the copy is the message's stand-in, not a way around its author's own
+  // deletion: when the abuser deletes their account, the copy of their words
+  // goes with it. The guest's name has no account behind it and stays.
+  const gone = await call('DELETE', '/api/users/me', { token: people.abuser.token, body: { password: PASSWORD } });
+  assert.equal(gone.status, 200, gone.text);
+  assert.deepEqual(await keptCopies(ids), [`guest_rsvp:${ids.guest}`]);
 });

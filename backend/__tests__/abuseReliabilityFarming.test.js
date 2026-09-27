@@ -271,6 +271,9 @@ async function dispatch(sql, params) {
     world.members = world.members.filter((m) => m.flock_id !== Number(p[0]));
     return { rows: [], rowCount: 1 };
   }
+  // The copy of reported content every plan delete takes first
+  // (utils/reportEvidence.js). This fixture files no reports, so nothing is kept.
+  if (/^INSERT INTO content_report_evidence/.test(flat)) return { rows: [], rowCount: 0 };
 
   // A member leaving is refused while they still owe on the plan's bill.
   // This fixture holds no bills, so the answer is always no.

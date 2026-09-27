@@ -257,6 +257,9 @@ function handle(text, params = []) {
   if (has('SET creator_id = heir.user_id')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
+  // Reported content in plans the deletion cascades is copied out first
+  // (utils/reportEvidence.js). This fixture owns no plans.
+  if (has('INSERT INTO content_report_evidence')) return { rows: [], rowCount: 0 };
   // A venue owner's review replies are erased with the account (migration 083).
   if (has('UPDATE venue_reviews')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM users WHERE id = $1')) {

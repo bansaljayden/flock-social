@@ -41,6 +41,9 @@ function dispatch(sql, params) {
   // this file is open and nobody holds an invite, so both default quietly.
   if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
   if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
+  // Every plan delete copies what an open report names before it cascades
+  // (utils/reportEvidence.js). Nobody in this file has reported anything.
+  if (/^\s*INSERT INTO content_report_evidence/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
     if (re.test(sql)) {

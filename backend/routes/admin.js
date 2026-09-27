@@ -17,6 +17,9 @@ const emailService = require('../services/emailService');
 // The age gate's own arithmetic, so "is this person a minor" means the same
 // thing on the moderation queue as it does at signup.
 const { ageFromDob } = require('../utils/age');
+// The content types a plan delete keeps a copy of (migration 110): where the
+// evidence readers look once the live row is gone.
+const { PRESERVED_CONTENT_TYPES } = require('../utils/reportEvidence');
 // THE PUSH LEDGER'S ONLY READER.
 //
 // Migration 050 created push_sends so it would be possible to answer "has a
@@ -624,6 +627,10 @@ router.get('/reports', async (req, res) => {
               c.is_hidden AS content_is_hidden,
               (r.content_id IS NOT NULL AND r.content_type <> 'profile' AND c.author_id IS NULL
                  AND c.body IS NULL AND c.created_at IS NULL) AS content_missing,
+              -- The plan it was posted in was deleted and what the card shows is
+              -- the copy kept for this report (migration 110). Nobody else can
+              -- see it any more, so there is nothing left to take down.
+              COALESCE(c.preserved, false) AS content_preserved,
               -- ROUND 25. THE THREE THINGS A MODERATOR HAD TO LEAVE THE SCREEN
               -- TO FIND OUT, and could not find out at all without a psql
               -- prompt. Each is one indexed lookup per row.
@@ -708,33 +715,49 @@ router.get('/reports', async (req, res) => {
          -- detail endpoint reads too, so the excerpt and the full text can never
          -- describe the same row differently.
          SELECT ${CONTENT_TEXT_SQL.flock_message('m')} AS body, m.image_url, m.sender_id AS author_id,
-                m.created_at, COALESCE(m.is_hidden, false) AS is_hidden
+                m.created_at, COALESCE(m.is_hidden, false) AS is_hidden, false AS preserved
          FROM messages m WHERE r.content_type = 'flock_message' AND m.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.dm('d')}, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.dm('d')}, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false), false
          FROM direct_messages d WHERE r.content_type = 'dm' AND d.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.story('s')}, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.story('s')}, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false), false
          FROM stories s WHERE r.content_type = 'story' AND s.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false), false
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
          -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
          -- the reported content IS the guest's self-chosen display name.
-         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false), false
          FROM guest_rsvps gr WHERE r.content_type = 'guest_rsvp' AND gr.id = r.content_id
          UNION ALL
          SELECT ${CONTENT_TEXT_SQL.venue_promotion('vp')}, NULL, vp.venue_user_id,
-                vp.created_at, COALESCE(vp.is_hidden, false)
+                vp.created_at, COALESCE(vp.is_hidden, false), false
          FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
          UNION ALL
          -- venue_event: owner-typed copy, takedown flag added by migration 019.
          -- Listed here for the same reason it is in TAKEDOWN_TARGETS below: a
          -- type the queue cannot render is a type a moderator cannot judge, and
          -- the report already reaches this table.
-         SELECT ${CONTENT_TEXT_SQL.venue_event('ve')}, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false)
+         SELECT ${CONTENT_TEXT_SQL.venue_event('ve')}, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false), false
          FROM venue_events ve WHERE r.content_type = 'venue_event' AND ve.id = r.content_id
+         UNION ALL
+         -- The copy a plan delete kept of a reported message or guest answer
+         -- (migration 110, utils/reportEvidence.js), read only when the
+         -- original is gone. The copy carries the original's own column names,
+         -- so the same CONTENT_TEXT_SQL expression renders it.
+         SELECT ${CONTENT_TEXT_SQL.flock_message('em')}, em.image_url, em.author_id, em.created_at, em.is_hidden, true
+         FROM content_report_evidence em
+         WHERE r.content_type = 'flock_message' AND em.content_type = 'flock_message'
+           AND em.content_id = r.content_id
+           AND NOT EXISTS (SELECT 1 FROM messages lm WHERE lm.id = r.content_id)
+         UNION ALL
+         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('eg')}, NULL, NULL, eg.created_at, eg.is_hidden, true
+         FROM content_report_evidence eg
+         WHERE r.content_type = 'guest_rsvp' AND eg.content_type = 'guest_rsvp'
+           AND eg.content_id = r.content_id
+           AND NOT EXISTS (SELECT 1 FROM guest_rsvps lg WHERE lg.id = r.content_id)
          UNION ALL
          -- A profile report has no row to hide, which is why it is absent from
          -- TAKEDOWN_TARGETS. It is NOT absent from the queue: the profile IS
@@ -744,7 +767,7 @@ router.get('/reports', async (req, res) => {
          -- action being a permanent ban. The keyed column is reported_user_id,
          -- not content_id — a profile report carries no content_id at all.
          SELECT ${CONTENT_TEXT_SQL.profile('pu')},
-                pu.profile_image_url, pu.id, pu.created_at::timestamptz, false
+                pu.profile_image_url, pu.id, pu.created_at::timestamptz, false, false
          FROM users pu WHERE r.content_type = 'profile' AND pu.id = r.reported_user_id
          LIMIT 1
        ) c ON true
@@ -828,6 +851,19 @@ const REPORT_IMAGE_SOURCES = {
 
 const NO_IMAGE = 'That report has no image attached.';
 
+// Where both evidence readers look once the live row is gone: the copy a plan
+// delete keeps of a reported message or guest answer (migration 110,
+// utils/reportEvidence.js). It carries the original's own column names, so the
+// caller's select list, aliased `t`, reads it unchanged. Any other type has no
+// copy and answers as not found.
+async function readPreservedCopy(report, rowId, selectList) {
+  if (!PRESERVED_CONTENT_TYPES.includes(report.content_type)) return { rows: [] };
+  return pool.query(
+    `${selectList} FROM content_report_evidence t WHERE t.content_id = $1 AND t.content_type = $2`,
+    [rowId, report.content_type]
+  );
+}
+
 router.get('/reports/:id/image', async (req, res) => {
   try {
     // Same id rule as PUT /reports/:id: a non-numeric id names no row, and a
@@ -857,10 +893,11 @@ router.get('/reports/:id/image', async (req, res) => {
     const rowId = source.keyedOn === 'reported_user_id' ? report.reported_user_id : report.content_id;
     if (!rowId) return res.status(404).json({ error: NO_IMAGE });
 
-    const found = await pool.query(
+    let found = await pool.query(
       `SELECT ${source.column} AS image_url FROM ${source.table} WHERE id = $1`,
       [rowId]
     );
+    if (found.rows.length === 0) found = await readPreservedCopy(report, rowId, 'SELECT t.image_url');
     if (found.rows.length === 0) {
       // Distinct from "no image": the row is gone, which is also the answer to
       // why the queue card looked empty, and it points at the action that is
@@ -978,13 +1015,11 @@ router.get('/reports/:id/content', async (req, res) => {
     const rowId = source.keyedOn === 'reported_user_id' ? report.reported_user_id : report.content_id;
     if (!rowId) return res.status(404).json({ error: NO_TEXT });
 
-    const found = await pool.query(
-      `SELECT LEFT(${bodySql('t')}, ${FULL_TEXT_MAX}) AS body,
+    const textOf = `SELECT LEFT(${bodySql('t')}, ${FULL_TEXT_MAX}) AS body,
               (COALESCE(LENGTH(${bodySql('t')}), 0) > ${FULL_TEXT_MAX}) AS clipped,
-              COALESCE(LENGTH(${bodySql('t')}), 0) AS total_length
-       FROM ${source.table} t WHERE t.id = $1`,
-      [rowId]
-    );
+              COALESCE(LENGTH(${bodySql('t')}), 0) AS total_length`;
+    let found = await pool.query(`${textOf} FROM ${source.table} t WHERE t.id = $1`, [rowId]);
+    if (found.rows.length === 0) found = await readPreservedCopy(report, rowId, textOf);
     if (found.rows.length === 0) {
       // Distinct from "no text": the row is gone, which is also the answer to
       // why the card looked empty, and it names the action still available.

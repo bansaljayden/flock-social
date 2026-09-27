@@ -81,6 +81,9 @@ const { validTimeZone } = require('../utils/venueZone');
 // push gate and the completion sweep from drifting apart. See the read in
 // deleteAccount.
 const { graceHours: flockGraceHours } = require('../services/flockSweep');
+// The plans that CASCADE away with the account keep what other people's open
+// reports name in them, as every plan delete does. See deleteAccount.
+const { PRESERVE_REPORTED_HOSTED_CONTENT_SQL } = require('../utils/reportEvidence');
 // The card answers a question about SOMEBODY ELSE by bare sequential id, which
 // is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
 const { createUserBudget } = require('../utils/probeBudget');
@@ -3500,6 +3503,16 @@ async function deleteAccount(req, res) {
       // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
       // user's flock messages so no authored content is retained after deletion.
       await client.query('DELETE FROM messages WHERE sender_id = $1', [req.user.id]);
+
+      // The plans this account still hosts go with the users row below
+      // (flocks.creator_id is ON DELETE CASCADE), and with them what OTHER
+      // people wrote in them. The account's own words are gone by the line
+      // above, as they always were; somebody else's reported message, or a
+      // guest's reported name, in a plan this account hosted is not its to
+      // erase. Copied out first, as every plan delete does
+      // (utils/reportEvidence.js), after the hand-on above, so a plan kept
+      // for its bill is not copied and stays exactly as it was.
+      await client.query(PRESERVE_REPORTED_HOSTED_CONTENT_SQL, [req.user.id]);
 
       // Round 16: a BAN has to outlive the account it was imposed on, or
       // deleting the account is a one-tap ban reset. Same transaction as the

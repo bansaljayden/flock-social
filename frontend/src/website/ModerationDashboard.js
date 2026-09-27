@@ -886,7 +886,11 @@ export default function ModerationDashboard() {
                   // photo and the account could no longer be banned from the card
                   // that proved it. The server accepts either at any time. So does
                   // this now.
-                  const takedownable = !!own(HIDEABLE, r.content_type) && !!r.content_id && !r.content_missing;
+                  // A saved copy (content_preserved) is what a deleted plan left
+                  // for the report: the original is gone, so there is nothing
+                  // live to hide or restore, and the server refuses both.
+                  const takedownable = !!own(HIDEABLE, r.content_type) && !!r.content_id
+                    && !r.content_missing && !r.content_preserved;
                   const canHide = takedownable && !r.content_is_hidden;
                   // Un-hide matters most after the fact: a mistaken takedown is
                   // discovered once the report is already resolved.
@@ -1200,7 +1204,8 @@ function ReportRecord({ report: r, unhandled }) {
 //
 // Field names come from GET /api/admin/reports (backend/routes/admin.js):
 // content_excerpt, content_excerpt_clipped, content_has_image, content_image_url,
-// content_image_deferred, content_created_at, content_is_hidden, content_missing.
+// content_image_deferred, content_created_at, content_is_hidden, content_missing,
+// content_preserved.
 // The expanded body comes from GET /api/admin/reports/:id/content, which answers
 // { text, clipped, totalLength } and is capped server-side.
 function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text, onToggleText }) {
@@ -1235,6 +1240,13 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
         {r.content_created_at ? <span>· posted {fmt(r.content_created_at)}</span> : null}
         {r.content_is_hidden ? <span style={S.hiddenTag}>HIDDEN</span> : null}
       </div>
+
+      {r.content_preserved ? (
+        // The plan was deleted after the report came in, and the server kept
+        // this copy for review (migration 110). Said plainly, because the
+        // missing Hide button needs a reason.
+        <div style={S.dimSmall}>The plan this was in has been deleted. This is the copy kept for review, and nobody else can see it.</div>
+      ) : null}
 
       {gone ? (
         <div style={S.dimSmall}>That content no longer exists. Dismiss the report.</div>
