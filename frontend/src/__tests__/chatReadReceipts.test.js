@@ -42,6 +42,8 @@ const { render, screen, fireEvent } = require('@testing-library/react');
 // and all of them reach the network, the socket or the Capacitor bridge.
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The chat header's offline read (api.js isOffline). Online here.
+  isOffline: () => false,
   BASE_URL: 'http://test.invalid',
   leaveFlock: jest.fn(),
   createBillSplit: jest.fn(),

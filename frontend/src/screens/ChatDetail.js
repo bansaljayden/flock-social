@@ -161,7 +161,7 @@
  */
 import React from 'react';
 import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
-import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
+import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -996,13 +996,18 @@ export default function ChatDetail({
     //   'reconnecting'  the socket is down but the network is up, and
     //                   socket.io retries forever on a backoff, so trying is
     //                   exactly what is happening.
-    //   'offline'       navigator.onLine is false: the DEVICE says there is no
-    //                   network, retries cannot succeed, and printing
-    //                   "reconnecting" over airplane mode would be the same
-    //                   lie the hardcoded "online" was, wearing amber.
+    //   'offline'       the DEVICE says there is no network, retries cannot
+    //                   succeed, and printing "reconnecting" over airplane
+    //                   mode would be the same lie the hardcoded "online"
+    //                   was, wearing amber.
+    // "The device says" is api.js isOffline(), the answer request() acts on,
+    // not navigator.onLine read here. A WebView can hold onLine at false on a
+    // network that works; the offline gate's Try again proves otherwise and
+    // tells api.js (markReachable), and from then on requests go out. Read
+    // raw, this header went on saying offline over a chat that was sending.
     const readConnection = () => {
       if (getSocket()?.connected) return 'online';
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+      if (isDeviceOffline()) return 'offline';
       return 'reconnecting';
     };
     const [connectionState, setConnectionState] = React.useState(readConnection);

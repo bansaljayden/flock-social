@@ -39,6 +39,8 @@ const { render, screen, fireEvent } = require('@testing-library/react');
 // the network or the socket.
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The chat header's offline read (api.js isOffline). Online here.
+  isOffline: jest.fn(() => false),
   sendFriendRequest: jest.fn(),
   trackDmVenueVote: jest.fn(),
   getDmMessageImage: jest.fn(),
@@ -425,5 +427,38 @@ describe('the DM stream through the chat module', () => {
     expect(scroller).toBeTruthy();
     fireEvent.scroll(scroller);
     expect(document.activeElement).toBe(field);
+  });
+});
+
+// THE HEADER'S "offline" IS api.js isOffline(), the answer request() acts on.
+// A WebView can hold navigator.onLine at false on a network that works; the
+// offline gate's Try again proves it and tells api.js, and requests go out
+// from then on. Read raw here, the header kept saying offline over a thread
+// that was sending.
+describe('the DM header takes offline from api.js', () => {
+  const apiModule = require('../services/api');
+  const socketModule = require('../services/socket');
+  afterEach(() => {
+    apiModule.isOffline.mockImplementation(() => false);
+    socketModule.getSocket.mockImplementation(() => ({ connected: true }));
+  });
+
+  test('when api.js says the device is offline, so does the header', () => {
+    socketModule.getSocket.mockImplementation(() => ({ connected: false }));
+    apiModule.isOffline.mockImplementation(() => true);
+    render(React.createElement(DmDetail, dmProps()));
+    expect(screen.getByText('offline')).toBeTruthy();
+  });
+
+  test('a navigator.onLine stuck at false that the gate has disproved reads reconnecting', () => {
+    socketModule.getSocket.mockImplementation(() => ({ connected: false }));
+    const spy = jest.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      render(React.createElement(DmDetail, dmProps()));
+      expect(screen.getByText('reconnecting...')).toBeTruthy();
+      expect(screen.queryByText('offline')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

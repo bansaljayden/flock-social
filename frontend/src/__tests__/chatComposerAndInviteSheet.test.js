@@ -73,6 +73,8 @@ const traverse = require('@babel/traverse').default;
 // test here and all four reach the network or the Capacitor bridge.
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The chat header's offline read (api.js isOffline). Online here.
+  isOffline: jest.fn(() => false),
   BASE_URL: 'http://test.invalid',
   leaveFlock: jest.fn(),
   createBillSplit: jest.fn(),
@@ -927,12 +929,14 @@ describe('no exit from the flock chat can skip the clear', () => {
 // ---------------------------------------------------------------------------
 describe('the header says whether the connection is actually up', () => {
   const socketModule = require('../services/socket');
+  const apiModule = require('../services/api');
   const setConnection = (connected) => socketModule.getSocket.mockImplementation(() => ({ connected }));
 
   beforeEach(() => setConnection(true));
   afterEach(() => {
     jest.useRealTimers();
     setConnection(true);
+    apiModule.isOffline.mockImplementation(() => false);
   });
 
   test('a live socket reads online', () => {
@@ -951,16 +955,31 @@ describe('the header says whether the connection is actually up', () => {
 
   test('with the device itself offline the header says offline, not reconnecting', () => {
     // The rule: "reconnecting" only while something really is trying.
-    // With navigator.onLine false the device knows no retry can succeed, and
-    // printing "reconnecting" over airplane mode is the hardcoded "online"
-    // lie again, wearing amber.
+    // With the device offline no retry can succeed, and printing
+    // "reconnecting" over airplane mode is the hardcoded "online" lie again,
+    // wearing amber. "The device is offline" is api.js isOffline(), the same
+    // answer request() refuses on.
     setConnection(false);
+    apiModule.isOffline.mockImplementation(() => true);
+    render(React.createElement(ChatDetail, chatProps()));
+    expect(screen.getByText('offline')).toBeTruthy();
+    expect(screen.queryByText('reconnecting...')).toBeNull();
+    expect(screen.queryByText('online')).toBeNull();
+  });
+
+  test('a navigator.onLine stuck at false that the offline gate has disproved does not read offline', () => {
+    // A WebView can hold onLine at false on a network that works. The gate's
+    // Try again gets an answer and tells api.js, and from then on requests go
+    // out; a header reading onLine itself went on saying offline over a chat
+    // that was sending. With the socket not back yet, the honest word is
+    // reconnecting.
+    setConnection(false);
+    apiModule.isOffline.mockImplementation(() => false);
     const spy = jest.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
     try {
       render(React.createElement(ChatDetail, chatProps()));
-      expect(screen.getByText('offline')).toBeTruthy();
-      expect(screen.queryByText('reconnecting...')).toBeNull();
-      expect(screen.queryByText('online')).toBeNull();
+      expect(screen.getByText('reconnecting...')).toBeTruthy();
+      expect(screen.queryByText('offline')).toBeNull();
     } finally {
       spy.mockRestore();
     }

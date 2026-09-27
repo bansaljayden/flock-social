@@ -51,6 +51,8 @@ const { act, render, screen, fireEvent, waitFor, within } = require('@testing-li
 
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The chat header's offline read (api.js isOffline). Online here.
+  isOffline: () => false,
   BASE_URL: 'http://test.invalid',
   leaveFlock: jest.fn(),
   createBillSplit: jest.fn(),
