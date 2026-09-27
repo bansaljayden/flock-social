@@ -156,11 +156,16 @@ test('the exemption matches the way Express routes, and nothing wider', () => {
 test('every exempt route really does require a signed-in account', () => {
   // The whole argument for skipping the address meter is that the caller is
   // already a verified account. A route on the list that does not mount
-  // authenticate is a door with the meter taken off it.
+  // authenticate is a door with the meter taken off it. POST /logout mounts
+  // authenticateAllowExpired, which is authenticate with the clock waived: the
+  // same signature, account, token_version and ban checks, and still nothing
+  // for a guesser to try (sessionRenewal.test.js holds that variant to the one
+  // route).
   for (const entry of authRoutes.SIGNED_IN_ROUTES) {
     const [method, p] = entry.split(' ');
     const escaped = p.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-    const re = new RegExp(`router\\.${method.toLowerCase()}\\('${escaped}', authenticate\\b`);
+    const mw = entry === 'POST /logout' ? 'authenticateAllowExpired' : 'authenticate';
+    const re = new RegExp(`router\\.${method.toLowerCase()}\\('${escaped}', ${mw}\\b`);
     assert.match(AUTH_SRC, re,
       `SIGNED_IN_ROUTES names ${entry}, and routes/auth.js does not mount it behind authenticate. `
       + 'Only a route that acts for an account that is already signed in may skip authLimiter.');

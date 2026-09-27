@@ -22,9 +22,12 @@
 --                  the whole chain at once.
 --   parent_id      the credential this one was issued in exchange for. A
 --                  rotated credential presented again is told apart from a
---                  lost response by whether any child of it was ever used.
---                  SET NULL rather than CASCADE: expired rows are pruned, and
---                  a parent always expires before its children do.
+--                  lost response by whether any child of it was ever used,
+--                  and two answers to one parent are siblings, only one of
+--                  which may ever be used. SET NULL rather than CASCADE:
+--                  expired rows are pruned, and the prune keeps a parent until
+--                  none of its children can be presented any more, so the link
+--                  is there for as long as a check can need it.
 --   token_version  users.token_version when it was issued. A bump (password
 --                  change, reset, sign out everywhere, an account claim) makes
 --                  every credential issued before it worthless, exactly as it
@@ -39,6 +42,11 @@
 -- A new table and its indexes, all IF NOT EXISTS, so replaying this file over
 -- a populated database moves no row. user_id cascades from users like every
 -- other per-account table, so deleting an account deletes its credentials.
+--
+-- expires_at is indexed for the hourly prune (server.js,
+-- pruneExpiredRefreshTokens). A renewal prunes only its own account, and the
+-- rows that pile up belong to the accounts that never renew again: signed
+-- out, idle past the sixty days, or ended by a replay.
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id BIGSERIAL PRIMARY KEY,
@@ -58,3 +66,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS refresh_tokens_token_hash_key ON refresh_token
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens (family_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_parent ON refresh_tokens (parent_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens (expires_at);
