@@ -103,6 +103,13 @@ pool.query = async (text, params = []) => {
       .map(([a, b]) => (Number(a) === me ? Number(b) : Number(a)));
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
+  // ROSTER_BLOCK_SQL, asked by the in-app accept: anybody else on the
+  // accepted roster with a block with the joiner, answered from the world.
+  if (has('JOIN user_blocks b ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)')) {
+    const hit = Number(params[0]) === FLOCK.id && members.some((m) => m.status === 'accepted'
+      && m.user_id !== Number(params[1]) && blockedBetween(m.user_id, params[1]));
+    return hit ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
 
   // routes/messages.js counterpartyIsBanned — the DM thread read and the DM
   // read receipt ask "is THIS one person banned", one row for one id, rather

@@ -229,8 +229,31 @@ function invalidateBlockCache(a, b) {
   blockCache.delete(pairKey(a, b));
 }
 
+// ---------------------------------------------------------------------------
+// IS ANYBODY ALREADY ON THIS PLAN BLOCKED WITH THIS PERSON, EITHER WAY?
+// ---------------------------------------------------------------------------
+// The rule both doors that seat a new accepted member ask before they write:
+// the share link's join (routes/guest.js) and the invite accepted in the app
+// (POST /api/flocks/:id/join). A blocked pair does not become co-members,
+// whoever pressed the button and whichever of them is the host, because every
+// roster read and socket fan-out then hides each from the other, and the block
+// ends up hiding the person from the one who blocked them while they walk into
+// the same evening. One statement for both doors, because two spellings of one
+// safety rule is how the doors drift apart. $1 the plan, $2 the joiner; a row
+// back means refuse.
+const ROSTER_BLOCK_SQL = `SELECT 1
+             FROM flock_members fm
+             JOIN user_blocks b
+               ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)
+               OR (b.blocked_id = $2 AND b.blocker_id = fm.user_id)
+            WHERE fm.flock_id = $1
+              AND fm.status = 'accepted'
+              AND fm.user_id <> $2
+            LIMIT 1`;
+
 module.exports = {
   isBlockedBetween, isBlockedOrBannedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache,
+  ROSTER_BLOCK_SQL,
 };
 // Exposed for __tests__/safetyFlow.test.js.
 module.exports.__test = { pairKey, blockCache, BLOCK_CACHE_TTL };

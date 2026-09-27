@@ -93,6 +93,7 @@ pool.query = async (text, params = []) => {
   if (has('FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = $2)')) return { rows: [], rowCount: 0 };
   if (has('SELECT blocked_id AS id FROM user_blocks')) return { rows: [], rowCount: 0 };
   if (has('SELECT blocker_id, blocked_id FROM user_blocks')) return { rows: [], rowCount: 0 };
+  if (has('JOIN user_blocks b ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)')) return { rows: [], rowCount: 0 };
 
   // users directory
   if (has('SELECT id, name FROM users WHERE id = $1')) {

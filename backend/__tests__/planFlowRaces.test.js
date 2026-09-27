@@ -5,7 +5,7 @@
 // THE PLAN FLOW'S SHARED ROWS, AGAINST A REAL POSTGRES
 // ---------------------------------------------------------------------------
 //
-// Four rules that only a database can prove, because each is about what a
+// Rules that only a database can prove, because each is about what a
 // statement does to rows another writer is touching, or about which rows a
 // join actually keeps:
 //
@@ -23,6 +23,8 @@
 //      the link and the app name the same leader.
 //   4. AN INVITE ACCEPTED IN THE APP RETIRES THE SAME PERSON'S GUEST ROW, with
 //      a real uuid[] and the membership its own transaction just wrote.
+//   5. A BLOCKED PAIR DOES NOT BECOME CO-MEMBERS through a third member's
+//      invite: the accept asks the whole accepted roster, both directions.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -435,4 +437,76 @@ test('an accept the server refuses retires nothing', async () => {
   assert.strictEqual(res.status, 409, JSON.stringify(res.body));
   const row = (await pool.query('SELECT is_hidden FROM guest_rsvps WHERE id = $1', [g.id])).rows[0];
   assert.strictEqual(row.is_hidden, false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 5. A blocked pair does not become co-members through a third member's invite
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The invite checks a block only between the inviter and the invitee, so a
+// member could invite somebody the host had blocked, and the in-app accept
+// seated them while every roster read hid each from the other. Run on the real
+// invite route and the real accept, so the roster the refusal reads is the one
+// the accept would have written into.
+
+async function block(blocker, blocked) {
+  await pool.query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [blocker.id, blocked.id]);
+}
+
+const memberStatus = async (flockId, user) => (await pool.query(
+  'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2', [flockId, user.id]
+)).rows[0]?.status;
+
+test('somebody the host blocked cannot accept a plan another member invited them to', async () => {
+  const alice = await mkUser('Alice Eleven');
+  const carol = await mkUser('Carol Eleven');
+  const bob = await mkUser('Bob Eleven');
+  const flockId = await mkFlock(alice, { hoursFromNow: 24 });
+  await addMember(flockId, carol, 'accepted');
+  await block(alice, bob);
+
+  const invite = await call('POST', `/api/flocks/${flockId}/invite`, { token: carol.token, body: { user_ids: [bob.id] } });
+  assert.ok(invite.status < 300, JSON.stringify(invite.body));
+  assert.strictEqual(await memberStatus(flockId, bob), 'invited', 'the invite itself is Carol\'s and lands');
+
+  const res = await call('POST', `/api/flocks/${flockId}/join`, { token: bob.token });
+  assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error, 'You cannot join this plan.', 'the link door\'s sentence, naming nobody');
+  assert.doesNotMatch(JSON.stringify(res.body), /Alice/);
+  assert.strictEqual(await memberStatus(flockId, bob), 'invited', 'nothing was written');
+});
+
+test('the refusal holds the other way round, and against any member, not only the host', async () => {
+  const host = await mkUser('Host Twelve');
+  const dana = await mkUser('Dana Twelve');
+  const eli = await mkUser('Eli Twelve');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  await addMember(flockId, dana, 'accepted');
+  await addMember(flockId, eli, 'invited');
+  // The joiner is the one who pressed block, on a member who is not the host.
+  await block(eli, dana);
+
+  const res = await call('POST', `/api/flocks/${flockId}/join`, { token: eli.token });
+  assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+  assert.strictEqual(await memberStatus(flockId, eli), 'invited');
+});
+
+test('a member already in is not turned out by a block made since, and a plan with no block still seats', async () => {
+  const host = await mkUser('Host Thirteen');
+  const fay = await mkUser('Fay Thirteen');
+  const gus = await mkUser('Gus Thirteen');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  await addMember(flockId, fay, 'accepted');
+  await addMember(flockId, gus, 'invited');
+
+  const seated = await call('POST', `/api/flocks/${flockId}/join`, { token: gus.token });
+  assert.strictEqual(seated.status, 200, JSON.stringify(seated.body));
+  assert.strictEqual(await memberStatus(flockId, gus), 'accepted');
+
+  // Two people already in who then block each other stay where they were, as
+  // on the link: a re-tap of the plan is not a new membership.
+  await block(fay, gus);
+  const again = await call('POST', `/api/flocks/${flockId}/join`, { token: gus.token });
+  assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+  assert.strictEqual(await memberStatus(flockId, gus), 'accepted');
 });

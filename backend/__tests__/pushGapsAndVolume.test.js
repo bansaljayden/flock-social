@@ -40,6 +40,7 @@ const express = require('express');
 process.env.JWT_SECRET = 'push-gaps-test-secret';
 
 const pool = require('../config/database');
+const { ROSTER_BLOCK_SQL } = require('../utils/blocks');
 
 let handlers = [];
 let log = [];
@@ -57,6 +58,9 @@ function dispatch(sql, params) {
     return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
   }
   if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The accept asks whether anybody on the roster has a block with the joiner
+  // (utils/blocks.js). Nobody in this file has one.
+  if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
     if (re.test(sql)) {

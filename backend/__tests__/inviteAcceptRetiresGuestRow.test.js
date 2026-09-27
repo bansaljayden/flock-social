@@ -29,6 +29,7 @@ process.env.JWT_SECRET = 'invite-accept-retires-guest-row-test-secret';
 delete process.env.FIREBASE_SERVICE_ACCOUNT;
 
 const pool = require('../config/database');
+const { ROSTER_BLOCK_SQL } = require('../utils/blocks');
 
 // The accept route sits behind authenticate and requireVerified. The caller is
 // a verified account; requireVerified runs for real against it.
@@ -41,6 +42,9 @@ let log = [];
 let unknown = [];
 
 function dispatch(sql, params) {
+  // The accept asks whether anybody on the roster has a block with the joiner
+  // (utils/blocks.js). Nobody in this file has one.
+  if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   log.push({ sql: flat, params: params || [] });
   for (const [re, fn] of handlers) {
