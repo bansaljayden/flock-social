@@ -1,5 +1,6 @@
 import React from 'react';
 import { setConsent, consentUnanswered } from '../services/analyticsConsent';
+import { isNativeShell } from '../lib/nativeShell';
 
 /**
  * THE ASK. One bar, two real buttons, no dark pattern.
@@ -38,6 +39,36 @@ import { setConsent, consentUnanswered } from '../services/analyticsConsent';
  * column pads its bottom by that much, so the footer scrolls clear of the bar
  * instead of under it. The variable is removed the moment the bar closes.
  */
+/*
+ * INSIDE THE NATIVE APP IT IS A DIFFERENT QUESTION, ASKED LATER.
+ *
+ * The consent is real there too: services/api.js returns before every capture
+ * without a yes, and index.js never starts PostHog without one, in the iOS
+ * shell exactly as on the web. So the app keeps asking. What changed is how:
+ *
+ *   WORDS. "Page views" and "the site" are website words, and inside the app
+ *   they read as a web page that wandered in. The app version says screens and
+ *   the app, and it says what the privacy policy says about analytics in the
+ *   app, where a person is signed in: the events carry an account number,
+ *   never a name. "Anonymous" would not be true of those, so it is not used.
+ *
+ *   WHEN. A fresh install opens on the sign-in screen, and on a 375x667
+ *   window the bar sat over the lower half of it, over Continue with Apple,
+ *   which is the first thing App Review taps. In the app the bar now waits
+ *   until the tab bar is on screen, i.e. until somebody is signed in, and then
+ *   sits above the tabs as before. Nothing on the sign-in screens is ever
+ *   under it. Until it is answered analytics stays off, which is what an
+ *   unanswered question already meant, so waiting collects nothing extra and
+ *   the only thing it costs is the sign-in event of a fresh install.
+ *
+ * The web is unchanged: same words, shown at once, same clearance rules.
+ */
+const WEB_COPY = 'Can we count anonymous page views to see what people read? No cookies, '
+  + 'no advertising, no sharing. Saying no changes nothing about the site.';
+export const APP_COPY = 'Can Flock count which screens you open and a few actions, like creating '
+  + 'a flock? It is tied to your account number, not your name. No ads, no selling. '
+  + 'Saying no changes nothing in the app.';
+
 const HEIGHT_VAR = '--cb-height';
 const MAIN_NAV = 'nav[aria-label="Main"]';
 
@@ -55,6 +86,10 @@ export default function ConsentBanner({ onAnswer }) {
   const [open, setOpen] = React.useState(() => consentUnanswered());
   const [clearance, setClearance] = React.useState(() => visibleNavHeight());
   const wrapRef = React.useRef(null);
+  // Read once per mount: the shell is decided at boot and does not change.
+  const [inApp] = React.useState(() => isNativeShell());
+  // In the app, nothing until the tab bar is there. See the note above WEB_COPY.
+  const waiting = inApp && clearance === 0;
 
   React.useEffect(() => {
     if (!open) return undefined;
@@ -63,13 +98,23 @@ export default function ConsentBanner({ onAnswer }) {
     const measure = () => {
       frame = 0;
       const h = visibleNavHeight();
+      if (inApp && h === 0) {
+        // Still before sign-in, or signed out again: stay off screen, and
+        // publish no footprint for a bar that is not there.
+        setClearance(0);
+        document.documentElement.style.removeProperty(HEIGHT_VAR);
+        return;
+      }
       // THE WATCH ENDS THE MOMENT IT HAS ITS ANSWER. The observer below exists
       // for one event, the tab bar mounting after sign-in, and until it was
       // stopped it kept a callback on every node the app added or removed for
       // the whole time the bar was open, each one scheduling two
       // getBoundingClientRect reads on the next frame. A measured tab bar is
       // the question answered, and resize still re-measures after it.
-      if (h > 0 && observer) { observer.disconnect(); observer = null; }
+      // In the app the watch stays on while the bar is unanswered, because a
+      // sign-out takes the tab bar away again and the bar has to leave with it
+      // rather than float over the sign-in screen.
+      if (h > 0 && observer && !inApp) { observer.disconnect(); observer = null; }
       setClearance((prev) => (prev === h ? prev : h));
       // The bar's own footprint: its height plus the 12px it floats above
       // whatever is under it. Published so a page can keep its own footer
@@ -100,9 +145,12 @@ export default function ConsentBanner({ onAnswer }) {
       // should keep padding for it.
       document.documentElement.style.removeProperty(HEIGHT_VAR);
     };
-  }, [open]);
+    // `waiting` is in the list so the effect runs again the moment the bar
+    // first renders in the app: the run that saw the tab bar arrive had no
+    // bar of its own to measure yet.
+  }, [open, inApp, waiting]);
 
-  if (!open) return null;
+  if (!open || waiting) return null;
   const answer = (value) => {
     setConsent(value);
     setOpen(false);
@@ -117,10 +165,7 @@ export default function ConsentBanner({ onAnswer }) {
       style={{ '--cb-clearance': `${clearance}px` }}
     >
       <style>{CSS}</style>
-      <p className="cb-copy">
-        Can we count anonymous page views to see what people read? No cookies,
-        no advertising, no sharing. Saying no changes nothing about the site.
-      </p>
+      <p className="cb-copy">{inApp ? APP_COPY : WEB_COPY}</p>
       <div className="cb-actions">
         <button type="button" className="cb-btn" onClick={() => answer('no')}>No thanks</button>
         <button type="button" className="cb-btn" onClick={() => answer('yes')}>That's fine</button>
