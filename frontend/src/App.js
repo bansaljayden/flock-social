@@ -129,6 +129,7 @@ import { owedOn } from './lib/billShares';
 // How a budget answer lands on the status, shared with the chat screen's own
 // answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
 import { mergeBudgetUpdate } from './lib/budgetStatus';
+import { isNightOver } from './lib/planNight';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -16181,9 +16182,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // (the server orders by last edit), a plan still voting twelve hours
     // after its time last, and labelled as such, since nothing ages those
     // out.
+    //
+    // askHowItWas: a locked-in plan whose night is over and that the reader
+    // has not rated. Its chip read "Locked In" until the sweep completed it
+    // the next day, which is also when a report on it stopped counting. Now
+    // it asks, and the tap opens the plan screen, where the same helper puts
+    // the "How was {venue}?" card. No venue, nothing to rate, so no ask.
     const liveFlocks = flocks
       .filter(f => f.status !== 'completed' && f.status !== 'cancelled')
-      .map(f => ({ ...f, timePassed: f.status === 'voting' && !!f.eventTime && (Date.now() - new Date(f.eventTime).getTime()) > 12 * 3600 * 1000 }))
+      .map(f => ({
+        ...f,
+        timePassed: f.status === 'voting' && !!f.eventTime && (Date.now() - new Date(f.eventTime).getTime()) > 12 * 3600 * 1000,
+        askHowItWas: isNightOver(f) && !!f.venueId && !submittedFeedback.has(f.id),
+      }))
       .sort((a, b) => {
         if (a.timePassed !== b.timePassed) return a.timePassed ? 1 : -1;
         const at = a.eventTime ? new Date(a.eventTime).getTime() : Infinity;
@@ -16514,7 +16525,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {f.venue}</p>
                   </div>
                   <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.timePassed ? 'Time passed' : f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : 'Locked In'}
+                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : f.askHowItWas ? Icons.star('var(--text-secondary)', 12) : Icons.check('var(--text-secondary)', 12)} {f.timePassed ? 'Time passed' : f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.askHowItWas ? 'How was it?' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
