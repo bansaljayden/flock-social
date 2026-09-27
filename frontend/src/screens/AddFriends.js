@@ -156,6 +156,29 @@ export default function AddFriends({
     // future deep link from landing on an empty pane.
     const activeTab = addFriendsTab === 'contacts' && !contactsSupported ? 'username' : addFriendsTab;
 
+    // INVITE A FRIEND, ON THE SEARCH TAB AS WELL AS IN CONTACTS.
+    //
+    // On a new app most of a new account's friends are not on Flock yet, so a
+    // name search finds nobody, and the only way to bring them in was the
+    // "Nobody there yet?" card at the bottom of Contacts. That tab exists only
+    // where an address book can be read (contactsAvailable in
+    // services/contacts.js), which leaves out every browser without the
+    // Contacts Picker, iPhone Safari included, and that is where people who
+    // signed up from a guest link are. So the web had no invite button at
+    // all, and in the app it was four tabs away from the screen a new account
+    // opens on.
+    //
+    // It goes where a search comes up empty: before anything is typed, and
+    // after a search that found nobody. Same handler as the Contacts card
+    // (handleInviteFriend: the share sheet, or a text message where there is
+    // none), and disabled until the code it sends has loaded, as it is there.
+    const inviteButton = (
+      <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleInviteFriend(); }} disabled={!myFriendCode}
+        style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
+        {Icons.share('white', 16)} Invite a friend
+      </button>
+    );
+
     return (
       <div key="add-friends-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         {/* Header */}
@@ -273,7 +296,7 @@ export default function AddFriends({
               )}
 
               {!addFriendsSearching && !addFriendsError && addFriendsSearch.trim().length >= 1 && addFriendsResults.length === 0 && (
-                <BirdNote size={64} title={`No users found for "${addFriendsSearch}"`} />
+                <BirdNote size={64} title={`No users found for "${addFriendsSearch}"`} body="Not on Flock yet? Send them your code." action={inviteButton} />
               )}
 
               {!addFriendsSearching && addFriendsResults.map(user => {
@@ -305,12 +328,16 @@ export default function AddFriends({
                    sends a new account to, so it is one of the first things
                    anybody sees, and it was an icon in a rounded square, which
                    is the bubble-tile shape DESIGN-STANDARD A14 bans and the one
-                   empty state on this screen with no bird on it. */
+                   empty state on this screen with no bird on it.
+
+                   The invite button is here too; inviteButton above says
+                   why. */
                 <BirdNote
                   bird={WARM_BIRD}
                   size={96}
                   title="Find people you know"
-                  body="Search by the name they signed up with."
+                  body="Search by the name they signed up with. Not on Flock yet? Send them your code."
+                  action={inviteButton}
                   style={{ padding: '32px 16px 16px' }}
                 />
               )}
