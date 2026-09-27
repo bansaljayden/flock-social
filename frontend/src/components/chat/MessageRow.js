@@ -75,7 +75,7 @@ import './chat.css';
  *   renderCard    (message) => node. Venue cards, bills, polls, live location.
  *                 Anything this module does not own is drawn by the parent.
  *   onLongPress   (message, { source, rect }) => void
- *   onSwipeReply  (message) => void
+ *   onSwipeReply  (message) => void, and only for a row canQuote accepts
  *   onOpenImage   (message) => void, the full screen viewer. Without it the
  *                 photo is not a control at all, so it carries its own alt
  *                 text instead of a button name promising a viewer.
@@ -153,6 +153,23 @@ export function aspectOf(message) {
   return null;
 }
 
+/**
+ * Can somebody reply to this row? Only to one the server has stored: an id it
+ * issued (message and DM keys are int4, and a bubble's placeholder is
+ * Date.now() or 'temp-...', never inside that) on a row that is not still
+ * sending and did not fail. A quote of a placeholder is refused by both
+ * transports: the socket answers "That message is no longer there to reply
+ * to." in a plan and drops a DM without a word, REST answers 400, and Retry
+ * resends the same dead id every time, so the reply could only be discarded.
+ * One rule for the swipe here and for the Reply in both screens' action
+ * menus, which is the same test their Pin and Unsend already make.
+ */
+export function canQuote(message) {
+  if (!message || message.pending || message.failed) return false;
+  const id = message.id;
+  return typeof id === 'number' && Number.isInteger(id) && id > 0 && id <= 2147483647;
+}
+
 export const LONG_PRESS_MS = 350;
 export const SWIPE_THRESHOLD = 48;
 const SWIPE_MAX = 64;
@@ -183,6 +200,10 @@ function MessageRow({
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [timeShown, setTimeShown] = useState(false);
+  // No swipe at all on a row nobody can reply to (canQuote): the row does not
+  // follow the finger and nothing is reported, the way the failed line under
+  // it already takes no swipe.
+  const swipeReply = onSwipeReply && canQuote(message) ? onSwipeReply : null;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -252,7 +273,7 @@ function MessageRow({
       cancelledRef.current = true;
       clearTimer();
     }
-    if (!onSwipeReply) return;
+    if (!swipeReply) return;
 
     // Rightward and roughly horizontal only, so a vertical scroll always keeps
     // the gesture it started.
@@ -273,12 +294,12 @@ function MessageRow({
     setDrag(0);
     // The row starts following the finger SLOP px in, so the finger has
     // travelled SLOP further than the transform says.
-    if (onSwipeReply && travelled + SLOP >= SWIPE_THRESHOLD) {
+    if (swipeReply && travelled + SLOP >= SWIPE_THRESHOLD) {
       // A swipe is not a tap. Engines differ on whether a horizontal drag on a
       // pan-y element still dispatches a click on release, and on the ones that
       // do, quoting a message would also have revealed its time.
       suppressClickRef.current = true;
-      onSwipeReply(message);
+      swipeReply(message);
     }
   };
 

@@ -46,7 +46,7 @@ import {
 } from '../components/chat/groupRows';
 import MessageGroup from '../components/chat/MessageGroup';
 import MessageList from '../components/chat/MessageList';
-import MessageRow, { groupReactions, imageOf, aspectOf, timeOf } from '../components/chat/MessageRow';
+import MessageRow, { groupReactions, imageOf, aspectOf, timeOf, canQuote } from '../components/chat/MessageRow';
 import StatusLine from '../components/chat/StatusLine';
 import TypingRow from '../components/chat/TypingRow';
 import DayDivider from '../components/chat/DayDivider';
@@ -659,9 +659,10 @@ describe('MessageRow gestures: 350ms and 48px, reported and not handled', () => 
   });
 
   it('reports a reply on a swipe past 48, and stays quiet under it', () => {
+    // A stored row: a reply can only quote an id the server issued (canQuote).
     const onSwipeReply = jest.fn();
     const { container } = render(
-      <MessageRow message={row({ id: 'a' })} onSwipeReply={onSwipeReply} />
+      <MessageRow message={row({ id: 41 })} onSwipeReply={onSwipeReply} />
     );
     const node = rowNode(container);
 
@@ -674,7 +675,60 @@ describe('MessageRow gestures: 350ms and 48px, reported and not handled', () => 
     fireEvent.touchMove(node, { touches: [{ clientX: 75, clientY: 104 }] });
     fireEvent.touchEnd(node, { changedTouches: [{ clientX: 75, clientY: 104 }] });
     expect(onSwipeReply).toHaveBeenCalledTimes(1);
-    expect(onSwipeReply.mock.calls[0][0].id).toBe('a');
+    expect(onSwipeReply.mock.calls[0][0].id).toBe(41);
+  });
+
+  it.each([
+    ['still sending in a plan', { id: 1700000000001, pending: true }],
+    ['failed in a plan', { id: 1700000000002, failed: true }],
+    ['still sending in a DM', { id: 'temp-1700000000003-ab12c', pending: true }],
+    ['failed in a DM', { id: 'temp-1700000000004-cd34e', failed: true }],
+  ])('a bubble %s takes no swipe: its placeholder id can never be quoted', (_label, over) => {
+    /* Both transports refuse a quote of a placeholder (int4 on the socket,
+       send_dm drops it silently, REST answers 400) and Retry resends the same
+       id, so a reply to one could only ever be discarded. The row does not
+       follow the finger either: a drag that moves and then does nothing
+       would read as a broken gesture. */
+    const onSwipeReply = jest.fn();
+    const { container } = render(
+      <MessageRow message={row({ sender: 'You', ...over })} onSwipeReply={onSwipeReply} />
+    );
+    const node = rowNode(container);
+    fireEvent.touchStart(node, { touches: [{ clientX: 10, clientY: 100 }] });
+    fireEvent.touchMove(node, { touches: [{ clientX: 90, clientY: 104 }] });
+    expect(node.style.transform).toBe('none');
+    expect(node.className).not.toMatch(/is-dragging/);
+    fireEvent.touchEnd(node, { changedTouches: [{ clientX: 90, clientY: 104 }] });
+    expect(onSwipeReply).not.toHaveBeenCalled();
+  });
+
+  it('canQuote accepts a stored row and nothing else', () => {
+    expect(canQuote({ id: 1 })).toBe(true);
+    expect(canQuote({ id: 2147483647 })).toBe(true);
+    // A placeholder, a stored id on a row the send has not settled, and junk.
+    expect(canQuote({ id: 2147483648 })).toBe(false);
+    expect(canQuote({ id: Date.now() })).toBe(false);
+    expect(canQuote({ id: 'temp-1-a' })).toBe(false);
+    expect(canQuote({ id: '12' })).toBe(false);
+    expect(canQuote({ id: 12, pending: true })).toBe(false);
+    expect(canQuote({ id: 12, failed: true })).toBe(false);
+    expect(canQuote({ id: 0 })).toBe(false);
+    expect(canQuote({ id: 1.5 })).toBe(false);
+    expect(canQuote(null)).toBe(false);
+  });
+
+  it('the same bubble takes the swipe once its echo has settled it', () => {
+    const onSwipeReply = jest.fn();
+    const { container, rerender } = render(
+      <MessageRow message={row({ id: 1700000000005, sender: 'You', pending: true })} onSwipeReply={onSwipeReply} />
+    );
+    rerender(<MessageRow message={row({ id: 812, sender: 'You', pending: false })} onSwipeReply={onSwipeReply} />);
+    const node = rowNode(container);
+    fireEvent.touchStart(node, { touches: [{ clientX: 10, clientY: 100 }] });
+    fireEvent.touchMove(node, { touches: [{ clientX: 90, clientY: 104 }] });
+    fireEvent.touchEnd(node, { changedTouches: [{ clientX: 90, clientY: 104 }] });
+    expect(onSwipeReply).toHaveBeenCalledTimes(1);
+    expect(onSwipeReply.mock.calls[0][0].id).toBe(812);
   });
 
   it('a long press over a photo does not also open the viewer behind the menu', () => {

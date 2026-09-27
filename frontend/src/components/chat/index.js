@@ -40,6 +40,7 @@ export {
   groupReactions,
   imageOf,
   aspectOf,
+  canQuote,
   LONG_PRESS_MS,
   SWIPE_THRESHOLD,
 } from './MessageRow';

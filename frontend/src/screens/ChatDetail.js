@@ -174,6 +174,7 @@ import Icons from '../components/ui/Icons';
    rather than a dozen paths spread through a 2,400 line screen. */
 import {
   BillCard,
+  canQuote,
   ChatInputBar,
   ComposerPlusSheet,
   MessageList,
@@ -1179,7 +1180,9 @@ export default function ChatDetail({
     const stableRenderStatus = React.useCallback((m) => (renderStatusRef.current ? renderStatusRef.current(m) : null), []);
     const stableLoadOlder = useStableFn(() => loadOlderHere());
     const stableLongPress = useStableFn((m, detail) => openMessageActions(m, detail));
-    const stableSwipeReply = useStableFn((m) => setFlockReplyingTo(originalRow(m)));
+    // Only a row somebody can reply to (canQuote). MessageRow already takes no
+    // swipe on any other, and the check here is what the menu's Reply makes.
+    const stableSwipeReply = useStableFn((m) => { const row = originalRow(m); if (canQuote(row)) setFlockReplyingTo(row); });
     const stableOpenImage = useStableFn((m) => openImageViewer(originalRow(m)));
     const stableReactionTap = useStableFn((emoji, m) => addReactionToMessage(flock.id, m.id, emoji));
 
@@ -3286,8 +3289,12 @@ export default function ChatDetail({
               ))}
               {/* The other way in. A swipe is faster once you know it is
                   there and completely invisible until then, so the long-press
-                  sheet carries the same act. */}
-              <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
+                  sheet carries the same act, on the same rows: none still
+                  sending or failed, because a quote of a placeholder id can
+                  never be sent (canQuote). */}
+              {canQuote(actionsMessage) && (
+                <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
+              )}
               {/* PIN, and only on a row the server has actually stored: a
                   message it has never seen has no id to pin. One control, and
                   its label says which way the tap goes, so it is never

@@ -80,7 +80,7 @@ import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket }
    MessageRow draws the pills with. */
 import { groupReactions } from '../components/chat/MessageRow';
 import { useStableFn } from '../components/chat/useStableFn';
-import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, DM_FRIEND_COLOUR } from '../components/chat';
+import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, canQuote, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 /* The keyboard lane, the same hook the flock thread calls. See the block at
    its call below, and the longer version of the reasoning in ChatDetail.js. */
@@ -763,9 +763,13 @@ export default function DmDetail({
   })();
 
   // Swipe right to reply, and the tap on Reply in the menu, are the same act.
-  // The row handed back is the shell's own, never the display copy.
+  // The row handed back is the shell's own, never the display copy. Only a
+  // row somebody can reply to (canQuote): a quote of a bubble still sending
+  // or one that failed carries its 'temp-' id, which send_dm drops without a
+  // word, so the reply failed after eight seconds and on every retry.
   const startDmReply = (m) => {
-    setDmReplyingTo(originalDmRow(m));
+    const row = originalDmRow(m);
+    if (canQuote(row)) setDmReplyingTo(row);
     closeDmActions();
   };
 
@@ -1736,7 +1740,9 @@ export default function DmDetail({
             {dmActionMessage.message_type === 'image' && (dmActionMessage.image_url || dmActionMessage.thumb_url) && (
               <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; closeDmActions(); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
             )}
-            <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); startDmReply(dmActionMessage); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+            {canQuote(dmActionMessage) && (
+              <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); startDmReply(dmActionMessage); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+            )}
             {dmActionMessage.sender !== 'You' && (
               <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
             )}
