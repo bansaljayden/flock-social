@@ -536,6 +536,41 @@ test('Birdie’s crowd tool charges the predictor’s paid lookups to the caller
     'the 24-hour walk ran with no account, so its event prefetch and hourly weather were charged to nobody');
 });
 
+const detailCallsFor = (placeId) => googleCalls.filter((u) => u.startsWith(`https://places.googleapis.com/v1/places/${placeId}`)).length;
+
+test('Birdie’s crowd tool reads the card’s Place Details payload instead of buying it again', async () => {
+  // The card is open: that bought the venue's payload and spent one unit.
+  const card = await get('/api/crowd/PLACE_BIRDIE_SHARED');
+  assert.strictEqual(card.status, 200);
+  assert.strictEqual(detailCallsFor('PLACE_BIRDIE_SHARED'), 1);
+  const afterCard = placesBudgetStatus(7).globalUsed;
+
+  // "Is this place busy right now?" about the same venue, a minute later.
+  const out = await executeTool('get_crowd_prediction', { place_id: 'PLACE_BIRDIE_SHARED' }, 7, { includeForecast: true });
+  assert.ok(out && !out.error, `the tool failed: ${out && out.error}`);
+  assert.strictEqual(detailCallsFor('PLACE_BIRDIE_SHARED'), 1,
+    'Birdie bought a second Enterprise Place Details call for a payload the card had already paid for');
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, afterCard,
+    'a lookup answered from the shared cache was charged to the caller anyway');
+});
+
+test('asking Birdie about one venue twice buys one Place Details call and charges one unit', async () => {
+  for (let i = 0; i < 2; i++) {
+    const out = await executeTool('get_crowd_prediction', { place_id: 'PLACE_BIRDIE_TWICE' }, 7, { includeForecast: true });
+    assert.ok(out && !out.error, `the tool failed: ${out && out.error}`);
+  }
+  assert.strictEqual(detailCallsFor('PLACE_BIRDIE_TWICE'), 1, 'the repeat question paid Google again');
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 1);
+  assert.strictEqual(placesBudgetStatus(7).userRemaining, PER_USER_HOURLY - 1);
+});
+
+test('an id that cannot be a Google place id is refused before any charge or call', async () => {
+  const out = await executeTool('get_crowd_prediction', { place_id: 'bad id/../x' }, 7, { includeForecast: true });
+  assert.ok(out && out.error, 'a malformed id was looked up');
+  assert.strictEqual(googleCalls.length, 0);
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 0);
+});
+
 // ---------------------------------------------------------------------------
 // 4. Gemini has a deadline, and a timeout is not retried
 // ---------------------------------------------------------------------------

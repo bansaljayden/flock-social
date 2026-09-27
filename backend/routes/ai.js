@@ -47,6 +47,9 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 // definition (round 25).
 const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
+// Birdie's crowd tool reads the card's Place Details payload rather than
+// buying its own. See get_crowd_prediction.
+const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
 // Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
 const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 // The six-hour memory of place ids Google has said name nothing. Birdie shares
@@ -821,48 +824,47 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Discover screen shows, not a parallel rule-engine estimate.
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
       const placeId = toolInput.place_id;
-      // Both refusals below come BEFORE the allowance is charged, because
-      // neither makes a call. The id is the model's to choose, so a venue name,
-      // an empty string or a sentence can arrive here instead of a real id, and
-      // each one bought a paid call that Google could only refuse, recorded as
-      // a Places failure toward the "Places is down" email. add_venue_to_vote
-      // below already refuses the same way.
+      // Shaped before anything is spent or cached, the rule every route that
+      // reaches the shared details cache keeps (its inventory row rests on
+      // it). The model relays whatever id it was told, and an id that cannot
+      // be Google's is a paid lookup that can only come back "not found".
       if (typeof placeId !== 'string' || !isPlaceIdShaped(placeId)) {
         return { error: 'That venue id is not usable.' };
       }
       // Google already said this id names nothing, within the last six hours.
       // Asking again buys the same answer, so it is answered from memory.
       if (isGonePlace(placeId)) return { error: 'Venue not found' };
-      // Paid Place Details call, same budget as search above (round 12).
-      if (!allowPlacesSearch(userId)) {
+      // THE SAME PLACE DETAILS PAYLOAD THE CARD READS, from
+      // services/placeDetailsCache.js, and charged only when a new upstream
+      // call will actually be made. This bought its own Enterprise call on
+      // every question, so asking Birdie about a venue whose card was open
+      // paid Google twice for one payload, and asking about it again inside
+      // ten minutes paid again, each time out of the same 30-an-hour
+      // allowance the card spends. The cache's header once listed this tool
+      // among the callers kept out on purpose, but the reason given there is
+      // the unauthenticated ledger (allowGlobalPlacesCall) that badge.js and
+      // publicCrowd.js charge; this tool charges allowPlacesSearch against the
+      // signed-in caller, exactly as routes/crowd.js and routes/venueSearch.js
+      // do, so sharing crosses no ledger line.
+      //
+      // The shared mask is a superset of the one this used to send, so every
+      // field read below (utcOffsetMinutes and timeZone for the venue clock
+      // included) is still fetched, and the id is still percent-encoded into
+      // the URL path, now inside the cache. NO `await` between the question
+      // and the fetch: willCostUpstreamCall is only true for this tick.
+      if (willCostUpstreamCall(placeId) && !allowPlacesSearch(userId)) {
         return { error: 'Too many venue lookups right now. Ask again in a little while.' };
       }
-      // encodeURIComponent for parity with routes/crowd.js fetchVenueFromGoogle:
-      // place_id is interpolated into the outbound URL PATH, so it must be
-      // percent-encoded (SECURITY-AUDIT-injection-idor.md finding, LOW/INFO).
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-        signal: upstreamSignal('places'),
-        headers: {
-          'X-Goog-Api-Key': PLACES_API_KEY,
-          // Round 15: utcOffsetMinutes so Birdie scores on the venue's clock
-          // (see below), same field mask intent as routes/crowd.js. timeZone
-          // (2026-09-25) for the same reason the card asks for it: the offset
-          // in force at each hour of the forecast. Place Details Pro, like the
-          // offset, on a mask already billed at Enterprise, so it costs nothing.
-          'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes,timeZone',
-        },
-      });
-      const p = await resp.json();
-      // A NOT_FOUND is Google answering about the id Birdie passed, which the
-      // model can invent or carry from an old conversation. It is health, not
-      // an outage, or a few of those in a row mailed "Places is down". It is
-      // also remembered, in the same place the venue cards remember theirs, so
-      // the next turn that asks about it costs no call and no allowance.
-      const noSuchPlace = isPlaceNotFoundAnswer(resp.status, p.error);
-      if (noSuchPlace) rememberGonePlace(placeId);
-      recordPlacesResult(resp.ok && !p.error || noSuchPlace,
-        p.error?.status || `HTTP ${resp.status}`);
-      if (p.error) return { error: 'Venue not found' };
+      const details = await fetchPlaceDetails(placeId);
+      if (!details.ok) {
+        // Google's own error body is a place it does not know. Anything else
+        // is Google not answering, which is not the same sentence: told "not
+        // found", the model would tell the user the venue does not exist.
+        return details.kind === 'api'
+          ? { error: 'Venue not found' }
+          : { error: 'Could not reach Google Places for that venue right now. Try again in a little while.' };
+      }
+      const p = details.place;
 
       // WHOSE CLOCK: the VENUE's, not Railway's UTC and not the caller's phone.
       // Same contract as /api/crowd. The caller's localHour/localDay start as

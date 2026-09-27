@@ -85,7 +85,11 @@
 //                             Search). Both behind a 10-minute response cache.
 //     routes/venueSearch.js   1 for the text search, 1 for place details.
 //     routes/ai.js            1 per Birdie search_venues / get_crowd_prediction
-//                             tool call, charged to the user steering the model.
+//                             tool call that makes a Google call, charged to
+//                             the user steering the model. The search has its
+//                             own 5-minute cache; the crowd tool reads the
+//                             card's shared Place Details cache, so a venue
+//                             whose card was just opened costs it nothing.
 //     routes/venueDashboard.js 1 per owner-dashboard Place Details and 1 per
 //                             competitor searchNearby.
 //
