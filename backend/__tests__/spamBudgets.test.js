@@ -136,6 +136,13 @@ pool.query = async (text, params = []) => {
       .map(([a, b]) => (Number(a) === me ? Number(b) : Number(a)));
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
+  // ROSTER_BLOCK_SQL, asked by the in-app accept: anybody else on the
+  // accepted roster with a block with the joiner, answered from the world.
+  if (has('JOIN user_blocks b ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)')) {
+    const hit = members.some((m) => m.status === 'accepted' && m.user_id !== Number(params[1])
+      && blockedBetween(m.user_id, params[1]));
+    return hit ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
 
   // users directory. routes/friends.js selects `is_banned` in the SAME
   // statement (a banned target folds into the existing single miss, so it must
