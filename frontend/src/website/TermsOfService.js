@@ -61,7 +61,7 @@ export default function TermsOfService() {
           <li>Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears.</li>
           <li>What you write stays yours. We get only the permission we need to show it to the people you sent it to.</li>
           <li>Crowd predictions are estimates. So is everything Roost tells a venue owner. Neither is a promise.</li>
-          <li>Flock is free to use, and Flock Pro is optional. Its price and how often it renews are shown before you pay. Buy it in the iOS app and you cancel through Apple; buy it on flockcorp.com and you cancel in your account there, with a full refund within 14 days of your first payment.</li>
+          <li>Flock is free to use, and Flock Pro is optional. Its price and how often it renews are shown before you pay. It is sold on flockcorp.com, where you cancel it in your account, with a full refund within 14 days of your first payment. The iOS app does not currently sell it; if a version of the app does, a subscription bought there is cancelled through Apple.</li>
           <li>You can delete your account at any time, and it really deletes.</li>
         </ul>
         <p>
@@ -487,9 +487,9 @@ export default function TermsOfService() {
           <strong>Flock is free to use.</strong> Making plans, inviting people, voting on where to go, the budget, splitting the bill, chat and the safety features cost nothing. Flock Pro is an optional subscription for more Birdie and more crowd forecasts, and the purchase screen lists exactly what it includes. If Flock Pro is not offered where you use Flock, nothing in this section applies to you and nothing is charged.
         </p>
         <p>
-          Flock Pro can be bought in two places. Where you bought it decides who charges you, how you cancel and how refunds work.
+          Flock Pro is sold on flockcorp.com, under 10.2. The iOS app does not currently sell it. If a version of the app offers it, 10.1 sets out how a subscription bought there works. Where you bought it decides who charges you, how you cancel and how refunds work.
         </p>
-        <h3>10.1 Bought in the iOS app</h3>
+        <h3>10.1 If bought in the iOS app</h3>
         <p>
           A subscription bought in the app is an auto-renewable subscription sold through the App Store, not by us. The following is true of it:
         </p>

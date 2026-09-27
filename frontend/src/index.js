@@ -766,7 +766,13 @@ const PAGES = [
   {
     id: 'privacy',
     test: (p) => p === '/privacy',
-    load: () => import('./website/PrivacyPolicy'),
+    // A REACT_APP_PURCHASES=off build (the App Store one) carries no copy of
+    // the policy, which names where each plan is bought, and points at the
+    // published text instead (website/LegalOnTheWeb.js has why). The literal
+    // test keeps the full page's chunk out of that build.
+    load: process.env.REACT_APP_PURCHASES === 'off'
+      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="privacy" /> }))
+      : () => import('./website/PrivacyPolicy'),
     Loading: PaperLoading,
   },
   {
@@ -778,7 +784,11 @@ const PAGES = [
   {
     id: 'terms',
     test: (p) => p === '/terms',
-    load: () => import('./website/TermsOfService'),
+    // Same as /privacy: the Terms price Roost and set out how Flock Pro is
+    // sold, so a REACT_APP_PURCHASES=off build points at the published text.
+    load: process.env.REACT_APP_PURCHASES === 'off'
+      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="terms" /> }))
+      : () => import('./website/TermsOfService'),
     Loading: PaperLoading,
   },
   {
