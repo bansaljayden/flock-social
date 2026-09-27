@@ -759,6 +759,25 @@ describe('capacitor.config.ts and the copy under ios/ agree', () => {
     });
   });
 
+  test('the status bar launches with light glyphs, and the app restyles it through SystemBars', () => {
+    // Nothing used to set the style, so the bar followed the phone's
+    // appearance instead of the app's theme. 'DARK' is Capacitor's word for a
+    // dark background, which is what the splash and the sign-in screen are.
+    expect(capConfigTs).toMatch(/SystemBars:\s*\{\s*style:\s*'DARK',?\s*\}/);
+    // setStyle is a no-op unless the view controller owns the status bar.
+    expect(infoPlist).toMatch(/<key>UIViewControllerBasedStatusBarAppearance<\/key>\s*<true\/>/);
+    // SystemBars ships inside @capacitor/core, so there is no plugin package
+    // for the dependency check below to find, and none was added.
+    expect(pkg.dependencies['@capacitor/core']).toBeTruthy();
+    expect(Object.keys(pkg.dependencies).filter((d) => /status-?bar|system-?bars/i.test(d))).toEqual([]);
+    // The runtime side: reached by a dynamic import behind the native-shell
+    // guard, so the web build never defines window.Capacitor from here.
+    const systemBars = read('frontend', 'src', 'services', 'systemBars.js');
+    expect(systemBars).toMatch(/import\('@capacitor\/core'\)/);
+    expect(systemBars).not.toMatch(/^import .* from '@capacitor\/core'/m);
+    expect(systemBars).toMatch(/if \(!isNativeShell\(\)\) return;/);
+  });
+
   test('every Capacitor plugin dependency has a declared plugin class', () => {
     // Everything in package.json that is a Capacitor plugin, less the three
     // packages that are the runtime itself rather than plugins. @capgo is here

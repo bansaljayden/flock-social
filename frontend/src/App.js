@@ -9,6 +9,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
 import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
+import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Location goes through this shim, never the browser API directly. Calling the
 // web API inside the iOS shell made WKWebView raise a SECOND permission sheet,
 // its own, reading '"localhost" would like to use your current location' — the
@@ -8140,6 +8141,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try { return localStorage.getItem('flock_notif_ask_dismissed') === 'true'; } catch { return false; }
   });
   const [profileScreen, setProfileScreen] = useState('main');
+  /* WHAT IS AT THE TOP OF THE SCREEN, for the status bar strip and the glyphs
+     iOS draws in it.
+
+     These screens open on a navy header in both themes. The strip above them
+     is the notch spacer, which painted --bg-primary, so on a phone a cream or
+     #0f172a band sat over a navy header, against SAFE-AREA rule 3 (let the
+     background run into the inset). While one of them is showing the spacer
+     is painted the header's own navy, and the glyphs go light. The list is
+     NAVY_TOP_SCREENS in services/systemBars.js. The Welcome and venue
+     onboarding screens take over the screen switch whatever currentScreen
+     says, so neither counts. */
+  const topIsNavy = screenTopIsNavy({
+    currentScreen, currentTab, profileScreen,
+    takenOver: showModeSelection || showVenueOnboarding,
+  });
+  /* Two dark surfaces that cover the whole screen, strip included: the event
+     detail hero and Birdie full screen. They paint over the spacer themselves,
+     so only the glyphs change. (The chat and DM photo viewers are local to
+     those screens and hold the bar from there; see services/systemBars.js.) */
+  const darkOverTop = !!eventDetail || aiChatMode === 'fullscreen';
+  useEffect(() => {
+    setStatusBarOverDark(isDark || topIsNavy || darkOverTop);
+  }, [isDark, topIsNavy, darkOverTop]);
+  // Signing out unmounts this shell and shows the sign-in screen, which is
+  // dark whatever the theme, so the glyphs go back to the launch style.
+  useEffect(() => () => setStatusBarOverDark(true), []);
   const [profileName, setProfileName] = useState(authUser?.name || '');
   // The local part of the address, shown as a read-only @handle on the profile
   // card. Derived, not state: it used to be edited in a "Username" field that
@@ -19241,7 +19268,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
       `}</style>
       <div style={styles.phoneContainer}>
-        <div style={styles.notch}>
+        {/* On the device the spacer takes the colour of the header under it
+            (topIsNavy above). The desktop bezel keeps its own fake notch. */}
+        <div style={fullBleed && topIsNavy ? { ...styles.notch, backgroundColor: colors.navyBg } : styles.notch}>
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
