@@ -27,15 +27,26 @@
  * `DialogBehavior` arrives as a prop rather than an import because it lives at
  * module scope in App.js and is not exported, which is exactly how AddFriends
  * receives it.
+ *
+ * "I've confirmed" was added later, and is the one change to the body. The
+ * sheet offered a new link and Not now, and no way to say the link had been
+ * opened, so on iOS, where it opens in Safari and the app hears nothing,
+ * somebody who had confirmed came back to the same sheet on the next tap. The
+ * signup screen has had its own re-check ("I opened the link, continue") all
+ * along. This one is App.js's checkEmailConfirmed, the same read the Nest's
+ * confirm line uses: it re-reads the account and, when the address is
+ * confirmed, clears verifyPrompt, which is what closes this sheet.
  */
 import React from 'react';
 
 const VerifyEmailSheet = ({
   DialogBehavior,
   authUser,
+  checkEmailConfirmedNow,
   isDark,
   resendVerification,
   setVerifyPrompt,
+  verifyChecking,
   verifyCooldown,
   verifyNote,
   verifyPrompt,
@@ -66,6 +77,14 @@ const VerifyEmailSheet = ({
           {verifyRefused
             ? 'We cannot mail that address'
             : verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : 'Send the link again'}
+        </button>
+        <button
+          className="hit44"
+          onClick={checkEmailConfirmedNow}
+          disabled={verifyChecking}
+          style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyChecking ? 'default' : 'pointer', opacity: verifyChecking ? 0.6 : 1 }}
+        >
+          {verifyChecking ? 'Checking' : "I've confirmed"}
         </button>
         <button
           className="hit44"

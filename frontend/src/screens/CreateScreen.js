@@ -173,6 +173,10 @@ export default function CreateScreen({
   Toggle,
   authUser,
   colors,
+  // The confirm-your-email line App.js draws on the Nest, or null for a
+  // confirmed account. Built there, once, so the two screens say the same
+  // thing; see components/EmailConfirmLine.js.
+  emailConfirmLine,
   flockBudgetContext,
   flockCashPool,
   flockDate,
@@ -593,6 +597,14 @@ export default function CreateScreen({
         </div>
 
         <div style={{ flex: 1, padding: '16px 16px 8px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
+
+          {/* An unconfirmed address is said before the form, not after it.
+              POST /api/flocks refuses an unconfirmed account, and the only
+              place that used to say so was the sheet the refusal raised,
+              after the name, the time and the invites were all filled in.
+              The form stays usable: everything typed here survives leaving
+              the screen, so somebody can fill it in, confirm, and come back. */}
+          {emailConfirmLine && <div style={{ marginBottom: '16px' }}>{emailConfirmLine}</div>}
 
           {/* THE OPENER. The warm bird, feet on the same line as the words,
               at a size that reads as the brand rather than an icon. Eager,

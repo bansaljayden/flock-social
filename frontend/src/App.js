@@ -172,6 +172,8 @@ import { mergeBudgetUpdate } from './lib/budgetStatus';
 // screen and is imported by screens/ProfileSettings.js now, not here.
 import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
+import EmailConfirmLine from './components/EmailConfirmLine';
+import { useStableFn } from './components/chat/useStableFn';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -5217,14 +5219,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => clearTimeout(t);
   }, [verifyCooldown]);
 
+  // FlockApp hands onUserPatch down as a fresh arrow on each of its renders.
+  // Read through a stable function here so the two callbacks below keep one
+  // identity: needsEmailVerification sits in the dependency lists of a dozen
+  // handlers, and a patch re-renders FlockApp, so depending on the raw prop
+  // would rebuild all of them on the very patch they made. Only ever called
+  // from handlers and effects, never during render, which is the one place
+  // useStableFn's ref can lag (its header says so). A patch that changes
+  // nothing is not sent: every patch is a new authUser object, and several
+  // effects here re-run on that identity (the friends read, the two socket
+  // subscriptions), so a second 403 on an account already marked unconfirmed
+  // must not cost any of them.
+  const patchSessionUser = useStableFn((patch) => {
+    if (!onUserPatch || !authUser) return;
+    if (Object.keys(patch).some((k) => authUser[k] !== patch[k])) onUserPatch(patch);
+  });
+
   // Returns true when it took ownership of the error, so callers read as
   //   if (needsEmailVerification(err, 'add friends')) return;
   const needsEmailVerification = useCallback((err, action) => {
     if (!err?.data?.emailVerificationRequired) return false;
     setVerifyNote('');
     setVerifyPrompt(action || 'do that');
+    // The server has just said this account is unconfirmed, and it reads the
+    // row on every request, so it is the fresher of the two answers. Folding
+    // it into the session's copy puts the confirm line on the Nest and the
+    // create screen for an account whose copy said otherwise (one that has
+    // since changed its address, say).
+    patchSessionUser({ email_verified: false });
     return true;
-  }, []);
+  }, [patchSessionUser]);
 
   // `true` once the account's address is on the suppression list, which is a
   // hard bounce or a spam report and is not something this app can take back
@@ -5268,6 +5292,93 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       else setVerifyNote(e?.message || 'Could not send it just now. Try again shortly.');
     }
   }, [verifyCooldown, verifyRefused]);
+
+  // ── Saying it up front, and noticing when it is done ─────────────────────
+  // The sheet above only ever appeared AFTER a refusal, so an account that
+  // took "Continue for now, confirm later" met the requirement at the end of
+  // filling in a whole plan. `email_verified` has been on every user object
+  // this app holds (signup, login and GET /api/auth/me all return it) and
+  // nothing on the Nest or the create screen read it. EmailConfirmLine now
+  // says it where the two refused buttons are; this is the half that finds
+  // out the link was opened.
+  //
+  // `=== false`, never falsy: an older server or a user object from a path
+  // that did not select the column must not put a confirm line in front of an
+  // account that is fine. The server's own gate reads the same literal false
+  // (isUnverified in backend/middleware/auth.js).
+  const emailUnconfirmed = authUser?.email_verified === false;
+  const [verifyChecking, setVerifyChecking] = useState(false);
+  // In flight, as a ref, so the focus and visibilitychange that iOS fires
+  // together on resume cost one request rather than two.
+  const verifyCheckInFlight = useRef(false);
+
+  // Re-reads the account. `quiet` is the automatic read on coming back to the
+  // app: it says nothing when the answer is still no, because nobody pressed
+  // anything, and it stands aside for a read already going. A tap on "I've
+  // confirmed" always runs and is told either way; its own button is
+  // disabled while it does, so it cannot stack.
+  const checkEmailConfirmed = useCallback(async (quiet = false) => {
+    if (quiet && verifyCheckInFlight.current) return;
+    verifyCheckInFlight.current = true;
+    if (!quiet) { setVerifyChecking(true); setVerifyNote(''); }
+    try {
+      const me = await getCurrentUser();
+      const user = me?.user || me;
+      if (user?.email_verified === true) {
+        // The server reads the row on every gated request, so nothing else
+        // has to be refreshed for Start a flock and Add friends to work now:
+        // patching the session's copy is what takes the line and the sheet
+        // down.
+        patchSessionUser({ email_verified: true });
+        setVerifyPrompt(null);
+        setVerifyNote('');
+        showToast('Your email is confirmed.');
+        return;
+      }
+      if (!quiet) setVerifyNote('Not confirmed yet. Open the link in the email, then tap this again.');
+    } catch (err) {
+      if (!quiet) setVerifyNote(err?.message || 'Could not check just now. Try again in a moment.');
+    } finally {
+      verifyCheckInFlight.current = false;
+      if (!quiet) setVerifyChecking(false);
+    }
+  }, [patchSessionUser, showToast]);
+  const checkEmailConfirmedNow = useCallback(() => checkEmailConfirmed(false), [checkEmailConfirmed]);
+
+  // In the iOS app the link opens in Safari, and nothing in the app hears
+  // about it. Coming back to the app is the moment somebody who just opened
+  // it returns, so that is when the account is re-read, and only while it is
+  // unconfirmed: a confirmed account adds no listener at all.
+  useEffect(() => {
+    if (!emailUnconfirmed) return undefined;
+    let lastRead = 0;
+    const onForeground = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (Date.now() - lastRead < 5000) return;
+      lastRead = Date.now();
+      checkEmailConfirmed(true);
+    };
+    document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
+    return () => {
+      document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
+    };
+  }, [emailUnconfirmed, checkEmailConfirmed]);
+
+  // One element, drawn on the Nest and handed to the create screen, so the
+  // two cannot say different things.
+  const emailConfirmLine = emailUnconfirmed ? (
+    <EmailConfirmLine
+      email={authUser?.email || ''}
+      onResend={resendVerification}
+      onCheck={checkEmailConfirmedNow}
+      cooldown={verifyCooldown}
+      refused={verifyRefused}
+      checking={verifyChecking}
+      note={verifyPrompt ? '' : verifyNote}
+    />
+  ) : null;
 
   // `quiet` is the automatic read on entering the tab: it still records the
   // failure in state, it just does not throw a toast at somebody who did not
@@ -16153,6 +16264,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       {/* Scrollable Content */}
       <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
+        {/* An unconfirmed address, said before either button below is
+            tapped. See checkEmailConfirmed for the rest. The empty state's
+            own margin sits under it, so it needs only a little here. */}
+        {emailConfirmLine && <div style={{ marginBottom: '8px' }}>{emailConfirmLine}</div>}
+
         {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
         {(() => {
           // A flock still voting AND still waiting on this reader. The second
@@ -18004,6 +18120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         Toggle,
         authUser,
         colors,
+        emailConfirmLine,
         flockBudgetContext,
         flockCashPool,
         flockDate,
@@ -19070,10 +19187,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const verifyEmailSheetProps = {
     DialogBehavior,
     authUser,
+    checkEmailConfirmedNow,
     isDark,
     resendVerification,
     verifyRefused,
     setVerifyPrompt,
+    verifyChecking,
     verifyCooldown,
     verifyNote,
     verifyPrompt,
