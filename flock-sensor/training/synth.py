@@ -198,6 +198,11 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
         s *= rng.uniform(0.6, 0.8)          # a child
     skin = rng.uniform(31.0, 35.0)
     cloth = _clothing(rng, amb, skin)
+    if rng.random() < 0.12:
+        # No shirt, or a vest: the torso reads as skin, as warm as a face.
+        # A real unit missed a bare torso filling its view because every
+        # person it had learned from wore clothes cooler than skin.
+        cloth = skin - rng.uniform(0.3, 1.8)
     hair = amb + (skin - amb) * rng.uniform(0.35, 0.85)
     pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
     head_rx, head_ry = 0.083 * s * rng.uniform(0.9, 1.1), 0.115 * s * rng.uniform(0.9, 1.1)
@@ -340,8 +345,28 @@ def distractor(c, rng, amb, oid=-1):
         paint(rect(x, y, 0.33 * s, 0.22 * s, angle=rng.normal(0, 0.3), corner=0.01 * s),
                 amb + rng.uniform(4, 14))
     elif kind == 'screen':
-        paint(rect(x, y, rng.uniform(0.5, 1.2) * s, rng.uniform(0.3, 0.7) * s),
-                amb + rng.uniform(3, 12))
+        # A monitor or a television is not a flat warm card: the backlight
+        # runs hotter along one edge, the electronics make a hot patch, the
+        # bezel reads cooler, and it stands on something. Tried in a real
+        # room, owl-3 took one for a person now and then.
+        sw, sh = rng.uniform(0.45, 1.3) * s, rng.uniform(0.28, 0.75) * s
+        base = amb + rng.uniform(2.5, 11)
+        paint(rect(x, y, sw * 1.04, sh * 1.06, corner=0.01 * s), amb + rng.uniform(0.5, 3))
+        ang = rng.uniform(0, 2 * np.pi)
+        box = rect(x, y, sw, sh)
+        if box is not None:
+            x0, y0, m = box
+            hh, ww = m.shape
+            gy, gx = np.mgrid[0:hh, 0:ww].astype(np.float32)
+            ramp = (np.cos(ang) * (gx / max(ww, 1) - 0.5) + np.sin(ang) * (gy / max(hh, 1) - 0.5))
+            field = base + ramp * rng.uniform(0, 5) + rng.normal(0, 0.15, m.shape)
+            c.paint(box, None, owner=oid, field=field.astype(np.float32))
+        spot = rng.uniform(-0.3, 0.3, 2)
+        paint(ellipse(x + spot[0] * sw, y + spot[1] * sh, 0.12 * sw, 0.15 * sh),
+              base + rng.uniform(1, 5))
+        if rng.random() < 0.7:
+            paint(rect(x, y + sh * 0.62, 0.06 * s, 0.25 * sh), amb + rng.uniform(0, 2))
+            paint(rect(x, y + sh * 0.75, 0.3 * sw, 0.04 * s), amb + rng.uniform(0, 2))
     elif kind == 'radiator':
         w, h = rng.uniform(0.6, 1.2) * s, rng.uniform(0.4, 0.7) * s
         t = rng.uniform(35, 60)
@@ -422,6 +447,12 @@ def scene_full(rng):
     if not overhead and rng.random() < 0.15:
         placed.append((rng.uniform(0.35, 0.8), rng.uniform(0.2, 0.8) * W,
                        rng.uniform(0.1, 0.55) * H, n))
+        n += 1
+    # A body filling the frame with the head above it, out of view: somebody
+    # standing right at the sensor. Still a person; the body carries the label.
+    if not overhead and rng.random() < 0.12:
+        placed.append((rng.uniform(0.3, 0.7), rng.uniform(0.25, 0.75) * W,
+                       rng.uniform(-0.45, -0.05) * H, n))
         n += 1
     # Pairs close together: move some people next to another.
     if n >= 2 and rng.random() < 0.35:
