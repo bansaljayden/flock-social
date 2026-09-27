@@ -81,7 +81,9 @@ const U = {
   ZELLE: num('routes/users.js',
     /body\('zelle_identifier'\)[\s\S]{0,240}?isLength\(\{ max: (\d+) \}\)/, 'the Zelle identifier width'),
   SETTINGS_PAYLOAD: num('routes/users.js', /JSON\.stringify\(partial\)\.length > (\d+)/, 'the settings payload cap'),
-  SETTINGS_STORED: num('routes/users.js', /serialized\.length > (\d+)/, 'the merged settings cap'),
+  // The merged cap is enforced inside the settings upsert, so it is a named
+  // constant bound as a parameter rather than a literal in a JS comparison.
+  SETTINGS_STORED: constIn('routes/users.js', 'MAX_SETTINGS_STORED'),
 };
 
 const V = {
