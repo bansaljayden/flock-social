@@ -135,10 +135,17 @@ function recordPlacesResult(ok, reason) {
  * FAILURE_STREAK_ALARM at Flock's traffic, and the operator was mailed "Google
  * Places is down" while it was up.
  *
- * NOT_FOUND ONLY, NOT INVALID_ARGUMENT, although a malformed id can come back
- * as the second. Google answers a dead or wrong API key with 400
- * INVALID_ARGUMENT ("API key not valid"), and a key problem is one of the
- * outages this alarm exists to report, so that status keeps counting.
+ * AN ID THAT DOES NOT DECODE IS THE SAME ANSWER, BUT ONLY WHEN GOOGLE SAYS SO.
+ * A place id that was never real (Birdie's model can invent one, and a
+ * truncated id is another) comes back 400 INVALID_ARGUMENT rather than
+ * NOT_FOUND, and three of those in a row mailed "Places is down" just the same.
+ * But Google also answers a dead or wrong API key with 400 INVALID_ARGUMENT
+ * ("API key not valid"), and a key problem is one of the outages this alarm
+ * exists to report. So INVALID_ARGUMENT counts here only when its message names
+ * a place id and no ErrorInfo detail names an API key reason (API_KEY_INVALID,
+ * API_KEY_EXPIRED). Every other INVALID_ARGUMENT keeps counting as a failure,
+ * and so would this one if Google ever reworded it: the miss is the old
+ * behaviour, never a silenced outage.
  *
  * @param {number} httpStatus the HTTP status the answer came with (0 if unknown)
  * @param {object} error      Google's `error` object from the body
@@ -147,7 +154,25 @@ function recordPlacesResult(ok, reason) {
 function isPlaceNotFoundAnswer(httpStatus, error) {
   if (!error || typeof error !== 'object') return false;
   if (error.status === 'NOT_FOUND') return true;
-  return Number(error.code) === 404 || httpStatus === 404;
+  if (Number(error.code) === 404 || httpStatus === 404) return true;
+  return isUnusablePlaceIdAnswer(error);
+}
+
+// "Not a valid Place ID", "The provided Place ID is no longer valid": Google's
+// wording names the id. "API key not valid" does not, and neither does a field
+// mask complaint about "places.id" (the "s" sits where "id" would have to be).
+const NAMES_PLACE_ID_RE = /\bplace[\s_]?ids?\b/i;
+
+function namesApiKeyProblem(error) {
+  const details = Array.isArray(error.details) ? error.details : [];
+  return details.some((d) => d && typeof d === 'object'
+    && typeof d.reason === 'string' && d.reason.startsWith('API_KEY_'));
+}
+
+function isUnusablePlaceIdAnswer(error) {
+  if (error.status !== 'INVALID_ARGUMENT') return false;
+  if (namesApiKeyProblem(error)) return false;
+  return NAMES_PLACE_ID_RE.test(String(error.message || ''));
 }
 
 /**

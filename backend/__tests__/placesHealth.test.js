@@ -200,16 +200,28 @@ test('a cached Places answer is never recorded as health', () => {
   assert.ok(sharedCheck > recordAt, 'the record is inside the else branch, not after the join');
 });
 
-test('only NOT_FOUND is read as Google answering about a place id', () => {
+test('only NOT_FOUND, or an INVALID_ARGUMENT naming the place id, is read as Google answering about it', () => {
   // A retired id answers NOT_FOUND, and that is Google working. Counted as a
   // failure, one tap on a stale saved venue built the streak that mailed
-  // "Google Places is down". Everything else that says no keeps counting,
-  // INVALID_ARGUMENT included, because a dead API key answers with it.
+  // "Google Places is down". An id that never decoded (one Birdie's model made
+  // up) answers INVALID_ARGUMENT and did the same. Everything else that says no
+  // keeps counting, a dead API key's INVALID_ARGUMENT above all.
+  const keyInfo = (reason) => [
+    { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason, domain: 'googleapis.com', metadata: { service: 'places.googleapis.com' } },
+  ];
   for (const [httpStatus, error, want, what] of [
     [404, { code: 404, status: 'NOT_FOUND', message: 'Requested entity was not found.' }, true, 'Places (New) NOT_FOUND'],
     [0, { status: 'NOT_FOUND' }, true, 'NOT_FOUND with no HTTP status to hand'],
     [0, { code: 404, message: 'not found' }, true, 'a 404 code with no status word'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'Not a valid Place ID: ChIJmadeUpByTheModel' }, true, 'an id that does not decode'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'The provided Place ID is no longer valid. Please refresh cached Place IDs.' }, true, 'a stale id answered as INVALID_ARGUMENT'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'Invalid placeId.' }, true, 'the camel-cased spelling'],
     [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.' }, false, 'a dead API key'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.', details: keyInfo('API_KEY_INVALID') }, false, 'a dead API key, with its ErrorInfo'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'Place ID lookup refused for this key.', details: keyInfo('API_KEY_EXPIRED') }, false, 'a key reason wins even when the wording names a place id'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT', message: 'Invalid field mask: places.id is not a field of Place.' }, false, 'a field mask complaint about places.id'],
+    [400, { code: 400, status: 'INVALID_ARGUMENT' }, false, 'INVALID_ARGUMENT with no message to read'],
+    [403, { code: 403, status: 'PERMISSION_DENIED', message: 'Place ID requests are blocked for this project.' }, false, 'only INVALID_ARGUMENT is read by its message'],
     [429, { code: 429, status: 'RESOURCE_EXHAUSTED' }, false, 'the September quota clamp'],
     [403, { code: 403, status: 'PERMISSION_DENIED' }, false, 'billing or key restriction'],
     [503, { code: 503, status: 'UNAVAILABLE' }, false, 'Google down'],

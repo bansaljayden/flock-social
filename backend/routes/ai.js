@@ -49,6 +49,9 @@ const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./
 const { allowPlacesSearch } = require('../utils/placesBudget');
 // Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
 const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
+// The six-hour memory of place ids Google has said name nothing. Birdie shares
+// only that, not the payload cache; services/placeDetailsCache.js says why.
+const { isGonePlace, rememberGonePlace } = require('../services/placeDetailsCache');
 const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
@@ -795,11 +798,23 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Same ML path as GET /api/crowd — Birdie must quote the numbers the
       // Discover screen shows, not a parallel rule-engine estimate.
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
+      const placeId = toolInput.place_id;
+      // Both refusals below come BEFORE the allowance is charged, because
+      // neither makes a call. The id is the model's to choose, so a venue name,
+      // an empty string or a sentence can arrive here instead of a real id, and
+      // each one bought a paid call that Google could only refuse, recorded as
+      // a Places failure toward the "Places is down" email. add_venue_to_vote
+      // below already refuses the same way.
+      if (typeof placeId !== 'string' || !isPlaceIdShaped(placeId)) {
+        return { error: 'That venue id is not usable.' };
+      }
+      // Google already said this id names nothing, within the last six hours.
+      // Asking again buys the same answer, so it is answered from memory.
+      if (isGonePlace(placeId)) return { error: 'Venue not found' };
       // Paid Place Details call, same budget as search above (round 12).
       if (!allowPlacesSearch(userId)) {
         return { error: 'Too many venue lookups right now. Ask again in a little while.' };
       }
-      const placeId = toolInput.place_id;
       // encodeURIComponent for parity with routes/crowd.js fetchVenueFromGoogle:
       // place_id is interpolated into the outbound URL PATH, so it must be
       // percent-encoded (SECURITY-AUDIT-injection-idor.md finding, LOW/INFO).
@@ -818,8 +833,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const p = await resp.json();
       // A NOT_FOUND is Google answering about the id Birdie passed, which the
       // model can invent or carry from an old conversation. It is health, not
-      // an outage, or a few of those in a row mailed "Places is down".
-      recordPlacesResult(resp.ok && !p.error || isPlaceNotFoundAnswer(resp.status, p.error),
+      // an outage, or a few of those in a row mailed "Places is down". It is
+      // also remembered, in the same place the venue cards remember theirs, so
+      // the next turn that asks about it costs no call and no allowance.
+      const noSuchPlace = isPlaceNotFoundAnswer(resp.status, p.error);
+      if (noSuchPlace) rememberGonePlace(placeId);
+      recordPlacesResult(resp.ok && !p.error || noSuchPlace,
         p.error?.status || `HTTP ${resp.status}`);
       if (p.error) return { error: 'Venue not found' };
 
