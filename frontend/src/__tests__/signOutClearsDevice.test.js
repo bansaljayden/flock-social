@@ -702,4 +702,68 @@ describe('a stored session that was already dead when the page loaded', () => {
 
     expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
   });
+
+  // THE STASH HAS TO BE NEWER THAN THE SESSION IT OUTLIVES.
+  //
+  // "No request in this page load saw the session alive" says the token is
+  // dead, not that the stash came after it died. The redeem after sign-in
+  // keeps a stash it could not use (an unverified email, a dropped
+  // connection), so account A can leave one while A's token is still good. The
+  // token expires, somebody else opens the app, and the boot's 401 used to keep
+  // A's stash for them: they signed in and were joined into A's plan and its
+  // chat, carrying A's guest identity. The stored token's own exp dates it.
+  describe('dated against the stored token\'s expiry', () => {
+    const nowSec = () => Math.floor(Date.now() / 1000);
+    const jwtExpiring = (exp) => {
+      const b64url = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+      return `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({ userId: 42, tv: 0, iat: exp - 86400, exp })}.sig`;
+    };
+    const stashAt = (at) => localStorage.setItem('flock_pending_invite', JSON.stringify({
+      token: 'abcdefgh12', at, flockName: 'Friday', guestToken: GUEST,
+    }));
+    const bootInto401 = async (api) => {
+      global.fetch.mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+      await expect(api.getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+      await api.logout();
+    };
+
+    it('keeps a stash written after the token had already expired', async () => {
+      const api = freshApi();
+      seedDevice();
+      localStorage.setItem('flockToken', jwtExpiring(nowSec() - 2 * 86400));
+      stashAt(Date.now() - 60 * 1000);
+
+      await bootInto401(api);
+
+      expect(localStorage.getItem('flock_pending_invite')).not.toBeNull();
+      expect(localStorage.getItem('flock_guest_abcdefgh12')).toBe('{"name":"Sam"}');
+    });
+
+    it('takes a stash written while that token still worked, and the guest identity it names', async () => {
+      const api = freshApi();
+      seedDevice();
+      localStorage.setItem('flockToken', jwtExpiring(nowSec() - 3600));
+      stashAt(Date.now() - 3 * 3600 * 1000);
+
+      await bootInto401(api);
+
+      expect(localStorage.getItem('flock_pending_invite')).toBeNull();
+      expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
+      // eslint-disable-next-line global-require
+      const { pendingInvite } = require('../services/inviteHandoff');
+      expect(pendingInvite()).toBeNull();
+    });
+
+    it('takes a stash with no date, which cannot be shown to be newer', async () => {
+      const api = freshApi();
+      seedDevice();
+      localStorage.setItem('flockToken', jwtExpiring(nowSec() - 3600));
+      localStorage.setItem('flock_pending_invite', JSON.stringify({ token: 'abcdefgh12', guestToken: GUEST }));
+
+      await bootInto401(api);
+
+      expect(localStorage.getItem('flock_pending_invite')).toBeNull();
+      expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
+    });
+  });
 });
