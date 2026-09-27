@@ -3395,7 +3395,9 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, voted = false, col
   // same venue. No score yet means no crowd row, exactly as Birdie's cards do.
   const crowd = typeof venue.crowd === 'number' ? venue.crowd : null;
   const crowdColor = crowdColorFor(crowd);
-  const crowdInk = crowdInkFor(crowd, colors);
+  // `c`, the palette the caller hands in. The bare `colors` here is the
+  // module-scope light palette, whose redText is #b91c1c at every hour.
+  const crowdInk = crowdInkFor(crowd, c);
   return (
     <div style={{
       backgroundColor: 'var(--bg-card-solid)',
@@ -3647,8 +3649,22 @@ const colors = colorsLight;
    render, which is also why the knob's `transition: left 0.2s` could never
    play: there was never an old node left to animate from.
 
-   Both read only `colors`, which is module scope, so nothing had to be
-   threaded to move them. */
+   THE MOVE BROKE DARK MODE, and the line that used to close this comment is
+   why. It said both read only `colors`, "which is module scope, so nothing had
+   to be threaded to move them". Inside the component, `colors` was the
+   theme-aware palette FlockAppInner builds with useMemo on isDark. Up here it
+   is the `const colors = colorsLight` above, the light palette at every hour.
+   From 8 PM the selected tab icon was #1e293b on its #1e3a5c highlight
+   (1.26:1), the idle icons were under 3:1 on the nav bar, and a switch that
+   was on drew #2d5a87 over a dark --toggle-off that is also #2d5a87.
+
+   So neither reads a palette any more. NavIcon strokes `currentColor`, and
+   BottomNav, which runs inside FlockAppInner, sets `color` on the wrapper from
+   the live palette. Toggle paints with the --toggle-on / --toggle-off tokens,
+   which index.css redefines under [data-theme="dark"]. Both stay module scope,
+   so the remount fix above stands. `moduleScopeThemeColors.test.js` fails any
+   component declared above FlockAppInner that reads `colors.` without being
+   handed `colors`. */
 // Toggle Component
 // role="switch" + aria-checked is the only thing that makes an unlabelled
 // 44x24 pill announce as a control with a state. `label` is passed by every
@@ -3686,14 +3702,16 @@ const intelFailure = (err) => ({
 });
 
 const Toggle = ({ on, onChange, label }) => (
-  <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? colors.steel : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
+  <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
     <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
   </button>
 );
 
-// SVG Icons for navigation
-const NavIcon = ({ id, active }) => {
-  const color = active ? colors.navy : colors.textTertiary;
+// SVG Icons for navigation. The stroke is `currentColor`: the tab button in
+// BottomNav sets `color` from the theme-aware palette, which this module-scope
+// component cannot see (see the comment above Toggle).
+const NavIcon = ({ id }) => {
+  const color = 'currentColor';
   const icons = {
     home: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
     explore: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
@@ -13322,8 +13340,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '8px', minWidth: '16px', height: '16px', borderRadius: '8px', padding: '0 4px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
             )}
             <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div>
-                <NavIcon id={t.id} active={currentTab === t.id} />
+              {/* The icon strokes currentColor, so this is where its colour
+                  comes from, and it has to be here: `colors` is the live
+                  palette only inside FlockAppInner. */}
+              <div style={{ color: currentTab === t.id ? colors.navy : colors.textTertiary }}>
+                <NavIcon id={t.id} />
               </div>
               <span style={{
                 fontSize: 'var(--t-meta)',
