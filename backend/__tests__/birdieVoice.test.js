@@ -361,3 +361,43 @@ test('the prompt still opens as Birdie', () => {
       `the prompt no longer opens as Birdie (${label})`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// The accuracy answer. Birdie may state how accurate Flock's crowd numbers are
+// only with the figures measured for the serving configuration that is making
+// them, and only while that configuration is on: with either switch off the
+// numbers are made another way and the figures describe nothing being served.
+// ---------------------------------------------------------------------------
+function withServeEnv(mode, nowcast, fn) {
+  const saved = { mode: process.env.CROWD_SERVE_MODE, nowcast: process.env.CROWD_NOWCAST_ENABLED };
+  const set = (k, v) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  set('CROWD_SERVE_MODE', mode);
+  set('CROWD_NOWCAST_ENABLED', nowcast);
+  try { return fn(); } finally {
+    set('CROWD_SERVE_MODE', saved.mode);
+    set('CROWD_NOWCAST_ENABLED', saved.nowcast);
+  }
+}
+
+test('with curve_offset and the nowcast on, Birdie can quote the measured accuracy, and only that', () => {
+  const served = require('../services/servedAccuracy.json');
+  const prompt = withServeEnv('curve_offset', 'true', adult);
+  assert.match(prompt, /If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else\./);
+  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), ${Math.round(served.within_one_band)}% of Flock's crowd numbers landed within one crowd level`),
+    'the within-one-level figure is not the one servedAccuracy.json records');
+  assert.ok(prompt.includes(`the average miss was ${Math.round(served.mae)} points`));
+  assert.ok(prompt.includes(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`));
+  assert.match(prompt, /never how sure one number is\./);
+  // Inside the hard rules, beside the confidence rule it qualifies.
+  const at = prompt.indexOf('how accurate Flock');
+  assert.ok(prompt.indexOf('Hard rules:') < at);
+  assert.ok(!/—/.test(prompt.slice(at, at + 600)));
+});
+
+test('with either switch off, the prompt states no accuracy figure', () => {
+  for (const [mode, nowcast] of [[undefined, undefined], ['curve_offset', undefined], [undefined, 'true'], ['model', 'true']]) {
+    const prompt = withServeEnv(mode, nowcast, adult);
+    assert.ok(!prompt.includes('how accurate Flock'), `accuracy line present with CROWD_SERVE_MODE=${mode} CROWD_NOWCAST_ENABLED=${nowcast}`);
+    assert.ok(!/78\.8|79%/.test(prompt));
+  }
+});

@@ -1,0 +1,26 @@
+{
+  "configuration": "CROWD_SERVE_MODE=curve_offset + CROWD_NOWCAST_ENABLED=true",
+  "population": "live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), held out; weights fitted on 2026-09-01..05",
+  "scored_dates": ["2026-09-06", "2026-09-07", "2026-09-08"],
+  "rows": 4183,
+  "within_one_band": 78.8,
+  "within_10": 53.8,
+  "within_15": 61.2,
+  "band_exact": 56.0,
+  "mae": 17.06,
+  "bias": -0.98,
+  "before": {
+    "configuration": "v2.6.0-starling as served before the two switches (model mode, quantile map on)",
+    "rows": 4183,
+    "within_one_band": 58.5,
+    "within_10": 28.6,
+    "mae": 30.61
+  },
+  "reading_one_hour_earlier": {
+    "what": "the scored readings whose venue had a live reading from the hour before, where the nowcast carries that reading at full weight",
+    "rows": 1716,
+    "within_one_band": 91.7,
+    "within_10": 85.5
+  },
+  "reproduce": "from backend/: node scripts/ml/train/bandEval.js --train=scripts/ml/train/training_data.csv.partial --holdout=scripts/ml/train/holdout_data.csv.partial --model=scripts/ml/models --legacy --fit --rows-out=band_rows.csv (the 'scored dates, shipped weights' block; the one-hour-earlier figures are the rows-out file filtered to date >= 2026-09-06 and served_nowcast_lag_hours = 1)"
+}
