@@ -36,6 +36,10 @@
 //      never revives a link that was revoked or had already lapsed.
 //   9. A GUEST ANSWER RETIRED ON A JOIN IS NOT A TAKEDOWN: its name stays
 //      free on the plan, and its own page is told the person joined.
+//  10. THE HOST HEARS ONCE WHEN EVERYONE ELSE HAS VOTED (routes/venues.js
+//      notifyHostVotesIn). "Once" is an UPDATE that claims
+//      flocks.votes_in_pushed_at only while it is NULL, so it is run here,
+//      with two last votes fired together, rather than trusted.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -981,4 +985,128 @@ test('a name a moderator took down is still refused, and a stranger\'s token is 
   const me = await call('POST', `/api/guest/${link}/me`, { body: { guestToken: abusive.body.guestToken } });
   assert.strictEqual(me.status, 403);
   assert.strictEqual(me.body.code, undefined, 'a takedown is not told it joined anything');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. The host hears once when everyone else has voted
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Push is switched on for these by replacing the provider, never by reaching
+// one: firebaseService is held as a module object by services/pushHelper.js,
+// so its isEnabled and sendPushToUser are what every delivery calls. The vote
+// route answers first and pushes after, so each check waits for the send.
+
+async function withPush(fn) {
+  const firebaseService = require('../services/firebaseService');
+  const realEnabled = firebaseService.isEnabled;
+  const realSend = firebaseService.sendPushToUser;
+  const sends = [];
+  firebaseService.isEnabled = () => true;
+  firebaseService.sendPushToUser = async (userId, title, body, data) => {
+    sends.push({ userId: Number(userId), title, body, data });
+    return { sent: 1, failed: 0 };
+  };
+  try {
+    return await fn(sends);
+  } finally {
+    firebaseService.isEnabled = realEnabled;
+    firebaseService.sendPushToUser = realSend;
+  }
+}
+
+const votesIn = (sends) => sends.filter((s) => s.data && s.data.type === 'flock_votes_in');
+const pushedAt = async (flockId) => (await pool.query(
+  'SELECT votes_in_pushed_at FROM flocks WHERE id = $1', [flockId]
+)).rows[0].votes_in_pushed_at;
+
+async function vote(user, flockId, venue) {
+  const res = await call('POST', `/api/flocks/${flockId}/vote`, { token: user.token, body: { venue_name: venue } });
+  assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+  return res;
+}
+
+// Waits long enough for a push the route would send after answering, so
+// "nothing was sent" is a finding rather than a race.
+async function settle() { await sleep(150); }
+
+test('the host hears once, when the last member other than the host votes, with the leader', async () => {
+  await withPush(async (sends) => {
+    const host = await mkUser('Host Eleven');
+    const bo = await mkUser('Bo Eleven');
+    const cy = await mkUser('Cy Eleven');
+    const dee = await mkUser('Dee Eleven');
+    const flockId = await mkFlock(host);
+    await addMember(flockId, bo, 'accepted');
+    await addMember(flockId, cy, 'accepted');
+    // An invite nobody answered is not a voter the host is waiting on.
+    await addMember(flockId, dee, 'invited');
+
+    await vote(bo, flockId, 'Kome');
+    await vote(host, flockId, 'Ramen');
+    await settle();
+    assert.deepStrictEqual(votesIn(sends), [], 'Cy has not voted yet');
+    assert.strictEqual(await pushedAt(flockId), null);
+
+    await vote(cy, flockId, 'Kome');
+    const until = Date.now() + 3000;
+    while (votesIn(sends).length === 0 && Date.now() < until) await sleep(20);
+    assert.deepStrictEqual(votesIn(sends).map((s) => [s.userId, s.title, s.body]),
+      [[host.id, 'The votes are in', 'Kome is ahead for Plan. Lock it in?']]);
+    assert.strictEqual(votesIn(sends)[0].data.flockId, String(flockId));
+    assert.ok(await pushedAt(flockId), 'the claim is recorded on the plan');
+
+    // A member changing their mind afterwards is not a second "votes are in".
+    await vote(bo, flockId, 'Ramen');
+    await settle();
+    assert.strictEqual(votesIn(sends).length, 1);
+  });
+});
+
+test('two last votes landing together send the host one push', async () => {
+  await withPush(async (sends) => {
+    const host = await mkUser('Host Twelve');
+    const ed = await mkUser('Ed Twelve');
+    const flo = await mkUser('Flo Twelve');
+    const flockId = await mkFlock(host);
+    await addMember(flockId, ed, 'accepted');
+    await addMember(flockId, flo, 'accepted');
+
+    await Promise.all([vote(ed, flockId, 'Kome'), vote(flo, flockId, 'Kome')]);
+    const until = Date.now() + 3000;
+    while (votesIn(sends).length === 0 && Date.now() < until) await sleep(20);
+    await settle();
+    assert.strictEqual(votesIn(sends).length, 1, 'both votes found everyone voted; only one may claim the push');
+    assert.strictEqual(votesIn(sends)[0].userId, host.id);
+  });
+});
+
+test('a plan already locked in, or voted on only by its host, sends nothing', async () => {
+  await withPush(async (sends) => {
+    const host = await mkUser('Host Thirteen');
+    const gus = await mkUser('Gus Thirteen');
+    const locked = await mkFlock(host, { status: 'confirmed' });
+    await addMember(locked, gus, 'accepted');
+    await vote(gus, locked, 'Kome');
+
+    // The host voting on a plan whose only other member has not.
+    const hal = await mkUser('Hal Thirteen');
+    const open = await mkFlock(host);
+    await addMember(open, hal, 'accepted');
+    await vote(host, open, 'Kome');
+
+    await settle();
+    assert.deepStrictEqual(votesIn(sends), []);
+    assert.strictEqual(await pushedAt(locked), null, 'a confirmed plan has nothing left to lock in');
+    assert.strictEqual(await pushedAt(open), null);
+  });
+});
+
+test('with push not configured the vote claims nothing, so a later vote can still tell the host', async () => {
+  const host = await mkUser('Host Fourteen');
+  const ivy = await mkUser('Ivy Fourteen');
+  const flockId = await mkFlock(host);
+  await addMember(flockId, ivy, 'accepted');
+  await vote(ivy, flockId, 'Kome');
+  await settle();
+  assert.strictEqual(await pushedAt(flockId), null);
 });

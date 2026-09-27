@@ -21,7 +21,7 @@ const {
 } = require('../utils/blocks');
 // The vote tally is routes/venues.js's, not a copy of it. See the note at
 // vote_venue below.
-const { collectVoteRows, tailorVotes, votingClosedReason, VOTE_PLAN_LOCK_SQL } = require('../routes/venues');
+const { collectVoteRows, tailorVotes, votingClosedReason, VOTE_PLAN_LOCK_SQL, notifyHostVotesIn } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const { SYSTEM_KINDS, writeSystemMessage } = require('../utils/systemMessages');
 const {
@@ -2389,6 +2389,12 @@ function registerHandlers(io, socket) {
         if (invisible.has(user.id)) continue;
         io.to(`user:${uid}`).emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisible, uid) });
       }
+
+      // This path writes the same venue_votes rows as POST /:id/vote, so it can
+      // be the vote that finishes the group's, and the host hears it the same
+      // way (routes/venues.js notifyHostVotesIn: once per plan, never throws,
+      // no database work when push is not configured).
+      await notifyHostVotesIn(io, flockId, user.id, rows);
     } catch (err) {
       console.error('vote_venue error:', err);
       socket.emit('error', { message: 'Failed to vote' });

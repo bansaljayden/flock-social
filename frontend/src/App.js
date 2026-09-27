@@ -7994,12 +7994,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setCurrentTab('chat');
       // 'plan' is the flock detail screen (time, venue, roster, crowd). 'bill'
       // and 'budget' both live in the cash pool sheet over the chat, which is
-      // the one surface that holds them.
+      // the one surface that holds them. 'votes' is the vote panel over the
+      // chat, where the host's Confirm sits on every venue.
       if (intent.view === 'plan') {
         setCurrentScreen('detail');
       } else {
         setCurrentScreen('chatDetail');
         if (intent.view === 'bill' || intent.view === 'budget') setShowChatPool(true);
+        if (intent.view === 'votes') setShowVotePanel(true);
       }
     } else if (intent.screen === 'flockInvite' && intent.flockId) {
       setCurrentTab('chat');

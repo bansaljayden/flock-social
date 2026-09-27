@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { rejectIfProfane, rejectIfProfaneVenue } = require('../utils/moderation');
 const { getInvisibleUserIds } = require('../utils/blocks');
+const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
 
@@ -330,6 +331,93 @@ function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null } 
     });
 }
 
+// ---------------------------------------------------------------------------
+// TELL THE HOST WHEN THE VOTE IS DONE.
+//
+// Only the creator can lock a plan in, and services/flockSweep.js cancels any
+// plan still in 'planning' twelve hours after its time. The vote paths emitted
+// `new_vote` to whoever had the app open and pushed nothing, so a host who was
+// not looking missed the moment the group finished, and the plan died without
+// anybody deciding to end it.
+//
+// So the first time every accepted member OTHER THAN THE HOST has a vote in,
+// the host is pushed once. Other than the host because the host's own vote is
+// in the host's hands, and a host who picks rather than votes would otherwise
+// never hear. "The votes are in" rather than "everyone voted" for the same
+// reason: it stays true when the host has not voted.
+//
+// ONCE, AND CLAIMED IN THE SAME STATEMENT THAT CHECKS. The UPDATE sets
+// flocks.votes_in_pushed_at (migration 099) only while it is NULL and only
+// while every such member has a vote, so two votes landing together cannot
+// both send it, and a member switching their pick afterwards cannot send it
+// again. A column, not push_debounce and not a Map: the maintenance sweep
+// clears push_debounce after an hour, a Map is per process and gone on deploy
+// (project documentation, the single-replica warning), and "once per plan" has no hour in
+// it. If the host's own vote is the event that finds it true (the others all
+// voted before this column existed, or the one member who had not voted
+// left), the claim is still taken and nothing is sent: they are looking at it.
+//
+// Nothing here touches the database when push is not configured, which is the
+// rule every push producer in this backend keeps (several suites assert a
+// push-triggering route issues no unscripted query), and nothing here throws:
+// the vote is committed before this runs and a notification failure must not
+// turn it into an error.
+// ---------------------------------------------------------------------------
+const VOTES_IN_CLAIM_SQL = `
+  UPDATE flocks f
+     SET votes_in_pushed_at = NOW()
+   WHERE f.id = $1
+     AND f.status = 'planning'
+     AND f.votes_in_pushed_at IS NULL
+     AND EXISTS (
+       SELECT 1 FROM flock_members m
+        WHERE m.flock_id = f.id AND m.status = 'accepted' AND m.user_id <> f.creator_id
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM flock_members m
+        WHERE m.flock_id = f.id AND m.status = 'accepted' AND m.user_id <> f.creator_id
+          AND NOT EXISTS (
+            SELECT 1 FROM venue_votes v WHERE v.flock_id = f.id AND v.user_id = m.user_id
+          )
+     )
+  RETURNING f.creator_id, f.name`;
+
+// The words, from the tally every screen draws. A tie is said as a tie, the
+// same rule as the vote panel's "Tied" badge (equal totals at the top), so the
+// push never names a leader the host's own screen does not.
+function votesInPush(rows, planName) {
+  const plan = planName || 'your plan';
+  const ranked = tailorVotes(rows, new Set()).filter((v) => v.vote_count > 0);
+  if (ranked.length === 0) return null;
+  const top = ranked[0].vote_count;
+  const tied = ranked.filter((v) => v.vote_count === top);
+  if (tied.length === 1) {
+    return { title: 'The votes are in', body: `${ranked[0].venue_name} is ahead for ${plan}. Lock it in?` };
+  }
+  if (tied.length === 2) {
+    return { title: 'The votes are in', body: `${tied[0].venue_name} and ${tied[1].venue_name} are tied for ${plan}. Your call.` };
+  }
+  return { title: 'The votes are in', body: `${tied.length} places are tied for ${plan}. Your call.` };
+}
+
+async function notifyHostVotesIn(io, flockId, voterId, rows) {
+  if (!isPushConfigured()) return false;
+  try {
+    const claim = await pool.query(VOTES_IN_CLAIM_SQL, [flockId]);
+    if (claim.rowCount === 0) return false;
+    const { creator_id: hostId, name } = claim.rows[0];
+    if (Number(hostId) === Number(voterId)) return false;
+    const words = votesInPush(rows, name);
+    if (!words) return false;
+    await pushIfOffline(io, hostId, words.title, words.body,
+      { type: 'flock_votes_in', flockId: String(flockId) });
+    return true;
+  } catch (err) {
+    console.error('Votes-in push error:', err.message);
+    return false;
+  }
+}
+
 // Broadcast the new tallies to every other accepted member, tailored to what
 // each of them is allowed to see.
 async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
@@ -473,6 +561,10 @@ router.post('/:id/vote',
       // Re-voting for the venue you already picked is a no-op, not an error:
       // the client re-sends its current pick whenever the vote list changes.
       res.status(changed ? 201 : 200).json({ vote, votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) });
+
+      // After the answer, so the voter never waits on the host's notification.
+      // A re-sent pick changed nothing and cannot be the vote that finished it.
+      if (changed) await notifyHostVotesIn(req.app.get('io'), flockId, req.user.id, rows);
     } catch (err) {
       console.error('Vote error:', err);
       res.status(500).json({ error: 'Failed to vote' });
@@ -663,3 +755,8 @@ module.exports.collectVoteRows = collectVoteRows;
 module.exports.tailorVotes = tailorVotes;
 module.exports.votingClosedReason = votingClosedReason;
 module.exports.VOTE_PLAN_LOCK_SQL = VOTE_PLAN_LOCK_SQL;
+// The host's "votes are in" push, for the socket vote path, which writes the
+// same venue_votes rows and so can finish the same vote.
+module.exports.notifyHostVotesIn = notifyHostVotesIn;
+module.exports.VOTES_IN_CLAIM_SQL = VOTES_IN_CLAIM_SQL;
+module.exports.votesInPush = votesInPush;

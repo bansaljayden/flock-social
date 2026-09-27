@@ -27,6 +27,8 @@
 //   flock_rsvp         someone joined the recipient's flock   (routes/flocks.js)
 //   flock_confirmed    a plan the recipient accepted is on    (routes/flocks.js)
 //   flock_reconfirm    a plan they said yes to is hours away  (services/reconfirmSweep.js)
+//   flock_votes_in     everyone else in the plan they host has voted
+//                                                             (routes/venues.js, once per plan)
 //   attendance_marked  the recipient's own score changed      (routes/flocks.js)
 //   flock_message      chat in a flock they belong to         (routes/messages.js, sockets/handlers.js)
 //   dm_message         a DM addressed to them                 (routes/messages.js, sockets/handlers.js)
