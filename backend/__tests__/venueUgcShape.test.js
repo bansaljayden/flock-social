@@ -539,7 +539,8 @@ test('a forged clock is refused rather than quietly rewritten to server time', a
 // reach the statement's parameters now: it is bound whether or not a row uses
 // it, and a typed parameter is parsed at bind time.
 test('a non-scalar reading is a 400 and is never written', async () => {
-  for (const field of ['ir_beam_count', 'thermal_headcount', 'noise_db', 'recorded_at', 'device_id', 'dry_run']) {
+  for (const field of ['ir_beam_count', 'thermal_headcount', 'noise_db', 'recorded_at', 'device_id', 'dry_run',
+    'occupancy', 'occupancy_low', 'occupancy_high', 'dwell_minutes']) {
     for (const v of NON_SCALARS) {
       handlers = [];
       deviceStoredAs(STORED_DIGEST);
@@ -547,7 +548,7 @@ test('a non-scalar reading is a 400 and is never written', async () => {
       const label = `${field}=${JSON.stringify(v)}`;
       assert.strictEqual(res.status, 400, `${label} -> ${res.status} ${res.text}`);
       assert.deepStrictEqual(sensorWrites(), [], `${label}: wrote something`);
-      assert.deepStrictEqual(ingestParams.slice(2), [false, null, false, null, false, '2 seconds', null, null, null],
+      assert.deepStrictEqual(ingestParams.slice(2), [false, null, false, null, false, '2 seconds', null, null, null, null, null, null, null],
         `${label}: a refused body reached the statement's parameters`);
     }
   }
@@ -619,6 +620,13 @@ test('out-of-range readings are still refused', async () => {
     { ...READING, thermal_headcount: 1001 },
     { ...READING, noise_db: 141 },
     { ...READING, ir_beam_count: -1 },
+    { ...READING, occupancy: 5001 },
+    { ...READING, occupancy: -1 },
+    { ...READING, occupancy: 12, occupancy_low: 5001 },
+    { ...READING, occupancy: 12, occupancy_high: -1 },
+    { ...READING, dwell_minutes: 0 },
+    { ...READING, dwell_minutes: 1441 },
+    { ...READING, occupancy: 12.5 },
   ]) {
     handlers = [];
     deviceStoredAs(STORED_DIGEST);

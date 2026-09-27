@@ -77,6 +77,13 @@ test.before(async () => {
     res.json = (body) => { events.push(`responded ${res.statusCode}`); return json(body); };
     next();
   });
+  // The read routes sit behind authenticate(), which is not what this suite
+  // tests; it is stubbed BEFORE the router is required, because the router
+  // destructures it at load.
+  require('../middleware/auth').authenticate = (req, _res, next) => {
+    req.user = { id: 1, name: 'Owner', role: 'user' };
+    next();
+  };
   app.use('/api/sensors', require('../routes/sensors'));
   server = await new Promise((resolve) => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
@@ -349,4 +356,80 @@ test('a dry run still names the device, so an installer can tell which unit answ
   const res = await push(reading({ dry_run: true, device_id: 'sensor_live' }));
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, { success: true, dry_run: true, device_id: 'sensor_live' });
+});
+
+// --- The occupancy estimate, through the real schema -------------------------
+//
+// Migration 095 added four nullable columns. The model suites prove the route
+// hands them over; these prove Postgres stores them, /current returns them and
+// /history averages them, and that an older device's row still stores cleanly.
+const estimateRows = async () => (await pool.query(
+  'SELECT occupancy, occupancy_low, occupancy_high, dwell_minutes FROM venue_sensor_data ORDER BY recorded_at'
+)).rows;
+const getJson = async (p) => {
+  const res = await fetch(`${base}${p}`);
+  return { status: res.status, body: await res.json() };
+};
+
+test('an occupancy estimate is stored, returned by /current and broadcast', async () => {
+  const res = await push(reading({ occupancy: 12, occupancy_low: 10, occupancy_high: 14, dwell_minutes: 45 }));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.deepEqual(await estimateRows(),
+    [{ occupancy: 12, occupancy_low: 10, occupancy_high: 14, dwell_minutes: 45 }]);
+  const current = await getJson(`/api/sensors/${VENUE}/current`);
+  assert.equal(current.status, 200);
+  const sd = current.body.sensor_data;
+  assert.deepEqual([sd.occupancy, sd.occupancy_low, sd.occupancy_high, sd.dwell_minutes], [12, 10, 14, 45]);
+  assert.equal(sd.thermal_headcount, 11, 'the thermal count is still returned beside it');
+  assert.equal(lastEmit.payload.occupancy, 12);
+});
+
+test('an older device sends no estimate: the row stores null for all four and /current says so', async () => {
+  const res = await push(reading());
+  assert.equal(res.status, 201);
+  assert.deepEqual(await estimateRows(),
+    [{ occupancy: null, occupancy_low: null, occupancy_high: null, dwell_minutes: null }]);
+  const sd = (await getJson(`/api/sensors/${VENUE}/current`)).body.sensor_data;
+  assert.equal(sd.occupancy, null);
+  assert.equal(sd.thermal_headcount, 11);
+});
+
+test('a band out of order is stored as null beside the kept estimate, and the device is answered 201', async () => {
+  const res = await push(reading({ occupancy: 12, occupancy_low: 15, occupancy_high: 20, dwell_minutes: 30 }));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.deepEqual(await estimateRows(),
+    [{ occupancy: 12, occupancy_low: null, occupancy_high: null, dwell_minutes: 30 }]);
+});
+
+test('an array-shaped or out of range estimate is a 400, never a 500, and writes nothing', async () => {
+  for (const body of [
+    reading({ occupancy: [12] }),
+    reading({ occupancy: 12, occupancy_low: ['10'] }),
+    reading({ dwell_minutes: { $gt: 0 } }),
+    reading({ occupancy: 5001 }),
+    reading({ dwell_minutes: 0 }),
+  ]) {
+    const res = await push(body);
+    assert.equal(res.status, 400, `${JSON.stringify(body)} -> ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  assert.equal((await rows()).length, 0);
+});
+
+test('the hourly history averages the estimate and skips the readings that had none', async () => {
+  const hourStart = new Date();
+  hourStart.setUTCMinutes(0, 0, 0);
+  // Three backfilled readings inside one past hour: two with an estimate, one
+  // from before the firmware sent it.
+  const lastHour = hourStart.getTime() - 60 * 60 * 1000;
+  const stamps = [5, 10, 15].map((m) => new Date(lastHour + m * 60 * 1000).toISOString());
+  assert.equal((await push(reading({ recorded_at: stamps[0], occupancy: 10, occupancy_low: 8, occupancy_high: 12, dwell_minutes: 40 }))).status, 201);
+  assert.equal((await push(reading({ recorded_at: stamps[1], occupancy: 20, occupancy_low: 17, occupancy_high: 23, dwell_minutes: 50 }))).status, 201);
+  assert.equal((await push(reading({ recorded_at: stamps[2] }))).status, 201);
+  const hist = await getJson(`/api/sensors/${VENUE}/history?hours=24`);
+  assert.equal(hist.status, 200);
+  assert.equal(hist.body.readings.length, 1);
+  const h = hist.body.readings[0];
+  assert.deepEqual([h.occupancy, h.occupancy_low, h.occupancy_high, h.dwell_minutes], [15, 13, 18, 45]);
+  assert.equal(h.sample_count, 3);
+  assert.equal(h.thermal_headcount, 11);
 });

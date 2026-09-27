@@ -315,9 +315,12 @@ test('no user identity enters a sensor row, the broadcast, or the ingest respons
   assert.ok(!/user/i.test(insert.sql), 'insert statement references a user column');
 
   assert.strictEqual(emits.length, 1);
+  // The occupancy estimate is four more counts about the room, worked out on
+  // the device; none of them is about a person.
   assert.deepStrictEqual(
     Object.keys(emits[0].payload).sort(),
-    ['ir_beam_count', 'noise_db', 'recorded_at', 'thermal_headcount', 'venue_place_id']
+    ['dwell_minutes', 'ir_beam_count', 'noise_db', 'occupancy', 'occupancy_high', 'occupancy_low',
+      'recorded_at', 'thermal_headcount', 'venue_place_id']
   );
   assert.deepStrictEqual(Object.keys(res.body).sort(), ['recorded_at', 'success']);
 });
