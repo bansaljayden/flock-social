@@ -49,6 +49,7 @@ import { createSosFollowUp } from './services/sosFollowUp';
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet } from './lib/storage';
+import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
 // `process.env.REACT_APP_PURCHASES !== 'off'` below is the App Store build's
 // switch: off, there is no purchase surface at all. lib/purchasesBuild.js has
 // the rules, and why every gate spells the variable out instead of calling it.
@@ -12941,9 +12942,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const img = cropImgRef.current;
     if (!img || !cropImageSrc) return;
 
-    // Draw cropped region to a square canvas
+    // Draw cropped region to a square canvas. AVATAR_EDGE, not the 400 px
+    // this used to draw: at 400 px and JPEG 0.9 an ordinary photo came out at
+    // 28,000 to 55,000 characters, and every list read on the server nulls an
+    // avatar over 12,000, so the face only its owner could see. lib/avatarImage.js
+    // has the numbers.
     const canvas = document.createElement('canvas');
-    const outputSize = 400;
+    const outputSize = AVATAR_EDGE;
     canvas.width = outputSize;
     canvas.height = outputSize;
     const ctx = canvas.getContext('2d');
@@ -12974,26 +12979,72 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
     ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, outputSize, outputSize);
 
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      // Preview immediately
-      const previewUrl = URL.createObjectURL(blob);
-      setProfilePic(previewUrl);
-      setCropImageSrc(null);
+    // Encoded once and measured as the data URL the server will store, then
+    // turned back into bytes for the multipart form, so the file sent is the
+    // one the size check passed.
+    const encoded = encodeAvatar(canvas);
+    const blob = dataUrlToBlob(encoded);
+    if (!blob) {
+      showToast("That photo couldn't be read. Pick another.", 'error');
+      return;
+    }
+    // Preview immediately
+    setProfilePic(encoded);
+    setCropImageSrc(null);
 
-      // Upload
-      try {
-        const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
-        const data = await uploadProfileImage(file);
-        const url = data.profile_image_url;
-        setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
-        showToast('Profile picture updated.', 'success');
-      } catch (err) {
-        console.error('Profile pic upload failed:', err);
-        showToast(err?.message || "That photo didn't upload. Try again.", 'error');
-      }
-    }, 'image/jpeg', 0.9);
+    // Upload
+    try {
+      const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
+      const data = await uploadProfileImage(file);
+      const url = data.profile_image_url;
+      setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
+      showToast('Profile picture updated.', 'success');
+    } catch (err) {
+      console.error('Profile pic upload failed:', err);
+      showToast(err?.message || "That photo didn't upload. Try again.", 'error');
+    }
   }, [cropImageSrc, cropZoom, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // AN AVATAR UPLOADED BEFORE THE CROP SHEET SIZED FOR THE LIST CEILING. Those
+  // are still stored at 28,000 to 55,000 characters, so every list read keeps
+  // nulling them and the people in this person's plans keep seeing an initial.
+  // Nothing on the server can shrink an image (the backend carries no image
+  // library), so the owner's own app redraws it at 160 px the first time it
+  // sees one and uploads that once. The upload goes through the same route
+  // and the same screening as any other, which is the one billed call this
+  // costs per affected account.
+  //
+  // Once per launch at most (the ref), and never again for a picture the
+  // server has already refused (the marker): a refusal is an answer about that
+  // picture, and asking again every launch would pay for the same screening
+  // every time. A failure with no answer, like a dropped connection or an
+  // expired session, writes no marker and the next launch tries again. The
+  // marker is a flock_ key, so sign-out sweeps it (services/api.js).
+  const avatarRefitTriedRef = useRef(false);
+  useEffect(() => {
+    const original = profilePic;
+    if (avatarRefitTriedRef.current || !authUser?.id || !needsAvatarRefit(original)) return;
+    avatarRefitTriedRef.current = true;
+    const marker = `${authUser.id}:${original.length}`;
+    if (lsGet(AVATAR_REFIT_MARKER_KEY) === marker) return;
+    (async () => {
+      const refit = await refitAvatar(original);
+      const blob = dataUrlToBlob(refit);
+      // The person may have picked a new photo while this was drawing, and
+      // that one must not be overwritten by a copy of the old one.
+      if (!blob || profilePicRef.current !== original) return;
+      try {
+        const data = await uploadProfileImage(new File([blob], 'profile.jpg', { type: 'image/jpeg' }));
+        const url = data?.profile_image_url;
+        if (typeof url === 'string') setProfilePic((cur) => (cur === original ? url : cur));
+      } catch (err) {
+        if (err?.status >= 400 && err?.status < 500 && err.status !== 401 && err.status !== 429) {
+          lsSet(AVATAR_REFIT_MARKER_KEY, marker);
+        }
+        console.warn('[AvatarRefit] kept the stored avatar:', err?.status || err?.message);
+      }
+    })();
+  }, [authUser?.id, profilePic]);
 
   // The other button in this same sheet, confirmCrop above, has had the honest
   // contract for weeks: the toast comes after the await and a refusal says so.

@@ -2118,10 +2118,22 @@ router.get('/search',
         // It answers in friends.js, flocks.js, messages.js, availability.js
         // and moderation.js, and sockets/handlers.js enforces the same ceiling
         // in JS. An oversized
-        // legacy avatar comes back NULL, which the consumers already handle --
+        // avatar comes back NULL, which the consumers already handle --
         // AddFriends.js and NewDmModal.js both draw the first letter of the name
-        // when the url is absent. Everything written since the upload path
-        // started resizing is well under the ceiling and is unaffected.
+        // when the url is absent.
+        //
+        // This comment used to say that everything written since the upload
+        // path started resizing was well under the ceiling. It was not: the
+        // crop sheet drew 400 px at JPEG 0.9, which measured 28,000 to 55,000
+        // characters for ordinary photos, so every uploaded face was nulled
+        // here and on every other list read. The crop sheet now draws 160 px
+        // and steps JPEG quality down until the data URL fits under 11,000
+        // (frontend/src/lib/avatarImage.js), and the owner's app redraws an
+        // older oversized one once on launch. POST /upload-image still accepts
+        // up to MAX_AVATAR_DATA_URL_BYTES, because installed iOS builds carry
+        // the old crop sheet in their bundle and this backend has no image
+        // library to shrink what they send; a guard on the reads, not a
+        // refusal on the write, is what keeps those builds working.
         //
         // What the guard buys is the wire and the heap, not the read: LENGTH
         // still has to decompress the value to measure it. That is the same
