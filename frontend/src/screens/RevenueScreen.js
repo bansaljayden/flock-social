@@ -148,7 +148,7 @@ const HUB_KIND_LABEL = {
   legal: 'Legal and company',
   other: 'Other',
 };
-const HUB_CADENCE_LABEL = { monthly: 'a month', yearly: 'a year', usage: 'a month, usage', one_time: 'once' };
+const HUB_CADENCE_LABEL = { monthly: 'a month', quarterly: 'a quarter', yearly: 'a year', usage: 'a month, usage', one_time: 'once' };
 const HUB_PLAN_LABEL = { monthly: 'monthly', yearly: 'yearly', founding: 'founding rate', other: 'other plans' };
 const HUB_STORE_LABEL = {
   app_store: 'App Store',
@@ -360,7 +360,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
           <p style={hubStyle.note}>
             {costsMissing.length > 0
               ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
-              : 'Monthly bills in full, yearly bills at a twelfth, and one-time charges dated this month.'}
+              : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.'}
           </p>
         </div>
       </div>
@@ -779,7 +779,7 @@ function HubCosts({ h, colors }) {
         </p>
       ))}
       {(c.nonUsd || []).length > 0 && (
-        <p style={hubStyle.foot}>Not added, because nothing here converts currencies: {c.nonUsd.map((x) => `${x.label} (${(x.amountCents / 100).toFixed(2)} ${x.currency}${x.replacesLine ? ', and the code line it names still counts' : ''})`).join(', ')}.</p>
+        <p style={hubStyle.foot}>Not added, because nothing here converts currencies: {c.nonUsd.map((x) => `${x.label} (${hubExpenseAmount(x)}${x.replacesLine ? ', and the code line it names still counts' : ''})`).join(', ')}.</p>
       )}
       {c.undatedCodeYearly > 0 && (
         <p style={hubStyle.foot}>{hubPlural(c.undatedCodeYearly, 'yearly bill in the code has', 'yearly bills in the code have')} no charge date, so {c.undatedCodeYearly === 1 ? 'it counts' : 'they count'} at a twelfth every month. Add {c.undatedCodeYearly === 1 ? 'it' : 'them'} to the expense list with a renewal date to see the renewal coming.</p>
@@ -794,9 +794,18 @@ function HubCosts({ h, colors }) {
   );
 }
 
+// An expense row's amount as the list shows it. A credit (a refund, a vendor
+// credit) is stored as a positive amount with isCredit set, and shown with a
+// minus sign so it reads as money coming back.
+function hubExpenseAmount(x) {
+  const cents = x.isCredit ? -x.amountCents : x.amountCents;
+  if (x.currency === 'USD') return hubMoney(cents);
+  return `${x.isCredit ? '−' : ''}${(x.amountCents / 100).toFixed(2)} ${x.currency}`;
+}
+
 const HUB_EMPTY_EXPENSE = {
   vendor: '', product: '', category: '', kind: 'tooling', amount: '', currency: 'USD', cadence: 'monthly',
-  lastChargedOn: '', renewsOn: '', replacesLine: '', verified: false, active: true, note: '',
+  lastChargedOn: '', renewsOn: '', replacesLine: '', verified: false, active: true, isCredit: false, note: '',
 };
 
 function hubFormFromExpense(x) {
@@ -813,6 +822,7 @@ function hubFormFromExpense(x) {
     replacesLine: x.replacesLine || '',
     verified: !!x.verified,
     active: x.active !== false,
+    isCredit: !!x.isCredit,
     note: x.note || '',
   };
 }
@@ -830,9 +840,11 @@ function hubBodyFromForm(f) {
     cadence: f.cadence,
     lastChargedOn: f.lastChargedOn || null,
     renewsOn: f.renewsOn || null,
-    replacesLine: f.replacesLine || null,
+    // A credit never stands in for a code line; the server refuses the pair.
+    replacesLine: f.isCredit ? null : (f.replacesLine || null),
     verified: !!f.verified,
     active: !!f.active,
+    isCredit: !!f.isCredit,
     note: f.note.trim() ? f.note : null,
   };
 }
@@ -895,13 +907,13 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
         {field('currency', 'Currency', <input id={`${uid}-currency`} style={I} value={form.currency} onChange={set('currency')} maxLength={3} />)}
         {field('cadence', 'How often', (
           <select id={`${uid}-cadence`} style={I} value={form.cadence} onChange={set('cadence')}>
-            {cadences.map((c) => <option key={c} value={c}>{c === 'one_time' ? 'once' : c === 'usage' ? 'usage, monthly' : c}</option>)}
+            {cadences.map((c) => <option key={c} value={c}>{c === 'one_time' ? 'once' : c === 'usage' ? 'usage, monthly' : c === 'quarterly' ? 'every three months' : c}</option>)}
           </select>
         ))}
         {field('lastChargedOn', 'Last charged', <input id={`${uid}-lastChargedOn`} style={I} type="date" max={localToday()} value={form.lastChargedOn} onChange={set('lastChargedOn')} />)}
         {field('renewsOn', 'Renews', <input id={`${uid}-renewsOn`} style={I} type="date" value={form.renewsOn} onChange={set('renewsOn')} />)}
         {field('replacesLine', 'Counts instead of', (
-          <select id={`${uid}-replacesLine`} style={I} value={form.replacesLine} onChange={set('replacesLine')}>
+          <select id={`${uid}-replacesLine`} style={I} value={form.isCredit ? '' : form.replacesLine} onChange={set('replacesLine')} disabled={form.isCredit}>
             <option value="">No code line</option>
             {codeLines.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </select>
@@ -915,7 +927,11 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
           <input type="checkbox" checked={form.active} onChange={set('active')} />Still being charged
         </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+          <input type="checkbox" checked={form.isCredit} onChange={set('isCredit')} />Money back: a refund or credit
+        </label>
       </div>
+      {form.isCredit && <p style={hubStyle.note}>Type the amount as a plain number. It is taken off the totals instead of added.</p>}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
         <button className="hit44" type="button" disabled={busy || !form.vendor.trim() || String(form.amount).trim() === ''} onClick={save}
           style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
@@ -952,7 +968,7 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
   };
   const label = x.product ? `${x.vendor}, ${x.product}` : x.vendor;
   const line = x.replacesLine ? (codeLines.find((l) => l.id === x.replacesLine) || {}).label || x.replacesLine : null;
-  const amount = x.currency === 'USD' ? hubMoney(x.amountCents) : `${(x.amountCents / 100).toFixed(2)} ${x.currency}`;
+  const amount = hubExpenseAmount(x);
   const facts = [
     HUB_KIND_LABEL[x.kind] || x.kind,
     x.category,
@@ -965,6 +981,7 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: x.active ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
           {label}
+          {x.isCredit && <span style={hubTag('good')}>Credit</span>}
           {!x.verified && <span style={hubTag('warn')}>Unverified</span>}
           {!x.active && <span style={hubTag('muted')}>Stopped</span>}
         </span>
@@ -1026,7 +1043,7 @@ function HubExpenseImport({ colors, onImported }) {
       {open && (
         <div style={{ marginTop: '6px' }}>
           <p style={hubStyle.note}>
-            One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, verified, note, and replacesLine to count a bill instead of a code line. A bill already on the list with the same vendor, product and cadence is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
+            One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, quarterly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, verified, note, replacesLine to count a bill instead of a code line, and isCredit: true for a refund or credit, with the amount still a plain number. A bill already on the list with the same vendor, product, cadence and isCredit is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
           </p>
           <pre style={{ ...hubStyle.note, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0' }}>{HUB_IMPORT_EXAMPLE}</pre>
           <textarea

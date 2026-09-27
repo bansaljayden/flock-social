@@ -125,7 +125,7 @@ const EXPENSES = {
     { id: 1, vendor: 'Example Tool', product: 'Team', category: 'Developer tools', kind: 'tooling', amountCents: 2000, currency: 'USD', cadence: 'monthly', lastChargedOn: '2026-09-16', renewsOn: null, active: true, verified: true, note: null, replacesLine: null },
   ],
   kinds: ['infrastructure', 'tooling', 'legal', 'other'],
-  cadences: ['monthly', 'yearly', 'usage', 'one_time'],
+  cadences: ['monthly', 'quarterly', 'yearly', 'usage', 'one_time'],
   codeLines,
 };
 
@@ -1040,7 +1040,7 @@ describe('the expense list writes through the API and then re-reads the hub', ()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.createAdminExpense).toHaveBeenCalledTimes(1));
     const body = api.createAdminExpense.mock.calls[0][0];
-    expect(body).toMatchObject({ vendor: 'Registered Agent Co', kind: 'legal', cadence: 'yearly', amount: '49.00', currency: 'USD', active: true, product: null, replacesLine: null });
+    expect(body).toMatchObject({ vendor: 'Registered Agent Co', kind: 'legal', cadence: 'yearly', amount: '49.00', currency: 'USD', active: true, product: null, replacesLine: null, isCredit: false });
     await waitFor(() => expect(api.getAdminMoneyHub).toHaveBeenCalledTimes(2));
   });
 
@@ -1078,6 +1078,75 @@ describe('the expense list writes through the API and then re-reads the hub', ()
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     expect(await screen.findByText('2 bills added and 1 updated.')).toBeInTheDocument();
     expect(api.importAdminExpenses).toHaveBeenLastCalledWith([{ vendor: 'A', kind: 'other', cadence: 'monthly', amount: 1 }]);
+  });
+
+  test('the import says how to paste a quarterly bill and a credit, and sends them as pasted', async () => {
+    await renderHub(NOT_CONNECTED);
+    fireEvent.click(screen.getByRole('button', { name: 'Import a list' }));
+    expect(screen.getByText(/cadence \(monthly, quarterly, yearly, usage or one_time\)/)).toBeInTheDocument();
+    expect(screen.getByText(/isCredit: true for a refund or credit/)).toBeInTheDocument();
+    api.importAdminExpenses.mockResolvedValueOnce({ success: true, inserted: 2, updated: 0 });
+    const list = [
+      { vendor: 'Tool', kind: 'tooling', cadence: 'quarterly', amount: 30 },
+      { vendor: 'Host', product: 'Refund', kind: 'infrastructure', cadence: 'one_time', amount: 12.5, isCredit: true },
+    ];
+    fireEvent.change(screen.getByLabelText('Expense list to import'), { target: { value: JSON.stringify(list) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    expect(await screen.findByText('2 bills added and 0 updated.')).toBeInTheDocument();
+    expect(api.importAdminExpenses).toHaveBeenLastCalledWith(list);
+  });
+});
+
+describe('quarterly bills and credits', () => {
+  const REFUND = { id: 2, vendor: 'Example Host', product: 'Refund', category: 'Hosting', kind: 'infrastructure', amountCents: 1250, currency: 'USD', cadence: 'one_time', lastChargedOn: '2026-09-10', renewsOn: null, active: true, verified: true, note: null, replacesLine: null, isCredit: true };
+  const WITH_CREDIT = {
+    ...NOT_CONNECTED,
+    costs: {
+      ...COSTS,
+      byCategory: [...COSTS.byCategory, { category: 'Refunds', thisMonthCents: -1250, perMonthCents: 0, lines: 1 }],
+      nonUsd: [{ label: 'Abroad, Credit', amountCents: 900, currency: 'EUR', replacesLine: null, isCredit: true }],
+    },
+    expenses: { ...EXPENSES, rows: [...EXPENSES.rows, REFUND, { ...REFUND, id: 3, vendor: 'Quarterly Tool', product: null, kind: 'tooling', amountCents: 3000, cadence: 'quarterly', isCredit: false }] },
+  };
+
+  test('a credit is marked and shown with a minus sign, in the list and in the tables', async () => {
+    await renderHub(WITH_CREDIT);
+    const row = (await screen.findByText('Example Host, Refund')).closest('div').parentElement;
+    expect(within(row).getByText('Credit')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/−\$12\.50 once/);
+    const charge = screen.getByText('Example Tool, Team').closest('div').parentElement;
+    expect(within(charge).queryByText('Credit')).toBeNull();
+    expect(charge.textContent).toMatch(/\$20\.00 a month/);
+    expect(charge.textContent).not.toMatch(/−/);
+    expect(screen.getByText('Quarterly Tool').closest('div').parentElement.textContent).toMatch(/\$30\.00 a quarter/);
+    expect(screen.getAllByText('−$12.50').length).toBeGreaterThan(0);
+    expect(screen.getByText(/Abroad, Credit \(−9\.00 EUR\)/)).toBeInTheDocument();
+  });
+
+  test('adding a quarterly credit sends the flag and drops a code line it cannot stand in for', async () => {
+    await renderHub(NOT_CONNECTED);
+    api.createAdminExpense.mockResolvedValue({ success: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a bill' }));
+    expect(screen.getByRole('option', { name: 'every three months' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Vendor'), { target: { value: 'Cloud Co' } });
+    fireEvent.change(screen.getByLabelText('How often'), { target: { value: 'quarterly' } });
+    fireEvent.change(screen.getByLabelText('Amount, dollars'), { target: { value: '15.00' } });
+    fireEvent.change(screen.getByLabelText('Counts instead of'), { target: { value: codeLines[0].id } });
+    fireEvent.click(screen.getByLabelText('Money back: a refund or credit'));
+    expect(screen.getByLabelText('Counts instead of')).toBeDisabled();
+    expect(screen.getByText(/taken off the totals instead of added/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.createAdminExpense).toHaveBeenCalledTimes(1));
+    expect(api.createAdminExpense.mock.calls[0][0]).toMatchObject({ vendor: 'Cloud Co', cadence: 'quarterly', amount: '15.00', isCredit: true, replacesLine: null });
+  });
+
+  test('editing a credit keeps it a credit', async () => {
+    await renderHub(WITH_CREDIT);
+    api.updateAdminExpense.mockResolvedValue({ success: true });
+    const row = (await screen.findByText('Example Host, Refund')).closest('div').parentElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Mark as stopped' }));
+    await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
+    expect(api.updateAdminExpense.mock.calls[0][1]).toMatchObject({ amount: '12.50', isCredit: true, active: false });
   });
 });
 
