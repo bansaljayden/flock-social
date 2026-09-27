@@ -52,6 +52,7 @@
 import React from 'react';
 import { BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 export default function PastFlocksScreen({
   // Declared at App.js module scope and shared with screens other than this
@@ -69,6 +70,10 @@ export default function PastFlocksScreen({
   setCurrentScreen,
   styles,
 }) {
+    // Back, from the arrow, Escape or a swipe from the left edge
+    // (hooks/useEdgeSwipeBack.js). One function so the three cannot differ.
+    const leave = () => setCurrentScreen('main');
+    const edgeBack = useEdgeSwipeBack(leave);
     const currentYear = new Date().getFullYear();
     const formatPastDate = (iso) => {
       if (!iso) return null;
@@ -79,10 +84,10 @@ export default function PastFlocksScreen({
       return d.toLocaleDateString('en-US', opts);
     };
     return (
-      <div key="past-flocks-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-        <DialogBehavior modal={false} onClose={() => setCurrentScreen('main')} />
+      <div key="past-flocks-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+        <DialogBehavior modal={false} onClose={leave} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
+          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Past flocks</h1>
         </div>
 

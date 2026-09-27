@@ -19994,8 +19994,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         .card-animate-3 { animation-delay: 0.15s; opacity: 0; }
         .card-animate-4 { animation-delay: 0.2s; opacity: 0; }
         .card-animate-5 { animation-delay: 0.25s; opacity: 0; }
+        /* The push into a drill-in screen, the same direction as the edge
+           swipe that pops it (hooks/useEdgeSwipeBack.js). NO fill mode, and
+           that is load bearing: "forwards" held translateX(0) on the root
+           after the slide, and any transform makes the root the containing
+           block for its position:fixed children, so the chat photo viewer
+           would have covered the screen root instead of the whole phone. The
+           last keyframe is the element's own style, so dropping it changes
+           nothing that shows. */
         .screen-enter {
-          animation: screenSlideIn 0.3s ease-out forwards;
+          animation: screenSlideIn 0.3s ease-out;
         }
         .tab-bounce {
           animation: tabBounce 0.3s ease-out;

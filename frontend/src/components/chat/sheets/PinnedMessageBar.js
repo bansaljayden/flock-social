@@ -59,6 +59,7 @@
  */
 import React, { useRef } from 'react';
 import Icons from '../../ui/Icons';
+import { startsInEdgeBand } from '../../../hooks/useEdgeSwipeBack';
 import './sheets.css';
 
 /* Below this a drag is a tap. 40px is the same threshold the swipe-to-reply
@@ -101,7 +102,10 @@ export default function PinnedMessageBar({
     <div
       className="cs-pinbar"
       data-chat-pinbar="true"
-      onPointerDown={(e) => { startX.current = e.clientX; }}
+      // A press that starts in the back swipe's band at the screen's left
+      // edge belongs to that swipe (hooks/useEdgeSwipeBack.js), so it does
+      // not also step to the previous pin.
+      onPointerDown={(e) => { startX.current = startsInEdgeBand(e.clientX) ? null : e.clientX; }}
       onPointerUp={(e) => {
         const from = startX.current;
         startX.current = null;

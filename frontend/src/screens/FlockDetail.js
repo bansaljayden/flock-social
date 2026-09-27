@@ -59,6 +59,7 @@ import { submitVenueFeedback } from '../services/api';
 import { lsGet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -163,6 +164,11 @@ export default function FlockDetail({
   timeEditHour,
   updateFlockVotes,
 }) {
+    // Back to the plans, from the arrow or a swipe from the left edge. Called
+    // before the missing-plan return below, because a hook has to run on
+    // every render or on none.
+    const leaveToPlans = () => setCurrentScreen('main');
+    const edgeBack = useEdgeSwipeBack(leaveToPlans);
     const flock = getSelectedFlock();
     if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
@@ -192,12 +198,12 @@ export default function FlockDetail({
       (typeof soloMember !== 'object' || String(soloMember.id) === String(authUser?.id));
 
     return (
-      <div key="flock-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+      <div key="flock-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
 
         {/* ── Header ── */}
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button className="hit44" aria-label="Back to your plans" onClick={() => setCurrentScreen('main')} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
+            <button className="hit44" aria-label="Back to your plans" onClick={leaveToPlans} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', margin: 0, fontSize: 'var(--t-title)', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--t-label)', marginTop: '3px' }}>
@@ -282,6 +288,9 @@ export default function FlockDetail({
             <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Night done? Slide to complete</p>
             <div
               ref={slideRef}
+              // Its thumb sits 16px from the screen's edge, inside the band
+              // the back swipe listens on. This drag keeps its own touches.
+              data-edge-swipe="off"
               style={{ position: 'relative', height: '44px', borderRadius: '22px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', overflow: 'hidden', touchAction: 'none', userSelect: 'none' }}
               onTouchStart={(e) => {
                 const rect = slideRef.current.getBoundingClientRect();

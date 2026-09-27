@@ -64,6 +64,7 @@ import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import EditProfileForm from '../components/EditProfileForm';
 import { isNativeShell } from '../lib/nativeShell';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 // REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
 // the subscription note on deletion is a plain App Store warning for an account
 // that has Pro. lib/purchasesBuild.js has the rules.
@@ -211,11 +212,17 @@ export default function ProfileSettings({
   venmoUsername,
   zelleIdentifier,
 }) {
+    // Back from a settings page to the You tab, from the arrow or a swipe from
+    // the left edge. Above the branch, because a hook has to run on every
+    // render; the ref is only attached to the root of a page, so on the You
+    // tab itself there is nothing to swipe.
+    const backToYou = () => setProfileScreen('main');
+    const edgeBack = useEdgeSwipeBack(backToYou);
     if (profileScreen !== 'main') {
       return (
-        <div key={`profile-${profileScreen}-container`} style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+        <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button aria-label="Back" className="hit44" onClick={() => setProfileScreen('main')} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
+            <button aria-label="Back" className="hit44" onClick={backToYou} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
             <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || 'Payment'}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>

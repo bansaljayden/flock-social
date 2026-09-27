@@ -86,6 +86,7 @@ import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
    its call below, and the longer version of the reasoning in ChatDetail.js. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
@@ -694,6 +695,12 @@ export default function DmDetail({
      friend request, so it is focused like any other. */
   const keyboard = useKeyboardComposer();
 
+  // Back to the list, shared by the header arrow and the swipe from the left
+  // edge so the two cannot leave differently. Same order the arrow always
+  // used: the screen changes, then the thread's shared state is cleared.
+  const leaveToList = () => { setCurrentScreen('main'); leaveDmScreen(); };
+  const edgeBack = useEdgeSwipeBack(leaveToList);
+
   /* THE COMPOSER'S OWN COPY OF THE DRAFT.
      App.js owns this field: `handleDmInputChange` writes the shared
      `chatInputRef`, emits typing and sets `chatInputHasText`, and the input
@@ -849,11 +856,11 @@ export default function DmDetail({
        border box is what keeps that padding inside the 100% rather than
        hanging it off the end of the phone. Both are `0px` and a no-op with the
        keyboard down. */
-    <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
+    <div key="dm-detail-screen" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); leaveDmScreen(); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           {/* The avatar opens the person card. The overflow menu already carries
               report/block for this thread, but the face is where people reach
               first, and it is the same control the roster now has.

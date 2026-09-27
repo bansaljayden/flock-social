@@ -201,6 +201,7 @@ import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel'
    both screens reach it the same way. See the block at its call below. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 /* A half-written message, per flock, for the length of the session.
    Outside this screen because App.js unmounts it on every navigation, and
@@ -939,6 +940,12 @@ export default function ChatDetail({
      * when the tap arrived. `__tests__/chatSheetOpensClean.test.js` pins it.
      */
     const keyboard = useKeyboardComposer();
+
+    // Back to the list. One function, because the header arrow and the swipe
+    // from the left edge have to leave the same way: the room is left before
+    // the screen changes, in that order, as the arrow always did.
+    const leaveToList = () => { leaveChatScreen(); setCurrentScreen('main'); };
+    const edgeBack = useEdgeSwipeBack(leaveToList);
 
     // THE COMPOSER'S TEXT, MIRRORED, and App.js is still the authority. The
     // draft lives in its `chatInputRef`, every keystroke below goes through
@@ -2793,10 +2800,10 @@ export default function ChatDetail({
          keeps that padding inside the 100% instead of hanging off the end of
          the phone. With the keyboard down this is `0px` and the column is what
          it always was. */
-      <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
+      <div key="chat-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button aria-label="Back" className="hit44" onClick={() => { leaveChatScreen(); setCurrentScreen('main'); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
             {/* THE NAME IS ALWAYS THE NAME, AND IT IS NOW THE DOOR TO THE PLAN.
                 It used to be swapped out for a rail of five controls whenever
                 the "Features" pill was pressed, so reaching for a feature cost

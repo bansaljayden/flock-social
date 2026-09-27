@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { startsInEdgeBand } from '../../hooks/useEdgeSwipeBack';
 import './chat.css';
 
 /**
@@ -197,6 +198,10 @@ function MessageRow({
   const lastTouchRef = useRef(0);
   const suppressClickRef = useRef(false);
   const dragRef = useRef(0);
+  /* The touch began in the back swipe's band at the left edge of the screen
+     (hooks/useEdgeSwipeBack.js). That finger is going back, so this row does
+     not also start a reply under it. A long press from there still works. */
+  const fromEdgeRef = useRef(false);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [timeShown, setTimeShown] = useState(false);
@@ -258,6 +263,7 @@ function MessageRow({
     lastTouchRef.current = Date.now();
     const t = e.touches && e.touches[0];
     if (!t || e.touches.length > 1) return;
+    fromEdgeRef.current = startsInEdgeBand(t.clientX);
     startPress(t.clientX, t.clientY, 'touch');
   };
 
@@ -273,7 +279,7 @@ function MessageRow({
       cancelledRef.current = true;
       clearTimer();
     }
-    if (!swipeReply) return;
+    if (!swipeReply || fromEdgeRef.current) return;
 
     // Rightward and roughly horizontal only, so a vertical scroll always keeps
     // the gesture it started.
