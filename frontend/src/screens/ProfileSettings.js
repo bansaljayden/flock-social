@@ -63,6 +63,7 @@ import { getNotificationStatus, requestNotificationPermission } from '../service
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import EditProfileForm from '../components/EditProfileForm';
+import OAuthReconfirm, { canReconfirmHere, PROVIDER_NAMES } from '../components/auth/OAuthReconfirm';
 import { isNativeShell } from '../lib/nativeShell';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 // REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
@@ -963,6 +964,28 @@ export default function ProfileSettings({
                     style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '10px', boxSizing: 'border-box' }}
                   />
                 )}
+                {/* An Apple or Google session older than five minutes is not
+                    proof enough for this file (routes/users.js hasFreshSession).
+                    The account's own sign-in runs right here, and a fresh
+                    session is all the retry needs; see OAuthReconfirm. */}
+                {exportNeedsReauth && (
+                  <div role="alert" style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '12px' }}>
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', margin: '0 0 4px' }}>{canReconfirmHere(authUser?.sign_in_method) ? "Confirm it's you first" : 'Sign in again first'}</p>
+                    {canReconfirmHere(authUser?.sign_in_method) ? (
+                      <>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>For your security, confirm it's you with {PROVIDER_NAMES[authUser.sign_in_method]}. Then tap Get my data again.</p>
+                        <OAuthReconfirm
+                          provider={authUser.sign_in_method}
+                          expectedUserId={authUser.id}
+                          onConfirmed={() => { setExportNeedsReauth(false); setExportError(''); }}
+                          onOtherAccount={() => { if (onLogout) onLogout(`You confirmed with a different ${PROVIDER_NAMES[authUser.sign_in_method]} account, so Flock signed you out. Nothing was exported.`); }}
+                        />
+                      </>
+                    ) : (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>For your security, sign out and back in, then try again.</p>
+                    )}
+                  </div>
+                )}
                 {exportError && (
                   <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '0 0 10px' }}>{exportError}</p>
                 )}
@@ -1037,8 +1060,28 @@ export default function ProfileSettings({
                     button go dead and nothing else. */}
                 {deleteNeedsReauth && (
                   <div role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
-                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', margin: '0 0 4px' }}>Sign in again first</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>Your account uses Google or Apple to sign in, and this session is older than five minutes. Log out, sign back in, then come straight here. Your account can still be deleted.</p>
+                    {/* Guideline 5.1.1(v) wants deletion easy to finish, and
+                        "log out, sign back in, then come straight here" sent
+                        the person out of the app to do it. Where this device
+                        can run the account's own sign-in, it runs here: a
+                        fresh session is the proof the server asked for, the
+                        typed DELETE stays, and one more tap finishes. Where it
+                        cannot (Apple outside the iOS app), the old sentence
+                        stays, because it is still the way. */}
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', margin: '0 0 4px' }}>{canReconfirmHere(authUser?.sign_in_method) ? "Confirm it's you first" : 'Sign in again first'}</p>
+                    {canReconfirmHere(authUser?.sign_in_method) ? (
+                      <>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>For your security, confirm it's you with {PROVIDER_NAMES[authUser.sign_in_method]}. Your account can still be deleted.</p>
+                        <OAuthReconfirm
+                          provider={authUser.sign_in_method}
+                          expectedUserId={authUser.id}
+                          onConfirmed={() => { setDeleteNeedsReauth(false); setDeleteError(''); }}
+                          onOtherAccount={() => { if (onLogout) onLogout(`You confirmed with a different ${PROVIDER_NAMES[authUser.sign_in_method]} account, so Flock signed you out. Nothing was deleted.`); }}
+                        />
+                      </>
+                    ) : (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', margin: 0, lineHeight: 1.5 }}>Your account uses Google or Apple to sign in, and this session is older than five minutes. Log out, sign back in, then come straight here. Your account can still be deleted.</p>
+                    )}
                   </div>
                 )}
 
