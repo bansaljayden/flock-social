@@ -37,8 +37,10 @@ test('the six windows found on 2026-09-04 read as naive UTC', () => {
   assert.match(read('routes/safety.js'), /f\.event_time BETWEEN \(NOW\(\) AT TIME ZONE 'UTC'\) - \(\$2::int \* INTERVAL '1 hour'\)/);
   assert.match(read('routes/checkin.js'), /\(NOW\(\) AT TIME ZONE 'UTC'\) BETWEEN event_time - INTERVAL '3 hours'/);
   assert.match(read('routes/feedback.js'), /f\.event_time BETWEEN \(NOW\(\) AT TIME ZONE 'UTC'\) - INTERVAL '12 hours'/);
-  assert.match(read('routes/flocks.js'), /COALESCE\(f\.event_time, f\.created_at\) <= \(NOW\(\) AT TIME ZONE 'UTC'\) AS started/);
-  assert.match(read('routes/flocks.js'), /COALESCE\(f3\.event_time, f3\.created_at\) <= \(NOW\(\) AT TIME ZONE 'UTC'\)/);
+  // The reliability tally reads a plan's moment as never earlier than its row
+  // (GREATEST, which skips a NULL event_time the way the COALESCE did).
+  assert.match(read('routes/flocks.js'), /GREATEST\(f\.event_time, f\.created_at\) <= \(NOW\(\) AT TIME ZONE 'UTC'\) AS started/);
+  assert.match(read('routes/flocks.js'), /GREATEST\(f3\.event_time, f3\.created_at\) <= \(NOW\(\) AT TIME ZONE 'UTC'\)/);
   assert.match(read('routes/users.js'), /> \(NOW\(\) AT TIME ZONE 'UTC'\) - make_interval\(hours => \$2::int\)\) AS upcoming/);
   // the invite expiry lands in a timestamptz column, so event_time is lifted
   // to timestamptz there rather than NOW() being dropped to naive
