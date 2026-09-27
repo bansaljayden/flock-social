@@ -269,6 +269,19 @@ const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily:
 //      decoration, because one PUT could backdate event_time 45 days and close
 //      the flock in the same request.
 //
+//      And READ that way by the tally, which is the half that holds on every
+//      door. POST / and POST /:id/rerun take an event_time as given, and a
+//      backdated one used to count: a pair creating a flock for a different
+//      past four-hour slot each loop earned a new point per loop, the burst
+//      rule 3 closes, because every plan landed in a slot of its own choosing
+//      and had already "started". Refusing a past time at creation would also
+//      refuse the group that makes the plan at 7:30 for the 7:00 they are
+//      already at, and nothing below refuses a request. So the tally takes a
+//      plan's moment as never earlier than the row's created_at
+//      (GREATEST(f.event_time, f.created_at), in all three places it reads
+//      one): a backdated plan counts as happening when it was made, and a
+//      loop of them is one slot like any other burst.
+//
 //   2. A plan cannot be certified before it starts. `ev.started` below. This
 //      costs spontaneity nothing: a flock created for right now has an
 //      event_time that is already in the past, and rule 1 means a farm cannot
@@ -3914,6 +3927,13 @@ router.post('/:id/attendance',
           // one statement (twice in the correlated EXISTS, which has to bucket
           // the other flock the same way), and repeating a bind parameter to
           // say the same thing three times reads worse than the number does.
+          //
+          // A PLAN'S MOMENT IS NEVER EARLIER THAN ITS ROW. Every read of when a
+          // plan happened is GREATEST(event_time, created_at): create and rerun
+          // accept any event_time, so a backdated plan picked its own past
+          // slot and counted as started the moment it existed (rule 1 at
+          // RELIABILITY_SLOT_SECONDS). GREATEST skips a NULL, so a plan with no
+          // time still reads created_at, as the COALESCE it replaces did.
           const tally = await client.query(
             `SELECT t.uid,
                     COUNT(DISTINCT CASE
@@ -3940,8 +3960,8 @@ router.post('/:id/attendance',
                WHERE m2.flock_id = fm.flock_id AND m2.status = 'accepted'
              ) mc ON TRUE
              LEFT JOIN LATERAL (
-               SELECT COALESCE(f.event_time, f.created_at) <= (NOW() AT TIME ZONE 'UTC') AS started,
-                      FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
+               SELECT GREATEST(f.event_time, f.created_at) <= (NOW() AT TIME ZONE 'UTC') AS started,
+                      FLOOR(EXTRACT(EPOCH FROM GREATEST(f.event_time, f.created_at))
                             / ${RELIABILITY_SLOT_SECONDS}) AS slot,
                       EXISTS (
                         SELECT 1
@@ -3951,10 +3971,10 @@ router.post('/:id/attendance',
                           AND m3.status = 'accepted'
                           AND m3.attendance = 'no_show'
                           AND f3.status = 'completed'
-                          AND COALESCE(f3.event_time, f3.created_at) <= (NOW() AT TIME ZONE 'UTC')
-                          AND FLOOR(EXTRACT(EPOCH FROM COALESCE(f3.event_time, f3.created_at))
+                          AND GREATEST(f3.event_time, f3.created_at) <= (NOW() AT TIME ZONE 'UTC')
+                          AND FLOOR(EXTRACT(EPOCH FROM GREATEST(f3.event_time, f3.created_at))
                                     / ${RELIABILITY_SLOT_SECONDS})
-                              = FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
+                              = FLOOR(EXTRACT(EPOCH FROM GREATEST(f.event_time, f.created_at))
                                       / ${RELIABILITY_SLOT_SECONDS})
                           AND (SELECT COUNT(*) FROM flock_members m4
                                WHERE m4.flock_id = m3.flock_id AND m4.status = 'accepted') >= 2

@@ -25,6 +25,8 @@
 //      a real uuid[] and the membership its own transaction just wrote.
 //   5. A BLOCKED PAIR DOES NOT BECOME CO-MEMBERS through a third member's
 //      invite: the accept asks the whole accepted roster, both directions.
+//   6. A PLAN CREATED FOR A PAST TIME COUNTS AS HAPPENING WHEN IT WAS MADE,
+//      so the reliability tally cannot be farmed one past slot per create.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -509,4 +511,62 @@ test('a member already in is not turned out by a block made since, and a plan wi
   const again = await call('POST', `/api/flocks/${flockId}/join`, { token: gus.token });
   assert.strictEqual(again.status, 200, JSON.stringify(again.body));
   assert.strictEqual(await memberStatus(flockId, gus), 'accepted');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. A plan created for a past time counts as happening when it was made
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// PUT refuses an event_time earlier than the row, and POST / takes any. Each
+// farm loop created its flock for a different past four-hour slot, so each one
+// had already started and was a slot of its own. The tally reads a naive
+// event_time against a naive created_at, so it is run here rather than read.
+
+test('three plans created for three different past slots earn one plan, not three', async () => {
+  const ada = await mkUser('Ada Fourteen');
+  const bea = await mkUser('Bea Fourteen');
+  const weeksAgo = Date.now() - 30 * 86400e3;
+  for (let i = 0; i < 3; i += 1) {
+    const created = await call('POST', '/api/flocks', {
+      token: ada.token,
+      body: { name: `Loop ${i}`, event_time: new Date(weeksAgo + i * 4 * 3600e3).toISOString() },
+    });
+    assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+    const flockId = created.body.flock.id;
+    await addMember(flockId, bea, 'accepted');
+    const done = await call('PUT', `/api/flocks/${flockId}`, { token: ada.token, body: { status: 'completed' } });
+    assert.strictEqual(done.status, 200, JSON.stringify(done.body));
+    const marked = await call('POST', `/api/flocks/${flockId}/attendance`, {
+      token: ada.token,
+      body: { attendance: [{ userId: ada.id, attended: true }, { userId: bea.id, attended: true }] },
+    });
+    assert.strictEqual(marked.status, 200, JSON.stringify(marked.body));
+  }
+  const { rows } = await pool.query('SELECT total_plans_joined, total_plans_attended FROM users WHERE id = $1', [ada.id]);
+  assert.deepStrictEqual(rows[0], { total_plans_joined: 1, total_plans_attended: 1 },
+    'one burst of creates is one evening, whatever times they were given');
+});
+
+test('a plan made before its evening still counts at the evening it was for', async () => {
+  const cal = await mkUser('Cal Fifteen');
+  const dee = await mkUser('Dee Fifteen');
+  // Two real plans, made days ahead and eight hours apart: two evenings.
+  for (const hoursAgo of [9, 1]) {
+    const { rows } = await pool.query(
+      `INSERT INTO flocks (name, creator_id, status, event_time, created_at)
+       VALUES ('Real', $1, 'completed', (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $2::int),
+               (NOW() AT TIME ZONE 'UTC') - INTERVAL '3 days')
+       RETURNING id`,
+      [cal.id, hoursAgo]
+    );
+    await addMember(rows[0].id, cal, 'accepted');
+    await addMember(rows[0].id, dee, 'accepted');
+    const marked = await call('POST', `/api/flocks/${rows[0].id}/attendance`, {
+      token: cal.token,
+      body: { attendance: [{ userId: cal.id, attended: true }, { userId: dee.id, attended: true }] },
+    });
+    assert.strictEqual(marked.status, 200, JSON.stringify(marked.body));
+  }
+  const { rows } = await pool.query('SELECT total_plans_joined FROM users WHERE id = $1', [cal.id]);
+  assert.strictEqual(rows[0].total_plans_joined, 2);
 });
