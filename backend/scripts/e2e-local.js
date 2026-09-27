@@ -186,9 +186,14 @@ const signup = (name, email, dob, headers) =>
   check('signup account starts unverified', meta.rows[0]?.email_verified === false, meta.rows[0]);
   const evTable = await pool.query("SELECT to_regclass('public.email_verifications') t");
   check('email_verifications table created', !!evTable.rows[0].t, evTable.rows[0]);
+  // The accounts above sign up on .test, a reserved name that can never
+  // receive mail, and signup issues no link to an address like that. The
+  // link is checked on an address that could receive one.
+  r = await signup('Vera', 'vera@flock-e2e.com', '2000-01-01');
+  check('a mailable signup succeeds (201)', r.status === 201, r);
   const evRow = await pool.query(
     'SELECT selector, verifier_hash, email, expires_at, used_at FROM email_verifications WHERE user_id = $1',
-    [idA]
+    [r.data?.user?.id]
   );
   check('a verification link was issued at signup', evRow.rows.length === 1, evRow.rows[0]);
   check('the link expires', evRow.rows[0] && new Date(evRow.rows[0].expires_at) > new Date(), evRow.rows[0]);
@@ -230,7 +235,7 @@ const signup = (name, email, dob, headers) =>
   check('report without content_type rejected (400)', r.status === 400, r);
 
   // --- Content filter (Carol posts) ---
-  r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tC, body: { message_text: 'you piece of shit' } });
+  r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tC, body: { message_text: 'you whore' } });
   check('profane flock message blocked (400)', r.status === 400, r);
   r = await req('POST', `/api/flocks/${flockId}/messages`, { token: tC, body: { message_text: 'meeting at 8 works for me' } });
   const msgC = r.data?.message?.id;
