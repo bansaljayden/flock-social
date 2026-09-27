@@ -83,7 +83,7 @@ function call(method, path, { token, ip } = {}) {
     // address for every request. Tests that need distinct anonymous identities
     // use distinct place ids instead.
     if (ip) headers['x-forwarded-for'] = ip;
-    const req = http.request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
+    const req = http.request({ agent: false, host: '127.0.0.1', port, path, method, headers }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => {

@@ -83,7 +83,7 @@ function call(method, urlPath, body, token) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const addr = server.address();
-    const req = http.request({
+    const req = http.request({ agent: false,
       host: '127.0.0.1', port: addr.port, path: urlPath, method,
       headers: {
         Authorization: `Bearer ${token}`,

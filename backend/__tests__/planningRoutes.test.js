@@ -472,7 +472,12 @@ const TOKENS = Object.fromEntries(USERS.map((u) => [u.id, signUserToken(u)]));
 function call(method, urlPath, body, asUser = 1) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
+    // agent: false, a fresh connection per request. Node's default agent keeps
+    // sockets alive and the server drops an idle one after 5 s, so under a
+    // loaded full-suite run the next test could write to a socket the server
+    // had just closed and fail with ECONNRESET on unchanged code.
     const req = http.request({
+      agent: false,
       host: '127.0.0.1', port: server.address().port, path: urlPath, method,
       headers: {
         Authorization: `Bearer ${TOKENS[asUser]}`,

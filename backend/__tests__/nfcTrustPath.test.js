@@ -80,7 +80,7 @@ function call(method, reqPath, { token, body } = {}) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = Buffer.byteLength(payload);
     }
-    const req = http.request({ host: '127.0.0.1', port, path: reqPath, method, headers }, (res) => {
+    const req = http.request({ agent: false, host: '127.0.0.1', port, path: reqPath, method, headers }, (res) => {
       let data = '';
       res.on('data', (c) => { data += c; });
       res.on('end', () => {
