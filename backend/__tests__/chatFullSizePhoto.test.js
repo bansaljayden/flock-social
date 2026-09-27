@@ -9,7 +9,9 @@
 // these two endpoints are the only door to the stored original. What is
 // pinned: the flock read is membership-gated, the DM read answers 404 to a
 // stranger (not 403, which would confirm the id exists), and a hidden
-// (taken down) message serves nothing on either path.
+// (taken down) message serves nothing on either path. The DM read also answers
+// 404 across a block, either way, and for a banned counterpart, which it did
+// not until the pair rules every other DM read applies were added to it.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -28,11 +30,24 @@ const TOKEN = signUserToken(ME);
 let isMember = false;
 let flockImageRow = null;   // { image_url } or null for no-row
 let dmRow = null;           // { sender_id, receiver_id, image_url } or null
+let blockedPair = null;     // [a, b] with a block between them, either way, or null
+let bannedIds = [];         // accounts a moderator has banned
+let pairQuestions = [];     // what the route asked of user_blocks and the ban column
 
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) {
     return { rows: [ME], rowCount: 1 };
+  }
+  if (sql.includes('FROM user_blocks')) {
+    pairQuestions.push({ blocks: params.map(Number) });
+    const hit = blockedPair
+      && params.map(Number).sort().join(',') === blockedPair.map(Number).sort().join(',');
+    return hit ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+  if (sql.includes('FROM users WHERE id = $1 AND is_banned IS TRUE')) {
+    pairQuestions.push({ banned: Number(params[0]) });
+    return bannedIds.includes(Number(params[0])) ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (sql.includes('FROM flock_members WHERE flock_id = $1')) {
     return isMember ? { rows: [{ id: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
@@ -113,6 +128,47 @@ test('a stranger gets 404, not 403, so the message id is not confirmed to exist'
   dmRow = { sender_id: 2, receiver_id: 8, image_url: 'data:image/jpeg;base64,DMFULL' };
   const res = await get('/api/dm/messages/77/image');
   assert.strictEqual(res.status, 404);
+});
+
+test('after a block, either way, neither side can pull a DM original by id', async () => {
+  // Alice (5) blocked Bob (8), or Bob blocked Alice: the thread read answers
+  // an empty conversation, so the originals in it are gone too, whoever sent
+  // them.
+  blockedPair = [5, 8];
+  bannedIds = [];
+  try {
+    for (const row of [
+      { sender_id: 8, receiver_id: 5, image_url: 'data:image/jpeg;base64,THEIRS' },
+      { sender_id: 5, receiver_id: 8, image_url: 'data:image/jpeg;base64,MINE' },
+    ]) {
+      dmRow = row;
+      pairQuestions = [];
+      const res = await get('/api/dm/messages/77/image');
+      assert.strictEqual(res.status, 404, `a blocked pair was served ${JSON.stringify(res.body)}`);
+      assert.deepStrictEqual(res.body, { error: 'Photo not found' }, 'the same answer a stranger gets');
+      assert.deepStrictEqual(pairQuestions[0].blocks.sort(), [5, 8], 'the block is asked of this pair');
+    }
+  } finally {
+    blockedPair = null;
+  }
+});
+
+test('a banned counterpart\'s DM originals are not served', async () => {
+  blockedPair = null;
+  bannedIds = [8];
+  try {
+    dmRow = { sender_id: 8, receiver_id: 5, image_url: 'data:image/jpeg;base64,BANNED' };
+    pairQuestions = [];
+    const res = await get('/api/dm/messages/77/image');
+    assert.strictEqual(res.status, 404);
+    assert.ok(pairQuestions.some((q) => q.banned === 8), 'the ban is asked of the counterpart, not the caller');
+  } finally {
+    bannedIds = [];
+  }
+  // And an unblocked, unbanned pair still gets the photo.
+  const ok = await get('/api/dm/messages/77/image');
+  assert.strictEqual(ok.status, 200);
+  assert.strictEqual(ok.body.image, 'data:image/jpeg;base64,BANNED');
 });
 
 test('non-integer ids are refused by validation', async () => {
