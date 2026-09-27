@@ -56,6 +56,7 @@ const EXPECTED_PUBLIC = {
   stripeWebhook: 'Stripe webhook, verified by a signature over the raw bytes before anything is read',
   sensors: 'Pi ingest checks x-api-key in the handler; the read APIs use JWT',
   proOffer: 'homepage pricing card: whether Flock Pro is on sale and at what price, the same answer for every caller, no account data',
+  clientCrash: 'the crash screen report button works before sign-in and ties no report to an account; own limiter, a 4KB body and daily caps',
 };
 
 const AUTH_MW = /\b(authenticate|authenticateAllowBanned|authenticateAllowExpired|requireVerified)\b/;

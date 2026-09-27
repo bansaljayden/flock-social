@@ -432,6 +432,7 @@ const AUTH_EXEMPT = new Map([
   ['emailWebhook.js', 'third-party webhook (Resend delivery events), authorised by a Svix signature verified against the raw request bytes with timingSafeEqual and a 5-minute timestamp window; a missing secret answers 503 rather than trusting the sender'],
   ['venueSearch.js', 'GET /api/venues/photo is a deliberately anonymous image proxy with a path-traversal-guarded ref allowlist'],
   ['waitlist.js', 'public landing-page signup; per-IP hourly and global daily caps inside the router'],
+  ['clientCrash.js', 'POST /api/client-crash is the crash screen\'s report button, which has to work before sign-in and must not tie a report to an account; it stores no account, IP or device id, and is capped by clientCrashLimiter, a 4KB body ceiling, 200 new crash shapes a day and 10 alert emails a day'],
   ['proOffer.js', 'GET /api/pro-offer feeds the homepage Flock Pro card: whether Pro is on sale and at what price, the same answer for every caller, no account data, no body, a ten-minute price cache and the global limiter in front'],
 ]);
 

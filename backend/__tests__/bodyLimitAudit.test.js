@@ -492,6 +492,11 @@ test('every route file that takes a body was actually looked at', () => {
     // as routes/pro.js: `plan` is one of two fixed strings, `sessionId` is
     // capped at 200 chars, the portal POST reads no body. The default ceiling.
     'venueBilling',
+    // routes/clientCrash.js enrolled 2026-09-27: the crash screen's report
+    // button. Short identifiers, a message clamped to 200 characters and at
+    // most eight component names, under 1KB; the router refuses past 4KB with
+    // its own 413 before a validator runs.
+    'clientCrash',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {

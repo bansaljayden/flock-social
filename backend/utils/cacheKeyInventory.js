@@ -1514,6 +1514,18 @@ const LIMITERS = [
     verdict: 'SAFE',
     why: 'The two unsubscribe surfaces are the venue and waitlist doors with NO login, so the address is all there is to key on. Both authorise on an HMAC that is not guessable, so this is not a brute-force gate — and one instance across both mounts, so they share the bucket. NOTE the interaction with RFC 8058 one-click POST: Gmail and Apple Mail send those from THEIR egress addresses, not the reader\'s, so a large send could in principle put many unrelated unsubscribes into one bucket. At this list size it cannot; if the list ever grows, this is the row to revisit and the evidence that settles it is the source addresses in the Railway access log for a Monday send.',
   },
+  {
+    name: 'clientCrashLimiter',
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    keyKind: 'ip',
+    key: 'req.ip (express-rate-limit default)',
+    message: 'That is a lot of crash reports from here in one hour. Try again later.',
+    mounts: ['/api/client-crash'],
+    protects: 'a Postgres upsert per report, and at most one ops email per new crash shape per day',
+    verdict: 'SAFE',
+    why: 'The crash screen has no login by design (a crash can come before sign-in, and a report carries no account), so the address is the only key. It is a brake, not the cap: routes/clientCrash.js caps the table at 200 new crash shapes a day and the email at 10 shapes a day through ops_alert_ledger, so rotating addresses buys a script at most those two ceilings. A school behind one NAT shares ten reports an hour, which is more crashes than one room of people will press Send on.',
+  },
 ];
 
 // ---------------------------------------------------------------------------

@@ -43,6 +43,9 @@ import SignupScreen from './components/auth/SignupScreen';
 // link on the consumer login, and the report sheet is behind a long-press on
 // somebody else's content.
 import ErrorBoundary from './components/ErrorBoundary';
+// "Send this to Flock" on the two screen-level crash fallbacks below, the same
+// button the app-wide one carries (components/CrashReportButton.js).
+import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './components/CrashReportButton';
 import EmergencySheet from './components/safety/EmergencySheet';
 import { createSosFollowUp } from './services/sosFollowUp';
 // deliverExport is NOT imported here. It is the one caller, it runs inside a
@@ -19277,7 +19280,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowConnectPanel(false);
   };
 
-  const screenCrashFallback = ({ error, eventId, reset }) => (
+  const screenCrashFallback = ({ error, eventId, reset, componentStack, label }) => (
     <>
       <div
         role="alert"
@@ -19314,7 +19317,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             >
               Go to Nest
             </button>
+            {worthReporting(error) && (
+              <CrashReportButton
+                error={error}
+                componentStack={componentStack}
+                label={label}
+                className="hit44"
+                style={{ flex: '1 1 100%', padding: '13px 16px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+              />
+            )}
           </div>
+          {worthReporting(error) && (
+            <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '10px 0 0' }}>
+              {CRASH_REPORT_NOTE}
+            </p>
+          )}
           <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
             {(error && error.message) || 'Unknown error'}
           </p>
@@ -19340,7 +19357,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // bar last — because ExploreScreen is the ONLY thing that draws the tab bar
   // on this tab (the switch answers null for it). A fallback without that last
   // line strands the user on Discover with no navigation at all.
-  const exploreCrashFallback = ({ error, reset }) => (
+  const exploreCrashFallback = ({ error, reset, componentStack, label }) => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       <div
         role="alert"
@@ -19373,6 +19390,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           >
             Try again
           </button>
+          {worthReporting(error) && (
+            <>
+              <CrashReportButton
+                error={error}
+                componentStack={componentStack}
+                label={label}
+                className="hit44"
+                style={{ display: 'block', marginTop: '10px', padding: '13px 20px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+              />
+              <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '10px 0 0' }}>
+                {CRASH_REPORT_NOTE}
+              </p>
+            </>
+          )}
           <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
             {(error && error.message) || 'Unknown error'}
           </p>
