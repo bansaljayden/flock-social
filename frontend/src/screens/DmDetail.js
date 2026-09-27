@@ -71,7 +71,7 @@
  * new row rather than changed here.
  */
 import React from 'react';
-import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
+import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, isOffline as isDeviceOffline, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 /* NOT from './ChatDetail' any more. Importing these two from the group-chat
    screen put its 146 KB chunk in this route's chunk group, so opening a DM
@@ -384,10 +384,12 @@ export default function DmDetail({
   // Three states, not two, with the same sampling and the same words as the
   // flock header. 9d87b73 fixed the hardcoded "online" in ChatDetail only;
   // this screen was extracted with the old literal frozen in, so a dead
-  // socket kept a green dot and the word online over it.
+  // socket kept a green dot and the word online over it. Offline is api.js
+  // isOffline(), as it is there, so a stuck navigator.onLine that the offline
+  // gate has already disproved does not keep this header saying offline.
   const readConnection = () => {
     if (getSocket()?.connected) return 'online';
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+    if (isDeviceOffline()) return 'offline';
     return 'reconnecting';
   };
   // Full-size photo viewer, the same shape ChatDetail carries: history rows
