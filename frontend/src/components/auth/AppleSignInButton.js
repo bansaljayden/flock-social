@@ -17,6 +17,11 @@ const isNativeIos = () =>
   window.Capacitor?.isNativePlatform?.() &&
   window.Capacitor?.getPlatform?.() === 'ios';
 
+// Whether this button draws anything. Exported so a screen can lay itself out
+// around it (the sign-up screen puts the providers first when Apple is one of
+// them) from the same test the button makes, rather than a second copy of it.
+export const isAppleSignInAvailable = () => Boolean(isNativeIos());
+
 // Apple delivers the person's name exactly once per Apple ID, on the first
 // sheet that completes, and never again unless they revoke the app in
 // Settings. The sheet completes on the device before the server has said

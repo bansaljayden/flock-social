@@ -272,8 +272,8 @@ describe('when the held credentials cannot be used', () => {
   });
 });
 
-describe('the signup screen stays as it was', () => {
-  it('asks the year before the sheet and sends it on the first post', async () => {
+describe('a year typed on the signup screen before the sheet', () => {
+  it('is sent on the first post, so a new account needs no step at all', async () => {
     const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
     fireEvent.change(utils.getByLabelText(/year of birth/i), { target: { value: '2000' } });
     mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
@@ -283,6 +283,182 @@ describe('the signup screen stays as it was', () => {
     expect(api.appleLogin.mock.calls[0][3]).toBe('2000-12-31');
     expect(api.appleLogin.mock.calls[0][4]).toEqual({ dobGranularity: 'year' });
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SIGNUP SCREEN, ON THE IPHONE.
+//
+// "New here? Create an account" used to put Apple at the very bottom, under
+// four fields, Create account, the legal line and Google, and a tap on it with
+// the year empty was refused with a sentence sending the person back up the
+// form. Apple is the fastest way in and the one that skips the confirmation
+// email, so on iOS the providers come first, and a new Apple account finishes
+// with the same step the sign-in screen uses: one sheet, then the year in the
+// Apple button's place.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const openSignup = (onSignupSuccess = jest.fn()) => {
+  const utils = render(React.createElement(SignupScreen, { onSignupSuccess, onSwitchToLogin: jest.fn() }));
+  return { ...utils, onSignupSuccess };
+};
+// document order of two nodes: true when a comes before b.
+const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+describe('the signup screen on iOS puts the providers first', () => {
+  // Google is drawn in the iOS app only when the build carries both client
+  // ids (isGoogleSignInAvailable), so this block gives it a pair.
+  const ENV = ['REACT_APP_GOOGLE_IOS_CLIENT_ID', 'REACT_APP_GOOGLE_CLIENT_ID'];
+  let saved;
+  beforeEach(() => {
+    saved = ENV.map((k) => process.env[k]);
+    process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID = 'ios-client.apps.googleusercontent.com';
+    process.env.REACT_APP_GOOGLE_CLIENT_ID = 'web-client.apps.googleusercontent.com';
+  });
+  afterEach(() => {
+    ENV.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
+  });
+
+  it('Apple first, then Google, then the email form, with the consent line above all three', () => {
+    const utils = openSignup();
+    const consent = utils.container.querySelector('.auth-legal');
+    const apple = appleButton(utils);
+    const google = utils.getByRole('button', { name: /continue with google/i });
+    const name = utils.getByLabelText('Name');
+    const create = utils.getByRole('button', { name: 'Create account' });
+    expect(before(consent, apple)).toBe(true);
+    expect(before(apple, google)).toBe(true);
+    expect(before(google, name)).toBe(true);
+    expect(before(name, create)).toBe(true);
+    // One consent paragraph, not one per place it could go.
+    expect(utils.container.querySelectorAll('.auth-legal').length).toBe(1);
+    expect(utils.getByText('or sign up with email')).toBeTruthy();
+  });
+
+  it('the subline no longer promises an inbox link to somebody about to use Apple', () => {
+    const utils = openSignup();
+    expect(utils.container.querySelector('.auth-sub').textContent).toBe('Use Apple or Google, or sign up with your email.');
+    expect(utils.container.textContent).not.toContain('Four fields, then one link in your inbox.');
+    utils.unmount();
+
+    // A build with no Google client id draws no Google button, and the line
+    // does not name one.
+    delete process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID;
+    const noGoogle = openSignup();
+    expect(noGoogle.queryByRole('button', { name: /continue with google/i })).toBeNull();
+    expect(noGoogle.container.querySelector('.auth-sub').textContent).toBe('Use Apple, or sign up with your email.');
+  });
+
+  it('on the web the layout is the one it was: the form, then the consent line, then Google', () => {
+    delete window.Capacitor;
+    const utils = openSignup();
+    expect(appleButton(utils)).toBeNull();
+    const create = utils.getByRole('button', { name: 'Create account' });
+    const consent = utils.container.querySelector('.auth-legal');
+    const google = utils.getByRole('button', { name: /continue with google/i });
+    expect(before(create, consent)).toBe(true);
+    expect(before(consent, google)).toBe(true);
+    expect(utils.container.querySelector('.auth-sub').textContent).toBe('Four fields, then one link in your inbox.');
+    expect(utils.getByText('or sign up with')).toBeTruthy();
+  });
+
+  it('Google with no year says where the field is from where the button now sits', async () => {
+    const utils = openSignup();
+    fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
+    await waitFor(() => expect(utils.getByRole('alert').textContent)
+      .toBe('Add the year you were born below first, then continue with Google.'));
+  });
+});
+
+describe('a new Apple account on the signup screen finishes on one sheet', () => {
+  it('an empty year opens the sheet; the year is asked in the Apple button\'s place, and the form steps aside', async () => {
+    const utils = openSignup();
+    await firstTap(utils);
+
+    const field = utils.getByLabelText('Year of birth');
+    expect(field.id).toBe('signup-apple-year');
+    expect(document.activeElement).toBe(field);
+    expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+    expect(utils.queryByRole('alert')).toBeNull();
+    // One year field and one thing to tap: the email form is not drawn under
+    // the step, and Continue has taken the Apple button's place.
+    expect(utils.container.querySelectorAll('input[autocomplete="bday-year"]').length).toBe(1);
+    expect(utils.queryByLabelText('Name')).toBeNull();
+    expect(appleButton(utils)).toBeNull();
+    // The consent line is still above it all, since Continue creates the account.
+    expect(utils.container.querySelector('.auth-legal')).not.toBeNull();
+    expect(utils.getByText('One more step: the year you were born.').textContent).not.toMatch(/\d/);
+  });
+
+  it('Continue posts the SAME credentials plus the year, name included, and never opens a second sheet', async () => {
+    const utils = openSignup();
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 51 } });
+    fireEvent.click(continueButton(utils));
+
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 51 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+    const [first, second] = api.appleLogin.mock.calls;
+    expect(first[3]).toBe('');
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
+    expect(second[2]).toBe(first[2]);
+    expect(second[3]).toBe('2000-12-31');
+    expect(second[4]).toEqual({ dobGranularity: 'year' });
+  });
+
+  it('an Apple ID that already has an account is simply signed in, with no year asked', async () => {
+    const utils = openSignup();
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 52 } });
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 52 }));
+    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+  });
+
+  it('an under-13 year is shown in the server\'s words, in the step, and nothing is tried again', async () => {
+    const UNDERAGE = 'Flock could not create an account.';
+    const utils = openSignup();
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2019' } });
+    api.appleLogin.mockRejectedValueOnce(httpError(403, UNDERAGE, { error: UNDERAGE }));
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE));
+    expect(continueButton(utils)).toBeNull();
+    expect(utils.onSignupSuccess).not.toHaveBeenCalled();
+    expect(api.appleLogin.mock.calls[1][3]).toBe('2019-12-31');
+  });
+
+  it('Sign up with email instead puts the form back and drops what was held', async () => {
+    const utils = openSignup();
+    await firstTap(utils);
+    fireEvent.click(utils.getByRole('button', { name: 'Sign up with email instead' }));
+    expect(utils.getByLabelText('Name')).toBeTruthy();
+    expect(continueButton(utils)).toBeNull();
+    expect(appleButton(utils)).not.toBeNull();
+    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+  });
+
+  it('a half-typed year is not sent to Apple as no year at all', async () => {
+    const utils = openSignup();
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '20' } });
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
+    expect(mockAppleAuthorize).not.toHaveBeenCalled();
+  });
+
+  it('an account that exists with no birth date on file is sent to sign in, not left at a dead end', async () => {
+    // The only needsDob with no granularity is the server backfilling an
+    // account that already exists, which needs the full date and the
+    // sign-in screen's read-back. This screen has neither.
+    const utils = openSignup();
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
+    api.appleLogin.mockRejectedValueOnce(httpError(403, 'Add your date of birth to continue.', { needsDob: true }));
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent)
+      .toBe('This Apple ID already has a Flock account. Tap Sign in below and continue with Apple there.'));
+    expect(continueButton(utils)).toBeNull();
   });
 });
 
