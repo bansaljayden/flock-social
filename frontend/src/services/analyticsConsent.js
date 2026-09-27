@@ -58,8 +58,10 @@ const KEY = 'flock_analytics_consent';
  * never sends anything unasked.
  *
  * An answer given while nobody is signed in (the web bar on the landing page
- * or the sign-in screen) has no account yet. It stays for the sign-in that
- * follows, because the person who just answered is the one signing in.
+ * or the sign-in screen) has no account yet. It stays for the next sign-in on
+ * this browser, which is nearly always the person who answered, on their way
+ * from the landing page or the sign-in form into the app. From then on it is
+ * that account's, and leaves with its session like any other.
  */
 let heldAtSignOut = null;
 const listeners = new Set();
