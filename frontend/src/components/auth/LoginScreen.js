@@ -179,9 +179,11 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       leaveAppleStep();
       onLoginSuccess(data.user);
     } catch (err) {
-      // Never reached the server (offline, connection refused): the same
-      // credentials are still good, so Continue stays and can be tapped again.
-      if (err?.isNetworkError && !err?.isTimeout && !err?.expired) {
+      // Provably never reached Flock (offline, or a captive portal answered):
+      // the same credentials are still good, so Continue stays and can be
+      // tapped again. Any other connection failure is ambiguous and falls
+      // through to a fresh Apple sheet below.
+      if ((err?.isOffline || err?.isCaptivePortal) && !err?.expired) {
         appleResume.current = resume;
         setAppleError(err.message);
         return;
