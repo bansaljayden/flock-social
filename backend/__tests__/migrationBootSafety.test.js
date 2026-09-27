@@ -1538,6 +1538,58 @@ test('091 deletes the queued pushes that carry a quarantined bill\'s figure, and
   await pool.query(`DELETE FROM users WHERE email LIKE '%091@example.com'`);
 });
 
+// ---------------------------------------------------------------------------
+// 096: quarterly bills and credits on the expense list. It redefines 080's
+// bill key under the same name, so the replay case that matters is 080 meeting
+// rows only the wider key allows: a charge and its refund with the same
+// vendor, product and cadence. 080's CREATE UNIQUE INDEX IF NOT EXISTS must
+// find 096's index and do nothing, rather than try to build the narrow key
+// over those two rows and fail the boot.
+// ---------------------------------------------------------------------------
+
+test('096 admits quarterly bills and credits, keeps its refusals, and a replay of 080 and 096 moves nothing', async () => {
+  const add = (vendor, product, cadence, amount, isCredit, replacesLine = null) => pool.query(
+    `INSERT INTO business_expenses (vendor, product, kind, amount_cents, cadence, is_credit, replaces_line)
+     VALUES ($1, $2, 'other', $3, $4, $5, $6) RETURNING id`,
+    [vendor, product, amount, cadence, isCredit, replacesLine]
+  );
+  const refusal = async (p) => {
+    try { await p; } catch (err) { return { code: err.code, constraint: err.constraint }; }
+    return null;
+  };
+  await add('Boot096 Host', 'Setup', 'one_time', 5000, false);
+  await add('Boot096 Host', 'Setup', 'one_time', 5000, true);
+  await add('Boot096 Tool', null, 'quarterly', 3000, false);
+
+  assert.deepEqual(await refusal(add('boot096 host', 'setup', 'one_time', 100, true)),
+    { code: '23505', constraint: 'business_expenses_bill_key' }, 'a second copy of the same credit is still one bill');
+  assert.equal((await refusal(add('Boot096 X', null, 'weekly', 100, false))).code, '23514', 'the cadence list is widened, not opened');
+  assert.equal((await refusal(add('Boot096 X', null, 'monthly', -100, true))).code, '23514', 'a credit is a positive amount with the flag set');
+  assert.deepEqual(await refusal(add('Boot096 X', null, 'monthly', 100, true, 'railway')),
+    { code: '23514', constraint: 'business_expenses_credit_line_check' });
+
+  const snapshot = async () => (await pool.query(
+    `SELECT vendor, product, cadence, amount_cents, is_credit FROM business_expenses
+      WHERE vendor LIKE 'Boot096%' ORDER BY id`
+  )).rows;
+  const before = await snapshot();
+  assert.equal(before.length, 3);
+
+  await pool.query(`DELETE FROM schema_migrations WHERE name IN ('080_business_expenses.sql', '096_business_expense_quarterly_credits.sql')`);
+  await migrate(pool); // must not throw on the charge and refund pair
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '096_business_expense_quarterly_credits.sql'`);
+  await migrate(pool);
+  assert.deepEqual(await snapshot(), before, 'a replay moved an expense row');
+  const { rows: [key] } = await pool.query(`SELECT indexdef FROM pg_indexes WHERE indexname = 'business_expenses_bill_key'`);
+  assert.match(key.indexdef, /UNIQUE INDEX business_expenses_bill_key .*cadence, is_credit\)/);
+  const { rows: [check] } = await pool.query(
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'business_expenses_cadence_check'`
+  );
+  assert.match(check.def, /'quarterly'/);
+
+  await pool.query(`DELETE FROM business_expenses WHERE vendor LIKE 'Boot096%'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block
