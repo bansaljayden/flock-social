@@ -60,6 +60,7 @@ import { lsGet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
+import { hapticTap } from '../services/haptics';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -302,6 +303,11 @@ export default function FlockDetail({
                 const rect = slideRef.current.getBoundingClientRect();
                 const x = e.touches[0].clientX - rect.left;
                 const pct = Math.max(0, Math.min(100, ((x - 22) / (rect.width - 44)) * 100));
+                // One tick as the thumb crosses into 'armed', the point where
+                // letting go completes the night, read off the previous value
+                // before it is overwritten so it fires once per crossing and
+                // not on every move past it. Touch only: a mouse has no motor.
+                if (pct > 85 && !(slidePctRef.current > 85)) hapticTap();
                 slidePctRef.current = pct;
                 if (slideFillRef.current) slideFillRef.current.style.width = `${Math.max(44, (pct / 100) * rect.width)}px`;
                 if (slideThumbRef.current) slideThumbRef.current.style.left = `${Math.max(3, (pct / 100) * (rect.width - 44))}px`;

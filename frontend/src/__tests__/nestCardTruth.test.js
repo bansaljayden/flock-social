@@ -295,7 +295,7 @@ describe('joining from an invite card', () => {
    * the returned harness reports everything the handler touched.
    */
   function buildAccept({ acceptRejects = null, invite, heldGuestTokens = [] } = {}) {
-    const calls = { accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [] };
+    const calls = { accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [], buzzes: 0 };
     let flocks = [];
     let pending = invite ? [invite] : [];
     const refused = new Set();
@@ -303,12 +303,15 @@ describe('joining from an invite card', () => {
     // The accept carries the guest identities this device holds for the
     // signed-in person (services/inviteHandoff.js storedGuestTokens), read off
     // meRef, so both are handed in alongside the rest. refusedInvitesRef is
-    // where a CANNOT_JOIN refusal is remembered for the session.
+    // where a CANNOT_JOIN refusal is remembered for the session. The join
+    // also buzzes once the server has said yes (services/haptics.js),
+    // counted here.
     // eslint-disable-next-line no-new-func
     const factory = new Function(
       'useCallback', 'acceptFlockInvite', 'pendingFlockInvites', 'setPendingFlockInvites',
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
       'refusedInvitesRef',
+      'hapticSuccess',
       `${source}\nreturn handleAcceptFlockInvite;`
     );
     const handler = factory(
@@ -327,6 +330,7 @@ describe('joining from an invite card', () => {
       (opts) => { calls.identityAsked.push(opts); return heldGuestTokens; },
       { current: { id: 5, name: 'Sam Rivera' } },
       { current: refused },
+      () => { calls.buzzes += 1; },
     );
     return {
       handler,
@@ -393,6 +397,8 @@ describe('joining from an invite card', () => {
       expect(h.flocks[0].memberStatus).toBe('accepted');
       expect(h.pending).toEqual([]);
       expect(h.calls.toasts[0].message).toBe('Joined Budget night!');
+      // And the hand feels it, once.
+      expect(h.calls.buzzes).toBe(1);
     });
   });
 
@@ -405,6 +411,8 @@ describe('joining from an invite card', () => {
       expect(h.flocks).toEqual([]);
       expect(h.pending.map((f) => f.id)).toEqual([41]);
       expect(h.calls.toasts).toEqual([{ message: 'Flock is full', type: 'error' }]);
+      // A join that did not happen does not buzz like one that did.
+      expect(h.calls.buzzes).toBe(0);
     });
   });
 
