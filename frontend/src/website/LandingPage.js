@@ -904,16 +904,24 @@ export default function LandingPage() {
             </p>
           </div>
           <div className="lp-row-media">
-            {/* Excerpt of the real SOS email the backend sends — not a mock UI */}
+            {/* Excerpt of the real SOS email the backend sends — not a mock UI.
+                Every line is copied from the template in routes/safety.js, and
+                landingPageClaims.test.js checks each one against it. The last
+                line used to read "exact coordinates included", which the email
+                stopped claiming when it began printing the phone's own accuracy
+                radius, and the sender and subject had drifted from the real
+                ones too. */}
             <div className="lp-sos-mail">
               <div className="lp-sos-meta">
+                <span>From</span><span>Flock</span>
                 <span>To</span><span>Your trusted contacts</span>
-                <span>Subject</span><span>Emergency Alert from Jordan</span>
+                <span>Subject</span><span>🚨 Emergency Alert from Jordan</span>
               </div>
               <div className="lp-sos-body">
                 <p className="lp-sos-headline">Jordan needs help</p>
-                <p className="lp-sos-link">View location on map</p>
-                <p className="lp-sos-fine">Sent 11:42 PM, exact coordinates included</p>
+                <p className="lp-sos-link">View Location on Map</p>
+                <p className="lp-sos-fine">Accurate to about 15 m.</p>
+                <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
               </div>
               <p className="lp-sos-cap">The actual email. Two taps to send, so a pocket can't fire it.</p>
             </div>

@@ -396,7 +396,7 @@ test('every message carries a reply-to a person reads', async () => {
         to: 'parent@example.com',
         subject: 'Flock SOS',
         html: '<p>x</p>',
-        from: 'Flock Safety <alerts@flockcorp.com>',
+        from: 'Flock <alerts@flockcorp.com>',
         category: EMERGENCY,
       });
     });

@@ -168,6 +168,51 @@ describe('the page only sells things that exist', () => {
     expect(copy).not.toMatch(/same model that ships inside Flock/);
   });
 
+  test('the SOS email on the page is the one the backend sends', () => {
+    // The card is captioned "The actual email." It printed "exact coordinates
+    // included" after the real email had stopped claiming exactness (it prints
+    // the phone's accuracy radius, or calls a coarse fix an area), and it
+    // named no sender while the real one went out as "Flock Safety", an
+    // unrelated camera company. Each line the card shows is checked against
+    // the template in routes/safety.js, so the two cannot drift apart again.
+    const safety = fs.readFileSync(
+      path.join(REPO, 'backend', 'routes', 'safety.js'), 'utf8'
+    );
+    const start = JS.indexOf('<div className="lp-sos-mail">');
+    const end = JS.indexOf('className="lp-sos-cap"', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const card = JS.slice(start, end)
+      .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+      .replace(/<[^>]+>/g, '\n')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    expect(card).not.toContainEqual(expect.stringMatching(/exact/i));
+
+    // From: the display name of SAFETY_FROM.
+    expect(card).toContain('From');
+    const from = /const SAFETY_FROM = '([^<']+?) <alerts@flockcorp\.com>';/.exec(safety);
+    expect(from).not.toBeNull();
+    expect(card[card.indexOf('From') + 1]).toBe(from[1]);
+
+    // Subject: the alert's subject with the name filled in.
+    expect(safety).toContain("`🚨 ${updateKind ? 'Update: ' : ''}Emergency Alert from ${safeSubjectText(userName)}`");
+    expect(card).toContain('🚨 Emergency Alert from Jordan');
+
+    // Body: the headline, the button for a precise fix, the accuracy line and
+    // the timestamp line, in the words the template uses.
+    expect(safety).toContain('<strong>${safeName}</strong> needs help');
+    expect(card).toContain('Jordan needs help');
+    expect(safety).toContain("'View Location on Map'");
+    expect(card).toContain('View Location on Map');
+    expect(safety).toContain('Accurate to ${accuracyPhrase(fixMetres)}.');
+    expect(card).toContain('Accurate to about 15 m.');
+    expect(safety).toContain('Alert sent at ${time}');
+    expect(card).toContainEqual(expect.stringMatching(/^Alert sent at \d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2} [AP]M [A-Z]{2,4}$/));
+  });
+
   test('nothing on the page claims a team that does not exist', () => {
     // Flock is one student and /about opens by saying so. A corporate "we"
     // making a commitment is a register mismatch a reader catches in two
