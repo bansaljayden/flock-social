@@ -71,7 +71,11 @@ const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 // ones who would otherwise turn up at the bar. See the fan-out in
 // deleteAccount.
 const { emitToFlockMembers } = require('../sockets/handlers');
-const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
+const { pushIfOffline, isPushConfigured, recipientZone } = require('../services/pushHelper');
+// The profile streak counts the person's own calendar days. The zone arrives
+// from the app, or is the one their device last reported for push, and is
+// only ever handed to Postgres once ICU has accepted it as an IANA name.
+const { validTimeZone } = require('../utils/venueZone');
 // "Has this plan already happened?" has one answer in this codebase and it is
 // the sweep's. Importing its window rather than restating it is what stops the
 // push gate and the completion sweep from drifting apart. See the read in
@@ -1803,10 +1807,39 @@ router.get('/stats', async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // WHOSE DAYS THE STREAK COUNTS. They were UTC days, walked back from a
+    // "today" on the server's clock, which is UTC too. A New York evening
+    // then split at 8 PM: messages at 7:55 and 8:05 PM counted as two days,
+    // and Monday 7:30 PM plus Tuesday 9 PM read as Monday and Wednesday with
+    // a gap between. The app sends its own zone (?tz=); an older build that
+    // sends none is read in the zone its device last reported for push, and
+    // failing both, UTC as before.
+    const zone = validTimeZone(req.query.tz)
+      || validTimeZone(await recipientZone(userId))
+      || 'UTC';
+    // Node's ICU and Postgres ship separate copies of the zone table, so a
+    // name one accepts can in principle be one the other has never heard of.
+    // Postgres refuses it as invalid_parameter_value (22023); the streak is
+    // then counted in UTC rather than the whole profile failing.
+    const activityDays = (tz) => pool.query(
+      `SELECT DISTINCT
+              to_char(((ts AT TIME ZONE 'UTC') AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS d,
+              to_char((NOW() AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS today
+         FROM (
+        SELECT created_at AS ts FROM messages WHERE sender_id = $1
+        UNION ALL
+        SELECT created_at FROM direct_messages WHERE sender_id = $1
+        UNION ALL
+        SELECT joined_at FROM flock_members WHERE user_id = $1 AND status = 'accepted'
+      ) AS activity ORDER BY d DESC LIMIT 60`,
+      [userId, tz]
+    );
+
     // -----------------------------------------------------------------------
     // SEVEN ROUND TRIPS, PAID ONE AFTER ANOTHER, FOR ONE SMALL JSON OBJECT.
     // -----------------------------------------------------------------------
-    // Every read below is parameterised on nothing but the caller's own id, and
+    // Every read below is parameterised on nothing but the caller's own id
+    // (and the streak read on the zone settled above), and
     // not one of them consumes another's result: the only code that used to sit
     // between them was the parseInt unwrapping, and both the XP arithmetic and
     // the streak walk run after the last of them returns. Awaiting them one at
@@ -1814,11 +1847,11 @@ router.get('/stats', async (req, res) => {
     // sequential Postgres round trips, stacked end to end. Issued together the
     // route waits for the slowest instead of the sum.
     //
-    // The statements are unchanged, character for character, and the destructure
-    // is in the same order as the array, so every value the client receives is
-    // the one it received before. The activity literal keeps its original inner
-    // indentation for the same reason: the text going to Postgres must not move
-    // just because the call is nested one level deeper.
+    // Batching left the statements unchanged, character for character, and the
+    // destructure is in the same order as the array, so every value the client
+    // received was the one it received before. (The activity read has changed
+    // since, on purpose, for the zone and the accepted-only join; it is built by
+    // activityDays above.)
     //
     // NOT FOLDED INTO ONE STATEMENT. The five counts would collapse into a
     // single SELECT of scalar subqueries, but the reliability row cannot join
@@ -1864,18 +1897,17 @@ router.get('/stats', async (req, res) => {
         `SELECT COUNT(*) FROM flocks WHERE creator_id = $1`,
         [userId]
       ),
-      // Streak: the distinct days with activity (messages or flock joins), most
-      // recent first. The consecutive-day walk over them is below.
-      pool.query(
-        `SELECT DISTINCT DATE(created_at AT TIME ZONE 'UTC') AS d FROM (
-        SELECT created_at FROM messages WHERE sender_id = $1
-        UNION ALL
-        SELECT created_at FROM direct_messages WHERE sender_id = $1
-        UNION ALL
-        SELECT joined_at AS created_at FROM flock_members WHERE user_id = $1
-      ) AS activity ORDER BY d DESC LIMIT 60`,
-        [userId]
-      ),
+      // Streak: the distinct days with activity (messages sent, or a plan
+      // joined), most recent first, as calendar dates in `zone`, with today's
+      // date in the same zone beside each. The consecutive-day walk over them
+      // is below. Only an ACCEPTED membership is a join: an invite row gets
+      // its joined_at when somebody else sends the invite, and a declined one
+      // keeps it, so counting every row let a friend's daily invites keep a
+      // streak alive for somebody who never opened the app.
+      activityDays(zone).catch((err) => {
+        if (zone !== 'UTC' && err && err.code === '22023') return activityDays('UTC');
+        throw err;
+      }),
       // Reliability score
       pool.query(
         'SELECT reliability_score, total_plans_joined, total_plans_attended FROM users WHERE id = $1',
@@ -1892,25 +1924,25 @@ router.get('/stats', async (req, res) => {
     const xp = (flocksCreated * 50) + (Math.max(0, flockCount - flocksCreated) * 20) + (messageCount * 5) + (friendCount * 10);
     const level = Math.floor(xp / 100) + 1;
 
-    // Streak: count consecutive days with activity (messages or flock joins) going back from today
+    // Streak: count consecutive days with activity (messages or flock joins)
+    // going back from today. The dates arrive as YYYY-MM-DD strings already in
+    // the person's zone, so each becomes a plain day number and the walk never
+    // touches this process's own clock or zone.
     let streak = 0;
     if (activityResult.rows.length > 0) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const dates = activityResult.rows.map(r => {
-        const d = new Date(r.d);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      });
+      const dayNumber = (ymd) => {
+        const [y, m, d] = String(ymd).split('-').map(Number);
+        return Date.UTC(y, m - 1, d) / 86400000;
+      };
+      const days = new Set(activityResult.rows.map(r => dayNumber(r.d)));
       // Check if today or yesterday has activity, then count back
-      const dayMs = 86400000;
-      let checkDate = today.getTime();
-      if (!dates.includes(checkDate)) {
-        checkDate -= dayMs; // allow yesterday as start
+      let checkDay = dayNumber(activityResult.rows[0].today);
+      if (!days.has(checkDay)) {
+        checkDay -= 1; // allow yesterday as start
       }
-      while (dates.includes(checkDate)) {
+      while (days.has(checkDay)) {
         streak++;
-        checkDate -= dayMs;
+        checkDay -= 1;
       }
     }
 

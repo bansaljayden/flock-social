@@ -2748,8 +2748,13 @@ export async function getSuggestedUsers() {
   return request('/api/users/suggested');
 }
 
+// The device's own zone rides along so the profile streak counts this
+// person's calendar days. Without it the server counts UTC days, and an
+// evening in the Americas splits at UTC midnight.
 export async function getUserStats() {
-  return request('/api/users/stats');
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* no Intl zone */ }
+  return request(tz ? `/api/users/stats?tz=${encodeURIComponent(tz)}` : '/api/users/stats');
 }
 
 export async function getUserSettings() {
