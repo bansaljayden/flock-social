@@ -2062,8 +2062,21 @@ router.post('/chat',
             // already been given, which is a number it could present as
             // Flock's own. The model keeps exactly what the search returned;
             // only the cards carry the reading.
+            //
+            // ONE CARD PER PLACE. A venue a second search in the same turn
+            // returns again (the same words run twice, or two overlapping
+            // queries) is already here and is not collected twice. Each search
+            // now hands back a copy of its own, so the enrichment below, which
+            // finds the first entry for a place id, left the repeat without the
+            // reading: the user got the same venue twice, once with a crowd
+            // number and once without, and the repeat took one of the four
+            // card slots from a venue they had not seen.
             if (name === 'search_venues' && result.venues) {
-              collectedVenues.push(...result.venues.map((v) => ({ ...v })));
+              for (const v of result.venues) {
+                const id = v && v.place_id;
+                if (typeof id === 'string' && id && collectedVenues.some((c) => c.place_id === id)) continue;
+                collectedVenues.push({ ...v });
+              }
             }
             if (name === 'navigate_app' && result.navigated) {
               navigationAction = { tab: result.tab, screen: result.screen, profile_section: result.profile_section };
