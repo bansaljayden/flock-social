@@ -55,7 +55,8 @@ pool.connect = async () => ({
     }
     return dispatch(sql, params);
   },
-  release: () => {},
+  // Logged too, so a test can tell what ran while the client was still held.
+  release: () => { log.push({ sql: 'RELEASE', params: [] }); },
 });
 
 function on(re, fn) { handlers.push([re, fn]); }
@@ -103,16 +104,27 @@ async function call(method, url, body) {
   return { status: res.status, body: parsed, text };
 }
 
-/** Membership, the target lookup, the count, the insert and the read back. */
-function scriptPin({ member = true, target = true, count = 0, pins = [] } = {}) {
+/** Membership, the target lookup, the count, the insert and the read back.
+ *  `seats` is what the refusal's wording read answers: one row per counted
+ *  pin, saying which side of a block hides it from this reader. By default
+ *  every counted pin is in plain sight. */
+function scriptPin({ member = true, target = true, count = 0, pins = [], seats = null } = {}) {
+  const seatRows = seats || Array.from({ length: count }, () => ({ hidden_by_me: false, hidden_by_them: false }));
   on(/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: member ? [{ id: 1 }] : [] }));
   on(/SELECT id FROM messages WHERE id = \$1 AND flock_id = \$2/, () => ({ rows: target ? [{ id: 5 }] : [] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 7 }] }));
   on(/COUNT\(\*\)::int AS n FROM pinned_messages/, () => ({ rows: [{ n: count }] }));
   on(/INSERT INTO pinned_messages/, () => ({ rows: [], rowCount: 1 }));
   on(/DELETE FROM pinned_messages/, () => ({ rows: [], rowCount: 1 }));
+  on(/AS hidden_by_me/, () => ({ rows: seatRows }));
   on(/FROM pinned_messages p/, () => ({ rows: pins }));
 }
+
+// One counted pin as the refusal's wording read describes it.
+const SEEN = { hidden_by_me: false, hidden_by_them: false };
+const MY_BLOCK = { hidden_by_me: true, hidden_by_them: false };
+const THEIR_BLOCK = { hidden_by_me: false, hidden_by_them: true };
+const BOTH_BLOCKS = { hidden_by_me: true, hidden_by_them: true };
 
 const PIN_ROW = {
   id: 11, message_id: 5, pinned_by: 2, created_at: '2026-09-05T20:00:00Z',
@@ -190,7 +202,7 @@ test('a fourth pin is REFUSED, and the refusal says what to do', async () => {
   /* Evicting the oldest would let one person silently remove something
      another person put there, on a surface whose whole point is that it is
      shared. */
-  scriptPin({ count: 3, pins: [PIN_ROW, { ...PIN_ROW, id: 12, message_id: 6 }, { ...PIN_ROW, id: 13, message_id: 7 }] });
+  scriptPin({ count: 3 });
   const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
 
   assert.strictEqual(res.status, 409, res.text);
@@ -198,36 +210,108 @@ test('a fourth pin is REFUSED, and the refusal says what to do', async () => {
   assert.strictEqual(log.filter((q) => /INSERT INTO pinned_messages/.test(q.sql)).length, 0);
 });
 
-test('a full bar with a pin this reader cannot see says so, instead of "Unpin one first"', async () => {
+test('a full bar with a pin this reader blocked says so, instead of "Unpin one first"', async () => {
   /* The seats are the flock's and the bar is the reader's. A pin of somebody
-     this reader blocked (or who blocked them) holds a seat everyone else can
-     see and free, so the count stays whole; but telling this reader to unpin
-     one over a bar with two pins on it was an instruction they could not
-     follow. The reader's own read, by their own invisible set, decides. */
-  scriptPin({ count: 3, pins: [PIN_ROW, { ...PIN_ROW, id: 12, message_id: 6 }] });
-  on(/blocked_id AS id FROM user_blocks/, () => ({ rows: [{ id: 4 }] }));
+     this reader blocked holds a seat everyone else can see and free, so the
+     count stays whole; but telling this reader to unpin one over a bar with
+     two pins on it was an instruction they could not follow. They know whom
+     they blocked, so saying one is out of sight tells them nothing new. */
+  scriptPin({ count: 3, seats: [SEEN, SEEN, MY_BLOCK] });
   const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
 
   assert.strictEqual(res.status, 409, res.text);
   assert.strictEqual(res.body.error,
     "Only 3 messages can be pinned, including one you can't see. Unpin one first, or ask someone else in the plan to.");
-  const read = log.find((q) => /FROM pinned_messages p/.test(q.sql));
-  assert.deepStrictEqual(read.params, [7, [4]], 'the reader\'s own invisible set filters the read');
+  const read = log.find((q) => /AS hidden_by_me/.test(q.sql));
+  assert.deepStrictEqual(read.params, [7, 1], 'asked for this flock, about this reader');
   assert.strictEqual(log.filter((q) => /INSERT INTO pinned_messages/.test(q.sql)).length, 0);
 });
 
-test('when every pin is hidden from the reader, the refusal asks someone else', async () => {
-  scriptPin({ count: 3, pins: [] });
+test('when every pin is hidden by the reader\'s own blocks, the refusal asks someone else', async () => {
+  scriptPin({ count: 3, seats: [MY_BLOCK, MY_BLOCK, MY_BLOCK] });
   const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
   assert.strictEqual(res.status, 409, res.text);
   assert.strictEqual(res.body.error,
     "Only 3 messages can be pinned, including 3 you can't see. Ask someone else in the plan to unpin one.");
 });
 
+test('a pin hidden because its author blocked the reader is never named', async () => {
+  /* Banned authors hold no seat, so a counted pin the reader cannot see is a
+     block one way or the other. Said out loud for a block the reader did not
+     make, "including one you can't see" is the server telling them somebody in
+     the plan blocked them. So those pins are left out of the words, and a bar
+     short only for that reason gets the plain sentence. */
+  scriptPin({ count: 3, seats: [SEEN, SEEN, THEIR_BLOCK] });
+  let res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.error, 'Only 3 messages can be pinned. Unpin one first.');
+
+  handlers = [];
+  scriptPin({ count: 3, seats: [THEIR_BLOCK, THEIR_BLOCK, THEIR_BLOCK] });
+  res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.error, 'Only 3 messages can be pinned. Unpin one first.');
+});
+
+test('only the reader\'s own blocks are counted in the words, and a two-way block is one of them', async () => {
+  // One pin hidden by the reader's block, two by blocks of the reader. The
+  // sentence names the one, and nobody else's pin is left for this reader to
+  // unpin, so it points at the rest of the plan.
+  scriptPin({ count: 3, seats: [MY_BLOCK, THEIR_BLOCK, THEIR_BLOCK] });
+  let res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.error,
+    "Only 3 messages can be pinned, including one you can't see. Ask someone else in the plan to unpin one.");
+
+  // Blocked both ways: the reader's own block explains it as far as they can
+  // tell, so it is theirs to be told about.
+  handlers = [];
+  scriptPin({ count: 3, seats: [SEEN, BOTH_BLOCKS, BOTH_BLOCKS] });
+  res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.error,
+    "Only 3 messages can be pinned, including 2 you can't see. Unpin one first, or ask someone else in the plan to.");
+});
+
+test('the wording read counts the seats the way the ceiling does and asks both block directions', async () => {
+  scriptPin({ count: 3 });
+  await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  const read = log.find((q) => /AS hidden_by_me/.test(q.sql));
+  assert.ok(read, 'the refusal was worded from its own read');
+  // The ceiling's live-pin filters, so the words describe the same seats.
+  assert.match(read.sql, /m\.id = pinned_messages\.message_id/);
+  assert.match(read.sql, /pinned_messages\.flock_id = \$1/);
+  assert.match(read.sql, /m\.is_hidden IS NOT TRUE/);
+  assert.match(read.sql, /m\.sender_deleted_at IS NULL/);
+  assert.match(read.sql, /su\.id = m\.sender_id AND su\.is_banned IS TRUE/);
+  // Which side of a block hides each pin.
+  assert.match(read.sql, /b\.blocker_id = \$2 AND b\.blocked_id = m\.sender_id\) AS hidden_by_me/);
+  assert.match(read.sql, /b\.blocker_id = m\.sender_id AND b\.blocked_id = \$2\) AS hidden_by_them/);
+});
+
+test('the refusal is worded after the transaction client is released', async () => {
+  /* Worded inside the transaction, the refusal held its client while its own
+     read waited on a second one from the same pool, and a burst of refusals on
+     a saturated pool could each hold one and wait forever on another. */
+  scriptPin({ count: 3, seats: [SEEN, SEEN, MY_BLOCK] });
+  const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 409, res.text);
+
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const rolledBack = at(/^ROLLBACK/i);
+  const released = at(/^RELEASE$/);
+  const worded = at(/AS hidden_by_me/);
+  assert.ok(rolledBack > -1 && released > -1 && worded > -1,
+    `missing a step: ${log.map((q) => q.sql.slice(0, 40)).join(' | ')}`);
+  assert.ok(rolledBack < released, 'the transaction closes before the client goes back');
+  assert.ok(released < worded, 'no pool read while the transaction client is held');
+  assert.strictEqual(log.filter((q) => q.sql === 'RELEASE').length, 1, 'released exactly once');
+});
+
 test('a read that fails while wording the refusal still refuses, in plain words', async () => {
   scriptPin({ count: 3 });
-  handlers = handlers.filter(([re]) => !re.test('SELECT p.id FROM pinned_messages p'));
-  on(/FROM pinned_messages p/, () => { throw new Error('pinned_messages unreadable'); });
+  handlers = handlers.filter(([re]) => !re.test('AS hidden_by_me'));
+  on(/AS hidden_by_me/, () => { throw new Error('pinned_messages unreadable'); });
   const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
   assert.strictEqual(res.status, 409, res.text);
   assert.strictEqual(res.body.error, 'Only 3 messages can be pinned. Unpin one first.');
