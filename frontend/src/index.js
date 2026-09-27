@@ -793,16 +793,19 @@ const PAGES = [
     load: () => import('./website/AboutPage'),
     Loading: PaperLoading,
   },
-  {
-    // Flock Pro on the web. WEB ONLY: inside the native shell this route does
-    // not match, so the WebView falls through to the app like any other path.
-    // Apple does not allow the app to point at a web price outside the US, and
-    // the page repeats the check itself in case it is ever mounted another way.
+  // Flock Pro on the web. WEB ONLY: inside the native shell this route does
+  // not match, so the WebView falls through to the app like any other path.
+  // Apple does not allow the app to point at a web price outside the US, and
+  // the page repeats the check itself in case it is ever mounted another way.
+  // A REACT_APP_PURCHASES=off build (the App Store one) has no /pro at all:
+  // the literal test lets webpack leave the page's chunk out of that build
+  // (lib/purchasesBuild.js).
+  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
     id: 'pro',
     test: (p) => p === '/pro' && !isNativeShell,
     load: () => import('./website/ProPage'),
     Loading: PaperLoading,
-  },
+  }]),
   {
     // Every physical NFC tag Flock has points at this one URL: the acrylic
     // table stand at the DECA booth (/tap?s=stand) and the business cards
@@ -840,14 +843,17 @@ const PAGES = [
   },
 ];
 
-const LANDING_PAGE = {
+// The marketing page sells Flock Pro, and the native shell never shows it
+// (isMarketingRoot below), so a REACT_APP_PURCHASES=off build, which is only
+// ever the App Store one, does not carry it (lib/purchasesBuild.js).
+const LANDING_PAGE = process.env.REACT_APP_PURCHASES === 'off' ? null : {
   id: 'landing',
   load: () => import('./website/LandingPage'),
   Loading: LandingLoading,
 };
 
 // "/" is the marketing site on the web and the app inside the native shell.
-const isMarketingRoot = !isNativeShell && !hasAppIntent
+const isMarketingRoot = !!LANDING_PAGE && !isNativeShell && !hasAppIntent
   && (path === '/' || path === '/landing' || path === '/index.html');
 
 const page = isMarketingRoot ? LANDING_PAGE : PAGES.find((r) => r.test(path));

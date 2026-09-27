@@ -40,6 +40,7 @@
 // signed in.
 
 import { isNativeShell } from '../lib/nativeShell';
+import { purchasesInBuild } from '../lib/purchasesBuild';
 
 const API_KEY = process.env.REACT_APP_REVENUECAT_IOS_KEY;
 
@@ -56,7 +57,11 @@ const API_KEY = process.env.REACT_APP_REVENUECAT_IOS_KEY;
  *  They differ only on a bridge that answers badly, which the sheet already
  *  treats as the app; if that bridge is not native after all, the plugin's web
  *  stub refuses configure and nothing can be bought. */
-export const isPurchasesAvailable = () => isNativeShell() && !!API_KEY;
+//
+// Never in a build made with REACT_APP_PURCHASES=off (lib/purchasesBuild.js,
+// the App Store build): that build sells nothing, so RevenueCat is never
+// configured and StoreKit is never asked, whatever key the build carries.
+export const isPurchasesAvailable = () => purchasesInBuild() && isNativeShell() && !!API_KEY;
 
 // The account this session signed in as, as RevenueCat must name it: a string
 // of our numeric user id (the webhook contract above). Set by initPurchases,
@@ -82,7 +87,11 @@ const serially = (task) => {
 const loadPlugin = async () => {
   if (!isPurchasesAvailable()) return null;
   try {
-    const mod = await import('@revenuecat/purchases-capacitor');
+    // Spelled out beside the import so webpack leaves the plugin's chunk out
+    // of a REACT_APP_PURCHASES=off build (lib/purchasesBuild.js says why).
+    const mod = process.env.REACT_APP_PURCHASES === 'off'
+      ? null
+      : await import('@revenuecat/purchases-capacitor');
     return mod?.Purchases || null;
   } catch (err) {
     console.warn('RevenueCat plugin unavailable:', err?.message || err);

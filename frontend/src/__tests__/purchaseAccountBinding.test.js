@@ -401,7 +401,7 @@ describe('purchases.js asks the detector the purchase screens ask', () => {
 
   test('it imports lib/nativeShell and keeps no check of its own', () => {
     expect(PURCHASES).toContain("import { isNativeShell } from '../lib/nativeShell';");
-    expect(PURCHASES).toMatch(/export const isPurchasesAvailable = \(\) => isNativeShell\(\) && !!API_KEY;/);
+    expect(PURCHASES).toMatch(/export const isPurchasesAvailable = \(\) => purchasesInBuild\(\) && isNativeShell\(\) && !!API_KEY;/);
     expect(stripComments(PURCHASES)).not.toMatch(/isNativePlatform/);
   });
 

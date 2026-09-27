@@ -308,6 +308,9 @@ const PLATFORM_GLOBALS = new Set([
   'isNaN', 'localStorage', 'navigator', 'parseFloat', 'parseInt',
   'requestAnimationFrame', 'sessionStorage', 'setInterval', 'setTimeout',
   'undefined', 'window',
+  // process.env.REACT_APP_PURCHASES, which the build replaces with a string
+  // (lib/purchasesBuild.js). No prop is ever called process.
+  'process',
 ]);
 
 describe('every name a screen reads has somewhere to come from', () => {

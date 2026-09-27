@@ -800,7 +800,7 @@ describe('the venue sheet under the same paywall', () => {
     // words BUSIEST HOURS: a card that reads as broken, not as a boundary.
     expect(appSource).not.toContain("{closedAllDay ? 'Closed Today' : peakText}");
     const tile = peakTile();
-    expect(tile).toContain('cd?.forecastAccess?.locked ? (');
+    expect(tile).toContain("cd?.forecastAccess?.locked && (process.env.REACT_APP_PURCHASES !== 'off') ? (");
     expect(tile).toContain("setPaywallTrigger('forecast'");
     expect(tile).toContain('{peakText}');
   });
@@ -814,7 +814,7 @@ describe('the venue sheet under the same paywall', () => {
 
   test('closed still wins over the paywall, since it is true either way', () => {
     const tile = peakTile();
-    expect(tile.indexOf('closedAllDay ? (')).toBeLessThan(tile.indexOf('cd?.forecastAccess?.locked ? ('));
+    expect(tile.indexOf('closedAllDay ? (')).toBeLessThan(tile.indexOf('cd?.forecastAccess?.locked && '));
   });
 });
 

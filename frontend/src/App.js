@@ -49,6 +49,9 @@ import { createSosFollowUp } from './services/sosFollowUp';
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet } from './lib/storage';
+// `process.env.REACT_APP_PURCHASES !== 'off'` below is the App Store build's
+// switch: off, there is no purchase surface at all. lib/purchasesBuild.js has
+// the rules, and why every gate spells the variable out instead of calling it.
 // When a member's live pin comes off this device, and the emit interval the
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
@@ -621,12 +624,18 @@ const rearmModerationSheet = () => {
 
    THE CATCH IS THE SAME LOAD-BEARING CATCH, and the mount site is the same:
    beside the screen ErrorBoundary rather than inside it, so a rejected chunk
-   would take the whole signed-in app down to the reload card for a sheet. */
-const loadPaywallSheet = () => import('./components/PaywallSheet')
-  .catch((err) => {
-    console.warn('Paywall sheet chunk did not load', err);
-    return { default: PaywallSheetUnavailable };
-  });
+   would take the whole signed-in app down to the reload card for a sheet.
+
+   A REACT_APP_PURCHASES=off build (the App Store one) has no sheet: the mount
+   below never renders it, and the literal test here keeps webpack from
+   building its chunk at all. */
+const loadPaywallSheet = process.env.REACT_APP_PURCHASES === 'off'
+  ? () => Promise.resolve({ default: () => null })
+  : () => import('./components/PaywallSheet')
+    .catch((err) => {
+      console.warn('Paywall sheet chunk did not load', err);
+      return { default: PaywallSheetUnavailable };
+    });
 let PaywallSheet = React.lazy(loadPaywallSheet);
 
 const rearmPaywallSheet = () => {
@@ -3551,8 +3560,9 @@ const NavIcon = ({ id, active }) => {
 // `VENUE_PRICE_USD` in backend/routes/admin.js;
 // backend/services/statedPrices.js lists it so the money hub flags a drift.
 const VENUE_PLAN_PRICE = { pro: 99 };
+// No price at all in a REACT_APP_PURCHASES=off build (lib/purchasesBuild.js).
 const venuePlanPriceLabel = (tier, per = 'mo') =>
-  VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
+  (process.env.REACT_APP_PURCHASES !== 'off') && VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
 
 // The NFC check-in screen. Mounted (not called) by the screen slot, so its
 // hooks live in a component of their own.
@@ -7864,6 +7874,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // reads. The portal only needs that re-read: a cancel or a card change may
   // have just happened.
   useEffect(() => {
+    if (!(process.env.REACT_APP_PURCHASES !== 'off')) return undefined;
     const ret = PRO_RETURN;
     if (!ret) return undefined;
     if (ret.kind === 'manage') {
@@ -7909,7 +7920,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // forget: a chunk that does not arrive leaves the RevenueCat link unmade,
     // which is the same state a web session is always in, and the next launch
     // tries again.
-    if (authUser?.id) {
+    //
+    // Never in a REACT_APP_PURCHASES=off build (the App Store one), which does
+    // not start RevenueCat or carry its chunk (lib/purchasesBuild.js).
+    if (process.env.REACT_APP_PURCHASES !== 'off' && authUser?.id) {
       import('./services/purchases')
         .then(({ initPurchases }) => initPurchases(authUser.id))
         .catch(() => {});
@@ -9301,9 +9315,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const resetsAt = err?.data?.resetsAt || null;
         setAiResetsAt(resetsAt);
         const back = resetsAt ? `after ${new Date(resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'tomorrow';
-        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: `that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me ${back}.` }]);
+        // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing,
+        // so it states the limit and when it lifts, and opens no sheet.
+        const limitText = (process.env.REACT_APP_PURCHASES !== 'off')
+          ? `that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me ${back}.`
+          : `You've reached today's limit. Try again ${back}.`;
+        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: limitText }]);
         setAiRemaining(0);
-        setPaywallTrigger('birdie');
+        if ((process.env.REACT_APP_PURCHASES !== 'off')) setPaywallTrigger('birdie');
       } else if (err?.code === 'CONVERSATION_TOO_LONG') {
         // Reaching here means the retry above could not make the payload any
         // smaller, so trimming is not the answer and saying "try again" would
@@ -16150,6 +16169,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // another account throws, so a stranger's link told this owner they had
   // paid. Anything unconfirmed gets the Pro return's wording.
   useEffect(() => {
+    if (!(process.env.REACT_APP_PURCHASES !== 'off')) return;
     const ret = VENUE_BILLING_RETURN;
     if (!ret) return;
     VENUE_BILLING_RETURN = null;
@@ -18366,7 +18386,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               decided it; the prop stays rather than being dropped because the
               sheet's effects read it and the sheet is also what the venue
               dashboard's teaser would open. */}
-          {paywallTrigger && (
+          {paywallTrigger && (process.env.REACT_APP_PURCHASES !== 'off') && (
             <React.Suspense fallback={null}>
               <PaywallSheet
                 open
@@ -19308,11 +19328,13 @@ const EMAIL_VERIFIED_OUTCOME = readEmailVerifiedOutcome();
 // stripped once, here, for the reason readEmailVerifiedOutcome gives above;
 // lib/proReturn.js has the rest. `let` because FlockAppInner clears it once
 // handled, so a sign-out and sign-in in the same tab does not replay it.
-let PRO_RETURN = readProReturn();
+// Never read in a REACT_APP_PURCHASES=off build, which has no checkout to come
+// back from (lib/purchasesBuild.js).
+let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readProReturn() : null;
 
 // Back from Stripe after a venue bought Roost: ?venue_billing=success|manage|cancelled.
 // Same read-once rule; lib/venueBillingReturn.js has the rest.
-let VENUE_BILLING_RETURN = readVenueBillingReturn();
+let VENUE_BILLING_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readVenueBillingReturn() : null;
 
 // A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
 // return is the ban; the emailVerificationRequired flag is checked anyway so a

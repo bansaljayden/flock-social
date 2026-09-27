@@ -39,6 +39,9 @@ import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
 import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
+// REACT_APP_PURCHASES=off (the App Store build): no plan badge, no plans
+// sheet, no prices, no upgrade buttons and no Subscription card. A tab the
+// server withholds says so without offering anything. lib/purchasesBuild.js.
 import {
   BASE_URL,
   askAdvisor,
@@ -118,7 +121,10 @@ const VERIFICATION_LINES = {
 };
 export function verificationLine({ verified, pending, onRoost }) {
   const state = verified ? 'verified' : pending ? 'pending' : 'unrequested';
-  return VERIFICATION_LINES[state][onRoost ? 'roost' : 'free'];
+  const line = VERIFICATION_LINES[state][onRoost ? 'roost' : 'free'];
+  // The free lines end on the plan that adds the forecast; a build that sells
+  // nothing leaves that sentence off.
+  return (process.env.REACT_APP_PURCHASES !== 'off') ? line : line.replace(' Your own forecast comes with Roost.', '');
 }
 
 // THE ROOST NOTICE WINDOW, SAID ONLY AS FAR AS IT HAS HAPPENED (Terms 9.6). A
@@ -810,10 +816,14 @@ export default function VenueDashboard({
         </div>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
+        {(process.env.REACT_APP_PURCHASES !== 'off') ? (<>
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
         <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
           Upgrade to Roost
         </button>
+        </>) : (
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600', margin: 0 }}>This is not turned on for your venue.</p>
+        )}
       </div>
     );
 
@@ -826,7 +836,7 @@ export default function VenueDashboard({
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {venueBillingOn && (
+              {venueBillingOn && (process.env.REACT_APP_PURCHASES !== 'off') && (
               <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
                 {tierBadge[venueData.tier].label}
               </span>
@@ -1788,7 +1798,7 @@ export default function VenueDashboard({
                 {venueListErrors.incomingFlocksLocked && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include the incoming-flocks feed.</p>
-                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>
+                    {(process.env.REACT_APP_PURCHASES !== 'off') && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
                   </div>
                 )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
@@ -2377,6 +2387,8 @@ export default function VenueDashboard({
                   claim about their bank account that is simply false. tier_source
                   and tier_reason already come down with the profile, so the
                   screen can say what actually happened instead. */}
+              {/* Not in a REACT_APP_PURCHASES=off build at all. */}
+              {(process.env.REACT_APP_PURCHASES !== 'off') && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
                 {/* Billing off: every feature is on and nothing is a plan the
@@ -2520,6 +2532,7 @@ export default function VenueDashboard({
                 )}
                 </>)}
               </div>
+              )}
 
               {/* Danger Zone */}
               <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: '12px', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
@@ -2545,7 +2558,7 @@ export default function VenueDashboard({
           )}
 
           {/* Upgrade Modal */}
-          {showUpgradeModal && (
+          {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off') && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
