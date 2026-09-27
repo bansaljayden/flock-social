@@ -623,6 +623,71 @@ test('a hidden unread DM is not counted, and opening the thread sweeps it read s
   assert.strictEqual(after.body.conversations[0].unread, 0);
 });
 
+// PUT /api/dm/:messageId/read, INTERPRETED like the sweeps above: the named
+// row by the predicate the statement puts on it, and the older rows only as
+// far as the statement actually reaches. A statement that marks one row marks
+// one row here too.
+function scriptDmReadMark(corpus) {
+  on(/^UPDATE direct_messages SET read_status = TRUE WHERE (id = \$1 AND receiver_id = \$2|receiver_id = \$2 AND)/, (p, sql) => {
+    const id = Number(p[0]);
+    const me = Number(p[1]);
+    const guardsNamed = /COALESCE\(is_hidden, false\) = false AND sender_deleted_at IS NULL/.test(sql);
+    const named = corpus.find((m) => m.id === id && m.receiver_id === me
+      && !(guardsNamed && (m.is_hidden || m.sender_deleted_at)));
+    if (!named) return { rows: [], rowCount: 0 };
+    const hit = [named];
+    const sweeps = /id < \$1 AND read_status = FALSE AND sender_id = \( SELECT t\.sender_id FROM direct_messages t WHERE t\.id = \$1 AND t\.receiver_id = \$2 AND COALESCE\(t\.is_hidden, false\) = false AND t\.sender_deleted_at IS NULL \)/.test(sql);
+    if (sweeps) {
+      for (const m of corpus) {
+        if (m.id < id && m.receiver_id === me && !m.read_status && m.sender_id === named.sender_id) hit.push(m);
+      }
+    }
+    for (const m of hit) m.read_status = true;
+    return { rows: hit.map((m) => ({ id: m.id, read_status: true })), rowCount: hit.length };
+  });
+}
+
+test('a live mark covers the whole burst from that person, and nothing else', async () => {
+  // The app marks an open thread once per 1.5 s and sends the newest id it
+  // saw. Two messages inside that window used to leave the first unread: on
+  // the app icon while the thread was on screen, and back on the list row
+  // after the next reload.
+  const dm = (id, sender, receiver, extra = {}) => ({
+    id, sender_id: sender, receiver_id: receiver, message_text: `m${id}`, message_type: 'text',
+    is_hidden: false, read_status: false, reply_to_id: null, created_at: '2026-08-14T14:00:00.000Z', ...extra,
+  });
+  const corpus = [
+    dm(40, 3, 1),                        // somebody else's thread
+    dm(41, 2, 1, { is_hidden: true }),   // taken down, swept the way opening the thread sweeps it
+    dm(42, 2, 1),                        // "omg"
+    dm(43, 1, 2),                        // my own, unread by THEM
+    dm(44, 2, 1),                        // "look at this": the id the timer carries
+    dm(45, 2, 1),                        // arrived after the mark went out
+  ];
+  scriptDmReadMark(corpus);
+
+  const res = await call('PUT', '/api/dm/44/read');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body.message, { id: 44, read_status: true },
+    'the answer is the named row\'s ack and nothing of the rows swept with it');
+
+  const unread = corpus.filter((m) => !m.read_status).map((m) => m.id);
+  assert.deepStrictEqual(unread, [40, 43, 45],
+    'the first of the burst stayed unread, or the mark reached another thread, '
+      + 'somebody else\'s copy, or a message that had not arrived');
+});
+
+test('a mark on a row that is not yours sweeps nothing and learns only 404', async () => {
+  const corpus = [
+    { id: 50, sender_id: 2, receiver_id: 1, message_text: 'mine to read', message_type: 'text', is_hidden: false, read_status: false, reply_to_id: null, created_at: '2026-08-14T14:00:00.000Z' },
+    { id: 51, sender_id: 1, receiver_id: 2, message_text: 'theirs to read', message_type: 'text', is_hidden: false, read_status: false, reply_to_id: null, created_at: '2026-08-14T14:00:01.000Z' },
+  ];
+  scriptDmReadMark(corpus);
+  const res = await call('PUT', '/api/dm/51/read');
+  assert.strictEqual(res.status, 404, res.text);
+  assert.deepStrictEqual(corpus.map((m) => m.read_status), [false, false]);
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 6. DM conversation list — the DISTINCT ON tie
 // ═════════════════════════════════════════════════════════════════════════════
