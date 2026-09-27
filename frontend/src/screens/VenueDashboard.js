@@ -765,7 +765,10 @@ export default function VenueDashboard({
         'How your projected night compares to the venues around you',
         "Roost's cards, every line naming where its number came from",
         'Ask Roost a question and get the answer from your own numbers',
-        'The weekly summary: what your venue did over the last 7 days',
+        // Named for the card it is, This Week on the Analytics tab. It read
+        // "The weekly summary", one word away from the Monday email listed
+        // beside it, and it is not that email.
+        'This Week: what your venue did over the last 7 days',
       ],
     };
 
@@ -1095,7 +1098,7 @@ export default function VenueDashboard({
               forecast, the strip, Roost's cards and questions, and the
               weekly summary. The live number above stays free. */}
           {venueTab === 'analytics' && !can.analytics && tierKnown && (
-            <LockedTab featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you, with Roost's cards, its answers and your weekly summary." />
+            <LockedTab featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you, with Roost's cards, its answers and the This Week card." />
           )}
           {venueTab === 'analytics' && can.analytics && tierKnown && (<>
           {/* No linked listing / loading states.
@@ -1235,7 +1238,7 @@ export default function VenueDashboard({
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'The weekly summary is part of Roost.' : 'The weekly summary is not turned on for your venue.'}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
             </div>
           )}
 
@@ -2337,18 +2340,27 @@ export default function VenueDashboard({
                 hasListing: !!venueProfile?.google_place_id,
               }) && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mail ? Icons.mail(colors.navy, 14) : null} Weekly reports</h3>
+                {/* ONE NAME: "the Monday email". This switch said "Weekly
+                    reports", the unsubscribe page asked "Turn off the Monday
+                    digest?" and pointed at "the Weekly reports switch", and the
+                    plan list sold "The weekly summary", which is the This Week
+                    card on the Analytics tab and not this email at all. An
+                    owner turning off weekly reports could not tell which of
+                    the two they had turned off. The switch, its toast, the
+                    email footer, the unsubscribe pages, the Terms and the
+                    Privacy Policy now all call this send the Monday email. */}
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mail ? Icons.mail(colors.navy, 14) : null} Monday email</h3>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    aria-label="Weekly reports by email"
+                    aria-label="Monday email"
                     checked={venueProfile?.notification_prefs?.weekly === true}
                     onChange={async (e) => {
                       const weekly = e.target.checked;
                       try {
                         const saved = await updateVenueProfile({ notificationPrefs: { weekly } });
                         setVenueProfile((prev) => mergeSavedProfile(prev, saved));
-                        showToast(weekly ? 'Weekly reports on. The first one comes Monday morning.' : 'Weekly reports off.');
+                        showToast(weekly ? 'Monday email on. The first one comes Monday morning.' : 'Monday email off.');
                       } catch (err) {
                         showToast(err?.message || 'Could not save that. Try again.', 'error');
                       }

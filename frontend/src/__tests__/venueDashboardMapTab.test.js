@@ -327,10 +327,11 @@ describe('the settings tab, venue-owner audit 2026-09-05', () => {
   });
 
   it('carries the one notification switch whose send exists, wired to notification_prefs.weekly', () => {
-    // The Monday digest reads notification_prefs.weekly; PUT /api/venue-profile
-    // is its only writer; the unsubscribe page and the email footer name
-    // "weekly reports" as the switch. One switch, no dead ones.
-    expect(APP).toContain('aria-label="Weekly reports by email"');
+    // The Monday email reads notification_prefs.weekly; PUT /api/venue-profile
+    // is its only writer; the unsubscribe page and the email footer name the
+    // switch "the Monday email", as the switch names itself. One switch, no
+    // dead ones.
+    expect(APP).toContain('aria-label="Monday email"');
     expect(APP).toContain('updateVenueProfile({ notificationPrefs: { weekly } })');
     expect(APP).toContain("checked={venueProfile?.notification_prefs?.weekly === true}");
     expect(APP).not.toMatch(/notificationPrefs: \{ (bookings|reviews)/);

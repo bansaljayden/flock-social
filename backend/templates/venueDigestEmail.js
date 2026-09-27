@@ -250,7 +250,10 @@ function renderDigestText({ businessName, cards, tier, optOutUrl, weekLabel }) {
 
   parts.push(
     [
-      `You are getting this because weekly reports are turned on for ${businessName} in your Flock venue dashboard.`,
+      // "the Monday email", the switch's own name in the dashboard. This said
+      // "weekly reports" while the switch, the unsubscribe page and the legal
+      // pages each used a different name for the same send.
+      `You are getting this because the Monday email is turned on for ${businessName} in your Flock venue dashboard.`,
       optOutUrl ? `Stop these emails: ${optOutUrl}` : null,
     ].filter(Boolean).join('\n')
   );
@@ -306,7 +309,7 @@ function renderDigestHtml({ businessName, cards, tier, optOutUrl, weekLabel }) {
   }
 
   const footer = [
-    `<p style="font-size: 13px; color: #a0aec0; margin-top: 32px; line-height: 1.6;">You are getting this because weekly reports are turned on for ${escapeHtml(businessName)} in your Flock venue dashboard.`,
+    `<p style="font-size: 13px; color: #a0aec0; margin-top: 32px; line-height: 1.6;">You are getting this because the Monday email is turned on for ${escapeHtml(businessName)} in your Flock venue dashboard.`,
     optOutUrl
       ? ` <a href="${escapeHtml(optOutUrl)}" style="color: #a0aec0;">Stop these emails</a>.`
       : '',

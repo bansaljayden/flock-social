@@ -2619,7 +2619,7 @@ router.get('/this-week', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the weekly summary is off. Write to hello@flockcorp.com to link one.' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the This Week card is off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const placeId = ctx.google_place_id;
@@ -2808,7 +2808,7 @@ router.get('/this-week', requirePro, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('Venue this-week error:', err);
-    res.status(500).json({ error: 'Failed to build the weekly summary' });
+    res.status(500).json({ error: 'Failed to build the This Week card' });
   }
 });
 
