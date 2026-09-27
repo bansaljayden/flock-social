@@ -644,6 +644,106 @@ test('a backfilled reading is not broadcast, so a two hour old count never redra
   assert.strictEqual(emits.length, 0);
 });
 
+// --- The occupancy estimate ------------------------------------------------
+//
+// Newer firmware combines the doorway in/out count with the thermal count on
+// the device and sends how many people are inside, a plausible range around
+// it, and a typical stay. Older firmware sends none of it, and both must keep
+// working side by side.
+
+const ESTIMATE = { occupancy: 12, occupancy_low: 10, occupancy_high: 14, dwell_minutes: 45 };
+
+test('an occupancy estimate is stored with the reading and broadcast as stored', async () => {
+  reset();
+  const res = await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading(ESTIMATE) });
+  assert.strictEqual(res.status, 201, res.raw);
+  assert.strictEqual(readings.length, 1);
+  const r = readings[0];
+  assert.deepStrictEqual(
+    [r.occupancy, r.occupancy_low, r.occupancy_high, r.dwell_minutes], [12, 10, 14, 45]);
+  const p = emits[0].payload;
+  assert.deepStrictEqual(
+    [p.occupancy, p.occupancy_low, p.occupancy_high, p.dwell_minutes], [12, 10, 14, 45]);
+});
+
+test('a device on older firmware sends no estimate and its row stores null for all four, not a refusal', async () => {
+  reset();
+  const res = await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading() });
+  assert.strictEqual(res.status, 201, res.raw);
+  const r = readings[0];
+  assert.deepStrictEqual(
+    [r.occupancy, r.occupancy_low, r.occupancy_high, r.dwell_minutes], [null, null, null, null]);
+});
+
+test('an explicit null for any part of the estimate is absent, not an error', async () => {
+  reset();
+  const res = await call('/api/sensors/data', {
+    apiKey: HASHED_KEY,
+    body: reading({ occupancy: 7, occupancy_low: null, occupancy_high: null, dwell_minutes: null }),
+  });
+  assert.strictEqual(res.status, 201, res.raw);
+  assert.strictEqual(readings[0].occupancy, 7);
+  assert.strictEqual(readings[0].dwell_minutes, null);
+});
+
+test('a band that contradicts its own estimate is dropped, the estimate kept, and the reading still answered 201', async () => {
+  // A 400 would make the device discard the reading for good, losing the
+  // estimate and the three counts with it, so the band alone is dropped.
+  for (const band of [
+    { occupancy_low: 13, occupancy_high: 20 },
+    { occupancy_low: 2, occupancy_high: 11 },
+    { occupancy_low: 30, occupancy_high: 5 },
+  ]) {
+    reset();
+    const res = await call('/api/sensors/data', {
+      apiKey: HASHED_KEY, body: reading({ occupancy: 12, dwell_minutes: 30, ...band }),
+    });
+    const label = JSON.stringify(band);
+    assert.strictEqual(res.status, 201, `${label}: ${res.raw}`);
+    const r = readings[0];
+    assert.strictEqual(r.occupancy, 12, label);
+    assert.strictEqual(r.occupancy_low, null, label);
+    assert.strictEqual(r.occupancy_high, null, label);
+    assert.strictEqual(r.dwell_minutes, 30, label);
+    assert.strictEqual(emits[0].payload.occupancy_low, null, `${label}: the dropped band was still broadcast`);
+  }
+});
+
+test('a band with no estimate to sit around is dropped, so the app never draws it around the thermal count', async () => {
+  reset();
+  const res = await call('/api/sensors/data', {
+    apiKey: HASHED_KEY, body: reading({ occupancy_low: 3, occupancy_high: 9 }),
+  });
+  assert.strictEqual(res.status, 201, res.raw);
+  assert.deepStrictEqual([readings[0].occupancy_low, readings[0].occupancy_high], [null, null]);
+});
+
+test('an out of range or non-integer estimate is refused and writes nothing', async () => {
+  for (const extra of [
+    { occupancy: 5001 }, { occupancy: -1 }, { occupancy: 1.5 }, { occupancy: 'many' },
+    { occupancy: 5, occupancy_low: -1 }, { occupancy: 5, occupancy_high: 5001 },
+    { dwell_minutes: 0 }, { dwell_minutes: 1441 },
+  ]) {
+    reset();
+    const res = await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading(extra) });
+    assert.strictEqual(res.status, 400, `${JSON.stringify(extra)} -> ${res.status} ${res.raw}`);
+    assert.strictEqual(readings.length, 0, `${JSON.stringify(extra)}: written anyway`);
+  }
+});
+
+test('an array-shaped estimate is refused like every other field, never coerced into an INTEGER parameter', async () => {
+  for (const field of ['occupancy', 'occupancy_low', 'occupancy_high', 'dwell_minutes']) {
+    for (const v of [[12], ['12'], [], { n: 12 }]) {
+      reset();
+      const res = await call('/api/sensors/data', {
+        apiKey: HASHED_KEY, body: reading({ ...ESTIMATE, [field]: v }),
+      });
+      assert.strictEqual(res.status, 400, `${field}=${JSON.stringify(v)} -> ${res.status} ${res.raw}`);
+      assert.strictEqual(readings.length, 0);
+    }
+  }
+});
+
 // --- Read side ------------------------------------------------------------
 
 test('the current reading is bounded by a staleness window, so a sensor that died on Friday is not still showing Friday crowd on Sunday', async () => {
@@ -671,4 +771,17 @@ test('the hourly entry total is capped before the int cast, so one bad historica
   const res = await call(`/api/sensors/${VENUE}/history?hours=24`, { method: 'GET' });
   assert.strictEqual(res.status, 200);
   assert.match(queryLog[0].sql, /LEAST\(SUM\(ir_beam_count\), 2147483647\)::int/);
+});
+
+test('the hourly history averages the occupancy estimate, so the chart can plot people inside rather than people in one camera', async () => {
+  queryLog = [];
+  pool.query = (sql, params) => {
+    queryLog.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+    return Promise.resolve({ rows: [] });
+  };
+  const res = await call(`/api/sensors/${VENUE}/history?hours=24`, { method: 'GET' });
+  assert.strictEqual(res.status, 200);
+  for (const col of ['occupancy', 'occupancy_low', 'occupancy_high', 'dwell_minutes']) {
+    assert.match(queryLog[0].sql, new RegExp(`ROUND\\(AVG\\(${col}\\)\\)::int AS ${col}`));
+  }
 });

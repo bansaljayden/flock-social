@@ -32,6 +32,15 @@ const MAX_IR_PER_READING = 10000;
 const MAX_THERMAL = 1000;
 // 140 dB is a jet engine at 30m. The client clamps to the same ceiling.
 const MAX_NOISE_DB = 140;
+// The occupancy estimate (people inside now, and the plausible range around
+// it) is worked out on the device from the doorway in/out count and the
+// thermal count. Unlike thermal_headcount it is a whole-room figure, so it may
+// exceed what one camera sees; 5000 is past any venue we would put one in.
+const MAX_OCCUPANCY = 5000;
+// Typical stay, from Little's law on the device. A day is the ceiling; the
+// device sends null, not 0, when too few people arrived to say.
+const MIN_DWELL_MINUTES = 1;
+const MAX_DWELL_MINUTES = 1440;
 // How far back a device may backfill after an outage. Its own buffer holds
 // about 2h of readings; 48h covers a long outage plus a device that was
 // powered off and came back, without letting genuinely stale data in.
@@ -140,6 +149,10 @@ const DIGEST_FORM = /^sha256:/i;
 // `raced` restates the insert's own gate: an insert that was allowed to run and
 // returned no row can only have met the key.
 //
+// $12-$15 are the occupancy estimate, trailing so every older parameter kept
+// its number. All four are optional: a device on older firmware sends none of
+// them and its row stores NULL, which is the truth for it.
+//
 // Every parameter keeps ONE type through the statement ($4, $6 and $7 are each
 // used more than once, with the same cast every time):
 // __tests__/sqlParameterTypes.test.js prepares this against a migrated
@@ -180,9 +193,11 @@ const INGEST_SQL = `
   ),
   ins AS (
     INSERT INTO venue_sensor_data
-      (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at)
+      (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at,
+       occupancy, occupancy_low, occupancy_high, dwell_minutes)
     SELECT w.venue_place_id, $9::integer, $10::integer, $11::numeric, w.device_id,
-           COALESCE($6::timestamptz, NOW())
+           COALESCE($6::timestamptz, NOW()),
+           $12::integer, $13::integer, $14::integer, $15::integer
       FROM writer w
      WHERE NOT EXISTS (SELECT 1 FROM dup)
        AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM touch))
@@ -207,7 +222,7 @@ const NO_FILING = null;
 
 function ingestParams(digest, legacy, filing) {
   const gap = `${MIN_LIVE_GAP_SECONDS} seconds`;
-  if (!filing) return [digest, legacy, false, null, false, null, false, gap, null, null, null];
+  if (!filing) return [digest, legacy, false, null, false, null, false, gap, null, null, null, null, null, null, null];
   return [
     digest, legacy, true,
     filing.claimedDeviceId,
@@ -218,7 +233,41 @@ function ingestParams(digest, legacy, filing) {
     filing.irBeamCount,
     filing.thermalHeadcount,
     filing.noiseDb,
+    filing.occupancy,
+    filing.occupancyLow,
+    filing.occupancyHigh,
+    filing.dwellMinutes,
   ];
+}
+
+// An absent optional field is null, never undefined: node-postgres binds both
+// as NULL, but the parameter array is what the tests pin.
+const intOrNull = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+
+/**
+ * The occupancy estimate as it will be stored. Only ever handed a body that
+ * passed validation, so each value is null or an in-range integer, or a
+ * numeric string the validator admitted. Those are made numbers here, so the
+ * live broadcast carries the same type /current returns and the app, which
+ * tests typeof === 'number', does not fall back to the thermal count.
+ *
+ * A band that contradicts its own estimate (low above it, or high below it) is
+ * a device bug or a forged value, and either way it is not a range anyone
+ * should be shown. It is dropped rather than the reading refused: a 400 tells
+ * the device the reading is malformed, the device discards it for good, and
+ * the occupancy and the three counts that came with it are lost with it. A
+ * band with no estimate to sit around is dropped for the same reason, because
+ * the app would draw it around the thermal count instead.
+ */
+function occupancyEstimate(b) {
+  const occupancy = intOrNull(b.occupancy);
+  let low = intOrNull(b.occupancy_low);
+  let high = intOrNull(b.occupancy_high);
+  const unusable = occupancy === null
+    || (low !== null && low > occupancy)
+    || (high !== null && occupancy > high);
+  if (unusable) { low = null; high = null; }
+  return { occupancy, occupancyLow: low, occupancyHigh: high, dwellMinutes: intOrNull(b.dwell_minutes) };
 }
 
 /**
@@ -269,7 +318,7 @@ async function findDeviceByApiKey(apiKey, filing = NO_FILING) {
 // in the handler's catch and answer 500 for a reading that was already stored,
 // which the device then retried as a failure. Its own try/catch, and a log line
 // that says the reading is safe.
-function broadcastReading(req, device, body, recordedAt) {
+function broadcastReading(req, device, body, filing, recordedAt) {
   try {
     const io = req.app.get('io');
     if (!io) return;
@@ -278,6 +327,12 @@ function broadcastReading(req, device, body, recordedAt) {
       ir_beam_count: body.ir_beam_count,
       thermal_headcount: body.thermal_headcount,
       noise_db: body.noise_db,
+      // What was STORED, not what was sent: a band dropped as out of order
+      // must not reach the venue card through the live push either.
+      occupancy: filing.occupancy,
+      occupancy_low: filing.occupancyLow,
+      occupancy_high: filing.occupancyHigh,
+      dwell_minutes: filing.dwellMinutes,
       recorded_at: recordedAt,
     });
   } catch (err) {
@@ -373,6 +428,19 @@ router.post('/data',
   body('device_id').optional({ nullable: true }).isString().isLength({ min: 1, max: 100 })
     .withMessage('device_id must be 1-100 characters'),
   scalarOnly(body('dry_run').optional({ nullable: true }), 'dry_run').isBoolean().withMessage('dry_run must be a boolean'),
+  // The occupancy estimate: optional and nullable, because older firmware sends
+  // none of it and newer firmware sends null for what it cannot yet say. Shape
+  // first, for exactly the reason every field above has it: `occupancy: [12]`
+  // passes isInt by coercion and would reach an INTEGER parameter as `{12}`.
+  scalarOnly(body('occupancy').optional({ nullable: true }), 'occupancy').isInt({ min: 0, max: MAX_OCCUPANCY })
+    .withMessage(`occupancy must be an integer 0-${MAX_OCCUPANCY}`),
+  scalarOnly(body('occupancy_low').optional({ nullable: true }), 'occupancy_low').isInt({ min: 0, max: MAX_OCCUPANCY })
+    .withMessage(`occupancy_low must be an integer 0-${MAX_OCCUPANCY}`),
+  scalarOnly(body('occupancy_high').optional({ nullable: true }), 'occupancy_high').isInt({ min: 0, max: MAX_OCCUPANCY })
+    .withMessage(`occupancy_high must be an integer 0-${MAX_OCCUPANCY}`),
+  scalarOnly(body('dwell_minutes').optional({ nullable: true }), 'dwell_minutes')
+    .isInt({ min: MIN_DWELL_MINUTES, max: MAX_DWELL_MINUTES })
+    .withMessage(`dwell_minutes must be an integer ${MIN_DWELL_MINUTES}-${MAX_DWELL_MINUTES}`),
   async (req, res) => {
     try {
       const apiKey = req.headers['x-api-key'];
@@ -435,6 +503,7 @@ router.post('/data',
           irBeamCount: req.body.ir_beam_count,
           thermalHeadcount: req.body.thermal_headcount,
           noiseDb: req.body.noise_db,
+          ...occupancyEstimate(req.body),
         };
       }
 
@@ -526,7 +595,7 @@ router.post('/data',
       // backfilled row to subscribers would redraw the venue card with stale
       // occupancy. After the response, and unable to change it: see
       // broadcastReading.
-      if (!filing.isBackfill) broadcastReading(req, device, req.body, device.recorded_at);
+      if (!filing.isBackfill) broadcastReading(req, device, req.body, filing, device.recorded_at);
     } catch (err) {
       console.error('Sensor data ingest error:', err);
       res.status(500).json({ error: 'Failed to ingest sensor data' });
@@ -559,6 +628,7 @@ router.get('/:placeId/current',
 
       const reading = await pool.query(
         `SELECT venue_place_id, ir_beam_count, thermal_headcount, noise_db,
+                occupancy, occupancy_low, occupancy_high, dwell_minutes,
                 sensor_device_id, recorded_at
            FROM venue_sensor_data
           WHERE venue_place_id = $1
@@ -590,7 +660,10 @@ router.get('/:placeId/current',
 
 // ---------------------------------------------------------------------------
 // GET /api/sensors/:placeId/history?hours=24 — hourly-bucketed readings for charts
-// One row per hour: thermal/noise are AVG, ir_beam_count is SUM. The sum is
+// One row per hour: thermal/noise and the occupancy estimate are AVG,
+// ir_beam_count is SUM. AVG skips NULLs, so an hour in which only some readings
+// carried an estimate averages those, and an hour with none reads NULL (the
+// app then charts thermal for it). The sum is
 // beam CROSSINGS per hour, not entries: the beam fires in both directions, so
 // it counts roughly two per person who comes in and leaves. Empty hours are
 // omitted; frontends construct fixed-width slot arrays and treat missing
@@ -617,6 +690,10 @@ router.get('/:placeId/history',
            ROUND(AVG(thermal_headcount))::int AS thermal_headcount,
            LEAST(SUM(ir_beam_count), 2147483647)::int AS ir_beam_count,
            ROUND(AVG(noise_db)::numeric, 2) AS noise_db,
+           ROUND(AVG(occupancy))::int AS occupancy,
+           ROUND(AVG(occupancy_low))::int AS occupancy_low,
+           ROUND(AVG(occupancy_high))::int AS occupancy_high,
+           ROUND(AVG(dwell_minutes))::int AS dwell_minutes,
            COUNT(*)::int AS sample_count
          FROM venue_sensor_data
          WHERE venue_place_id = $1

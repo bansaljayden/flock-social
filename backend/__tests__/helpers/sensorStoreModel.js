@@ -34,7 +34,8 @@ const sameReading = (r, deviceId, at) => r.sensor_device_id === deviceId
  * suite may reassign its arrays between tests). Parameters in INGEST_SQL order:
  *   $1 digest, $2 legacy key, $3 may write, $4 claimed device_id, $5 client
  *   stamped, $6 recorded_at, $7 affects the live figure, $8 guard interval,
- *   $9-$11 the reading.
+ *   $9-$11 the reading, $12-$15 the occupancy estimate (occupancy, its low
+ *   and high band, dwell minutes), each null when the device sent none.
  *
  * `store.snapshot`, when a suite sets it, is the readings this statement's
  * snapshot can see, for modelling two deliveries that raced: the duplicate
@@ -43,7 +44,8 @@ const sameReading = (r, deviceId, at) => r.sensor_device_id === deviceId
  * Postgres checks an ON CONFLICT arbiter.
  */
 function runIngest(store, params) {
-  const [digest, legacy, mayWrite, claim, clientSupplied, recordedAt, affectsLive, gap, ir, thermal, noise] = params;
+  const [digest, legacy, mayWrite, claim, clientSupplied, recordedAt, affectsLive, gap, ir, thermal, noise,
+    occupancy, occupancyLow, occupancyHigh, dwellMinutes] = params;
 
   // device: the key lookup, first match, as LIMIT 1 without an ORDER BY.
   const device = store.devices.find((d) => d.api_key === digest || d.api_key === legacy);
@@ -90,6 +92,10 @@ function runIngest(store, params) {
         ir_beam_count: ir,
         thermal_headcount: thermal,
         noise_db: noise,
+        occupancy,
+        occupancy_low: occupancyLow,
+        occupancy_high: occupancyHigh,
+        dwell_minutes: dwellMinutes,
         sensor_device_id: writer.device_id,
         recorded_at: at,
       };
