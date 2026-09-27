@@ -1077,9 +1077,17 @@ const MAX_INTEREST_LEN = 40;
 // this ceiling is the whole bound. 200 is a product number: the card the bio
 // renders on is a mini profile, not a page. Measured AFTER freeText strips the
 // markup, i.e. against the string that will actually be stored — a real
-// 200-character bio fits, and a bio that is nothing but tags strips to '',
-// which is falsy and leaves the stored value alone like every other blank
-// field on this form.
+// 200-character bio fits.
+//
+// A bio that ARRIVES blank is a removal, unlike the other blank fields on this
+// form. Name and email cannot be empty, so a blank there can only mean "leave
+// it", but an empty bio is a real state and the Edit Profile box sends '' when
+// somebody deletes theirs. It used to fall to NULL here, COALESCE kept the old
+// text, the response echoed it back into the box and the screen said the
+// profile was updated: a bio, readable by any signed-in user on the person
+// card, could be overwritten but never removed. Absent or null still means
+// "leave it alone", and a bio that is nothing but tags strips to '' and so
+// clears too, which is what somebody who submitted no visible text asked for.
 const MAX_BIO = 200;
 
 // interests is TEXT[] and node-pg will serialize whatever it is handed into it,
@@ -1591,9 +1599,13 @@ router.put('/profile',
         // id: a parameter's number is a name here, and re-numbering would hand
         // every fixture dispatcher that reads params[5] as the user id
         // something else.
+        //
+        // bio is `?? null`, not `|| null`: '' is the removal (see MAX_BIO) and
+        // has to reach COALESCE as itself, where it replaces the stored text.
+        // Only an absent or null bio becomes the NULL that leaves it alone.
         [
           name || null, changingEmail ? email : null, phone || null, safeInterests,
-          hashedPassword, req.user.id, bio || null,
+          hashedPassword, req.user.id, bio ?? null,
           changingPhone ? 'phone-changed' : null,
           changingPhone ? nextPhoneHash : null,
           changingPhone ? Boolean(user.phone_discoverable) && Boolean(nextPhoneHash) : null,
