@@ -800,7 +800,12 @@ const PAGES = [
   {
     id: 'about',
     test: (p) => p === '/about',
-    load: () => import('./website/AboutPage'),
+    // Same as /terms: the About page sets out Roost and Flock Pro and asks
+    // venues to write in for early access, so a REACT_APP_PURCHASES=off build
+    // points at the published page and leaves this one's chunk out.
+    load: process.env.REACT_APP_PURCHASES === 'off'
+      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="about" /> }))
+      : () => import('./website/AboutPage'),
     Loading: PaperLoading,
   },
   // Flock Pro on the web. WEB ONLY: inside the native shell this route does

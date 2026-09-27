@@ -36,6 +36,16 @@ test('a deletion that committed while the reply was lost is treated as done, and
   expect(users).toMatch(/Your Apple sign-in was disconnected, but the account could not be deleted just now\. Sign in with Apple again, then try once more\./);
 });
 
+test('a deletion refused over billing keeps its sentence on the web and carries a code for the App Store build', () => {
+  // The web still shows the server's words, plan names included.
+  expect(users).toMatch(/error: "We couldn't cancel your Flock Pro web subscription just now\. Try again in a minute\.", code: 'SUBSCRIPTION_NOT_CANCELLED' \}/);
+  expect(users).toMatch(/error: "We couldn't cancel your Roost subscription just now\. Try again in a minute\.", code: 'SUBSCRIPTION_NOT_CANCELLED' \}/);
+  expect(users).toMatch(/error: 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now\. Please try again in a minute\.', code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' \}/);
+  expect(profile).toMatch(/\} else \{\s*setDeleteError\(err\.message \|\| 'Could not delete account\. Try again\.'\);/);
+  // Only a build that sells nothing swaps the wording, and only for a code it knows.
+  expect(profile).toMatch(/else if \(process\.env\.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL\[err\?\.code\]\)/);
+});
+
 test('a refused address is told why, and not offered another try', () => {
   expect(auth).toMatch(/mailRefused = sendResult\.refused === true;/);
   expect(auth).toMatch(/verificationSent: sendResult\.sent === true, mailRefused: sendResult\.refused === true \}\);/);

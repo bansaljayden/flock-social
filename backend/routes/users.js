@@ -3138,6 +3138,13 @@ async function deleteAccount(req, res) {
     // cannot be done, refuse and let the person try again, rather than delete
     // the only record of which customer to cancel. (An App Store subscription
     // is the person's to stop in their Apple settings; we cannot cancel it.)
+    //
+    // EVERY BILLING REFUSAL BELOW CARRIES A CODE beside its sentence. The
+    // sentence names the plan and is what the web shows. The App Store build
+    // sells nothing and names no plan, so it shows its own wording keyed by
+    // the code (frontend/src/screens/ProfileSettings.js DELETE_BILLING_NEUTRAL):
+    //   SUBSCRIPTION_NOT_CANCELLED           account kept, subscription still on
+    //   SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT  subscription cancelled, account kept
     const stripeCustomer = await stripeCustomerIdFor(req.user.id);
     let stripeClosed = false;
     if (stripeCustomer) {
@@ -3145,7 +3152,7 @@ async function deleteAccount(req, res) {
         stripeClosed = await closeStripeCustomer(stripeCustomer);
       } catch (err) {
         console.error('[users] Stripe customer close failed during deletion:', err?.message || err);
-        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
+        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute.", code: 'SUBSCRIPTION_NOT_CANCELLED' });
       }
       // NOT CLOSED IS A REFUSAL TOO, not only a throw. closeCustomer answers
       // false without throwing when STRIPE_SECRET_KEY is missing or too short,
@@ -3157,7 +3164,7 @@ async function deleteAccount(req, res) {
       // it goes through on the first try after Stripe is reachable again.
       if (!stripeClosed) {
         console.error(`[users] account ${req.user.id} holds Stripe customer ${stripeCustomer} and Stripe did not confirm it was cancelled, so the deletion was refused.`);
-        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute." });
+        return res.status(503).json({ error: "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute.", code: 'SUBSCRIPTION_NOT_CANCELLED' });
       }
       // Forget the customer at once. If the deletion below then fails, the
       // account must not keep pointing at a Stripe customer that no longer
@@ -3167,7 +3174,7 @@ async function deleteAccount(req, res) {
         await pool.query('UPDATE users SET stripe_customer_id = NULL WHERE id = $1 AND stripe_customer_id = $2::text', [req.user.id, stripeCustomer]);
       } catch (err) {
         console.error('[users] could not forget a cancelled Stripe customer during deletion:', err?.message || err);
-        return res.status(503).json({ error: 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.' });
+        return res.status(503).json({ error: 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.', code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' });
       }
     }
 
@@ -3181,7 +3188,7 @@ async function deleteAccount(req, res) {
       await closeVenueCustomer(req.user.id);
     } catch (err) {
       console.error('[users] Roost Stripe customer close failed during deletion:', err?.message || err);
-      return res.status(503).json({ error: "We couldn't cancel your Roost subscription just now. Try again in a minute." });
+      return res.status(503).json({ error: "We couldn't cancel your Roost subscription just now. Try again in a minute.", code: 'SUBSCRIPTION_NOT_CANCELLED' });
     }
 
     // Moderation evidence survives the account (round 5): cascade deletes let
@@ -3390,6 +3397,8 @@ async function deleteAccount(req, res) {
           : stripeClosed
             ? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'
             : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
+        // The Apple sentence names no plan and is the one shown when both ran.
+        ...(!appleRevoked && stripeClosed ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),
       });
     } finally {
       client.release();

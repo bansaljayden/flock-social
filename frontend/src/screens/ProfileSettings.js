@@ -68,6 +68,17 @@ import { isNativeShell } from '../lib/nativeShell';
 // the subscription note on deletion is a plain App Store warning for an account
 // that has Pro. lib/purchasesBuild.js has the rules.
 
+// A deletion refused over billing, said without naming a plan. The sentence
+// from the server names Flock Pro or Roost (backend/routes/users.js, DELETE
+// /me), which the web shows as it is; a REACT_APP_PURCHASES=off build shows
+// these instead, keyed by the code the server sends with it. Each keeps what the person needs
+// to know: whether the account is gone, and whether a subscription is still
+// running.
+export const DELETE_BILLING_NEUTRAL = {
+  SUBSCRIPTION_NOT_CANCELLED: 'Your account was not deleted. A subscription on it could not be cancelled just now and is still active. Try again in a minute.',
+  SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT: 'Your subscription was cancelled, but your account could not be deleted just now. Try again in a minute.',
+};
+
 export default function ProfileSettings({
   // Module-level helpers, constants and components that live in App.js and are
   // shared with screens other than this one, so they stay declared there and
@@ -98,6 +109,7 @@ export default function ProfileSettings({
   deletingAccount,
   editingContact,
   entitlements,
+  entitlementsUnknown,
   exportError,
   exportNeedsReauth,
   exportPassword,
@@ -920,10 +932,14 @@ export default function ProfileSettings({
                     REACT_APP_PURCHASES=off build (the App Store one) sells
                     nothing, but an account that already has Pro may be paying
                     Apple for it, so that account still gets the warning and
-                    where to cancel, with no plan name, price or link. */}
+                    where to cancel, with no plan name, price or link. When
+                    the entitlement read never landed (entitlementsUnknown in
+                    App.js), isPro is only a default, so the warning shows
+                    then too: a paying account must not lose it to a failed
+                    request. */}
                 {(process.env.REACT_APP_PURCHASES !== 'off') ? ((entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
-                )) : (isPro && (
+                )) : ((isPro || entitlementsUnknown) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel a subscription paid through the App Store. Cancel it first in the Settings app: tap your name, then Subscriptions.</p>
                 ))}
                 {/* Both inputs below close the keyboard on Return
@@ -1029,6 +1045,8 @@ export default function ProfileSettings({
                           setDeleteError('');
                         } else if (reauth === 'password') {
                           setDeleteError(deletePassword ? 'That password is not right. Try again.' : 'Enter your password to confirm it is you.');
+                        } else if (process.env.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL[err?.code]) {
+                          setDeleteError(DELETE_BILLING_NEUTRAL[err.code]);
                         } else {
                           setDeleteError(err.message || 'Could not delete account. Try again.');
                         }

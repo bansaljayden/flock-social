@@ -7821,6 +7821,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPaywallTrigger(trigger);
   }, []);
   const isPro = !!entitlements?.isPremium;
+  // WHETHER isPro IS AN ANSWER OR A DEFAULT. isPro is false both for an account
+  // the server said is not Pro and for one whose snapshot never arrived: before
+  // the first read lands, or when every read so far failed (refreshEntitlements
+  // swallows the error). A screen that must not stay quiet to a paying account,
+  // the subscription warning on the deletion sheet, treats this as "may be Pro".
+  const entitlementsUnknown = typeof entitlements?.isPremium !== 'boolean';
   // Two readers ask for this snapshot and their answers can come back out of
   // order: a read sent on resume, before a purchase's webhook lands, can arrive
   // after the upgrade poll's newer "you're Pro" and flip the app back to free
@@ -17704,6 +17710,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           deletingAccount,
           editingContact,
           entitlements,
+          entitlementsUnknown,
           exportError,
           exportNeedsReauth,
           exportPassword,

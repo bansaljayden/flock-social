@@ -245,10 +245,58 @@ describe('the You tab', () => {
 
   test('deletion, off: a subscriber still gets the App Store warning and how to cancel, with nothing sold', () => {
     const note = deletionNote();
-    expect(note).toContain(`)) : (isPro && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>${NEUTRAL_NOTE}</p>\n                ))}`);
+    expect(note).toContain(`)) : ((isPro || entitlementsUnknown) && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>${NEUTRAL_NOTE}</p>\n                ))}`);
     expect(NEUTRAL_NOTE).not.toMatch(/Pro|flockcorp|\$\d|price|buy|http/i);
     expect(NEUTRAL_NOTE).toMatch(/does not cancel a subscription paid through the App Store/);
     expect(NEUTRAL_NOTE).toMatch(/Settings app: tap your name, then Subscriptions/);
+  });
+
+  test('deletion, off: an account whose entitlement read failed is warned too, since it may be paying', () => {
+    const app = read('App.js');
+    // Unknown means no answer from the server, which is also what a failed
+    // read leaves behind: refreshEntitlements swallows the error and the
+    // snapshot stays null, so isPro reads false for a real subscriber.
+    expect(app).toContain("const entitlementsUnknown = typeof entitlements?.isPremium !== 'boolean';");
+    expect(app).toContain('getEntitlements().then((data) => applyEntitlements(seq, data)).catch(() => {});');
+    expect(app).toMatch(/\n {10}entitlements,\n {10}entitlementsUnknown,\n/);
+    expect(read('screens', 'ProfileSettings.js')).toMatch(/\n {2}entitlements,\n {2}entitlementsUnknown,\n/);
+    // The rule, for each state the snapshot can be in.
+    const unknown = (entitlements) => typeof entitlements?.isPremium !== 'boolean';
+    expect(unknown(null)).toBe(true);
+    expect(unknown(undefined)).toBe(true);
+    expect(unknown({ error: 'Server error' })).toBe(true);
+    expect(unknown({ isPremium: false, paywallEnabled: false })).toBe(false);
+    expect(unknown({ isPremium: true })).toBe(false);
+    // The web keeps its own condition, unchanged.
+    expect(deletionNote()).toContain(`{${ON} ? ((entitlements?.paywallEnabled || isPro) && (`);
+  });
+
+  test('deletion refused over billing: off shows neutral wording from the code, unset shows the server sentence', () => {
+    const settings = read('screens', 'ProfileSettings.js');
+    expect(settings).toContain("} else if (process.env.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL[err?.code]) {\n                          setDeleteError(DELETE_BILLING_NEUTRAL[err.code]);\n                        } else {\n                          setDeleteError(err.message || 'Could not delete account. Try again.');");
+    const { DELETE_BILLING_NEUTRAL } = require('../screens/ProfileSettings');
+    expect(Object.keys(DELETE_BILLING_NEUTRAL).sort()).toEqual(['SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT', 'SUBSCRIPTION_NOT_CANCELLED']);
+    for (const text of Object.values(DELETE_BILLING_NEUTRAL)) {
+      expect(text).not.toMatch(/Pro\b|Roost|flockcorp|\$\d|price|buy|http|—/i);
+    }
+    // What each still tells the person: whether the account is gone, and
+    // whether a subscription is still running.
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_NOT_CANCELLED).toMatch(/account was not deleted/);
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_NOT_CANCELLED).toMatch(/could not be cancelled just now and is still active/);
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT).toMatch(/subscription was cancelled/);
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT).toMatch(/account could not be deleted/);
+    // Every code the server sends has wording here, and every sentence on the
+    // deletion route that names a plan carries a code.
+    const users = readRepo('backend', 'routes', 'users.js');
+    const codes = new Set((users.match(/code: 'SUBSCRIPTION_[A-Z_]+'/g) || []).map((m) => m.slice(7, -1)));
+    expect([...codes].sort()).toEqual(Object.keys(DELETE_BILLING_NEUTRAL).sort());
+    const start = users.indexOf('const stripeCustomer = await stripeCustomerIdFor(req.user.id);');
+    const route = users.slice(start, users.indexOf('client.release();', start));
+    const refusals = route.split('\n').filter((l) => /\.json\(\{ error: .*(Flock Pro|Roost)/.test(l));
+    expect(refusals).toHaveLength(4);
+    for (const line of refusals) expect(line).toMatch(/, code: 'SUBSCRIPTION_[A-Z_]+' \}\);$/);
+    expect(route).toContain("? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'");
+    expect(route).toContain("...(!appleRevoked && stripeClosed ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),");
   });
 });
 
@@ -377,6 +425,16 @@ describe('the router', () => {
   });
 });
 
+describe('the About page', () => {
+  test('off points /about at the published page, unset keeps the full page, and nothing else bundles it', () => {
+    const index = read('index.js');
+    expect(index).toContain("load: process.env.REACT_APP_PURCHASES === 'off'\n      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc=\"about\" /> }))\n      : () => import('./website/AboutPage'),");
+    expect(index.match(/import\('\.\/website\/AboutPage'\)/g)).toHaveLength(1);
+    // Why it is gated: the full page describes the paid plans.
+    expect(read('website', 'AboutPage.js')).toMatch(/Roost, the paid plan for venues/);
+  });
+});
+
 describe('the legal pages', () => {
   test('/terms and /privacy carry no copy of either document when off, and the full page when unset', () => {
     const index = read('index.js');
@@ -389,7 +447,7 @@ describe('the legal pages', () => {
     expect(read('website', 'CommunityGuidelines.js')).not.toMatch(/Flock Pro|Roost|\$\d|checkout|subscription/i);
   });
 
-  test.each([['terms', 'Terms of Service'], ['privacy', 'Privacy Policy']])('off: /%s points at the published text and sells nothing', (doc, title) => {
+  test.each([['terms', 'Terms of Service'], ['privacy', 'Privacy Policy'], ['about', 'About Flock']])('off: /%s points at the published text and sells nothing', (doc, title) => {
     const LegalOnTheWeb = require('../website/LegalOnTheWeb').default;
     const { container } = render(<LegalOnTheWeb doc={doc} />);
     const link = screen.getByRole('link', { name: `flockcorp.com/${doc}` });
