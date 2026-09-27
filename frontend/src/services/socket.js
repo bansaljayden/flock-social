@@ -156,14 +156,14 @@ function dispose(instance) {
 /**
  * A handshake rejected by the server's auth middleware will be rejected again,
  * identically, forever: the token is expired, revoked (password change, account
- * claim), the account is banned, or the account is gone. socket.io retries on
- * its own schedule and — since reconnectionAttempts is Infinity — would keep
- * re-presenting the same dead credential every 30 seconds for as long as the
+ * claim), the account is banned, or the account is gone. Retrying one forever
+ * would re-present the same dead credential every 30 seconds for as long as the
  * app is open, costing a signature check and a database read per client per
  * attempt, and never telling anyone.
  *
  * These are the exact strings middleware/auth.js's authenticateSocket puts on
- * the error. 'Too many connections' and every transport failure are NOT here:
+ * the error. 'Too many connections', the server's "busy, try again" answer
+ * (SOCKET_RETRYABLE_MESSAGE there) and every transport failure are NOT here:
  * those are transient and must keep retrying.
  */
 const FATAL_AUTH_ERRORS = [
@@ -174,10 +174,10 @@ const FATAL_AUTH_ERRORS = [
   'authentication failed',
 ];
 
-// 'Authentication failed' is also authenticateSocket's catch-all, which a
-// database blip can reach — so a few in a row, not one, ends the retry loop,
-// and an explicit reconnect (online / tab-visible / reconnectSocket) always
-// gets another chance.
+// A server still running code from before SOCKET_RETRYABLE_MESSAGE existed
+// answers a database blip with 'Authentication failed' too, so a few in a row,
+// not one, ends the retry loop, and an explicit reconnect (online / tab-visible
+// / reconnectSocket) always gets another chance.
 const FATAL_AUTH_STRIKES = 3;
 let fatalAuthStrikes = 0;
 
@@ -186,13 +186,62 @@ function isFatalAuthError(message) {
   return FATAL_AUTH_ERRORS.some((known) => m.includes(known));
 }
 
+/**
+ * NOBODY ELSE RETRIES A REFUSED HANDSHAKE.
+ *
+ * socket.io-client retries a TRANSPORT failure itself (the server is
+ * unreachable, the connection dropped): the manager's reconnect loop, with the
+ * backoff createSocket configures. A refusal from the server's middleware is
+ * different. The CONNECT_ERROR packet makes the library destroy the socket and
+ * close its manager with reconnection switched off, so `active` goes false and
+ * no retry is ever scheduled, reconnectionAttempts: Infinity notwithstanding.
+ * The strike counter above was written for a retry loop that did not exist: one
+ * database blip during a handshake, or one refusal from the per-IP limiter
+ * during a venue-wide reconnect burst, left a foreground app with no live chat,
+ * votes or location, the header reading "reconnecting", until the app was
+ * backgrounded or the network changed.
+ *
+ * So this file runs that loop itself, on the same shape of backoff as the
+ * manager (1s doubling to 30s, half randomised), and only for a socket the
+ * library has given up on. A connect restores the base delay.
+ */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 30000;
+let retryTimer = null;
+let retryAttempt = 0;
+
+function cancelRetry() {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
+function scheduleRetry(instance) {
+  cancelRetry();
+  const ceiling = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(retryAttempt, 10));
+  retryAttempt += 1;
+  const delay = ceiling * (0.5 + Math.random());
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    // Re-checked when it fires, not when it was set: the instance may have
+    // been replaced (sign-out, account switch, a new push token), a nudge may
+    // have got there first, and a hidden document stays gone (HIDDEN MEANS GONE
+    // below; the nudge on the way back dials it).
+    if (socket !== instance || instance.connected || instance.active || isHidden()) return;
+    instance.connect();
+  }, delay);
+}
+
 function createSocket(token) {
   // A fresh instance starts with a clean slate. Without this, strikes left
   // over from a previous credential could kill a brand-new sign-in's socket
   // after a single transient 'Authentication failed' (db blip). The cap still
-  // holds per instance: a dead credential accrues its three strikes on this
-  // socket's own retry loop and stops.
+  // holds per instance: a dead credential accrues its three strikes on the
+  // retry loop above and stops.
   fatalAuthStrikes = 0;
+  retryAttempt = 0;
+  cancelRetry();
   const instance = io(BASE_URL, {
     // pushToken names the device this connection speaks for. See the block at
     // the top of the file. Omitted rather than sent as null when we do not
@@ -214,6 +263,8 @@ function createSocket(token) {
 
   instance.on('connect', () => {
     fatalAuthStrikes = 0;
+    retryAttempt = 0;
+    cancelRetry();
     // Re-enter every room this client believes it is in. Fires on the first
     // connect too, which is harmless (the registry is empty) and is what makes
     // a join issued mid-handshake land instead of being dropped.
@@ -221,16 +272,23 @@ function createSocket(token) {
   });
   instance.on('connect_error', (err) => {
     console.warn('Socket connection error:', err?.message);
-    if (!isFatalAuthError(err?.message)) {
+    if (isFatalAuthError(err?.message) && !err?.data?.retryable) {
+      fatalAuthStrikes += 1;
+      if (fatalAuthStrikes >= FATAL_AUTH_STRIKES) {
+        // Stop the loop. Clearing socketToken means the next connectSocket(),
+        // after a fresh sign-in say, rebuilds instead of reusing this instance.
+        socketToken = null;
+        cancelRetry();
+        try { instance.disconnect(); } catch { /* already torn down */ }
+        return;
+      }
+    } else {
       fatalAuthStrikes = 0;
-      return;
     }
-    fatalAuthStrikes += 1;
-    if (fatalAuthStrikes < FATAL_AUTH_STRIKES) return;
-    // Stop the loop. Clearing socketToken means the next connectSocket() —
-    // after a fresh sign-in, say — rebuilds instead of reusing this instance.
-    socketToken = null;
-    try { instance.disconnect(); } catch { /* already torn down */ }
+    // Still `active` means the manager's own loop has this (a transport
+    // failure). Not active means the server refused the handshake and nothing
+    // else will dial again. See NOBODY ELSE RETRIES A REFUSED HANDSHAKE.
+    if (!instance.active) scheduleRetry(instance);
   });
   instance.on('error', (data) => {
     console.warn('Socket error:', data?.message);
@@ -291,6 +349,8 @@ export function reconnectSocket() {
   if (socket.active) {
     try { socket.disconnect(); } catch { /* mid-teardown */ }
   }
+  // This dial replaces any retry the connect_error handler had scheduled.
+  cancelRetry();
   socket.connect();
   return socket;
 }
@@ -299,6 +359,7 @@ export function disconnectSocket() {
   const stale = socket;
   socket = null;
   socketToken = null;
+  cancelRetry();
   // Rooms do NOT survive, for the opposite reason subscriptions do: a room is a
   // fact about one authenticated connection, not a standing request by a
   // component. Sign-out and session expiry both land here.
