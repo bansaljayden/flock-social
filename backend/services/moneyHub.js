@@ -49,7 +49,8 @@
 // one. The database reads (expenses, costs, health, people) are never cached: an edit
 // shows on the next load. There are two exceptions. The model's served-forecast
 // check, a month of serves joined to the collector's readings, is held for
-// MODEL_TTL_MS (an hour): the readings it scores against land once an hour, so
+// MODEL_TTL_MS (an hour), and so is the week's split of what answered each
+// serve beside it: the readings the check scores against land once an hour, so
 // the hold costs at most one collector run of freshness. THE MODEL section
 // below says why it is held here rather than precomputed. And the one SELECT 1
 // the steps block times is held like a vendor read, so reloading the page does
@@ -2428,6 +2429,69 @@ async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAY
   };
 }
 
+// HOW OFTEN THE MODEL ANSWERS. The share above scores only forecasts the model
+// made, so it cannot say whether that is nine in ten of the forecasts people
+// see or one in twenty. served_predictions records what answered every card it
+// served to a signed-in person (routes/crowd.js recordServedPredictions), so
+// the split is one GROUP BY over the rows it already keeps, on its served_at
+// index. The Costs tab's counter (mlPredictor.predictionCoverage) answers a
+// different question: it counts every hour of a forecast strip, in memory,
+// since the last deploy. This counts cards served, over a week that survives a
+// deploy, and the screen says which is which. Held for MODEL_TTL_MS with the
+// check above, for the same reason: it is a dashboard read over a week of rows.
+const MODEL_COVERAGE_DAYS = 7;
+const MODEL_COVERAGE_METHODS_MAX = 20;
+
+// $1 the window in days, $2 the most methods to name. A method nobody wrote
+// down is named 'unknown' rather than dropped, so the parts add up to the
+// whole. Counts, and how many venues each touched, are all that leave.
+const MODEL_COVERAGE_SQL = `SELECT COALESCE(sv.prediction_method, 'unknown') AS method,
+              COUNT(*)::int AS served,
+              COUNT(DISTINCT sv.venue_place_id)::int AS venues
+         FROM served_predictions sv
+        WHERE sv.served_at >= NOW() - make_interval(days => $1::int)
+        GROUP BY 1
+        ORDER BY 2 DESC, 1
+        LIMIT $2::int`;
+
+function modelCoverageCacheKey(windowDays) {
+  return `model-coverage:${windowDays}d`;
+}
+
+async function readModelCoverage(db = pool, { windowDays = MODEL_COVERAGE_DAYS } = {}) {
+  let rows;
+  try {
+    const r = await db.query(MODEL_COVERAGE_SQL, [windowDays, MODEL_COVERAGE_METHODS_MAX]);
+    rows = (r && r.rows) || [];
+  } catch (err) {
+    console.error('[money] model coverage read failed:', err && err.message ? err.message : err);
+    return { status: 'error', reason: 'The database did not finish counting what answered each forecast served, so there is no split to show.' };
+  }
+  const count = (v) => {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+  };
+  const byMethod = rows
+    .map((row) => ({ method: String(row.method || 'unknown').slice(0, 60), served: count(row.served), venues: count(row.venues) }))
+    .filter((m) => m.served > 0);
+  const total = byMethod.reduce((sum, m) => sum + m.served, 0);
+  const ml = (byMethod.find((m) => m.method === 'ml') || { served: 0 }).served;
+  // A fallback is the rule engine standing in for the model. The owner's own
+  // live report is not one (it outranks the model on purpose), and neither is
+  // a serve whose method was not recorded.
+  const fallbacks = byMethod.filter((m) => !['ml', 'owner_report', 'unknown'].includes(m.method));
+  return {
+    status: 'ok',
+    asOf: new Date().toISOString(),
+    windowDays,
+    total,
+    ml,
+    mlPercent: total > 0 ? Math.round((ml / total) * 1000) / 10 : null,
+    byMethod,
+    topFallback: fallbacks.length > 0 ? fallbacks[0] : null,
+  };
+}
+
 // The version serving now. The predictor's own loaded metadata when it has
 // loaded a model (mlPredictor.predictionCoverage, the read the Costs tab uses);
 // otherwise the artifact the server would load, model_metadata.json on disk,
@@ -2467,11 +2531,13 @@ async function readModelVersion({ predictor = null, metaPath = MODEL_META_PATH }
   }
 }
 
-function buildModelBlock({ version, accuracy, ladder }) {
+function buildModelBlock({ version, accuracy, ladder, coverage = null }) {
   const measured = !!accuracy && accuracy.status === 'ok' && accuracy.enough === true && Number.isFinite(accuracy.percent);
   return {
     version,
     accuracy,
+    // What answered the forecasts people were served, over the last week.
+    coverage,
     goal: { percent: MODEL_GOAL_PCT, metric: 'within_one_band' },
     // Points short of the goal; zero or less means the goal is met. Only ever
     // from a measured share, never from a withheld one.
@@ -2903,7 +2969,7 @@ async function buildMoneyHub({
     { force, logMessage: false }
   );
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people] = await Promise.all([
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -2939,6 +3005,12 @@ async function buildMoneyHub({
     // Never held, like the other database reads, and never throws: a failed
     // read comes back as a block with a reason.
     readPeople(db, now),
+    // Held for the hour with the served-forecast check beside it.
+    cachedRead(
+      modelCoverageCacheKey(MODEL_COVERAGE_DAYS),
+      () => readModelCoverage(db, { windowDays: MODEL_COVERAGE_DAYS }),
+      { force, ttlMs: MODEL_TTL_MS }
+    ),
   ]);
 
   const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
@@ -3043,7 +3115,7 @@ async function buildMoneyHub({
       besttime: besttimeRead,
       plan: statedBestTimePlan(now),
     },
-    model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder }),
+    model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder, coverage: modelCoverage }),
     health,
     // See ONLY YOU CAN DO THESE above. Whether each variable is set, never
     // its value.
@@ -3068,6 +3140,8 @@ module.exports = {
   readBestTime,
   statedBestTimePlan,
   readServedBandAccuracy,
+  readModelCoverage,
+  MODEL_COVERAGE_SQL,
   readModelVersion,
   crowdBandLadder,
   SERVED_BAND_ACCURACY_SQL,
@@ -3106,6 +3180,7 @@ module.exports = {
     revenueCatCacheKey,
     besttimeCacheKey,
     modelAccuracyCacheKey,
+    modelCoverageCacheKey,
     databaseRoundTripCacheKey,
     databaseNetwork,
     measureDatabaseRoundTrip,
@@ -3130,5 +3205,6 @@ module.exports = {
     MODEL_MIN_DAYS,
     MODEL_GOAL_PCT,
     MODEL_META_PATH,
+    MODEL_COVERAGE_DAYS,
   },
 };

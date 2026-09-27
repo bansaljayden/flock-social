@@ -357,11 +357,14 @@ function peopleHandlers(people = QUIET_PEOPLE) {
 }
 
 // Everything the hub asks Postgres, answered with a quiet but real database.
-function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accuracy = QUIET_ACCURACY, people = QUIET_PEOPLE } = {}) {
+function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accuracy = QUIET_ACCURACY, people = QUIET_PEOPLE, coverage = [] } = {}) {
   return [
     // The people statements name users, flocks and served_predictions, which
     // the patterns below look for, so they are answered first.
     ...peopleHandlers(people),
+    // What answered each serve this week: one row per method, as Postgres
+    // groups them. The default is a week nobody was served a forecast.
+    [/AS method, COUNT\(\*\)::int AS served/, () => (coverage instanceof Error ? Promise.reject(coverage) : { rows: coverage, rowCount: coverage.length })],
     // First, because its WITH clause names no table the other patterns look for,
     // and a check that fell through to "unscripted" would read as an error.
     [/FROM served_predictions sp/, () => (accuracy instanceof Error ? Promise.reject(accuracy) : { rows: [accuracy], rowCount: 1 })],
@@ -2121,6 +2124,101 @@ test('the check pairs model forecasts with live readings of the same venue and h
   // The pairing window is short of the week that separates two of the same
   // weekday and hour, by a wide margin.
   assert.ok(moneyHub.__test.MODEL_PAIR_WINDOW_HOURS * 2 < 7 * 24);
+});
+
+// How often the model answers at all: the week's serves, by what answered
+// each, from served_predictions. Sorted as the statement sorts them, most
+// served first.
+const COVERAGE = [
+  { method: 'ml', served: 1310, venues: 80 },
+  { method: 'rule_engine_no_baseline', served: 1204, venues: 212 },
+  { method: 'owner_report', served: 40, venues: 3 },
+  { method: 'rule_engine_fallback', served: 12, venues: 9 },
+  { method: 'unknown', served: 3, venues: 2 },
+];
+const coverageChecks = () => log.filter((q) => /AS method, COUNT\(\*\)::int AS served/.test(q.sql));
+
+test('how often the model answers: the week\'s serves by what answered them, the share from the model, the most common fallback', async () => {
+  handlers = hubHandlers({ accuracy: MEASURED, coverage: COVERAGE });
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const c = r.body.model.coverage;
+  assert.strictEqual(c.status, 'ok');
+  assert.strictEqual(c.cached, false);
+  assert.strictEqual(c.windowDays, 7);
+  // Every serve counted once, the ones with no method recorded included.
+  assert.strictEqual(c.total, 2569);
+  assert.strictEqual(c.ml, 1310);
+  assert.strictEqual(c.mlPercent, 51);
+  assert.deepStrictEqual(c.byMethod, COVERAGE);
+  assert.deepStrictEqual(c.topFallback, { method: 'rule_engine_no_baseline', served: 1204, venues: 212 });
+  // Asked the window and the ceiling on methods, once, beside the accuracy
+  // check, which still scores model serves only.
+  const q = coverageChecks();
+  assert.strictEqual(q.length, 1);
+  assert.deepStrictEqual(q[0].params, [7, 20]);
+  assert.strictEqual(r.body.model.accuracy.percent, 63.3);
+  assert.strictEqual(servedChecks().length, 1, 'the coverage read is not mistaken for the accuracy check');
+});
+
+test('the owner\'s report and an unrecorded method are never the fallback, and a quiet week has no share', async () => {
+  let c = await moneyHub.readModelCoverage({
+    query: async () => ({ rows: [
+      { method: 'owner_report', served: 500, venues: 4 },
+      { method: 'unknown', served: 400, venues: 30 },
+      { method: 'ml', served: 100, venues: 20 },
+      { method: 'rule_engine', served: 5, venues: 5 },
+    ] }),
+  });
+  assert.deepStrictEqual(c.topFallback, { method: 'rule_engine', served: 5, venues: 5 });
+  assert.strictEqual(c.total, 1005);
+  assert.strictEqual(c.mlPercent, 10);
+
+  c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [{ method: 'ml', served: 42, venues: 7 }] }) });
+  assert.strictEqual(c.topFallback, null, 'every serve came from the model');
+  assert.strictEqual(c.mlPercent, 100);
+
+  c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [] }) });
+  assert.strictEqual(c.total, 0);
+  assert.strictEqual(c.mlPercent, null, 'nothing served is no share, not 0%');
+  assert.strictEqual(c.topFallback, null);
+});
+
+test('the coverage read is held for the hour with the check, and a failure is words with no numbers', async () => {
+  handlers = hubHandlers({ accuracy: MEASURED, coverage: COVERAGE });
+  await req('GET', '/api/admin/money');
+  moneyHub.__test.ageCache(moneyHub.__test.EXTERNAL_TTL_MS + 1000);
+  const held = await req('GET', '/api/admin/money');
+  assert.strictEqual(held.body.model.coverage.cached, true);
+  assert.strictEqual(coverageChecks().length, 1);
+  moneyHub.__test.ageCache(moneyHub.__test.MODEL_TTL_MS);
+  await req('GET', '/api/admin/money');
+  assert.strictEqual(coverageChecks().length, 2, 'an hour on, it is counted again');
+  assert.ok(moneyHub.__test.cacheKeys().includes(moneyHub.__test.modelCoverageCacheKey(7)));
+  assert.ok(moneyHub.__test.cacheKeys().includes(moneyHub.__test.modelAccuracyCacheKey(30, [20, 39, 69, 84])),
+    'the coverage answer does not push the accuracy answer out of the hold');
+
+  moneyHub.__test.resetCache();
+  handlers = hubHandlers({ accuracy: MEASURED, coverage: new Error('canceling statement due to statement timeout') });
+  const { result: r } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  const c = r.body.model.coverage;
+  assert.strictEqual(c.status, 'error');
+  assert.match(c.reason, /did not finish counting what answered each forecast served/);
+  for (const field of ['total', 'ml', 'mlPercent', 'byMethod', 'topFallback']) {
+    assert.strictEqual(c[field], undefined, `a failed read carried ${field}`);
+  }
+  assert.strictEqual(r.body.model.accuracy.status, 'ok', 'the accuracy check is its own read');
+});
+
+test('the coverage statement counts cards served, names nobody, and is static', () => {
+  const sql = moneyHub.MODEL_COVERAGE_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /FROM served_predictions sv WHERE sv\.served_at >= NOW\(\) - make_interval\(days => \$1::int\)/);
+  assert.match(sql, /COALESCE\(sv\.prediction_method, 'unknown'\) AS method/);
+  assert.match(sql, /GROUP BY 1/);
+  assert.match(sql, /LIMIT \$2::int/);
+  assert.ok(!/user_id/.test(sql), 'who was served is not read');
+  assert.ok(!/sp\b/.test(sql), 'the accuracy check\'s alias would make the two reads indistinguishable in a log');
+  assert.ok(!moneyHub.MODEL_COVERAGE_SQL.includes('${'), 'static, so the sqlParameterTypes suite prepares it');
 });
 
 // ===========================================================================
