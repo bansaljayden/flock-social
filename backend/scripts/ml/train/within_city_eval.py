@@ -265,18 +265,67 @@ def filter_and_weight_like_prepare_features(train_df: pd.DataFrame) -> pd.DataFr
     return train_df
 
 
+def apply_live_feature_policy() -> None:
+    """main()'s FLOCK_LIVE_FEATURES policy, applied the way main() applies it.
+
+    'off' drops the five live features from get_feature_columns through
+    drop_features, before any feature is built. The rebuild ignored it, so an
+    ablation run's rebuilt frame kept five columns features_train.pkl never
+    had and verify_rebuild refused it. Read at call time from the module, so
+    the policy is prepare_features' own and cannot be restated differently.
+    """
+    if pf.LIVE_FEATURE_POLICY == 'off':
+        pf.drop_features(pf.LIVE_FEATURE_NAMES, 'FLOCK_LIVE_FEATURES=off (ablation)')
+
+
+def time_holdout_like_prepare_features(train_df: pd.DataFrame,
+                                       holdout_dates: pd.DataFrame) -> pd.DataFrame:
+    """main()'s time holdout: resolved over BOTH export frames, cut from the train one.
+
+    main() removes every realtime row observed on or after the held-out date
+    from the training frame before anything is fitted (FLOCK_TIME_HOLDOUT_DAYS,
+    default 14). The rebuild kept those rows, so its row count differed from
+    features_train.pkl's and verify_rebuild refused it. The last live date is
+    read over both frames, as main() reads it; the holdout frame needs only
+    the three columns resolve_time_holdout looks at.
+    """
+    time_holdout = pf.resolve_time_holdout([train_df, holdout_dates])
+    train_df, split = pf.split_time_holdout(train_df, time_holdout['from_date'])
+    logger.info('  time holdout (%s) from %s: %d realtime rows held out, as prepare_features cut them',
+                time_holdout['policy'], time_holdout['from_date'], split['realtime_rows_held_out'])
+    return train_df
+
+
+# What a cached frame was built under. A frame built under another policy, or
+# by an older rebuild, is a different frame, and verify_rebuild would refuse
+# it; it is rebuilt instead of reused.
+REBUILD_VERSION = 3
+
+
+def rebuild_cache_key() -> dict:
+    return {
+        'rebuild_version': REBUILD_VERSION,
+        'live_feature_policy': pf.LIVE_FEATURE_POLICY,
+        'sports_features': bool(pf.sports_features_enabled()),
+        'run_length_policy': pf.RUN_LENGTH_POLICY,
+        'time_holdout_from': os.environ.get(pf.TIME_HOLDOUT_FROM_ENV, ''),
+        'time_holdout_days': os.environ.get(pf.TIME_HOLDOUT_DAYS_ENV, ''),
+    }
+
+
 def rebuild_training_frame() -> pd.DataFrame:
+    apply_live_feature_policy()
     cached = None
     if FRAME_CACHE.exists():
         logger.info('Loading cached rebuilt frame from %s', FRAME_CACHE)
         with open(FRAME_CACHE, 'rb') as f:
-            cached = pickle.load(f)
-        # A frame cached before the rebuild weighed rows as prepare_features
-        # does carries the old fixed ladder and no run lengths; verify_rebuild
-        # would refuse it, so it is rebuilt instead of reused.
-        if 'live_run_length' not in cached.columns:
-            logger.info('  the cached frame predates run-length weights; rebuilding it')
-            cached = None
+            stored = pickle.load(f)
+        # A bare DataFrame is a cache from before the key existed.
+        if isinstance(stored, dict) and stored.get('key') == rebuild_cache_key():
+            cached = stored['frame']
+        else:
+            logger.info('  the cached frame was built by an older rebuild or under other '
+                        'policies; rebuilding it')
     if cached is not None:
         if not cached.attrs.get('feature_cols'):
             # DataFrame.attrs does not survive every pandas pickle round-trip.
@@ -302,6 +351,13 @@ def rebuild_training_frame() -> pd.DataFrame:
     pf.recover_weather_codes(train_df, 'train')
     pf.audit_calendar_coverage(train_df, 'train')
 
+    holdout_path = SCRIPT_DIR / 'holdout_data.csv'
+    if not holdout_path.exists():
+        raise SystemExit(f'{holdout_path} does not exist; prepare_features resolved the time '
+                         'holdout over it, so the rebuild cannot reproduce the cut without it.')
+    holdout_dates = pd.read_csv(holdout_path, usecols=['is_realtime', 'label_source', 'observed_date'])
+    train_df = time_holdout_like_prepare_features(train_df, holdout_dates)
+
     train_df = train_df.dropna(subset=['busyness_pct'])
     venue_means = train_df.groupby(
         ['city', 'venue_category', 'latitude', 'longitude'])['busyness_pct'].mean()
@@ -322,6 +378,11 @@ def rebuild_training_frame() -> pd.DataFrame:
     train_df = pf.add_neighbor_features(train_df, neighbor_table)
     train_df = pf.add_live_features(train_df, live_reading_table, neighbor_table)
     train_df = pf.add_holiday_features(train_df)
+    # main() adds the game-night columns last, whether or not the family is
+    # a feature (get_feature_columns decides that through
+    # sports_features_enabled). Without them a sports-on features_train.pkl
+    # has six columns the rebuild never made.
+    train_df = pf.add_sports_features(train_df)
 
     train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
     train_df['delta_label'] = (train_df['busyness_pct']
@@ -343,7 +404,7 @@ def rebuild_training_frame() -> pd.DataFrame:
                 len(train_df), len(feature_cols), time.time() - t0)
 
     with open(FRAME_CACHE, 'wb') as f:
-        pickle.dump(train_df, f)
+        pickle.dump({'key': rebuild_cache_key(), 'frame': train_df}, f)
     return train_df
 
 
