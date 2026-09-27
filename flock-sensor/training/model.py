@@ -80,13 +80,21 @@ class PeopleNet(nn.Module):
         return self.head(f), self.box(f)
 
 
-def focal_loss(logits, target, alpha=2.0, beta=4.0):
-    """CenterNet's penalty-reduced focal loss over a Gaussian target."""
+def focal_loss(logits, target, alpha=2.0, beta=4.0, known=None):
+    """CenterNet's penalty-reduced focal loss over a Gaussian target.
+
+    known, [N, classes] of 0 or 1, says which maps a frame's labels cover. A
+    real frame from a public dataset marks its people and nothing else, so its
+    other maps are neither right nor wrong and must not be graded.
+    """
     p = torch.sigmoid(logits).clamp(1e-4, 1 - 1e-4)
     pos = target.eq(1.0).float()
     neg = 1.0 - pos
     pos_loss = torch.log(p) * (1 - p) ** alpha * pos
     neg_loss = torch.log(1 - p) * p ** alpha * (1 - target) ** beta * neg
+    if known is not None:
+        w = known[:, :, None, None]
+        pos, pos_loss, neg_loss = pos * w, pos_loss * w, neg_loss * w
     n = pos.sum().clamp(min=1.0)
     return -(pos_loss.sum() + neg_loss.sum()) / n
 
