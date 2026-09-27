@@ -12,6 +12,12 @@
 //
 // It never touches privacy labels, the age rating, review notes, category, or
 // submission; the checklist for those prints at the end of every run.
+//
+//   node tools/asc-upload/upload.mjs --check-review-login --key <AuthKey.p8> --key-id <KID> --issuer <ISSUER>
+//
+// Reads the demo login saved in App Review Information and tries it against
+// the live sign-in route. Exits 1 unless it signs in. Read-only on the App
+// Store Connect side; run it before Submit, Update Review or Resubmit.
 
 import { createHash } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
@@ -23,11 +29,13 @@ import {
   ASC_BASE_URL,
   buildPlan,
   buildScreenshotManifest,
+  checkReviewLogin,
   mintAscJwt,
   neverTouchesChecklist,
   parseSubmissionDoc,
   planScreenshotUploads,
   pngDimensions,
+  REVIEW_LOGIN_URL,
   validateListing,
 } from './lib.mjs';
 
@@ -44,6 +52,8 @@ const { values: args } = parseArgs({
     'bundle-id': { type: 'string', default: 'com.flockcorp.flock' },
     version: { type: 'string', default: '1.0' },
     locale: { type: 'string', default: 'en-US' },
+    'check-review-login': { type: 'boolean', default: false },
+    'login-url': { type: 'string', default: REVIEW_LOGIN_URL },
     help: { type: 'boolean', default: false },
   },
 });
@@ -60,6 +70,9 @@ if (args.help) {
   --bundle-id <id>        default: com.flockcorp.flock
   --version <v>           default: 1.0
   --locale <l>            default: en-US
+  --check-review-login    only check that the App Review demo login saved in
+                          App Store Connect signs in; needs the key options
+  --login-url <url>       sign-in route for that check (default: ${REVIEW_LOGIN_URL})
 
 With --key/--key-id/--issuer absent, --dry-run is forced (offline).`);
   process.exit(0);
@@ -385,7 +398,50 @@ async function executePlan(client, steps, { remote, locale, files, screenshotsDi
 // Main
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// --check-review-login
+// ---------------------------------------------------------------------------
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  });
+  let json = null;
+  try { json = await res.json(); } catch { /* non-JSON body: status alone decides */ }
+  return { status: res.status, json };
+}
+
+async function runReviewLoginCheck() {
+  console.log('App Review demo login check (read-only on App Store Connect)');
+  if (!haveCredentials) {
+    fail('--check-review-login reads the demo login from App Store Connect, so it needs --key, --key-id and --issuer.');
+  }
+  const keyPem = await readFile(args.key, 'utf8');
+  const client = makeClient({ keyPem, keyId: args['key-id'], issuerId: args.issuer });
+  const result = await checkReviewLogin({
+    ascGet: (path) => client.request('GET', path),
+    postJson,
+    bundleId: args['bundle-id'],
+    loginUrl: args['login-url'],
+  });
+  if (result.version) console.log(`  version ${result.version.versionString ?? result.version.id}, state ${result.version.state}`);
+  if (result.account) console.log(`  demo account ${result.account} (password not printed)`);
+  if (result.ok) {
+    console.log(`\n${result.message}`);
+    return;
+  }
+  console.error(`\n${result.message}`);
+  process.exit(1);
+}
+
 async function main() {
+  if (args['check-review-login']) {
+    await runReviewLoginCheck();
+    return;
+  }
   console.log(`ASC uploader ${dryRun ? '(DRY RUN, no network writes)' : '(LIVE)'}`);
   if (!haveCredentials && !args['dry-run']) {
     console.log('No --key/--key-id/--issuer given: dry run forced.');

@@ -22,6 +22,24 @@ and prints the exact API calls a live run would make. No network writes ever
 happen in dry-run mode. With credentials plus `--dry-run` it also does
 read-only discovery so the plan shows the exact PATCH-vs-POST decisions.
 
+## Before Submit, Update Review or Resubmit: check the demo login
+
+```
+node tools/asc-upload/upload.mjs --check-review-login --key AuthKey_XXXXXXXXXX.p8 --key-id <KEY_ID> --issuer <ISSUER_ID>
+```
+
+Two Guideline 2.1 rejections came from a demo password in App Review
+Information that no longer matched the account in production. This reads the
+demo user name and password App Store Connect holds for the iOS version heading
+to review (preparing, waiting, in review, or rejected and about to be
+resubmitted), POSTs them to `https://api.flockcorp.com/api/auth/login`, and
+prints PASS on a 200 with a session token. Anything else exits 1 with the fix:
+a 401 points at `backend/scripts/seed-review-account.js`, a 429 means the
+account is locked out right now, and a 403 asking for a date of birth means the
+reviewer would be stopped at that question. The password is never printed. Each
+failed attempt counts toward the sign-in lockout (10 in 15 minutes), so fix the
+cause before running it again.
+
 ## What it pushes
 
 - **appStoreVersion 1.0** (created if absent) + copyright (6.8)
@@ -71,13 +89,15 @@ prints at the end of every run.
 node --test tools/asc-upload/
 ```
 
-29 tests, all offline: JWT shape against Apple's documented spec (ES256,
+39 tests, all offline: JWT shape against Apple's documented spec (ES256,
 `kid` header, `iss`/`iat`/`exp`/`aud=appstoreconnect-v1`, 20-minute cap,
 raw r||s signature), doc parsing against the real `APP-STORE-SUBMISSION.md`
 (computed counts must equal the doc's own), mutation cases (broken
 delimiters, oversized fields, bad display types, doc drift each fail naming
-the fix), screenshot manifest handling, and plan idempotency (a second run
-plans replace, not create).
+the fix), screenshot manifest handling, plan idempotency (a second run
+plans replace, not create), and the demo login check against mocked App
+Store Connect and sign-in responses (pass, 401, 429, missing date of birth,
+no saved account, no version in review, password never echoed).
 
 API facts verified against Apple's documentation 2026-08-14:
 `generating-tokens-for-api-requests`, `screenshotdisplaytype`,
