@@ -2155,7 +2155,9 @@ test('with nothing set, every step the server checks reads to do, and the databa
     ['revenuecat_project_figures', /^REVENUECAT_V2_SECRET_API_KEY is not set, so RevenueCat's project-wide figures and the offering are not read\. In RevenueCat, open Project settings, then API keys/],
     ['revenuecat_webhook', /^REVENUECAT_WEBHOOK_SECRET is not set to a usable value, 16 characters or more, so the server refuses every webhook RevenueCat sends\..*The server cannot see RevenueCat's side\.$/],
     ['expense_list', /^The expense list is empty, .*Paste the list into Import a list, at the bottom of the Expense list card\.$/],
-    ['error_reporting', /^SENTRY_DSN is not set\. Server errors still reach the Railway logs/],
+    // Not "nothing sends an alert": utils/serverFault.js counts the 500s and a
+    // burst raises an ops alert without Sentry.
+    ['error_reporting', /^SENTRY_DSN is not set\. Server errors reach the Railway logs, and 10 of them in 15 minutes, or a background job that stops, raises an ops alert\./],
   ]) {
     const s = ownerStep(r.body, id);
     assert.strictEqual(s.checkedBy, 'server', id);
@@ -2204,7 +2206,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.match(ownerStep(r.body, 'revenuecat_webhook').words,
     /^REVENUECAT_WEBHOOK_SECRET is set on the server\..*Authorization header, with or without Bearer in front\. The server cannot see RevenueCat's side, so that half is yours to check\.$/);
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
-  assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry.');
+  assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.

@@ -69,6 +69,7 @@
 const crypto = require('crypto');
 const pool = require('../config/database');
 const { RATES, DAYS_PER_MONTH } = require('./costModel');
+const { recordJobRun } = require('../utils/serverFault');
 
 const PHOTO_SKU = RATES.places.skus.photos;
 
@@ -221,9 +222,13 @@ async function prunePhotoStore() {
       [PHOTO_CACHE_TTL_MS]
     );
     if (r.rowCount > 0) console.log(`[Photo Store] expired ${r.rowCount} cached photos`);
+    // Hourly from server.js. A prune that keeps failing is a terms problem,
+    // not a disk one, so it reports to the stalled-job check.
+    recordJobRun('photoPrune', true, null, 60 * 60 * 1000);
     return r.rowCount;
   } catch (err) {
     console.error('[Photo Store] prune failed:', err.message);
+    recordJobRun('photoPrune', false, err, 60 * 60 * 1000);
     return null;
   }
 }

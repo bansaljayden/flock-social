@@ -209,6 +209,20 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ---------------------------------------------------------------------------
+// SERVER FAULTS — counted before anything else can answer
+// ---------------------------------------------------------------------------
+// Every route catches its own failure and answers 500 itself, so neither
+// Sentry's error handler nor the [unhandled-error] handler below ever sees one.
+// This is first so every response, whichever middleware writes it, is counted
+// by route pattern, and the console hook picks up the Error each catch block
+// already logs so the 500 reaches Sentry with its stack. The money watch reads
+// the window and alerts on a burst (utils/serverFault.js,
+// services/serverFaultAlert.js).
+const { faultMiddleware, installConsoleHook, recordJobRun } = require('./utils/serverFault');
+installConsoleHook();
+app.use(faultMiddleware);
+
+// ---------------------------------------------------------------------------
 // THE APP-WIDE BACKSTOP — the ceiling that was missing
 // ---------------------------------------------------------------------------
 // Every limiter in this file guards a mount. Nothing guarded the process. Four
@@ -2291,6 +2305,11 @@ async function runMoneyWatch() {
       // one ceiling is how the second one gets filtered away.
     });
   } catch (e) { console.error('[moneyWatch] photo read failed:', e && e.message); }
+
+  // Not money either: routes answering 500 and background jobs that have
+  // stopped succeeding, counted by utils/serverFault.js. Read on this timer
+  // because the window is the same fifteen minutes.
+  await require('./services/serverFaultAlert').runServerFaultAlert();
 }
 
 // Handles for the background timers, held so shutdown() can clear them —
@@ -2439,7 +2458,14 @@ async function boot() {
   // feed. Hourly for the same reason the photo prune is: the window is a day
   // and the only cost of being an hour late is an hour.
   const { purgeExpiredStories } = require('./routes/stories');
-  const storyPurge = () => purgeExpiredStories().catch((e) => console.error('[stories] purge failed:', e.message));
+  // The purge throws on failure rather than catching, so this wrapper is where
+  // it reports each run to the stalled-job check (utils/serverFault.js).
+  const storyPurge = () => purgeExpiredStories()
+    .then(() => recordJobRun('storyPurge', true, null, 60 * 60 * 1000))
+    .catch((e) => {
+      recordJobRun('storyPurge', false, e, 60 * 60 * 1000);
+      console.error('[stories] purge failed:', e.message);
+    });
   storyPurgeInterval = setInterval(storyPurge, 60 * 60 * 1000);
   // Staggered off the photo prune so two DELETE sweeps do not open on the same
   // tick of a cold boot.

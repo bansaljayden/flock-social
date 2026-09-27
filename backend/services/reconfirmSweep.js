@@ -40,6 +40,8 @@ const pool = require('../config/database');
 const { pushIfOffline } = require('./pushHelper');
 const { flockSweepEnabled } = require('./flockSweep');
 const { reconfirmLeadHours } = require('../utils/reconfirm');
+// Each run reports to the stalled-job check (utils/serverFault.js).
+const { recordJobRun } = require('../utils/serverFault');
 
 const RECONFIRM_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 // See "NOT TOUCHED IN THE LAST FIFTEEN MINUTES" above.
@@ -87,7 +89,10 @@ async function runReconfirmSweep(io) {
       [lead, SETTLE_MINUTES, SWEEP_BATCH_SIZE]
     );
     opened = result.rows || [];
-    if (opened.length === 0) return 0;
+    if (opened.length === 0) {
+      recordJobRun('reconfirmSweep', true, null, RECONFIRM_SWEEP_INTERVAL_MS);
+      return 0;
+    }
     console.log(`[reconfirmSweep] opened ${opened.length} window${opened.length === 1 ? '' : 's'} (${lead}h lead)`);
 
     // Everyone who said yes is asked again. Members reach here through their
@@ -124,9 +129,11 @@ async function runReconfirmSweep(io) {
     // pushIfOffline is not guaranteed to hand back a promise (see
     // routes/budget.js on the same point).
     await Promise.allSettled(pushes);
+    recordJobRun('reconfirmSweep', true, null, RECONFIRM_SWEEP_INTERVAL_MS);
     return opened.length;
   } catch (err) {
     console.error('[reconfirmSweep] sweep failed:', err.message);
+    recordJobRun('reconfirmSweep', false, err, RECONFIRM_SWEEP_INTERVAL_MS);
     return opened.length;
   }
 }

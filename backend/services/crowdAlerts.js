@@ -14,6 +14,12 @@ const {
   sweepPushOutbox,
   sweepPushMaintenance,
 } = require('./pushHelper');
+// Each sweep reports to the stalled-job check (utils/serverFault.js). The push
+// outbox rides this sweep, so a sweep that keeps failing also strands every
+// push held for quiet hours or queued for a retry.
+const { recordJobRun } = require('../utils/serverFault');
+// server.js runs checkCrowdAlerts on this interval.
+const CROWD_ALERTS_INTERVAL_MS = 15 * 60 * 1000;
 
 const ALERT_TYPE = 'crowd';
 
@@ -311,13 +317,13 @@ async function checkCrowdAlerts() {
       LIMIT $2
     `, [ALERT_TYPE, MAX_FLOCKS_PER_SWEEP]);
 
-    if (!flocks.length) return;
-
     for (const flock of flocks) {
       await processFlockAlert(flock);
     }
+    recordJobRun('crowdAlerts', true, null, CROWD_ALERTS_INTERVAL_MS);
   } catch (err) {
     console.error('[CrowdAlerts] Error checking alerts:', err.message);
+    recordJobRun('crowdAlerts', false, err, CROWD_ALERTS_INTERVAL_MS);
   }
 }
 
