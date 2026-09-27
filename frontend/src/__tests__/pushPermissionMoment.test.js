@@ -101,8 +101,12 @@ describe('the ask lives where its reason is on screen', () => {
     );
     expect(row).toMatch(/Flock can tell you when someone replies here, or this plan changes\./);
     // Named because they are what the backend sends to EVERY member.
-    // flock_rsvp goes to the creator alone, so the row does not promise it.
+    // flock_rsvp goes to the creator alone, so the group line does not
+    // promise it, and the one line that does is the creator's own, drawn
+    // only while nobody else is on the plan yet (hostPlanControls.test.js
+    // renders both).
     expect(row).not.toMatch(/RSVP/);
+    expect(row).toMatch(/isCreator && \(flock\.memberCount \|\| 1\) <= 1\s*\n\s*\? "Flock can tell you when someone says they're in\."/);
     // A dismiss that is not remembered is not a dismiss, and a row that comes
     // back on the next screen is nagging for a permission.
     expect(row).toMatch(/dismissNotifAsk/);
@@ -110,10 +114,12 @@ describe('the ask lives where its reason is on screen', () => {
   });
 
   it('it is not offered to a device that has already answered', () => {
-    const guard = APP.slice(
-      APP.indexOf("{(flock.memberCount || 1) > 1 && notifStatus !== 'granted'"),
-      APP.indexOf('Know when they answer')
-    );
+    // A second member, or the creator of a plan still running: the host of a
+    // brand-new flock is the one person whose first push (a friend answering
+    // the link) arrives before anybody else is on it.
+    const start = APP.indexOf("{((flock.memberCount || 1) > 1 || (isCreator && !planClosed)) && notifStatus !== 'granted'");
+    expect(start).toBeGreaterThan(-1);
+    const guard = APP.slice(start, APP.indexOf('Know when they answer'));
     expect(guard).toMatch(/notifStatus !== 'denied'/);
     expect(guard).toMatch(/!notifAskDismissed/);
     // Inside the iOS shell there is no window.Notification, so the synchronous
