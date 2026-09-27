@@ -373,6 +373,30 @@ test('an alternatives request served from warm caches charges nothing', async ()
     'a request that made no Google call was charged for one');
 });
 
+test('the alternatives cache key holds nothing the caller chooses', async () => {
+  // The venue's own clock overrides the caller's localHour and localDay before
+  // anything is scored, so every (hour, day) a client sends asks the same
+  // question. Keyed on them, each new pair was a fresh entry in the map every
+  // card shares, and with the details and neighbour search already warm it
+  // cost the caller no Places unit to write one. Only the first request here
+  // may score anything; the rest must be the cached answer.
+  const first = await get('/api/crowd/PLACE_ALT_KEY/alternatives?localHour=1&localDay=1');
+  assert.strictEqual(first.status, 200);
+  const scoredOnce = predictorCalls.length;
+  assert.ok(scoredOnce > 0, 'the first request scored the venue');
+
+  googleCalls = [];
+  for (const [hour, day] of [[2, 2], [13, 4], [23, 6], [0, 0]]) {
+    const again = await get(`/api/crowd/PLACE_ALT_KEY/alternatives?localHour=${hour}&localDay=${day}`);
+    assert.strictEqual(again.status, 200);
+    assert.deepStrictEqual(again.body, first.body, `hour ${hour} day ${day} answered differently`);
+  }
+  assert.strictEqual(predictorCalls.length, scoredOnce,
+    'a new caller-chosen hour or day minted a fresh cache entry and re-ran the predictor');
+  assert.strictEqual(googleCalls.length, 0);
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2, 'only the first request bought anything');
+});
+
 test('a caller with one unit left cannot start a two-call request', async () => {
   // Burn 29 of 30 so the request needs a unit it does not have. All-or-nothing:
   // the refusal must cost nothing.

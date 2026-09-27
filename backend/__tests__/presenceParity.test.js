@@ -881,8 +881,11 @@ test('a covered venue lists nothing quieter and buys no search; an opened one li
   assert.strictEqual(covered.body.crowdLocked, true);
   assert.strictEqual(fetched.length, 0, 'a covered venue still paid Google for a neighbour search');
 
-  // A cached list holding one opened and one unopened quieter neighbour.
-  crowdRouter.__test.seedCache('alt:PW_ALT_SEEN:20:5', {
+  // A cached list holding one opened and one unopened quieter neighbour. Keyed
+  // on the server's hour and day, as the route keys it: the caller's
+  // localHour/localDay never reach the key.
+  const serverNow = new Date();
+  crowdRouter.__test.seedCache(`alt:PW_ALT_SEEN:${serverNow.getHours()}:${serverNow.getDay()}`, {
     currentVenue: { name: 'PW_ALT_SEEN', score: 60, label: 'Usually busy' },
     alternatives: [
       { placeId: 'PW_NEAR_NEW', name: 'PW_NEAR_NEW', score: 20, label: 'Usually quiet' },

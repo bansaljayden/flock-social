@@ -192,13 +192,13 @@ const INVENTORY = [
   // ── routes/crowd.js ───────────────────────────────────────────────────────
   {
     file: 'routes/crowd.js', name: 'crowdCache', kind: 'cache',
-    key: '`full:${placeId}:${localHour}:${localDay}` and `alt:${placeId}:...`',
-    callerControls: 'placeId (shape-checked by isPlaceIdShaped) and hour/day (parsed then clamped 0-23 / 0-6 BEFORE keying)',
+    key: '`full:${placeId}:${serverHour}:${serverDay}` and `alt:${placeId}:${serverHour}:${serverDay}`, plus the `altsearch:` neighbour-search entries',
+    callerControls: 'placeId only (shape-checked by isPlaceIdShaped). The hour and day are the SERVER\'s on both prefixes, never the caller\'s localHour/localDay',
     protects: 'paid Google Places calls (1 for /:placeId, 2 for /alternatives) + ML CPU',
     denominator: 'cached predictions; the spend meter is allowPlacesSearch (30/user/hr)',
-    bound: '200 entries shared by both prefixes, expire-then-oldest-first, 10 min TTL',
+    bound: '200 entries shared by every prefix, expire-then-oldest-first, 10 min TTL',
     verdict: 'SAFE',
-    why: 'Per-venue key space is 2 x 24 x 7 = 336 and the venue half is shape-checked, so the key cannot be walked; every miss is charged to the caller\'s own 30/hr Places budget before the call.',
+    why: 'Each venue has one live key per prefix and the venue half is shape-checked, so a key cannot be walked. It was not SAFE on the old keys: the caller\'s localHour/localDay made 168 keys per venue for one answer (the venue clock overrides both before scoring), and once the Place Details and neighbour search were warm a miss spent no Places unit, so one account could flush the map every card shares for free. The card moved to the server clock first; /alternatives followed on 2026-09-27.',
   },
 
   // ── routes/events.js ──────────────────────────────────────────────────────
