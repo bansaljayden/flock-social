@@ -21,6 +21,11 @@ RPi.GPIO
 # pipeline with it (OpenCV, Pillow, numpy image IO), and an image pipeline on
 # this device is the one thing the published privacy policy says is not here.
 # The MLX90640 I2C driver and the Blinka shim it needed are gone with it.
+#
+# The trained people counter needs numpy and onnxruntime, and setup.sh
+# installs both from apt rather than here. They do arithmetic on the grid of
+# temperatures that is already in memory; neither decodes, encodes or saves an
+# image, and without them the unit counts with the heat-cluster rule.
 
 spidev                               # MCP3008 ADC (noise) over SPI
 requests                             # HTTPS push to the backend
