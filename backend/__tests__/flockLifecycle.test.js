@@ -59,6 +59,7 @@ let server;
 let base;
 let alice;
 let bob;
+let admin;
 let flockId;
 let runFlockCompletionSweep;
 
@@ -131,9 +132,15 @@ test.before(async () => {
     );
   }
 
+  // The admin console's Research tab reads the confirmation times this walk
+  // writes (Stage 4b), through the real admin router and a real admin account.
+  admin = await mkUser('admin@lifecycle.test', 'Admin');
+  await pool.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [admin.id]);
+
   const app = express();
   app.use(express.json());
   app.use('/api/flocks', require('../routes/flocks'));
+  app.use('/api/admin', require('../routes/admin'));
   server = await new Promise((resolve) => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -188,6 +195,81 @@ test('a member who is not the host cannot confirm', async () => {
   });
   assert.equal(res.status, 403);
   assert.equal((await flockRow()).status, 'confirmed', 'and the row did not move');
+});
+
+// When a plan was confirmed (migration 099), for the Research tab's time to
+// confirm. Stamped on the move into confirmed, once.
+
+test('confirming stamps the moment, and sending confirmed again does not move it', async () => {
+  const first = (await flockRow()).confirmed_at;
+  assert.ok(first instanceof Date, 'the confirm left no moment behind');
+  assert.ok(Math.abs(Date.now() - first.getTime()) < 5 * 60000, 'stamped at the confirm, not some other time');
+  const again = await call('PUT', `/api/flocks/${flockId}`, { token: alice.token, body: { status: 'confirmed' } });
+  assert.equal(again.status, 200);
+  assert.equal((await flockRow()).confirmed_at.getTime(), first.getTime(), 'a second confirmed is not a new confirmation');
+});
+
+test('a plan confirmed before the column existed is not stamped with today, and a trip back to planning keeps the first stamp', async () => {
+  const { rows: old } = await pool.query(
+    `INSERT INTO flocks (name, creator_id, status) VALUES ('Confirmed Long Ago', $1, 'confirmed') RETURNING id`,
+    [alice.id]
+  );
+  const { rows: fresh } = await pool.query(
+    `INSERT INTO flocks (name, creator_id, status) VALUES ('Back And Forth', $1, 'planning') RETURNING id`,
+    [alice.id]
+  );
+  const at = async (id) => (await pool.query('SELECT confirmed_at FROM flocks WHERE id = $1', [id])).rows[0].confirmed_at;
+  try {
+    const put = (id, status) => call('PUT', `/api/flocks/${id}`, { token: alice.token, body: { status } });
+    assert.equal((await put(old[0].id, 'confirmed')).status, 200);
+    assert.equal(await at(old[0].id), null, 'its real moment is unknown, so it stays unknown');
+
+    assert.equal((await put(fresh[0].id, 'confirmed')).status, 200);
+    const first = await at(fresh[0].id);
+    assert.ok(first instanceof Date);
+    await pool.query(`UPDATE flocks SET confirmed_at = confirmed_at - INTERVAL '3 hours' WHERE id = $1`, [fresh[0].id]);
+    const moved = await at(fresh[0].id);
+    assert.equal((await put(fresh[0].id, 'planning')).status, 200);
+    assert.equal((await put(fresh[0].id, 'confirmed')).status, 200);
+    assert.equal((await at(fresh[0].id)).getTime(), moved.getTime(), 'the first confirmation is the one kept');
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = ANY($1)', [[old[0].id, fresh[0].id]]);
+  }
+});
+
+test('picking the venue over the socket confirms the plan and stamps it once', async () => {
+  const { registerHandlers, __resetRateLimiters } = require('../sockets/handlers');
+  __resetRateLimiters();
+  const noop = () => {};
+  const room = () => ({ except() { return this; }, emit: noop });
+  const handlers = new Map();
+  const socket = {
+    id: 'lifecycle-socket', user: { id: alice.id, name: alice.name }, rooms: new Set(), handshake: null,
+    on(event, handler) { handlers.set(event, handler); }, join: noop, leave: noop, emit: noop, to: room, disconnect: noop,
+  };
+  const io = { sockets: { sockets: new Map(), adapter: { rooms: new Map() } }, to: room };
+  registerHandlers(io, socket);
+
+  const { rows } = await pool.query(
+    `INSERT INTO flocks (name, creator_id, status) VALUES ('Picked Over The Socket', $1, 'planning') RETURNING id`,
+    [alice.id]
+  );
+  const id = rows[0].id;
+  const row = async () => (await pool.query('SELECT status, venue_name, confirmed_at FROM flocks WHERE id = $1', [id])).rows[0];
+  try {
+    await handlers.get('select_venue')({ flockId: id, venue_name: 'Kome' });
+    const first = await row();
+    assert.equal(first.status, 'confirmed');
+    assert.ok(first.confirmed_at instanceof Date, 'the socket confirm left no moment behind');
+    await pool.query(`UPDATE flocks SET confirmed_at = confirmed_at - INTERVAL '2 hours' WHERE id = $1`, [id]);
+    const moved = (await row()).confirmed_at;
+    await handlers.get('select_venue')({ flockId: id, venue_name: 'Bar Two' });
+    const after = await row();
+    assert.equal(after.venue_name, 'Bar Two', 'the second pick did land');
+    assert.equal(after.confirmed_at.getTime(), moved.getTime(), 'changing the venue of a confirmed plan is not a new confirmation');
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = $1', [id]);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -275,6 +357,52 @@ test('the finished night is in history for both people who were there', async ()
     assert.equal(list[0].id, flockId);
     assert.equal(list[0].status, 'completed');
     assert.equal(list[0].venue_name, 'Kome');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 4b — the admin Research tab reading the walk back
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('the Research tab reads a median time to confirm, withheld under ten plans, and counts people accounts only', async () => {
+  const get = () => call('GET', '/api/admin/analytics', { token: admin.token });
+  let res = await get();
+  assert.equal(res.status, 200);
+  // Only the walked plan carries a confirmation time so far.
+  assert.deepEqual(res.body.timeToConfirm, { medianHours: null, plans: 1, minPlans: 10 });
+  assert.equal(res.body.avgTimeToConfirmation, undefined, 'the closing time printed as a confirmation time is gone');
+  // The walked plan ended confirmed, and it is the only plan that ended.
+  assert.equal(res.body.endedPlans, 1);
+  assert.equal(res.body.completionRate, 100);
+  // Alice and Bob. The admin account is not a user, and, never having been
+  // scored, would have landed in the reliability split's new cell.
+  assert.equal(res.body.totalUsers, 2);
+  assert.equal(res.body.newUsersThisWeek, 2);
+  assert.equal(Number(res.body.reliabilityDistribution.reliable), 1);
+  assert.equal(Number(res.body.reliabilityDistribution.flaky), 1);
+  assert.equal(Number(res.body.reliabilityDistribution.unscored), 0);
+
+  // Nine more plans, confirmed 1 to 9 hours after they were made: ten in all,
+  // exactly at the floor, and the median sits between the fifth and sixth.
+  // created_at is naive UTC wall time and confirmed_at is TIMESTAMPTZ, so each
+  // gap is exactly its hours only if the route converts one to the other.
+  const ids = [];
+  try {
+    for (let h = 1; h <= 9; h += 1) {
+      const { rows } = await pool.query(
+        `INSERT INTO flocks (name, creator_id, status, created_at, confirmed_at)
+         VALUES ($1, $2, 'confirmed', (NOW() AT TIME ZONE 'UTC') - INTERVAL '2 days',
+                 NOW() - INTERVAL '2 days' + make_interval(hours => $3::int))
+         RETURNING id`,
+        [`Confirmed after ${h}h`, alice.id, h]
+      );
+      ids.push(rows[0].id);
+    }
+    res = await get();
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.timeToConfirm, { medianHours: 4.5, plans: 10, minPlans: 10 });
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = ANY($1)', [ids]);
   }
 });
 

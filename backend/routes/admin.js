@@ -278,6 +278,10 @@ router.get('/venues/tag-url', async (req, res) => {
   }
 });
 
+// The fewest confirmed plans the Research tab's time to confirm is shown from.
+// Under it the server sends the count and no median.
+const TIME_TO_CONFIRM_MIN_PLANS = 10;
+
 router.get('/analytics', async (req, res) => {
   try {
     // NINE AGGREGATES THAT WERE WAITING IN LINE FOR EACH OTHER.
@@ -297,10 +301,12 @@ router.get('/analytics', async (req, res) => {
     // that attaches a handler to every one of them is reached in the same tick —
     // a second failure cannot escape as an unhandled rejection.
     //
-    // THE SQL IS BYTE-IDENTICAL to what it was, ragged indentation included.
-    // Several suites in __tests__ script a fake pool by matching the wording of
-    // a statement, so re-wrapping one of these strings is a test change wearing
-    // the clothes of a formatting change. Moving the wrapper is not.
+    // THE SQL WAS BYTE-IDENTICAL when the batch was made, ragged indentation
+    // included. Several suites in __tests__ script a fake pool by matching the
+    // wording of a statement, so re-wrapping one of these strings is a test
+    // change wearing the clothes of a formatting change. Moving the wrapper is
+    // not. Since then three statements changed on purpose, each with its reason
+    // beside it: the time to confirm, and the two that count accounts.
     //
     // Nine concurrent statements hold nine of the pool's 20 slots for as long as
     // they run (config/database.js). That is acceptable on THIS route and would
@@ -312,7 +318,7 @@ router.get('/analytics', async (req, res) => {
       completionRate,
       avgGroupSize,
       budgetAdoption,
-      avgTimeToConfirm,
+      timeToConfirm,
       stallPoints,
       weeklyTrends,
       userStats,
@@ -338,9 +344,22 @@ router.get('/analytics', async (req, res) => {
        FROM research_analytics`
       ),
 
+      // TIME TO CONFIRM, from flocks.confirmed_at (migration 099). This read
+      // research_analytics.time_to_confirmation, which holds the minutes from
+      // creation to the host CLOSING the plan, after the night, for plans a
+      // host closed by hand: it was printed as a confirmation time and read in
+      // the thousands. The median, because one plan made weeks ahead and
+      // confirmed the night before would drag a mean anywhere. created_at is
+      // naive UTC wall time and confirmed_at is TIMESTAMPTZ, so created_at is
+      // converted before the subtraction.
       pool.query(
-        `SELECT AVG(time_to_confirmation)::INTEGER AS avg_minutes
-       FROM research_analytics WHERE flock_completed = true`
+        `SELECT COUNT(*)::int AS plans,
+        percentile_cont(0.5) WITHIN GROUP (
+          ORDER BY EXTRACT(EPOCH FROM (confirmed_at - (created_at AT TIME ZONE 'UTC'))) / 3600.0
+        ) AS median_hours
+       FROM flocks
+       WHERE confirmed_at IS NOT NULL
+         AND confirmed_at >= (created_at AT TIME ZONE 'UTC')`
       ),
 
       // The only variable-length result on this router that had no ceiling.
@@ -370,10 +389,16 @@ router.get('/analytics', async (req, res) => {
        ORDER BY week DESC`
       ),
 
+      // PEOPLE ACCOUNTS ONLY, here and in the reliability split below: role
+      // 'user' and not banned, the definition the Overview's People card uses
+      // (services/moneyHub.js). Both counted every row, so every venue owner
+      // and admin read as a user, and landed in the reliability split's "new"
+      // cell, since only attendance ever scores one.
       pool.query(
         `SELECT COUNT(*) AS total_users,
         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS new_this_week
-       FROM users`
+       FROM users
+       WHERE role = 'user' AND is_banned IS NOT TRUE`
       ),
 
       pool.query(
@@ -387,7 +412,8 @@ router.get('/analytics', async (req, res) => {
         -- one bucket that could not contain the flakiest users.
         COUNT(*) FILTER (WHERE reliability_score >= 0 AND reliability_score < 50) AS flaky,
         COUNT(*) FILTER (WHERE reliability_score IS NULL) AS unscored
-       FROM users`
+       FROM users
+       WHERE role = 'user' AND is_banned IS NOT TRUE`
       ),
     ]);
 
@@ -395,13 +421,28 @@ router.get('/analytics', async (req, res) => {
     const terminal = parseInt(cr.terminal) || 0;
     const ba = budgetAdoption.rows[0];
     const baTotal = parseInt(ba.total) || 0;
+    const ttc = timeToConfirm.rows[0] || {};
+    const confirmedPlans = parseInt(ttc.plans) || 0;
+    const medianHours = Number(ttc.median_hours);
 
     res.json({
       totalFlocks: parseInt(totalFlocks.rows[0].count),
-      completionRate: terminal > 0 ? Math.round((parseInt(cr.completed) / terminal) * 100) : 0,
+      // Of the plans that ended, the share that had been confirmed: the sweep
+      // (services/flockSweep.js) closes a confirmed plan as completed and an
+      // unconfirmed one as cancelled once its time has passed, and a host
+      // closes one by hand the same way. No ended plan is no share, not 0%.
+      completionRate: terminal > 0 ? Math.round((parseInt(cr.completed) / terminal) * 100) : null,
+      endedPlans: terminal,
       avgGroupSize: avgGroupSize.rows[0].avg_size ? parseFloat(avgGroupSize.rows[0].avg_size) : 0,
       budgetAdoptionRate: baTotal > 0 ? Math.round((parseInt(ba.with_budget) / baTotal) * 100) : 0,
-      avgTimeToConfirmation: avgTimeToConfirm.rows[0].avg_minutes || 0,
+      // Withheld under the floor, here where the rule lives: a median of a
+      // handful of plans says more about those plans than about confirming.
+      timeToConfirm: {
+        medianHours: confirmedPlans >= TIME_TO_CONFIRM_MIN_PLANS && Number.isFinite(medianHours)
+          ? Math.round(medianHours * 10) / 10 : null,
+        plans: confirmedPlans,
+        minPlans: TIME_TO_CONFIRM_MIN_PLANS,
+      },
       stallPointDistribution: stallPoints.rows,
       weeklyTrends: weeklyTrends.rows,
       totalUsers: parseInt(userStats.rows[0].total_users),

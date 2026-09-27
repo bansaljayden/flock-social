@@ -107,6 +107,108 @@ describe('break-even: impossible inputs read as a sentence, not Infinity', () =>
   });
 });
 
+// ---------------------------------------------------------------------------
+// THE RESEARCH TAB SAYS WHAT EACH FIGURE COUNTS.
+//
+// Three of its figures read as something they were not. "Completion Rate" was
+// every plan that ended, closed by a host or by the sweep once its time
+// passed, while "Where Flocks Stall" beside it counts only the plans a host
+// closed by hand, so the two disagreed without saying why. "Time to Confirm"
+// printed the minutes from creation to the host closing a plan after the
+// night, with an "m" after it. And both user counts counted venue owners and
+// admins. The time now comes from flocks.confirmed_at (migration 099) and
+// waits, in words, for enough plans confirmed since it was recorded.
+// ---------------------------------------------------------------------------
+jest.mock('../services/api', () => ({
+  __esModule: true,
+  saveAdminReconciled: jest.fn(),
+  getAdminMoneyHub: jest.fn(() => new Promise(() => {})),
+  createAdminExpense: jest.fn(),
+  updateAdminExpense: jest.fn(),
+  deleteAdminExpense: jest.fn(),
+  importAdminExpenses: jest.fn(),
+}));
+
+describe('research tab: each figure says what it counts', () => {
+  const React = require('react');
+  const { render, screen, within } = require('@testing-library/react');
+  const RevenueScreen = require('../screens/RevenueScreen').default;
+  const LIVE = {
+    totalFlocks: 60, completionRate: 64, endedPlans: 42, avgGroupSize: 3.8, budgetAdoptionRate: 20,
+    timeToConfirm: { medianHours: 5.24, plans: 12, minPlans: 10 },
+    stallPointDistribution: [{ stall_point: 'completed', count: '9' }, { stall_point: 'venue', count: '4' }],
+    totalUsers: 118, newUsersThisWeek: 9,
+    reliabilityDistribution: { reliable: '10', moderate: '3', flaky: '1', unscored: '104' },
+  };
+  const show = (data) => {
+    const fn = () => jest.fn();
+    render(React.createElement(RevenueScreen, {
+      adminTab: 'research', avgSpend: 1, colors: { navy: '#1f2a44', navyBg: '#1f2a44', creamDark: '#ddd', steel: '#4a7ba7' },
+      costsData: null, costsError: false, costsLoading: false, eventsPerVenue: 1, fetchCosts: fn(), fetchResearchLive: fn(),
+      numVenues: 1, operatingCosts: 1, researchDemoMode: false, researchError: false, researchLiveData: data, researchLoading: false,
+      setAdminTab: fn(), setAvgSpend: fn(), setEventsPerVenue: fn(), setNumVenues: fn(), setOperatingCosts: fn(),
+      setResearchDemoMode: fn(), setSubscriptionPrice: fn(), setTakeRate: fn(), styles: { gradientButton: {} },
+      subscriptionPrice: 99, switchMode: fn(), takeRate: 2.5,
+    }));
+  };
+  const statCard = (label) => screen.getByText(label).parentElement;
+
+  test('the rate is named for what it counts, with the plans it counts under it', () => {
+    show(LIVE);
+    expect(screen.queryByText('Completion Rate')).toBeNull();
+    const card = statCard('Confirmed before it ended');
+    expect(within(card).getByText('64%')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/of 42 plans that ended, including ones closed automatically once their time passed/);
+    // And the stall split beside it says it counts a different set.
+    expect(screen.getByText(/^Plans a host closed by hand: 13 plans\. A plan closed automatically once its time passed is not in this\.$/)).toBeInTheDocument();
+  });
+
+  test('time to confirm is a median in hours over the plans it names', () => {
+    show(LIVE);
+    const card = statCard('Time to Confirm');
+    expect(within(card).getByText('5.2h')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/median from making a plan to confirming it, over 12 plans/);
+    expect(card.textContent).not.toMatch(/\dm\b/);
+  });
+
+  test('under the floor it waits in words, and a median that arrives anyway is not drawn', () => {
+    show({ ...LIVE, timeToConfirm: { medianHours: 0.4, plans: 3, minPlans: 10 } });
+    const card = statCard('Time to Confirm');
+    expect(within(card).getByText('Not yet')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/Not enough plans confirmed since this was recorded: 3 of 10\./);
+    expect(card.textContent).not.toMatch(/24m|0\.4/);
+  });
+
+  test('a server from before the change shows no number for the old closing time', () => {
+    const { timeToConfirm, endedPlans, ...older } = LIVE;
+    expect(timeToConfirm && endedPlans).toBeTruthy();
+    show({ ...older, avgTimeToConfirmation: 2880 });
+    const card = statCard('Time to Confirm');
+    expect(within(card).getByText('No data')).toBeInTheDocument();
+    expect(screen.queryByText(/2880/)).toBeNull();
+  });
+
+  test('no ended plan is no rate, said in words', () => {
+    show({ ...LIVE, completionRate: null, endedPlans: 0 });
+    const card = statCard('Confirmed before it ended');
+    expect(within(card).getByText('No data')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/No plan has ended yet\./);
+  });
+
+  test('the user counts say they are people accounts', () => {
+    show(LIVE);
+    expect(statCard('Total Users').textContent).toMatch(/people accounts, not venue owners, admins or banned accounts/);
+    expect(screen.getByText('People accounts made in the last 7 days.')).toBeInTheDocument();
+  });
+
+  test('none of it prints an em dash', () => {
+    expect(visible).toContain('Confirmed before it ended');
+    expect(visible).not.toMatch(/avgTimeToConfirmation/);
+    const research = visible.slice(visible.indexOf("activeTab === 'research'"));
+    expect(research).not.toMatch(/—/);
+  });
+});
+
 describe('lib/finance.js: edge inputs never surface as Infinity or NaN', () => {
   test('zeroing every revenue input makes break-even Infinity, the documented sentinel', () => {
     expect(calculateBreakEven(2000, 0, 0, 0, 0)).toBe(Infinity);

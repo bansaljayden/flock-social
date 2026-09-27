@@ -1,0 +1,35 @@
+-- 099: when a plan was confirmed.
+--
+-- ASCII only, like 094: the embedded server the boot-safety suite runs is
+-- WIN1252.
+--
+-- WHY. The admin Research tab printed "Time to Confirm" from
+-- research_analytics.time_to_confirmation, which routes/flocks.js writes as
+-- the minutes from a plan's creation to the host closing it, after the night,
+-- and only for plans a host closed by hand. Nothing recorded when a plan
+-- became confirmed, so no confirmation time could be measured at all.
+--
+-- WHO WRITES IT. The two places a plan becomes confirmed: PUT /api/flocks/:id
+-- with status 'confirmed' (routes/flocks.js) and the select_venue socket
+-- event (sockets/handlers.js). Each stamps it only on the move INTO confirmed,
+-- and keeps the first stamp (COALESCE), so a plan re-sent as confirmed, or
+-- moved back to planning and confirmed again, keeps the time it was first
+-- confirmed.
+--
+-- WHO READS IT. GET /api/admin/analytics, for the median time from a plan's
+-- creation to its confirmation.
+--
+-- NO BACKFILL. A plan confirmed before this file ran has no recorded moment,
+-- and updated_at is the time of its LAST edit, not of its confirmation, so it
+-- stays NULL and the median counts only plans confirmed from here on. The
+-- Research tab says so until there are enough of them.
+--
+-- TIMESTAMPTZ, unlike flocks.created_at, which is a naive TIMESTAMP holding UTC
+-- wall time (the pool pins TimeZone=UTC); the reader converts created_at
+-- before subtracting.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no
+-- rewrite, no scan, every existing row reads NULL. A replay is a no-op.
+-- @requires column flocks.confirmed_at
+
+ALTER TABLE flocks ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
