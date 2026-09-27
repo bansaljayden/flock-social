@@ -195,6 +195,34 @@ test('every per-door sub-ceiling still binds strictly under the aggregate', () =
   assert.strictEqual(GLOBAL_DAILY - UNAUTH_DAILY, 1200);
 });
 
+test('the photo proxy\'s share is counted in the same window as the ledger, and gates nothing', () => {
+  // The admin cost panel splits this ledger into photos and everything else
+  // by subtraction, so the photo count it subtracts has to reset and roll
+  // exactly when globalUsed does. A durable whole-day count did not, and the
+  // remainder read zero after every deploy.
+  __resetPlacesBudget();
+  assert.strictEqual(allowGlobalPlacesCall(1, { photo: true }), true);
+  assert.strictEqual(allowGlobalPlacesCall(1, { photo: true }), true);
+  assert.strictEqual(allowGlobalPlacesCall(1), true); // the badge or the demo
+  assert.strictEqual(allowPlacesSearch(7, 2), true); // a signed-in search
+  let s = placesBudgetStatus(null);
+  assert.strictEqual(s.globalUsed, 5);
+  assert.strictEqual(s.photoUsed, 2, 'only the units the photo proxy marked');
+  assert.strictEqual(s.globalUsed - s.photoUsed, 3, 'the remainder the panel prices');
+
+  // A refused photo charge counts nothing, so the share can never exceed the
+  // ledger it is a share of.
+  while (allowGlobalPlacesCall(1, { photo: true }));
+  s = placesBudgetStatus(null);
+  assert.ok(s.photoUsed <= s.globalUsed);
+  assert.strictEqual(s.unauthUsed, UNAUTH_DAILY);
+  assert.strictEqual(s.photoUsed, UNAUTH_DAILY - 1, 'every unauthenticated unit but the badge one');
+
+  // And it starts again with the ledger.
+  __resetPlacesBudget();
+  assert.strictEqual(placesBudgetStatus(null).photoUsed, 0);
+});
+
 test('the claim in the source says what the code does', () => {
   // M5-1 was as much about the sentence as the numbers, and the sentence is
   // what the next round reads. It must not be possible to leave the two

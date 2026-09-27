@@ -60,6 +60,7 @@ test('with every meter at zero, every observed figure is zero, whatever the ceil
     advisorPromptTokens: 7843,
     advisorMaxOutputTokens: 512,
     placesCallsToday: 0,
+    placesPhotoCallsThisProcess: 0,
     placesPhotoCallsToday: 0,
     placesPhotoCallsMonth: 0,
     visionCallsToday: 0,
@@ -93,6 +94,7 @@ test('buildObserved takes no limits, and buildWorstCase takes no counts', () => 
     advisorPromptTokens: 7843,
     advisorMaxOutputTokens: 512,
     placesCallsToday: 10,
+    placesPhotoCallsThisProcess: 4,
     placesPhotoCallsToday: 4,
     visionCallsToday: 2,
     weatherCallsToday: 5,
@@ -205,7 +207,7 @@ test('the Places line is a band, because the ledger does not record the SKU', ()
   // 100 calls, 40 of them photos. The 60 remaining could have been Place
   // Details or Text Search and the meter cannot say, so the line carries both
   // ends rather than picking one.
-  const observed = cm.buildObserved({ placesCallsToday: 100, placesPhotoCallsToday: 40 });
+  const observed = cm.buildObserved({ placesCallsToday: 100, placesPhotoCallsThisProcess: 40, placesPhotoCallsToday: 40 });
   const photos = observed.lines.find((l) => l.id === 'places-photos');
   const other = observed.lines.find((l) => l.id === 'places-other');
   assert.strictEqual(photos.count, 40);
@@ -217,14 +219,52 @@ test('the Places line is a band, because the ledger does not record the SKU', ()
 });
 
 test('more photo calls than total Places calls cannot produce a negative remainder', () => {
-  // Reachable in production: the photo counter is charged before the shared
-  // ledger agrees, and the shared ledger resets on a different code path. A
-  // negative "other" would subtract money from the total.
-  const observed = cm.buildObserved({ placesCallsToday: 10, placesPhotoCallsToday: 50 });
+  // The two counts now come from one ledger and move together, so this should
+  // not happen. The clamp stays anyway: a negative "other" would subtract
+  // money from the total.
+  const observed = cm.buildObserved({ placesCallsToday: 10, placesPhotoCallsThisProcess: 50, placesPhotoCallsToday: 50 });
   const other = observed.lines.find((l) => l.id === 'places-other');
   assert.strictEqual(other.count, 0);
   assert.strictEqual(other.usd, 0);
   assert.ok(observed.todayUsd >= 0);
+});
+
+test('a deploy earlier today does not zero the Text Search and Place Details line', () => {
+  // The case the old subtraction got wrong. Railway deploys at 14:00 UTC on a
+  // push. 250 photos were bought before it; since then this process has made
+  // 120 Text Search and Place Details calls and 30 photo fetches. The durable
+  // photo count is the whole day (280), the in-memory ledger is since the
+  // deploy (150). 150 - 280 read as 0 calls and $0. The remainder has to come
+  // from the ledger's own photo share, which covers the same window.
+  const observed = cm.buildObserved({
+    placesCallsToday: 150,
+    placesPhotoCallsThisProcess: 30,
+    placesPhotoCallsToday: 280,
+  });
+  const other = observed.lines.find((l) => l.id === 'places-other');
+  const photos = observed.lines.find((l) => l.id === 'places-photos');
+  assert.strictEqual(other.count, 120, 'the non-photo calls this process made');
+  assert.strictEqual(other.usd, cm.priceCalls(120, cm.RATES.places.skus.detailsEnterprise.perThousand));
+  assert.strictEqual(other.usdHigh, cm.priceCalls(120, cm.RATES.places.skus.textSearchEnterprise.perThousand));
+  assert.ok(other.usd > 0, 'real calls are not priced at zero');
+  // The photo line still reads the durable whole-day count; only the
+  // remainder is taken from the ledger.
+  assert.strictEqual(photos.count, 280);
+  assert.ok(
+    observed.todayUsdHigh >= photos.usd + other.usdHigh - 1e-9,
+    'the 120 calls are in today\'s total'
+  );
+});
+
+test('without the ledger\'s own photo count, the remainder is unmeasured rather than guessed', () => {
+  // Subtracting the durable whole-day count is the arithmetic that read zero
+  // after a deploy. With nothing from the same window to subtract, the honest
+  // answer is null, and the payload names the line.
+  const observed = cm.buildObserved({ placesCallsToday: 150, placesPhotoCallsToday: 280 });
+  const other = observed.lines.find((l) => l.id === 'places-other');
+  assert.strictEqual(other.count, null);
+  assert.strictEqual(other.usd, null);
+  assert.ok(observed.unmeasuredLines.includes('places-other'));
 });
 
 test('free-tier upstreams are counted and priced at zero, and say why', () => {

@@ -2464,6 +2464,10 @@ router.get('/costs', async (req, res) => {
   // -- In-memory meters, turned into plain counts -----------------------------
   const birdieTokensToday = meterOrNull(() => birdieUsage.geminiSpendStatus(null).globalUsed);
   const placesCallsToday = meterOrNull(() => placesBudgetStatus(null).globalUsed);
+  // The photo proxy's share of that same in-memory count. The durable photo
+  // count below is the whole UTC day, so it cannot be subtracted from a ledger
+  // that started again at the last deploy; this one can.
+  const placesPhotoCallsThisProcess = meterOrNull(() => placesBudgetStatus(null).photoUsed);
   // The photo meter is no longer in this list: it moved out of memory and into
   // places_photo_spend, so it reads with the durable ledgers below.
   const visionCallsToday = meterOrNull(() => visionBudgetStatus(null).globalUsed);
@@ -2645,6 +2649,7 @@ router.get('/costs', async (req, res) => {
     advisorPromptTokens,
     advisorMaxOutputTokens,
     placesCallsToday,
+    placesPhotoCallsThisProcess,
     placesPhotoCallsToday: photoSpend ? photoSpend.dayUsed : null,
     placesPhotoCallsMonth: photoSpend ? photoSpend.monthUsed : null,
     placesPhotoBudget: photoSpend ? photoSpend.limits : null,

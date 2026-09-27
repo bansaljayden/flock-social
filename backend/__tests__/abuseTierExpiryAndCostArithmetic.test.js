@@ -387,7 +387,7 @@ test('CLAIM S: "~34 cooperating accounts for about three dollars" is still exact
 
 test('ABUSE T: the photo proxy charges the shared Places ledger before its own dollar brake, so 18 addresses exhaust the unauthenticated share', () => {
   const src = fs.readFileSync(path.join(BACKEND, 'routes', 'venueSearch.js'), 'utf8');
-  const ledgerAt = src.indexOf('if (!allowGlobalPlacesCall(1)) {');
+  const ledgerAt = src.indexOf('if (!allowGlobalPlacesCall(1, { photo: true })) {');
   const brakeAt = src.indexOf('const charge = await chargePhotoFetch();');
   assert.ok(ledgerAt > 0 && brakeAt > 0, 'both charges are on this path');
   assert.ok(ledgerAt < brakeAt,

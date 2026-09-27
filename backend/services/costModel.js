@@ -1327,7 +1327,20 @@ function buildObserved(counts = {}) {
     const photos = num(c.placesPhotoCallsToday);
     const photosMonth = num(c.placesPhotoCallsMonth);
     const photoBudget = c.placesPhotoBudget || null;
-    const other = total === null ? null : Math.max(0, total - (photos || 0));
+    // THE REMAINDER IS TAKEN FROM TWO COUNTS OF THE SAME WINDOW, OR NOT AT ALL.
+    // `total` is the shared ledger, in memory since this process started.
+    // `photos` above is durable and covers the whole UTC day. Subtracting the
+    // second from the first was right only on a day with no deploy, and every
+    // push deploys: 250 photos before a 14:00 deploy, 120 other calls and 30
+    // photos after it, and this line read max(0, 150 - 280) = 0 calls and $0,
+    // leaving the 120 real calls out of today's total until the process count
+    // passed the whole day's photos, which on a photo-heavy day it never does.
+    // `photosInLedger` is the photo proxy's share of `total`, counted by the
+    // ledger itself (utils/placesBudget.js photoDayCount), so the difference is
+    // exactly the non-photo calls. Without it there is nothing in the same
+    // window to subtract, and the line is unmeasured rather than guessed.
+    const photosInLedger = num(c.placesPhotoCallsThisProcess);
+    const other = total === null || photosInLedger === null ? null : Math.max(0, total - photosInLedger);
     const sk = RATES.places.skus;
     lines.push({
       id: 'places-photos',
@@ -1376,7 +1389,7 @@ function buildObserved(counts = {}) {
       usdHigh: other === null ? null : round(priceCalls(other, sk.textSearchEnterprise.perThousand), 4),
       window: 'today, this process only',
       durable: false,
-      note: 'The shared Places ledger counts calls without recording the SKU, so this is a band: everything priced as Place Details at the low end, everything as Text Search at the high end. Since 2026-08-20 the Place Details half of this counts ONE call per venue-detail open rather than two — services/placeDetailsCache.js gives the detail card and the crowd card one shared payload — so the count itself is lower; the band is derived from it and needed no adjustment.',
+      note: 'The shared Places ledger counts calls without recording the SKU, so this is a band: everything priced as Place Details at the low end, everything as Text Search at the high end. The photo proxy\'s calls are taken out of the same in-memory count that holds these, so a deploy earlier today makes this line start again from the deploy rather than read zero. Since 2026-08-20 the Place Details half of this counts ONE call per venue-detail open rather than two — services/placeDetailsCache.js gives the detail card and the crowd card one shared payload — so the count itself is lower; the band is derived from it and needed no adjustment.',
     });
   }
 
