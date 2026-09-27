@@ -267,7 +267,16 @@ const CHARGE_SQL = `
                         FROM places_photo_spend p
                        WHERE p.day >= DATE_TRUNC('month', s.day)::date
                          AND p.day <  s.day) < $1
-  RETURNING s.fetches`;
+  RETURNING s.fetches, s.day::text AS day`;
+
+// Hand one charge back to the day it was taken from. The day travels as text
+// ('YYYY-MM-DD') because node-postgres turns a DATE into a local-midnight
+// Date, which can name the wrong day once converted back. Never below zero.
+const REFUND_SQL = `
+  UPDATE places_photo_spend
+     SET fetches = fetches - 1, updated_at = NOW()
+   WHERE day = $1::date AND fetches > 0
+  RETURNING fetches`;
 
 // The ceiling being reached is INFORMATION, not an error to swallow, but it is
 // also reached once per request until midnight, so the log is throttled to one
@@ -318,7 +327,8 @@ async function chargePhotoFetch() {
         + `$${PHOTO_BUDGET_USD_PER_YEAR}/year budget; raise PHOTO_BUDGET_USD_PER_YEAR if this is real traffic.`
       );
     }
-    return { allowed: true, dayFetches, reason: null };
+    // `day` is what refundPhotoFetch needs to hand this charge back.
+    return { allowed: true, dayFetches, reason: null, day: r.rows[0].day || null };
   }
 
   // Refused. Which ceiling it was is worth knowing, so read (non-consuming) and
@@ -343,6 +353,34 @@ async function chargePhotoFetch() {
         + `day cannot spend the month, so hitting it repeatedly means the annual budget is too low.`
   );
   return { allowed: false, dayFetches: status ? status.dayUsed : null, reason };
+}
+
+/**
+ * Hand back a charge Google refused before billing it.
+ *
+ * chargePhotoFetch charges before the fetch because Google bills a request it
+ * received even when we abort it, and that stays true for a timeout: the
+ * outcome is unknown, so the charge stands. But a 429 (quota) or a 403 (key or
+ * billing refused) is Google saying no before doing anything, and nothing is
+ * billed. Without this, every refused call during a photos outage spent a
+ * unit of the month's budget for nothing, so the budget was gone by the time
+ * the outage ended. Only routes/venueSearch.js calls it, and only for those
+ * two statuses.
+ *
+ * @param {string} day the `day` chargePhotoFetch returned
+ * @returns {Promise<boolean>} whether a charge was handed back. Never throws.
+ */
+async function refundPhotoFetch(day) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  try {
+    const r = await pool.query(REFUND_SQL, [day]);
+    return r.rows.length > 0;
+  } catch (err) {
+    // The worst outcome is one unit spent for nothing, which is where this
+    // started, so a failure is a log line and nothing more.
+    console.error('[Photo Budget] refund failed:', err.message);
+    return false;
+  }
 }
 
 /**
@@ -402,6 +440,7 @@ module.exports = {
   writeStoredPhoto,
   prunePhotoStore,
   chargePhotoFetch,
+  refundPhotoFetch,
   photoSpendStatus,
-  __test: { CHARGE_SQL },
+  __test: { CHARGE_SQL, REFUND_SQL },
 };

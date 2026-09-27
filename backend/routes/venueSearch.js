@@ -45,7 +45,7 @@ const {
 // the TTL is chosen against.
 const {
   PHOTO_CACHE_TTL_MS, photoCacheKey, readStoredPhoto, writeStoredPhoto,
-  chargePhotoFetch, photoSpendStatus,
+  chargePhotoFetch, refundPhotoFetch, photoSpendStatus,
   PHOTO_FETCH_BUDGET_MONTH, PHOTO_FETCH_BURST_PER_DAY, PHOTO_BUDGET_USD_PER_YEAR,
 } = require('../services/photoStore');
 
@@ -750,7 +750,21 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
     // Round 12: both legs of the photo proxy are outbound calls with no
     // deadline of their own — see utils/upstream.js.
-    const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
+    //
+    // THE PHOTOS LEG OF THE PLACES ALARM. Place Photos has its own per-day
+    // Google quota, so photos can be refused while search works, and this
+    // proxy used to tell utils/placesHealth.js nothing. It records to its own
+    // leg, once per request: a request that got its bytes, or a name Google
+    // answered was bad, is Google working; a refusal, a CDN failure or no
+    // answer at all is not.
+    const PHOTOS = { leg: 'photos' };
+    let metaRes;
+    try {
+      metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
+    } catch (err) {
+      recordPlacesResult(false, 'unreachable', PHOTOS);
+      throw err;
+    }
     if (!metaRes.ok) {
       // The ref's length rides along with its prefix: a name Google rejects
       // is usually a truncated or stale one, and sixty characters of prefix
@@ -759,23 +773,41 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
       console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60),
         `(${photoRef.length} chars)`, why);
       if (googleSaysNameIsBad(metaRes.status, why)) {
+        recordPlacesResult(true, null, PHOTOS);
         rememberDeadPhotoRef(photoRef);
         return PHOTO_GONE;
       }
+      recordPlacesResult(false, `HTTP ${metaRes.status}`, PHOTOS);
+      // A quota refusal (429) or a key or billing refusal (403) is Google
+      // saying no before doing anything, and it bills nothing, so the charge
+      // taken above goes back. During a photos outage every refused call used
+      // to spend a unit of the month's budget for nothing. A timeout stays
+      // charged: whether Google did the work is unknown.
+      if (metaRes.status === 429 || metaRes.status === 403) await refundPhotoFetch(charge.day);
       return { status: 502, error: 'That photo is not loading right now. Try again in a moment.' };
     }
     const meta = await metaRes.json();
     if (!meta.photoUri) {
+      // Google answered; it simply has no image for this name.
+      recordPlacesResult(true, null, PHOTOS);
       console.error('[Photo Proxy] No photoUri in response for ref:', photoRef.slice(0, 60));
       return { status: 404, error: 'Photo not found' };
     }
 
     // Step 2: fetch the actual image bytes from the CDN
-    const imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
+    let imgRes;
+    try {
+      imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
+    } catch (err) {
+      recordPlacesResult(false, 'photo CDN unreachable', PHOTOS);
+      throw err;
+    }
     if (!imgRes.ok) {
+      recordPlacesResult(false, `photo CDN HTTP ${imgRes.status}`, PHOTOS);
       console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
       return { status: 502, error: 'That photo is not loading right now. Try again in a moment.' };
     }
+    recordPlacesResult(true, null, PHOTOS);
 
     // Step 3: cache and return the image bytes
     const buffer = Buffer.from(await imgRes.arrayBuffer());

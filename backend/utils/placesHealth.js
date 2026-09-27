@@ -74,19 +74,37 @@ const FAILURE_STREAK_ALARM = 3;
 // the person reading the alert, not a log.
 const MAX_REASONS = 5;
 
-const state = {
-  consecutiveFailures: 0,
-  totalOk: 0,
-  totalFailed: 0,
-  lastOkAt: null,
-  lastFailAt: null,
-  // The moment the CURRENT unbroken run of failures began. Null whenever the
-  // streak is zero. This is the "since" in the alert sentence, and it is the
-  // number that turns "Places is failing" into "Places has been failing for
-  // four hours", which is the difference between a shrug and an action.
-  failingSince: null,
-  reasons: [],
-};
+// ---------------------------------------------------------------------------
+// TWO LEGS, BECAUSE GOOGLE METERS PHOTOS SEPARATELY.
+// ---------------------------------------------------------------------------
+// Place Photos has its own per-day quota on the Google project, apart from
+// search and details, and it was one of the four clamped by hand on
+// 2026-08-21. So photos can be refused while every search succeeds. On one
+// shared streak that outage is invisible twice over: the photo proxy never
+// recorded anything, and even if it had, the search calls still working
+// between its failures would reset the count every time. The photo proxy
+// (routes/venueSearch.js) records to the 'photos' leg; everything else is the
+// 'search' leg, which is what the top level of placesHealthStatus() has always
+// described.
+const LEGS = ['search', 'photos'];
+
+function freshLeg() {
+  return {
+    consecutiveFailures: 0,
+    totalOk: 0,
+    totalFailed: 0,
+    lastOkAt: null,
+    lastFailAt: null,
+    // The moment the CURRENT unbroken run of failures began. Null whenever the
+    // streak is zero. This is the "since" in the alert sentence, and it is the
+    // number that turns "Places is failing" into "Places has been failing for
+    // four hours", which is the difference between a shrug and an action.
+    failingSince: null,
+    reasons: [],
+  };
+}
+
+const legs = { search: freshLeg(), photos: freshLeg() };
 
 function utcDay(now = Date.now()) {
   return new Date(now).toISOString().slice(0, 10);
@@ -102,8 +120,11 @@ function utcDay(now = Date.now()) {
  * @param {boolean} ok   true if Google answered usefully
  * @param {string} [reason] short tag for a failure ('HTTP 429', 'unreachable',
  *                          'error body', 'malformed body'). Ignored when ok.
+ * @param {object} [opts] { leg: 'photos' } for the photo proxy; anything else
+ *                        is the search leg.
  */
-function recordPlacesResult(ok, reason) {
+function recordPlacesResult(ok, reason, opts) {
+  const state = legs[opts && LEGS.includes(opts.leg) ? opts.leg : 'search'];
   const now = Date.now();
   if (ok) {
     state.consecutiveFailures = 0;
@@ -175,15 +196,7 @@ function isUnusablePlaceIdAnswer(error) {
   return NAMES_PLACE_ID_RE.test(String(error.message || ''));
 }
 
-/**
- * Non-consuming read, shaped like placesBudgetStatus() and visionBudgetStatus()
- * so server.js's money watch can treat it as one more leg.
- *
- * `day` is present for the same reason those two carry one: sayOnceToday()
- * treats a missing day as "already spoke today" and would silence the leg
- * forever. See its comment in server.js.
- */
-function placesHealthStatus(now = Date.now()) {
+function legStatus(state, now) {
   return {
     day: utcDay(now),
     consecutiveFailures: state.consecutiveFailures,
@@ -199,15 +212,25 @@ function placesHealthStatus(now = Date.now()) {
   };
 }
 
+/**
+ * Non-consuming read, shaped like placesBudgetStatus() and visionBudgetStatus()
+ * so server.js's money watch can treat it as one more leg.
+ *
+ * The top level is the search leg, as it always was; `photos` is the photo
+ * proxy's leg in the same shape.
+ *
+ * `day` is present for the same reason those two carry one: sayOnceToday()
+ * treats a missing day as "already spoke today" and would silence the leg
+ * forever. See its comment in server.js.
+ */
+function placesHealthStatus(now = Date.now()) {
+  return { ...legStatus(legs.search, now), photos: legStatus(legs.photos, now) };
+}
+
 /** Test seam. Mirrors __resetPlacesBudget() in utils/placesBudget.js. */
 function __resetPlacesHealth() {
-  state.consecutiveFailures = 0;
-  state.totalOk = 0;
-  state.totalFailed = 0;
-  state.lastOkAt = null;
-  state.lastFailAt = null;
-  state.failingSince = null;
-  state.reasons = [];
+  legs.search = freshLeg();
+  legs.photos = freshLeg();
 }
 
 module.exports = {

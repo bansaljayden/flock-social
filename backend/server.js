@@ -2230,6 +2230,20 @@ async function runMoneyWatch() {
         // this is the one alert for this leg.
         await require('./services/placesOutageAlert').runPlacesOutageAlert(h);
     }
+    // The photo proxy's own leg. Place Photos has a separate per-day Google
+    // quota, so photos can be refused while search works, and the search leg
+    // above cannot see that (utils/placesHealth.js says why). Same shape: a
+    // log line, then the one alert through the ops ledger.
+    const p = h.photos;
+    if (p && p.unhealthy) {
+      const why = p.reasons.length ? ` Google said: ${p.reasons.join(', ')}.` : '';
+      sayOnceToday('places-photos-health', 'exhausted', p.day,
+        'GOOGLE PLACE PHOTOS IS FAILING. Venue photos that are not already cached are blank. '
+        + `${p.consecutiveFailures} photo lookups in a row have failed.${why} `
+        + 'Check the GetPhotoMediaRequestPerDayPerProject quota.',
+        { consecutiveFailures: p.consecutiveFailures, failingForMs: p.failingForMs, reasons: p.reasons });
+      await require('./services/placesOutageAlert').runPlacesPhotoOutageAlert(p);
+    }
   } catch (e) { console.error('[moneyWatch] places health read failed:', e && e.message); }
 
   // Vision. It already logs at its own thresholds; this adds the Sentry half
