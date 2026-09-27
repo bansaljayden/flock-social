@@ -92,7 +92,11 @@ workflows:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
       - name: Build web app (relative asset paths)
-        script: npm run build
+        # REACT_APP_PURCHASES=off: the App Store build carries no purchase
+        # screen, price, checkout link or store SDK start-up at all
+        # (frontend/src/lib/purchasesBuild.js). Set on the iOS build lines
+        # only, never on Vercel, so the web keeps everything.
+        script: REACT_APP_PURCHASES=off npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
       - name: Write and verify GoogleService-Info.plist (push notifications)
@@ -586,7 +590,9 @@ workflows:
         # the retry still happen underneath), the second forces the light theme,
         # because this machine keeps UTC time and a run after 20:00 UTC would
         # otherwise film dark. Neither is set on any other workflow or on Vercel.
-        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true npm run build
+        # REACT_APP_PURCHASES=off as on the App Store build above, so the take
+        # films the same app the reviewer installs: no purchase surface at all.
+        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=off npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
       - name: Firebase config for the recording build, optional

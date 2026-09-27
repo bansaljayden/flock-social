@@ -50,7 +50,7 @@ describe('the recording-only build flags', () => {
     const setters = CODEMAGIC.match(/REACT_APP_REVIEW_(HIDE_LOCATION_BANNER|FORCE_LIGHT)=true/g) || [];
     expect(setters).toEqual(['REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true', 'REACT_APP_REVIEW_FORCE_LIGHT=true']);
     const recording = CODEMAGIC.slice(CODEMAGIC.indexOf('ios-review-recording:'));
-    expect(recording).toContain('script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true npm run build');
+    expect(recording).toContain('script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=off npm run build');
     // the workflows before it build without them
     const before = CODEMAGIC.slice(0, CODEMAGIC.indexOf('ios-review-recording:'));
     expect(before).not.toContain('REACT_APP_REVIEW_');
