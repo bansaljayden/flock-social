@@ -165,7 +165,9 @@ const HUB_STORE_LABEL = {
 };
 
 const hubStyle = {
-  card: { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0 },
+  // scrollMarginTop so a card the attention list jumps to lands with a gap
+  // above it rather than flush against the tab bar.
+  card: { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0, scrollMarginTop: '12px' },
   sub: { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.4 },
   kicker: { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '14px 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
   big: { fontSize: 'var(--t-display)', fontWeight: '600', margin: '2px 0 0', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' },
@@ -185,6 +187,20 @@ const HUB_TONE = {
   bad: 'var(--accent-red-text)',
   warn: 'var(--accent-amber-text)',
   muted: 'var(--text-tertiary)',
+};
+
+// The cards the attention list at the top can send the owner to, by the id
+// each one carries. `link` is the words on the jump, named after the card's
+// own heading so it reads as where it lands.
+const HUB_CARD = {
+  steps: { id: 'hub-steps', link: 'Go to the steps' },
+  revenue: { id: 'hub-revenue', link: 'Go to Revenue' },
+  costs: { id: 'hub-costs', link: 'Go to Costs' },
+  expenses: { id: 'hub-expenses', link: 'Go to the expense list' },
+  prices: { id: 'hub-prices', link: 'Go to Prices' },
+  crowd: { id: 'hub-crowd', link: 'Go to Crowd data' },
+  model: { id: 'hub-model', link: 'Go to Model' },
+  health: { id: 'hub-health', link: 'Go to Health' },
 };
 
 function hubTag(tone) {
@@ -215,6 +231,8 @@ function hubMoney(cents, { sign = false } = {}) {
 const hubCount = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US') : null);
 const hubPlural = (n, one, many) => `${hubCount(n)} ${n === 1 ? one : many}`;
 const hubTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null);
+// A stretch of minutes in the unit a person would say it in.
+const hubAgo = (min) => (min < 60 ? hubPlural(min, 'minute', 'minutes') : min < 48 * 60 ? hubPlural(Math.round(min / 60), 'hour', 'hours') : hubPlural(Math.round(min / 1440), 'day', 'days'));
 
 // A YYYY-MM-DD date read as that calendar day wherever the browser is.
 function hubDay(ymd) {
@@ -499,7 +517,7 @@ function HubOwnerActions({ h, colors }) {
   const yours = oa.items.filter((s) => s.checkedBy !== 'server');
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.steps.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Only you can do these</h3>
       <p style={hubStyle.sub}>Steps the code cannot take for itself. The server checks the ones it can see each time this page is read. The rest are marked Check yourself, with a link to where each one is done.</p>
       {checked.length > 0 && (
@@ -554,7 +572,7 @@ function HubRevenue({ h, colors }) {
   const periodWords = (p) => (p === 'P0D' || !p ? 'now' : p === 'P28D' ? 'the last 28 days' : p);
 
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.revenue.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Revenue</h3>
       <p style={hubStyle.sub}>
         flockcorp.com sells through Stripe; the iOS app sells through the App Store, which RevenueCat reads. Paywall {onOff(flags.paywallEnabled)}, web checkout {onOff(flags.proWebCheckoutEnabled)}, venue billing {onOff(flags.venueBillingEnabled)}.
@@ -752,7 +770,7 @@ function HubCosts({ h, colors }) {
   );
   const upcoming = c.upcoming || [];
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.costs.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Costs</h3>
       <p style={hubStyle.sub}>
         The infrastructure bills in backend/services/costModel.js, the reconciled Google invoice, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
@@ -1086,7 +1104,7 @@ function HubExpenses({ h, colors, onChanged }) {
   const [editing, setEditing] = React.useState(null);
   const done = () => { setEditing(null); onChanged(); };
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.expenses.id} style={hubStyle.card}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ minWidth: 0 }}>
           <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Expense list</h3>
@@ -1133,7 +1151,7 @@ function HubPrices({ h, colors }) {
   const count = Number.isFinite(p.mismatches) ? p.mismatches : 0;
   const every = (iv) => (iv === 'year' ? 'a year' : iv === 'month' ? 'a month' : iv ? `every ${iv}` : 'once');
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.prices.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Prices</h3>
       <p style={hubStyle.sub}>What Stripe and the App Store charge, next to every price written down in the code and the decision documents.</p>
       <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: count > 0 ? 'var(--accent-red-text)' : s.status === 'ok' ? 'var(--accent-green-text)' : 'var(--text-secondary)' }}>
@@ -1203,9 +1221,9 @@ function HubHealth({ h, colors }) {
   const navy = colors.navy;
   const STATE = { fresh: { text: 'Landing', tone: 'good' }, late: { text: 'Late', tone: 'warn' }, stopped: { text: 'Stopped', tone: 'bad' } };
   const st = STATE[c.state] || { text: 'Not read', tone: 'muted' };
-  const ago = (min) => (min < 60 ? hubPlural(min, 'minute', 'minutes') : min < 48 * 60 ? hubPlural(Math.round(min / 60), 'hour', 'hours') : hubPlural(Math.round(min / 1440), 'day', 'days'));
+  const ago = hubAgo;
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.health.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Health</h3>
       <p style={hubStyle.sub}>The paid data feed, read from the rows it writes rather than from the job.</p>
       {c.status === 'error' ? (
@@ -1257,7 +1275,7 @@ function HubCrowdData({ h, colors }) {
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
   const counterValue = (n) => (Number.isFinite(n) ? hubCount(n) : 'Not reported');
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.crowd.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Crowd data</h3>
       <p style={hubStyle.sub}>BestTime, the paid feed behind the crowd model. Only its key endpoint is asked, which admits no venue and spends nothing.</p>
       {!ready && <HubNotice status={b.status} reason={b.reason} />}
@@ -1390,7 +1408,7 @@ function HubModel({ h, colors }) {
     gapNote = gap > 0 ? 'The goal less the measured share, in percentage points.' : 'The measured share is at or above the goal.';
   }
   return (
-    <div style={hubStyle.card}>
+    <div id={HUB_CARD.model.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Model</h3>
       <p style={hubStyle.sub}>The crowd model serving now, and how its forecasts held up against what the collector measured in the same hour.</p>
       <HubRow
@@ -1438,6 +1456,260 @@ function HubModel({ h, colors }) {
   );
 }
 
+// NEEDS ATTENTION: every live problem the payload already carries, in one list
+// at the top of the Overview. On a phone the month's figures alone fill the
+// first screen, and each of these sat inside a long card further down: a
+// stopped collector in Health, which is the last card; an open dispute near
+// the end of Revenue; a price disagreement in Prices; the steps still to do
+// behind a summary line. Nothing here is read a second time. Each row is built
+// from a field another card draws, and jumps to that card.
+//
+// A source that was asked and did not answer is a row too, because "nothing
+// needs you" is a claim about what was checked, and a Stripe that did not
+// answer checked no dispute. A source that is not connected is not a row: with
+// no Stripe key nothing is sold through Stripe, so there is no dispute to
+// miss, and connecting one is a step the steps card already counts.
+//
+// Renewals coming up are listed apart, under their own heading, and never
+// count as a problem: a bill due Tuesday is something to know, not something
+// that went wrong.
+const HUB_SEVERITY = { bad: 0, warn: 1 };
+const HUB_SOON_DAYS = 7;
+
+// Whole calendar days from one YYYY-MM-DD to another, or null. Both are New
+// York dates from the server, so no zone is involved.
+function hubDaysUntil(fromYmd, toYmd) {
+  const utc = (ymd) => {
+    if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+    const [y, m, d] = ymd.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  const a = utc(fromYmd);
+  const b = utc(toYmd);
+  return a === null || b === null ? null : Math.round((b - a) / 86400000);
+}
+
+// A list of words as a person says it: "a", "a and b", "a, b and c".
+function hubAnd(words) {
+  if (words.length <= 1) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+function hubAttention(h) {
+  const problems = [];
+  const add = (row) => problems.push(row);
+  const n = (v) => (Number.isFinite(v) ? v : 0);
+  const revenue = h.revenue || {};
+  const s = revenue.stripe || {};
+  const rc = revenue.revenuecat || {};
+  const flags = revenue.flags || {};
+
+  // The collector, from the Health card's own read.
+  const c = h.health && h.health.collector;
+  if (c && c.status === 'error') {
+    add({ key: 'collector', tone: 'warn', label: 'Crowd collector', value: 'Not read', note: c.reason || "The collector's rows could not be read.", card: HUB_CARD.health });
+  } else if (c && c.status === 'ok' && (c.state === 'late' || c.state === 'stopped')) {
+    const since = Number.isFinite(c.minutesSinceLatest)
+      ? `No live crowd row for ${hubAgo(c.minutesSinceLatest)}.`
+      : 'No live crowd row has landed yet.';
+    add({
+      key: 'collector',
+      tone: c.state === 'stopped' ? 'bad' : 'warn',
+      label: 'Crowd collector',
+      value: c.state === 'stopped' ? 'Stopped' : 'Late',
+      note: `${since} It runs every hour, and the model is scored against what it collects.`,
+      card: HUB_CARD.health,
+    });
+  }
+
+  // BestTime's key endpoint. Not connected is the API server without the key,
+  // which changes nothing but the Crowd data card.
+  const b = h.crowdData && h.crowdData.besttime;
+  if (b && b.status === 'error') {
+    add({ key: 'besttime', tone: 'warn', label: 'BestTime', value: 'Not read', note: b.reason || 'BestTime did not answer.', card: HUB_CARD.crowd });
+  } else if (b && b.status === 'ok' && b.key && b.key.healthy === false) {
+    const k = b.key;
+    add({
+      key: 'besttime',
+      tone: 'bad',
+      label: 'BestTime',
+      value: 'Key not working',
+      note: `BestTime says status ${k.status === null || k.status === undefined ? 'none' : k.status}, valid ${String(k.valid)}, active ${String(k.active)}.`,
+      card: HUB_CARD.crowd,
+    });
+  }
+
+  const p = h.pricing || {};
+  if (n(p.mismatches) > 0) {
+    add({ key: 'prices', tone: 'bad', label: 'Price disagreements', value: hubCount(p.mismatches), note: 'A price a store charges and a price the code or a document states do not match, or two places in the code differ. The Prices card says each one in words.', card: HUB_CARD.prices });
+  }
+
+  // Stripe. A key that did not answer, or answered for only some lists, left
+  // disputes and failed renewals unchecked, and the list says so.
+  if (s.status === 'error') {
+    add({ key: 'stripe', tone: 'warn', label: 'Stripe', value: 'Not read', note: `${s.reason || 'Stripe did not answer.'} Disputes, failed renewals and prices were not checked.`, card: HUB_CARD.revenue });
+  }
+  if (s.status === 'ok') {
+    const subs = s.subscriptions && s.subscriptions.status === 'ok' ? s.subscriptions : null;
+    const disputes = s.disputes && s.disputes.status === 'ok' ? s.disputes : null;
+    const unread = [];
+    if (!subs) unread.push('subscriptions');
+    if (!disputes) unread.push('disputes');
+    if (!s.prices || s.prices.status !== 'ok') unread.push('prices');
+    if (unread.length > 0) {
+      add({ key: 'stripe-part', tone: 'warn', label: 'Stripe', value: 'Read in part', note: `Stripe answered, but its ${hubAnd(unread)} could not be read, so ${unread.length === 1 ? 'that was' : 'those were'} not checked.`, card: HUB_CARD.revenue });
+    }
+    const open = disputes ? n(disputes.open) + n(disputes.openOtherCurrency) : 0;
+    if (open > 0) {
+      add({
+        key: 'disputes',
+        tone: 'bad',
+        label: 'Disputes to answer',
+        value: hubCount(open),
+        note: `${hubMoney(n(disputes.openAmountCents))} at stake in dollars${n(disputes.openOtherCurrency) > 0 ? `, and ${hubPlural(disputes.openOtherCurrency, 'more', 'more')} in another currency` : ''}. Each has a deadline in the Stripe dashboard.`,
+        card: HUB_CARD.revenue,
+      });
+    }
+    for (const [key, name] of [['pro', 'Flock Pro'], ['roost', 'Roost']]) {
+      const sum = subs && subs[key];
+      if (!sum) continue;
+      if (n(sum.pastDue) > 0) {
+        add({ key: `past-due-${key}`, tone: 'warn', label: `Past due, ${name}`, value: hubCount(sum.pastDue), note: 'A renewal failed and Stripe is retrying it.', card: HUB_CARD.revenue });
+      }
+      if (n(sum.unpaid) > 0) {
+        add({ key: `unpaid-${key}`, tone: 'bad', label: `Unpaid, ${name}`, value: hubCount(sum.unpaid), note: 'Stripe stopped retrying a failed renewal, so these are not counted as active.', card: HUB_CARD.revenue });
+      }
+    }
+    // A test key while something is on sale: a buyer would pay in test money.
+    const selling = [
+      flags.paywallEnabled && 'the paywall',
+      flags.proWebCheckoutEnabled && 'web checkout',
+      flags.venueBillingEnabled && 'venue billing',
+    ].filter(Boolean);
+    if (s.mode === 'test' && selling.length > 0) {
+      const list = hubAnd(selling);
+      add({
+        key: 'stripe-test',
+        tone: 'bad',
+        label: 'Stripe test key',
+        value: 'Selling',
+        note: `${list.charAt(0).toUpperCase()}${list.slice(1)} ${selling.length === 1 ? 'is' : 'are'} on while the Stripe key is a test key, so anything bought through Stripe is paid in test money.`,
+        card: HUB_CARD.revenue,
+      });
+    }
+  }
+
+  // RevenueCat, and the Pro accounts it finds nothing live for.
+  const rcSubs = rc.subscribers;
+  if (rc.status === 'error' || (rc.status === 'ok' && rcSubs && rcSubs.status !== 'ok')) {
+    const why = rc.status === 'error' ? rc.reason : rcSubs.reason;
+    add({ key: 'revenuecat', tone: 'warn', label: 'RevenueCat', value: 'Not read', note: `${why || 'RevenueCat did not answer.'} Pro accounts with nothing live were not checked.`, card: HUB_CARD.revenue });
+  } else if (rc.status === 'ok' && rcSubs && n(rcSubs.premiumWithNothingLive) > 0) {
+    add({ key: 'pro-nothing-live', tone: 'warn', label: 'Pro accounts with nothing live', value: hubCount(rcSubs.premiumWithNothingLive), note: 'Pro in the database while RevenueCat shows no live subscription for them.', card: HUB_CARD.revenue });
+  }
+
+  // The model loads on the first forecast after a deploy, so a quiet morning
+  // after one reads as not loaded until somebody asks for a forecast.
+  const v = h.model && h.model.version;
+  if (v && v.loaded === false) {
+    add({
+      key: 'model',
+      tone: 'warn',
+      label: 'Crowd model',
+      value: 'Not loaded',
+      note: v.status === 'ok'
+        ? 'No model is loaded in this server process. It loads on the first forecast after a deploy; if it stays like this, every forecast is coming from the rule engine.'
+        : (v.reason || 'The model version could not be read.'),
+      card: HUB_CARD.model,
+    });
+  }
+
+  const oa = h.ownerActions;
+  const todo = oa && Array.isArray(oa.items) ? oa.items.filter((x) => x.checkedBy === 'server' && x.state === 'todo' && !x.optional) : [];
+  if (todo.length > 0) {
+    add({ key: 'steps', tone: 'warn', label: 'Steps only you can take', value: `${hubCount(todo.length)} to do`, note: `${todo.map((x) => x.label).join('; ')}.`, card: HUB_CARD.steps });
+  }
+
+  const costs = h.costs || {};
+  const doubles = Array.isArray(costs.possibleDoubles) ? costs.possibleDoubles : [];
+  if (doubles.length > 0) {
+    add({ key: 'doubles', tone: 'warn', label: 'Bills possibly counted twice', value: hubCount(doubles.length), note: `${doubles.map((d) => `${d.expenseLabel} on the list and ${d.codeLabel} in the code`).join('; ')}.`, card: HUB_CARD.costs });
+  }
+  if (h.expenses && h.expenses.status === 'error') {
+    add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
+  }
+
+  // Worst first; the order each was added in breaks a tie.
+  problems.sort((x, y) => (HUB_SEVERITY[x.tone] ?? 2) - (HUB_SEVERITY[y.tone] ?? 2));
+
+  const today = h.month && h.month.todayYmd;
+  const soon = (Array.isArray(costs.upcoming) ? costs.upcoming : [])
+    .map((u) => ({ ...u, inDays: hubDaysUntil(today, u.on) }))
+    .filter((u) => u.inDays !== null && u.inDays >= 0 && u.inDays <= HUB_SOON_DAYS);
+  return { problems, soon };
+}
+
+// Moves the Overview to a card without touching the address bar, where a hash
+// would ride along on every refresh and every copied link afterwards.
+function hubJump(id) {
+  return (e) => {
+    e.preventDefault();
+    const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
+    if (!el || typeof el.scrollIntoView !== 'function') return;
+    const still = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+  };
+}
+
+function HubAttention({ h, colors }) {
+  const navy = colors.navy;
+  const { problems, soon } = hubAttention(h);
+  const at = hubTime(h.generatedAt);
+  const checked = at ? `Checked at ${at}.` : '';
+  // The quiet morning is one line, and says when it was true.
+  if (problems.length === 0 && soon.length === 0) {
+    return (
+      <div style={hubStyle.card}>
+        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-green-text)', margin: 0 }}>{`Nothing needs you. ${checked}`.trim()}</p>
+      </div>
+    );
+  }
+  const jump = (card) => (
+    <a className="hit44" href={`#${card.id}`} onClick={hubJump(card.id)} style={hubStyle.link}>{card.link}</a>
+  );
+  const when = (d) => (d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`);
+  return (
+    <div style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: problems.length > 0 ? navy : 'var(--accent-green-text)', margin: '0 0 2px' }}>
+        {problems.length > 0 ? hubPlural(problems.length, 'thing needs you', 'things need you') : 'Nothing needs you'}
+      </h3>
+      <p style={hubStyle.sub}>{[checked, problems.length > 0 ? 'Each one is read from a card below and jumps to it.' : ''].filter(Boolean).join(' ')}</p>
+      {problems.map((r) => (
+        <HubRow key={r.key} navy={navy} label={r.label} value={r.value} tone={r.tone} note={r.note}>
+          {jump(r.card)}
+        </HubRow>
+      ))}
+      {soon.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Renewing in the next {HUB_SOON_DAYS} days</p>
+          {soon.map((u) => (
+            <HubRow
+              key={`soon-${u.expenseId}-${u.on}`}
+              navy={navy}
+              label={u.label}
+              value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
+              note={`Renews ${when(u.inDays)}, ${hubDay(u.on)}.${u.estimated ? ' Worked out from the last charge date.' : ''}`}
+            >
+              {jump(HUB_CARD.costs)}
+            </HubRow>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function MoneyHub({ colors }) {
   const [data, setData] = React.useState(hubMemo.data);
   const [loading, setLoading] = React.useState(false);
@@ -1480,8 +1752,12 @@ function MoneyHub({ colors }) {
     );
   }
 
+  // The attention list goes first, above the month. On a phone the month's
+  // card alone is taller than the screen under the console's header and tabs,
+  // so anything below it is already a scroll away.
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <HubAttention h={data} colors={colors} />
       <HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
       <HubOwnerActions h={data} colors={colors} />
       <HubRevenue h={data} colors={colors} />
