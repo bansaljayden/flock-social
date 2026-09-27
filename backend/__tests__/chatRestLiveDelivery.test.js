@@ -517,3 +517,81 @@ test('the stored DM invalidates the relationship cache, as the socket twin does'
   await call('POST', '/api/dm/2', { message_text: 'outside' });
   assert.ok(!relationshipCache.has('1_2'), 'the stale "no" is gone');
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A photo goes out live as its thumbnail
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The history reads ship a photo's thumbnail and null its image_url
+// (`CASE WHEN thumb_url IS NOT NULL THEN NULL ELSE image_url END`). These two
+// routes fanned out the INSERT ... RETURNING * row whole, so every recipient's
+// socket, the sender's other devices and the HTTP answer all carried the full
+// photo. The socket twins are pinned in chatTransportParity.test.js.
+
+const photo = (bytes) => `data:image/jpeg;base64,${'A'.repeat(bytes)}`;
+const FULL = photo(4096);
+const SMALL = photo(512);
+
+// The INSERT hands back what RETURNING * would: the stored image and thumb.
+function scriptFlockPhoto() {
+  scriptFlockSend({ members: [2] });
+  handlers = handlers.filter(([re]) => !re.test('INSERT INTO messages'));
+  on(/INSERT INTO messages/, (p) => ({
+    rows: [{ id: 501, flock_id: p[0], sender_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5], thumb_url: p[6] }],
+    rowCount: 1,
+  }));
+}
+
+function scriptDmPhoto() {
+  scriptDmSend();
+  handlers = handlers.filter(([re]) => !re.test('INSERT INTO direct_messages'));
+  on(/INSERT INTO direct_messages/, (p) => ({
+    rows: [{ id: 901, sender_id: p[0], receiver_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5], thumb_url: p[7] }],
+    rowCount: 1,
+  }));
+}
+
+test('a flock photo sent over REST goes out as its thumbnail on every copy, the answer included', async () => {
+  scriptFlockPhoto();
+  const res = await call('POST', '/api/flocks/7/messages', { message_text: 'look', message_type: 'image', image_url: FULL, thumb_url: SMALL });
+  assert.strictEqual(res.status, 201, res.text);
+  await settle();
+  assert.strictEqual(res.body.message.image_url, null);
+  assert.strictEqual(res.body.message.thumb_url, SMALL);
+  const copies = emits.filter((e) => e.event === 'new_message');
+  assert.deepStrictEqual(copies.map((e) => e.room).sort(), ['user:1', 'user:2']);
+  for (const c of copies) {
+    assert.strictEqual(c.payload.image_url, null, `${c.room} was sent the full photo`);
+    assert.strictEqual(c.payload.thumb_url, SMALL);
+  }
+});
+
+test('a flock photo with no thumbnail keeps its image on the live copies', async () => {
+  scriptFlockPhoto();
+  const res = await call('POST', '/api/flocks/7/messages', { message_type: 'image', image_url: FULL });
+  assert.strictEqual(res.status, 201, res.text);
+  await settle();
+  for (const c of emits.filter((e) => e.event === 'new_message')) assert.strictEqual(c.payload.image_url, FULL);
+});
+
+test('a DM photo sent over REST goes out as its thumbnail on every copy, the answer included', async () => {
+  scriptDmPhoto();
+  const res = await call('POST', '/api/dm/2', { message_text: 'look', message_type: 'image', image_url: FULL, thumb_url: SMALL });
+  assert.strictEqual(res.status, 201, res.text);
+  await settle();
+  assert.strictEqual(res.body.message.image_url, null);
+  const copies = emits.filter((e) => e.event === 'new_dm');
+  assert.deepStrictEqual(copies.map((e) => e.room).sort(), ['user:1', 'user:2']);
+  for (const c of copies) {
+    assert.strictEqual(c.payload.image_url, null, `${c.room} was sent the full photo`);
+    assert.strictEqual(c.payload.thumb_url, SMALL);
+  }
+});
+
+test('a DM photo with no thumbnail keeps its image on the live copies', async () => {
+  scriptDmPhoto();
+  const res = await call('POST', '/api/dm/2', { message_type: 'image', image_url: FULL });
+  assert.strictEqual(res.status, 201, res.text);
+  await settle();
+  for (const c of emits.filter((e) => e.event === 'new_dm')) assert.strictEqual(c.payload.image_url, FULL);
+});

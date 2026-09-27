@@ -38,6 +38,9 @@ const {
   // validates it and echoed only on the sender's copies. See readClientId.
   readClientId,
   ownEcho,
+  // The live copy of a photo is its thumbnail, as in history. Shared with the
+  // socket send paths so the two transports ship the same row.
+  toLiveImageShape,
   CHAT_IMAGE_MAX_BYTES,
   sanitizeStoredImage,
   IMAGE_TOO_LARGE_MESSAGE,
@@ -1018,7 +1021,9 @@ router.post('/flocks/:id/messages',
         ]
       );
 
-      const message = result.rows[0];
+      // The thumbnail, not the photo, on the answer and on every live copy
+      // below (toLiveImageShape in sockets/handlers.js has the reasoning).
+      const message = toLiveImageShape(result.rows[0]);
       message.sender_name = req.user.name;
       message.reactions = [];
 
@@ -2134,7 +2139,9 @@ router.post('/dm/:userId',
           safeThumb]
       );
 
-      const message = result.rows[0];
+      // The thumbnail, not the photo, on the answer and on both live copies
+      // below, as on the flock twin above.
+      const message = toLiveImageShape(result.rows[0]);
       message.sender_name = req.user.name;
       message.reactions = [];
       // The quoted row the recipient's bubble reads, same shape as the socket

@@ -35,8 +35,8 @@ test('a photo the server re-encoded is one bubble, not two', () => {
   // photo stopped matching its own server row, so a send that timed out but
   // actually landed came back as a second bubble reading "Didn't send", the
   // failed copy was rewritten to localStorage on every open, and retry posted a
-  // third. The socket echo was never affected; it carries image_url from
-  // INSERT ... RETURNING.
+  // third. The live echo follows the same rule now (toLiveImageShape, below),
+  // so the thumbnail is what tells it has a photo on every path.
   expect(app).toMatch(/const serverHasImage = !!\(server\.image_url \|\| server\.thumb_url \|\| server\.thumb \|\| null\);/);
   expect(app).toMatch(/&& !!localImage === serverHasImage;/);
   expect(app).not.toMatch(/&& localImage === \(server\.image_url \|\| null\);/);
@@ -56,6 +56,25 @@ test('a photo the server re-encoded is one bubble, not two', () => {
   // including once its row is already on screen (chatEchoOrderAndRetraction
   // runs both). Presence still keeps a line of text from matching a photo.
   expect(app).toMatch(/if \(bubble\.image_url \|\| bubble\.image \|\| bubble\.message_type === 'image'\) \{\s*return bubble\.clientId != null && row\.clientId === bubble\.clientId;\s*\}/);
+});
+
+test('a photo arrives live as its thumbnail, and the sender keeps the photo it drew', () => {
+  // The server nulls image_url on every live copy of a row that has a
+  // thumbnail, the history read's rule, instead of shipping the full photo to
+  // every socket (toLiveImageShape in backend/sockets/handlers.js; the four
+  // send paths are pinned in chatTransportParity and chatRestLiveDelivery).
+  expect(handlers).toMatch(/function toLiveImageShape\(row\) \{\s*if \(row && row\.thumb_url\) row\.image_url = null;/);
+  expect(handlers).toMatch(/const msg = toLiveImageShape\(result\.rows\[0\]\);/);
+  expect(messages).toMatch(/const message = toLiveImageShape\(result\.rows\[0\]\);/);
+  // The DM echo swaps the server row in for the bubble, so without this the
+  // sender's own photo would flick to the smaller copy and a tap would fetch a
+  // photo the phone already holds. The flock echo settles in place and never
+  // replaced the image.
+  const i = app.indexOf('const unsub = onNewDm((msg) => {');
+  const handler = app.slice(i, i + 12000);
+  expect(handler).toMatch(/updated\[tempIdx\] = mapped\.image_url \|\| !updated\[tempIdx\]\.image_url\s*\? mapped\s*: \{ \.\.\.mapped, image_url: updated\[tempIdx\]\.image_url \};/);
+  // A thumbnail alone still reads as a photo in the list preview.
+  expect(app).toMatch(/if \(m\.message_type === 'image' \|\| m\.image_url \|\| m\.image \|\| m\.thumb_url \|\| m\.thumb \|\| m\.hadContent\) return 'Photo';/);
 });
 
 test('the typing indicator is reset when the open thread changes', () => {
