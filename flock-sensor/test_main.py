@@ -3757,6 +3757,16 @@ class PeopleCounterModel(unittest.TestCase):
         frame[36:48, 36:48] = 62.0  # a mug the model mistook
         self.assertEqual(m.points(frame.ravel().tolist()), [])
 
+    def test_the_shipped_model_counts_an_empty_room_as_nobody(self):
+        path = self.HERE / 'models' / 'people.onnx'
+        self.assertTrue(path.exists(), 'models/people.onnx is missing; setup.sh would ship the rule')
+        try:
+            model = main.PeopleModel(path, 0.4)
+        except ImportError:
+            self.skipTest('onnxruntime not installed')
+        room = [21.0 + (i % 160) * 0.004 + ((i * 7919) % 13) * 0.01 for i in range(19200)]
+        self.assertEqual(model.points(room), [])
+
 
 class SmarterMicrophone(unittest.TestCase):
     """What minutes of loudness say, from loudness figures alone."""
