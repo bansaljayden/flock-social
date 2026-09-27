@@ -39,7 +39,7 @@
 //
 // The responses are small HTML pages, not JSON, because a person is looking at
 // them. They flip venue_profiles.notification_prefs.weekly, the same column the
-// dashboard's "Weekly reports" switch writes, so the dashboard shows the truth
+// dashboard's "Monday email" switch writes, so the dashboard shows the truth
 // the next time the owner opens it.
 // ---------------------------------------------------------------------------
 const express = require('express');
@@ -67,7 +67,7 @@ function page(title, body, action = '') {
 function confirmForm(formAction) {
   return `
     <form method="post" action="${escapeHtml(formAction)}" style="margin-top: 24px;">
-      <button type="submit" style="font: inherit; font-size: 15px; background: #1a2b4a; color: #ffffff; border: 0; border-radius: 8px; padding: 12px 20px; cursor: pointer;">Turn off the Monday digest</button>
+      <button type="submit" style="font: inherit; font-size: 15px; background: #1a2b4a; color: #ffffff; border: 0; border-radius: 8px; padding: 12px 20px; cursor: pointer;">Turn off the Monday email</button>
     </form>`;
 }
 
@@ -75,19 +75,22 @@ const tokenValidator = [
   query('token').isString().notEmpty().withMessage('Token is required').isLength({ max: 2048 }),
 ];
 
+// Every page here calls the send "the Monday email", which is also the name of
+// the switch in the venue dashboard. They used to say "the Monday digest" and
+// point at "the Weekly reports switch", two names for one thing on one page.
 const MISSING_TOKEN = [
   'That link is not right',
-  'This unsubscribe link is missing its token. Open the link from the email again, or turn off Weekly reports in your venue dashboard.',
+  'This unsubscribe link is missing its token. Open the link from the email again, or turn off the Monday email in your venue dashboard.',
 ];
 
 const BAD_TOKEN = [
   'That link has expired',
-  'This unsubscribe link is no longer valid. You can still turn off Weekly reports in your venue dashboard, or use the link in a newer digest email.',
+  'This unsubscribe link is no longer valid. You can still turn off the Monday email in your venue dashboard, or use the link in a newer Monday email.',
 ];
 
 const DONE = [
   'You are unsubscribed',
-  'The Monday digest for your venue is off. You can turn it back on any time with the Weekly reports switch in your venue dashboard.',
+  'The Monday email for your venue is off. You can turn it back on any time with the Monday email switch in your venue dashboard.',
 ];
 
 // GET: read and draw. Every branch here is a response and none of them writes.
@@ -105,15 +108,15 @@ router.get('/opt-out', tokenValidator, async (req, res) => {
     }
     const action = `${req.baseUrl}${req.path}?token=${encodeURIComponent(req.query.token)}`;
     return res.status(200).type('html').send(page(
-      'Turn off the Monday digest?',
-      'This stops the weekly email for your venue. Nothing else about your account changes, and your dashboard keeps working the same way.',
+      'Turn off the Monday email?',
+      'This stops the Monday email for your venue. Nothing else about your account changes, and your dashboard keeps working the same way.',
       confirmForm(action)
     ));
   } catch (err) {
     console.error('Digest opt-out page error:', err);
     return res.status(500).type('html').send(page(
       'Something went wrong',
-      'We could not load this link. Try again in a minute, or turn off Weekly reports in your venue dashboard.'
+      'We could not load this link. Try again in a minute, or turn off the Monday email in your venue dashboard.'
     ));
   }
 });
@@ -147,7 +150,7 @@ router.post('/opt-out', tokenValidator, async (req, res) => {
     console.error('Digest opt-out error:', err);
     return res.status(500).type('html').send(page(
       'Something went wrong',
-      'We could not process this link. Try again in a minute, or turn off Weekly reports in your venue dashboard.'
+      'We could not process this link. Try again in a minute, or turn off the Monday email in your venue dashboard.'
     ));
   }
 });

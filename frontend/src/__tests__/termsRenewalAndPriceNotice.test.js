@@ -70,6 +70,9 @@ describe('the price-change line is a condition, not a sender', () => {
   test('the Terms carry the new effective date, and so does the mirror', () => {
     // Moved on again to September 27, when section 12 gained the one plan an
     // account deletion hands on instead of deleting. The mirror moves with it.
+    // September 27: 9.6 renamed "the Monday digest" to "the Monday email", the
+    // name the dashboard's switch uses. A later change to the words moves it
+    // again.
     expect(TERMS).toContain("const EFFECTIVE_DATE = 'September 27, 2026';");
     const terms = MIRROR.slice(MIRROR.indexOf('  terms: ['));
     expect(terms).toContain('["p", "Effective September 27, 2026"],');

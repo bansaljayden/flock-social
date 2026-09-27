@@ -2,6 +2,9 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
+// Moved to September 27 when 9.6 renamed "the Monday digest" to "the Monday
+// email", the name the venue dashboard's switch uses. The words moved, so the
+// date does (DESIGN-STANDARD §Q4).
 const EFFECTIVE_DATE = 'September 27, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
@@ -431,7 +434,7 @@ export default function TermsOfService() {
         <p>
           A venue account, a claimed listing, replies to reviews and the 0 to 100 busyness
           report cost nothing. The paid plan is <strong>Roost</strong>: the forecast for your
-          venue, the Roost cards and answers, the week view and the Monday digest.
+          venue, the Roost cards and answers, the week view and the Monday email.
         </p>
         <ul>
           <li><strong>Who can buy it.</strong> A verified venue, on flockcorp.com. The seller is Flock Social LLC and Stripe processes the payment. We never see or store your card.</li>

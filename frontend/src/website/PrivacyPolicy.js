@@ -560,7 +560,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Operating facts you tell us:</strong> when the kitchen stops, your capacity, how long a table usually turns, your age policy, your reservation policy, the largest walk-in group you take, your typical spend per person, what you believe your busy nights are, and what sits near you that pulls a crowd. Google's opening hours describe your door, not your pass, so this is the only place these facts exist. We use them to answer your own questions and to give groups useful answers about your venue. They are not features in the crowd model.</li>
                 <li><strong>Occupancy readings you post:</strong> the 0 to 100 slider. Every reading is stored with your account, your venue, and the time. It is shown to users as coming from your venue, never as Flock's own estimate. The wording that carries it is ours, built from your venue's category rather than from anything you typed, and it expires by itself 90 minutes after you set it. You can retract one. Retracted and expired readings are not deleted, because a labelled observation of a venue-hour is exactly what the crowd model learns from, which is the other half of why this feature exists.</li>
                 <li><strong>What you post to your listing:</strong> promotions, events, and replies to reviews. Public, and screened by the same moderation rules as anything else.</li>
-                <li><strong>Records about your account:</strong> your tier, any comped tier we granted, whether the weekly digest is switched on, and the digest sends we have made.</li>
+                <li><strong>Records about your account:</strong> your tier, any comped tier we granted, whether the Monday email is switched on, and the Monday emails we have sent.</li>
               </ul>
 
               <h3>What we do with what you submit</h3>
@@ -634,7 +634,7 @@ export default function PrivacyPolicy() {
 
               <h3>They receive something about you</h3>
               <ul>
-                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert (with your location when it has one), the waitlist confirmation, the Monday venue digest. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
+                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert (with your location when it has one), the waitlist confirmation, the Monday venue email. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> deliver push notifications. They receive the device token and the notification.</li>
                 <li><strong>Google Cloud Vision</strong> screens every image you upload against our content rules before anyone can see it. The image is sent for that check and for nothing else. If the check cannot run, the upload is refused rather than let through.</li>
                 <li><strong>Google Gemini</strong> powers Birdie and Roost. <a href="#ai">Birdie and Roost</a> says exactly what each of them sends.</li>
@@ -782,13 +782,13 @@ export default function PrivacyPolicy() {
               </p>
               <p>
                 Everything else is optional and every message carries an unsubscribe link that
-                works without signing in. The waitlist confirmation and the Monday venue digest
+                works without signing in. The waitlist confirmation and the Monday venue email
                 both do, and the two links work differently because the lists are different.
                 Unsubscribing from the waitlist writes your address to a do-not-mail list.
-                Turning off the Monday digest switches off a setting on your venue account
+                Turning off the Monday email switches off a setting on your venue account
                 instead, so it stops that one email and writes nothing about your address. The
-                digest is off by default and only sends if a venue owner switches weekly
-                reports on. An address that hard-bounces or is reported as spam is added to the
+                Monday email is off by default and only sends if a venue owner switches it
+                on. An address that hard-bounces or is reported as spam is added to the
                 do-not-mail list automatically.
               </p>
               <p>
@@ -831,7 +831,7 @@ export default function PrivacyPolicy() {
                 <li><strong>A phone matching code,</strong> only while you have "Let friends find me by my phone number" switched on. It is a one-way keyed code of your number, it cannot be turned back into the number, and it is deleted the moment you switch discovery off or delete your account.</li>
                 <li><strong>Plan statistics:</strong> when a flock ends we keep one row per plan describing how it went: group size, whether a budget was used, the group's ceiling, how many people submitted, whether it was confirmed, how long that took, and where it stalled. It carries no names, no messages, and no individual budget amounts, and once the plan is deleted it is not linked to anyone. We keep these to understand where planning breaks down.</li>
                 <li><strong>Venue occupancy readings by owners:</strong> kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted.</li>
-                <li><strong>Venue digest send records:</strong> 90 days, then deleted.</li>
+                <li><strong>Monday venue email send records:</strong> 90 days, then deleted.</li>
                 <li><strong>Crash reports you send:</strong> 90 days, then deleted. A report is not linked to any account, so deleting your account does not change this.</li>
                 <li><strong>Cached venue photos from Google:</strong> 30 days, then re-fetched.</li>
                 <li><strong>Sensor readings:</strong> kept as venue history. They contain no identifiers. See section 3.</li>
@@ -894,7 +894,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Live location sharing:</strong> stop at any time from within the flock or the conversation you started it in.</li>
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>
                 <li><strong>Photos and contacts:</strong> both are asked for at the moment you use them, and both can be withdrawn in your device settings. Phone numbers you matched were never stored. Turning off "Let friends find me by my phone number" erases the code we matched you against.</li>
-                <li><strong>Email:</strong> we don't send marketing email. Optional email, which today means the waitlist confirmation and the Monday venue digest, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
+                <li><strong>Email:</strong> we don't send marketing email. Optional email, which today means the waitlist confirmation and the Monday venue email, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
                 <li><strong>Blocking and reporting:</strong> you can block anyone and report any message, profile, review or guest from inside the app. Our <a href="/guidelines">Community Guidelines</a> say where every one of those controls is.</li>
                 <li><strong>Complaints:</strong> if you think we have handled your information badly, tell us first at {mail}. If you are in the EEA or the UK you can also complain to your national data protection authority.</li>
               </ul>

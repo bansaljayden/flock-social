@@ -165,3 +165,62 @@ describe('a save does not forget what the server worked out', () => {
     expect((DASH.match(/setVenueProfile\(\(prev\) => mergeSavedProfile\(prev, saved\)\)/g) || []).length).toBe(2);
   });
 });
+
+describe('the Monday email has one name, and the This Week card another', () => {
+  // The switch said "Weekly reports", the email footer "weekly reports are
+  // turned on", the unsubscribe page "Turn off the Monday digest?" and then
+  // "the Weekly reports switch", the Terms "the Monday digest" and the Privacy
+  // Policy "weekly digest". Beside it the plan list sold "The weekly summary",
+  // which is the This Week card on the Analytics tab and not the email at all,
+  // so an owner turning off weekly reports could not tell which one they had
+  // turned off. Every surface that names either now uses one name for each.
+  const strip = (s) => s
+    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const SURFACES = [
+    ['VenueDashboard.js', strip(DASH)],
+    ['TermsOfService.js', strip(read('frontend', 'src', 'website', 'TermsOfService.js'))],
+    ['PrivacyPolicy.js', strip(read('frontend', 'src', 'website', 'PrivacyPolicy.js'))],
+    ['marketing-page.js', strip(read('frontend', 'api', 'marketing-page.js'))],
+    ['venueDigest.js', strip(read('backend', 'routes', 'venueDigest.js'))],
+    ['venueDigestEmail.js', strip(read('backend', 'templates', 'venueDigestEmail.js'))],
+    ['roostNoticeEmail.js', strip(read('backend', 'templates', 'roostNoticeEmail.js'))],
+    ['venueDashboard.js (route)', strip(read('backend', 'routes', 'venueDashboard.js'))],
+  ];
+  const OLD_NAMES = [
+    /weekly reports?/i,
+    /Monday (venue )?digest/i,
+    /weekly digest/i,
+    /digest (email|sends)/i,
+    /venue digest send/i,
+    /weekly summary/i,
+  ];
+
+  test('no surface uses an old name for either', () => {
+    const hits = [];
+    for (const [name, text] of SURFACES) {
+      for (const re of OLD_NAMES) {
+        const m = text.replace(/\s+/g, ' ').match(re);
+        if (m) hits.push(`${name}: "${m[0]}"`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+
+  test('the switch, its toast and the plan list say the new names', () => {
+    expect(DASH).toContain('Monday email</h3>');
+    expect(DASH).toContain('aria-label="Monday email"');
+    expect(DASH).toContain("showToast(weekly ? 'Monday email on. The first one comes Monday morning.' : 'Monday email off.');");
+    expect(DASH).toContain("'This Week: what your venue did over the last 7 days',");
+    expect(DASH).toContain('>This Week</h3>');
+  });
+
+  test('the Terms and the Privacy Policy name the email the way the switch does', () => {
+    const terms = strip(read('frontend', 'src', 'website', 'TermsOfService.js')).replace(/\s+/g, ' ');
+    const privacy = strip(read('frontend', 'src', 'website', 'PrivacyPolicy.js')).replace(/\s+/g, ' ');
+    expect(terms).toContain('the week view and the Monday email.');
+    expect(privacy).toContain('Turning off the Monday email switches off a setting on your venue account');
+    expect(privacy).toContain('The Monday email is off by default and only sends if a venue owner switches it on.');
+  });
+});

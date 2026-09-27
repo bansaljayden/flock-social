@@ -280,6 +280,15 @@ test('pro digest renders all four cards, one anomaly block, recap before heads-u
   // The opt-out link is in both variants.
   assert.ok(text.includes(RENDER_INPUT_PRO.optOutUrl));
   assert.ok(html.includes('Stop these emails'));
+
+  // The footer names the switch by the name the dashboard gives it. It said
+  // "weekly reports" while the switch, the unsubscribe page and the legal
+  // pages used three other names for the same send.
+  for (const body of [text, html]) {
+    assert.ok(body.includes('because the Monday email is turned on for'), 'the footer names the Monday email');
+    assert.ok(!/weekly reports|digest/i.test(body.replace(/https?:\/\/\S+/g, '')),
+      'no second name for this email in the email itself');
+  }
 });
 
 test('a stored premium gets the whole Roost digest, not a cut-down one', () => {
@@ -807,7 +816,7 @@ test('the emailed GET only renders: a valid token draws a confirm form and write
     for (const res of [first, second]) {
       assert.strictEqual(res.status, 200);
       assert.ok(/<form[^>]+method="post"/i.test(res.body), 'the GET must offer the write, not perform it');
-      assert.ok(res.body.includes('Turn off the Monday digest'));
+      assert.ok(res.body.includes('Turn off the Monday email'));
       assert.ok(!res.body.includes('You are unsubscribed'));
     }
     assert.deepStrictEqual(prefUpdates, [], 'a GET on the unsubscribe link must not write');
@@ -830,6 +839,11 @@ test('POST is the unsubscribe, and a second POST is a success rather than an err
     const first = await srv.post(linkFor(7));
     assert.strictEqual(first.status, 200);
     assert.ok(first.body.includes('You are unsubscribed'));
+    // One name, the switch's own: this page said "The Monday digest ... is
+    // off" and then pointed at "the Weekly reports switch".
+    assert.ok(first.body.includes('The Monday email for your venue is off.'));
+    assert.ok(first.body.includes('with the Monday email switch in your venue dashboard'));
+    assert.ok(!/Weekly reports|digest/i.test(first.body), 'no second name on the page');
     assert.strictEqual(prefUpdates.length, 1);
     assert.ok(/"weekly": false/.test(prefUpdates[0].sql));
     assert.deepStrictEqual(prefUpdates[0].params, [7]);
