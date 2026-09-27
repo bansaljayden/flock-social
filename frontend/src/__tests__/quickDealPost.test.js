@@ -22,7 +22,7 @@
 
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { PromoModal } from '../App';
+import { PromoModal, promoEditDescription } from '../App';
 
 const fs = require('fs');
 const path = require('path');
@@ -100,5 +100,57 @@ describe('a deal with no description can still be edited', () => {
     fireEvent.change(screen.getByLabelText('Deal title'), { target: { value: '   ' } });
     fireEvent.change(screen.getByLabelText('Deal description'), { target: { value: 'Something' } });
     expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+  });
+});
+
+// A deal the card posted before the fix carries its title again as the
+// description. The lists hide that copy, but a retitle that kept it would turn
+// it into a stale second line both lists show again. So the form opens those
+// with the box empty, the dashboard sends that empty box, and PUT /promotions
+// clears on an empty description instead of keeping the old one
+// (backend/__tests__/promotionDescriptionEdit.test.js).
+describe('editing a deal the card posted twice drops the copy', () => {
+  const colors = { creamDark: '#e5e0d8', navy: '#0d2847', navyBg: '#0d2847' };
+
+  test('the form opens the copied description as empty, and a real one as it is', () => {
+    expect(promoEditDescription({ title: '2-for-1 drinks', description: '2-for-1 drinks' })).toBe('');
+    expect(promoEditDescription({ title: '2-for-1 drinks', description: 'Wells and drafts only' })).toBe('Wells and drafts only');
+    expect(promoEditDescription({ title: '2-for-1 drinks', description: null })).toBe('');
+    expect(promoEditDescription({ title: '2-for-1 drinks', desc: '2-for-1 drinks' })).toBe('');
+    expect(promoEditDescription(null)).toBe('');
+  });
+
+  test('retitling one saves an empty description, so the old sentence cannot come back', async () => {
+    const onSave = jest.fn(() => Promise.resolve());
+    render(
+      <PromoModal
+        editing={{ id: 9, title: '2-for-1 drinks until 8pm', description: '2-for-1 drinks until 8pm', time_slot: 'Happy Hour', days: 'Daily' }}
+        onSave={onSave}
+        onCancel={() => {}}
+        colors={colors}
+      />
+    );
+    expect(screen.getByLabelText('Deal description')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Deal title'), { target: { value: '2-for-1 drinks until 9pm' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save Changes' })); });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ title: '2-for-1 drinks until 9pm', desc: '' });
+  });
+
+  test('a deal with its own description opens with it', () => {
+    render(
+      <PromoModal
+        editing={{ id: 10, title: 'Half-price wings', description: 'Tuesdays at the bar', time_slot: 'Happy Hour', days: 'Daily' }}
+        onSave={jest.fn()}
+        onCancel={() => {}}
+        colors={colors}
+      />
+    );
+    expect(screen.getByLabelText('Deal description')).toHaveValue('Tuesdays at the bar');
+  });
+
+  test('the dashboard sends the box as it is, so an empty one reaches the server as empty', () => {
+    const save = DASH.slice(DASH.indexOf('<PromoModal'), DASH.indexOf('{showEventModal && ('));
+    expect(save).toMatch(/updateVenuePromotion\(editingPromo\.id, \{ title: form\.title, description: form\.desc, /);
   });
 });
