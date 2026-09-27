@@ -458,7 +458,11 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
       if (err?.status === 403) {
         // The server said which plan serves these; repeat it rather than
         // guessing. Dormant while VENUE_BILLING_ENABLED is unset.
-        setLockedReason(err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`);
+        // The App Store build names no plan (lib/purchasesBuild.js),
+        // including the server's own wording.
+        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'
+          ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)
+          : 'Not turned on for your venue.');
         setState('locked');
       } else {
         setState('error');

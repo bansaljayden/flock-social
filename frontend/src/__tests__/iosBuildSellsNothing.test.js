@@ -329,6 +329,15 @@ describe('the venue dashboard', () => {
     expect(openers).toBe(4);
   });
 
+  test('a plan refusal on the cards or a typed question names no plan when off', () => {
+    const cards = read('components', 'VenueInsightCards.js');
+    expect(cards).toContain("setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'\n          ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)\n          : 'Not turned on for your venue.');");
+    const chat = read('components', 'VenueAdvisorChat.js');
+    expect(chat).toContain("const said = planRefusal && process.env.REACT_APP_PURCHASES === 'off'\n        ? 'This is not turned on for your venue.'");
+    expect(chat).toContain("err?.data?.code === 'UPGRADE_REQUIRED'");
+    expect(readRepo('backend', 'services', 'venueEntitlements.js')).toContain("code: 'UPGRADE_REQUIRED',");
+  });
+
   test('the fallback venue price is gone when off', () => {
     const app = read('App.js');
     expect(app).toContain(`${ON} && VENUE_PLAN_PRICE[tier] ? \`$\${VENUE_PLAN_PRICE[tier]}/\${per}\` : null;`);
