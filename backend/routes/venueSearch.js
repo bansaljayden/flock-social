@@ -697,7 +697,11 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // Cost 1: only the metadata leg is believed to be metered. The second leg
     // pulls bytes from Google's CDN with the returned photoUri. If an invoice
     // ever shows that leg billed too, this is a 2 (see utils/upstream.js).
-    if (!allowGlobalPlacesCall(1)) {
+    // `photo: true` marks the unit as this door's in the same in-memory window
+    // as the rest of the ledger, which is what lets the admin cost panel split
+    // photos from Text Search and Place Details without mixing a whole-day
+    // durable count into a since-the-last-deploy one.
+    if (!allowGlobalPlacesCall(1, { photo: true })) {
       // A shared UTC-day ceiling, not this address's doing, so the sentence
       // does not describe the caller as having done anything.
       const ms = globalPlacesRetryAfter(1).ms || msUntilUtcMidnight();

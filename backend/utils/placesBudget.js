@@ -210,6 +210,16 @@ let dayCount = 0;
 // instead of it: an unauthenticated call still counts against the invoice
 // ceiling like any other, this only says how much of that ceiling it may reach.
 let unauthDayCount = 0;
+// The photo proxy's slice of dayCount, for the admin cost panel and nothing
+// else. Never a gate. It exists because the panel splits this ledger into
+// photos and "Text Search and Place Details" by subtraction, and the only
+// photo count it had was the durable one (places_photo_spend), which covers
+// the whole UTC day while dayCount covers only the life of this process. After
+// a deploy those are different windows: 250 photos bought before it, 120 other
+// calls and 30 photos after it, and the panel subtracted 280 from 150 and
+// priced the 120 real calls at zero. This counter lives, rolls and resets
+// exactly as dayCount does, so the two can be subtracted.
+let photoDayCount = 0;
 
 function utcDay() {
   return new Date().toISOString().slice(0, 10);
@@ -244,6 +254,7 @@ function rollDay() {
     dayKey = today;
     dayCount = 0;
     unauthDayCount = 0;
+    photoDayCount = 0;
   }
 }
 
@@ -323,9 +334,12 @@ function allowPlacesSearch(userId, cost = 1) {
  * a caller believing it may proceed.
  *
  * @param {number} [cost=1] how many PAID Google calls this request makes
+ * @param {{photo?: boolean}} [opts] `photo: true` from the photo proxy only,
+ *   so the cost panel can tell its units apart from the rest (photoDayCount).
+ *   Changes nothing about whether the call is allowed.
  * @returns {boolean} true when the caller may proceed
  */
-function allowGlobalPlacesCall(cost = 1) {
+function allowGlobalPlacesCall(cost = 1, { photo = false } = {}) {
   assertCost(cost);
   const units = cost;
   rollDay();
@@ -337,6 +351,7 @@ function allowGlobalPlacesCall(cost = 1) {
   if (unauthDayCount + units > UNAUTH_DAILY) return false;
   dayCount += units;
   unauthDayCount += units;
+  if (photo === true) photoDayCount += units;
   return true;
 }
 
@@ -427,6 +442,8 @@ function placesBudgetStatus(userId) {
     // numbers on purpose, and the gap between them is the reserve.
     unauthUsed: unauthDayCount,
     unauthRemaining: Math.max(0, UNAUTH_DAILY - unauthDayCount),
+    // The photo proxy's share of globalUsed, same window. For the cost panel.
+    photoUsed: photoDayCount,
     userRemaining: id === null ? 0 : Math.max(0, PER_USER_HOURLY - hits.length),
     trackedUsers: userHits.size,
     limits: { perUserHourly: PER_USER_HOURLY, globalDaily: GLOBAL_DAILY, unauthDaily: UNAUTH_DAILY },
@@ -444,6 +461,7 @@ function __resetPlacesBudget({ keepUsers = false } = {}) {
   dayKey = utcDay();
   dayCount = 0;
   unauthDayCount = 0;
+  photoDayCount = 0;
 }
 
 // A READ-ONLY LOOK AT WHETHER A CHARGE WOULD BE ALLOWED, for a route that
