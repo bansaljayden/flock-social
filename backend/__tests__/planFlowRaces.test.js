@@ -30,7 +30,8 @@
 //   6. A PLAN CREATED FOR A PAST TIME COUNTS AS HAPPENING WHEN IT WAS MADE,
 //      so the reliability tally cannot be farmed one past slot per create.
 //   7. A NEW VENUE REPLACES THE OLD ONE WHOLE: no coordinate, photo, rating
-//      or place id of the old venue survives a PUT that names another.
+//      or place id of the old venue survives a PUT that names another, or
+//      the socket's select_venue.
 //   8. THE SHARED LINK FOLLOWS THE PLAN TO ITS NEW TIME, and a reschedule
 //      never revives a link that was revoked or had already lapsed.
 //   9. A GUEST ANSWER RETIRED ON A JOIN IS NOT A TAKEDOWN: its name stays
@@ -772,6 +773,80 @@ test('the same name at a different place id is a different venue', async () => {
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   const v = await venueOf(flockId);
   assert.deepStrictEqual([v.venue_id, v.venue_latitude, v.venue_photo_url], ['ChIJkome000002', null, null]);
+});
+
+// The socket's confirm, select_venue, is the second writer of the same row.
+// It carries a name, an address and a place id and nothing else, and it wrote
+// those three over a row that kept the old venue's coordinates, rating and
+// photo. Run through the real handler, with a stand-in socket and server that
+// record what they are asked to send.
+function socketAs(user) {
+  const handlers = new Map();
+  const io = {
+    emitted: [],
+    sockets: { sockets: new Map(), adapter: { rooms: new Map() } },
+    to(room) {
+      return {
+        except() { return this; },
+        emit(event, payload) { io.emitted.push({ room, event, payload }); },
+      };
+    },
+  };
+  const socket = {
+    id: `plan-flow-${user.id}`,
+    user: { id: user.id, name: user.name },
+    rooms: new Set(),
+    handshake: null,
+    on(event, fn) { handlers.set(event, fn); },
+    join(room) { socket.rooms.add(room); },
+    leave(room) { socket.rooms.delete(room); },
+    emit(event, payload) { io.emitted.push({ room: 'self', event, payload }); },
+    disconnect() {},
+  };
+  require('../sockets/handlers').registerHandlers(io, socket);
+  return { io, fire: (event, payload) => handlers.get(event)(payload) };
+}
+
+test('the socket confirm of a different venue leaves nothing of the old one, and tells the room so', async () => {
+  const host = await mkUser('Host TwentySix');
+  const flockId = await atKome(host);
+  const { io, fire } = socketAs(host);
+
+  await fire('select_venue', { flockId, venue_name: "Joe's Bar", venue_id: 'ChIJjoes00001' });
+  assert.deepStrictEqual(await venueOf(flockId), {
+    venue_name: "Joe's Bar", venue_address: null, venue_id: 'ChIJjoes00001',
+    venue_latitude: null, venue_longitude: null, venue_rating: null, venue_photo_url: null,
+  }, 'no address, coordinate, rating or photo of Kome survives');
+  assert.strictEqual(await statusOf(flockId), 'confirmed');
+
+  const selected = io.emitted.find((e) => e.event === 'venue_selected');
+  assert.ok(selected, JSON.stringify(io.emitted));
+  assert.deepStrictEqual(
+    [selected.payload.venue_latitude, selected.payload.venue_longitude, selected.payload.venue_photo_url],
+    [null, null, null],
+    'every open app is told the old pin is gone'
+  );
+});
+
+test('the socket confirm of the venue the plan is already at keeps what the plan has', async () => {
+  const host = await mkUser('Host TwentySeven');
+  const flockId = await atKome(host);
+  const { io, fire } = socketAs(host);
+
+  // By name alone, the way a client that holds no place id sends it.
+  await fire('select_venue', { flockId, venue_name: 'Kome' });
+  assert.deepStrictEqual(await venueOf(flockId), {
+    venue_name: 'Kome', venue_address: '1 Kome St', venue_id: 'ChIJkome000001',
+    venue_latitude: 40.7, venue_longitude: -74.0, venue_rating: 4.5, venue_photo_url: KOME_PHOTO,
+  });
+  const selected = io.emitted.find((e) => e.event === 'venue_selected');
+  assert.strictEqual(selected.payload.venue_id, 'ChIJkome000001', 'the room hears the place id the row kept');
+  assert.strictEqual(selected.payload.venue_latitude, 40.7);
+
+  // The same name at a different place id is a different venue here too.
+  await fire('select_venue', { flockId, venue_name: 'Kome', venue_id: 'ChIJkome000002' });
+  const moved = await venueOf(flockId);
+  assert.deepStrictEqual([moved.venue_id, moved.venue_latitude, moved.venue_photo_url], ['ChIJkome000002', null, null]);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

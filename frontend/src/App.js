@@ -11223,6 +11223,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for venue confirmed (flock status → confirmed)
   useEffect(() => {
     const unsub = onVenueSelected((data) => {
+      // The server sends the venue block as the row holds it (sockets/
+      // handlers.js select_venue), so a move to another venue carries the
+      // old one's coordinates, rating and photo as cleared. A server from
+      // before that sends none of those keys, and what this app holds stays.
+      const sent = (key) => Object.prototype.hasOwnProperty.call(data, key);
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
         return {
@@ -11230,6 +11235,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venue: data.venue_name,
           venueAddress: data.venue_address || null,
           venueId: data.venue_id || null,
+          venueLat: sent('venue_latitude') ? (data.venue_latitude ?? null) : f.venueLat,
+          venueLng: sent('venue_longitude') ? (data.venue_longitude ?? null) : f.venueLng,
+          venueRating: sent('venue_rating') ? (data.venue_rating ?? null) : f.venueRating,
+          venuePhoto: sent('venue_photo_url') ? resolveVenuePhoto(data.venue_photo_url) : f.venuePhoto,
           status: 'confirmed',
         };
       }));
@@ -11384,18 +11393,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           showToast(`${name} is set for ${formatEventTime(data.event_time)}.`);
         }
       }
+      // THE VENUE BLOCK IS TAKEN AS SENT. The PUT sends the row's whole
+      // venue block on every update, and a move to a venue the body gave no
+      // coordinates, photo, rating or place id for sends those as null, on
+      // purpose (routes/flocks.js, A NEW VENUE IS ONE BLOCK). Read with `||`,
+      // each null fell back to what this app already held, so every other
+      // member kept Kome's pin, photo, rating and place id under the name
+      // Joe's Bar, and Directions, ETAs and "near" all went to Kome until a
+      // full reload. A key that is present is the row's value, null included;
+      // only a key the event does not carry at all (the sweep sends a bare
+      // { flockId, status }) leaves what this app holds.
+      const sent = (key) => Object.prototype.hasOwnProperty.call(data, key);
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
         return {
           ...f,
           name: data.name || f.name,
           venue: data.venue_name || f.venue,
-          venueAddress: data.venue_address || f.venueAddress,
-          venueId: data.venue_id || f.venueId,
-          venueLat: data.venue_latitude || f.venueLat,
-          venueLng: data.venue_longitude || f.venueLng,
-          venueRating: data.venue_rating || f.venueRating,
-          venuePhoto: resolveVenuePhoto(data.venue_photo_url) || f.venuePhoto,
+          venueAddress: sent('venue_address') ? (data.venue_address || null) : f.venueAddress,
+          venueId: sent('venue_id') ? (data.venue_id || null) : f.venueId,
+          venueLat: sent('venue_latitude') ? (data.venue_latitude ?? null) : f.venueLat,
+          venueLng: sent('venue_longitude') ? (data.venue_longitude ?? null) : f.venueLng,
+          venueRating: sent('venue_rating') ? (data.venue_rating ?? null) : f.venueRating,
+          venuePhoto: sent('venue_photo_url') ? resolveVenuePhoto(data.venue_photo_url) : f.venuePhoto,
           time: data.event_time ? formatEventTime(data.event_time) : f.time,
           eventTime: data.event_time || f.eventTime || null,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),

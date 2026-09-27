@@ -3572,10 +3572,36 @@ function registerHandlers(io, socket) {
         return;
       }
 
+      // A NEW VENUE IS ONE BLOCK, the rule PUT /api/flocks/:id follows. This
+      // event carries a name, an address and a place id and nothing else, and
+      // it wrote those three over a row that kept the old venue's
+      // coordinates, rating and photo: a plan called Joe's Bar with Kome's
+      // map pin, weather and distances. So a DIFFERENT venue (by place id when
+      // both sides have one, by name otherwise, decided on the row) clears
+      // what this cannot send, and the same venue confirmed again keeps what
+      // the plan already has and only fills in what this adds. Every SET reads
+      // the row as it was before this statement, so the comparison is against
+      // the old venue whichever column it sits beside. Each parameter is cast
+      // the same way wherever it appears (42P08; sqlParameterTypes prepares
+      // this).
       const updated = await pool.query(
         `UPDATE flocks
-         SET venue_name = $1, venue_address = $2, venue_id = $3, status = 'confirmed', updated_at = NOW()
-         WHERE id = $4 AND status NOT IN ('completed', 'cancelled')`,
+         SET venue_name = $1::text,
+             venue_address = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                                  THEN $2::text ELSE COALESCE($2::text, venue_address) END,
+             venue_id = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                             THEN $3::text ELSE COALESCE($3::text, venue_id) END,
+             venue_latitude = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                                   THEN NULL ELSE venue_latitude END,
+             venue_longitude = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                                    THEN NULL ELSE venue_longitude END,
+             venue_rating = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                                 THEN NULL ELSE venue_rating END,
+             venue_photo_url = CASE WHEN CASE WHEN $3::text IS NOT NULL AND venue_id IS NOT NULL THEN $3::text <> venue_id ELSE $1::text IS DISTINCT FROM venue_name END
+                                    THEN NULL ELSE venue_photo_url END,
+             status = 'confirmed', updated_at = NOW()
+         WHERE id = $4 AND status NOT IN ('completed', 'cancelled')
+         RETURNING venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url`,
         [venue_name, venue_address, venue_id, flockId]
       );
       if (updated.rowCount === 0) {
@@ -3601,11 +3627,22 @@ function registerHandlers(io, socket) {
       } catch (_) {
         return;
       }
+      // The venue block as the row now holds it, so every open app points at
+      // the venue the plan is at: a move carries the cleared coordinates, and
+      // a re-confirm carries the address and place id the row kept rather
+      // than the blanks this event may have sent. What the event sent stands
+      // in only for a reply that carries no row.
+      const stored = updated.rows[0] || {};
+      const storedOr = (key, sent) => (Object.prototype.hasOwnProperty.call(stored, key) ? stored[key] : sent);
       broadcastExcluding(io.to(`flock:${flockId}`), selectInvisible, 'venue_selected', {
         flockId,
         venue_name,
-        venue_address,
-        venue_id,
+        venue_address: storedOr('venue_address', venue_address),
+        venue_id: storedOr('venue_id', venue_id),
+        venue_latitude: storedOr('venue_latitude', null),
+        venue_longitude: storedOr('venue_longitude', null),
+        venue_rating: storedOr('venue_rating', null),
+        venue_photo_url: storedOr('venue_photo_url', null),
         selected_by: { userId: user.id, name: user.name },
       });
 
