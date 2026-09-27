@@ -662,6 +662,102 @@ describe('the flock_updated listener, lifted out of App.js and executed', () => 
     const cards = s.setPendingFlockInvites.mock.calls[0][0]([{ id: 1, status: 'voting' }, { id: 2, status: 'voting' }]);
     expect(cards.map((c) => c.id)).toEqual([2]);
   });
+
+  // What this app holds for a plan at Kome, and what the PUT fans out when
+  // the host moves it to a venue the body carried no detail for: the row's
+  // whole venue block, the cleared parts as null (routes/flocks.js, A NEW
+  // VENUE IS ONE BLOCK).
+  const AT_KOME = {
+    ...LIVE, venue: 'Kome', venueAddress: '1 Kome St', venueId: 'ChIJkome000001',
+    venueLat: 40.7, venueLng: -74.0, venueRating: '4.5', venuePhoto: 'https://api.test/api/venues/photo?ref=kome',
+  };
+  const movedTo = (over = {}) => ({
+    flockId: 1, name: 'Friday', status: 'confirmed', event_time: LIVE.eventTime, updatedBy: 'Jay',
+    venue_name: "Joe's Bar", venue_address: '', venue_id: 'ChIJjoes00001',
+    venue_latitude: null, venue_longitude: null, venue_rating: null, venue_photo_url: null,
+    reconfirm_reset: false,
+    ...over,
+  });
+  const photoAsSent = { resolveVenuePhoto: (u) => (u ? `https://api.test${u}` : null) };
+
+  test('a move to another venue leaves no coordinate, photo, rating or place id of the old one', () => {
+    // Read with `||`, every null fell back to Kome's, so every other member
+    // had a plan called Joe's Bar with Kome's pin, photo and Directions.
+    const s = runListener(movedTo(), [AT_KOME], photoAsSent);
+    const [after] = s.setFlocks.mock.calls[0][0]([AT_KOME]);
+    expect(after).toMatchObject({
+      venue: "Joe's Bar", venueAddress: null, venueId: 'ChIJjoes00001',
+      venueLat: null, venueLng: null, venueRating: null, venuePhoto: null,
+    });
+  });
+
+  test('a move with no place id does not keep the old one', () => {
+    const s = runListener(movedTo({ venue_id: null, venue_latitude: 40.8, venue_longitude: -73.9 }), [AT_KOME], photoAsSent);
+    const [after] = s.setFlocks.mock.calls[0][0]([AT_KOME]);
+    expect([after.venueId, after.venueLat, after.venueLng]).toEqual([null, 40.8, -73.9]);
+  });
+
+  test('the row\'s own detail is taken as sent, and a coordinate of 0 is a coordinate', () => {
+    const s = runListener(movedTo({
+      venue_name: 'Kome', venue_address: '1 Kome St', venue_id: 'ChIJkome000001',
+      venue_latitude: 0, venue_longitude: -74.0, venue_rating: '4.8', venue_photo_url: '/api/venues/photo?ref=kome',
+    }), [AT_KOME], photoAsSent);
+    const [after] = s.setFlocks.mock.calls[0][0]([AT_KOME]);
+    expect(after).toMatchObject({
+      venue: 'Kome', venueAddress: '1 Kome St', venueId: 'ChIJkome000001',
+      venueLat: 0, venueLng: -74.0, venueRating: '4.8', venuePhoto: 'https://api.test/api/venues/photo?ref=kome',
+    });
+  });
+
+  test('an event that carries no venue block leaves the one this app holds', () => {
+    // flockSweep sends { flockId, status } and nothing else.
+    const s = runListener({ flockId: 1, status: 'completed' }, [AT_KOME], photoAsSent);
+    const [after] = s.setFlocks.mock.calls[0][0]([AT_KOME]);
+    expect(after).toMatchObject({
+      venue: 'Kome', venueAddress: '1 Kome St', venueId: 'ChIJkome000001',
+      venueLat: 40.7, venueLng: -74.0, venueRating: '4.5', venuePhoto: AT_KOME.venuePhoto, status: 'completed',
+    });
+  });
+});
+
+// The socket's confirm (select_venue) is the other writer of the venue block,
+// and its event now carries the block as the row holds it.
+const SELECTED_BODY = lift(
+  'const unsub = onVenueSelected((data) => {',
+  '\n    });\n    return unsub;\n  }, [showToast]);'
+);
+
+describe('the venue_selected listener, lifted out of App.js and executed', () => {
+  function runSelected(data, flocks) {
+    const setFlocks = jest.fn();
+    const showToast = jest.fn();
+    // eslint-disable-next-line no-new-func
+    new Function('setFlocks', 'showToast', 'resolveVenuePhoto', 'data', SELECTED_BODY)(
+      setFlocks, showToast, (u) => (u ? `https://api.test${u}` : null), data
+    );
+    return setFlocks.mock.calls[0][0](flocks);
+  }
+  const KOME = { id: 1, venue: 'Kome', venueLat: 40.7, venueLng: -74.0, venueRating: '4.5', venuePhoto: 'kome.jpg' };
+  const by = { userId: 9, name: 'Jay' };
+
+  test('the lift found the real listener', () => {
+    expect(SELECTED_BODY).toContain('setFlocks(prev => prev.map(');
+    expect(SELECTED_BODY).toContain("status: 'confirmed'");
+    expect(SELECTED_BODY.length).toBeGreaterThan(400);
+  });
+
+  test('a move clears what the row cleared', () => {
+    const [after] = runSelected({
+      flockId: 1, venue_name: "Joe's Bar", venue_address: null, venue_id: 'ChIJjoes00001',
+      venue_latitude: null, venue_longitude: null, venue_rating: null, venue_photo_url: null, selected_by: by,
+    }, [KOME]);
+    expect(after).toMatchObject({ venue: "Joe's Bar", venueId: 'ChIJjoes00001', venueLat: null, venueLng: null, venueRating: null, venuePhoto: null });
+  });
+
+  test('an event from a server that sends no block keeps what this app holds', () => {
+    const [after] = runSelected({ flockId: 1, venue_name: 'Kome', venue_address: null, venue_id: null, selected_by: by }, [KOME]);
+    expect(after).toMatchObject({ venueLat: 40.7, venueLng: -74.0, venueRating: '4.5', venuePhoto: 'kome.jpg' });
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
