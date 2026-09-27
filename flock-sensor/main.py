@@ -1417,33 +1417,38 @@ _THERMAL_WINDOW = 15
 THERMAL_EVERY = 0.1 if THERMAL_VIEW_ON else 2.0
 _thermal_window = deque(maxlen=_THERMAL_WINDOW)
 
-def _import_onnxruntime_quietly():
-    """Import onnxruntime without its start-up noise.
+class _QuietStderr:
+    """Point file descriptor 2 at /dev/null for a moment, then put it back.
 
-    Debian's build of onnxruntime registers the ONNX operator schemas twice,
-    and the library prints a "Schema error: Trying to register schema ..."
-    line for every one of several hundred operators, straight to file
-    descriptor 2 from C++, the moment it is imported. The model works; the
-    only harm is a screen of false alarms in the self test and the journal
-    at every start. Python's own sys.stderr cannot catch output written
-    below it, so descriptor 2 itself points at /dev/null for the import and
-    is put back afterwards, whatever happens.
+    Debian's build of onnxruntime registers the ONNX operator schemas twice
+    and prints a "Schema error: Trying to register schema ..." line for each
+    of several hundred operators, straight to descriptor 2 from C++. It does
+    it when the library is imported and again when the first model is
+    opened; hiding only the import left a full screen of false alarms in the
+    self test on a real unit. Python's sys.stderr cannot catch output written
+    below it, so the descriptor itself is swapped, and always restored.
     """
-    try:
-        saved = os.dup(2)
-    except OSError:
-        import onnxruntime
-        return onnxruntime
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
+
+    def __enter__(self):
         try:
-            os.dup2(devnull, 2)
-            import onnxruntime
-        finally:
-            os.dup2(saved, 2)
-            os.close(devnull)
-    finally:
-        os.close(saved)
+            self.saved = os.dup(2)
+            self.devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(self.devnull, 2)
+        except OSError:
+            self.saved = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.saved is not None:
+            os.dup2(self.saved, 2)
+            os.close(self.saved)
+            os.close(self.devnull)
+        return False
+
+
+def _import_onnxruntime_quietly():
+    with _QuietStderr():
+        import onnxruntime
     return onnxruntime
 
 
@@ -1476,8 +1481,9 @@ class PeopleModel:
         opts.intra_op_num_threads = 2 if THERMAL_VIEW_ON else 1
         opts.inter_op_num_threads = 1
         self.np = np
-        self.session = ort.InferenceSession(str(path), opts,
-                                            providers=['CPUExecutionProvider'])
+        with _QuietStderr():
+            self.session = ort.InferenceSession(str(path), opts,
+                                                providers=['CPUExecutionProvider'])
         self.input = self.session.get_inputs()[0].name
         self.threshold = threshold
 
@@ -1494,6 +1500,15 @@ class PeopleModel:
     # What owl-2 names, in its output order. owl-1 knows only the first.
     CLASSES = ('person', 'hand', 'pet', 'hot drink', 'food', 'laptop', 'screen',
                'heater', 'lamp', 'warm seat')
+    # How sure the model must be before it names each kind, as a multiple of
+    # the person threshold. Tried in a real room, the same bar for everything
+    # named a pet in a room with none: the rarer kinds are learned from fewer
+    # examples and have to clear a higher one. People keep THERMAL_MODEL_THRESHOLD.
+    NAME_BAR = {'hand': 1.25, 'pet': 1.75, 'hot drink': 1.25, 'food': 1.5, 'laptop': 1.4,
+                'screen': 1.4, 'heater': 1.4, 'lamp': 1.4, 'warm seat': 1.6}
+    # Things a person is easily mistaken for. Where one of these is surer
+    # than the person at the same spot, it is that thing and nobody is there.
+    PERSON_LOOKALIKES = ('screen', 'laptop', 'heater', 'lamp', 'warm seat')
 
     def read(self, frame):
         """Everything the model finds in one frame.
@@ -1514,12 +1529,24 @@ class PeopleModel:
         _, h, w = heat.shape
         local = np.max([padded[:, dy:dy + h, dx:dx + w]
                         for dy in range(3) for dx in range(3)], axis=0)
-        ks, ys, xs = np.nonzero((heat >= self.threshold) & (heat >= local))
+        bars = np.array([self.threshold] + [
+            min(0.95, self.threshold * self.NAME_BAR.get(name, 1.0))
+            for name in self.CLASSES[1:heat.shape[0]]], dtype=np.float32)[:, None, None]
+        ks, ys, xs = np.nonzero((heat >= bars) & (heat >= local))
         t = np.asarray(frame, dtype=np.float32).reshape(THERMAL_ROWS, THERMAL_COLS)
         ambient = float(np.median(t))
         people, things = [], []
         for k, y, x in zip(ks.tolist(), ys.tolist(), xs.tolist()):
             fx, fy = (x + 0.5) * self.STRIDE, (y + 0.5) * self.STRIDE
+            if k == 0 and heat.shape[0] > 1:
+                # A person the model is less sure of than a screen or a heater
+                # in the same place is that screen or heater.
+                y0, y1, x0, x1 = max(0, y - 1), y + 2, max(0, x - 1), x + 2
+                rival = max(float(heat[self.CLASSES.index(name), y0:y1, x0:x1].max())
+                            for name in self.PERSON_LOOKALIKES
+                            if self.CLASSES.index(name) < heat.shape[0])
+                if rival > float(heat[0, y, x]):
+                    continue
             if k == 0:
                 # Physical bounds, as a backstop to what the model learned: a
                 # person is warmer than the room around them, and a patch
