@@ -751,7 +751,16 @@ export default function PrivacyPolicy() {
                 Sentry is wired into both the app and the server and it is <strong>not
                 switched on</strong>. With no connection string configured, the code never
                 starts it and the software is not even downloaded to your device, so no crash
-                report is being sent anywhere today.
+                report is being sent to Sentry today.
+              </p>
+              <p>
+                When part of the app stops working, the error screen has a <strong>Send this
+                to Flock</strong> button, and nothing is sent unless you press it. A report
+                holds the kind of error, its message with invite and reset tokens,
+                coordinates and email addresses removed, the names of the parts of the app it
+                happened in, the app version, and whether it was the phone app or the
+                website. It carries no account, name, email address or device identifier, and
+                we delete it after 90 days.
               </p>
               <p>
                 If we turn it on, this is what it will do. Sentry will receive unhandled errors

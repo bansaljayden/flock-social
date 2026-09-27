@@ -974,6 +974,11 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     RFC 8058 one-click POST does carry a fixed `List-Unsubscribe=One-Click`
 //     form body, which the urlencoded parser below buffers under the same
 //     64KB ceiling and the router never looks at.
+//   * routes/clientCrash.js — POST /api/client-crash, the crash screen's
+//     report: a label, an error name, a message the client clamps to 200
+//     characters, eight component names and a build tag. Well under 1KB, and
+//     the router refuses anything past its own 4KB ceiling with a 413, so the
+//     default parser is never the binding limit.
 //
 // SCOPED LARGER, each for a reason it can state:
 //   * the three IMAGE_BODY_ROUTES below, unchanged and still derived from
@@ -1596,6 +1601,19 @@ const digestOptOutLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many requests, please try again later' },
 });
 
+// The crash screen's "Send this to Flock" button (routes/clientCrash.js). No
+// login, on purpose: a report carries no account, and a crash can happen
+// before sign-in. So the address is the only key there is. A person sends one
+// report per crash; ten an hour is room for a bad afternoon and nothing like
+// room for a script. The route caps the table and the email on its own.
+const clientCrashLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'That is a lot of crash reports from here in one hour. Try again later.' },
+});
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -1648,6 +1666,10 @@ app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest'
 //     default one.
 app.use('/api/unsubscribe', digestOptOutLimiter, require('./routes/unsubscribe'));
 app.use('/api/email-events', require('./routes/emailWebhook'));
+// The crash screen's report button. No JWT for the same reason as the two
+// above it: a crash can come before sign-in, and a report carries no account,
+// so below the catch-alls it would be answered 401 (routes/clientCrash.js).
+app.use('/api/client-crash', clientCrashLimiter, require('./routes/clientCrash'));
 // /api/users must also precede the two /api catch-alls. Those routers call
 // `router.use(authenticate)`, which runs for EVERY request under /api — so a
 // banned user's DELETE /api/users/me was rejected 403 there before it could
@@ -2371,6 +2393,8 @@ let modelWarmKickoff = null;
 let costHeartbeatInterval = null;
 let costHeartbeatKickoff = null;
 let dbWatchInterval = null;
+let crashReportPruneInterval = null;
+let crashReportPruneKickoff = null;
 
 async function boot() {
   try {
@@ -2529,6 +2553,15 @@ async function boot() {
   // 115s: between the roost notice kickoff's 110s and the money watch's 120s,
   // same stagger reason.
   refreshPruneKickoff = setTimeout(refreshPrune, 115 * 1000);
+  // Crash reports sent from the crash screen are kept 90 days, which the
+  // privacy policy says in so many words, so the delete runs on a timer of
+  // its own rather than waiting for the next report to arrive
+  // (routes/clientCrash.js). Hourly for the same reason as the two above.
+  const { pruneCrashReports } = require('./routes/clientCrash');
+  const crashPrune = () => pruneCrashReports().catch((e) => console.error('[client-crash] prune failed:', e.message));
+  crashReportPruneInterval = setInterval(crashPrune, 60 * 60 * 1000);
+  // 117s, two seconds after the refresh credential prune, same stagger reason.
+  crashReportPruneKickoff = setTimeout(crashPrune, 117 * 1000);
 
   // Finish plans whose night is over. Until this existed, NOTHING in the
   // product moved a flock through time: a confirmed plan stayed confirmed
@@ -2636,6 +2669,8 @@ function shutdown(signal) {
   if (storyPurgeKickoff) clearTimeout(storyPurgeKickoff);
   if (refreshPruneInterval) clearInterval(refreshPruneInterval);
   if (refreshPruneKickoff) clearTimeout(refreshPruneKickoff);
+  if (crashReportPruneInterval) clearInterval(crashReportPruneInterval);
+  if (crashReportPruneKickoff) clearTimeout(crashReportPruneKickoff);
   if (flockSweepInterval) clearInterval(flockSweepInterval);
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
   if (reconfirmSweepInterval) clearInterval(reconfirmSweepInterval);

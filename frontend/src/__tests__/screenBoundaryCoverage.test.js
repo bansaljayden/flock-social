@@ -640,7 +640,9 @@ describe('ErrorBoundary gained a reset key and nothing else', () => {
       BOUNDARY.indexOf('reload() {')
     );
     expect(body).toMatch(/if \(!this\.state\.error\) return;/);
-    expect(body).toMatch(/return;\n\s*this\.setState\(\{ error: null, eventId: null \}\)/);
+    // componentStack rides along since the crash report button, and is
+    // dropped with the error it describes.
+    expect(body).toMatch(/return;\n\s*this\.setState\(\{ error: null, eventId: null, componentStack: null \}\)/);
   });
 
   test('a late Sentry id cannot be filed under the wrong crash', () => {

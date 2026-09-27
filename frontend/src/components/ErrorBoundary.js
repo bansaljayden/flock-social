@@ -6,6 +6,9 @@ import { BirdieStill, BIRDIE, WARM_BIRD } from './ui/BirdieBird';
 // would fail for exactly the person left staring at the screen with
 // nothing to do. It is a few KB of pure canvas with no dependencies.
 import FloppyBird from './ui/FloppyBird';
+// Static for the same reason as the game: a button lazy-loaded from a second
+// chunk could fail to download on the very screen that needs it.
+import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './CrashReportButton';
 
 /**
  * The app's crash net.
@@ -46,12 +49,16 @@ import FloppyBird from './ui/FloppyBird';
  *                      error state. Compared with Object.is: pass a string or
  *                      a number, never a fresh object.
  *   fallback  fn|node  optional override. As a function it receives
- *                      { error, eventId, reload, reset }.
+ *                      { error, eventId, reload, reset, componentStack,
+ *                      label }, the last two for <CrashReportButton>.
  */
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { error: null, eventId: null };
+    // componentStack is kept for the "Send this to Flock" button: it is the
+    // only place the names of the components that crashed are available, and
+    // it arrives in componentDidCatch, after getDerivedStateFromError.
+    this.state = { error: null, eventId: null, componentStack: null };
     this._mounted = false;
     this.reload = this.reload.bind(this);
     this.reset = this.reset.bind(this);
@@ -82,7 +89,7 @@ class ErrorBoundary extends React.Component {
   componentDidUpdate(prevProps) {
     if (!this.state.error) return;
     if (Object.is(prevProps.resetKey, this.props.resetKey)) return;
-    this.setState({ error: null, eventId: null });
+    this.setState({ error: null, eventId: null, componentStack: null });
   }
 
   componentDidCatch(error, info) {
@@ -90,6 +97,10 @@ class ErrorBoundary extends React.Component {
     // Console first and unconditionally. Sentry is best-effort; a crash must
     // always leave a trace someone can read off a device log.
     console.error(`[ErrorBoundary:${label}]`, error, info && info.componentStack);
+    // Kept only while it still describes the error on screen.
+    if (this.state.error === error) {
+      this.setState({ componentStack: (info && info.componentStack) || null });
+    }
 
     if (!process.env.REACT_APP_SENTRY_DSN) return; // silent when unconfigured
     import('@sentry/react')
@@ -115,13 +126,14 @@ class ErrorBoundary extends React.Component {
   }
 
   reset() {
-    this.setState({ error: null, eventId: null });
+    this.setState({ error: null, eventId: null, componentStack: null });
     if (typeof this.props.onReset === 'function') this.props.onReset();
   }
 
   render() {
-    const { error, eventId } = this.state;
+    const { error, eventId, componentStack } = this.state;
     if (!error) return this.props.children;
+    const label = this.props.label || 'root';
 
     // Development: hand the error straight back to React. Swallowing it here
     // would replace CRA's error overlay (real stack, real source, live
@@ -131,7 +143,7 @@ class ErrorBoundary extends React.Component {
     if (process.env.NODE_ENV === 'development') throw error;
 
     if (typeof this.props.fallback === 'function') {
-      return this.props.fallback({ error, eventId, reload: this.reload, reset: this.reset });
+      return this.props.fallback({ error, eventId, reload: this.reload, reset: this.reset, componentStack, label });
     }
     if (this.props.fallback) return this.props.fallback;
 
@@ -193,7 +205,19 @@ class ErrorBoundary extends React.Component {
                 {this.props.resetLabel || 'Go back'}
               </button>
             )}
+            {/* Not for a download that died: that is the network, not a bug,
+                and there is nothing in it for us to fix. */}
+            {worthReporting(error) && (
+              <CrashReportButton
+                error={error}
+                componentStack={componentStack}
+                label={label}
+                className="glass-btn glass-secondary"
+                style={styles.button}
+              />
+            )}
           </div>
+          {worthReporting(error) && <p style={styles.detail}>{CRASH_REPORT_NOTE}</p>}
 
           <p style={styles.detail}>
             {error && error.message ? error.message : 'Unknown error'}
