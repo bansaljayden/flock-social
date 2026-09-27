@@ -87,9 +87,11 @@ const makeResume = ({ identityToken, fullName, authorizationCode }) => {
       data = await appleLogin(identityToken, fullName, authorizationCode, dob,
         ...(dobGranularity ? [{ dobGranularity }] : []));
     } catch (err) {
-      // Offline, or the connection failed before an answer: the server never
-      // saw the credentials, so they are still good until the deadline above.
-      if (err?.isNetworkError && !err?.isTimeout) used = false;
+      // Kept only when the request provably never reached Flock: offline, which
+      // api.js refuses before sending, or a captive portal answering in Flock's
+      // place. Any other connection failure may have landed after the server
+      // accepted them (a lost 200), and a retry would only spend a 401.
+      if (err?.isOffline || err?.isCaptivePortal) used = false;
       throw err;
     }
     // Accepted, so the same rule as a first-tap success: forget the name.

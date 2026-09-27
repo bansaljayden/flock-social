@@ -232,16 +232,17 @@ describe('when the held credentials cannot be used', () => {
     expect(api.appleLogin.mock.calls[1][3]).toBe('2019-12-31');
   });
 
-  it('a request that never reached the server keeps Continue, and the retry sends the same credentials', async () => {
+  it('a request refused while offline keeps Continue, and the retry sends the same credentials', async () => {
     const utils = open();
     await firstTap(utils);
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    // api.js throws this before sending anything, so the server never saw them.
     api.appleLogin.mockRejectedValueOnce(Object.assign(
-      new Error("Couldn't reach Flock. Give it a second and try again."), { isNetworkError: true },
+      new Error("You're offline. This will work again once you're back on signal."), { isNetworkError: true, isOffline: true },
     ));
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent)
-      .toBe("Couldn't reach Flock. Give it a second and try again."));
+      .toBe("You're offline. This will work again once you're back on signal."));
     expect(continueButton(utils)).not.toBeNull();
 
     api.appleLogin.mockResolvedValueOnce({ user: { id: 43 } });
@@ -250,6 +251,24 @@ describe('when the held credentials cannot be used', () => {
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
     expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-1');
     expect(api.appleLogin.mock.calls[2][2]).toBe('apple-code-1');
+  });
+
+  it('a connection that died after sending drops the credentials and asks for a fresh Apple sheet', async () => {
+    // A lost 200 looks exactly like this, and a retry of spent credentials
+    // would only earn the replay guard's 401.
+    const utils = open();
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    api.appleLogin.mockRejectedValueOnce(Object.assign(
+      new Error('Your signal dropped mid-reply. That may have gone through, so check before trying it again.'),
+      { isNetworkError: true, isBadReply: true },
+    ));
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent)
+      .toMatch(/Tap Continue with Apple to try again\. Your year is still filled in\./));
+    expect(continueButton(utils)).toBeNull();
+    expect(appleButton(utils)).not.toBeNull();
+    expect(api.appleLogin).toHaveBeenCalledTimes(2);
   });
 });
 
