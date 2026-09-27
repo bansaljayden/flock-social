@@ -626,22 +626,30 @@ router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async
 // ORDER IS ASCENDING NOW. `DESC` put the furthest-away plan first, which is
 // backwards for a feed whose whole job is "what is about to hit me".
 //
-// KNOWN AND DELIBERATELY NOT CHANGED HERE: `'active'` is not a value
-// `flocks.status` can hold. The CHECK constraint (database/schema.sql) allows
-// planning / confirmed / completed / cancelled, so this predicate resolves to
-// "confirmed, or NULL" and every flock still in the voting stage — which is
-// exactly when a venue is being considered — is filtered out. That is a
-// separate product decision about who may see an unconfirmed group's plans, not
-// a window bug, and it is not made in this change.
+// WHICH FLOCKS ARE COMING HERE, AND WHICH ARE ONLY CONSIDERING IT. This feed
+// used to be every flock with a venue_votes row naming this place, and votes
+// are not where a plan is going. Nothing clears a vote when the host locks the
+// plan in somewhere else, so a group that split two votes to four between two
+// bars showed up on the losing bar's card as "Party of 6, Confirmed", and that
+// bar staffed for a party walking into its rival. The other way round, a plan
+// made straight from a venue's card carries flocks.venue_id and no vote at
+// all, so the one venue it was certainly going to never saw it. And a vote
+// left behind by someone who has since left the plan, or been banned, still
+// counted here after the tally itself (routes/venues.js collectVoteRows) had
+// stopped counting it. So:
+//   * a CONFIRMED plan is on this card only when flocks.venue_id is this
+//     place, whatever its members voted;
+//   * a plan still PLANNING is on it when this place is its current pick, or
+//     when a member who is still in the plan and not banned has it in their
+//     vote, the same membership the tally reads.
+// The status is still what the card shows: 'confirmed' now always means
+// "confirmed here".
 const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
 const INCOMING_AHEAD_HOURS = 168; // = 7 days
 
-// GET /api/venue-dashboard/incoming-flocks — flocks with this venue in their
-// vote. One member's vote is enough to list a flock, whether or not the group
-// then chose this venue, so nothing that renders this feed may say a group
-// "chose" or "picked" the venue: the dashboard and the public pages call it
-// the flocks with you in their vote. Free on every plan, inside the 12-hour /
-// 7-day window above; only verification gates it (below).
+// GET /api/venue-dashboard/incoming-flocks — flocks coming to this venue, or
+// still deciding with it in the running (the rule above). Free on every plan,
+// inside the 12-hour / 7-day window above; only verification gates it (below).
 router.get('/incoming-flocks', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);
@@ -652,8 +660,9 @@ router.get('/incoming-flocks', async (req, res) => {
     // run against the same row was a duplicate read, not a second opinion.
     if (!venue.verified) return res.json({ flocks: [], unverified: true });
 
-    // Find flocks where venue_votes reference this venue's place_id (venue_id
-    // column), inside the window argued above. The intervals are SQL literals
+    // Find flocks going to this venue's place id (flocks.venue_id), or still
+    // planning with it in a present member's vote (venue_votes.venue_id),
+    // inside the window argued above. The intervals are SQL literals
     // rather than bound parameters on purpose: the only bound value here is the
     // server-derived place id, and the object-authz suite pins that fact.
     // f.name IS NOT SELECTED, and that is the whole of this change.
@@ -689,12 +698,18 @@ router.get('/incoming-flocks', async (req, res) => {
     // COUNT rather than from anything a user typed. Nothing user-authored
     // crosses this boundary any more.
     const { rows } = await pool.query(
-      `SELECT DISTINCT f.id, f.event_time, f.status,
+      `SELECT f.id, f.event_time, f.status,
               (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
        FROM flocks f
-       JOIN venue_votes vv ON vv.flock_id = f.id
-       WHERE vv.venue_id = $1
-         AND (f.status IS NULL OR f.status IN ('planning', 'confirmed'))
+       WHERE (
+               (f.venue_id = $1 AND (f.status IS NULL OR f.status IN ('planning', 'confirmed')))
+               OR ((f.status IS NULL OR f.status = 'planning') AND EXISTS (
+                 SELECT 1 FROM venue_votes vv
+                   JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
+                   JOIN flock_members vm ON vm.flock_id = vv.flock_id AND vm.user_id = vv.user_id
+                     AND vm.status = 'accepted'
+                  WHERE vv.flock_id = f.id AND vv.venue_id = $1))
+             )
          AND f.event_time IS NOT NULL
          AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
          AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'

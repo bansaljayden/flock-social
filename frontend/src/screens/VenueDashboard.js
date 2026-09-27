@@ -1173,21 +1173,15 @@ export default function VenueDashboard({
                   tab and its empty state were "Groups Eyeing You", "Incoming
                   Flocks" and "No incoming flocks yet": three names for
                   GET /incoming-flocks, and the last two promised arrivals. The
-                  route lists a flock when one member voted for this venue, so
-                  every surface now says "in their vote" and nothing more. */}
+                  route lists a plan going here, or still deciding with this venue
+                  as its pick or in a member's vote, so every surface says "in their
+                  vote" and nothing more. */}
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In Their Vote</p>
               {/* A read that never landed is not zero. The other three tiles on
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
                   timed out, and 0 here is the number a venue would act on. */}
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}</p>
-              {/* The window GET /incoming-flocks keeps: plans up to 7 days
-                  ahead, plus any whose time passed less than 12 hours ago
-                  (INCOMING_PAST_HOURS), which is a party that may be inside
-                  right now. "Next 7 days" left that party out. "This week"
-                  would collide with the This Week card just below, which
-                  counts the last 7 days and so shows a different number for
-                  the same kind of vote. */}
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -1859,8 +1853,13 @@ export default function VenueDashboard({
                             4", so the member label repeated it. */}
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{incomingWhen(flock.event_time) || memberCountLabel(flock)}</p>
                       </div>
+                      {/* The feed sends a confirmed plan only to the venue it
+                          is locked in at (routes/venueDashboard.js), so
+                          'confirmed' here means coming here. Anything else is
+                          a plan still deciding with this venue in the running,
+                          which "Active" did not say. */}
                       <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                        {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
+                        {flock.status === 'confirmed' ? 'Confirmed' : 'Considering you'}
                       </span>
                     </div>
                   </div>

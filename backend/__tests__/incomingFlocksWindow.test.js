@@ -116,6 +116,8 @@ function windowFrom(sql) {
   };
 }
 
+const FEED_SQL = /FROM flocks f WHERE/;
+
 function dispatch(rawSql, params = []) {
   const sql = String(rawSql).replace(/\s+/g, ' ').trim();
   log.push({ sql, params });
@@ -132,9 +134,12 @@ function dispatch(rawSql, params = []) {
     return { rows: UNATTRIBUTED_ROWS };
   }
 
-  // The feed.
-  if (/FROM flocks f JOIN venue_votes vv/.test(sql)) {
-    const m = sql.match(/vv\.venue_id = \$(\d+)/);
+  // The feed. Each row here is a plan whose own venue_id is the place it is
+  // going to; which votes keep a plan still deciding on the card is a
+  // question of joins, so it is answered on the real schema in
+  // venueCurrentOwner.test.js (section 9), not by this fake.
+  if (FEED_SQL.test(sql)) {
+    const m = sql.match(/f\.venue_id = \$(\d+)/);
     const placeIdx = m ? Number(m[1]) - 1 : null;
     const w = windowFrom(sql);
     const rows = FLOCKS
@@ -203,7 +208,7 @@ async function get(path_) {
   return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
-const feedQuery = () => log.find((q) => /FROM flocks f JOIN venue_votes vv/.test(q.sql));
+const feedQuery = () => log.find((q) => FEED_SQL.test(q.sql));
 const countQuery = () => log.find((q) => /FROM venue_votes vv JOIN flocks f/.test(q.sql));
 
 // ── 1. The window ──────────────────────────────────────────────────────────
@@ -303,7 +308,7 @@ test('the group\'s own name for their night never reaches the venue', async () =
   assert.strictEqual(r.status, 200);
   assert.ok(r.body.flocks.length > 0, 'there is something in the window to check');
 
-  const sql = log.find((q) => /FROM flocks f JOIN venue_votes vv/.test(q.sql)).sql;
+  const sql = feedQuery().sql;
   assert.doesNotMatch(sql, /f\.name/, 'the column is not selected at all, so it cannot be forwarded by accident');
 
   const typed = ['Here now', 'Thursday crew', 'Next weekend', 'Birthday Dinner', 'Someday'];

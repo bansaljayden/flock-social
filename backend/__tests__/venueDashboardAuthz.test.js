@@ -201,8 +201,8 @@ function dispatch(rawSql, params = []) {
   }
 
   // Incoming flocks
-  if (/FROM flocks f JOIN venue_votes vv/.test(sql)) {
-    const v = pidx(sql, /vv\.venue_id = \$(\d+)/);
+  if (/FROM flocks f WHERE/.test(sql)) {
+    const v = pidx(sql, /f\.venue_id = \$(\d+)/);
     const rows = FLOCK_ROWS
       .filter((f) => v === null || f.venue_id === params[v])
       .map(({ id, title, event_time, status, member_count }) => ({ id, title, event_time, status, member_count }));
@@ -501,7 +501,7 @@ test('incoming-flocks is keyed to the caller\'s own place, query string ignored'
   const res = await call('GET', '/api/venue-dashboard/incoming-flocks?placeId=PLACE_B&venueId=PLACE_B&google_place_id=PLACE_B');
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body.flocks.map((f) => f.id), [31], "another venue's incoming flocks were served");
-  const q = ran(/FROM flocks f JOIN venue_votes vv/)[0];
+  const q = ran(/FROM flocks f WHERE/)[0];
   assert.deepStrictEqual(q.params, ['PLACE_A'], 'the flocks query was not bound to the server-side place id');
 });
 

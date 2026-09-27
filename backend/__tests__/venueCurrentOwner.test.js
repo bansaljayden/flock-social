@@ -33,6 +33,10 @@
 // listing the admin checked. An owner who re-pointed the claim at another
 // business after asking used to be verified as that business.
 //
+// And one about whose plans an owner reads: 9. the incoming feed shows a
+// confirmed plan only to the venue it is going to, and a plan still deciding
+// only through the votes of members who are still in it.
+//
 // These are properties of SQL (which rows a join keeps), so a scripted fake
 // cannot prove them: it answers whatever it was told to. The routes and
 // services run here unmodified against the real schema.
@@ -733,4 +737,86 @@ test('a verify decided on one listing never makes the claimant owner of another'
   } finally {
     emailService.sendEmail = realSend;
   }
+});
+
+// ── 9. the incoming feed follows where the plan is going ────────────────────
+//
+// GET /incoming-flocks used to be every flock with a vote naming the place.
+// Votes survive the host locking the plan in somewhere else, a plan made from
+// a venue's card carries flocks.venue_id and no vote, and a departed or banned
+// member's vote stayed on the feed after the tally dropped it. Which rows the
+// join keeps is the whole question, so it runs on the real schema.
+
+test('the incoming feed shows a confirmed plan only to the venue it is going to', async () => {
+  const PLACE_A = 'ChIJincomingFeedBarA01';
+  const PLACE_B = 'ChIJincomingFeedBarB01';
+  const PLACE_C = 'ChIJincomingFeedBarC01';
+  const ownerA = await user('Owner A');
+  const ownerB = await user('Owner B');
+  const ownerC = await user('Owner C');
+  await claim(ownerA, PLACE_A, { verified: true, name: 'Bar A' });
+  await claim(ownerB, PLACE_B, { verified: true, name: 'Bar B' });
+  await claim(ownerC, PLACE_C, { verified: true, name: 'Bar C' });
+  const people = [];
+  for (let i = 1; i <= 8; i += 1) people.push(await user(`Member ${i}`, { banned: i === 8 }));
+
+  // Tomorrow, as the naive UTC wall clock flocks.event_time holds.
+  async function plan(name, { venueId = null, status }) {
+    const { rows } = await testPool.query(
+      `INSERT INTO flocks (name, creator_id, venue_id, status, event_time)
+       VALUES ($1, $2, $3, $4, (NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day') RETURNING id`,
+      [name, people[0], venueId, status]
+    );
+    return rows[0].id;
+  }
+  async function member(flockId, userId) {
+    await testPool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')", [flockId, userId]);
+  }
+  async function vote(flockId, userId, placeId, venueName) {
+    await testPool.query('INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4)', [flockId, userId, venueName, placeId]);
+  }
+
+  // Six people vote two for A and four for B, and the host locks it in at B.
+  const split = await plan('Split vote', { venueId: PLACE_B, status: 'confirmed' });
+  for (const p of people.slice(0, 6)) await member(split, p);
+  for (const p of people.slice(0, 2)) await vote(split, p, PLACE_A, 'Bar A');
+  for (const p of people.slice(2, 6)) await vote(split, p, PLACE_B, 'Bar B');
+
+  // Made straight from C's card and locked in. Nobody ever voted.
+  const madeAtC = await plan('Made at C', { venueId: PLACE_C, status: 'confirmed' });
+  for (const p of people.slice(0, 3)) await member(madeAtC, p);
+
+  // Still planning, with A in the vote of a member who is still in the plan.
+  const weighingA = await plan('Weighing A', { status: 'planning' });
+  for (const p of people.slice(0, 2)) await member(weighingA, p);
+  await vote(weighingA, people[1], PLACE_A, 'Bar A');
+
+  // Still planning, and the only votes for A are from someone who left and
+  // from someone since banned.
+  const staleVotes = await plan('Stale votes', { status: 'planning' });
+  await member(staleVotes, people[0]);
+  await member(staleVotes, people[7]);
+  await vote(staleVotes, people[6], PLACE_A, 'Bar A');
+  await vote(staleVotes, people[7], PLACE_A, 'Bar A');
+
+  const feed = async (owner) => {
+    const res = await call('GET', '/api/venue-dashboard/incoming-flocks', { as: owner });
+    assert.strictEqual(res.status, 200, res.text);
+    return res.body.flocks;
+  };
+
+  const a = await feed(ownerA);
+  assert.ok(!a.some((f) => f.id === split), "the bar that lost the vote was shown the winner's confirmed party");
+  assert.ok(!a.some((f) => f.id === staleVotes), 'votes from a member who left, and from a banned one, kept a plan on the feed');
+  assert.deepStrictEqual(a.map((f) => [f.id, f.status]), [[weighingA, 'planning']]);
+
+  const b = await feed(ownerB);
+  const atB = b.find((f) => f.id === split);
+  assert.ok(atB, 'the venue the plan was locked in at does not see it');
+  assert.strictEqual(atB.status, 'confirmed');
+  assert.strictEqual(atB.title, 'Party of 6');
+
+  const c = await feed(ownerC);
+  assert.deepStrictEqual(c.map((f) => [f.id, f.status]), [[madeAtC, 'confirmed']],
+    'a plan made at the venue with no vote never reached its feed');
 });

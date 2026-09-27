@@ -326,6 +326,16 @@ describe('the settings tab, venue-owner audit 2026-09-05', () => {
     expect(APP).not.toMatch(/flock\.time \?/);
   });
 
+  it('labels an incoming group by where its plan stands', () => {
+    // The feed sends a confirmed plan only to the venue it is locked in at, so
+    // the other badge is a plan still deciding with this venue in the running.
+    expect(APP).toContain("{flock.status === 'confirmed' ? 'Confirmed' : 'Considering you'}");
+    expect(APP).not.toContain("{flock.status === 'confirmed' ? 'Confirmed' : 'Active'}");
+    // The tile under it counts the same feed, named by its window
+    // (landingPageClaims pins that wording).
+    expect(APP).toContain('flocks, now and the week ahead');
+  });
+
   it('carries the one notification switch whose send exists, wired to notification_prefs.weekly', () => {
     // The Monday email reads notification_prefs.weekly; PUT /api/venue-profile
     // is its only writer; the unsubscribe page and the email footer name the
