@@ -26,11 +26,14 @@
 // nobody writes and silently registering nobody for notifications.
 //
 // getToken rather than isLoggedIn: the watcher below needs the token's VALUE,
-// not a boolean. It compares the current token with the last one it handled to
-// tell "already registered this session" from "a different account is signed in
-// now", and an account switch that happens in another tab never passes through
-// a logged-out state for a boolean to notice.
+// not a boolean. It compares the sign-in the current token belongs to with the
+// last one it handled to tell "already registered this session" from "a
+// different account is signed in now", and an account switch that happens in
+// another tab never passes through a logged-out state for a boolean to notice.
 import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken, handOverPushTokenForSignOut } from './api';
+// Which sign-in that token belongs to, so a renewal is not a new session. See
+// readSessionKey below.
+import { signInKey } from '../lib/sessionIdentity';
 import { startPushNavigation, handleNotificationData, clearPendingNavigation } from './pushNavigation';
 // The socket needs to know which device it is speaking for, so the backend can
 // suppress a push on THIS device without silencing the account. The token is
@@ -470,9 +473,9 @@ export async function readNotificationPermission() {
 // in and registered nothing.
 //
 // Registration is a property of the SESSION, not of one mount. The watcher
-// keys off the stored auth token: a new token means a new session (fresh
-// login, signup, or account switch), and every new session registers this
-// device exactly once.
+// keys off the sign-in the stored auth token belongs to (readSessionKey
+// below): a new sign-in means a new session (fresh login, signup, or account
+// switch), and every new session registers this device exactly once.
 //
 // IT REGISTERS. IT DOES NOT ASK. Round 8: the tick below called
 // requestNotificationPermission, so on the first session it ever saw it drew
@@ -486,7 +489,7 @@ export async function readNotificationPermission() {
 // on the screen: the Enable button in Settings, and the row inside a flock
 // chat that names what that flock would notify you about.
 // ---------------------------------------------------------------------------
-let handledAuthToken = null;
+let handledSession = null;
 let attempts = 0;
 let syncInFlight = false;
 const MAX_ATTEMPTS = 5;
@@ -498,23 +501,37 @@ function readAuthToken() {
   try { return getAuthToken() || null; } catch (err) { return null; }
 }
 
+// WHICH SIGN-IN, NOT WHICH TOKEN STRING. The access token is renewed about
+// once a day for the same person now (api.js, RENEWING THE SESSION), and keyed
+// on the string every renewal read as a new session: the next focus or return
+// to the app sent POST /api/notifications/register again for a phone that was
+// already registered to that very sign-in. signInKey (lib/sessionIdentity.js)
+// names the account and the moment it signed in, which a renewal keeps and a
+// sign-out, a new sign-in or an account switch does not. A token it cannot
+// read is its own session, as the string used to be.
+function readSessionKey() {
+  const token = readAuthToken();
+  if (!token) return null;
+  return signInKey(token) || token;
+}
+
 // Any successful registration settles this session, wherever it came from —
 // the watcher, the mount effect, or the Enable button in settings.
 function markSessionRegistered() {
-  handledAuthToken = readAuthToken();
+  handledSession = readSessionKey();
   attempts = 0;
 }
 
 async function syncPushForSession() {
-  const authToken = readAuthToken();
+  const session = readSessionKey();
 
-  if (!authToken) {
+  if (!session) {
     // Signed out. Arm for whoever signs in next.
-    handledAuthToken = null;
+    handledSession = null;
     attempts = 0;
     return;
   }
-  if (handledAuthToken === authToken || syncInFlight) return;
+  if (handledSession === session || syncInFlight) return;
 
   syncInFlight = true;
   try {
@@ -524,7 +541,7 @@ async function syncPushForSession() {
     // Watcher for the whole argument.
     const token = await syncPushRegistration();
     if (token) {
-      handledAuthToken = authToken;
+      handledSession = session;
       attempts = 0;
       return;
     }
@@ -536,11 +553,11 @@ async function syncPushForSession() {
     const status = await readNotificationPermission();
     attempts += 1;
     if (status !== 'granted' || attempts >= MAX_ATTEMPTS) {
-      handledAuthToken = authToken;
+      handledSession = session;
     }
   } catch (err) {
     attempts += 1;
-    if (attempts >= MAX_ATTEMPTS) handledAuthToken = authToken;
+    if (attempts >= MAX_ATTEMPTS) handledSession = session;
   } finally {
     syncInFlight = false;
   }
@@ -582,7 +599,7 @@ async function rearmIfUnresolvedInner() {
   // any more, so the worst a re-arm can now do is one no-op, and the case it
   // was blocking is the one that matters: permission granted from the ask in a
   // flock chat, on a session the watcher had already given up on.
-  handledAuthToken = null;
+  handledSession = null;
   attempts = 0;
 }
 
@@ -600,7 +617,7 @@ function settleOwedTokenDelete() {
     .then(() => {
       markTokenDeleteOwed(false);
       if (readAuthToken()) {
-        handledAuthToken = null;
+        handledSession = null;
         attempts = 0;
         syncPushForSession();
       }
@@ -621,7 +638,7 @@ export function startPushSessionWatcher() {
   // created without keeping its handle, so it ran every two seconds for the
   // whole life of the page. That is right up to the moment the session is
   // registered, and pure waste afterwards: once syncPushForSession has set
-  // handledAuthToken and a push token exists, every later tick is a
+  // handledSession and a push token exists, every later tick is a
   // localStorage read followed by an early return, forever.
   //
   // Signing in still has to be heard, and the reason the poll exists is
@@ -629,11 +646,11 @@ export function startPushSessionWatcher() {
   // already-focused tab, so no event reaches this module. So the poll is kept
   // for exactly as long as the question is open, and the four listeners below
   // re-arm it whenever the answer could have changed underneath us: a sign
-  // out clears handledAuthToken, and another tab's sign-in arrives as storage.
+  // out clears handledSession, and another tab's sign-in arrives as storage.
   let pollId = null;
   // SETTLED IS ABOUT THE SESSION, NOT ABOUT HAVING A TOKEN, and requiring both
   // meant this timer could never stop for the people it runs on most.
-  // syncPushForSession sets handledAuthToken on BOTH outcomes -- a granted
+  // syncPushForSession sets handledSession on BOTH outcomes -- a granted
   // permission that produced a token, and a status that is not granted, which
   // leaves currentPushToken null forever. The comment above says who that is:
   // every signed-in web user, and the overwhelming majority of them have never
@@ -641,9 +658,9 @@ export function startPushSessionWatcher() {
   // true, stopPoll was never reached, and a 2s interval ran for the life of
   // the page doing a localStorage read and an early return.
   //
-  // handledAuthToken already means "this session has been answered", which is
+  // handledSession already means "this session has been answered", which is
   // exactly the question the poll is open on.
-  const settled = () => handledAuthToken !== null;
+  const settled = () => handledSession !== null;
   const stopPoll = () => { if (pollId !== null) { clearInterval(pollId); pollId = null; } };
 
   const tick = () => { syncPushForSession(); if (settled()) stopPoll(); };
@@ -679,7 +696,7 @@ export function startPushSessionWatcher() {
  * the request that ends the session. Either request landing is enough.
  */
 export function unregisterPushToken() {
-  handledAuthToken = null;
+  handledSession = null;
   attempts = 0;
   const token = knownPushToken();
   try { handOverPushTokenForSignOut(token); } catch (err) { /* a sign-out never fails on this */ }

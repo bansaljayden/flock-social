@@ -13,9 +13,13 @@
  *     the new token, instead of ending the session;
  *   - a 401 "Token expired" is renewed once and the request sent again, writes
  *     included, because authenticate turned the first one away unrun;
- *   - only a renewal the SERVER refuses ends the session, and it ends it
- *     exactly the way a dead token always did; a renewal the network ate keeps
- *     the session;
+ *   - only a renewal the SERVER refuses ends the session (a 401, a 403, or
+ *     our API's 400 for a credential it cannot read), and it ends it exactly
+ *     the way a dead token always did; a renewal the network ate keeps the
+ *     session, and so does a 400 page that did not come from our API;
+ *   - the sign-out that follows a refused renewal still tells the server, on
+ *     the token the session died holding, so the phone's push row goes too;
+ *   - the refresh credential rides on no request but the renewal;
  *   - requests racing past one expiry share one renewal;
  *   - sign-in stores both halves, sign-out sends the credential to be retired
  *     and wipes it, and sign-out never renews, because a renewal answered after
@@ -196,6 +200,92 @@ test('a renewal the server refuses ends the session the way a dead token always 
   expect(window.localStorage.getItem('flockToken')).toBeNull();
   expect(window.localStorage.getItem('flockRefreshToken')).toBeNull();
   expect(expiredEvents).toBe(1);
+});
+
+test('a renewal the server answers 400 ends the session instead of being retried every minute', async () => {
+  // The server's answer to a credential it cannot even read (not a string, or
+  // wider than any it issues). Kept, it was renewed every minute for ever and
+  // every request failed without the person ever being signed out.
+  holdSession(tokenAged(25 * 3600), 'R1', 25 * 3600);
+  serve({
+    '/api/auth/refresh': () => jsonRes({ error: 'Session expired, please sign in again' }, 400),
+    '/api/auth/me': () => jsonRes({ error: 'Token expired' }, 401),
+  });
+
+  // sessionExpired is handleSessionExpiry having ended it, the same path a
+  // refused renewal takes.
+  await expect(getCurrentUser()).rejects.toMatchObject({ status: 401, sessionExpired: true });
+  expect(calls.filter((c) => c.path === '/api/auth/refresh')).toHaveLength(1);
+  expect(window.localStorage.getItem('flockRefreshToken')).toBeNull();
+  expect(window.localStorage.getItem('flockToken')).toBeNull();
+});
+
+test('a 400 page that is not our API is the network, not a verdict on the credential', async () => {
+  const stale = tokenAged(25 * 3600);
+  holdSession(stale, 'R1', 25 * 3600);
+  serve({
+    '/api/auth/refresh': () => ({
+      ok: false,
+      status: 400,
+      headers: { get: (h) => (String(h).toLowerCase() === 'content-type' ? 'text/html' : null) },
+      text: async () => '<html><body>Bad Request</body></html>',
+    }),
+    '/api/auth/me': () => jsonRes({ error: 'Token expired' }, 401),
+  });
+
+  await expect(getCurrentUser()).rejects.toMatchObject({ status: 400 });
+  expect(window.localStorage.getItem('flockToken')).toBe(stale);
+  expect(window.localStorage.getItem('flockRefreshToken')).toBe('R1');
+  expect(expiredEvents).toBe(0);
+});
+
+test('the sign-out that follows a refused renewal still reaches the server, with the token the session died holding', async () => {
+  // App.js answers 'flock-session-expired' with endSession, whose logout()
+  // used to find the token already wiped and tell the server nothing, so this
+  // phone's push row stayed registered to the account. Called here straight
+  // after the refusal, which is the order endSession runs in.
+  const stale = tokenAged(25 * 3600);
+  holdSession(stale, 'R1', 25 * 3600);
+  serve({
+    '/api/auth/refresh': () => jsonRes({ error: 'Session expired, please sign in again' }, 401),
+    '/api/auth/me': () => jsonRes({ error: 'Token expired' }, 401),
+    '/api/auth/logout': () => jsonRes({ message: 'Logged out successfully' }),
+  });
+  await expect(getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+  expect(window.localStorage.getItem('flockToken')).toBeNull();
+  await logout();
+
+  const signOuts = calls.filter((c) => c.path === '/api/auth/logout');
+  expect(signOuts).toHaveLength(1);
+  expect(signOuts[0].auth).toBe(`Bearer ${stale}`);
+  expect(window.localStorage.getItem('flockToken')).toBeNull();
+
+  // Handed over once: a later sign-out with nobody signed in sends nothing.
+  calls.length = 0;
+  await logout();
+  expect(calls.filter((c) => c.path === '/api/auth/logout')).toHaveLength(0);
+});
+
+test('the refresh credential is sent to the renewal and nowhere else', async () => {
+  // Part of what bounds keeping it in storage (the note on REFRESH_TOKEN_KEY):
+  // no ordinary request, header or body, carries it.
+  const first = 'refresh-credential-first';
+  const second = 'refresh-credential-second';
+  holdSession(tokenAged(25 * 3600), first, 25 * 3600);
+  const fresh = tokenAged(0);
+  serve({
+    '/api/auth/refresh': () => jsonRes({ token: fresh, refreshToken: second }),
+    '/api/auth/me': () => jsonRes({ user: { id: 7 } }),
+    '/api/blocks/5': () => jsonRes({ blocked: true }),
+  });
+  await getCurrentUser();
+  await blockUser(5);
+
+  const carries = (c, secret) => JSON.stringify({ auth: c.auth, body: c.body }).includes(secret);
+  const leaks = calls.filter((c) => c.path !== '/api/auth/refresh' && (carries(c, first) || carries(c, second)));
+  expect(leaks).toEqual([]);
+  expect(calls.filter((c) => c.path === '/api/auth/refresh')).toHaveLength(1);
+  expect(calls[0].body).toEqual({ refreshToken: first });
 });
 
 test('a renewal the network ate keeps the session, and the caller hears a network error', async () => {
