@@ -84,14 +84,25 @@ workflows:
         APP_STORE_APP_ID: "6781442127"   # numeric ASC app id (Flock Social) — for build-number lookup
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
-        PUBLIC_URL: "."   # CRA → relative asset paths for the bundled WebView origin
+        # ROOT-ABSOLUTE ASSET PATHS, NOT RELATIVE ONES. This was "." and CRA
+        # then wrote ./static/js/main.<hash>.js into index.html. Capacitor
+        # serves the bundle from the root of capacitor://localhost and answers
+        # any path without an extension with index.html, so the moment the
+        # WebView went to a nested path (/admin/moderation, from the moderation
+        # push and the admin dashboard's console button) the script resolved
+        # to /admin/static/js/..., which is not in the bundle, and the admin
+        # sat on a blank screen with no URL bar and no way back. "/" is what a
+        # local build without this variable already produces, and every path
+        # resolves from it. frontend/src/__tests__/iosBundleAssetPaths.test.js
+        # holds every workflow that syncs iOS to it.
+        PUBLIC_URL: "/"
         CI: "false"        # don't treat CRA build warnings as errors
       node: 22             # Capacitor 8.4 CLI requires Node >= 22
       xcode: latest
     scripts:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
-      - name: Build web app (relative asset paths)
+      - name: Build web app (root asset paths)
         # REACT_APP_PURCHASES=off: the App Store build carries no purchase
         # screen, price, checkout link or store SDK start-up at all
         # (frontend/src/lib/purchasesBuild.js). Set on the iOS build lines
@@ -535,7 +546,7 @@ workflows:
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
-        PUBLIC_URL: "."
+        PUBLIC_URL: "/"   # root-absolute, as on ios-capacitor above; the reason is there
         CI: "false"
         # Any iPhone the installed Xcode ships a runtime for. The exact model
         # is not material to the reviewer; the system dialogs are.
@@ -577,7 +588,7 @@ workflows:
           echo "Review accounts present: A=$REVIEW_EMAIL_A B=$REVIEW_EMAIL_B (password not printed)."
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
-      - name: Build web app (relative asset paths)
+      - name: Build web app (root asset paths)
         # No seeded location. Two takes (builds 50 and 51) were built with a
         # REACT_APP_REVIEW_LOCATION that answered the Discover tab's location
         # read with Center City, and on both the tab never loaded a venue or

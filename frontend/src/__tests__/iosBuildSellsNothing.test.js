@@ -482,7 +482,7 @@ describe('where the flag is set', () => {
     return next === -1 ? yaml.slice(start) : yaml.slice(start, start + 1 + next);
   };
   const buildLine = (block) => {
-    const step = block.indexOf('- name: Build web app (relative asset paths)');
+    const step = block.indexOf('- name: Build web app (root asset paths)');
     expect(step).toBeGreaterThan(-1);
     return /\n\s+script: (.*)\n/.exec(block.slice(step))[1];
   };
