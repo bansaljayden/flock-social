@@ -308,7 +308,7 @@ const PAGE_BLOCKS = {
     ["h3", "What the sensor sends us"],
     ["p", "Every 30 seconds it sends three numbers, and nothing else:"],
     ["li", "Doorway crossings: how many times someone crossed the doorway since the last reading, in either direction. Depending on the unit, it counts them with an infrared beam across the doorway or with an infrared distance sensor that looks down at it."],
-    ["li", "Warm bodies in view: a count of heat clusters in a grid of 19,200 temperature readings. The count is worked out on the device."],
+    ["li", "Warm bodies in view: a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It learned from computer-generated thermal images, not from pictures of real people. A device without the model counts heat clusters instead."],
     ["li", "Ambient loudness: one loudness level, the typical level over the last minute."],
     ["h3", "What it does not do"],
     ["li", "No photo or video. The thermal part is a 160 by 120 grid of temperatures, not a picture. It is reduced to a count on the device and thrown away. It is never stored and never sent to us. A doorway distance sensor, on a unit that has one, reads 64 distances, an 8 by 8 grid in which one square is about 30 cm of floor. Each reading becomes a crossing count on the device and is thrown away too."],
