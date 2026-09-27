@@ -60,6 +60,7 @@
 import React from 'react';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 /* The QR GENERATOR is lazy, the way the scanner half of this feature already
    is. qrcode.react carries its own encoder and webpack gives it a chunk of its
@@ -138,6 +139,9 @@ export default function AddFriends({
   stopQrScanner,
   styles,
 }) {
+    // Back, from the arrow or a swipe from the left edge (hooks/useEdgeSwipeBack.js).
+    const leave = () => setCurrentScreen('main');
+    const edgeBack = useEdgeSwipeBack(leave);
     // Contacts only appears where an address book can actually be read. See
     // contactsAvailable() in services/contacts.js, which is true inside the iOS
     // app and false in a desktop browser without the Contacts Picker.
@@ -153,11 +157,11 @@ export default function AddFriends({
     const activeTab = addFriendsTab === 'contacts' && !contactsSupported ? 'username' : addFriendsTab;
 
     return (
-      <div key="add-friends-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+      <div key="add-friends-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0, flex: 1 }}>Add friends</h1>
             {pendingRequests.length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length} new</span>
