@@ -138,6 +138,12 @@ pool.query = async (text, params = []) => {
     if (!row) return { rows: [], rowCount: 0 };
     row.password = params[0];
     if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;
+    // The payment handles are cleared only if the statement says so, for the
+    // round-19 reason above: a fake that cleared them on its own would pass
+    // the handle test below with the clause deleted from routes/auth.js.
+    if (clause(sql, /\bvenmo_username = NULL\b/)) row.venmo_username = null;
+    if (clause(sql, /\bcashapp_cashtag = NULL\b/)) row.cashapp_cashtag = null;
+    if (clause(sql, /\bzelle_identifier = NULL\b/)) row.zelle_identifier = null;
     return { rows: [{ id: row.id }], rowCount: 1 };
   }
 
@@ -216,6 +222,10 @@ pool.query = async (text, params = []) => {
         oauth_provider: u?.oauth_provider ?? null,
         is_banned: u?.is_banned ?? false,
         has_password: u?.password != null,
+        // Answered only when the statement asks, like every column here.
+        ...(clause(sql, /AS has_payment_handles/)
+          ? { has_payment_handles: Boolean(u?.venmo_username || u?.cashapp_cashtag || u?.zelle_identifier) }
+          : {}),
       }],
     };
   }
@@ -774,6 +784,40 @@ test('a completed reset does NOT mark the address verified', async () => {
   })).status, 200);
   assert.strictEqual(users[0].email_verified, false, 'still unverified, still inside the round-16 gate');
   assert.strictEqual(users[0].verified_email, null);
+});
+
+test('a reset hands the row over without the payment handles it was holding', async () => {
+  reset();
+  // The reset twin of the Google claim's R5-H3. A squatter registers the
+  // owner's address, the stray confirmation mail gets clicked, the verified
+  // row takes the squatter's payout handles, and the owner, told the address
+  // is already registered, takes the row back through Forgot password. The
+  // reset ends the squatter's sessions and credential; if it left the handles,
+  // every bill split the owner ran would pay the squatter under their name.
+  const squat = addPasswordUser({
+    email: 'owner@example.com', verified_email: 'owner@example.com',
+    venmo_username: 'squatter-venmo', cashapp_cashtag: '$squatter', zelle_identifier: 'squatter@example.net',
+  });
+  await requestReset(squat.email);
+  const res = await post('/api/auth/reset-password', { token: tokenFromLastMail(), password: 'BrandNew1' });
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+
+  assert.strictEqual(users[0].venmo_username, null, 'the Venmo handle survived the reset and now pays out from the owner\'s splits');
+  assert.strictEqual(users[0].cashapp_cashtag, null, 'the Cash App tag survived the reset');
+  assert.strictEqual(users[0].zelle_identifier, null, 'the Zelle identifier survived the reset');
+  // And the person resetting is told, so an honest owner who only forgot a
+  // password knows to add their own again instead of finding out at a split.
+  assert.strictEqual(body.paymentHandlesCleared, true);
+
+  // An account with nothing to clear is not told anything was.
+  reset();
+  const plain = addPasswordUser();
+  await requestReset(plain.email);
+  const quiet = await (await post('/api/auth/reset-password', {
+    token: tokenFromLastMail(), password: 'BrandNew1',
+  })).json();
+  assert.strictEqual(quiet.paymentHandlesCleared, undefined);
 });
 
 test('a banned account is mailed nothing and cannot be reset', async () => {

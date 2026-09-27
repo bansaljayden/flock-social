@@ -188,6 +188,11 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
   // the form can name the account, which is what a password manager pairs the
   // new password with when it offers to save it.
   const [account, setAccount] = useState('');
+  // The reset removes any Venmo, Cash App and Zelle details on the account,
+  // because a squatter who once held the row could have left theirs there
+  // (backend/routes/auth.js consumeReset). The server says when it did, and
+  // the done screen passes that on so nobody learns it from a bill split.
+  const [handlesCleared, setHandlesCleared] = useState(false);
 
   // Take the credential out of the address bar. It has already been read into
   // state, and leaving it there puts it in browser history, in any screenshot
@@ -253,12 +258,13 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
     }
     setPhase('saving');
     try {
-      await request('/api/auth/reset-password', {
+      const data = await request('/api/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify({ token, password }),
       });
       setPassword('');
       setConfirm('');
+      setHandlesCleared(Boolean(data && data.paymentHandlesCleared));
       setPhase('done');
     } catch (err) {
       // The server names which of the three dead-link states it is, so the
@@ -288,6 +294,12 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
           Every device that was signed in to this account has been signed out, this one
           included. If someone else had been in there, they are out now.
         </p>
+        {handlesCleared && (
+          <p className="auth-sub" style={{ margin: '0 0 20px', maxWidth: 'none' }}>
+            The Venmo, Cash App and Zelle details on the account were removed too. Add
+            your own in Settings after you sign in.
+          </p>
+        )}
         {/* The only caller that reports a change. Every other route to the
             sign-in screen passes nothing, so the screen underneath cannot end
             up claiming a password was updated when it was not. */}
