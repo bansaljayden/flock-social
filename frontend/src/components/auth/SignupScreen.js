@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { signup, resendVerificationEmail, trackAuthScreen, getCurrentUser } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
-import AppleSignInButton from './AppleSignInButton';
+import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
+import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 import BirthYearField, { birthYearToDob } from './BirthYearField';
 import Icons from '../ui/Icons';
@@ -23,6 +24,33 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // PROVIDERS FIRST, WHERE APPLE IS ONE OF THEM.
+  //
+  // In the iOS app the fastest way in is Continue with Apple: one sheet, a
+  // year, and an account whose address Apple has already proved, so it skips
+  // the confirmation email that keeps a password account from starting a
+  // flock, joining one or adding a friend. It sat at the very bottom, under
+  // four fields, the Create button, the legal line and Google. So on iOS the
+  // two provider buttons come first, Apple on top, with the email form under
+  // them. The web has no Apple button (AppleSignInButton draws nothing there)
+  // and keeps the form-first layout it had.
+  const providersFirst = isAppleSignInAvailable();
+  // A provider's message is drawn beside the providers when they come first.
+  // With the form above them (the web) the form's own error box is already
+  // the nearest one, so there is only that one.
+  const [providerError, setProviderError] = useState('');
+  const clearErrors = () => { setError(''); setProviderError(''); };
+  const showProviderError = (message) => {
+    if (providersFirst) { setProviderError(message); setError(''); } else setError(message);
+  };
+  // A new Apple account finishes on this screen the way it does on sign-in:
+  // the year is asked after Apple's sheet, in the Apple button's place, and
+  // Continue sends the same credentials with it. AppleYearStep.js has why.
+  const apple = useAppleYearStep({ fieldId: 'signup-apple-year', onSuccess: onSignupSuccess });
+  // Messages about the Apple tap go where the person is looking: into the
+  // step while it is open, otherwise beside the providers.
+  const showAppleError = (message) => (apple.step ? apple.setError(message) : showProviderError(message));
 
   // The arrival event for the signup form. screen_viewed only fires inside
   // the authed shell, so this screen, shown before it, had no denominator of
@@ -118,7 +146,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // through the GIS browser flow; both post to the same /api/auth/google.
   const startGoogle = useGoogleAuth({
     onSuccess: onSignupSuccess,
-    onError: (msg) => setError(msg || 'Google sign-in failed'),
+    onError: (msg) => showProviderError(msg || 'Google sign-in failed'),
     setBusy: setLoading,
   });
 
@@ -197,7 +225,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    clearErrors();
 
     // THIS IS THE FORM'S ONLY VALIDATION, and it has to be, because the form
     // carries `noValidate`. See the comment on the <form> element for why.
@@ -240,11 +268,19 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     }
   };
 
+  // The subline describes the layout under it. "Four fields, then one link
+  // in your inbox" is true of the email form and of nothing else, and on iOS
+  // the first thing under it is now Apple, which has no fields and sends no
+  // link.
   const hero = (
     <>
       <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
       <h1 className="auth-h1">Create your account</h1>
-      <p className="auth-sub">Four fields, then one link in your inbox.</p>
+      <p className="auth-sub">
+        {providersFirst
+          ? (isGoogleSignInAvailable() ? 'Use Apple or Google, or sign up with your email.' : 'Use Apple, or sign up with your email.')
+          : 'Four fields, then one link in your inbox.'}
+      </p>
     </>
   );
 
@@ -310,8 +346,26 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     );
   }
 
-  return (
-    <AuthShell hero={hero}>
+  // Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at on
+  // EVERY signup path (email, Google, Apple), so the agreement has to be on
+  // this screen before any of those buttons is hit. On the web it sits
+  // directly under Create account and above the Google button, so it covers
+  // both without scrolling. On iOS, where the providers come first, it sits
+  // above them, which puts it above everything that creates an account. The
+  // Terms page carries the zero-tolerance-for-objectionable-content language
+  // Apple's 1.2 template requires. One paragraph, drawn in one of the two
+  // places, never both.
+  const consent = (
+        <p className="auth-legal">
+          Creating an account means you agree to the{' '}
+          <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
+          <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
+          <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
+        </p>
+  );
+
+  const form = (
+    <>
       {/* noValidate, and this is the most load-bearing attribute on the screen.
           Every field below carries `required`, and one carries `minLength`.
           On iOS there is no validation bubble: WKWebView refuses the
@@ -435,42 +489,36 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           {loading ? 'Creating account…' : 'Create account'}
         </button>
 
-        {/* Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at
-            on EVERY signup path (email, Google, Apple), so the agreement has
-            to be shown on this screen before any of those buttons are hit.
-            It sits directly under Create account and above the Google/Apple
-            buttons so it covers all three without scrolling. The Terms page
-            carries the zero-tolerance-for-objectionable-content language
-            Apple's 1.2 template requires. */}
-        <p className="auth-legal">
-          Creating an account means you agree to the{' '}
-          <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
-          <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
-          <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
-        </p>
+        {/* The consent paragraph, here on the web; see `consent` above. */}
+        {!providersFirst && consent}
       </form>
+    </>
+  );
 
-      <AuthRule label="or sign up with" />
+  // Where the year field for a provider tap is, from the provider buttons:
+  // above them on the web and inside an open Apple step, below them in the
+  // iOS form.
+  const yearIs = providersFirst && !apple.step ? 'below' : 'above';
 
-      {/* Hidden only when a native build carries no iOS Google client id, i.e.
-          when the button could not work by any route. On web it always shows. */}
-      {isGoogleSignInAvailable() && (
+  // Hidden only when a native build carries no iOS Google client id, i.e.
+  // when the button could not work by any route. On web it always shows.
+  const googleButton = isGoogleSignInAvailable() && (
         <button
           type="button"
           className="auth-provider"
           disabled={loading}
           onClick={() => {
-            setError('');
+            clearErrors();
             // The server requires a date of birth to create an account on this
             // path, so the field has to be filled before Google's sheet is any
             // use. What the date says about age is not decided here, exactly as
             // it is not decided in handleSubmit.
             if (!dob) {
-              setError('Add the year you were born above first, then continue with Google.');
+              showProviderError(`Add the year you were born ${yearIs} first, then continue with Google.`);
               return;
             }
             if (!dobLooksReal(dob)) {
-              setError('That year does not look right. Check it and try again.');
+              showProviderError('That year does not look right. Check it and try again.');
               return;
             }
             startGoogle({ dob, dobGranularity: 'year' });
@@ -478,43 +526,141 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         >
           <GoogleG /> Continue with Google
         </button>
-      )}
+  );
 
-      {/* Apple guideline 4.8 parity with the Google button above; native
-          iOS only (returns null on web). Apple accounts do not carry a date of
-          birth, so whatever is in the field is passed through and the server
-          decides, the same as the other two paths. An empty field is stopped
-          before the sheet opens, the same as the Google button: this is the
-          signup screen, the server will not create an account without a date,
-          and Apple hands over the person's name only on the first sheet that
-          completes. Letting an empty field through spent that one delivery on
-          a tap the server was always going to refuse, and the retry created
-          the account from the email's local part instead. The only other
-          thing stopped here is the date no living person can have, for the
-          reason spelled out on dobLooksReal. */}
+  // Apple guideline 4.8 parity with the Google button; native iOS only
+  // (AppleSignInButton returns null on web). Apple accounts do not carry a
+  // date of birth, so whatever year is typed is passed through and the server
+  // decides, the same as the other two paths.
+  //
+  // AN EMPTY YEAR GOES THROUGH NOW, and the reason it used to be stopped is
+  // worth keeping. Apple hands over the person's name only on the first sheet
+  // that completes, and a new account's first tap with no date was always
+  // refused (needsDob), so that tap spent the one delivery and the retry
+  // named the account after a relay address. What changed is that the refusal
+  // no longer ends anything: its 403 arrives with the sheet's credentials held
+  // (AppleSignInButton's makeResume), the name among them, and the Apple step
+  // sends them again with the year. One sheet, the real name, and nobody sent
+  // back up a form to find a field. The same answer signs in somebody whose
+  // Apple ID already has an account, who needs no year at all.
+  //
+  // What is still stopped before the sheet is what cannot be an honest
+  // answer: a year that is not four digits yet, and a date no living person
+  // can have (see dobLooksReal). Neither names an age.
+  const appleButton = (
       <AppleSignInButton
-        onSuccess={onSignupSuccess}
-        onError={(m) => setError(m)}
+        onSuccess={(user) => { apple.leave(); onSignupSuccess(user); }}
+        onError={(m, err, resume) => {
+          if (err?.data?.needsDob && err.data.dobGranularity === 'year') {
+            clearErrors();
+            if (resume) apple.hold(resume);
+            // No credentials held means nothing to send again, so the step
+            // opens on the Apple button instead of Continue.
+            else apple.retap('Add the year you were born, then tap Continue with Apple again.');
+            return;
+          }
+          if (err?.data?.needsDob && !apple.step && !dob) {
+            // A date asked for with no granularity is the server backfilling
+            // an account that ALREADY EXISTS (enforceDobOnLogin), which needs
+            // the full date and the sign-in screen's read-back. This screen
+            // has neither, so it says where to go. With a year typed the
+            // server's own sentence already says this, and is shown as is.
+            showProviderError('This Apple ID already has a Flock account. Tap Sign in below and continue with Apple there.');
+            return;
+          }
+          // Anything else is the server's answer in its own words: under 13
+          // among them, into the step if it is open.
+          showAppleError(m);
+        }}
         dob={dob}
         dobGranularity="year"
         beforeAuthorize={() => {
-          setError('');
-          if (!dob) {
-            setError('Add the year you were born above first, then continue with Apple.');
+          clearErrors();
+          apple.setError('');
+          if (birthYear && !dob) {
+            showAppleError('Write the year in full, like 2004.');
             return false;
           }
-          if (!dobLooksReal(dob)) {
-            setError('That year does not look right. Check it and try again.');
+          if (dob && !dobLooksReal(dob)) {
+            showAppleError('That year does not look right. Check it and try again.');
             return false;
           }
           return true;
         }}
       />
+  );
 
+  // The Apple step in the Apple button's place, with Continue, while the
+  // server is waiting on a year for a sheet already done; otherwise the button.
+  const appleBlock = (
+    <>
+      {apple.step && (
+        <AppleYearStep
+          idPrefix="signup"
+          error={apple.error}
+          value={birthYear}
+          onChange={(v) => { setBirthYear(v); apple.setError(''); }}
+        />
+      )}
+      {apple.step === 'resume'
+        ? <AppleStepContinue busy={apple.busy} busyLabel="Creating account…" onClick={() => apple.continueWith(birthYear)} />
+        : appleButton}
+    </>
+  );
+
+  const foot = (
       <p className="auth-foot">
         Already have an account?
         <button type="button" className="auth-textbtn" onClick={onSwitchToLogin}>Sign in</button>
       </p>
+  );
+
+  if (providersFirst) {
+    return (
+      <AuthShell hero={hero}>
+        {/* The legal line's own margin is for sitting under a button; here
+            it sits over one, so the gap goes below it instead. */}
+        <div style={{ marginBottom: '16px' }}>{consent}</div>
+        <AuthError>{providerError}</AuthError>
+        {appleBlock}
+        {/* Wrapped for its gap: under the Apple button the stylesheet's
+            .auth-provider + .auth-provider rule would give one, but under the
+            step's Continue nothing would. */}
+        {googleButton && <div style={{ marginTop: '10px' }}>{googleButton}</div>}
+        {/* While the Apple step is open the email form steps aside: one year
+            field on screen and one thing to tap, the same rule the sign-in
+            screen's step keeps. Leaving drops the held credentials; a later
+            Apple tap simply opens a new sheet. */}
+        {apple.step ? (
+          <button
+            type="button"
+            className="auth-textbtn"
+            onClick={() => { apple.leave(); clearErrors(); }}
+            style={{ display: 'block', margin: '16px auto 0' }}
+          >
+            Sign up with email instead
+          </button>
+        ) : (
+          <>
+            <AuthRule label="or sign up with email" />
+            {form}
+          </>
+        )}
+        {foot}
+      </AuthShell>
+    );
+  }
+
+  return (
+    <AuthShell hero={hero}>
+      {form}
+
+      <AuthRule label="or sign up with" />
+
+      {googleButton}
+      {appleBlock}
+
+      {foot}
     </AuthShell>
   );
 };

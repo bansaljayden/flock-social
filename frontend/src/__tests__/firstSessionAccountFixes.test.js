@@ -15,8 +15,10 @@
  *      created the account from the email's local part, which for a private
  *      relay address is a random string. The button now remembers the last
  *      delivered name for the same Apple user and resends it. SignupScreen
- *      also stops the sheet opening with no date of birth, as its Google
- *      button already did, so the first tap is one the server can accept.
+ *      used to stop the sheet opening with no date of birth for the same
+ *      reason; it now holds the refused sheet's credentials, name and all,
+ *      and sends them again with the year (AppleYearStep.js), so the first
+ *      tap's name still reaches the account.
  *   3. LoginScreen and the venue sign-in half create accounts through their
  *      Google and Apple buttons and stamped terms_accepted_at without ever
  *      showing the Terms. Both now render SignupScreen's consent paragraph,
@@ -248,14 +250,31 @@ describe('the name Apple sends once', () => {
     expect(api.appleLogin.mock.calls[0][1]).toBeUndefined();
   });
 
-  it('is not spent at all from the signup screen until a date of birth is in', async () => {
+  it('from the signup screen with no year yet, is carried by the held sheet into the account', async () => {
+    // This used to pin that the sheet never opened without a year, because
+    // the refused first tap spent the name. The sign-up screen now holds that
+    // sheet's credentials, name included, and sends them again with the year
+    // (components/auth/AppleYearStep.js), so the one delivery reaches the
+    // account and no second sheet is ever needed.
     asNativeIos();
-    const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
+    const onSignupSuccess = jest.fn();
+    const utils = render(React.createElement(SignupScreen, { onSignupSuccess, onSwitchToLogin: jest.fn() }));
+    mockAppleAuthorize.mockResolvedValueOnce({
+      response: { identityToken: 'apple-token-s1', user: 'apple-user-S', givenName: 'Sam', familyName: 'Lee', authorizationCode: 'code-s1' },
+    });
+    api.appleLogin.mockRejectedValueOnce(Object.assign(new Error('No Flock account yet.'), {
+      status: 403, data: { needsDob: true, dobGranularity: 'year' },
+    }));
     tapApple(utils);
-    await waitFor(() => expect(utils.getByRole('alert').textContent)
-      .toBe('Add the year you were born above first, then continue with Apple.'));
-    expect(mockAppleAuthorize).not.toHaveBeenCalled();
-    expect(api.appleLogin).not.toHaveBeenCalled();
+    await waitFor(() => expect(utils.getByRole('button', { name: /^continue$/i })).toBeTruthy());
+
+    fireEvent.change(utils.getByLabelText(/year of birth/i), { target: { value: '2000' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 13 } });
+    fireEvent.click(utils.getByRole('button', { name: /^continue$/i }));
+    await waitFor(() => expect(onSignupSuccess).toHaveBeenCalledWith({ id: 13 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+    expect(api.appleLogin.mock.calls[1][1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
+    expect(api.appleLogin.mock.calls[1][3]).toBe('2000-12-31');
   });
 
   it('opens the sheet from the signup screen once a year is in', async () => {

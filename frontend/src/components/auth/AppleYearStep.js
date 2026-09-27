@@ -1,0 +1,161 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AuthError, ageFromDob } from './AuthShell';
+import BirthYearField, { birthYearToDob } from './BirthYearField';
+
+// THE APPLE STEP, SHARED BY THE SIGN-IN AND SIGN-UP SCREENS.
+//
+// A brand-new Apple account is answered 403 {needsDob, dobGranularity:'year'},
+// because Apple never sends a birth year. AppleSignInButton hands the screen a
+// `resume` for that one answer: the credentials from the sheet that was just
+// completed, held in a closure, ready to be sent again with a year (the reason
+// that is allowed, and the rules for holding them, are written out above
+// makeResume in AppleSignInButton.js). This is what a screen does with it:
+// the year field and a Continue button take the place of the Apple button,
+// and Continue posts the same credentials with the year. No second sheet.
+//
+// It was written inside LoginScreen for App Review's new-user path and moved
+// here so the sign-up screen can finish a new Apple account the same way.
+// Before that, sign-up refused to open Apple's sheet at all until the year
+// field in its email form had been filled, which on the iPhone layout meant
+// scrolling past the whole form to reach Apple, being sent back up to the
+// year, and coming down again. That refusal existed because a refused first
+// tap used to spend Apple's one delivery of the person's name; the held
+// credentials carry that name, so the reason is gone.
+//
+//   step null      no Apple step on screen
+//   step 'resume'  holding this sheet's credentials; Continue sends them again
+//   step 'retap'   they are gone (timed out, or the server said no); the Apple
+//                  button is back and carries the year, so one more sheet ends it
+//
+// The handle lives in a ref, never in state, so nothing that reads component
+// state can reach it, and it is dropped the moment it is used.
+//
+// `fieldId` is the id of the step's year field, focused when the step opens.
+// `onSuccess` gets the user the server returns.
+export function useAppleYearStep({ fieldId, onSuccess }) {
+  const [step, setStep] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const resumeRef = useRef(null);
+
+  const leave = useCallback(() => {
+    resumeRef.current = null;
+    setStep(null);
+    setError('');
+  }, []);
+
+  // The creation 403 arrived with credentials that can be sent again.
+  const hold = useCallback((resume) => {
+    resumeRef.current = resume;
+    setError('');
+    setStep('resume');
+  }, []);
+
+  // The creation 403 arrived with nothing held, so there is nothing to send
+  // again: the step opens with the Apple button, which carries the year.
+  const retap = useCallback((message) => {
+    resumeRef.current = null;
+    setError(message || '');
+    setStep('retap');
+  }, []);
+
+  useEffect(() => {
+    if (step !== 'resume') return;
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+    // preventScroll off on purpose: focusing is also what brings the field
+    // into view on a short screen. scrollIntoView is the backstop for a
+    // WebView that focuses without scrolling.
+    field.focus();
+    if (typeof field.scrollIntoView === 'function') field.scrollIntoView({ block: 'center' });
+  }, [step, fieldId]);
+
+  // Continue on the Apple step: the same credentials, now with the year.
+  const continueWith = async (birthYear) => {
+    if (busy) return;
+    setError('');
+    const sendDob = birthYearToDob(birthYear);
+    // Two local checks, the same two the sign-up form makes: an empty field,
+    // and a year nobody alive can have. Neither names an age; the server is
+    // the only thing on any path that decides that.
+    if (!sendDob) {
+      setError('Add the year you were born.');
+      document.getElementById(fieldId)?.focus();
+      return;
+    }
+    const years = ageFromDob(sendDob);
+    if (years === null || years < 0) {
+      setError('That year does not look right. Check it and try again.');
+      document.getElementById(fieldId)?.focus();
+      return;
+    }
+    const resume = resumeRef.current;
+    // Used once, whatever happens next.
+    resumeRef.current = null;
+    setBusy(true);
+    try {
+      if (!resume) throw Object.assign(new Error('Apple sign-in timed out'), { expired: true });
+      const data = await resume(sendDob, 'year');
+      leave();
+      onSuccess(data.user);
+    } catch (err) {
+      // Provably never reached Flock (offline, or a captive portal answered):
+      // the same credentials are still good, so Continue stays and can be
+      // tapped again. Any other connection failure is ambiguous and falls
+      // through to a fresh Apple sheet below.
+      if ((err?.isOffline || err?.isCaptivePortal) && !err?.expired) {
+        resumeRef.current = resume;
+        setError(err.message);
+        return;
+      }
+      // Otherwise the credentials are gone. Put the Apple button back; it
+      // carries the year now, so one more sheet finishes the account.
+      setStep('retap');
+      // A code past Apple's five minutes, a lapsed identity token (401), a
+      // failed code exchange (503) and a request that timed out all mean the
+      // same thing to the person: the sheet has to be done again. Anything
+      // else is the server's answer word for word, which keeps the under-13
+      // refusal exactly what it was.
+      const status = err?.status;
+      const timedOut = err?.expired || err?.isTimeout || status === 401 || status === 503 || !status;
+      setError(timedOut
+        ? 'Apple sign-in did not finish in time. Tap Continue with Apple to try again. Your year is still filled in.'
+        : (err?.message || 'Apple sign-in failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return { step, error, setError, busy, hold, retap, leave, continueWith };
+}
+
+// The step itself: what is being asked, and the field to answer it in. The
+// screen draws it where its Apple button is and puts Continue (below) in the
+// button's place while the step is 'resume'. `idPrefix` keeps the two screens'
+// ids apart: `${idPrefix}-apple-year` is the field.
+export default function AppleYearStep({ idPrefix, error, value, onChange }) {
+  return (
+    <div className="auth-apple-step" id={`${idPrefix}-apple-step`}>
+      <AuthError>{error}</AuthError>
+      <p className="auth-step-line" id={`${idPrefix}-apple-step-line`}>
+        One more step: the year you were born.
+      </p>
+      <BirthYearField
+        id={`${idPrefix}-apple-year`}
+        hintId={`${idPrefix}-apple-year-hint`}
+        value={value}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+// Continue, in the Apple button's place. `busyLabel` because the same tap
+// signs an existing account in on one screen and creates one on the other.
+export function AppleStepContinue({ busy, busyLabel, onClick }) {
+  return (
+    <button type="button" className="auth-primary" disabled={busy} onClick={onClick}>
+      {busy ? busyLabel : 'Continue'}
+    </button>
+  );
+}

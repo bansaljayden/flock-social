@@ -49,8 +49,14 @@ jest.mock('@react-oauth/google', () => ({
 }));
 
 // Native-iOS only; renders null on web anyway, but mocking it keeps this file
-// from depending on Capacitor detection.
-jest.mock('../components/auth/AppleSignInButton', () => () => null);
+// from depending on Capacitor detection. The sign-up screen also asks the
+// module whether Apple is available, to choose its layout; this file audits
+// the web layout, so the answer is no.
+jest.mock('../components/auth/AppleSignInButton', () => ({
+  __esModule: true,
+  default: () => null,
+  isAppleSignInAvailable: () => false,
+}));
 
 jest.mock('../components/auth/PasswordReset', () => ({
   ForgotPasswordScreen: () => null,

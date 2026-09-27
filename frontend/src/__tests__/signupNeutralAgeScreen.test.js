@@ -150,6 +150,10 @@ const DOORS = [
     fieldId: 'id="signup-dob"',
     hintId: 'signup-dob-hint',
     nameLabel: 'Name',
+    // This door asks the year AFTER Apple's sheet when it was left empty,
+    // holding the sheet's credentials (components/auth/AppleYearStep.js).
+    // The venue portal's door still asks before.
+    appleAsksYearAfterSheet: true,
     open: () => {
       const onCreated = jest.fn();
       const utils = render(
@@ -413,25 +417,62 @@ DOORS.forEach((door) => {
       expect(api.appleLogin).not.toHaveBeenCalled();
     });
 
-    it('an empty year is stopped before the Apple sheet opens, the same as Google', async () => {
-      // This used to pin the opposite: an empty date reached Apple so that an
-      // existing Apple account could sign in from this screen. Reversed
-      // 2026-09-05. Apple hands over the person's name on the first sheet
-      // that completes and never again, and a new account's first tap with
-      // no date was always refused (needsDob), so that tap spent the one
-      // delivery and the retry named the account after a relay address. The
-      // sentence is not an age claim: it asks for the field, not a threshold.
-      // An existing Apple account signs in from the login screen, where the
-      // button asks nothing. firstSessionAccountFixes.test.js pins the rest.
-      asNativeIos();
-      const utils = door.open();
-      fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
+    if (door.appleAsksYearAfterSheet) {
+      it('an empty year opens the Apple sheet, and the year asked after it teaches nothing either', async () => {
+        // This pinned the opposite until the Apple step came to this screen:
+        // an empty year was stopped before the sheet, because a new account's
+        // first tap with no date was always refused (needsDob) and that tap
+        // spent Apple's one delivery of the person's name. The refusal now
+        // arrives with the sheet's credentials held, the name among them, and
+        // the year is asked in the Apple button's place. What this file cares
+        // about is that the ask stays neutral: no threshold printed, the year
+        // sent as typed, and the server's refusal shown as written.
+        // appleOneSheetSignIn.test.js pins the rest of the flow.
+        asNativeIos();
+        mockAppleAuthorize.mockResolvedValueOnce({
+          response: { identityToken: 'apple-token', authorizationCode: 'apple-code', user: 'apple-user' },
+        });
+        api.appleLogin.mockRejectedValueOnce(Object.assign(
+          new Error('No Flock account yet. Add the year you were born, then tap Continue with Apple again.'),
+          { status: 403, data: { needsDob: true, dobGranularity: 'year' } },
+        ));
+        const utils = door.open();
+        fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
+        await waitFor(() => expect(utils.getByRole('button', { name: /^continue$/i })).toBeTruthy());
+        expect(api.appleLogin.mock.calls[0][3]).toBe('');
+        expect(visibleText(utils.container)).not.toMatch(/\b13\b/);
+        expect(visibleText(utils.container)).not.toMatch(/or older/i);
 
-      await waitFor(() => expect(utils.getByRole('alert').textContent)
-        .toBe('Add the year you were born above first, then continue with Apple.'));
-      expect(mockAppleAuthorize).not.toHaveBeenCalled();
-      expect(api.appleLogin).not.toHaveBeenCalled();
-    });
+        const year = yearForAge(12);
+        api.appleLogin.mockRejectedValueOnce(refusal());
+        setYear(utils, year);
+        fireEvent.click(utils.getByRole('button', { name: /^continue$/i }));
+        await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
+        expect(api.appleLogin.mock.calls[1][3]).toBe(dobOf(year));
+        expect(api.appleLogin.mock.calls[1][4]).toEqual({ dobGranularity: 'year' });
+        expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+      });
+    } else {
+      it('an empty year is stopped before the Apple sheet opens, the same as Google', async () => {
+        // This used to pin the opposite: an empty date reached Apple so that an
+        // existing Apple account could sign in from this screen. Reversed
+        // 2026-09-05. Apple hands over the person's name on the first sheet
+        // that completes and never again, and a new account's first tap with
+        // no date was always refused (needsDob), so that tap spent the one
+        // delivery and the retry named the account after a relay address. The
+        // sentence is not an age claim: it asks for the field, not a threshold.
+        // An existing Apple account signs in from the login screen, where the
+        // button asks nothing. firstSessionAccountFixes.test.js pins the rest.
+        asNativeIos();
+        const utils = door.open();
+        fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
+
+        await waitFor(() => expect(utils.getByRole('alert').textContent)
+          .toBe('Add the year you were born above first, then continue with Apple.'));
+        expect(mockAppleAuthorize).not.toHaveBeenCalled();
+        expect(api.appleLogin).not.toHaveBeenCalled();
+      });
+    }
   });
 });
 
