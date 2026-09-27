@@ -40,6 +40,16 @@ SS = 2                                                       # supersampling
 # Owner id for anything drawn in front of people that is not a person: a hand
 # at the lens or a mug held up hides whoever is behind it.
 OCCLUDER = 1 << 20
+
+# What owl-2 names. Index 0 is what the sensor counts; everything else is
+# named on the screen so it is plain why it was not counted.
+CLASSES = ('person', 'hand', 'pet', 'hot drink', 'food', 'laptop', 'screen',
+           'heater', 'lamp', 'warm seat')
+_KIND_CLASS = {'mug': 'hot drink', 'plate': 'food', 'laptop': 'laptop',
+               'screen': 'screen', 'radiator': 'heater', 'vent': 'heater',
+               'lamp': 'lamp', 'pet': 'pet', 'seat': 'warm seat', 'sun': None}
+# Owner ids for objects start here, clear of any person id.
+OBJECT_ID0 = 10000
 W, H = COLS * SS, ROWS * SS
 
 
@@ -264,7 +274,7 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
 # The things a threshold counts as people
 # ---------------------------------------------------------------------------
 
-def hand_near_lens(c, rng, amb):
+def hand_near_lens(c, rng, amb, oid=OCCLUDER):
     """A hand held up close to the camera: the reason fingers counted twice."""
     d = rng.uniform(0.15, 0.6)
     s = F_PX * SS / d
@@ -276,8 +286,8 @@ def hand_near_lens(c, rng, amb):
     # The forearm runs off the nearest edge of the frame.
     edge = rng.choice(['bottom', 'left', 'right'])
     ex, ey = {'bottom': (cx, H + 50), 'left': (-50, cy + 20), 'right': (W + 50, cy + 20)}[edge]
-    c.paint(capsule(cx, cy, ex, ey, 0.035 * s), skin - rng.uniform(0.5, 3.0), owner=OCCLUDER)
-    c.paint(rect(cx, cy, palm_w, palm_h, angle=ang, corner=0.02 * s), skin, owner=OCCLUDER)
+    c.paint(capsule(cx, cy, ex, ey, 0.035 * s), skin - rng.uniform(0.5, 3.0), owner=oid)
+    c.paint(rect(cx, cy, palm_w, palm_h, angle=ang, corner=0.02 * s), skin, owner=oid)
     fist = rng.random() < 0.2
     spread = rng.uniform(0.02, 0.18)
     for i in range(4):
@@ -293,58 +303,67 @@ def hand_near_lens(c, rng, amb):
             # Fingers are drawn from the palm's top edge, fanned by `spread`.
             c.paint(capsule(cx + off, cy - palm_h / 2, cx + off + math.sin(fa) * length,
                             cy - palm_h / 2 - math.cos(fa) * length, 0.0095 * s),
-                    skin - rng.uniform(0.5, 3.5), owner=OCCLUDER)
+                    skin - rng.uniform(0.5, 3.5), owner=oid)
     side = rng.choice([-1, 1])
     c.paint(capsule(cx + side * palm_w * 0.5, cy, cx + side * palm_w * 0.95,
-                    cy - palm_h * 0.45, 0.011 * s), skin - rng.uniform(0.3, 2.5), owner=OCCLUDER)
+                    cy - palm_h * 0.45, 0.011 * s), skin - rng.uniform(0.3, 2.5), owner=oid)
 
 
-def distractor(c, rng, amb):
+def distractor(c, rng, amb, oid=-1):
+    """Draw one thing that is warm and is not a person. Returns its class
+    name (see CLASSES), or None for a patch of sun, which is background."""
     kind = rng.choice(['mug', 'laptop', 'screen', 'radiator', 'lamp', 'pet',
                        'seat', 'plate', 'sun', 'vent'],
                       p=[0.18, 0.14, 0.08, 0.08, 0.06, 0.12, 0.1, 0.08, 0.1, 0.06])
     d = rng.uniform(0.5, 6.0)
+    if _KIND_CLASS[kind] is None:
+        oid = -1
+
+    def paint(shape, temp):
+        c.paint(shape, temp, owner=oid)
+
     s = F_PX * SS / d
     x, y = rng.uniform(0, W), rng.uniform(0.15, 1.0) * H
     if kind == 'mug':
         t = rng.uniform(42, 70)
-        c.paint(rect(x, y, 0.08 * s, 0.1 * s, corner=0.01 * s), t)
-        c.paint(capsule(x + 0.05 * s, y - 0.02 * s, x + 0.05 * s, y + 0.02 * s, 0.012 * s), t - 8)
+        paint(rect(x, y, 0.08 * s, 0.1 * s, corner=0.01 * s), t)
+        paint(capsule(x + 0.05 * s, y - 0.02 * s, x + 0.05 * s, y + 0.02 * s, 0.012 * s), t - 8)
     elif kind == 'laptop':
-        c.paint(rect(x, y, 0.33 * s, 0.22 * s, angle=rng.normal(0, 0.3), corner=0.01 * s),
+        paint(rect(x, y, 0.33 * s, 0.22 * s, angle=rng.normal(0, 0.3), corner=0.01 * s),
                 amb + rng.uniform(4, 14))
     elif kind == 'screen':
-        c.paint(rect(x, y, rng.uniform(0.5, 1.2) * s, rng.uniform(0.3, 0.7) * s),
+        paint(rect(x, y, rng.uniform(0.5, 1.2) * s, rng.uniform(0.3, 0.7) * s),
                 amb + rng.uniform(3, 12))
     elif kind == 'radiator':
         w, h = rng.uniform(0.6, 1.2) * s, rng.uniform(0.4, 0.7) * s
         t = rng.uniform(35, 60)
         for i in range(int(rng.integers(5, 12))):
-            c.paint(rect(x - w / 2 + (i + 0.5) * w / 10, y, w / 14, h, corner=w / 40), t)
+            paint(rect(x - w / 2 + (i + 0.5) * w / 10, y, w / 14, h, corner=w / 40), t)
     elif kind == 'lamp':
         t = rng.uniform(55, 120)
-        c.paint(ellipse(x, y, 0.06 * s, 0.06 * s), amb + (t - amb) * 0.25)
-        c.paint(ellipse(x, y, 0.03 * s, 0.03 * s), t)
+        paint(ellipse(x, y, 0.06 * s, 0.06 * s), amb + (t - amb) * 0.25)
+        paint(ellipse(x, y, 0.03 * s, 0.03 * s), t)
     elif kind == 'pet':
         fur = amb + (34 - amb) * rng.uniform(0.3, 0.65)
         big = rng.uniform(0.6, 1.3)
-        c.paint(ellipse(x, y, 0.25 * s * big, 0.12 * s * big, rng.normal(0, 0.2)), fur)
+        paint(ellipse(x, y, 0.25 * s * big, 0.12 * s * big, rng.normal(0, 0.2)), fur)
         hx = x + rng.choice([-1, 1]) * 0.27 * s * big
-        c.paint(ellipse(hx, y - 0.08 * s * big, 0.08 * s * big, 0.07 * s * big), fur + rng.uniform(0.5, 2.5))
+        paint(ellipse(hx, y - 0.08 * s * big, 0.08 * s * big, 0.07 * s * big), fur + rng.uniform(0.5, 2.5))
         for side in (-1, 1):
             for fb in (-1, 1):
                 lx = x + fb * 0.15 * s * big
-                c.paint(capsule(lx + side * 0.02 * s, y + 0.05 * s * big, lx, y + 0.22 * s * big,
+                paint(capsule(lx + side * 0.02 * s, y + 0.05 * s * big, lx, y + 0.22 * s * big,
                                 0.025 * s * big), fur - rng.uniform(0, 2))
     elif kind == 'seat':
-        c.paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s), amb + rng.uniform(1.5, 5.0))
+        paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s), amb + rng.uniform(1.5, 5.0))
     elif kind == 'plate':
-        c.paint(ellipse(x, y, 0.13 * s, 0.05 * s), rng.uniform(38, 60))
+        paint(ellipse(x, y, 0.13 * s, 0.05 * s), rng.uniform(38, 60))
     elif kind == 'sun':
-        c.paint(rect(x, y, rng.uniform(40, 160), rng.uniform(20, 90), angle=rng.normal(0, 0.4)),
+        paint(rect(x, y, rng.uniform(40, 160), rng.uniform(20, 90), angle=rng.normal(0, 0.4)),
                 amb + rng.uniform(3, 14))
     elif kind == 'vent':
-        c.paint(rect(x, y * 0.4, 0.3 * s, 0.15 * s), amb + rng.uniform(6, 20))
+        paint(rect(x, y * 0.4, 0.3 * s, 0.15 * s), amb + rng.uniform(6, 20))
+    return _KIND_CLASS[kind]
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +385,15 @@ def _people_count(rng):
     return int(rng.integers(13, 26))
 
 
-def scene(rng):
-    """One frame: (celsius [ROWS, COLS] float32, [(x, y), ...] in frame pixels)."""
+def scene_full(rng):
+    """One frame and everything in it.
+
+    Returns (celsius [ROWS, COLS] float32, objects), each object a dict with
+    'cls' (a name from CLASSES), 'x', 'y' (its point, in frame pixels) and
+    'box' (x0, y0, x1, y1, the part of it that shows). A person's point is the
+    head, the thing that is counted; anything else's is the middle of what
+    shows of it.
+    """
     c, amb, horizon = room(rng)
     overhead = rng.random() < 0.2
     n = _people_count(rng)
@@ -398,19 +424,37 @@ def scene(rng):
             placed[j] = (di * rng.uniform(0.95, 1.05),
                          xi + rng.choice([-1, 1]) * rng.uniform(0.32, 0.55) * s,
                          yi + rng.normal(0, 0.05) * s, placed[j][3])
+
+    things = {}          # owner id -> class name
+    next_id = [OBJECT_ID0]
+
+    def new_id(cls):
+        oid = next_id[0]
+        next_id[0] += 1
+        if cls is not None:
+            things[oid] = cls
+        return oid
+
+    def add_distractor():
+        oid = next_id[0]
+        cls = distractor(c, rng, amb, oid)
+        next_id[0] += 1
+        if cls is not None:
+            things[oid] = cls
+
     # Behind first: distractors on the floor and tables go in among them.
     order = sorted(placed, key=lambda p: -p[0])
-    for _ in range(int(rng.integers(0, 4))):
-        distractor(c, rng, amb)
+    for _ in range(int(rng.integers(0, 5))):
+        add_distractor()
     visible = []
     for d, hx, hy, pid in order:
         head, torso = person(c, rng, amb, d, hx, hy, pid, overhead=overhead)
         visible.append((pid, head, torso))
     if rng.random() < 0.15:
         for _ in range(int(rng.integers(1, 3))):
-            hand_near_lens(c, rng, amb)
-    if rng.random() < 0.15:
-        distractor(c, rng, amb)
+            hand_near_lens(c, rng, amb, new_id('hand'))
+    if rng.random() < 0.2:
+        add_distractor()
 
     # Down to the camera's resolution, then its optics and its electronics.
     t = c.t.reshape(ROWS, SS, COLS, SS).mean(axis=(1, 3))
@@ -425,12 +469,18 @@ def scene(rng):
     t = np.round(t * 100) / 100
 
     # Labels from what is actually visible in the final frame.
-    points = []
+    objects = []
     own = c.owner.reshape(ROWS, SS, COLS, SS)
+
+    def box_of(mask):
+        ys, xs = np.nonzero(mask)
+        return (float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)), len(xs)
+
     for pid, (hx, hy, hr), (tx0, ty0, tx1, ty1) in visible:
         mask = (own == pid).any(axis=(1, 3))
         if not mask.any():
             continue
+        box, shown = box_of(mask)
         fx, fy = hx / SS, hy / SS
         head_in = 0 <= fx < COLS and 0 <= fy < ROWS
         if head_in:
@@ -439,14 +489,28 @@ def scene(rng):
             y0, y1 = int(max(0, fy - r)), int(min(ROWS, fy + r + 1))
             x0, x1 = int(max(0, fx - r)), int(min(COLS, fx + r + 1))
             if mask[y0:y1, x0:x1].mean() > 0.3:
-                points.append((fx, fy))
+                objects.append({'cls': 'person', 'x': fx, 'y': fy, 'box': box})
                 continue
         # Head out of view or hidden: count the body if a good part of it shows.
-        ys, xs = np.nonzero(mask)
         area_px = ((tx1 - tx0) / SS) * ((ty1 - ty0) / SS)
-        if len(xs) > max(12, 0.25 * area_px):
-            points.append((float(xs.mean()), float(ys.mean())))
-    return t.astype(np.float32), points
+        if shown > max(12, 0.25 * area_px):
+            ys, xs = np.nonzero(mask)
+            objects.append({'cls': 'person', 'x': float(xs.mean()), 'y': float(ys.mean()),
+                            'box': box})
+    for oid, cls in things.items():
+        mask = (own == oid).any(axis=(1, 3))
+        if mask.sum() < 3:
+            continue
+        box, _ = box_of(mask)
+        objects.append({'cls': cls, 'x': (box[0] + box[2]) / 2, 'y': (box[1] + box[3]) / 2,
+                        'box': box})
+    return t.astype(np.float32), objects
+
+
+def scene(rng):
+    """One frame: (celsius [ROWS, COLS] float32, [(x, y), ...] per person)."""
+    t, objects = scene_full(rng)
+    return t, [(o['x'], o['y']) for o in objects if o['cls'] == 'person']
 
 
 def model_input(celsius):
@@ -476,3 +540,37 @@ def heatmap(points, stride=4, sigma=1.1):
         if 0 <= ix < gw and 0 <= iy < gh:
             hm[iy, ix] = 1.0
     return hm
+
+
+def targets(objects, stride=4):
+    """Training targets for owl-2 on the model's 30x40 grid.
+
+    heat [len(CLASSES), 30, 40]: a Gaussian peak of 1 at each object's point,
+    wider for bigger things, whose middle is less exactly placed.
+    ltrb [4, 30, 40] and mask [30, 40]: at each object's peak cell, the
+    distance from the point to the left, top, right and bottom of its box, in
+    grid cells, which is how a box is drawn round a person whose point is the
+    head and not the middle.
+    """
+    gh, gw = ROWS // stride, COLS // stride
+    heat = np.zeros((len(CLASSES), gh, gw), dtype=np.float32)
+    ltrb = np.zeros((4, gh, gw), dtype=np.float32)
+    mask = np.zeros((gh, gw), dtype=np.float32)
+    ys, xs = np.mgrid[0:gh, 0:gw].astype(np.float32)
+    for o in objects:
+        k = CLASSES.index(o['cls'])
+        x0, y0, x1, y1 = o['box']
+        cx, cy = o['x'] / stride - 0.5, o['y'] / stride - 0.5
+        size = min(x1 - x0, y1 - y0) / stride
+        sigma = max(1.1, size / 6.0) if k else 1.1
+        g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma * sigma))
+        heat[k] = np.maximum(heat[k], g)
+        ix, iy = int(round(cx)), int(round(cy))
+        if 0 <= ix < gw and 0 <= iy < gh:
+            heat[k, iy, ix] = 1.0
+            px, py = (ix + 0.5) * stride, (iy + 0.5) * stride
+            ltrb[:, iy, ix] = [max(0.0, px - x0), max(0.0, py - y0),
+                               max(0.0, x1 - px), max(0.0, y1 - py)]
+            ltrb[:, iy, ix] /= stride
+            mask[iy, ix] = 1.0
+    return heat, ltrb, mask

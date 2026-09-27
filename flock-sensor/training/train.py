@@ -1,12 +1,16 @@
-"""Train the people counter on synthetic frames and export it for the Pi.
+"""Train the sensor's network on synthetic frames and export it for the Pi.
 
-    python train.py --out ~/flux-training/run1 --steps 30000
+    python train.py --out ~/flux-training/run3 --steps 30000
 
 Frames are drawn fresh by synth.py in worker processes, so the model never
 sees the same frame twice and there is nothing on disk to manage. At the end
-it writes people.onnx (1 x 2 x 120 x 160 in, 1 x 1 x 30 x 40 probabilities
-out) and a report of how it counts on held-out frames next to how the rule
-counter in main.py counts the same ones.
+it writes people.onnx and a report: how it counts people on held-out frames
+next to how the rule counter in main.py counts the same ones, and how well it
+finds and names each other kind of thing.
+
+people.onnx takes 1 x 2 x 120 x 160 and gives two outputs on a 30 x 40 grid:
+'heat', 1 x len(CLASSES) probabilities, and 'ltrb', 1 x 4 box reach in grid
+cells. main.py also still reads owl-1's single-output file.
 
 Needs torch, numpy and scipy, on the development machine. A GPU helps; a CPU
 works, slowly.
@@ -14,7 +18,6 @@ works, slowly.
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -28,9 +31,20 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import synth                      # noqa: E402
-from model import PeopleNet, focal_loss   # noqa: E402
+from model import PeopleNet, focal_loss, box_loss   # noqa: E402
 
 PEAK_THRESHOLD = 0.4
+K = len(synth.CLASSES)
+
+
+def flip(t, objects):
+    """Mirror a frame and its labels left to right."""
+    w = synth.COLS
+    out = []
+    for o in objects:
+        x0, y0, x1, y1 = o['box']
+        out.append({'cls': o['cls'], 'x': w - o['x'], 'y': o['y'], 'box': (w - x1, y0, w - x0, y1)})
+    return t[:, ::-1].copy(), out
 
 
 class Frames(IterableDataset):
@@ -42,35 +56,77 @@ class Frames(IterableDataset):
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
         while True:
-            t, pts = synth.scene(rng)
+            t, objects = synth.scene_full(rng)
             if rng.random() < 0.5:
-                t = t[:, ::-1].copy()
-                pts = [(synth.COLS - x, y) for x, y in pts]
-            yield torch.from_numpy(synth.model_input(t)), torch.from_numpy(synth.heatmap(pts))[None]
+                t, objects = flip(t, objects)
+            heat, ltrb, mask = synth.targets(objects)
+            yield (torch.from_numpy(synth.model_input(t)), torch.from_numpy(heat),
+                   torch.from_numpy(ltrb), torch.from_numpy(mask))
 
 
 def peaks(prob, threshold=PEAK_THRESHOLD):
-    """Peaks on a [N, 1, 30, 40] probability map: the same rule main.py uses."""
+    """Peaks on a [N, C, 30, 40] probability map: the same rule main.py uses."""
     local = F.max_pool2d(prob, 3, 1, 1)
     return (prob >= threshold) & (prob == local)
 
 
 def held_out(n, seed=12345):
     rng = np.random.default_rng(seed)
-    return [synth.scene(rng) for _ in range(n)]
+    return [synth.scene_full(rng) for _ in range(n)]
 
 
-def evaluate(net, frames, device, threshold=PEAK_THRESHOLD):
+def predict(net, frames, device, threshold=PEAK_THRESHOLD):
+    """Per frame: [(class index, x, y)] of every peak, in frame pixels."""
     net.eval()
-    counts = []
+    found = []
     with torch.no_grad():
         for i in range(0, len(frames), 256):
             x = torch.stack([torch.from_numpy(synth.model_input(t)) for t, _ in frames[i:i + 256]])
-            prob = torch.sigmoid(net(x.to(device)))
-            counts += peaks(prob, threshold).flatten(1).sum(1).tolist()
+            heat, _ = net(x.to(device))
+            pk = peaks(torch.sigmoid(heat), threshold).cpu().numpy()
+            for f in pk:
+                ks, ys, xs = np.nonzero(f)
+                found.append([(int(k), (x + 0.5) * 4, (y + 0.5) * 4) for k, y, x in zip(ks, ys, xs)])
     net.train()
-    truth = [len(p) for _, p in frames]
-    return score(truth, counts), counts
+    return found
+
+
+def evaluate(net, frames, device, threshold=PEAK_THRESHOLD):
+    found = predict(net, frames, device, threshold)
+    truth = [sum(o['cls'] == 'person' for o in objs) for _, objs in frames]
+    counts = [sum(k == 0 for k, _, _ in f) for f in found]
+    return score(truth, counts), found
+
+
+def per_class(frames, found, reach=8.0):
+    """How often each kind of thing is found (recall) and how often a name
+    given is right (precision). A find matches a real thing of the same kind
+    within `reach` pixels of its point."""
+    out = {}
+    for k, name in enumerate(synth.CLASSES):
+        tp = fn = fp = 0
+        for (_, objs), f in zip(frames, found):
+            real = [(o['x'], o['y']) for o in objs if o['cls'] == name]
+            said = [(x, y) for kk, x, y in f if kk == k]
+            used = set()
+            for rx, ry in real:
+                best = None
+                for j, (sx, sy) in enumerate(said):
+                    if j in used:
+                        continue
+                    d = ((sx - rx) ** 2 + (sy - ry) ** 2) ** 0.5
+                    if d <= reach and (best is None or d < best[0]):
+                        best = (d, j)
+                if best:
+                    used.add(best[1])
+                    tp += 1
+                else:
+                    fn += 1
+            fp += len(said) - len(used)
+        out[name] = {'real': tp + fn,
+                     'found': round(tp / max(1, tp + fn), 3),
+                     'right_when_named': round(tp / max(1, tp + fp), 3)}
+    return out
 
 
 def score(truth, counts):
@@ -99,16 +155,17 @@ def rule_counts(frames):
 def export(net, path):
     net = net.cpu().eval()
 
-    class WithSigmoid(torch.nn.Module):
+    class Exported(torch.nn.Module):
         def __init__(self, inner):
             super().__init__()
             self.inner = inner
 
         def forward(self, x):
-            return torch.sigmoid(self.inner(x))
+            heat, raw = self.inner(x)
+            return torch.sigmoid(heat), torch.exp(raw.clamp(0.0, 6.0)) - 1.0
 
-    torch.onnx.export(WithSigmoid(net), torch.zeros(1, 2, synth.ROWS, synth.COLS), str(path),
-                      input_names=['frame'], output_names=['people'], opset_version=17,
+    torch.onnx.export(Exported(net), torch.zeros(1, 2, synth.ROWS, synth.COLS), str(path),
+                      input_names=['frame'], output_names=['heat', 'ltrb'], opset_version=17,
                       dynamo=False)
 
 
@@ -123,7 +180,9 @@ def main(argv=None):
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--width', type=int, default=24)
     ap.add_argument('--seed', type=int, default=1)
-    ap.add_argument('--name', default='owl-1',
+    ap.add_argument('--init', default=None,
+                    help='a best.pt to start the shared layers from, such as owl-1')
+    ap.add_argument('--name', default='owl-2',
                     help='the name this model is known by on the unit and in the report')
     args = ap.parse_args(argv)
     out = Path(args.out).expanduser()
@@ -131,7 +190,14 @@ def main(argv=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     torch.manual_seed(args.seed)
 
-    net = PeopleNet(args.width).to(device)
+    net = PeopleNet(args.width, classes=K, boxes=True).to(device)
+    if args.init:
+        # Everything but the output layer carries over; that is where owl-1
+        # learned what a person looks like in this camera.
+        state = torch.load(args.init, map_location=device)
+        state = {k: v for k, v in state.items() if not k.startswith('head.')}
+        missing = net.load_state_dict(state, strict=False)
+        print(f'started from {args.init}; new layers: {missing.missing_keys}', flush=True)
     params = sum(p.numel() for p in net.parameters())
     print(f'{params:,} parameters on {device}', flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -153,9 +219,11 @@ def main(argv=None):
         print(f'resuming at step {start}', flush=True)
     t0 = time.time()
     running = 0.0
-    for step, (x, y) in enumerate(loader, start + 1):
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        loss = focal_loss(net(x), y)
+    for step, (x, heat, ltrb, mask) in enumerate(loader, start + 1):
+        x, heat = x.to(device, non_blocking=True), heat.to(device, non_blocking=True)
+        ltrb, mask = ltrb.to(device, non_blocking=True), mask.to(device, non_blocking=True)
+        logits, raw = net(x)
+        loss = focal_loss(logits, heat) + box_loss(raw, ltrb, mask)
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
@@ -178,9 +246,12 @@ def main(argv=None):
 
     net.load_state_dict(torch.load(out / 'best.pt', map_location=device))
     test = held_out(3000, seed=999)
-    model_score, _ = evaluate(net, test, device)
-    rule_score = score([len(p) for _, p in test], rule_counts(test))
-    report = {'name': args.name, 'parameters': params, 'steps': args.steps, 'model': model_score, 'rule': rule_score}
+    model_score, found = evaluate(net, test, device)
+    rule_score = score([sum(o['cls'] == 'person' for o in objs) for _, objs in test],
+                       rule_counts(test))
+    report = {'name': args.name, 'classes': list(synth.CLASSES), 'parameters': params,
+              'steps': args.steps, 'model': model_score, 'rule': rule_score,
+              'things': per_class(test, found)}
     (out / 'report.json').write_text(json.dumps(report, indent=2))
     export(net, out / 'people.onnx')
     print(json.dumps(report, indent=2))
