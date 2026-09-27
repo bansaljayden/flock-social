@@ -52,7 +52,7 @@ ALL_KNOWN = np.ones(K, dtype=np.float32)
 PEOPLE_ONLY = np.eye(K, dtype=np.float32)[0]
 
 
-def real_frame(real, rng):
+def real_frame(real, rng, groups_x3=True):
     """One real training frame at Lepton size, with its people.
 
     real is the 'train' part of the cache real_cache.py builds from public,
@@ -74,10 +74,13 @@ def real_frame(real, rng):
     else:
         # Frames with two or more people drawn three times as often: groups
         # seen from the side are where owl-3 undercounted.
-        if '_w' not in real:
-            w = np.array([3.0 if len(p) >= 2 else 1.0 for p in real['otp_people']])
-            real['_w'] = w / w.sum()
-        i = int(rng.choice(len(real['otp_img']), p=real['_w']))
+        if not groups_x3:
+            i = int(rng.integers(len(real['otp_img'])))
+        else:
+            if '_w' not in real:
+                w = np.array([3.0 if len(p) >= 2 else 1.0 for p in real['otp_people']])
+                real['_w'] = w / w.sum()
+            i = int(rng.choice(len(real['otp_img']), p=real['_w']))
         g = real['otp_img'][i].astype(np.float32) / 255.0
         # 8-bit frames carry no temperatures; a plausible room-to-skin range,
         # different every time, so no one mapping is learned as the truth.
@@ -141,7 +144,9 @@ def real_held_out(path, split, n=600, seed=5):
     rng = np.random.default_rng(seed)
     out = []
     for _ in range(n):
-        t, objects, _ = real_frame(real, rng)
+        # Drawn as they come, not weighted toward groups the way training
+        # draws them, so the score means the same thing from run to run.
+        t, objects, _ = real_frame(real, rng, groups_x3=False)
         out.append((t, objects))
     return out
 
