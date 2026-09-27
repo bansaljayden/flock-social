@@ -74,6 +74,32 @@ describe('the price-change line is a condition, not a sender', () => {
   });
 });
 
+describe('where Flock Pro is sold', () => {
+  // No iOS build sells Flock Pro (the App Store one is built with
+  // REACT_APP_PURCHASES=off), so the Terms no longer say it can be bought in
+  // the app. The App Store terms in 10.1 stay whole, for a version that does.
+  const BOTH = [['Terms', TERMS], ['mirror', MIRROR]];
+
+  test('neither copy says Pro can be bought in the iOS app today', () => {
+    for (const [, text] of BOTH) {
+      expect(text).not.toMatch(/Buy it in the iOS app and you cancel through Apple/);
+      expect(text).not.toMatch(/Flock Pro can be bought in two places/);
+      expect(text).toContain('The iOS app does not currently sell it; if a version of the app does, a subscription bought there is cancelled through Apple.');
+      expect(text).toContain('Flock Pro is sold on flockcorp.com, under 10.2. The iOS app does not currently sell it. If a version of the app offers it, 10.1 sets out how a subscription bought there works.');
+      expect(text).toContain('10.1 If bought in the iOS app');
+    }
+  });
+
+  test('every App Store disclosure in 10.1 is still there', () => {
+    for (const [, text] of BOTH) {
+      expect(text).toMatch(/renews automatically at the end of each term at the then-current price/);
+      expect(text).toMatch(/you manage and cancel the subscription in your Apple ID settings, not in Flock/);
+      expect(text).toMatch(/handled by Apple under its own policies/);
+      expect(text).toMatch(/Deleting your Flock account does not cancel a store subscription\./);
+    }
+  });
+});
+
 describe('the homepage speaks to the public', () => {
   test('its "Live crowd levels" line says why the review list does not change it', () => {
     const landing = read('frontend', 'src', 'website', 'LandingPage.js');

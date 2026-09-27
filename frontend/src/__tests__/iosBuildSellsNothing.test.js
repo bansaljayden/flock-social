@@ -336,6 +336,35 @@ describe('the router', () => {
   });
 });
 
+describe('the legal pages', () => {
+  test('/terms and /privacy carry no copy of either document when off, and the full page when unset', () => {
+    const index = read('index.js');
+    expect(index).toContain("load: process.env.REACT_APP_PURCHASES === 'off'\n      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc=\"privacy\" /> }))\n      : () => import('./website/PrivacyPolicy'),");
+    expect(index).toContain("load: process.env.REACT_APP_PURCHASES === 'off'\n      ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc=\"terms\" /> }))\n      : () => import('./website/TermsOfService'),");
+    // Nothing else pulls either document into the bundle.
+    const imports = (index.match(/import\('\.\/website\/(TermsOfService|PrivacyPolicy)'\)/g) || []);
+    expect(imports).toHaveLength(2);
+    // The Guidelines sell nothing and stay whole in every build.
+    expect(read('website', 'CommunityGuidelines.js')).not.toMatch(/Flock Pro|Roost|\$\d|checkout|subscription/i);
+  });
+
+  test.each([['terms', 'Terms of Service'], ['privacy', 'Privacy Policy']])('off: /%s points at the published text and sells nothing', (doc, title) => {
+    const LegalOnTheWeb = require('../website/LegalOnTheWeb').default;
+    const { container } = render(<LegalOnTheWeb doc={doc} />);
+    const link = screen.getByRole('link', { name: `flockcorp.com/${doc}` });
+    expect(link.getAttribute('href')).toBe(`https://www.flockcorp.com/${doc}`);
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(container.textContent).toContain(title);
+    expect(container.textContent).not.toMatch(/Pro|Roost|\$\d|price|buy|subscri/i);
+  });
+
+  test('the app\'s own legal links already open the published text', () => {
+    const settings = read('screens', 'ProfileSettings.js');
+    expect(settings).toContain("openExternal('https://www.flockcorp.com/terms')");
+    expect(settings).toContain("openExternal('https://www.flockcorp.com/privacy')");
+  });
+});
+
 describe('where the flag is set', () => {
   const yaml = readRepo('codemagic.yaml');
   const workflow = (id) => {
