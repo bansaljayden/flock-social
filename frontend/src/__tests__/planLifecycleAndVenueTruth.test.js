@@ -181,7 +181,9 @@ describe('confirming a plan', () => {
     // the only thing that writes anybody a reliability score, so a completed
     // flock with an unmarked roster has to keep a door open.
     expect(APP).toMatch(/const openAttendanceSheet = useCallback/);
-    expect(APP).toMatch(/const attendanceOwed = isCompleted &&/);
+    // A completed flock, not a cancelled one: the server takes attendance only
+    // for 'completed', so the door stays shut on a night that did not happen.
+    expect(APP).toMatch(/const attendanceOwed = isDone &&/);
     expect(APP).toMatch(/attendance: m\.attendance \|\| 'unmarked'/);
     expect(APP_SRC).toMatch(/Who showed up\?/);
   });

@@ -519,14 +519,29 @@ router.post('/',
         // invitation is inert" is a sentence somebody should be able to rely on
         // without re-deriving it per route; one exception costs more than it
         // buys.
+        //
+        // AND NOT A PLAN THAT WAS CALLED OFF. A report attributed to a
+        // cancelled flock is a rating of a night that did not happen. The
+        // presence check below already refuses to verify one, so it was
+        // filed, unverified, and dropped by every reader, while the person
+        // was thanked for it. flockSweep cancels every plan nobody locked in
+        // once its time is 12 hours gone, so this is the most common way a
+        // plan ends, and the plan screen stops asking (FlockDetail's isDone).
+        // Refused here too, because a hidden card is only the client's word.
+        // The status rides on the membership read so the order of checks and
+        // statements is unchanged.
         if (flockId !== null) {
           const membership = await client.query(
-            `SELECT 1 FROM flock_members
+            `SELECT (SELECT status FROM flocks WHERE id = $1) AS flock_status FROM flock_members
               WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted' LIMIT 1`,
             [flockId, req.user.id]
           );
           if (membership.rowCount === 0) {
             refusal = { status: 403, body: { error: 'That flock is not yours to report on.' } };
+            throw new Rollback();
+          }
+          if (membership.rows[0]?.flock_status === 'cancelled') {
+            refusal = { status: 409, body: { error: 'That plan was called off, so there is no night to report on.' } };
             throw new Rollback();
           }
         }

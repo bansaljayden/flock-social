@@ -187,10 +187,19 @@ export default function FlockDetail({
     // editor and "Lock it in" still offered (lifecycle audit, 2026-09-05).
     const isCompleted = flock.status === 'completed' || flock.status === 'cancelled';
     const isConfirmed = flock.status === 'confirmed' || flock.status === 'locked';
+    // A night that actually happened. isCompleted above means "ended", which
+    // is right for the controls it hides, but a cancelled plan ended without a
+    // night: POST /:id/attendance answers 400 for anything but 'completed', and
+    // a report on a cancelled plan is refused by POST /api/feedback. The sweep
+    // cancels every plan nobody locked in, so this is the common ending, and
+    // gating the two asks below on isCompleted gave the host a "Who showed up?"
+    // banner that could never be cleared and asked everyone to rate a night
+    // that did not happen.
+    const isDone = flock.status === 'completed';
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
     // completed the night hours after it ended and there was no sheet to skip.
-    const attendanceOwed = isCompleted && acceptedMembers.some(m => typeof m === 'object' && (m.attendance || 'unmarked') === 'unmarked');
+    const attendanceOwed = isDone && acceptedMembers.some(m => typeof m === 'object' && (m.attendance || 'unmarked') === 'unmarked');
     const hasVenue = flock.venue && flock.venue !== 'TBD';
     // PUT /api/flocks/:id is creator-only, so only the creator gets the control.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
@@ -510,8 +519,10 @@ export default function FlockDetail({
             >{recapSharing ? 'Making the card…' : 'Share the night'}</button>
           )}
 
-          {/* Post-hangout feedback prompt — only after flock is marked done */}
-          {isCompleted && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
+          {/* Post-hangout feedback prompt, only once the night happened.
+              isDone and not isCompleted: a cancelled plan has no night to
+              rate (see isDone above). */}
+          {isDone && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: '0 0 10px' }}>How was {flock.venue}?</p>
 

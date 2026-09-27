@@ -32,6 +32,7 @@ let unknown;      // unmodelled statements
 function reset() {
   state = {
     memberships: [{ flock_id: 10, user_id: 1 }], // user 1 belongs to flock 10
+    flockStatus: { 10: 'completed' },            // flocks.status by id
     recentCount: 0,          // rows in the last hour for this user
     signedNfcCheckin: false, // an HMAC-signed tap at this venue in the last 3h
     qualifyingFlock: false,  // accepted membership in a >=2-person, non-cancelled flock here
@@ -63,7 +64,12 @@ function dispatch(sql, params) {
   if (/FROM flock_members WHERE flock_id/i.test(text)) {
     const [flockId, userId] = params;
     const hit = state.memberships.some((m) => m.flock_id === Number(flockId) && m.user_id === Number(userId));
-    return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
+    // The membership read carries the plan's status in a scalar subquery, so
+    // the row answers with it the way Postgres would.
+    const row = /AS flock_status/i.test(text)
+      ? { flock_status: state.flockStatus[Number(flockId)] ?? null }
+      : { '?column?': 1 };
+    return Promise.resolve({ rows: hit ? [row] : [], rowCount: hit ? 1 : 0 });
   }
   if (/^DELETE FROM venue_feedback/i.test(text)) {
     return Promise.resolve({ rows: [], rowCount: 0 });
@@ -301,6 +307,41 @@ test('a flock the user does belong to is accepted', async () => {
   const r = await call('POST', '/api/feedback', { ...base_payload(), flock_id: 10 });
   assert.equal(r.status, 201, r.text);
   assert.equal(inserted[1], 10);
+});
+
+// A cancelled plan is an explicit "we did not go". The presence check already
+// refuses to verify a report against one; the report itself was still filed,
+// and the person thanked, for a night that never happened. The sweep cancels
+// every plan nobody locked in, so this is the usual ending, not an edge.
+test('a report on a plan that was called off is refused, and nothing is written', async () => {
+  state.flockStatus[10] = 'cancelled';
+  const r = await call('POST', '/api/feedback', { ...base_payload(), flock_id: 10 });
+  assert.equal(r.status, 409, r.text);
+  assert.match(r.body.error, /called off/);
+  assert.equal(inserted, null);
+  assert.ok(queries.some((q) => /^ROLLBACK/i.test(q.text)), 'expected ROLLBACK');
+  assert.ok(!queries.some((q) => /^COMMIT/i.test(q.text)), 'must not COMMIT');
+  // Refused before the dedupe DELETE, so a cancelled plan cannot wipe the
+  // person's real report on the same venue either.
+  assert.ok(!queries.some((q) => /^DELETE FROM venue_feedback/i.test(q.text)), 'the dedupe ran before the refusal');
+});
+
+test('the status is read in the same statement as the membership, for this flock id', async () => {
+  await call('POST', '/api/feedback', { ...base_payload(), flock_id: 10 });
+  const membership = queries.find((q) => /FROM flock_members WHERE flock_id/i.test(q.text));
+  assert.ok(membership, 'the membership check never ran');
+  assert.match(membership.text, /\(SELECT status FROM flocks WHERE id = \$1\) AS flock_status/);
+  assert.match(membership.text, /status = 'accepted'/);
+  assert.deepEqual(membership.params, [10, 1]);
+});
+
+test('every other plan state still takes a report', async () => {
+  for (const status of ['completed', 'confirmed', 'planning']) {
+    reset();
+    state.flockStatus[10] = status;
+    const r = await call('POST', '/api/feedback', { ...base_payload(), flock_id: 10 });
+    assert.equal(r.status, 201, `${status} -> ${r.text}`);
+  }
 });
 
 // ── Place id shape ──────────────────────────────────────────────────────────
