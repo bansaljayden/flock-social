@@ -79,7 +79,9 @@
 // routes/crowd.js has always served `isOpen` up to ten minutes stale from its
 // own cache, on the same screen, for the same venue. What changes is that the
 // detail card's opening-hours block now shares that ten rather than its own
-// five. Everything else in the payload is slower-moving than either number by
+// five, and so does Birdie's crowd tool, which fetched openNow fresh on every
+// question until it read this cache; Birdie and the card now agree on it.
+// Everything else in the payload is slower-moving than either number by
 // orders of magnitude. Do NOT raise this to hours to buy more cache hits: the
 // saving is already taken by the in-flight coalescing above (the duplicate pair
 // is simultaneous), and every additional minute is spent entirely on openNow

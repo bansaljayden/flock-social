@@ -847,6 +847,16 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // signed-in caller, exactly as routes/crowd.js and routes/venueSearch.js
       // do, so sharing crosses no ledger line.
       //
+      // What sharing costs is the age of one field. currentOpeningHours.openNow,
+      // read below as isOpen and returned as is_open, can now be up to the
+      // cache's ten minutes old, where this used to fetch it fresh on every
+      // question. That is the bound the card has always served it under (the
+      // TTL paragraph in placeDetailsCache.js), so Birdie and the card now
+      // say the same thing about whether a venue is open. Recomputing it here
+      // from `periods` would not be fresher, only different: crowdEngine's
+      // isOpenAt reads whole hours, and the card lets Google's openNow win
+      // over the posted hours because the two disagree often enough.
+      //
       // The shared mask is a superset of the one this used to send, so every
       // field read below (utcOffsetMinutes and timeZone for the venue clock
       // included) is still fetched, and the id is still percent-encoded into
