@@ -2339,7 +2339,9 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   };
   // No burn, no break-even: a count worked from a partial burn would be a
   // smaller number that looks whole.
-  const need = (netPerUnit) => (burnCents !== null && netPerUnit > 0 ? Math.ceil(burnCents / netPerUnit) : null);
+  // Credits can put a month's burn below zero, and no count below zero is
+  // needed to cover it.
+  const need = (netPerUnit) => (burnCents !== null && netPerUnit > 0 ? Math.max(0, Math.ceil(burnCents / netPerUnit)) : null);
   const proPrice = priceFor('pro', 'monthly');
   const roostPrice = priceFor('roost', 'monthly');
   const proWebNet = proPrice ? stripeNetMonthlyCents(proPrice.cents, { interval: 'month', interval_count: 1 }) : null;
