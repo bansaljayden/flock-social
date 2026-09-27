@@ -164,7 +164,7 @@ describe('the bot document is the rendered page, block for block', () => {
     // EXCLUDE list — fix the list, not this test.
     const all = Object.values(api.PAGE_BLOCKS).flat().map(([, text]) => text).join('\n');
     expect(all).not.toMatch(/\$116\.82|\$23\.3[67]/);
-    expect(all).not.toMatch(/needs help|View location on map/);
+    expect(all).not.toMatch(/needs help|View location on map|Accurate to about|Alert sent at/i);
     expect(all).not.toMatch(/Seen by 6/);
   });
 

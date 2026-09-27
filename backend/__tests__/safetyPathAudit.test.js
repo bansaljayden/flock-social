@@ -423,6 +423,10 @@ test('sos: the alert email carries a deadline, a safety sender and a header-safe
       assert.strictEqual(r.sends.length, 1);
       const { payload, options } = r.sends[0];
       assert.match(payload.from, /alerts@flockcorp\.com/, 'an SOS is not sent from the marketing address');
+      // The display name is what a parent reads in the inbox list. "Flock
+      // Safety" is a licence-plate camera company, so the sender is Flock and
+      // nothing after it.
+      assert.strictEqual(payload.from, 'Flock <alerts@flockcorp.com>');
       assert.ok(!/[\r\n]/.test(payload.subject), `subject carried a newline: ${JSON.stringify(payload.subject)}`);
       assert.ok(options && options.signal, 'round 12: an undeadlined send parks the SOS for minutes');
     });
@@ -943,6 +947,45 @@ test('test email: the daily allowance is not spent on an account that has no add
       }
     });
   } finally { restore(); }
+});
+
+test('test email: it comes from Flock and says what it is testing', async () => {
+  // The subject read "Flock Safety: test email". Flock Safety is an unrelated
+  // licence-plate camera company, and this is the first mail from the SOS
+  // sender a user ever sees, so it is where the name has to be right.
+  const r = stubResend();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Me', email: 'me@example.com' }] };
+    return null;
+  });
+  const cap = captureConsole();
+  try {
+    await withEnv({ RESEND_API_KEY: 'k' }, async () => {
+      emailService.resetClient();
+      const res = await call(safetyRoutes, 'GET', '/api/test-email');
+      assert.strictEqual(res.body.ok, true, JSON.stringify(res.body));
+      assert.strictEqual(r.sends.length, 1);
+      const { payload } = r.sends[0];
+      assert.strictEqual(payload.from, 'Flock <alerts@flockcorp.com>');
+      assert.strictEqual(payload.subject, 'Flock: test SOS email');
+    });
+  } finally {
+    cap.restore(); r.restore(); restore(); emailService.resetClient();
+  }
+});
+
+test('copy: nothing routes/safety.js sends is signed "Flock Safety"', () => {
+  // A sweep behind the two exact pins above, so a new send on this route
+  // cannot bring the name back in a subject or a body either.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const code = fs.readFileSync(path.join(__dirname, '..', 'routes', 'safety.js'), 'utf8')
+    .replace(/\r/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+    .join('\n');
+  assert.ok(!/Flock Safety/i.test(code), 'routes/safety.js still says "Flock Safety" outside a comment');
 });
 
 test('copy: no em dash reaches anything routes/safety.js sends or says', () => {

@@ -75,7 +75,14 @@ function safeSubjectText(str) {
 // alert open for minutes with nothing sent), the recipient check and the log
 // masking. The only thing kept here is the from-address: an SOS does not come
 // from the marketing mailbox.
-const SAFETY_FROM = 'Flock Safety <alerts@flockcorp.com>';
+//
+// The display name is plain "Flock". It read "Flock Safety", which is the name
+// of an unrelated licence-plate camera company, so a parent's inbox showed an
+// emergency about their child arriving under another company's name. It is not
+// "Flock SOS" either, because this sender also carries the
+// all-clear and the share-my-location email, and neither of those is an
+// emergency. The address is what separates it from the rest of Flock's mail.
+const SAFETY_FROM = 'Flock <alerts@flockcorp.com>';
 
 // `category` is the do-not-mail list's question, and only ONE caller in this
 // file answers it 'emergency': POST /alert. The whole argument is written at
@@ -144,7 +151,7 @@ router.get('/test-email', authenticate, async (req, res) => {
 
     const result = await sendAlertEmail(
       user.rows[0].email,
-      'Flock Safety: test email',
+      'Flock: test SOS email',
       '<div style="font-family:Arial,sans-serif;padding:20px;text-align:center"><h2>It works!</h2><p>Your Flock emergency alerts are set up correctly.</p></div>'
     );
     res.json({ ok: result.sent || false, error: result.error });
