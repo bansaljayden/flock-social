@@ -136,7 +136,7 @@ function combineRsvpCounts(members = [], guests = []) {
 // joining account.
 //
 // RETIRED, NOT TAKEN DOWN. Both stamp retired_at in the same write that hides
-// the row (migration 097). A hidden row was all a takedown wrote too, so the
+// the row (migration 098). A hidden row was all a takedown wrote too, so the
 // takedown's replay guard (routes/guest.js nameIsTakenDown) refused the
 // retired row's name to anybody else on the plan with the moderation sentence,
 // and the person who had just joined was told their answer was gone. The

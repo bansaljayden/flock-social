@@ -201,7 +201,7 @@ async function dispatch(sql, params) {
       ? { rows: [{ id: g.id, name: g.name, status: g.status, reconfirmed_at: g.reconfirmed_at }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
-  // A miss asks whether the row was retired on a join (migration 097).
+  // A miss asks whether the row was retired on a join (migration 098).
   // Nobody in this world joined, so a hidden row here is a takedown.
   if (/^SELECT 1 FROM guest_rsvps WHERE guest_token = \$1 AND flock_id = \$2 AND is_hidden IS TRUE AND retired_at IS NOT NULL LIMIT 1$/.test(flat)) {
     const g = world.guests.find((x) => x.flock_id === Number(p[1]) && x.guest_token === String(p[0]).toLowerCase()

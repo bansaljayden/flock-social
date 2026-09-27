@@ -464,7 +464,7 @@ test('a hidden guest RSVP is announced to the flock, and to no personal room', a
 test('hiding or restoring a guest RSVP clears its retired stamp, and no other table is asked to', async () => {
   // A guest row retired because its person joined the plan is already hidden,
   // and the name guard only reads a hidden row as a takedown when it was not
-  // retired (migration 097). A moderator's hide has to make it a takedown,
+  // retired (migration 098). A moderator's hide has to make it a takedown,
   // and a restore makes it a live answer again rather than a retired one.
   for (const action of ['hide', 'unhide']) {
     handlers = moderationHandlers('guest_rsvp', 'guest_rsvps', { flock_id: 8, notify_a: null, notify_b: null });

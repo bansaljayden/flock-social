@@ -774,7 +774,11 @@ test('a first name retired on a join stays free for the next person, and its own
   const joined = await call('POST', `/api/guest/${link}/join`, { token: sam.token, body: { guestToken: answered.body.guestToken } });
   assert.strictEqual(joined.status, 200, JSON.stringify(joined.body));
 
-  // A different Sam on the same link is an ordinary new answer.
+  // A different Sam on the same link is an ordinary new answer. So is the Sam
+  // who joined, answering again from a browser that holds no identity: the
+  // route is anonymous and cannot tell the two apart, and refusing both is
+  // the defect (migration 098, WHAT THE STAMP OPENS). Pinned so the opening
+  // is a decision someone has to undo on purpose, not a surprise.
   const other = await sayAs(link, { name: 'Sam', status: 'in' });
   assert.strictEqual(other.status, 201, JSON.stringify(other.body));
 
