@@ -116,9 +116,34 @@ function track(event, props) {
    drift, keep the props a literal object (the sweep reads it), and say in a
    comment which question it answers. If it cannot be recorded without one of
    the values above, do not record it. */
+// The account this page is signed in as, kept so that an identify which had to
+// wait for consent can still be made once it arrives. Cleared by the sign-out
+// wipe, so it never outlives the session it names.
+let signedInUserId = null;
+
+function rememberSignedInUser(user) {
+  if (user?.id !== undefined && user?.id !== null) signedInUserId = String(user.id);
+}
+
 function identifyUser(user) {
   if (!user?.id) return;
+  rememberSignedInUser(user);
   withPostHog((posthog) => posthog.identify(String(user.id)));
+}
+
+/* THE IDENTIFY A SIGN-IN COULD NOT MAKE.
+   In the app the analytics question is asked after sign-in: the native shell
+   holds the bar back until the tab bar is on screen (components/
+   ConsentBanner.js), and on the web a fresh visitor often signs in before
+   answering. Either way the identify at login ran into the consent gate in
+   withPostHog and was dropped, so everything the person did after saying yes
+   was recorded against an anonymous id until their next sign-in, a day later
+   at the soonest. index.js calls this once PostHog has started on a yes, and
+   it names the account signed in now, or does nothing when nobody is. */
+export function identifySignedInUser() {
+  const id = signedInUserId;
+  if (!id) return;
+  withPostHog((posthog) => posthog.identify(id));
 }
 
 function getToken() {
@@ -245,8 +270,9 @@ function storeSession(data) {
  *                                they belong to whoever is holding the
  *                                device now (holdInviteHandoff below)
  *
- *   KEPT — device facts, nothing personal in them, and every one of them is
- *   overwritten by pullSettings() the moment the next account signs in:
+ *   KEPT — device facts, nothing personal in them. The three display ones are
+ *   overwritten by pullSettings() the moment the next account signs in; the
+ *   last two are about the browser, not the account:
  *     flock-theme, flock-theme-mode   dark/light. Dropping it means the next
  *                                     person gets a flash of the wrong theme
  *                                     for zero privacy gain.
@@ -255,6 +281,23 @@ function storeSession(data) {
  *                                     permission. That is true of the handset
  *                                     regardless of who holds it; clearing it
  *                                     just re-prompts into a denial.
+ *     flock_analytics_consent         the answer to the analytics bar
+ *                                     (services/analyticsConsent.js). Not
+ *                                     overwritten by pullSettings: it is not an
+ *                                     account setting. It is consent to store
+ *                                     and send from THIS browser, the thing
+ *                                     ePrivacy asks about, and on the web it is
+ *                                     usually given before any account exists.
+ *                                     Sweeping it broke the banner's one
+ *                                     promise, that declining is remembered and
+ *                                     the bar does not come back: every
+ *                                     sign-out and every 24h expiry asked again.
+ *                                     It also switched off the PostHog reset
+ *                                     below for the next account, which is how
+ *                                     the next person on a shared phone was
+ *                                     recorded as the last one. The reset still
+ *                                     runs on every sign-out, so a kept yes
+ *                                     carries no identity across accounts.
  *
  * sessionStorage is not written anywhere in the app today. It is swept on the
  * same rule anyway so a future writer is covered by default rather than by
@@ -266,6 +309,7 @@ const KEEP_ON_SIGN_OUT = new Set([
   'flock-theme-mode',
   'flock_map_type',
   'flock_notif_denied',
+  'flock_analytics_consent',
 ]);
 
 function sweepStore(store) {
@@ -417,15 +461,25 @@ function holdInviteHandoff() {
 }
 
 export function clearLocalSession({ keepInviteHandoff = false } = {}) {
+  // Round 3: without reset, activity on a shared device stays attributed to
+  // the previous account, and the next login can merge identities.
+  //
+  // ASKED FOR BEFORE THE SWEEP, because withPostHog reads the consent answer
+  // at the moment it is called and that answer is a flock* key. Called after
+  // the sweep, as it was, it read a consent the sweep had just deleted and
+  // returned without resetting: the SDK kept the last account's identified id,
+  // and the next yes on the same page initialised straight back into it. The
+  // answer is kept now (KEEP_ON_SIGN_OUT), and this order means the reset no
+  // longer depends on that. The reset itself still lands after the sweep, a
+  // microtask later, so it cannot come between Log out and the wipe.
+  withPostHog((posthog) => posthog.reset());
+  signedInUserId = null;
   const held = keepInviteHandoff ? holdInviteHandoff() : [];
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
   try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
   held.forEach(([key, value]) => {
     try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
   });
-  // Round 3: without reset, activity on a shared device stays attributed to
-  // the previous account, and the next login can merge identities.
-  withPostHog((posthog) => posthog.reset());
   // LAST, and after the storage sweep has already run, so nothing this touches
   // can come between a user tapping Log out and their data leaving the device.
   endNativeGoogleSession();
@@ -1533,7 +1587,11 @@ export async function joinFlockByInviteToken(token, guestToken) {
 }
 
 export async function getCurrentUser() {
-  return request('/api/auth/me');
+  const data = await request('/api/auth/me');
+  // A boot on a stored session never passes through login(), so this is where
+  // an identify that has to wait for consent learns whose it is.
+  rememberSignedInUser(data && (data.user || data));
+  return data;
 }
 
 // Sign out: tell the server, then wipe the device. In that order, and the
