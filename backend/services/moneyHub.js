@@ -65,6 +65,9 @@ const costModel = require('./costModel');
 const billing = require('./proBilling');
 const besttime = require('./besttimeAccount');
 const { legacyRoostPrices } = require('./venueBilling');
+// The error-reporting step quotes the alert threshold, so it reads the numbers
+// the alert uses rather than a copy of them.
+const { SERVER_FAULT_ALERT_THRESHOLD, WINDOW_MS: FAULT_WINDOW_MS } = require('../utils/serverFault');
 const {
   STATED_PRICES, PRICE_ENV, APP_STORE_PRODUCTS, PRODUCT_LABEL, PLAN_INTERVAL,
 } = require('./statedPrices');
@@ -2584,9 +2587,12 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
       label: 'Error reporting',
       state: sentrySet ? 'done' : 'todo',
       optional: true,
+      // Both sentences describe what utils/serverFault.js actually does: every
+      // route's own caught 500 goes to Sentry with its stack when the DSN is
+      // set, and a burst of them raises an ops alert either way.
       words: sentrySet
-        ? 'SENTRY_DSN is set, so server errors are collected in Sentry.'
-        : 'SENTRY_DSN is not set. Server errors still reach the Railway logs, but nothing collects them or sends an alert. Setting it needs no code change.',
+        ? 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.'
+        : `SENTRY_DSN is not set. Server errors reach the Railway logs, and ${SERVER_FAULT_ALERT_THRESHOLD} of them in ${Math.round(FAULT_WINDOW_MS / 60000)} minutes, or a background job that stops, raises an ops alert. What is missing is a stack trace for each error. Setting it needs no code change.`,
     },
   ].map((s) => ({ optional: false, fix: null, link: null, ...s, checkedBy: 'server' }));
 

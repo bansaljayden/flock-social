@@ -65,6 +65,9 @@
 // and that is the honest reading of it.
 // ---------------------------------------------------------------------------
 const pool = require('../config/database');
+// Each run reports to the stalled-job check, so a sweep broken by a migration
+// is an alert the same day instead of last month's plans quietly staying live.
+const { recordJobRun } = require('../utils/serverFault');
 
 // Every half hour. The grace period is measured in hours, so the only cost of
 // being a few minutes late is a few minutes.
@@ -219,12 +222,14 @@ async function runFlockCompletionSweep(io) {
         console.error('[flockSweep] completion fan-out failed:', err.message);
       }
     }
+    recordJobRun('flockSweep', true, null, FLOCK_SWEEP_INTERVAL_MS);
     return moved;
   } catch (err) {
     // `moved`, not 0. Every batch before the failure is committed, and
     // reporting zero would say the pass achieved nothing when it may have moved
     // 9,500 rows before the 9,501st statement timed out.
     console.error('[flockSweep] sweep failed:', err.message);
+    recordJobRun('flockSweep', false, err, FLOCK_SWEEP_INTERVAL_MS);
     return moved;
   }
 }
