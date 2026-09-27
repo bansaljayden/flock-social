@@ -690,6 +690,10 @@ function birdieSearchSet(key, data) {
 // load-bearing: the system prompt's hard rules already forbid making up crowd
 // data, and this repeats it at the exact moment the data is missing.
 const LOCKED_FORECAST_NOTE = 'This user has used their free venues for this month, so this venue\'s crowd level, best time to go, peak hours and hour-by-hour forecast are Flock Pro. There is no crowd reading here: do not guess, estimate or infer how busy it is, now or later. Say it is a Pro feature if they ask.';
+// The same note for a client that sells nothing (the App Store build, which
+// sends `purchases: 'off'`; see SALES COPY OFF below). It names no plan, no
+// upgrade and no price, only the limit.
+const LOCKED_FORECAST_NOTE_NO_SALES = 'This venue is past this account\'s limit for now, so there is no crowd level, best time to go, peak hours or hour-by-hour forecast for it. There is no crowd reading here: do not guess, estimate or infer how busy it is, now or later. If they ask, say that is past this account\'s limit for now. Do not mention any plan, subscription, upgrade, price or purchase.';
 // A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
 // (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
 // level as well as the forecast, for any venue not already opened this month.
@@ -697,7 +701,7 @@ const LOCKED_FORECAST_NOTE = 'This user has used their free venues for this mont
 // attribution and the confidence block, because anything left in this object
 // is text the model can say back. The venue's name and open state stay: those
 // are Google's facts, not a reading.
-function lockForecastResult(result) {
+function lockForecastResult(result, { salesOff = false } = {}) {
   delete result.best_time;
   delete result.peak_hours;
   delete result.hourly_forecast;
@@ -709,7 +713,7 @@ function lockForecastResult(result) {
   delete result.confidence;
   delete result.confidence_measurement;
   result.forecast_locked = true;
-  result.forecast_note = LOCKED_FORECAST_NOTE;
+  result.forecast_note = salesOff ? LOCKED_FORECAST_NOTE_NO_SALES : LOCKED_FORECAST_NOTE;
   return result;
 }
 
@@ -1155,7 +1159,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
           };
         }
       } else {
-        lockForecastResult(result);
+        lockForecastResult(result, { salesOff: opts.salesOff === true });
       }
       return result;
     }
@@ -1440,7 +1444,7 @@ function servedAccuracyRule() {
   return `\n- If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else. Tested against ${h.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), ${pct(h.within_one_band)} of Flock's crowd numbers landed within one crowd level of the reading, and the average miss was ${Math.round(h.mae)} points. When a venue had a live reading from the hour before, ${pct(h.reading_one_hour_earlier.within_one_band)} landed within one level. Say it plainly and once. It describes Flock's numbers overall, never how sure one number is.`;
 }
 
-function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
+function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = false } = {}) {
   // PERSONALITY SCALES WITH AGE. THE SAFETY FLOOR DOES NOT.
   //
   // The enforced minimum age on this app is 13 (utils/age.js MIN_AGE), so the
@@ -1467,8 +1471,21 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier } = {}) {
   // gets the full forecast for their first ten venues, then hits the wall.
   // Telling the model otherwise makes it refuse something the user has paid
   // nothing for and is entitled to, which is its own kind of dishonesty.
-  const tierLine = freeTier
-    ? `\n- The user is on the free tier: 10 Birdie messages a day, and crowd levels plus the AI forecast (how busy it is now, best time to go, peak hours, hour by hour) are free for the first 30 venues they ask about each month, then it is Flock Pro. A venue they already asked about this month stays open. If a crowd lookup comes back with no crowd reading, their month is spent: say so plainly and never guess how busy it is. You can mention Pro exists (150 Birdie messages a day + crowd levels and forecasts for every venue + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
+  //
+  // SALES COPY OFF. A client that sells nothing (the App Store build, which
+  // sends `purchases: 'off'`) gets the same limits described with no plan
+  // named and nothing offered, and a line forbidding any sales talk at all, on
+  // every tier, since a user can ask about a plan they heard of elsewhere. The
+  // lines never name the plan, so there is nothing to repeat. It changes
+  // wording only. The tier, the meters and the forecast gate
+  // are decided above from the account, never from this flag.
+  const noSalesLine = `\n- Never mention a paid plan, a subscription, an upgrade, a price or anything for sale, even if they ask about one. If they ask how to get more messages or forecasts, say that is past this account's limit for now.`;
+  const tierLine = salesOff
+    ? (freeTier
+      ? `\n- This account has a daily message limit, and crowd levels plus the AI forecast (how busy it is now, best time to go, peak hours, hour by hour) are open for a set number of new venues each month. A venue they already asked about this month stays open. If a crowd lookup comes back with no crowd reading, that venue is past this account's limit for now: say so plainly and never guess how busy it is.${noSalesLine}`
+      : noSalesLine)
+    : freeTier
+    ? `\n- The user is on the free tier:10 Birdie messages a day, and crowd levels plus the AI forecast (how busy it is now, best time to go, peak hours, hour by hour) are free for the first 30 venues they ask about each month, then it is Flock Pro. A venue they already asked about this month stays open. If a crowd lookup comes back with no crowd reading, their month is spent: say so plainly and never guess how busy it is. You can mention Pro exists (150 Birdie messages a day + crowd levels and forecasts for every venue + a heads-up push before a spot gets packed). Mention it at most once per conversation, never unprompted, and never promise anything beyond those three things.`
     : '';
   return `You are Birdie, the assistant inside Flock, a social coordination app for Gen Z. You help people figure out where to go, how busy it is, and get their group out the door.
 
@@ -1605,6 +1622,9 @@ router.post('/chat',
     scalarOnly(body('currentContext.venue.place_id').optional({ values: 'null' }), 'venue place id').isString().isLength({ max: 200 }),
     body('localHour').optional().isInt({ min: 0, max: 23 }),
     body('localDay').optional().isInt({ min: 0, max: 6 }),
+    // Sent only by a client built to sell nothing (see SALES COPY OFF in
+    // buildSystemPrompt). One accepted value.
+    body('purchases').optional({ values: 'null' }).isIn(['off']),
   ],
   async (req, res) => {
     try {
@@ -1656,6 +1676,11 @@ router.post('/chat',
 
       const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
+      // The client sells nothing (the App Store build). This only REMOVES
+      // sales wording from what Birdie is told and says; it is never read by
+      // the tier check, a meter or the forecast gate, so it cannot grant
+      // anything.
+      const salesOff = req.body.purchases === 'off';
 
       // PostHog AI Observability identity for this turn. No conversation/thread
       // id crosses the wire (the client resends the whole history every call),
@@ -1719,7 +1744,7 @@ router.post('/chat',
       if (!rateCheck.allowed) {
         if (freeTier && rateCheck.reason === 'daily') {
           return res.status(429).json({
-            error: "Birdie's free tier is out of chirps for today",
+            error: salesOff ? "that's past this account's limit for today" : "Birdie's free tier is out of chirps for today",
             code: 'UPGRADE_REQUIRED',
             feature: 'birdie',
             limit: FREE_DAILY_LIMIT,
@@ -1790,7 +1815,7 @@ router.post('/chat',
       // have silently dropped Birdie's system prompt AND every tool
       // declaration, which is a far worse bug than the one being fixed.
       const chatConfig = {
-        systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier }),
+        systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier, salesOff }),
         tools: [{ functionDeclarations: toolDeclarations }],
       };
       const chat = genAI.chats.create({
@@ -1946,7 +1971,7 @@ router.post('/chat',
           // tool-backed turns come back empty (round 6).
           const { name, args, id } = part.functionCall;
           try {
-            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay };
+            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay, salesOff };
             // The exact string the tool fetches, so the meter and Google agree
             // on which venue this is. No id means every lookup counts, which is
             // the metered direction.
@@ -1967,7 +1992,7 @@ router.post('/chat',
             // one's peek) locks the result instead of passing it on.
             if (name === 'get_crowd_prediction' && Array.isArray(result?.hourly_forecast)) {
               const charged = await venueForecastAccess(meterVenue, true);
-              if (charged.locked) lockForecastResult(result);
+              if (charged.locked) lockForecastResult(result, { salesOff });
             }
 
             // Collect venue data for cards

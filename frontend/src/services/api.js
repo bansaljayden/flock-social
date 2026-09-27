@@ -2527,11 +2527,17 @@ export async function getActivityFeed() {
 // length, and this is the same boundary from the other side.
 export async function sendAiChat(messages, location, currentContext) {
   let data;
+  const body = { messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() };
+  // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing, so it
+  // tells Birdie to leave every plan, upgrade and price out of what it says.
+  // The server only ever removes wording on this; it grants nothing
+  // (lib/purchasesBuild.js has why the test is written out).
+  if (process.env.REACT_APP_PURCHASES === 'off') body.purchases = 'off';
   try {
     data = await request('/api/ai/chat', {
       method: 'POST',
       timeout: AI_TIMEOUT_MS,
-      body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
+      body: JSON.stringify(body),
     });
   } catch (err) {
     // The generic POST line ("that may have gone through, so check before

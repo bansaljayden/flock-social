@@ -817,6 +817,73 @@ test('what Birdie is told about the free tier matches what the gate does', async
     'a paying subscriber was pitched the free tier');
 });
 
+// THE APP STORE BUILD SELLS NOTHING (frontend/src/lib/purchasesBuild.js). It
+// sends purchases: 'off' with every Birdie turn, and the server then leaves
+// every plan name and offer out of what the model is told, in the prompt and
+// in the locked tool result. The flag only changes wording: the same spent
+// allowance still locks the same venue.
+const PRO_WORDING = /\bPro\b|Flock Pro|upgrade to|150 Birdie messages/;
+
+async function birdieCrowdSalesOff(placeIds) {
+  sendImpl = crowdToolTurn(placeIds);
+  const res = await call('POST', '/api/ai/chat', { messages: [{ role: 'user', text: 'when should I go' }], purchases: 'off' });
+  assert.strictEqual(res.status, 200, res.text);
+  return toolResultsSentToGemini();
+}
+
+test('purchases off: a locked venue is still locked, and nothing Birdie is told names a plan', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  notPremium();
+  const [open] = await birdieCrowd(['BIRDIE_OFF_CMP']);
+  const answers = premiumAnswers(
+    { best_time: open.best_time, peak_hours: open.peak_hours, hourly: open.hourly_forecast },
+    { best: 'best_time', peak: 'peak_hours', hourly: 'hourly' },
+  );
+
+  const uid = freshUser();
+  spendAllowance(uid);
+  handlers = [];
+  notPremium();
+  sendCalls = [];
+  const [locked] = await birdieCrowdSalesOff(['BIRDIE_OFF_CMP']);
+
+  assert.strictEqual(locked.forecast_locked, true, 'the purchases flag unlocked a venue past the allowance');
+  assertNoLeak(locked, answers, 'Birdie crowd tool, purchases off');
+  assert.match(locked.forecast_note, /no crowd reading/);
+  assert.match(locked.forecast_note, /past this account's limit for now/);
+  assert.ok(!PRO_WORDING.test(locked.forecast_note), `the locked note still sells: ${locked.forecast_note}`);
+
+  const prompt = String(sendCalls[0].config.systemInstruction);
+  assert.ok(!PRO_WORDING.test(prompt), 'the purchases-off prompt still names or pitches the plan');
+  assert.ok(!/You can mention/.test(prompt), 'the purchases-off prompt still allows a pitch');
+  assert.match(prompt, /past this account's limit for now/);
+  assert.match(prompt, /Never mention a paid plan/);
+});
+
+test('purchases off grants nothing: the free message cap and its code are unchanged, only the words', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = freshUser();
+  notPremium();
+  let last;
+  for (let i = 0; i < 11; i += 1) {
+    sendImpl = null;
+    // eslint-disable-next-line no-await-in-loop
+    last = await call('POST', '/api/ai/chat', { messages: [{ role: 'user', text: `hi ${i}` }], purchases: 'off' });
+    if (last.status === 429) break;
+  }
+  assert.strictEqual(last.status, 429, `a purchases-off client got past the free cap (user ${uid})`);
+  assert.strictEqual(last.body.code, 'UPGRADE_REQUIRED');
+  assert.ok(!/free tier|Pro/.test(last.body.error), `the limit still names a plan: ${last.body.error}`);
+  assert.match(last.body.error, /past this account's limit/);
+});
+
+test('purchases takes one value; anything else is refused before any spend', async () => {
+  sendCalls = [];
+  const res = await call('POST', '/api/ai/chat', { messages: [{ role: 'user', text: 'hi' }], purchases: 'on' });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(sendCalls.length, 0);
+});
+
 test('a Pro subscriber is never locked out of Birdie', async () => {
   process.env.PAYWALL_ENABLED = 'true';
   const uid = CURRENT_USER.id;
