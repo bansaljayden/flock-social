@@ -984,7 +984,7 @@ carries a box and a name on everything it found: person, hand, pet, hot drink,
 food, laptop, screen, heater, lamp, warm seat. Only people are counted; the
 rest are named so it is plain why they were not. A hand at the lens is boxed
 as a hand, two people shoulder to shoulder get a box each. owl-1 draws a ring
-on each person instead. With a screen, the camera is read four times a second
+on each person instead. With a screen, every frame the camera sends is counted, about nine a second,
 so the boxes keep up with a moving hand. `training/README.md` says how the
 counter was made.
 
