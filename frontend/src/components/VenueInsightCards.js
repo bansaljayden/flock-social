@@ -695,7 +695,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
       // waiting on Roost. It never says "Pro", which is the consumer plan.
       return renderCardShell(card, (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-          Part of Roost.
+          {process.env.REACT_APP_PURCHASES !== 'off' ? 'Part of Roost.' : 'Not turned on for your venue.'}
         </p>
       ));
     }
