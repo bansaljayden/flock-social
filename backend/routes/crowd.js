@@ -1834,11 +1834,25 @@ router.get('/:placeId/alternatives',
       //
       // Read BEFORE the charge, deliberately: utils/placesBudget.js says cache
       // hits must be answered before the charge, because charging for a call we
-      // did not make masks the real burn rate. The key uses the CALLER's clock
-      // rather than the venue's — the venue's offset is not known until the
-      // Place Details call below has already happened — which is the same
-      // trade-off the card makes: two viewers in different zones mint two
-      // entries holding the same answer, and neither ever sees the other's.
+      // did not make masks the real burn rate.
+      //
+      // THE KEY HOLDS NOTHING THE CALLER CHOOSES, the rule the card's key
+      // already keeps (see GET /:placeId). This was keyed on the caller's
+      // localHour and localDay, which the venue's own clock overrides below
+      // before anything is scored, so all 168 (hour, day) keys held the same
+      // answer. Once the target's details and the neighbour search were warm a
+      // miss cost no Places unit at all, and one account walking
+      // ?localHour=0..23&localDay=0..6 against a busy venue wrote a fresh entry
+      // per request into the 200-entry map the card shares, flushing every
+      // other user's cards and cached neighbour searches, each of which the
+      // next viewer then paid to rebuild. The venue's clock is not known until
+      // the Place Details call has happened, so the key carries the SERVER's
+      // hour and day, the same for every caller and rolling with the TTL. A
+      // venue in another zone is keyed on a number that does not describe it,
+      // which costs a duplicate entry, not a wrong answer. The one venue whose
+      // answer does follow the caller's clock is one Google gives no offset or
+      // zone for, and there the first caller's clock scores the entry for the
+      // TTL, exactly as it does on the card.
       //
       // `currentVenue.score` can now be up to a TTL older than the card's own
       // number, where before it was always fresh against a card that could be
@@ -1861,7 +1875,7 @@ router.get('/:placeId/alternatives',
         ? payload
         : { ...payload, alternatives: payload.alternatives.filter((a) => a && canSee(a.placeId)) });
 
-      const cacheKey = `alt:${placeId}:${localHour}:${localDay}`;
+      const cacheKey = `alt:${placeId}:${now.getHours()}:${now.getDay()}`;
       const cachedAlts = getCached(cacheKey);
       if (cachedAlts) return res.json(onlyVisible(cachedAlts));
 
