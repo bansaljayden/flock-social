@@ -103,6 +103,10 @@
   --icon-bg: #f1ede0;
   --modal-backdrop: rgba(0,0,0,0.5);
   --badge-bg: #f1ede0;
+  /* The switch's on fill. It used to be the JS palette's `steel`, read by a
+     component at module scope, where that palette is always the light one, so
+     in dark mode "on" drew #2d5a87 over an "off" that is also #2d5a87. */
+  --toggle-on: #2d5a87;
   --toggle-off: #d1d5db;
   --toggle-knob: #ffffff;
   --accent-amber-bg: #fef3c7;
@@ -203,6 +207,10 @@
   --icon-bg: #1e3a5c;
   --modal-backdrop: rgba(0,0,0,0.7);
   --badge-bg: #1e3a5c;
+  /* Dark `steel`. 2.41:1 against --toggle-off and 4.92:1 on a card, where the
+     old on state was 1.00:1 against off. The knob also moves, so the fill is
+     not the only thing carrying the state. */
+  --toggle-on: #6d9ac3;
   --toggle-off: #2d5a87;
   --toggle-knob: #1e293b;
   --accent-amber-bg: rgba(245,158,11,0.15);
