@@ -122,6 +122,8 @@ const authMod = require('../middleware/auth');
 let CURRENT_USER = { id: 1, name: 'Ava', role: 'user', email: 'ava@example.com', email_verified: true };
 authMod.authenticate = (req, _res, next) => { req.user = CURRENT_USER; next(); };
 authMod.authenticateAllowBanned = (req, _res, next) => { req.user = CURRENT_USER; next(); };
+// POST /logout mounts the variant that also takes an expired token.
+authMod.authenticateAllowExpired = (req, _res, next) => { req.user = CURRENT_USER; next(); };
 
 const authRouter = require('../routes/auth');
 const revenuecatRouter = require('../routes/revenuecat');

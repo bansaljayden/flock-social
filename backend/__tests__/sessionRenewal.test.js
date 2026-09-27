@@ -254,14 +254,89 @@ test('two tabs renewing with one credential at once is a race, not a replay', as
   assert.equal(a.status, 200, a.text);
   assert.equal(b.status, 200, b.text);
   assert.notEqual(a.body.refreshToken, b.body.refreshToken);
-  // Both successors carry on; neither tab is signed out by the other.
+  // The tabs share one storage, and the client keeps whichever answer landed
+  // first and drops the other (services/api.js performRenewal), so the one
+  // kept carries on and neither tab is signed out by the other.
   assert.equal((await renew(a.body.refreshToken)).status, 200);
-  assert.equal((await renew(b.body.refreshToken)).status, 200);
   // And the row lock serialised them: the credential was spent once.
   const { rows } = await pool.query(
     'SELECT COUNT(*)::int AS n FROM refresh_tokens WHERE parent_id = $1', [(await rowOf(u.refreshToken)).id]
   );
   assert.equal(rows[0].n, 2, 'two children, one per tab');
+});
+
+// ── A copy inside the race window ────────────────────────────────────────────
+// The grace above forgives a second presentation of a spent credential for a
+// couple of minutes. A thief presenting a copy inside that window used to get
+// a live sibling, and the session forked into two chains that each renewed for
+// as long as they were used: no replay was ever seen, because each holder only
+// ever presented its own latest credential. Only one answer to a credential is
+// ever kept by the client, so the first use of a second one is the tell.
+
+test('a copy presented inside the race window forks nothing: the thief renewing second ends the sign-in', async () => {
+  const u = await signIn();
+  const device = await renew(u.refreshToken);
+  assert.equal(device.status, 200);
+  // The copy, a moment later: inside the window, so it is answered.
+  const copy = await renew(u.refreshToken);
+  assert.equal(copy.status, 200, 'a presentation inside the race window was refused');
+
+  // The person's device carries on with its own answer.
+  const deviceNext = await renew(device.body.refreshToken);
+  assert.equal(deviceNext.status, 200);
+
+  // The thief's answer, used after the device's: two holders exist.
+  const thief = await renew(copy.body.refreshToken);
+  assert.equal(thief.status, 401, 'a copy presented inside the race window became a second chain');
+  assert.equal((await renew(deviceNext.body.refreshToken)).status, 401,
+    'the fork was seen and the sign-in survived it; one of the two holders is not the person');
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM refresh_tokens WHERE family_id = $1 AND revoked_at IS NULL',
+    [(await rowOf(u.refreshToken)).family_id]
+  );
+  assert.equal(rows[0].n, 0);
+});
+
+test('a copy presented inside the race window forks nothing: the thief renewing first is caught at the device', async () => {
+  const u = await signIn();
+  const device = await renew(u.refreshToken);
+  const copy = await renew(u.refreshToken);
+  assert.equal(copy.status, 200);
+
+  // The thief renews first, before the device's next renewal.
+  const thiefNext = await renew(copy.body.refreshToken);
+  assert.equal(thiefNext.status, 200);
+  // The device's own answer is now the second fork used.
+  assert.equal((await renew(device.body.refreshToken)).status, 401);
+  assert.equal((await renew(thiefNext.body.refreshToken)).status, 401,
+    'the thief kept a chain of its own after the fork was seen');
+});
+
+test('inside the race window, a credential whose answer was already used is a replay, not a race', async () => {
+  const u = await signIn();
+  const device = await renew(u.refreshToken);
+  // The device's answer has been used already: the chain has moved on, so the
+  // presentation below is not a tab racing the first one.
+  const deviceNext = await renew(device.body.refreshToken);
+  assert.equal(deviceNext.status, 200);
+
+  const copy = await renew(u.refreshToken);
+  assert.equal(copy.status, 401, 'a spent credential minted a second chain after the first had moved on');
+  assert.equal((await renew(deviceNext.body.refreshToken)).status, 401);
+});
+
+test('two forks presented at the same moment cannot both go on', async () => {
+  const u = await signIn();
+  const device = await renew(u.refreshToken);
+  const copy = await renew(u.refreshToken);
+  // The parent's row lock serialises the two first uses, so the second one
+  // always sees the first and neither reads the other as unused.
+  const [a, b] = await Promise.all([renew(device.body.refreshToken), renew(copy.body.refreshToken)]);
+  const statuses = [a.status, b.status].sort();
+  assert.deepEqual(statuses, [200, 401], `both forks answered ${a.status} and ${b.status}`);
+  const survivor = a.status === 200 ? a : b;
+  assert.equal((await renew(survivor.body.refreshToken)).status, 401,
+    'the fork that went first kept renewing after the other was seen');
 });
 
 test('a renewal whose answer was lost can be repeated later, and only the repeat carries on', async () => {
@@ -365,6 +440,116 @@ test('signing out retires this sign-in only', async () => {
   const stranger = await signIn();
   await call('POST', '/api/auth/logout', { session: phone.token, body: { refreshToken: stranger.refreshToken } });
   assert.equal((await renew(stranger.refreshToken)).status, 200);
+});
+
+test('signing out on an access token that has already run out still ends the sign-in and drops the phone', async () => {
+  // Tapping Log out after a day away. The client never renews to sign out, so
+  // the access token it sends has run out, and this used to be a 401: the
+  // family stayed renewable for weeks and the push row stayed.
+  const u = await signIn();
+  const pushToken = `fcm-${u.id}-${'x'.repeat(140)}`;
+  await pool.query(
+    'INSERT INTO device_tokens (user_id, token, device_type, signed_in_at) VALUES ($1, $2, $3, NOW())',
+    [u.id, pushToken, 'ios']
+  );
+  const stale = expiredCopyOf(u.token);
+  assert.equal((await call('GET', '/api/auth/me', { session: stale })).status, 401,
+    'an expired token must still be refused everywhere but the sign-out');
+
+  const out = await call('POST', '/api/auth/logout', {
+    session: stale, body: { refreshToken: u.refreshToken, pushToken },
+  });
+  assert.equal(out.status, 200, out.text);
+  assert.equal((await renew(u.refreshToken)).status, 401,
+    'a sign-out on an expired token left the sign-in renewable');
+  const { rows } = await pool.query('SELECT 1 FROM device_tokens WHERE token = $1', [pushToken]);
+  assert.equal(rows.length, 0, 'a sign-out on an expired token left the phone registered to the account');
+});
+
+test('the sign-out waives the clock and nothing else', async () => {
+  const u = await signIn();
+  const stale = expiredCopyOf(u.token);
+  const logout = (session) => call('POST', '/api/auth/logout', { session, body: {} });
+
+  // Forged: signed with another secret.
+  const { userId, tv, auth_time: authTime } = claimsOf(u.token);
+  const now = Math.floor(Date.now() / 1000);
+  const forged = jwt.sign({ userId, tv, auth_time: authTime, iat: now - 90000, exp: now - 3600 }, 'not-the-secret');
+  assert.equal((await logout(forged)).status, 401, 'a forged expired token signed out');
+  assert.equal((await logout(undefined)).status, 401);
+
+  // Banned: refused as before.
+  await pool.query('UPDATE users SET is_banned = true WHERE id = $1', [u.id]);
+  assert.equal((await logout(stale)).status, 403);
+  await pool.query('UPDATE users SET is_banned = false WHERE id = $1', [u.id]);
+
+  // Revoked: a token from before a token_version bump is refused, expired or
+  // not, exactly as it is on every other route.
+  assert.equal((await logout(stale)).status, 200);
+  await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [u.id]);
+  assert.equal((await logout(stale)).status, 401, 'a revoked token signed out');
+  assert.equal((await logout(u.token)).status, 401);
+
+  // And the waiver is mounted on that one route: every other route mounts the
+  // strict middleware or one of its other named variants.
+  const routesDir = path.join(__dirname, '..', 'routes');
+  const mounts = [];
+  for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith('.js'))) {
+    for (const line of fs.readFileSync(path.join(routesDir, file), 'utf8').split(/\r?\n/)) {
+      if (/authenticateAllowExpired\b/.test(line) && /router\.[a-z]+\(/.test(line)) mounts.push(`${file}: ${line.trim()}`);
+    }
+  }
+  assert.deepEqual(mounts, ["auth.js: router.post('/logout', authenticateAllowExpired, ["],
+    `the expired-token waiver is mounted somewhere new: ${mounts.join(' | ')}`);
+});
+
+// ── The table does not grow for ever ─────────────────────────────────────────
+
+test('the hourly prune deletes credentials no account can use again, and keeps the ones a check still needs', async () => {
+  // An account that signed in, renewed once and never came back.
+  const gone = await signIn();
+  const goneNext = await renew(gone.refreshToken);
+  assert.equal(goneNext.status, 200);
+  const goneRows = [(await rowOf(gone.refreshToken)).id, (await rowOf(goneNext.body.refreshToken)).id];
+  await pool.query(
+    'UPDATE refresh_tokens SET expires_at = NOW() - INTERVAL \'1 day\' WHERE id = ANY($1::bigint[])', [goneRows]
+  );
+
+  // An account still in use, whose first credential has expired while the
+  // credential it was exchanged for is live. The parent stays: it is how a
+  // second answer to it would be found.
+  const kept = await signIn();
+  const keptNext = await renew(kept.refreshToken);
+  await backdate(kept.refreshToken, 'expires_at', `${refreshTokens.REFRESH_TOKEN_TTL_DAYS + 1} days`);
+
+  const deleted = await refreshTokens.pruneExpiredRefreshTokens();
+  assert.ok(deleted >= 2, `the prune deleted ${deleted} rows`);
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM refresh_tokens WHERE id = ANY($1::bigint[])', [goneRows]);
+  assert.equal(rows[0].n, 0, 'expired credentials of an account that never renews again were kept for ever');
+  assert.ok(await rowOf(kept.refreshToken), 'an expired parent of a live credential was pruned');
+  assert.equal((await rowOf(keptNext.body.refreshToken)).parent_id, (await rowOf(kept.refreshToken)).id);
+  assert.equal((await renew(keptNext.body.refreshToken)).status, 200);
+
+  // In batches: a batch of one still deletes everything there is to delete.
+  const more = await signIn();
+  await backdate(more.refreshToken, 'expires_at', `${refreshTokens.REFRESH_TOKEN_TTL_DAYS + 1} days`);
+  const other = await signIn();
+  await backdate(other.refreshToken, 'expires_at', `${refreshTokens.REFRESH_TOKEN_TTL_DAYS + 1} days`);
+  assert.ok((await refreshTokens.pruneExpiredRefreshTokens(1)) >= 2);
+  assert.equal(await rowOf(more.refreshToken), null);
+  assert.equal(await rowOf(other.refreshToken), null);
+});
+
+test('server.js runs the prune on a timer and clears it on shutdown', () => {
+  // Every pattern is anchored at the start of its line, so a line that was
+  // commented out (it would start with //) does not satisfy it.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r/g, '');
+  assert.match(src, /^let refreshPruneInterval = null;$/m);
+  assert.match(src, /^\s*const refreshPrune = \(\) => pruneExpiredRefreshTokens\(\)$/m);
+  assert.match(src, /^\s*refreshPruneInterval = setInterval\(refreshPrune, /m);
+  const shutdown = src.slice(src.indexOf('function shutdown('));
+  assert.match(shutdown, /^\s*if \(refreshPruneInterval\) clearInterval\(refreshPruneInterval\);$/m);
+  assert.match(shutdown, /^\s*if \(refreshPruneKickoff\) clearTimeout\(refreshPruneKickoff\);$/m);
 });
 
 test('an idle credential expires, and junk is refused without a query', async () => {

@@ -336,7 +336,21 @@ function requireVerified(req, res, next) {
 // reactions. There is no URL matching here any more: a route that needs the
 // exemption opts in explicitly by mounting this variant, so no other route can
 // ever reach it.
-function makeAuthenticate({ allowBanned = false } = {}) {
+//
+// `allowExpired` waives the token's clock and nothing else, for ONE route:
+// POST /api/auth/logout. A sign-out on a token that has already run out (a
+// person tapping Log out after a day away, or the teardown after a renewal the
+// server refused) used to be a 401, so the refresh credential it carried was
+// never retired and could go on renewing that sign-in for weeks, and the
+// phone's push row was never deleted, so the account's pushes kept ringing a
+// phone on the sign-in screen. The signature, the account, token_version and
+// the ban are all still checked, so a token that was revoked is refused
+// exactly as before. And an expired token is only the "who" there: each thing
+// the route changes also needs a second secret only the device holds (the
+// refresh credential to retire its family, the push token to delete its row),
+// so an old token picked up somewhere signs nobody out of anything.
+// Pinned to that one mount by __tests__/sessionRenewal.test.js.
+function makeAuthenticate({ allowBanned = false, allowExpired = false } = {}) {
   return async function authenticateRequest(req, res, next) {
     try {
       const header = req.headers.authorization;
@@ -345,7 +359,10 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       }
 
       const token = header.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: TOKEN_ALGORITHMS,
+        ignoreExpiration: allowExpired,
+      });
 
       // Confirm user still exists in DB.
       // `email_verified` is selected BEFORE is_banned deliberately: it keeps
@@ -411,6 +428,8 @@ const authenticate = makeAuthenticate();
 // Opt-in variant for DELETE /api/users/me and the three SOS routes in
 // routes/safety.js (see makeAuthenticate above for why each one keeps it).
 const authenticateAllowBanned = makeAuthenticate({ allowBanned: true });
+// Opt-in variant for POST /api/auth/logout alone (see allowExpired above).
+const authenticateAllowExpired = makeAuthenticate({ allowExpired: true });
 
 // Socket.io middleware: verify JWT from handshake auth
 const authenticateSocket = async (socket, next) => {
@@ -451,6 +470,7 @@ const authenticateSocket = async (socket, next) => {
 module.exports = {
   authenticate,
   authenticateAllowBanned,
+  authenticateAllowExpired,
   authenticateSocket,
   signUserToken,
   revokeUserSessions,

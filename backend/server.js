@@ -2206,6 +2206,8 @@ let photoPruneInterval = null;
 let photoPruneKickoff = null;
 let storyPurgeInterval = null;
 let storyPurgeKickoff = null;
+let refreshPruneInterval = null;
+let refreshPruneKickoff = null;
 let flockSweepInterval = null;
 let flockSweepKickoff = null;
 let reconfirmSweepInterval = null;
@@ -2343,6 +2345,21 @@ async function boot() {
   // tick of a cold boot.
   storyPurgeKickoff = setTimeout(storyPurge, 105 * 1000);
 
+  // Delete refresh credentials that can never renew anything again
+  // (services/refreshTokens.js). A renewal prunes its own account's dead rows,
+  // but the rows that pile up belong to accounts that never renew again:
+  // signed out, idle past the sixty days, or a sign-in a replay ended. Without
+  // a timer the table only grew. Hourly like its neighbours; being an hour
+  // late costs nothing, since an expired row is refused whether or not it
+  // still exists.
+  const { pruneExpiredRefreshTokens } = require('./services/refreshTokens');
+  const refreshPrune = () => pruneExpiredRefreshTokens()
+    .catch((e) => console.error('[auth] refresh credential prune failed:', e && e.message));
+  refreshPruneInterval = setInterval(refreshPrune, 60 * 60 * 1000);
+  // 115s: between the roost notice kickoff's 110s and the money watch's 120s,
+  // same stagger reason.
+  refreshPruneKickoff = setTimeout(refreshPrune, 115 * 1000);
+
   // Finish plans whose night is over. Until this existed, NOTHING in the
   // product moved a flock through time: a confirmed plan stayed confirmed
   // forever unless its host slid the done bar by hand, so a plan for a night
@@ -2444,6 +2461,8 @@ function shutdown(signal) {
   if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
   if (storyPurgeInterval) clearInterval(storyPurgeInterval);
   if (storyPurgeKickoff) clearTimeout(storyPurgeKickoff);
+  if (refreshPruneInterval) clearInterval(refreshPruneInterval);
+  if (refreshPruneKickoff) clearTimeout(refreshPruneKickoff);
   if (flockSweepInterval) clearInterval(flockSweepInterval);
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
   if (reconfirmSweepInterval) clearInterval(reconfirmSweepInterval);

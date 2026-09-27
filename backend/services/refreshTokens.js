@@ -45,7 +45,13 @@
 //   * A SHORT GRACE FOR RACES. Two tabs, or a retry, can present the same
 //     credential moments apart. Inside REFRESH_REUSE_GRACE_MS of its rotation a
 //     spent credential is exchanged again for a sibling, instead of being read
-//     as a replay and ending the session.
+//     as a replay and ending the session. A sibling is a fork of the chain, and
+//     only one fork may ever be used: the client keeps one answer and drops the
+//     other (services/api.js performRenewal), so the first use of a credential
+//     whose sibling was already used means two holders exist, and the sign-in
+//     ends. Without that rule a copy presented inside the window became a
+//     second chain that renewed for as long as it was used, and no replay was
+//     ever seen, because each holder only presented its own latest credential.
 //   * A LOST RESPONSE IS NOT A THEFT. A renewal whose answer never arrived
 //     leaves the device holding a spent credential whose child nobody has.
 //     Presented later, it is exchanged again if no child of it was ever used
@@ -71,6 +77,23 @@ const REFRESH_TOKEN_TTL_DAYS = 60;
 // slow connection, short enough that it buys a thief nothing they did not
 // already have by holding the credential at that moment.
 const REFRESH_REUSE_GRACE_MS = 2 * 60 * 1000;
+
+// How many rows one pass of the global prune deletes. The table is small at
+// this size of product; the cap keeps a first run over a long backlog from
+// holding a single statement open against the renewals it shares rows with.
+const REFRESH_PRUNE_BATCH = 5000;
+
+// A row that can never be presented successfully again: expired, and no longer
+// the parent of a credential that can. The parent is kept while any child is
+// live because the child's parent_id is how the replay and fork checks find its
+// siblings, and deleting the parent sets that link to NULL (migration 097). A
+// parent expires about a renewal interval before its children, so this keeps
+// one extra row per sign-in for about a day, never more.
+const PRUNABLE_REFRESH_SQL =
+  `rt.expires_at < NOW()
+   AND NOT EXISTS (
+     SELECT 1 FROM refresh_tokens c WHERE c.parent_id = rt.id AND c.expires_at >= NOW()
+   )`;
 
 // 32 random bytes in base64url is exactly 43 characters from this alphabet.
 // Anything else is refused before it reaches a hash or a query.
@@ -140,14 +163,29 @@ async function issueSession(user, { authTime } = {}) {
 // presentations of one credential are serialised: the second one sees the
 // first one's rotation and takes the grace or the replay branch, never a
 // second clean exchange.
+//
+// The presented row's PARENT is locked first, and that is what serialises two
+// siblings as well. Two copies of one chain presented at once (the person's
+// credential and a sibling minted for a copy inside the grace window, or a
+// credential and its already spent parent) would otherwise each read the other
+// as unused and both go on. Always the parent before the child, on every path,
+// so two exchanges in one chain wait for each other instead of deadlocking.
 async function exchangeRefreshToken(raw) {
   if (!isRefreshTokenShape(raw)) return { ok: false, status: 401, reason: 'invalid' };
+  const tokenHash = hashRefreshToken(raw);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const located = await client.query(
+      'SELECT parent_id FROM refresh_tokens WHERE token_hash = $1',
+      [tokenHash]
+    );
+    if (located.rows[0] && located.rows[0].parent_id !== null) {
+      await client.query('SELECT id FROM refresh_tokens WHERE id = $1 FOR UPDATE', [located.rows[0].parent_id]);
+    }
     const { rows } = await client.query(
-      `SELECT rt.id, rt.user_id, rt.family_id, rt.token_version,
+      `SELECT rt.id, rt.user_id, rt.family_id, rt.parent_id, rt.token_version,
               EXTRACT(EPOCH FROM rt.auth_time)::bigint AS auth_time,
               rt.expires_at, rt.rotated_at, rt.revoked_at,
               u.token_version AS current_token_version, u.is_banned
@@ -155,7 +193,7 @@ async function exchangeRefreshToken(raw) {
          JOIN users u ON u.id = rt.user_id
         WHERE rt.token_hash = $1
         FOR UPDATE OF rt`,
-      [hashRefreshToken(raw)]
+      [tokenHash]
     );
     const row = rows[0];
     if (!row) {
@@ -190,19 +228,22 @@ async function exchangeRefreshToken(raw) {
     if (row.is_banned) return refuse(403, 'suspended', true);
 
     if (row.rotated_at) {
+      const used = await client.query(
+        'SELECT 1 FROM refresh_tokens WHERE parent_id = $1 AND rotated_at IS NOT NULL LIMIT 1',
+        [row.id]
+      );
+      if (used.rows.length > 0) {
+        // The chain moved on from this credential and somebody still holds a
+        // copy of it. One of the two holders is not the person, and there is
+        // no telling which, so both are signed out. Inside the grace window
+        // too: a race partner is at most a couple of minutes behind and has
+        // not renewed again since, so a used child means the chain has already
+        // moved on, and a sibling minted now would be a second chain.
+        console.warn(`[auth] replayed refresh credential for user ${row.user_id}; ending that sign-in`);
+        return refuse(401, 'replayed', true);
+      }
       const spentFor = Date.now() - new Date(row.rotated_at).getTime();
       if (spentFor > REFRESH_REUSE_GRACE_MS) {
-        const used = await client.query(
-          'SELECT 1 FROM refresh_tokens WHERE parent_id = $1 AND rotated_at IS NOT NULL LIMIT 1',
-          [row.id]
-        );
-        if (used.rows.length > 0) {
-          // The chain moved on from this credential and somebody still holds a
-          // copy of it. One of the two holders is not the person, and there is
-          // no telling which, so both are signed out.
-          console.warn(`[auth] replayed refresh credential for user ${row.user_id}; ending that sign-in`);
-          return refuse(401, 'replayed', true);
-        }
         // Nobody ever used what this credential was exchanged for: the answer
         // that carried it was lost. Retire those unused children, so only the
         // one issued now can continue the chain.
@@ -212,6 +253,22 @@ async function exchangeRefreshToken(raw) {
         );
       }
     } else {
+      if (row.parent_id !== null) {
+        // The first use of this credential. If a sibling (another answer to the
+        // same parent, minted inside the grace window) has already been used,
+        // the chain forked and both forks are in use: the client keeps exactly
+        // one answer, so two holders exist. The sign-in ends, as for a replay.
+        const forked = await client.query(
+          `SELECT 1 FROM refresh_tokens
+            WHERE parent_id = $1 AND id <> $2 AND rotated_at IS NOT NULL
+            LIMIT 1`,
+          [row.parent_id, row.id]
+        );
+        if (forked.rows.length > 0) {
+          console.warn(`[auth] a second answer to one refresh credential was used for user ${row.user_id}; ending that sign-in`);
+          return refuse(401, 'replayed', true);
+        }
+      }
       await client.query('UPDATE refresh_tokens SET rotated_at = NOW() WHERE id = $1', [row.id]);
     }
 
@@ -228,8 +285,9 @@ async function exchangeRefreshToken(raw) {
 
     // Rows that expired can never be presented successfully again, so they
     // are only weight. Per account, after the commit, and never allowed to
-    // fail the renewal it rides on.
-    pool.query('DELETE FROM refresh_tokens WHERE user_id = $1 AND expires_at < NOW()', [row.user_id])
+    // fail the renewal it rides on. pruneExpiredRefreshTokens below does the
+    // same for every account on a timer, for the ones that never renew again.
+    pool.query(`DELETE FROM refresh_tokens rt WHERE rt.user_id = $1 AND ${PRUNABLE_REFRESH_SQL}`, [row.user_id])
       .catch((e) => console.warn(`[auth] refresh credential prune failed for user ${row.user_id}:`, e.message));
 
     return {
@@ -263,10 +321,41 @@ async function revokeRefreshFamily(raw, userId) {
   return result.rowCount || 0;
 }
 
+// Delete credentials that can never be presented successfully again, for every
+// account. The prune inside a renewal only reaches an account that renews, and
+// the rows that pile up are the ones whose account never does again: signed
+// out, idle past REFRESH_TOKEN_TTL_DAYS, or a family a replay ended. server.js
+// runs this on an hourly timer. Resolves to the number of rows deleted.
+//
+// SKIP LOCKED, so a row an exchange is holding is left for the next pass
+// rather than waited on, and in batches, so a first run over a backlog is a
+// few short statements rather than one long one.
+async function pruneExpiredRefreshTokens(batch = REFRESH_PRUNE_BATCH) {
+  let total = 0;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await pool.query(
+      `DELETE FROM refresh_tokens
+        WHERE id IN (
+          SELECT rt.id FROM refresh_tokens rt
+           WHERE ${PRUNABLE_REFRESH_SQL}
+           ORDER BY rt.expires_at
+           LIMIT $1::int
+           FOR UPDATE SKIP LOCKED
+        )`,
+      [batch]
+    );
+    const deleted = result.rowCount || 0;
+    total += deleted;
+    if (deleted < batch) return total;
+  }
+}
+
 module.exports = {
   issueSession,
   exchangeRefreshToken,
   revokeRefreshFamily,
+  pruneExpiredRefreshTokens,
   isRefreshTokenShape,
   hashRefreshToken,
   REFRESH_TOKEN_TTL_DAYS,

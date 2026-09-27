@@ -73,7 +73,7 @@ function linkWaitlistConversion(email, userId) {
 // sets iat to now and carries auth_time over, so renewing a session can never
 // manufacture the proof.
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
-const { authenticate, revokeUserSessions } = require('../middleware/auth');
+const { authenticate, authenticateAllowExpired, revokeUserSessions } = require('../middleware/auth');
 const { issueSession, exchangeRefreshToken, revokeRefreshFamily } = require('../services/refreshTokens');
 const {
   sendVerificationEmail, verificationLink, baseWebUrl,
@@ -2906,7 +2906,9 @@ router.post('/login', loginValidation, async (req, res) => {
 //
 // It is the wrong meter for the routes below, and it was charging them too.
 // Every one of them runs behind `authenticate`, so the caller is a verified
-// account, and GET /me is what every app launch sends first. Everyone on a
+// account (POST /logout behind authenticateAllowExpired, which checks the same
+// signature, account, token_version and ban and only waives the clock), and
+// GET /me is what every app launch sends first. Everyone on a
 // school's or a venue's Wi-Fi shares one public address, so ten cold starts
 // in a minute used up the bucket: the eleventh phone got a 429, App.js read it
 // as the network being down and showed the unreachable screen, retrying /me
@@ -2977,8 +2979,9 @@ router.post('/refresh', [
     if (!errors.isEmpty()) {
       // Not something this app ever sends, so it is refused before any query,
       // as a 400 like every malformed body on this router. The client treats
-      // a 400 from here as a dead credential too, so a corrupted one on a
-      // device ends in sign-in rather than in renewals that can never work.
+      // a 400 from here as a dead credential too (frontend/src/services/api.js
+      // performRenewal), so a corrupted one on a device ends in sign-in rather
+      // than in renewals that can never work, retried every minute.
       return res.status(400).json({ error: 'Session expired, please sign in again' });
     }
     const result = await exchangeRefreshToken(req.body.refreshToken);
@@ -3062,8 +3065,17 @@ router.get('/me', authenticate, async (req, res) => {
 // same phone belongs to that account, and this sign-out must not take it. A
 // database blip is retried a couple of times before the request gives up,
 // because this row is the one thing a sign-out changes on the server.
+//
+// AN ACCESS TOKEN THAT HAS ONLY RUN OUT STILL SIGNS OUT. Both halves above
+// used to need a live one, and the client never renews to sign out (a renewal
+// answered after its wipe would put a session back on the device). So a
+// person tapping Log out after a day away, or the teardown after a renewal the
+// server refused, got a 401 here: the family stayed renewable for weeks and
+// the push row stayed. authenticateAllowExpired (middleware/auth.js) waives the
+// clock and nothing else; each half still needs its own secret, the refresh
+// credential or the push token, which is what makes an old token harmless.
 const LOGOUT_DEVICE_DELETE_ATTEMPTS = 3;
-router.post('/logout', authenticate, [
+router.post('/logout', authenticateAllowExpired, [
   body('pushToken').optional({ values: 'null' }).isString().trim()
     .isLength({ min: 8, max: MAX_PUSH_TOKEN }).withMessage('Invalid push token'),
   body('refreshToken').optional({ values: 'null' }).isString()

@@ -58,7 +58,7 @@ const EXPECTED_PUBLIC = {
   proOffer: 'homepage pricing card: whether Flock Pro is on sale and at what price, the same answer for every caller, no account data',
 };
 
-const AUTH_MW = /\b(authenticate|authenticateAllowBanned|requireVerified)\b/;
+const AUTH_MW = /\b(authenticate|authenticateAllowBanned|authenticateAllowExpired|requireVerified)\b/;
 const IN_BODY_AUTH = /\b(x-api-key|findDeviceByApiKey|verifyGuestToken|requireSharedSecret|timingSafeEqual)\b/i;
 
 /** Remove comments only, keeping string literals.
