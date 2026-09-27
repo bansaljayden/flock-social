@@ -608,9 +608,14 @@ router.get('/', async (req, res) => {
               -- Unread for the row badge: messages after this member's read
               -- cursor (migration 056), counted under EXACTLY the history
               -- read's visibility filters in routes/messages.js (hidden,
-              -- unsent, blocked either way, deleted sender, and never your
-              -- own), because a count that includes a row the chat will not
-              -- show is a badge that can never be cleared. Capped INSIDE the
+              -- unsent, blocked either way, banned sender, deleted sender,
+              -- and never your own), because a count that includes a row the
+              -- chat will not show is a badge that can never be cleared. The
+              -- banned half was missing: a ban hides nothing in storage, the
+              -- history read drops the account through getInvisibleUserIds,
+              -- so opening the chat could only move the cursor to the newest
+              -- row it showed and the badge came back on every list read.
+              -- pushHelper's unreadBadge already carried it. Capped INSIDE the
               -- subquery: LEAST(COUNT(*), 100) computed the full count first
               -- and only then clamped it, so a far-behind cursor still paid
               -- for a scan of the whole history (code review, 2026-09-01).
@@ -628,6 +633,9 @@ router.get('/', async (req, res) => {
                       SELECT 1 FROM user_blocks b
                       WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
                          OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
+                    )
+                    AND NOT EXISTS (
+                      SELECT 1 FROM users su WHERE su.id = m.sender_id AND su.is_banned IS TRUE
                     )
                   LIMIT 100
                ) capped)::int AS unread_count,

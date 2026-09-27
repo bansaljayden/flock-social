@@ -132,6 +132,14 @@ test('the list unread_count uses the history read filter set, capped', () => {
   assert.match(block, /m\.is_hidden IS NOT TRUE/);
   assert.match(block, /m\.sender_deleted_at IS NULL/, 'an unsent message must not hold a badge');
   assert.match(block, /user_blocks/, 'a blocked sender the chat hides must not hold a badge');
+  // The history read drops every banned account (utils/blocks.js
+  // getInvisibleUserIds), so opening the chat can never move the cursor past a
+  // banned member's unread rows. Counted, they came back on every list read.
+  assert.match(block, /su\.id = m\.sender_id AND su\.is_banned IS TRUE/,
+    'a banned sender the chat hides must not hold a badge');
+  // The predicate belongs to the capped subquery, not somewhere after it.
+  assert.ok(block.indexOf('is_banned') < block.indexOf('LIMIT 100'),
+    'the banned filter sits inside the capped subquery');
 });
 
 test('the icon badge flock count mirrors the same filters and only accepted memberships', () => {
