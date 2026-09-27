@@ -1334,7 +1334,18 @@ export default function ConsumerVenueCard({
                   const reading = sensorHistory.find(r => hourMs(r.recorded_at) === slotTs) || null;
                   return { hour: new Date(slotTs).getHours(), reading };
                 });
-                const maxHeads = Math.max(1, ...slots.map(s => s.reading?.thermal_headcount || 0));
+                // Newer sensors combine the doorway in/out count with the
+                // thermal count on the device and send `occupancy`, people
+                // inside the room. Older ones send only the thermal count,
+                // which is one camera's view. Prefer the room figure when a
+                // row has it, per row, so a history that spans a firmware
+                // update charts each hour with what that hour actually had.
+                const people = (r) => (typeof r?.occupancy === 'number' ? r.occupancy : r?.thermal_headcount);
+                const hasOccupancy = typeof sd.occupancy === 'number';
+                const band = hasOccupancy && typeof sd.occupancy_low === 'number'
+                  && typeof sd.occupancy_high === 'number' && sd.occupancy_low !== sd.occupancy_high
+                  ? `${sd.occupancy_low} to ${sd.occupancy_high} inside` : null;
+                const maxHeads = Math.max(1, ...slots.map(s => people(s.reading) || 0));
                 return (
                   <m.div
                     initial={{ opacity: 0, y: 14 }}
@@ -1357,13 +1368,16 @@ export default function ConsumerVenueCard({
                       {ageStr && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
-                      <span style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
-                      {/* "in view", not "right now": the count is one doorway
-                          camera's field of view, uncalibrated against the
-                          room. Same honesty rule as the noise band below,
-                          and the same words the sensor's own display uses. */}
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>people in view</span>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{hasOccupancy ? sd.occupancy : sd.thermal_headcount}</span>
+                      {/* "in view", not "right now", for the thermal count: it
+                          is one doorway camera's field of view, uncalibrated
+                          against the room. Same honesty rule as the noise band
+                          below, and the same words the sensor's own display
+                          uses. "inside" only when the device sent its room
+                          estimate, which is what that number is. */}
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{hasOccupancy ? 'people inside' : 'people in view'}</span>
+                      {band && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{band}</span>}
                     </div>
 
                     {/* The band, and only the band. The figure that used to sit
@@ -1386,7 +1400,7 @@ export default function ConsumerVenueCard({
                       <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
                       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
                         {slots.map((s, i) => {
-                          const val = s.reading?.thermal_headcount;
+                          const val = people(s.reading);
                           if (val == null) {
                             return <div key={i} style={{ flex: 1, height: '4px', background: 'repeating-linear-gradient(45deg, var(--border-subtle), var(--border-subtle) 2px, transparent 2px, transparent 4px)', borderRadius: '2px', opacity: 0.5 }} />;
                           }

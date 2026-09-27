@@ -7094,6 +7094,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venue_place_id: pid,
           ir_beam_count: payload.ir_beam_count,
           thermal_headcount: payload.thermal_headcount,
+          occupancy: payload.occupancy ?? null,
+          occupancy_low: payload.occupancy_low ?? null,
+          occupancy_high: payload.occupancy_high ?? null,
+          dwell_minutes: payload.dwell_minutes ?? null,
           noise_db: payload.noise_db,
           recorded_at: payload.recorded_at,
         },
@@ -7104,6 +7108,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const incoming = {
           recorded_at: payload.recorded_at,
           thermal_headcount: payload.thermal_headcount,
+          occupancy: payload.occupancy ?? null,
+          occupancy_low: payload.occupancy_low ?? null,
+          occupancy_high: payload.occupancy_high ?? null,
+          dwell_minutes: payload.dwell_minutes ?? null,
           ir_beam_count: payload.ir_beam_count,
           noise_db: payload.noise_db,
         };
@@ -16323,6 +16331,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venue_place_id: pid,
           ir_beam_count: payload.ir_beam_count,
           thermal_headcount: payload.thermal_headcount,
+          occupancy: payload.occupancy ?? null,
+          occupancy_low: payload.occupancy_low ?? null,
+          occupancy_high: payload.occupancy_high ?? null,
+          dwell_minutes: payload.dwell_minutes ?? null,
           noise_db: payload.noise_db,
           recorded_at: payload.recorded_at,
         },
@@ -16335,6 +16347,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const incoming = {
           recorded_at: payload.recorded_at,
           thermal_headcount: payload.thermal_headcount,
+          occupancy: payload.occupancy ?? null,
+          occupancy_low: payload.occupancy_low ?? null,
+          occupancy_high: payload.occupancy_high ?? null,
+          dwell_minutes: payload.dwell_minutes ?? null,
           ir_beam_count: payload.ir_beam_count,
           noise_db: payload.noise_db,
         };
