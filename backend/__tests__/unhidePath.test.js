@@ -461,6 +461,25 @@ test('a hidden guest RSVP is announced to the flock, and to no personal room', a
   assert.strictEqual(emitted[0].payload.contentType, 'guest_rsvp');
 });
 
+test('hiding or restoring a guest RSVP clears its retired stamp, and no other table is asked to', async () => {
+  // A guest row retired because its person joined the plan is already hidden,
+  // and the name guard only reads a hidden row as a takedown when it was not
+  // retired (migration 097). A moderator's hide has to make it a takedown,
+  // and a restore makes it a live answer again rather than a retired one.
+  for (const action of ['hide', 'unhide']) {
+    handlers = moderationHandlers('guest_rsvp', 'guest_rsvps', { flock_id: 8, notify_a: null, notify_b: null });
+    log = [];
+    const res = await call('PUT', '/api/admin/reports/7', { action });
+    assert.strictEqual(res.status, 200, `${action}: ${res.text}`);
+    const [write] = ran(/UPDATE guest_rsvps SET is_hidden/);
+    assert.match(write.sql, /^UPDATE guest_rsvps SET is_hidden = \$1, retired_at = NULL WHERE id = \$2 /, action);
+  }
+  handlers = moderationHandlers('flock_message', 'messages', { flock_id: 8, notify_a: null, notify_b: null });
+  log = [];
+  await call('PUT', '/api/admin/reports/7', { action: 'hide' });
+  assert.match(ran(/UPDATE messages SET is_hidden/)[0].sql, /^UPDATE messages SET is_hidden = \$1 WHERE id = \$2 /);
+});
+
 test('a hidden DM reaches BOTH participants', async () => {
   handlers = moderationHandlers('dm', 'direct_messages', { flock_id: null, notify_a: 3, notify_b: 4 });
   await call('PUT', '/api/admin/reports/7', { action: 'hide' });

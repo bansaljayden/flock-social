@@ -1021,7 +1021,13 @@ const TAKEDOWN_TARGETS = {
   venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
   // A guest RSVP has no account behind it, so there is nobody personal to tell;
   // the flock members watching the roster are the whole audience.
-  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
+  //
+  // `alsoSet` clears retired_at (migration 097) on both the hide and the
+  // un-hide. A row retired because its person joined the plan is hidden
+  // already, and the name guard reads a hidden row as a takedown only when it
+  // was not retired, so a moderator hiding it would otherwise have taken down
+  // nothing. A row brought back is a live answer again, not a retired one.
+  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id', alsoSet: 'retired_at = NULL' },
 };
 
 // ---------------------------------------------------------------------------
@@ -1314,7 +1320,7 @@ router.put('/reports/:id', async (req, res) => {
           // changed (a DM's receiver, a message's flock), and on a rollback it
           // would name people about an event that never happened.
           const changed = await client.query(
-            `UPDATE ${target.table} SET is_hidden = $1 WHERE id = $2 RETURNING ${target.audience}`,
+            `UPDATE ${target.table} SET is_hidden = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 RETURNING ${target.audience}`,
             [hiding, report.content_id]
           );
           if (changed.rowCount === 0) {
