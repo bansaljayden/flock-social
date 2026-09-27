@@ -130,6 +130,7 @@ import { owedOn } from './lib/billShares';
 // answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
 import { mergeBudgetUpdate } from './lib/budgetStatus';
 import { isNightOver } from './lib/planNight';
+import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -6810,6 +6811,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // undefined on a backend that does not send it yet, which keeps the
           // card hidden rather than guessing.
           iVoted: typeof f.i_voted === 'boolean' ? f.i_voted : undefined,
+          // The other two things a plan can be waiting on this reader for,
+          // from the same read and on the same terms: booleans about the
+          // reader alone, never an amount, and undefined when the server did
+          // not say, which keeps the Nest card quiet rather than guessing.
+          iBudgetOpen: typeof f.i_budget_open === 'boolean' ? f.i_budget_open : undefined,
+          iOwe: typeof f.i_owe === 'boolean' ? f.i_owe : undefined,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           // going_count includes guests who RSVPed through the share link;
@@ -11923,8 +11930,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // submission told everyone watching whose answer had just moved it.
       if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling, budgetLocked: true } : f));
       // The creator started the budget over (POST /reset): the lock comes off
-      // and every row is gone, this reader's own included.
-      if (data.reset) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: null, budgetLocked: false } : f));
+      // and every row is gone, this reader's own included, so the budget is
+      // waiting on this reader again (the Nest's ask, lib/nestAsks.js).
+      if (data.reset) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: null, budgetLocked: false, iBudgetOpen: true } : f));
       // Update detailed status if viewing this flock
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
@@ -11953,10 +11961,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const unsubReminder = onBudgetReminder((data) => {
       showToast(`Submit your budget for ${data.flockName}`);
     });
+    // The Nest's "you owe" (lib/nestAsks.js) follows the bill between two list
+    // reads, for every plan and not only the one on screen: a bill posted the
+    // morning after is exactly the one nobody has open. Each event is this
+    // reader's own copy (per-member fan-out in routes/billing.js), and only
+    // their own share moves their own flag.
+    const setMyOwe = (flockId, owe) => setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, iOwe: owe } : f));
+    const isMe = (userId) => userId != null && String(userId) === String(meRef.current?.id);
     const unsubBillCreated = onBillCreated((data) => {
       if (data.flockId === selectedFlockId) setBillSplit(data.bill);
+      if (data.bill) setMyOwe(data.flockId, owesOnBill(data.bill, meRef.current?.id));
     });
     const unsubSettled = onShareSettled((data) => {
+      if (isMe(data.userId)) setMyOwe(data.flockId, false);
       if (data.flockId === selectedFlockId) {
         // The array only; the counts arrive on bill_tally, see below.
         setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: true, outstanding: 0 } : s) } : prev);
@@ -11968,6 +11985,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // payment taken back left every other member looking at a green tick
     // until they reopened the sheet.
     const unsubUnsettled = onShareUnsettled((data) => {
+      // A payment taken back is a debt again. The unsettle route refuses the
+      // payer and a payerless bill, so this is only ever a share owed to
+      // somebody else.
+      if (isMe(data.userId)) setMyOwe(data.flockId, true);
       if (data.flockId === selectedFlockId) {
         // The figure comes back with the flag: a settled row is served with
         // outstanding 0, and leaving that in place read as nothing owed.
@@ -16386,10 +16407,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ? !hasCastMyVote(f)
             : f.iVoted === false);
           const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && needsMyVote(f));
-          if (needsAction.length === 0) return null;
+          // And the money: a share still owed on a bill somebody else paid, or
+          // a budget still missing this reader's answer (lib/nestAsks.js has
+          // the order and why). Owing reads `flocks`, not liveFlocks, because
+          // the bill usually lands the morning after, on a plan this list has
+          // already let go. The budget and the bill both live in the cash
+          // pool sheet over the chat, so that is where their tap goes; a vote
+          // still opens the plan, as it always has.
+          const asks = nestAsks(flocks, needsAction);
+          if (asks.length === 0) return null;
+          const top = asks[0];
+          const openTop = () => {
+            setSelectedFlockId(top.flock.id);
+            if (top.kind === 'vote') { setCurrentScreen('detail'); return; }
+            setCurrentScreen('chatDetail');
+            setShowChatPool(true);
+          };
           return (
             <button className="hit44"
-              onClick={() => { setSelectedFlockId(needsAction[0].id); setCurrentScreen('detail'); }}
+              onClick={openTop}
               style={{
                 width: '100%',
                 textAlign: 'left',
@@ -16406,13 +16442,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{needsAction[0].name}</p>
+                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{top.flock.name}</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {needsAction.length === 1 ? 'Needs your vote' : `${needsAction.length - 1} other ${needsAction.length - 1 === 1 ? 'flock needs' : 'flocks need'} your vote too`}
+                  {nestAskLine(asks)}
                 </p>
               </div>
               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
-                {Icons.vote('var(--accent-purple-text)', 12)} Needs Votes
+                {top.kind === 'vote' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.dollar('var(--accent-purple-text)', 12)} {NEST_ASK_CHIP[top.kind]}
               </span>
             </button>
           );
