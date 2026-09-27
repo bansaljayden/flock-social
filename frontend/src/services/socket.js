@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import { travelFields } from '../lib/travel';
 import { getToken, BASE_URL } from './api';
+import { sameSignIn } from '../lib/sessionIdentity';
 
 let socket = null;
 let socketToken = null;
@@ -439,6 +440,48 @@ if (typeof window !== 'undefined') {
   window.addEventListener('flock-session-expired', () => {
     disconnectSocket();
   });
+  // api.js fires this when it has renewed the session. See adoptRefreshedToken.
+  window.addEventListener('flock-token-refreshed', () => {
+    adoptRefreshedToken();
+  });
+}
+
+/**
+ * A RENEWED TOKEN IS THE SAME PERSON, SO THE ROOMS STAY.
+ *
+ * services/api.js renews the session before its access token runs out. The
+ * server authenticated this connection once, at the handshake, with the old
+ * token, and its recheck (backend/sockets/handlers.js revalidateSession) cuts
+ * the connection with session_expired the minute that token runs out, however
+ * healthy the session is. So the connection re-dials with the new token now,
+ * while the old one still has hours left.
+ *
+ * NOT through connectSocket(). A different token there means a different
+ * account: it clears the rooms and builds a new instance. A renewal is the SAME
+ * sign-in (lib/sessionIdentity.js), so the instance, its listeners and the room
+ * registry are kept and the 'connect' handler replays the rooms on the new
+ * connection. A token that is not the same sign-in is left alone here, for
+ * connectSocket to treat as the account switch it is.
+ *
+ * A connection that is hidden stays gone ("HIDDEN MEANS GONE" above): only its
+ * handshake is updated, and the nudge that brings it back dials with the new
+ * token. One that gave up after its strikes, which a token that ran out while
+ * the app was away produces, is dialled again when somebody is looking.
+ */
+function adoptRefreshedToken() {
+  const token = getToken();
+  if (!socket || !token || token === socketToken) return;
+  const held = socketToken || (socket.auth && socket.auth.token);
+  if (!held || !sameSignIn(token, held)) return;
+  socketToken = token;
+  socket.auth = devicePushToken ? { token, pushToken: devicePushToken } : { token };
+  if (socket.connected || socket.active) {
+    try { socket.disconnect(); } catch { /* mid-teardown */ }
+    socket.connect();
+  } else if (!isHidden()) {
+    fatalAuthStrikes = 0;
+    socket.connect();
+  }
 }
 
 // Join is an intent, not a one-shot emit: it is remembered so the reconnect

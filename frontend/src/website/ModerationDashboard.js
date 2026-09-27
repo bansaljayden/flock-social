@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getToken, BASE_URL } from '../services/api';
+import { getToken, BASE_URL, ensureFreshSession } from '../services/api';
 import Icons from '../components/ui/Icons';
 import { connectSocket, onModerationReport } from '../services/socket';
 
@@ -166,6 +166,11 @@ const ADMIN_FETCH_TIMEOUT_MS = 20000;
 // something, since the server answered before the connection went quiet.
 const ADMIN_TIMEOUT_COPY = 'That took too long. It may or may not have gone through. Press Refresh and check the card before trying again.';
 async function adminFetch(path, options = {}) {
+  // A console left open past the access token's day renews first rather than
+  // answering every card with a 401 (services/api.js, RENEWING THE SESSION).
+  // A renewal that cannot reach the server leaves the fetch below to say so.
+  const renewal = ensureFreshSession();
+  if (renewal) await renewal.catch(() => {});
   const token = getToken();
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   let timer = null;

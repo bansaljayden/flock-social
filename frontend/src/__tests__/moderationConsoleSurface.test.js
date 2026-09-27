@@ -84,6 +84,8 @@ const { render, screen, fireEvent, waitFor, act } = require('@testing-library/re
 jest.mock('../services/api', () => ({
   BASE_URL: 'https://api.test',
   getToken: () => 'test-token',
+  // The console renews an expiring session before each fetch; nothing is due here.
+  ensureFreshSession: () => null,
   reportContent: () => Promise.resolve({ message: 'ok' }),
   blockUser: () => Promise.resolve({ message: 'ok' }),
 }));

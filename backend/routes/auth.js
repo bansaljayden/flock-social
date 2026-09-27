@@ -64,8 +64,17 @@ function linkWaitlistConversion(email, userId) {
 }
 // signUserToken is the ONLY way tokens are minted (round 13): it stamps the
 // user's token_version into the JWT so a bump revokes every outstanding token.
+// The four sign-in doors below reach it through issueSession, which also
+// hands out the refresh credential that renews the session
+// (services/refreshTokens.js), and stamps the sign-in time as auth_time. Where
+// the comments in this file speak of a sign-in minting a "fresh iat" as the
+// sudo-mode proof, that proof is now read from auth_time
+// (middleware/auth.js signedInAt): a sign-in sets both to now, and a renewal
+// sets iat to now and carries auth_time over, so renewing a session can never
+// manufacture the proof.
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
-const { authenticate, signUserToken, revokeUserSessions } = require('../middleware/auth');
+const { authenticate, revokeUserSessions } = require('../middleware/auth');
+const { issueSession, exchangeRefreshToken, revokeRefreshFamily } = require('../services/refreshTokens');
 const {
   sendVerificationEmail, verificationLink, baseWebUrl,
   sendPasswordResetEmail, sendPasswordResetOAuthEmail, passwordResetLink,
@@ -194,6 +203,12 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync('flock-login-timing-equalizer', SALT
 //                  same width POST /api/notifications/register stores one at
 //                  (an FCM registration token is 160-350 characters), so any
 //                  token that could have been registered can be signed out.
+//   MAX_REFRESH_TOKEN
+//                  the refresh credential POST /refresh renews with and POST
+//                  /logout retires: 32 random bytes in base64url, exactly 43
+//                  characters (services/refreshTokens.js refuses any other
+//                  shape before hashing it). 128 is room for a longer
+//                  credential later without letting a body grow unmeasured.
 const MAX_EMAIL = 255;
 const MAX_OAUTH_ID = 255;
 const MAX_NAME = 255;
@@ -205,6 +220,7 @@ const MAX_LINK_TOKEN = 200;
 const MAX_OAUTH_TOKEN = 4096;
 const MAX_OAUTH_ACCESS_TOKEN = 2048;
 const MAX_PUSH_TOKEN = 1024;
+const MAX_REFRESH_TOKEN = 128;
 
 // ---------------------------------------------------------------------------
 // Email identity (round 15)
@@ -2405,12 +2421,15 @@ router.post('/signup', signupValidation, async (req, res) => {
       console.error('[auth] verification send failed at signup:', mailErr.message);
     }
 
-    const token = signUserToken(user);
+    // The access token and the refresh credential that renews it (see
+    // services/refreshTokens.js). issueSession never throws: a credential it
+    // could not write leaves the response with the access token alone.
+    const session = await issueSession(user);
 
     // mailRefused: the address is on the do-not-mail list (a bounce or a spam
     // report on an earlier account). Asking again cannot help, and the screen
     // used to say the link was still worth asking for.
-    res.status(201).json({ token, user, emailVerificationRequired: true, verificationSent, mailRefused });
+    res.status(201).json({ ...session, user, emailVerificationRequired: true, verificationSent, mailRefused });
   } catch (err) {
     // Two signups for one address in the same moment: both pass the existence
     // check above, one INSERT wins, and users.email is UNIQUE, so the other
@@ -2854,7 +2873,8 @@ router.post('/login', loginValidation, async (req, res) => {
 
     if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    const token = signUserToken(user);
+    // Access token plus refresh credential; see the signup response.
+    const session = await issueSession(user);
 
     // Strip password from response
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
@@ -2866,7 +2886,7 @@ router.post('/login', loginValidation, async (req, res) => {
     // be saved, because the form demanded a password the account never had.
     // The Google and Apple responses below set it the same way.
     safeUser.sign_in_method = user.oauth_provider || 'password';
-    res.json({ token, user: safeUser });
+    res.json({ ...session, user: safeUser });
   } catch (err) {
     // Our failure, not a wrong password: the reserved attempt is handed back.
     if (throttleKey !== null && loginSlot) releaseLoginAttempt(throttleKey, loginSlot);
@@ -2906,6 +2926,18 @@ const SIGNED_IN_ROUTES = new Set([
   'POST /resend-verification',
 ]);
 
+// The renewal (POST /refresh below) is the one exempt route that does not run
+// behind `authenticate`, because it exists for the moment the access token has
+// run out. It is still a signed-in call: what it spends is the refresh
+// credential a sign-in issued, 32 random bytes compared by hash, which no
+// per-address meter was ever going to slow a guess at, and there is no bcrypt
+// behind it. And it is the call every app launch after a day away makes before
+// GET /me, so metering it per address would put the school Wi-Fi lockout
+// described above straight back.
+const SESSION_RENEWAL_ROUTES = new Set([
+  'POST /refresh',
+]);
+
 // Matched the way Express routes: case insensitive, a trailing slash optional,
 // and HEAD answered by the GET handler. A spelling this misses is charged to
 // authLimiter, which is the safe direction to be wrong in.
@@ -2913,8 +2945,60 @@ function isSignedInRoute(req) {
   const method = req.method === 'HEAD' ? 'GET' : String(req.method || '').toUpperCase();
   let p = String(req.path || '').toLowerCase();
   while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
-  return SIGNED_IN_ROUTES.has(`${method} ${p}`);
+  const key = `${method} ${p}`;
+  return SIGNED_IN_ROUTES.has(key) || SESSION_RENEWAL_ROUTES.has(key);
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/refresh — { refreshToken } -> { token, refreshToken }
+// ---------------------------------------------------------------------------
+// Renew a session. The access token lives 24 hours and there used to be no way
+// to get another without signing in again, so every user was signed out a day
+// after signing in, in the middle of whatever they were doing. The client
+// (frontend/src/services/api.js) calls this before its access token runs out
+// and whenever a request is answered 401 "Token expired", and stores both
+// halves of the answer the way it stores a sign-in.
+//
+// Deliberately NOT behind `authenticate`: the access token is expected to be
+// expired here. The refresh credential is the proof, and services/refreshTokens.js
+// holds every rule about it: stored hashed, rotated on use, bound to
+// token_version, refused for a banned account, and a replay ends the sign-in it
+// belongs to. The new access token carries the ORIGINAL sign-in time as
+// auth_time, so a renewal is never a fresh sign-in for hasFreshSession.
+//
+// One refusal for every dead credential, whatever the reason, so the answer
+// says nothing about which credentials exist. The 403 is the ban, worded as
+// middleware/auth.js words it, so the app says the same thing either way.
+router.post('/refresh', [
+  body('refreshToken').isString().isLength({ max: MAX_REFRESH_TOKEN }),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      // Not something this app ever sends, so it is refused before any query,
+      // as a 400 like every malformed body on this router. The client treats
+      // a 400 from here as a dead credential too, so a corrupted one on a
+      // device ends in sign-in rather than in renewals that can never work.
+      return res.status(400).json({ error: 'Session expired, please sign in again' });
+    }
+    const result = await exchangeRefreshToken(req.body.refreshToken);
+    if (!result.ok) {
+      if (result.status === 403) {
+        return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
+      }
+      return res.status(401).json({ error: 'Session expired, please sign in again' });
+    }
+    // Never cached anywhere between here and the device: both halves are live
+    // credentials.
+    res.set('Cache-Control', 'no-store');
+    res.json({ token: result.token, refreshToken: result.refreshToken });
+  } catch (err) {
+    console.error('Refresh session error:', err);
+    // A 500, never a 401: the credential may be perfectly good, and a 401 here
+    // would end a session over a database blip.
+    res.status(500).json({ error: 'Could not renew your session. Try again in a moment.' });
+  }
+});
 
 // GET /api/auth/me
 router.get('/me', authenticate, async (req, res) => {
@@ -2952,11 +3036,20 @@ router.get('/me', authenticate, async (req, res) => {
 });
 
 // POST /api/auth/logout
-// Single-device sign-out. Tokens carry no per-session id, so the only thing
-// that can be revoked is EVERY session at once (token_version) — doing that
-// here would sign a user out of their laptop every time they signed out of
-// their phone. So the session half stays advisory: the client discards the
-// token. POST /api/auth/logout-all below is the one that actually revokes.
+// Single-device sign-out. Access tokens carry no per-session id, so the only
+// thing that can revoke one is revoking EVERY session at once (token_version),
+// and doing that here would sign a user out of their laptop every time they
+// signed out of their phone. So the access token stays advisory: the client
+// discards it and it runs out within the day. POST /api/auth/logout-all below
+// is the one that revokes everything.
+//
+// THE RENEWAL HALF IS NOT ADVISORY. The refresh credential IS per sign-in, so
+// the client sends it (refreshToken) and its whole family is retired here
+// (services/refreshTokens.js revokeRefreshFamily). Without that a sign-out
+// would leave a credential that could go on renewing the session for weeks
+// after the person walked away from the phone. Scoped to the caller like the
+// device row below. Best effort: the device has already dropped its copy, so
+// a failure here is logged rather than reported as a failed sign-out.
 //
 // THE DEVICE HALF IS NOT ADVISORY. The client sends the push token this device
 // registered (pushToken) and its row is deleted here, inside the request that
@@ -2973,11 +3066,21 @@ const LOGOUT_DEVICE_DELETE_ATTEMPTS = 3;
 router.post('/logout', authenticate, [
   body('pushToken').optional({ values: 'null' }).isString().trim()
     .isLength({ min: 8, max: MAX_PUSH_TOKEN }).withMessage('Invalid push token'),
+  body('refreshToken').optional({ values: 'null' }).isString()
+    .isLength({ max: MAX_REFRESH_TOKEN }).withMessage('Invalid refresh token'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
+    }
+    const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : '';
+    if (refreshToken) {
+      try {
+        await revokeRefreshFamily(refreshToken, req.user.id);
+      } catch (err) {
+        console.error(`[auth] refresh credential revocation failed at sign-out for user ${req.user.id}:`, err.message);
+      }
     }
     const pushToken = typeof req.body?.pushToken === 'string' ? req.body.pushToken.trim() : '';
     if (pushToken) {
@@ -3009,7 +3112,9 @@ router.post('/logout', authenticate, [
 // app that bump token_version are the OAuth claim and a password change —
 // neither available to an OAuth account whose device was stolen. This is that
 // control: bump the version (killing every outstanding JWT for the account,
-// this caller's included) and drop the live sockets those tokens are holding.
+// this caller's included, and every refresh credential, which is bound to the
+// same version in services/refreshTokens.js) and drop the live sockets those
+// tokens are holding.
 router.post('/logout-all', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
@@ -3540,12 +3645,13 @@ router.post('/google', [
       spendOauthNonce(suppliedNonce);
     }
 
-    const token = signUserToken(user);
+    // Access token plus refresh credential; see the signup response.
+    const session = await issueSession(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     // See the /login response: the field the profile form and the account
     // sheets read, present from the first session rather than the second.
     safeUser.sign_in_method = user.oauth_provider || 'password';
-    res.json({ token, user: safeUser });
+    res.json({ ...session, user: safeUser });
   } catch (err) {
     console.error('Google OAuth error:', err);
     // The canonical-email unique index (migration 062) raised: another
@@ -4008,12 +4114,13 @@ router.post('/apple', [
     identityClaimCommitted = true;
     spendOauthNonce(suppliedNonce);
 
-    const token = signUserToken(user);
+    // Access token plus refresh credential; see the signup response.
+    const session = await issueSession(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     // See the /login response: the field the profile form and the account
     // sheets read, present from the first session rather than the second.
     safeUser.sign_in_method = user.oauth_provider || 'password';
-    res.json({ token, user: safeUser });
+    res.json({ ...session, user: safeUser });
   } catch (err) {
     console.error('Apple Sign In error:', err);
     // The canonical-email unique index (migration 062) raised: another
@@ -4051,6 +4158,7 @@ module.exports.EMAIL_CANONICAL_SQL = EMAIL_CANONICAL_SQL;
 // export for the same reason as the two above: server.js is a caller.
 module.exports.isSignedInRoute = isSignedInRoute;
 module.exports.SIGNED_IN_ROUTES = SIGNED_IN_ROUTES;
+module.exports.SESSION_RENEWAL_ROUTES = SESSION_RENEWAL_ROUTES;
 
 // Exported for backend/__tests__/authSurface.test.js. The SQL half of the
 // canonical match (EMAIL_MATCH_SQL) is verified by inspection against
@@ -4141,6 +4249,7 @@ module.exports.__testing = {
   MAX_OAUTH_TOKEN,
   MAX_OAUTH_ACCESS_TOKEN,
   MAX_PUSH_TOKEN,
+  MAX_REFRESH_TOKEN,
   clampName,
   // Minors-compliance audit 2026-08-14 (COPPA neutral age screen). The message
   // is exported so the test can assert it TEACHES NOTHING (no age, no

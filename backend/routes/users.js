@@ -40,11 +40,15 @@ const { isDisposableEmail } = require('../utils/disposableEmail');
 const {
   authenticate,
   authenticateAllowBanned,
-  signUserToken,
   revokeUserSessions,
+  signedInAt,
   TOKEN_ALGORITHMS,
   UNVERIFIED_MESSAGE,
 } = require('../middleware/auth');
+// A password change mints the replacement session through the same door a
+// sign-in does, so it comes with a refresh credential under the new
+// token_version instead of an access token that nothing can renew.
+const { issueSession } = require('../services/refreshTokens');
 // stripHtml is no longer imported here: the one chain that called it is now
 // freeText(), which applies it (and the trailing trim it was missing).
 const { sanitizeArray } = require('../utils/sanitize');
@@ -458,11 +462,20 @@ function normalizedAddress(addr) {
 // session for one knows it.
 //
 // OAuth accounts have no password to retype, so the equivalent is a session
-// that was minted by an actual provider sign-in moments ago. `iat` is stamped
-// by jsonwebtoken on every token signUserToken issues, so a token that is more
-// than REAUTH_WINDOW_MS old fails the check and the client has to re-run Sign
-// in with Apple / Google to get a fresh one. A token lifted hours earlier (the
-// realistic theft) is stale by definition.
+// that was minted by an actual provider sign-in moments ago. Every token
+// carries the time its session signed in as `auth_time` (signUserToken in
+// middleware/auth.js), so a session that signed in more than REAUTH_WINDOW_MS
+// ago fails the check and the client has to re-run Sign in with Apple / Google
+// to get a fresh one. A token lifted hours earlier (the realistic theft) is
+// stale by definition.
+//
+// auth_time and not `iat`, since sessions can be renewed. A renewal
+// (services/refreshTokens.js) mints a new token, with a new iat, for a sign-in
+// that happened days ago, and reading iat would have made every renewal a
+// fresh sign-in: a stolen refresh credential would have bought deletion and
+// the full export without the account's provider ever being asked. A token
+// from before auth_time existed was minted at a sign-in, so its iat is read
+// in its place (signedInAt).
 //
 // Deletion stays genuinely reachable either way, which is the Apple 5.1.1(v)
 // requirement: banned accounts can still sign in (the ban is enforced by
@@ -489,7 +502,8 @@ function tokenIssuedAtMs(req) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET, {
       algorithms: TOKEN_ALGORITHMS || ['HS256'],
     });
-    return Number.isFinite(decoded?.iat) ? decoded.iat * 1000 : null;
+    const at = signedInAt(decoded);
+    return at === null ? null : at * 1000;
   } catch {
     return null;
   }
@@ -1677,10 +1691,17 @@ router.put('/profile',
           .catch((e) => console.error(`[users] reset link retirement failed for user ${req.user.id}:`, e.message));
       }
 
+      // The bump above ended every session this account had, this device's
+      // included, and every refresh credential with them (they are bound to
+      // token_version). So a password change answers with a whole new
+      // session, access token and refresh credential both, minted under the
+      // new version. Handing back only the access token signed this device
+      // out a day later with nothing able to renew it.
+      const replacement = hashedPassword ? await issueSession(result.rows[0]) : null;
       const { token_version: _tv, ...safeUser } = result.rows[0];
       res.json({
         user: safeUser,
-        ...(hashedPassword ? { token: signUserToken(result.rows[0]) } : {}),
+        ...(replacement || {}),
         // The address moved, so the row is unverified again and the round-16
         // gate is back on. Say so, or the next payment/friend/flock call is an
         // unexplained 403. POST /api/auth/resend-verification mails the link for
