@@ -446,3 +446,13 @@ test('the CLI refuses an export that is missing a column the replay reads', asyn
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('the gate scores the incumbent under the serving switches production has, or the ones it is told', () => {
+  const I = { serveMode: () => 'curve_offset', nowcastEnabled: () => true };
+  assert.deepEqual(B.parseIncumbentServe(undefined, I), { serveMode: 'curve_offset', nowcast: true });
+  assert.deepEqual(B.parseIncumbentServe('model', I), { serveMode: 'model', nowcast: false });
+  assert.deepEqual(B.parseIncumbentServe('curve_offset+nowcast', I), { serveMode: 'curve_offset', nowcast: true });
+  assert.throws(() => B.parseIncumbentServe('curve', I), /not one of/);
+  const src = fs.readFileSync(path.join(ML_DIR, 'train', 'bandEval.js'), 'utf8');
+  assert.match(src, /const theirs = inc \? await scoreArtifact\(inc, prepared, \{ qmap, \.\.\.incumbentServe \}\)/);
+});
