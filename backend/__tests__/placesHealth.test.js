@@ -237,7 +237,9 @@ test('every Place Details caller that reads Google\'s error body counts NOT_FOUN
   // others share the one predicate so they cannot drift apart again.
   const fs = require('fs');
   const path = require('path');
-  for (const rel of ['services/placeDetailsCache.js', 'routes/ai.js', 'routes/badge.js']) {
+  // routes/ai.js is not listed: Birdie's crowd lookup reads Place Details
+  // through services/placeDetailsCache.js, so the cache's check covers it.
+  for (const rel of ['services/placeDetailsCache.js', 'routes/badge.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
     assert.match(src, /isPlaceNotFoundAnswer\(/, `${rel} records a retired place id as a Places failure again`);
   }

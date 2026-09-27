@@ -51,10 +51,10 @@ const { allowPlacesSearch } = require('../utils/placesBudget');
 // buying its own. See get_crowd_prediction.
 const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
 // Outage detection for Birdie's own venue lookups. See utils/placesHealth.js.
-const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
+const { recordPlacesResult } = require('../utils/placesHealth');
 // The six-hour memory of place ids Google has said name nothing. Birdie shares
 // only that, not the payload cache; services/placeDetailsCache.js says why.
-const { isGonePlace, rememberGonePlace } = require('../services/placeDetailsCache');
+const { isGonePlace } = require('../services/placeDetailsCache');
 const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
