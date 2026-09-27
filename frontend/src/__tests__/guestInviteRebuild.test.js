@@ -1092,7 +1092,12 @@ describe('inviteHandoff: App.js wiring', () => {
     const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
     const start = app.indexOf('redeemPendingInvite()');
     expect(start).toBeGreaterThan(-1);
-    const block = app.slice(start, start + 9000);
+    // To the end of loadFlocks's chain, not a fixed number of characters: the
+    // order is the property, and a character count failed the moment the
+    // load grew a filter above the open.
+    const end = app.indexOf('.finally(() => setFlocksLoading(false));', start);
+    expect(end).toBeGreaterThan(start);
+    const block = app.slice(start, end);
     const load = block.indexOf('getFlocks()');
     const open = block.indexOf('openJoinedFlock(invite)');
     expect(load).toBeGreaterThan(0);

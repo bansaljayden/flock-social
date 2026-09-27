@@ -19,7 +19,7 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // that asked the block question — flock creation and POST /:id/invite — both ask
 // it once for a whole id set now, with the same bidirectional predicate written
 // out inline. The helper is unchanged and keeps every other caller it has.
-const { getInvisibleUserIds, ROSTER_BLOCK_SQL } = require('../utils/blocks');
+const { getInvisibleUserIds, ROSTER_BLOCK_SQL, ROSTER_BLOCK_REFUSAL } = require('../utils/blocks');
 const {
   GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts, carryGuestVote, lockVoteSlot, RETIRE_ON_INVITE_ACCEPT_SQL,
 } = require('../utils/guestRsvp');
@@ -2379,19 +2379,22 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
       // both directions, so a mutual friend's invite or a rerun of an old plan
       // is refused the same way.
       //
-      // Under the plan's row lock, before the write. Both joins take this lock
-      // before they seat anybody, so the roster read here is the roster the
-      // accept commits against: two people with a block between them
-      // accepting at the same moment cannot each read the other as not yet in.
+      // Under the plan's row lock, before the write. The link door asks it
+      // under the same lock, after the same status read (routes/guest.js
+      // POST /:token/join), so the roster read here is the roster the accept
+      // commits against: two people with a block between them joining at the
+      // same moment, through either door, cannot each read the other as not
+      // yet in.
       //
       // An accepted member re-tapping is not a new membership and is not
       // refused, as on the link. The sentence names nobody, because naming
-      // who is on the plan is the one thing the block withholds.
+      // who is on the plan is the one thing the block withholds; it is the
+      // link door's answer word for word (utils/blocks.js).
       if (membership.rows[0].status !== 'accepted') {
         const blocked = await joinClient.query(ROSTER_BLOCK_SQL, [flockId, req.user.id]);
         if (blocked.rows.length > 0) {
           await joinClient.query('ROLLBACK');
-          return res.status(403).json({ error: 'You cannot join this plan.' });
+          return res.status(403).json(ROSTER_BLOCK_REFUSAL);
         }
       }
       result = await joinClient.query(

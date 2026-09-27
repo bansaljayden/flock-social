@@ -298,14 +298,17 @@ describe('joining from an invite card', () => {
     const calls = { accepted: [], carried: [], identityAsked: [], toasts: [], loadFlocks: 0, verifyChecked: [] };
     let flocks = [];
     let pending = invite ? [invite] : [];
+    const refused = new Set();
     const source = liftCallback('handleAcceptFlockInvite');
     // The accept carries the guest identities this device holds for the
     // signed-in person (services/inviteHandoff.js storedGuestTokens), read off
-    // meRef, so both are handed in alongside the rest.
+    // meRef, so both are handed in alongside the rest. refusedInvitesRef is
+    // where a CANNOT_JOIN refusal is remembered for the session.
     // eslint-disable-next-line no-new-func
     const factory = new Function(
       'useCallback', 'acceptFlockInvite', 'pendingFlockInvites', 'setPendingFlockInvites',
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
+      'refusedInvitesRef',
       `${source}\nreturn handleAcceptFlockInvite;`
     );
     const handler = factory(
@@ -323,10 +326,12 @@ describe('joining from an invite card', () => {
       (err, action) => { calls.verifyChecked.push(action); return false; },
       (opts) => { calls.identityAsked.push(opts); return heldGuestTokens; },
       { current: { id: 5, name: 'Sam Rivera' } },
+      { current: refused },
     );
     return {
       handler,
       calls,
+      refused,
       get flocks() { return flocks; },
       get pending() { return pending; },
     };
@@ -408,5 +413,72 @@ describe('joining from an invite card', () => {
     // This checks the handler still asks it before it words anything itself.
     const source = liftCallback('handleAcceptFlockInvite');
     expect(source).toContain("if (needsEmailVerification(err, 'join a flock')) return;");
+  });
+
+  /** What api.js throws for the server's refusal of a blocked pair. */
+  const cannotJoin = () => Object.assign(new Error('You cannot join this plan.'), { status: 403, code: 'CANNOT_JOIN' });
+
+  it('a plan somebody on it has a block with this account takes the card away, and says so', () => {
+    // The card stayed, and every tap was refused with the same toast: the
+    // membership row is still an invite, so nothing else would ever move it.
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: cannotJoin() });
+    return h.handler(41).then(() => {
+      expect(h.pending).toEqual([]);
+      expect(h.flocks).toEqual([]);
+      expect(h.calls.loadFlocks).toBe(0);
+      expect(h.calls.toasts).toEqual([{ message: 'You cannot join this plan.', type: 'error' }]);
+      // Remembered under this account, so the next load does not put it back.
+      expect([...h.refused]).toEqual(['5:41']);
+    });
+  });
+
+  it('any other 403 keeps the card: only the server\'s code means the plan is closed to this account', () => {
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: Object.assign(new Error('Nope'), { status: 403 }) });
+    return h.handler(41).then(() => {
+      expect(h.pending.map((f) => f.id)).toEqual([41]);
+      expect(h.refused.size).toBe(0);
+    });
+  });
+
+  it('a declined plan\'s Re-join is taken away on the same refusal', () => {
+    let declined = [{ ...PREVIEW, memberStatus: 'declined' }];
+    const refused = new Set();
+    const toasts = [];
+    // eslint-disable-next-line no-new-func
+    const handler = new Function(
+      'useCallback', 'acceptFlockInvite', 'declinedFlockInvites', 'setDeclinedFlockInvites',
+      'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
+      'refusedInvitesRef',
+      `${liftCallback('handleRejoinDeclinedFlock')}\nreturn handleRejoinDeclinedFlock;`
+    )(
+      (fn) => fn,
+      () => Promise.reject(cannotJoin()),
+      declined,
+      (fn) => { declined = typeof fn === 'function' ? fn(declined) : fn; },
+      () => { throw new Error('nothing is added to the list on a refusal'); },
+      (message, type) => toasts.push({ message, type }),
+      () => { throw new Error('nothing is refetched on a refusal'); },
+      () => false,
+      () => [],
+      { current: { id: 5, name: 'Sam Rivera' } },
+      { current: refused },
+    );
+    return handler(41).then(() => {
+      expect(declined).toEqual([]);
+      expect([...refused]).toEqual(['5:41']);
+      expect(toasts).toEqual([{ message: 'You cannot join this plan.', type: 'error' }]);
+    });
+  });
+
+  it('the list load leaves out what this account was refused, keyed the way the handlers write it', () => {
+    // The load is the one place the card could come back from, so it reads
+    // the same `${account}:${plan}` key the two handlers add.
+    const load = liftCallback('loadFlocks');
+    expect(load).toContain('const refused = (f) => refusedInvitesRef.current.has(`${meRef.current?.id}:${f.id}`);');
+    expect(load).toMatch(/setPendingFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'invited' [^\n]*&& !refused\(f\)\)\);/);
+    expect(load).toMatch(/setDeclinedFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'declined' && !refused\(f\)\)\);/);
+    for (const name of ['handleAcceptFlockInvite', 'handleRejoinDeclinedFlock']) {
+      expect(liftCallback(name)).toContain('refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);');
+    }
   });
 });

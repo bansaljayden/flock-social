@@ -6310,6 +6310,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const flocksRef = useRef(flocks);
   flocksRef.current = flocks;
 
+  // Invites the server has said this account cannot accept (403 CANNOT_JOIN:
+  // somebody already on the plan has a block with them, either way). The
+  // membership row is still an invite, so every load would put the card back
+  // and every tap would be refused the same way. Kept for this session and
+  // keyed by account as well as plan, so a second account on the device is
+  // not affected; a restart shows the card once more, which is right if the
+  // person who blocked them has since left. Entries are `${accountId}:${flockId}`.
+  const refusedInvitesRef = useRef(new Set());
+
   // Fetch flocks from API on mount.
   //
   // An invite redemption runs FIRST, and this is the whole of the invite
@@ -6445,11 +6454,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // An invite to a night that already happened is not an invitation,
         // and accepting one dropped the person into a finished plan. The
         // accept route has no status guard, so the card is the gate.
-        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && !f.finished && f.status !== 'completed' && f.status !== 'cancelled'));
+        const refused = (f) => refusedInvitesRef.current.has(`${meRef.current?.id}:${f.id}`);
+        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && !f.finished && f.status !== 'completed' && f.status !== 'cancelled' && !refused(f)));
         // A declined membership row still comes down on every load. Keep it so
         // the person can find the plan again and re-join, rather than silently
         // dropping it and leaving no route back in.
-        setDeclinedFlockInvites(mapped.filter(f => f.memberStatus === 'declined'));
+        setDeclinedFlockInvites(mapped.filter(f => f.memberStatus === 'declined' && !refused(f)));
         // The list is in state, so the chat has something to render. This is
         // the last step of the trip that started on the invite link.
         // Three outcomes, and the middle one used to be silent. A stranger
@@ -6531,6 +6541,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast(err.message || 'That plan is no longer open.');
         return;
       }
+      // Somebody on the plan has a block with this account. The server says
+      // so the same way on every tap, so a card left in place is a button
+      // that can only ever be refused: it leaves, and stays gone for the
+      // session (refusedInvitesRef). The sentence is the server's, and names
+      // nobody.
+      if (err?.status === 403 && err?.code === 'CANNOT_JOIN') {
+        refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);
+        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        showToast(err.message || 'You cannot join this plan.', 'error');
+        return;
+      }
       showToast(err.message || 'Failed to accept invite', 'error');
     }
   }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks]);
@@ -6555,6 +6576,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       loadFlocks();
     } catch (err) {
       if (needsEmailVerification(err, 'join a flock')) return;
+      // The same refusal as on an invite card, and the same answer: the
+      // Re-join button would be refused on every tap, so the row leaves.
+      if (err?.status === 403 && err?.code === 'CANNOT_JOIN') {
+        refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);
+        setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        showToast(err.message || 'You cannot join this plan.', 'error');
+        return;
+      }
       showToast(err.message || 'Failed to join', 'error');
     }
   }, [declinedFlockInvites, showToast, needsEmailVerification, loadFlocks]);

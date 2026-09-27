@@ -24,7 +24,9 @@ const { broadcastGuestRsvp, emitToFlockExcludingBlocked, emitToFlockMembers } = 
 const {
   authenticate, requireVerified, TOKEN_ALGORITHMS, issuedTokenVersion, currentTokenVersion,
 } = require('../middleware/auth');
-const { getInvisibleUserIds, isBlockedBetween, ROSTER_BLOCK_SQL } = require('../utils/blocks');
+const {
+  getInvisibleUserIds, isBlockedBetween, ROSTER_BLOCK_SQL, ROSTER_BLOCK_REFUSAL,
+} = require('../utils/blocks');
 // The member-facing venue tally has one implementation and it lives with the
 // member vote routes — see broadcastGuestVote there for why a guest vote is
 // announced through it rather than emitted from here. VOTE_PLAN_LOCK_SQL is the
@@ -1828,57 +1830,10 @@ router.post('/:token/join',
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawGuestToken))
         ? rawGuestToken : null;
 
-      // BLOCKS HOLD ON THE LINK DOOR TOO (security round 5, 2026-08-20).
-      //
-      // Until this check, the header above claimed "blocks (the join fan-out
-      // below is block-aware)" and only the ANNOUNCEMENT was. The membership
-      // itself was minted regardless, so a share link — a bearer credential
-      // that spreads by design, through group chats and screenshots — was a
-      // way past the one control the product offers for exactly this.
-      //
-      // WHAT THAT BOUGHT AN ATTACKER, and why mutual invisibility made it
-      // worse rather than better. B, blocked by A, gets the link to A's plan
-      // and joins. B is now an accepted member of the flock A is going to:
-      // the venue, the time, the chat the rest of the group holds about the
-      // night. And because every read in routes/flocks.js and every socket
-      // fan-out in sockets/handlers.js filters the pair out of each other's
-      // view, A is never shown that B is there. The block did not keep B away
-      // from A's evening; it hid B from A while B walked into it.
-      //
-      // The rule is the one POST /api/flocks (invited_user_ids) and POST
-      // /:id/invite already enforce in the other direction: a blocked pair
-      // does not become co-members. Applied across the WHOLE accepted roster,
-      // not just the host, because "who is at this plan" is what the joiner
-      // learns and what the members are exposed to — the host is one of them,
-      // not the only one that counts.
-      //
-      // Bidirectional, matching utils/blocks.js: it does not matter which side
-      // pressed the button. Asked in one set-based query rather than a call
-      // per member, and it runs BEFORE the advisory-lock transaction so a
-      // refusal never takes a lock.
-      //
-      // ALREADY-ACCEPTED MEMBERS ARE NOT REFUSED. Two people already in a
-      // flock who then block each other stay where they were — that is the
-      // existing behaviour everywhere else, the flock's own reads already keep
-      // them apart, and turning a re-tap of your own plan's link into a 403
-      // would be a new eviction rule smuggled in through a share link. This
-      // gate is about a NEW membership, so it sits after the already-in
-      // answer and before the write.
-      //
-      // The refusal names no one. Telling B which member blocked them would
-      // hand over exactly the fact the block exists to withhold — that A is on
-      // this plan — so the sentence is the same one whoever is on the roster.
-      //
-      // The in-app accept asks the same statement (utils/blocks.js
-      // ROSTER_BLOCK_SQL): the invite rules check a block only between the
-      // inviter and each invitee, so a member inviting somebody another member
-      // had blocked was the same walk-in through the other door.
-      if (!(existing.rows.length && existing.rows[0].status === 'accepted')) {
-        const blocked = await pool.query(ROSTER_BLOCK_SQL, [link.flock_id, req.user.id]);
-        if (blocked.rows.length > 0) {
-          return res.status(403).json({ error: 'You cannot join this plan.' });
-        }
-      }
+      // The block rule for a NEW membership is asked inside the join's
+      // transaction below, under the plan's row lock (BLOCKS HOLD ON THE LINK
+      // DOOR TOO). An account that is already an accepted member is answered
+      // here, first, and is never asked it.
       if (existing.rows.length && existing.rows[0].status === 'accepted') {
         // ALREADY IN, BUT THE GUEST ROW STILL GOES (guest and DM audit,
         // 2026-09-05). A member without the app opens the link on a laptop,
@@ -1991,6 +1946,7 @@ router.post('/:token/join',
       let joined = false;
       let overCap = false;
       let planOver = false;
+      let refused = false;
       try {
         await client.query('BEGIN');
         // A join that may carry a guest vote takes the vote routes' flockvote:
@@ -2026,13 +1982,70 @@ router.post('/:token/join',
           await client.query('ROLLBACK');
         }
 
+        // BLOCKS HOLD ON THE LINK DOOR TOO (security round 5, 2026-08-20).
+        //
+        // Until this check, the header above claimed "blocks (the join fan-out
+        // below is block-aware)" and only the ANNOUNCEMENT was. The membership
+        // itself was minted regardless, so a share link, a bearer credential
+        // that spreads by design through group chats and screenshots, was a
+        // way past the one control the product offers for exactly this.
+        //
+        // WHAT THAT BOUGHT AN ATTACKER, and why mutual invisibility made it
+        // worse rather than better. B, blocked by A, gets the link to A's plan
+        // and joins. B is now an accepted member of the flock A is going to:
+        // the venue, the time, the chat the rest of the group holds about the
+        // night. And because every read in routes/flocks.js and every socket
+        // fan-out in sockets/handlers.js filters the pair out of each other's
+        // view, A is never shown that B is there. The block did not keep B away
+        // from A's evening; it hid B from A while B walked into it.
+        //
+        // The rule is the one POST /api/flocks (invited_user_ids) and POST
+        // /:id/invite already enforce in the other direction: a blocked pair
+        // does not become co-members. Applied across the WHOLE accepted roster,
+        // not just the host, because "who is at this plan" is what the joiner
+        // learns and what the members are exposed to; the host is one of them,
+        // not the only one that counts. Bidirectional, matching utils/blocks.js:
+        // it does not matter which side pressed the button. One set-based
+        // query, the same statement the in-app accept asks (utils/blocks.js
+        // ROSTER_BLOCK_SQL), because the invite rules check a block only
+        // between the inviter and each invitee, so a member inviting somebody
+        // another member had blocked was the same walk-in through the other
+        // door.
+        //
+        // UNDER THE ROW LOCK, BEFORE THE WRITE. It used to run on the pool
+        // before this transaction, and that left a gap between the two doors:
+        // Bob's link join read the roster while Alice was still only invited,
+        // Alice's in-app accept then took this lock, read no Bob and
+        // committed, and Bob's transaction seated him beside her. Both doors
+        // ask it under this lock now, so whichever commits second reads the
+        // first one's member. A refusal holds the row for one read and never
+        // takes the flock_join: lock.
+        //
+        // ALREADY-ACCEPTED MEMBERS ARE NOT REFUSED. Two people already in a
+        // flock who then block each other stay where they were; that is the
+        // existing behaviour everywhere else, the flock's own reads already keep
+        // them apart, and turning a re-tap of your own plan's link into a 403
+        // would be a new eviction rule smuggled in through a share link. They
+        // were answered above and never reach this.
+        //
+        // The refusal names no one. Telling B which member blocked them would
+        // hand over exactly the fact the block exists to withhold, that A is on
+        // this plan, so the sentence is the same one whoever is on the roster.
         if (!planOver) {
+          const blocked = await client.query(ROSTER_BLOCK_SQL, [link.flock_id, req.user.id]);
+          if (blocked.rows.length > 0) {
+            refused = true;
+            await client.query('ROLLBACK');
+          }
+        }
+
+        if (!planOver && !refused) {
           await client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(link.flock_id)]);
         }
 
         // An already-invited account is not new weight on the flock: the host
         // put them there. Only a link walk-up is capped.
-        if (!planOver && !wasInvited) {
+        if (!planOver && !refused && !wasInvited) {
           const count = await client.query(
             "SELECT COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
             [link.flock_id]
@@ -2043,7 +2056,7 @@ router.post('/:token/join',
           }
         }
 
-        if (!planOver && !overCap) {
+        if (!planOver && !refused && !overCap) {
           // The EXISTS clause is the last line of the unverified-account gate,
           // written where the membership is actually minted. requireVerified
           // above and the middleware deny list both already refuse this
@@ -2119,6 +2132,11 @@ router.post('/:token/join',
       if (planOver) {
         // The same answer flockIsOver gives at the top of this route.
         return res.status(409).json({ error: 'This plan is over. Ask them to start a new one.' });
+      }
+
+      if (refused) {
+        // The in-app accept's refusal, word for word (utils/blocks.js).
+        return res.status(403).json(ROSTER_BLOCK_REFUSAL);
       }
 
       if (overCap) {

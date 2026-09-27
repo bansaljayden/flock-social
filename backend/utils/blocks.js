@@ -241,6 +241,11 @@ function invalidateBlockCache(a, b) {
 // the same evening. One statement for both doors, because two spellings of one
 // safety rule is how the doors drift apart. $1 the plan, $2 the joiner; a row
 // back means refuse.
+//
+// Both doors ask it inside the transaction that seats the member, after
+// `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`. Asked before that lock,
+// two people with a block between them joining through different doors at the
+// same moment could each read the other as not yet in and both commit.
 const ROSTER_BLOCK_SQL = `SELECT 1
              FROM flock_members fm
              JOIN user_blocks b
@@ -251,9 +256,15 @@ const ROSTER_BLOCK_SQL = `SELECT 1
               AND fm.user_id <> $2
             LIMIT 1`;
 
+// And both answer it the same way. The sentence names nobody, because who is
+// on the plan is the one thing the block withholds. The code lets the app take
+// the invite card away instead of offering a button that is refused on every
+// tap; it says only that this account cannot join, which the sentence says.
+const ROSTER_BLOCK_REFUSAL = Object.freeze({ error: 'You cannot join this plan.', code: 'CANNOT_JOIN' });
+
 module.exports = {
   isBlockedBetween, isBlockedOrBannedBetween, isBlockedBetweenCached, getInvisibleUserIds, invalidateBlockCache,
-  ROSTER_BLOCK_SQL,
+  ROSTER_BLOCK_SQL, ROSTER_BLOCK_REFUSAL,
 };
 // Exposed for __tests__/safetyFlow.test.js.
 module.exports.__test = { pairKey, blockCache, BLOCK_CACHE_TTL };

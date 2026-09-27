@@ -409,15 +409,47 @@ test('a blocked account cannot walk into the flock through the share link', asyn
   assert.strictEqual(res.status, 403);
   // THE REFUSAL NAMES NOBODY. Telling the joiner which member blocked them
   // would hand over the exact fact the block exists to withhold: that this
-  // person is on this plan. One sentence, whoever is on the roster.
-  assert.strictEqual(res.body.error, 'You cannot join this plan.');
+  // person is on this plan. One sentence, whoever is on the roster, and the
+  // in-app accept's answer word for word (utils/blocks.js).
+  assert.deepStrictEqual(res.body, { error: 'You cannot join this plan.', code: 'CANNOT_JOIN' });
   assert.ok(!/block/i.test(JSON.stringify(res.body)), 'the word does not appear either');
 
   assert.strictEqual(ran(/INSERT INTO flock_members/).length, 0, 'no membership is written');
   assert.strictEqual(ran(/pg_advisory_xact_lock/).length, 0,
     'a refusal never takes the per-flock lock');
+  assert.ok(log.some((q) => q.sql === 'ROLLBACK'), 'the transaction it was asked in is rolled back');
+  assert.ok(!log.some((q) => q.sql === 'COMMIT'), 'and nothing commits');
   assert.strictEqual(emits.length, 0);
   assert.strictEqual(pushes.length, 0, 'and the host is not pushed a name they blocked');
+});
+
+test('the link door asks the block question under the plan\'s row lock, the way the in-app accept does', async () => {
+  // It used to be asked on the pool before the join's transaction. The in-app
+  // accept asks the same statement under `SELECT ... FOR UPDATE` on the plan,
+  // so Bob's link join could read Alice as only invited, Alice's accept could
+  // then take the row, read no Bob and commit, and Bob's join seated him
+  // beside her. planFlowRaces.test.js forces that interleaving on a real
+  // database; this pins where the question sits.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/JOIN user_blocks/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  scriptAnnounce();
+
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 200, res.text);
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = log.findIndex((q) => q.sql === 'BEGIN');
+  const rowLock = at(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const status = at(/^SELECT status FROM flocks WHERE id = \$1$/);
+  const asked = at(/JOIN user_blocks/);
+  const insert = at(/INSERT INTO flock_members/);
+  assert.ok(begin > -1 && begin < rowLock, 'inside the transaction');
+  assert.ok(rowLock < asked, 'after the plan\'s row is held');
+  assert.ok(status < asked, 'after the status read the join commits against');
+  assert.ok(asked < at(/pg_advisory_xact_lock/) && asked < insert, 'and before the lock and the write');
 });
 
 test('the block gate is bidirectional and reads the whole accepted roster', async () => {
