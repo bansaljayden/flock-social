@@ -189,16 +189,22 @@ def _clothing(rng, amb, skin):
     return amb + (skin - amb) * rng.uniform(0.2, 0.7)
 
 
-def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
+def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
+           child=None, shirtless=None, coat=None):
     """Draw one person with the head centre at (hx, hy) canvas pixels, at d
     metres. Returns the head's canvas position and radius, and the torso box,
-    so the label can be decided from what is actually visible."""
+    so the label can be decided from what is actually visible. child,
+    shirtless and coat force those looks (the stress test uses them); left
+    None, each happens at random."""
     s = F_PX * SS / d                      # canvas px per metre
-    if rng.random() < 0.12:
+    if child if child is not None else rng.random() < 0.12:
         s *= rng.uniform(0.6, 0.8)          # a child
     skin = rng.uniform(31.0, 35.0)
     cloth = _clothing(rng, amb, skin)
-    if rng.random() < 0.12:
+    if coat if coat is not None else rng.random() < 0.08:
+        # A winter coat reads barely above the room.
+        cloth = amb + (skin - amb) * rng.uniform(0.05, 0.2)
+    elif shirtless if shirtless is not None else rng.random() < 0.12:
         # No shirt, or a vest: the torso reads as skin, as warm as a face.
         # A real unit missed a bare torso filling its view because every
         # person it had learned from wore clothes cooler than skin.
@@ -207,7 +213,26 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False):
     pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
     head_rx, head_ry = 0.083 * s * rng.uniform(0.9, 1.1), 0.115 * s * rng.uniform(0.9, 1.1)
     view = view or rng.choice(['front', 'back', 'side'], p=[0.5, 0.3, 0.2])
-    pose = pose or rng.choice(['stand', 'sit', 'walk'], p=[0.45, 0.35, 0.2])
+    pose = pose or rng.choice(['stand', 'sit', 'walk', 'lie'], p=[0.43, 0.34, 0.18, 0.05])
+
+    if pose == 'lie' and not overhead:
+        # Lying on a sofa or the floor: the body runs sideways from the head.
+        # Nobody lying down appeared in training before, and a long flat warm
+        # shape was as likely to read as a heater or a seat as as a person.
+        way = rng.choice([-1, 1])
+        tilt = rng.normal(0, 0.15)
+        body = 0.55 * s * rng.uniform(0.9, 1.1)
+        bx = hx + way * (0.13 * s + body / 2) * math.cos(tilt)
+        by = hy + (0.13 * s + body / 2) * math.sin(tilt) + 0.03 * s
+        leg_x = bx + way * (body / 2 + 0.4 * s) * math.cos(tilt)
+        leg_y = by + (body / 2 + 0.4 * s) * math.sin(tilt)
+        c.paint(capsule(bx, by, leg_x, leg_y, 0.07 * s), pants, owner=pid)
+        c.paint(rect(bx, by, body, 0.3 * s, angle=tilt, corner=0.06 * s), cloth, owner=pid)
+        c.paint(ellipse(hx, hy, head_ry, head_rx, tilt), skin - rng.uniform(0.3, 1.5), owner=pid)
+        c.paint(ellipse(hx - way * head_ry * 0.4, hy, head_ry * 0.5, head_rx * 1.02, tilt),
+                hair, owner=pid)
+        x0, x1 = sorted((hx, leg_x))
+        return (hx, hy, max(head_rx, head_ry)), (x0, min(hy, leg_y) - 0.15 * s, x1, max(hy, leg_y) + 0.15 * s)
 
     if overhead:
         # Looking down from a ceiling: shoulders around a head.
@@ -322,10 +347,10 @@ def hand_near_lens(c, rng, amb, oid=OCCLUDER):
                     cy - palm_h * 0.45, 0.011 * s), skin - rng.uniform(0.3, 2.5), owner=oid)
 
 
-def distractor(c, rng, amb, oid=-1):
+def distractor(c, rng, amb, oid=-1, kind=None):
     """Draw one thing that is warm and is not a person. Returns its class
     name (see CLASSES), or None for a patch of sun, which is background."""
-    kind = rng.choice(['mug', 'laptop', 'screen', 'radiator', 'lamp', 'pet',
+    kind = kind or rng.choice(['mug', 'laptop', 'screen', 'radiator', 'lamp', 'pet',
                        'seat', 'plate', 'sun', 'vent'],
                       p=[0.18, 0.14, 0.08, 0.08, 0.06, 0.12, 0.1, 0.08, 0.1, 0.06])
     d = rng.uniform(0.5, 6.0)
