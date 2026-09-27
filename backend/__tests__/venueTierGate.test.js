@@ -448,6 +448,18 @@ test('a non-boolean `verified` is refused instead of coerced', async () => {
   assert.strictEqual(bare.status, 400);
   assert.strictEqual(bare.body.code, 'PLACE_ID_REQUIRED');
   assert.strictEqual(log.length, 0, 'a verify naming no place reached the database');
+  // The admin who meets this is on a console tab opened before the rule
+  // shipped, which sends {verified:true} and prints the server's error as it
+  // is. So the words say nothing happened and what to do about it, and only
+  // then name the field for someone sending the request by hand.
+  assert.match(bare.body.error, /^Nothing was changed\./);
+  assert.match(bare.body.error, /Reload the moderation console and verify again\./);
+  assert.match(bare.body.error, /googlePlaceId/);
+  const stale = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  assert.strictEqual(stale.status, 400);
+  assert.strictEqual(stale.body.code, 'PLACE_ID_REQUIRED');
+  assert.strictEqual(stale.body.error, bare.body.error);
+  assert.strictEqual(log.length, 0, 'the old console body reached the database');
   const ok = await call('PUT', '/api/admin/venues/7/verify', { googlePlaceId: 'PLACE_A' });
   assert.strictEqual(ok.status, 200);
   assert.strictEqual(log[0].params[0], true);
