@@ -543,6 +543,106 @@ test('sos: a suspended account is still refused the surfaces that reach a NEW ad
   } finally { restore(); }
 });
 
+// ---------------------------------------------------------------------------
+// THE TWO TESTS ABOVE MOUNT THE SAFETY ROUTER ON A BARE APP, AND IN THE PRODUCT
+// IT IS NOT MOUNTED ON A BARE APP.
+//
+// server.js mounts moderation.js and messages.js on the bare `/api` prefix, and
+// both open with a pathless `router.use(authenticate)`: the STRICT variant, run
+// for every /api/* request. /api/safety was mounted below them, so a banned
+// account's POST /api/safety/alert was answered 403 "This account has been
+// suspended" by moderation.js and safety.js never ran. Every
+// authenticateAllowBanned mount in routes/safety.js was dead in production,
+// while the bare-app test above went green. These two read server.js itself.
+// ---------------------------------------------------------------------------
+
+// The first bare `app.use('/api', ...)` in server.js, by index into the whole
+// file so the checkout's line endings do not matter.
+function firstCatchAll(src) {
+  const positions = [...src.matchAll(/app\.use\('\/api',/g)].map((m) => m.index);
+  assert.ok(positions.length >= 1, 'expected at least one bare /api catch-all mount in server.js');
+  return Math.min(...positions);
+}
+
+test('server.js mounts every router with a ban-tolerant route ahead of the /api catch-alls', () => {
+  const src = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  const catchAll = firstCatchAll(src);
+  const routesDir = path.join(__dirname, '..', 'routes');
+  // Found by reading the routers rather than listed by hand, so the next route
+  // that opts into authenticateAllowBanned is held to this without anybody
+  // remembering to add it here.
+  const banTolerant = fs.readdirSync(routesDir)
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => /router\.\w+\([^)]*authenticateAllowBanned/.test(fs.readFileSync(path.join(routesDir, f), 'utf8')));
+  assert.ok(banTolerant.includes('safety.js') && banTolerant.includes('users.js'),
+    `expected safety.js and users.js among the ban-tolerant routers, found ${banTolerant.join(', ')}`);
+
+  for (const file of banTolerant) {
+    const name = file.replace(/\.js$/, '');
+    const bound = src.match(new RegExp(`const (\\w+) = require\\('\\./routes/${name}'\\)`));
+    assert.ok(bound, `server.js does not require routes/${file}`);
+    const mounts = [...src.matchAll(new RegExp(`app\\.use\\('\\/api[^']*',[^\\n]*\\b${bound[1]}\\)`, 'g'))];
+    assert.strictEqual(mounts.length, 1, `routes/${file} should be mounted exactly once, found ${mounts.length}`);
+    assert.ok(mounts[0].index < catchAll,
+      `routes/${file} mounts authenticateAllowBanned, so it must be mounted before the bare /api catch-alls. `
+      + 'Below them, moderation.js\'s router.use(authenticate) answers a banned account 403 and the router never runs.');
+  }
+});
+
+test('sos: a suspended account reaches its SOS routes through the /api stack in server.js order', async () => {
+  // The same routers, mounted in the order server.js mounts them, so the order
+  // under test is the one that ships.
+  const src = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+  const routers = {
+    moderationRoutes,
+    messageRoutes: require('../routes/messages'),
+    safetyRoutes,
+  };
+  const mounts = [...src.matchAll(/app\.use\('([^']+)',[^\n]*\b(moderationRoutes|messageRoutes|safetyRoutes)\)/g)]
+    .map((m) => ({ prefix: m[1], name: m[2] }));
+  assert.deepStrictEqual(mounts.map((m) => m.name).sort(), ['messageRoutes', 'moderationRoutes', 'safetyRoutes']);
+
+  const app = express();
+  app.use(express.json());
+  for (const { prefix, name } of mounts) app.use(prefix, routers[name]);
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  const token = jwt.sign({ userId: ME.id, tv: 0 }, process.env.JWT_SECRET);
+  const send = async (method, urlPath, body) => {
+    const res = await fetch(`http://127.0.0.1:${port}${urlPath}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+
+  const banned = { ...ME, is_banned: true };
+  const mail = stubMail();
+  const { restore } = stubPoolAs(banned, async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [] };
+    if (sql.includes('FROM trusted_contacts')) return { rows: ONE_CONTACT };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Me' }] };
+    if (sql.includes('INSERT INTO emergency_alerts')) return { rows: [{ id: 992 }] };
+    return null;
+  });
+  try {
+    const contacts = await send('GET', '/api/safety/contacts');
+    assert.strictEqual(contacts.status, 200, JSON.stringify(contacts.body));
+    const alert = await send('POST', '/api/safety/alert', { latitude: 40.7, longitude: -74, includeLocation: true });
+    assert.strictEqual(alert.status, 200, JSON.stringify(alert.body));
+    assert.strictEqual(mail.mails.length, 1, 'the alert must reach the trusted contact');
+    // And the catch-alls still refuse the same account everywhere else.
+    const blocks = await send('GET', '/api/blocks');
+    assert.strictEqual(blocks.status, 403, 'a ban still locks the account out of the rest of /api');
+  } finally {
+    mail.restore();
+    restore();
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('sos: a fix the phone calls approximate is not drawn as a pin', () => {
   // THE BUG THIS PINS. The alert email printed six decimal places of latitude
   // (eleven centimetres) and a button reading "View Location on Map", for every
