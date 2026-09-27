@@ -249,7 +249,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective September 26, 2026"],
+    ["p", "Effective September 27, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -309,7 +309,7 @@ const PAGE_BLOCKS = {
     ["h3", "What the sensor sends us"],
     ["p", "Every 30 seconds it sends these numbers, and nothing else:"],
     ["li", "Doorway crossings: how many times someone crossed the doorway since the last reading, in either direction. Depending on the unit, it counts them with an infrared beam across the doorway or with an infrared distance sensor that looks down at it."],
-    ["li", "Warm bodies in view: a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It learned from computer-generated thermal images, not from pictures of real people. A device without the model counts heat clusters instead."],
+    ["li", "Warm bodies in view: a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It learned from computer-generated thermal images and from public research collections of thermal images whose licenses allow this use. It has never been trained on anything a Flux sensor saw, and it names kinds of things, never who anyone is. A device without the model counts heat clusters instead."],
     ["li", "Estimated people inside: the doorway count and the warm-bodies count combined on the device into one number with a likely range, and how long people typically stay. These are counts, worked out on the device."],
     ["li", "Ambient loudness: one loudness level, the typical level over the last minute."],
     ["h3", "What it does not do"],
