@@ -201,10 +201,11 @@ function getRefreshToken() {
 
 // What the stored token says about itself: its payload, decoded and NOT
 // verified. Only the server can say whether a token is good, and nothing here
-// decides that. The question a session that is ending can still ask of it is
-// whose it was (userId), for the analytics answer. A boot that finds the
-// session already dead has had no answer from the server to learn that from.
-// Null for anything that is not a readable JWT.
+// decides that. Two questions a session that is ending can still ask of it
+// are whose it was (userId), for the analytics answer, and when it stopped
+// working (exp), for the invite handoff. A boot that finds the session already
+// dead has had no answer from the server to learn either from. Null for
+// anything that is not a readable JWT.
 function storedTokenClaims() {
   try {
     const token = getToken();
@@ -451,14 +452,24 @@ export const RESET_DONE_KEY = 'flock_password_reset_done';
  * they had just tapped Join on, and the answer they gave as a guest could no
  * longer be retired by the join, so they were counted twice.
  *
- * Those two keys are not the dead account's residue. They were written after
- * that session last worked, by whoever is holding the device now, which is the
- * same reasoning App.js endSession applies to a notification tap waiting at a
- * boot like this one. So they survive a clear ONLY when no request in this page
- * load has seen the session alive (sessionSeenLive above). A session that ran
- * here takes them like everything else, because then the shared-phone rule in
- * the SIGN-OUT comment is the one that applies. The handoff's own 24 hour TTL
- * (services/inviteHandoff.js) still bounds how long they can sit.
+ * Those two keys are not the dead account's residue WHEN they were written
+ * after that session stopped working: then it was whoever is holding the
+ * device now, which is the same reasoning App.js endSession applies to a
+ * notification tap waiting at a boot like this one. So they survive a clear
+ * ONLY when no request in this page load has seen the session alive
+ * (sessionSeenLive above), AND the stash is dated after the stored token's own
+ * expiry. The date matters because the redeem after sign-in keeps a
+ * stash it could not use (an unverified email, a dropped connection), so
+ * account A can leave one behind while A's token is still good. That token
+ * expires later, somebody else opens the app, and without the date check the
+ * boot's 401 kept A's stash for them: they signed in and were joined into A's
+ * plan and its chat, presenting A's guest identity. A stash written before the
+ * token ran out is that session's and goes with it. A token that cannot be
+ * read gives no date to test, and the stash is held as it was before this
+ * check existed. A session that ran here takes them like everything else,
+ * because then the shared-phone rule in the SIGN-OUT comment is the one that
+ * applies. The handoff's own 24 hour TTL (services/inviteHandoff.js) still
+ * bounds how long they can sit.
  *
  * Only the identity the stashed invite points at is held. Any other
  * flock_guest_* key is an answer from some other visit and goes as before.
@@ -471,9 +482,14 @@ function holdInviteHandoff() {
     const store = window.localStorage;
     const raw = store.getItem(INVITE_HANDOFF_KEY);
     if (raw === null) return held;
+    let stash = null;
+    try { stash = JSON.parse(raw); } catch (_) { /* unreadable: inviteHandoff forgets it on read */ }
+    // exp is in seconds, the stash's `at` in milliseconds. A missing or
+    // unreadable `at` is not after anything, so against a readable exp it goes.
+    const exp = Number(storedTokenClaims()?.exp);
+    if (Number.isFinite(exp) && !(Number(stash?.at) > exp * 1000)) return held;
     held.push([INVITE_HANDOFF_KEY, raw]);
-    let linkToken = null;
-    try { linkToken = JSON.parse(raw)?.token; } catch (_) { /* unreadable: inviteHandoff forgets it on read */ }
+    const linkToken = stash?.token;
     // The same length bounds inviteHandoff.js and the guest routes put on a
     // link token, so a malformed stash cannot name some unrelated key.
     if (typeof linkToken === 'string' && linkToken.length >= 8 && linkToken.length <= 64) {
