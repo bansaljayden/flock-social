@@ -2300,6 +2300,13 @@ const noteRetraction = (ref, entry) => {
 //    are serial, so "newer" is decidable. A local row missing from the middle
 //    of the returned window was hidden by a moderator or deleted and must stay
 //    gone; resurrecting it is the failure mode this avoids.
+//    AND ONLY ROWS THAT ARRIVED AFTER THE READ WENT OUT. A newer row that was
+//    already on screen when it went out (`held`, heldServerIds) was on the
+//    server before the read was, so a page that does not have it is a page
+//    from after its unsend or takedown. The event saying so goes to a socket,
+//    and a phone that dropped its socket in a pocket never hears it: the newest
+//    message in the chat was unsent, the read came back without it, and this
+//    rule put it back on screen for the rest of the session.
 // 3. `keepOlder` — rows OLDER than the oldest the history returned. The route
 //    answers with the newest 50, so a catch-up in a busy chat would otherwise
 //    slice scrollback off the top of a conversation the user is reading. Those
@@ -2307,6 +2314,15 @@ const noteRetraction = (ref, entry) => {
 //    argument above does not apply. Screen entry does NOT ask for this: it is
 //    the one moment a clean read of the server's truth is wanted, and the local
 //    list there can be a stale session's.
+//    ONLY WHEN THE PAGE REACHES THEM (pageAgainstHeld). Eighty messages while
+//    the phone was locked came back as the newest fifty, and splicing the
+//    scrollback under them hid the thirty in between with nothing to mark the
+//    hole: "Load earlier" pages back from the oldest row on screen, which was
+//    below the hole, so they could never be fetched in this view. A full page
+//    that shares no row with what was on screen now replaces it, and the
+//    loaders put "Load earlier" back so the rest is one tap away. A page
+//    shorter than a full one is the whole conversation, so a row below it is
+//    one the server no longer has, and it goes too.
 // One shape for a stored row, wherever it was read from. Both message screens
 // now have two readers each, the entry read and the older-page read behind
 // "Load earlier messages", and two copies of a mapping are two chances for a
@@ -2431,10 +2447,36 @@ const oldestServerId = (messages) => {
 // conversation. Change it here if the routes' default ever moves.
 const DM_PAGE_SIZE = 50;
 
+// The ids a history read may take as already known: every row on screen that
+// the server has issued an id for and that is not still sending or failed, as
+// the read goes out. Taken from the loaders' state mirrors (flocksRef,
+// directMessagesRef), so a row appended a moment earlier and not yet rendered
+// is missing from it, which errs toward keeping that row: the old rule.
+const heldServerIds = (messages) => {
+  const held = new Set();
+  for (const m of messages || []) if (!m.pending && !m.failed && isServerId(m.id)) held.add(m.id);
+  return held;
+};
+
+// Where a history page stands against what was on screen when it went out.
+// 'whole': the server sent less than a full page, so it has nothing older.
+// 'joins': a row it sent was already on screen, so what is on screen below it
+// continues it. 'gap': a full page that reaches none of it, so rows between
+// the two were never loaded. Null when the caller could not say what was held.
+// Counted on the page as the server sent it, before anything is dropped.
+const pageAgainstHeld = (history, held) => {
+  if (!held) return null;
+  const rows = history || [];
+  if (rows.length < DM_PAGE_SIZE) return 'whole';
+  return rows.some((h) => held.has(h.id)) ? 'joins' : 'gap';
+};
+
 // `drop` is what was retracted after this read went out (retractedSince): a
 // response older than an unsend, a takedown or a block does not get to put
-// those rows, or quotes of them, back.
-const mergeHistory = (local, history, { keepOlder = false, drop = null } = {}) => {
+// those rows, or quotes of them, back. `held` is heldServerIds as the read went
+// out, or null from a caller that cannot say, which keeps points 2 and 3 as
+// they were before either knew about it.
+const mergeHistory = (local, history, { keepOlder = false, drop = null, held = null } = {}) => {
   const hist = dropRetracted(history || [], drop);
   const mine = local || [];
   const settled = (m) => !m.pending && !m.failed;
@@ -2455,8 +2497,13 @@ const mergeHistory = (local, history, { keepOlder = false, drop = null } = {}) =
   // against it.
   if (newestId === null) return [...hist, ...unsettled];
 
-  const older = keepOlder ? mine.filter((m) => settled(m) && isServerId(m.id) && m.id < oldestId) : [];
-  const newer = mine.filter((m) => settled(m) && isServerId(m.id) && m.id > newestId);
+  // Point 3: scrollback stays only under a page that reaches it.
+  const place = pageAgainstHeld(history, held);
+  const older = keepOlder && (place === null || place === 'joins')
+    ? mine.filter((m) => settled(m) && isServerId(m.id) && m.id < oldestId)
+    : [];
+  // Point 2: newer than the page, and not on screen when the read went out.
+  const newer = mine.filter((m) => settled(m) && isServerId(m.id) && m.id > newestId && !(held && held.has(m.id)));
   return [...older, ...hist, ...newer, ...unsettled];
 };
 
@@ -9811,6 +9858,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     historyReadSeqRef.current[`flock:${flockId}`] = turn;
     const overtaken = () => historyReadSeqRef.current[`flock:${flockId}`] !== turn;
     const since = retractionsRef.current.seq;
+    // What was on screen as this read went out (heldServerIds): a row of it
+    // the answer lacks is one the server no longer has, and a full page that
+    // shares none of it has a gap under it (mergeHistory, points 2 and 3).
+    const held = heldServerIds((flocksRef.current.find(f => f.id === flockId) || {}).messages);
     if (showSpinner) setMessagesLoading(true);
     setMessagesError('');
     return getMessages(flockId)
@@ -9835,8 +9886,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // again. Nothing cleared the exhausted flag, so one walk to the top of a
         // long chat hid "Load earlier messages" for the rest of the session:
         // leave the chat, come back to the newest fifty, and the control that
-        // reaches the other two hundred and fifty is not on the screen.
-        if (!keepOlder) {
+        // reaches the other two hundred and fifty is not on the screen. A
+        // keepOlder read whose full page reaches nothing on screen truncates
+        // the same way (mergeHistory, point 3), so the rows it skipped are
+        // one "Load earlier" away.
+        if (!keepOlder || pageAgainstHeld(msgs, held) === 'gap') {
           setFlockAtTop(t => {
             if (!t[flockId]) return t;
             const next = { ...t };
@@ -9878,7 +9932,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop }), readers, pins };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held }), readers, pins };
         }));
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
@@ -9919,6 +9973,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     historyReadSeqRef.current[`dm:${userId}`] = turn;
     const overtaken = () => historyReadSeqRef.current[`dm:${userId}`] !== turn;
     const since = retractionsRef.current.seq;
+    // The flock twin's `held`, for the same two rules.
+    const held = heldServerIds((directMessagesRef.current.find(d => d.userId === userId) || {}).messages);
     if (showSkeleton) setDmMessagesLoading(true);
     setDmMessagesError('');
     return getDMs(userId)
@@ -9951,8 +10007,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // that does not keep older rows truncates the thread back to this
         // page, so the pages exist again, and the exhausted flag has to go
         // or one walk to the top hid "Load earlier messages" for the rest of
-        // the session on every re-entry (guest and DM audit, 2026-09-05).
-        if (!keepOlder) {
+        // the session on every re-entry (guest and DM audit, 2026-09-05). And
+        // the flock twin's gap: a full page that reaches nothing on screen.
+        if (!keepOlder || pageAgainstHeld(msgs, held) === 'gap') {
           setDmAtTop(t => {
             if (!t[userId]) return t;
             const next = { ...t };
@@ -9984,7 +10041,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             }];
           }
           return prev.map(d => d.userId === userId
-            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop }), unread: 0 }
+            ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop, held }), unread: 0 }
             : d);
         });
         // The DM half of the delivery receipt, and the flock twin's comment
