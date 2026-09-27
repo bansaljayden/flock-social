@@ -615,6 +615,8 @@ let unmodelled;
 let proCustomer = null;
 let roostCustomer = null;
 let rowDeleted = false;
+// Whether forgetting a cancelled Pro customer on the users row fails.
+let failForget = false;
 // The account row's lock, the statement that erases a venue owner's review
 // replies and the user delete, in the order they ran, so a test can see the
 // erase lands inside the transaction under the lock and before the delete.
@@ -639,7 +641,10 @@ function stubQuery(text) {
   if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) {
     return { rows: [{ stripe_customer_id: proCustomer }], rowCount: 1 };
   }
-  if (has('UPDATE users SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
+  if (has('UPDATE users SET stripe_customer_id = NULL')) {
+    if (failForget) throw new Error('simulated write failure');
+    return { rows: [], rowCount: 1 };
+  }
   if (has('UPDATE venue_profiles SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('FROM users WHERE id = $1')) {
     if (has('FOR UPDATE')) deletionOrder.push('lock users');
@@ -728,6 +733,7 @@ async function deleteAccountAs(opts = {}) {
   unmodelled = [];
   blockedBoth = opts.blocked || [];
   failTransaction = Boolean(opts.failTransaction);
+  failForget = Boolean(opts.failForget);
   pushConfigured = opts.pushConfigured !== false;
   proCustomer = opts.proCustomer || null;
   roostCustomer = opts.roostCustomer || null;
@@ -829,7 +835,8 @@ test('with push unconfigured the deletion still completes and still emits', asyn
 // ---------------------------------------------------------------------------
 const billing = require('../services/proBilling');
 
-function withStripe(fn) {
+// `refuse` makes Stripe answer every customer delete with an error.
+function withStripe(fn, { refuse = false } = {}) {
   const stripePath = require.resolve('stripe');
   const savedEntry = require.cache[stripePath];
   const savedKey = process.env.STRIPE_SECRET_KEY;
@@ -837,7 +844,11 @@ function withStripe(fn) {
   require.cache[stripePath] = {
     id: stripePath, filename: stripePath, loaded: true,
     exports: function FakeStripe() {
-      return { customers: { del: async (id) => { deleted.push(id); return { id, deleted: true }; } } };
+      return { customers: { del: async (id) => {
+        if (refuse) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+        deleted.push(id);
+        return { id, deleted: true };
+      } } };
     },
   };
   process.env.STRIPE_SECRET_KEY = ['sk', 'test', 'd'.repeat(24)].join('_');
@@ -857,6 +868,7 @@ test('a Pro web customer that Stripe cannot cancel (no key) keeps the account an
     const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE' });
     assert.equal(res.status, 503, JSON.stringify(res.body));
     assert.match(res.body.error, /couldn't cancel your Flock Pro web subscription/);
+    assert.equal(res.body.code, 'SUBSCRIPTION_NOT_CANCELLED', 'the App Store build words this from the code');
     assert.equal(rowDeleted, false, 'the account was deleted while Stripe went on billing it');
     assert.deepEqual(emitted, [], 'a refused deletion tells nobody their plan is off');
   } finally {
@@ -872,6 +884,7 @@ test('a Roost customer that Stripe cannot cancel (no key) keeps the account and 
     const res = await deleteAccountAs({ roostCustomer: 'cus_ROOST_ON_FILE' });
     assert.equal(res.status, 503, JSON.stringify(res.body));
     assert.match(res.body.error, /couldn't cancel your Roost subscription/);
+    assert.equal(res.body.code, 'SUBSCRIPTION_NOT_CANCELLED');
     assert.equal(rowDeleted, false);
   } finally {
     if (savedKey !== undefined) process.env.STRIPE_SECRET_KEY = savedKey;
@@ -886,4 +899,59 @@ test('customers Stripe confirms as cancelled are forgotten and the deletion goes
     assert.equal(rowDeleted, true);
     assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
   });
+});
+
+// ---------------------------------------------------------------------------
+// EVERY BILLING REFUSAL CARRIES A CODE. The sentence names Flock Pro or Roost
+// and the web shows it as it is; the App Store build sells nothing and words
+// the refusal from the code instead (frontend ProfileSettings.js
+// DELETE_BILLING_NEUTRAL). A refusal with no code would show a plan name there.
+// ---------------------------------------------------------------------------
+test('a Pro web customer Stripe errors on keeps the account, with the not-cancelled code', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "We couldn't cancel your Flock Pro web subscription just now. Try again in a minute.");
+    assert.equal(res.body.code, 'SUBSCRIPTION_NOT_CANCELLED');
+    assert.deepEqual(deletedAtStripe, []);
+    assert.equal(rowDeleted, false);
+  }, { refuse: true });
+});
+
+test('a Roost customer Stripe errors on keeps the account, with the not-cancelled code', async () => {
+  await withStripe(async () => {
+    const res = await deleteAccountAs({ roostCustomer: 'cus_ROOST_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "We couldn't cancel your Roost subscription just now. Try again in a minute.");
+    assert.equal(res.body.code, 'SUBSCRIPTION_NOT_CANCELLED');
+    assert.equal(rowDeleted, false);
+  }, { refuse: true });
+});
+
+test('Pro cancelled but the customer could not be forgotten: account kept, with the cancelled-account-kept code', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE', failForget: true });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.');
+    assert.equal(res.body.code, 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT');
+    assert.deepEqual(deletedAtStripe, ['cus_PRO_ON_FILE']);
+    assert.equal(rowDeleted, false);
+  });
+});
+
+test('Pro cancelled but the deletion rolled back: account kept, with the cancelled-account-kept code', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE', failTransaction: true });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.');
+    assert.equal(res.body.code, 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT');
+    assert.deepEqual(deletedAtStripe, ['cus_PRO_ON_FILE']);
+  });
+});
+
+test('a rollback with nothing billed carries no billing code', async () => {
+  const res = await deleteAccountAs({ failTransaction: true });
+  assert.equal(res.status, 503);
+  assert.match(res.body.error, /Nothing was changed/);
+  assert.equal('code' in res.body, false);
 });
