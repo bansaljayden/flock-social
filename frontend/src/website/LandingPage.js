@@ -630,9 +630,9 @@ export default function LandingPage() {
               <p className="lp-kicker">Crowd levels</p>
               <h2 id="lp-h-crowds">Know how busy it is before you leave.</h2>
               <p className="lp-lead">
-                Flock reads the hour, the weather, and how busy a place usually
-                runs, then estimates how packed it will be tonight. You stop
-                driving across town to stand in a line.
+                Flock pulls live busyness readings every hour and weighs them
+                against how each place usually runs, then shows you how packed it
+                is tonight. You stop driving across town to stand in a line.
               </p>
             </div>
             <ul className="lp-list">
@@ -654,22 +654,28 @@ export default function LandingPage() {
             </ul>
           </div>
 
-          {/* The training figures are the most checkable thing this site owns,
-              and until now they only existed on /about, which is the page
-              nobody reads. They belong here, one line above the demo that is
-              about to run the model in front of you: "everything below is live"
-              is an assertion, and 1.9 million observations across 30 cities is
-              the reason to believe it.
+          {/* The accuracy figures are the most checkable thing this site owns,
+              and they belong here, one line above the demo that is about to
+              serve real numbers in front of you: "the numbers are live" is an
+              assertion, and a measured hit rate on readings the system had not
+              seen is the reason to believe it.
+
+              This line used to cite the model's training corpus (1.9 million
+              venue-hour observations across 30 cities). With the serving
+              configuration production runs (CROWD_SERVE_MODE=curve_offset,
+              CROWD_NOWCAST_ENABLED=true) the number on a pin is the venue's own
+              weekly pattern moved by its live readings, and the trained model
+              does not enter it, so crediting the pins to the model's corpus
+              named the wrong source. The corpus figures stay on /about, beside
+              the model they describe.
 
               Both numbers are read straight out of
-              backend/scripts/ml/models/model_metadata.json (training_rows
-              1,934,988 and 30 entries in training_cities) and are pinned
-              against that file in landingPageClaims.test.js, the same way
-              AboutPage's five figures are pinned. If the model is retrained and
-              the corpus changes, that test goes red and this sentence gets
-              corrected rather than quietly becoming a lie. "venue-hour
-              observations" is the unit /about uses; do not round it into
-              "hours" or "venues", which are different quantities.
+              backend/services/servedAccuracy.json (rows 4,183, within_one_band
+              78.8) and are pinned against that file in landingPageClaims.test.js.
+              If the serving configuration is re-measured, that test goes red
+              and this sentence gets corrected rather than quietly becoming a
+              lie. "within one crowd level" is the band metric; do not round it
+              into "accurate", which is a different claim.
 
               THIS LINE IS READ BY TWO AUDIENCES AND ONE OF THEM HAS NO MAP.
               It used to open "Everything below is live" and close "Pick a pin",
@@ -691,9 +697,9 @@ export default function LandingPage() {
               numbers come from, which is true whether or not a map follows it,
               and the human still reads it directly above a live one. */}
           <p className="lp-demo-proof" id="try">
-            The map, the pins, and the numbers are live. They come from the same
-            model that ships inside Flock, trained on 1.9 million venue-hour
-            observations across 30 cities.
+            The map, the pins, and the numbers are live, made the same way they
+            are in the app. Tested against 4,183 real live readings they had not
+            seen, 78.8% of Flock's crowd numbers landed within one crowd level.
           </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always
@@ -780,7 +786,7 @@ export default function LandingPage() {
               {/* No trailing periods, which is what every other list on this
                   page does. This one was the exception. */}
               <li>Ask in plain words. “Where’s poppin rn” works</li>
-              <li>Crowd numbers come from the same model as the map above</li>
+              <li>The same crowd numbers as the map above</li>
               <li>Tap a card for the details, or send it straight to your flock</li>
             </ul>
           </div>
@@ -1044,7 +1050,7 @@ export default function LandingPage() {
                 <li>See the flocks that chose you</li>
                 <li>Put a deal on your venue’s card, where groups open it</li>
                 <li>Reply to reviews from people who went</li>
-                <li>Your own hour-by-hour forecast, from the model the app runs</li>
+                <li>Your own hour-by-hour forecast, the same one the app shows</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch

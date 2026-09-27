@@ -961,10 +961,21 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(copy).toMatch(/30 cities/);
     expect(copy).toMatch(/395,000/);
 
-    // "on 68,000 realtime observations it cuts the average error by 2.3 points"
-    expect(Math.round(meta.ship_gate.realtime_rows / 1000)).toBe(67);
-    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.06, 2);
-    expect(copy).toMatch(/67,000 realtime observations/);
-    expect(copy).toMatch(/2\.1 points/);
+  });
+
+  test('the served-number figures on /about match servedAccuracy.json', () => {
+    const served = JSON.parse(fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'backend', 'services', 'servedAccuracy.json'),
+      'utf8'
+    ));
+    const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
+
+    expect(served.rows).toBe(4183);
+    expect(copy).toMatch(/Tested against 4,183 real live readings it had not seen, from September 6 to 8, 2026/);
+    expect(copy).toContain(`${served.within_one_band}% of Flock's crowd numbers landed within one crowd level of the reading and ${served.within_10}% within 10 points`);
+    expect(copy).toContain(`The average miss was ${Math.round(served.mae)} points, with no lean high or low`);
+    expect(Math.abs(served.bias)).toBeLessThan(2);
+    expect(copy).toContain(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`);
+    expect(copy).toContain(`scored ${served.before.within_one_band}% within one level before the September upgrade`);
   });
 });
