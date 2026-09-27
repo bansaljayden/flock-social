@@ -1401,6 +1401,36 @@ _THERMAL_IDENTICAL_LIMIT = 5
 _THERMAL_WINDOW = 15
 _thermal_window = deque(maxlen=_THERMAL_WINDOW)
 
+def _import_onnxruntime_quietly():
+    """Import onnxruntime without its start-up noise.
+
+    Debian's build of onnxruntime registers the ONNX operator schemas twice,
+    and the library prints a "Schema error: Trying to register schema ..."
+    line for every one of several hundred operators, straight to file
+    descriptor 2 from C++, the moment it is imported. The model works; the
+    only harm is a screen of false alarms in the self test and the journal
+    at every start. Python's own sys.stderr cannot catch output written
+    below it, so descriptor 2 itself points at /dev/null for the import and
+    is put back afterwards, whatever happens.
+    """
+    try:
+        saved = os.dup(2)
+    except OSError:
+        import onnxruntime
+        return onnxruntime
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, 2)
+            import onnxruntime
+        finally:
+            os.dup2(saved, 2)
+            os.close(devnull)
+    finally:
+        os.close(saved)
+    return onnxruntime
+
+
 class PeopleModel:
     """The trained people counter: a thermal frame in, a point per person out.
 
@@ -1421,7 +1451,7 @@ class PeopleModel:
 
     def __init__(self, path, threshold):
         import numpy as np
-        import onnxruntime as ort
+        ort = _import_onnxruntime_quietly()
         opts = ort.SessionOptions()
         # One core. The Pi has four and the display, the microphone and the
         # doorway counter all want theirs.
