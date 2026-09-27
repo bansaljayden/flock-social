@@ -55,7 +55,9 @@ describe('the locked venue card', () => {
 
 describe('crowd alerts on a free account', () => {
   test('with the paywall on and no Pro, the row opens Pro instead of showing a switch', () => {
-    expect(profile).toMatch(/\{\(process\.env\.REACT_APP_PURCHASES !== 'off'\) && entitlements\?\.paywallEnabled && !isPro \? \(\n\s*<button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick=\{\(\) => setPaywallTrigger\('settings'\)\}/);
+    // The entitlement check comes first; the purchases flag then picks the
+    // Pro button (web) or nothing (the App Store build), never the switch.
+    expect(profile).toMatch(/\{entitlements\?\.paywallEnabled && !isPro \? \(\n\s*\(process\.env\.REACT_APP_PURCHASES !== 'off'\) \? \(\n\s*<button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick=\{\(\) => setPaywallTrigger\('settings'\)\}/);
     // The switch itself is unchanged for everyone else.
     expect(profile).toContain('<Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />');
   });

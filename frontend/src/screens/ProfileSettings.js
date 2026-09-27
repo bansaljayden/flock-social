@@ -64,8 +64,9 @@ import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import EditProfileForm from '../components/EditProfileForm';
 import { isNativeShell } from '../lib/nativeShell';
-// REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, no
-// subscription note. lib/purchasesBuild.js has the rules.
+// REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
+// the subscription note on deletion is a plain App Store warning for an account
+// that has Pro. lib/purchasesBuild.js has the rules.
 
 export default function ProfileSettings({
   // Module-level helpers, constants and components that live in App.js and are
