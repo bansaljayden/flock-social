@@ -55,6 +55,8 @@ import { lsGet, lsSet } from './lib/storage';
 // When a member's live pin comes off this device, and the emit interval the
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
+// Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
+import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
 // The paywall is dormant behind PAYWALL_ENABLED, so for every session that
 // ships today the sheet is a chunk nothing can open.
@@ -6271,6 +6273,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch { /* ignore */ }
   }, []);
 
+  // The viewer's own pulse, as the server has it now. The server answers only
+  // a pulse that has not expired, so a re-read also drops one that ended
+  // while the app sat open.
+  // Numbered with every tap, so a read that was still out when a tap
+  // answered does not put the old status back over the new one.
+  const myPulseSeqRef = useRef(0);
+  const refreshMyPulse = useCallback(async () => {
+    const seq = ++myPulseSeqRef.current;
+    try {
+      const d = await getMyAvailability();
+      if (seq === myPulseSeqRef.current) setMyPulse(d.pulse || null);
+    } catch { /* keep what is shown; the expiry check below still applies */ }
+  }, []);
+
   const handleCheckIn = useCallback(async (placeId) => {
     if (!placeId || checkinSaving) return;
     setCheckinSaving(true);
@@ -6317,8 +6333,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       tomorrow4am.setHours(4, 0, 0, 0);
       const expiresAt = tomorrow4am.toISOString();
 
-      if (myPulse?.status === status) {
-        // Tapping the same status clears it
+      myPulseSeqRef.current += 1;
+      // Tapping the same status clears it, but only while that status is
+      // still on. One that expired at 4 AM is already gone for friends, so a
+      // tap on it sets it again rather than clearing nothing.
+      if (pulseTapAction(myPulse, status) === 'clear') {
         await clearAvailability();
         setMyPulse(null);
       } else {
@@ -6331,6 +6350,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setPulseSaving(false);
     }
   }, [myPulse, pulseSaving, showToast]);
+
+  // The pulse goes out when it ends, rather than staying lit until something
+  // else happens to re-render the Nest. A timer can sleep through the hour in
+  // a backgrounded app, which is why the render and the tap check the time
+  // again themselves and a return to the app re-reads the server's copy.
+  useEffect(() => {
+    const end = pulseEndsAt(myPulse);
+    if (end == null) return undefined;
+    const drop = () => setMyPulse(prev => (prev === myPulse && !livePulse(prev) ? null : prev));
+    const wait = end - Date.now();
+    if (wait <= 0) { drop(); return undefined; }
+    const t = setTimeout(drop, Math.min(wait + 1000, 2147483647));
+    return () => clearTimeout(t);
+  }, [myPulse]);
 
   // Animations
   const [activeTabAnimation, setActiveTabAnimation] = useState(null);
@@ -6973,15 +7006,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Availability pulse: load my current + friends' on mount, listen for updates
   useEffect(() => {
-    getMyAvailability().then(d => setMyPulse(d.pulse || null)).catch(() => {});
+    refreshMyPulse();
     refreshFriendsPulses();
+
+    // And again on the way back to the app. Both were read once at mount and
+    // then moved only by taps and socket events, which a backgrounded phone
+    // drops, so an app left open overnight showed last night's statuses. At
+    // most once a minute: a return fires visibilitychange alongside several
+    // other readers.
+    let lastReadAt = Date.now();
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastReadAt < 60000) return;
+      lastReadAt = Date.now();
+      refreshMyPulse();
+      refreshFriendsPulses();
+    };
+    document.addEventListener('visibilitychange', onVisible);
 
     // Registry subscription, not sock.on(): this effect has an empty dependency
     // array, so a listener bound to whatever instance getSocket() returned at
     // mount stayed bound to it forever — and returned undefined (no listener at
     // all) when this ran before the socket existed, which is the common order on
     // a cold start. Friends' pulses then never updated live for the session.
-    return onAvailabilityUpdated((payload) => {
+    const unsubscribe = onAvailabilityUpdated((payload) => {
       if (!payload || !payload.userId) return;
       setFriendsPulses(prev => {
         const next = prev.filter(f => f.id !== payload.userId);
@@ -7002,7 +7049,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       });
     });
-  }, [refreshFriendsPulses]);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [refreshFriendsPulses, refreshMyPulse]);
 
   // Flock ordering & pinning (persisted in localStorage)
   const [pinnedFlockIds, setPinnedFlockIds] = useState(() => {
@@ -14422,6 +14473,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     loadFlocks();
     loadDmConversations();
   }, [reconnectTick, loadFlocks, loadDmConversations]);
+  // The Tonight pulses cross the same gap: a friend's availability_updated
+  // sent while the socket was down is gone, and so is the viewer's own
+  // status set or cleared from another device. A reconnect while hidden is
+  // covered by the pulse effect's own read on the return.
+  useEffect(() => {
+    if (!reconnectTick) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    refreshMyPulse();
+    refreshFriendsPulses();
+  }, [reconnectTick, refreshMyPulse, refreshFriendsPulses]);
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible' || !listsGapPendingRef.current) return;
@@ -15653,7 +15714,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               { key: 'maybe', fill: '#b45309', label: 'Maybe' },
               { key: 'not', fill: '#3f4a5a', label: 'Not' },
             ].map(opt => {
-              const active = myPulse?.status === opt.key;
+              // Lit only while the pulse is still on; friends stop seeing it
+              // at its expiry and so must this button.
+              const active = livePulse(myPulse)?.status === opt.key;
               return (
                 <button className="hit44"
                   key={opt.key}

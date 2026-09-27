@@ -592,7 +592,9 @@ describe('what was left silent, and why it is safe', () => {
 
   test('the Tonight control prints no sentence about the pulse it failed to read', () => {
     const pulse = region(APP, "{ key: 'down', fill: '#047857', label: 'Down' }", 'aria-pressed={active}');
-    expect(pulse).toMatch(/const active = myPulse\?\.status === opt\.key;/);
+    // livePulse: the button is lit only while the pulse has not expired
+    // (lib/pulse.js, pinned by tonightPulseExpiry.test.js).
+    expect(pulse).toMatch(/const active = livePulse\(myPulse\)\?\.status === opt\.key;/);
     expect(APP).not.toMatch(/You have no status set/);
   });
 });
