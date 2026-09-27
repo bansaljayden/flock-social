@@ -113,6 +113,7 @@ const USER_SCOPED = {
   flock_sos_corner: 'bl',
   flock_push_token: 'fcm-token-xyz',
   flock_pending_invite: '{"token":"abcdefgh12"}',
+  flock_avatar_refit: '7:28151',
   // The prefix family. Handled by iterating keys, never by naming them: one
   // row per venue the user tapped into, i.e. where they physically were.
   'flock_checkin_ChIJ_place_id_123': '1755300000000',

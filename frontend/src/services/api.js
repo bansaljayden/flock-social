@@ -369,6 +369,8 @@ function storeSession(data) {
  *     flock_sos_stand_downs      which senders' SOS alarms were called off
  *                                (services/pushNavigation.js)
  *     flock_pending_invite       an invite stashed for whoever redeems it
+ *     flock_avatar_refit         which oversized avatar the server refused a
+ *                                smaller copy of (lib/avatarImage.js)
  *     flock_guest_<token>        a guest identity from an invite page. These
  *                                two outlive ONE kind of clear: a stored
  *                                session found already dead at boot, where
