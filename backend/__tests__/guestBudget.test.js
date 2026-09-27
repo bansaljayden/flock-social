@@ -44,8 +44,9 @@
 //      guest their own row, and the band only to an 'in' guest, once locked
 //      over three member sharers, and a departure after the settle does not
 //      take it back. GET /:token carries counts and never
-//      a ceiling key at all, and its roster says "reconfirmed" only inside an
-//      open window.
+//      a ceiling key at all, reads a settled budget's isReady off the crowd
+//      it settled over (so a departure cannot say who had shared), and its
+//      roster says "reconfirmed" only inside an open window.
 //   5. THE SOURCE CONTRACT. Two fragments. MEMBER_SUBMISSIONS is accounts only
 //      and is what every reveal threshold counts, here, in routes/flocks.js
 //      and in routes/billing.js. PRESENT_ANSWERS widens it by a guest arm
@@ -1192,6 +1193,55 @@ test('GET /:token carries the budget as counts and never a ceiling key', async (
   for (const secret of ['120', '123.45', '140', '150', '160']) {
     assert.ok(!res.text.includes(secret), `${secret} reached the public page`);
   }
+  assertQueriesUnderstood();
+});
+
+test('GET /:token: a departure after the settle moves isReady for nobody, so the link cannot tell a sharer from a skipper', async () => {
+  // Ava, Bob and Dee share, Eve skips, and the budget settles. This public
+  // read counted PRESENT sharers after the settle, so Bob leaving took
+  // isReady from true to false while Eve leaving would not have, and the
+  // roster beside it lost exactly that one first name. Anybody holding the
+  // link learned Bob had shared. Every other reader asks the crowd the
+  // budget settled over; this one asks it too now.
+  seedFlock({ members: [AVA, BOB, DEE, EVE] });
+  await memberSkip(EVE.id);
+  await memberAnswer(AVA.id, 60);
+  await memberAnswer(BOB.id, 70);
+  const settling = await memberAnswer(DEE.id, 80);
+  assert.strictEqual(settling.body.budgetLocked, true, 'settled');
+
+  let res = await preview();
+  assert.strictEqual(res.body.budget.isReady, true, 'settled over three member sharers');
+
+  world.members = world.members.filter((m) => m.user_id !== BOB.id);
+  res = await preview();
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.budget.locked, true);
+  assert.strictEqual(res.body.budget.isReady, true, 'a sharer leaving did not flip isReady');
+  assert.ok(!res.body.people.some((p) => p.name === 'Bob'), 'and the roster no longer names him');
+  const member = await memberStatus(AVA.id);
+  assert.strictEqual(res.body.budget.isReady, member.body.isReady, 'the link and the app still agree');
+
+  world.members = world.members.filter((m) => m.user_id !== EVE.id);
+  res = await preview();
+  assert.strictEqual(res.body.budget.isReady, true, 'a skipper leaving reads the same');
+  assertQueriesUnderstood();
+});
+
+test('GET /:token still says not ready over a budget locked on fewer than three MEMBER rows', async () => {
+  // The one job the settled crowd keeps: a plan locked by the first lock
+  // route, which had no floor, is not called ready because guests sit
+  // beside one member's amount.
+  seedFlock({ members: [AVA, BOB], guests: [CASS, EZRA], locked: true, ceiling: '50.00' });
+  world.submissions.push(
+    { flock_id: FLOCK, user_id: AVA.id, guest_rsvp_id: null, amount: '60.00', skipped: false },
+    { flock_id: FLOCK, user_id: null, guest_rsvp_id: CASS.id, amount: '50.00', skipped: false },
+    { flock_id: FLOCK, user_id: null, guest_rsvp_id: EZRA.id, amount: '55.00', skipped: false },
+  );
+  const res = await preview();
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.budget.locked, true);
+  assert.strictEqual(res.body.budget.isReady, false);
   assertQueriesUnderstood();
 });
 
