@@ -161,9 +161,18 @@ function getRefreshToken() {
   return lsGet(REFRESH_TOKEN_KEY);
 }
 
+// Whether the session in storage has been seen working in this page load: a
+// token this page was just handed by a sign-in, or one a request came back OK
+// with. False at every boot until the first answer, so a 401 before that is a
+// stored session that was already dead when the page opened, which is a
+// different event from a session ending under somebody who was using it. See
+// holdInviteHandoff below for the one thing that difference decides.
+let sessionSeenLive = false;
+
 function setToken(token) {
   localStorage.setItem('flockToken', token);
   lsSet(TOKEN_RECEIVED_KEY, String(Date.now()));
+  sessionSeenLive = true;
   sessionExpiryAnnounced = false; // fresh session, the expiry notice may fire again someday
 }
 
@@ -230,7 +239,11 @@ function storeSession(data) {
  *     flock_sos_stand_downs      which senders' SOS alarms were called off
  *                                (services/pushNavigation.js)
  *     flock_pending_invite       an invite stashed for whoever redeems it
- *     flock_guest_<token>        a guest identity from an invite page
+ *     flock_guest_<token>        a guest identity from an invite page. These
+ *                                two outlive ONE kind of clear: a stored
+ *                                session found already dead at boot, where
+ *                                they belong to whoever is holding the
+ *                                device now (holdInviteHandoff below)
  *
  *   KEPT — device facts, nothing personal in them, and every one of them is
  *   overwritten by pullSettings() the moment the next account signs in:
@@ -357,9 +370,59 @@ function endNativePurchasesSession() {
 // a function argument, which a full page navigation cannot carry.
 export const RESET_DONE_KEY = 'flock_password_reset_done';
 
-export function clearLocalSession() {
+/**
+ * THE ONE THING A SESSION THAT WAS ALREADY DEAD DOES NOT TAKE WITH IT.
+ *
+ * website/GuestInvite.js writes flock_pending_invite, and keeps the guest
+ * identity it names under flock_guest_<link token>, seconds before it sends
+ * somebody to /app or /signup to join a plan. When that browser still holds a
+ * token that expired days ago (24h, and nothing renews it), the boot's first
+ * request answers 401 and the sweep used to take the invite with it. The
+ * person signed in and landed on the Nest with nothing said about the plan
+ * they had just tapped Join on, and the answer they gave as a guest could no
+ * longer be retired by the join, so they were counted twice.
+ *
+ * Those two keys are not the dead account's residue. They were written after
+ * that session last worked, by whoever is holding the device now, which is the
+ * same reasoning App.js endSession applies to a notification tap waiting at a
+ * boot like this one. So they survive a clear ONLY when no request in this page
+ * load has seen the session alive (sessionSeenLive above). A session that ran
+ * here takes them like everything else, because then the shared-phone rule in
+ * the SIGN-OUT comment is the one that applies. The handoff's own 24 hour TTL
+ * (services/inviteHandoff.js) still bounds how long they can sit.
+ *
+ * Only the identity the stashed invite points at is held. Any other
+ * flock_guest_* key is an answer from some other visit and goes as before.
+ */
+const INVITE_HANDOFF_KEY = 'flock_pending_invite';
+
+function holdInviteHandoff() {
+  const held = [];
+  try {
+    const store = window.localStorage;
+    const raw = store.getItem(INVITE_HANDOFF_KEY);
+    if (raw === null) return held;
+    held.push([INVITE_HANDOFF_KEY, raw]);
+    let linkToken = null;
+    try { linkToken = JSON.parse(raw)?.token; } catch (_) { /* unreadable: inviteHandoff forgets it on read */ }
+    // The same length bounds inviteHandoff.js and the guest routes put on a
+    // link token, so a malformed stash cannot name some unrelated key.
+    if (typeof linkToken === 'string' && linkToken.length >= 8 && linkToken.length <= 64) {
+      const guestKey = `flock_guest_${linkToken}`;
+      const guest = store.getItem(guestKey);
+      if (guest !== null) held.push([guestKey, guest]);
+    }
+  } catch (_) { /* storage blocked: nothing to hold */ }
+  return held;
+}
+
+export function clearLocalSession({ keepInviteHandoff = false } = {}) {
+  const held = keepInviteHandoff ? holdInviteHandoff() : [];
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
   try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
+  held.forEach(([key, value]) => {
+    try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
+  });
   // Round 3: without reset, activity on a shared device stays attributed to
   // the previous account, and the next login can merge identities.
   withPostHog((posthog) => posthog.reset());
@@ -678,7 +741,9 @@ function handleSessionExpiry(endpoint, hadToken, data) {
   // A dead token is a sign-out, so it clears what a sign-out clears. Dropping
   // only the token here was the second half-clearing path that let the
   // previous user's location and deleted-DM list outlive their session.
-  clearLocalSession();
+  // Except an invite handed over by the invite page, when the session was
+  // already dead at this page load: holdInviteHandoff says why.
+  clearLocalSession({ keepInviteHandoff: !sessionSeenLive });
   if (typeof window !== 'undefined' && !sessionExpiryAnnounced) {
     sessionExpiryAnnounced = true;
     window.dispatchEvent(new CustomEvent('flock-session-expired'));
@@ -1058,6 +1123,7 @@ async function request(endpoint, options = {}) {
       }
       throw guardErr;
     }
+    if (token) sessionSeenLive = true;
     return data;
   }
 }
@@ -1532,7 +1598,11 @@ export async function logout() {
       ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
     }).catch(() => null)
     : null;
-  clearLocalSession();
+  // With no token, the path that removed it has already made the call on the
+  // invite handoff (handleSessionExpiry, when a stored session is found dead at
+  // boot and App.js endSession lands here second), and this clear must not
+  // undo it. A token in hand is a session somebody is leaving: everything goes.
+  clearLocalSession({ keepInviteHandoff: !token && !sessionSeenLive });
   if (told) await told;
 }
 
