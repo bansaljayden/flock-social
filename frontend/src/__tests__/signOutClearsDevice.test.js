@@ -599,3 +599,94 @@ describe('the native Google session', () => {
     expect(body).toContain('.catch(');
   });
 });
+
+// ===========================================================================
+// 7. A stored session that was already dead when the page loaded
+//
+// The invite page stashes flock_pending_invite, and keeps the guest identity
+// it names, seconds before it sends somebody to /app to join. A browser still
+// holding a token that expired days ago answered the boot's GET /api/auth/me
+// with 401, the sweep took the invite with it, and the person signed in to an
+// empty Nest with nothing said, their guest answer no longer retirable. The
+// rule pinned here: that handoff survives a clear only when no request in this
+// page load had seen the session alive. A session that ran still takes it.
+//
+// Each case loads api.js fresh, because "has this page load seen the session
+// alive" is module state and the suites above have already made successful
+// requests with a token.
+// ===========================================================================
+describe('a stored session that was already dead when the page loaded', () => {
+  const freshApi = () => {
+    let mod;
+    jest.isolateModules(() => { mod = require('../services/api'); });
+    return mod;
+  };
+  const GUEST = '1b4e28ba-2fa1-11d2-883f-0016d3cca427';
+  const stashInvite = () => localStorage.setItem('flock_pending_invite', JSON.stringify({
+    token: 'abcdefgh12', at: Date.now(), flockName: 'Friday', guestToken: GUEST,
+  }));
+
+  it('keeps the invite just stashed, and the guest identity it names, through the boot 401 and the logout after it', async () => {
+    const api = freshApi();
+    seedDevice();
+    stashInvite();
+    // An answer from some other visit, which the stash does not point at.
+    localStorage.setItem('flock_guest_zzzzzzzz99', '{"name":"Someone else"}');
+    global.fetch.mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+
+    // The boot's first request...
+    await expect(api.getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+    // ...and App.js endSession, which answers the expiry event with logout().
+    await api.logout();
+
+    // Everything the dead account wrote is gone as before.
+    expect(localStorage.getItem('flockToken')).toBeNull();
+    expect(localStorage.getItem('flock_user_lat')).toBeNull();
+    expect(localStorage.getItem('flock_deleted_dms')).toBeNull();
+    expect(localStorage.getItem('flock_guest_zzzzzzzz99')).toBeNull();
+    // The handoff is not, and the redeem after sign-in can read it.
+    expect(localStorage.getItem('flock_guest_abcdefgh12')).toBe('{"name":"Sam"}');
+    // eslint-disable-next-line global-require
+    const { pendingInvite } = require('../services/inviteHandoff');
+    expect(pendingInvite()).toEqual({ token: 'abcdefgh12', flockName: 'Friday', guestToken: GUEST });
+  });
+
+  it('a session that ran in this page load takes the invite with it when it expires', async () => {
+    const api = freshApi();
+    seedDevice();
+    stashInvite();
+    global.fetch
+      .mockResolvedValueOnce(jsonRes({ blocked: [] }))
+      .mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+
+    await api.getBlockedUsers();
+    await expect(api.getBlockedUsers()).rejects.toMatchObject({ sessionExpired: true });
+    await api.logout();
+
+    expect(localStorage.getItem('flock_pending_invite')).toBeNull();
+    expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
+  });
+
+  it('a sign-out with a token in hand takes it, whether or not anything had answered yet', async () => {
+    const api = freshApi();
+    seedDevice();
+    stashInvite();
+    global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+    await api.logout();
+
+    expect(localStorage.getItem('flock_pending_invite')).toBeNull();
+    expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
+  });
+
+  it('a stash with no readable link token keeps no guest identity', async () => {
+    const api = freshApi();
+    seedDevice();
+    localStorage.setItem('flock_pending_invite', '{not json');
+    global.fetch.mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+
+    await expect(api.getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+
+    expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
+  });
+});
