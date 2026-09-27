@@ -51,6 +51,13 @@ const PG_PORT = pickEmbeddedPgPort('venueBillingWriter');
 let pg;
 let testPool;
 let dataDir;
+// Before config/database is required: its Pool reads these at require time,
+// and backend/.env points at the live database. The admin router mounted near
+// the end of this file brings modules with timers of their own, so the pool
+// must not be able to reach anything but the test database even after its
+// query and connect are handed back.
+process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_venuebilling_test`;
+for (const k of ['PGHOST', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGPORT']) delete process.env[k];
 const appPool = require('../config/database');
 const realQuery = appPool.query;
 const realConnect = appPool.connect;
@@ -81,6 +88,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ENV = {
   VENUE_BILLING_ENABLED: 'true',
   ADMIN_USER_IDS: '1',
+  JWT_SECRET: 'venue-billing-writer-test-secret',
   STRIPE_SECRET_KEY: ['sk', 'test', 'z'.repeat(24)].join('_'),
   STRIPE_PRICE_ROOST_MONTHLY: 'price_roost_month',
 };
@@ -358,4 +366,133 @@ test('a subscription that names another venue on the second read is refused, not
   await venueBilling.syncVenueSubscription('sub_moved');
   assert.strictEqual((await state(y)).served, 'pro');
   assert.strictEqual((await testPool.query('SELECT 1 FROM venue_subscriptions WHERE user_id = $1', [x])).rows.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// A COMP LAID OVER A PAYING VENUE. POST /api/admin/venues/:userId/tier writes
+// the comp onto the venue's one grant row and leaves the Stripe columns as they
+// were, so the row still names the subscription the venue was paying on. That
+// subscription's own events used to be let through by SYNC_SQL (the same
+// subscription always overwrites its row), so the venue cancelling its plan
+// after being comped ended the comp months early: the cancel_at_period_end
+// update cut the six months down to the Stripe period plus grace, and the
+// deleted event wrote 'canceled' and the cache 'free'. These run through the
+// real admin route, because the row that route leaves is the input here.
+// ---------------------------------------------------------------------------
+
+let adminServer = null;
+let adminBase = null;
+async function adminCall(method, urlPath, { as, body } = {}) {
+  if (!adminServer) {
+    const http = require('node:http');
+    const express = require('express');
+    const app = express();
+    app.use(express.json());
+    app.set('io', null);
+    app.use('/api/admin', require('../routes/admin'));
+    adminServer = http.createServer(app);
+    await new Promise((r) => adminServer.listen(0, '127.0.0.1', r));
+    adminBase = `http://127.0.0.1:${adminServer.address().port}`;
+  }
+  const { signUserToken } = require('../middleware/auth');
+  const res = await fetch(adminBase + urlPath, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${signUserToken({ id: as, token_version: 0 })}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* not JSON */ }
+  return { status: res.status, body: json, text };
+}
+test.after(async () => {
+  if (adminServer) await new Promise((r) => adminServer.close(r));
+});
+
+async function admin() {
+  n += 1;
+  const u = await testPool.query(
+    "INSERT INTO users (email, password, name, role, email_verified) VALUES ($1, 'x', 'Admin', 'admin', true) RETURNING id",
+    [`admin${n}@example.com`]
+  );
+  return u.rows[0].id;
+}
+
+test('a comp over a paying venue survives that subscription being cancelled and ending', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_comped', id, 'active'));
+  assert.strictEqual((await state(id)).grant.source, 'stripe');
+
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'founding_comp', reason: 'founding cohort' },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  const compEnds = new Date(comp.body.expires_at).getTime();
+  assert.ok(compEnds > Date.now() + 150 * 86400000, 'the founding comp runs six months');
+  const comped = await state(id);
+  assert.strictEqual(comped.grant.source, 'comp');
+  assert.strictEqual(comped.grant.stripe_subscription_id, 'sub_comped', 'the comp leaves the old subscription on the row, which is the case under test');
+
+  // The venue stops paying: Stripe marks it to cancel at the period end, and
+  // the update event arrives while the subscription is still active.
+  const periodEnd = Math.floor(Date.now() / 1000) + 14 * 86400;
+  sub('sub_comped', id, 'active', { cancel_at: periodEnd, cancel_at_period_end: true });
+  const update = await venueBilling.syncVenueSubscription('sub_comped');
+  assert.strictEqual(update.written, false, 'a subscription ending before the comp was written over it');
+  let s = await state(id);
+  assert.strictEqual(s.grant.source, 'comp');
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), compEnds, 'the comp was cut down to the Stripe period');
+  assert.strictEqual(s.served, 'pro');
+
+  // Then it ends, and the deleted event arrives.
+  sub('sub_comped', id, 'canceled');
+  await venueBilling.syncVenueSubscription('sub_comped');
+  s = await state(id);
+  assert.strictEqual(s.grant.status, 'active', 'the deleted event of the old subscription revoked the comp');
+  assert.strictEqual(s.grant.source, 'comp');
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), compEnds);
+  assert.strictEqual(s.cached, 'pro');
+  assert.strictEqual(s.served, 'pro');
+  assert.ok(!s.audit.some((r) => /-> free/.test(r.reason)), 'an audit row records Roost being taken away');
+});
+
+test('a subscription still being paid takes the grant back once its period runs past the comp', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_outlasts', id, 'active'));
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 7 },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  assert.strictEqual((await state(id)).grant.source, 'admin');
+
+  // A renewal whose period (14 days out) ends after the week-long comp: the
+  // venue is paying for longer than the comp covers, so the Stripe grant is
+  // the one that keeps Roost on past the comp's end.
+  const renewal = await venueBilling.syncVenueSubscription(sub('sub_outlasts', id, 'active'));
+  assert.strictEqual(renewal.written, true);
+  const s = await state(id);
+  assert.strictEqual(s.grant.source, 'stripe');
+  assert.ok(new Date(s.grant.expires_at).getTime() > Date.now() + 14 * 86400000);
+  assert.strictEqual(s.served, 'pro');
+});
+
+test('a comp that has lapsed does not hold back the subscription behind it', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_after_comp', id, 'active'));
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'demo', durationDays: 30 },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  await testPool.query("UPDATE venue_subscriptions SET expires_at = NOW() - INTERVAL '1 day' WHERE user_id = $1", [id]);
+
+  sub('sub_after_comp', id, 'canceled');
+  const r = await venueBilling.syncVenueSubscription('sub_after_comp');
+  assert.strictEqual(r.written, true, 'a dead comp kept a Stripe event from being recorded');
+  const s = await state(id);
+  assert.strictEqual(s.grant.source, 'stripe');
+  assert.strictEqual(s.grant.status, 'canceled');
+  assert.strictEqual(s.served, 'free');
 });
