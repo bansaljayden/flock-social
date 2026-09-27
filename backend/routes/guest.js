@@ -738,7 +738,15 @@ async function announceGuestRsvp(req, link, { guestId, name, status, isNew }) {
 // server-issued identity, on the terms a member does.
 async function guestBudgetSummary(link) {
   if (!link.budget_enabled) return null;
-  const [counts, population] = await Promise.all([
+  // Open: three PRESENT member sharers, as the member reader asks. Settled:
+  // the crowd it settled over (routes/budget.js, settledCrowdHolds), which is
+  // the rule GET /api/budget/:id and POST /:token/me already follow. This read
+  // counted present sharers after the settle too, so when a sharer left the
+  // plan isReady went from true to false here and a skipper leaving changed
+  // nothing. The roster on the same public answer lost that one first name,
+  // so anybody holding the link could tell which kind the person who left had
+  // been. Leaving deletes no row, so the settled count does not move.
+  const [counts, population, settledHolds] = await Promise.all([
     pool.query(
       `SELECT COUNT(*) AS total_submissions,
               COUNT(*) FILTER (WHERE skipped = false AND bm.id IS NOT NULL) AS non_skip_count
@@ -746,6 +754,7 @@ async function guestBudgetSummary(link) {
       [link.flock_id]
     ),
     answeringPopulation((q, p) => pool.query(q, p), link.flock_id),
+    link.budget_locked ? settledCrowdHolds((q, p) => pool.query(q, p), link.flock_id) : null,
   ]);
   const row = (counts.rows && counts.rows[0]) || {};
   return {
@@ -754,7 +763,7 @@ async function guestBudgetSummary(link) {
     locked: !!link.budget_locked,
     submissionCount: parseInt(row.total_submissions || 0),
     totalMembers: population.total,
-    isReady: parseInt(row.non_skip_count || 0) >= 3,
+    isReady: link.budget_locked ? settledHolds : parseInt(row.non_skip_count || 0) >= 3,
   };
 }
 
