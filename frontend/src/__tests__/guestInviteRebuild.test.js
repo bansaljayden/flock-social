@@ -1259,6 +1259,28 @@ describe('GuestInvite: the budget and the still-in question, from the link', () 
     expect(container.textContent).not.toMatch(/not on this plan anymore/i);
   });
 
+  test('changing an answer the server says was retired on a join says they joined, not that it was removed', async () => {
+    // The edit path answers the same code when the page never asked /me (a
+    // server from before the route, or a tab left open across the join). Its
+    // generic 403 branch reads the server's sentence as a complaint and puts
+    // the person back on the name field to answer again, which for somebody
+    // now in the plan is a second place on it.
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container, sent } = mount({
+      '': () => reply(200, PLAN),
+      '/rsvp': () => reply(403, { code: 'JOINED_IN_APP', error: 'Joined.' }),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.click(screen.getByRole('button', { name: /can't make it/i }));
+    await waitFor(() => expect(container.textContent).toMatch(/You joined this plan in the app, so your answer and the chat are there now\./));
+    // It was this identity's answer that was sent, and that identity is gone.
+    expect(sent).toEqual([{ path: '/rsvp', body: { name: 'Sam', status: 'out', guestToken: 'g-1' } }]);
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    // A note, not a problem: nothing names a removal, and no other name is asked for.
+    expect(container.querySelector('#gi-problem-rsvp').textContent).toBe('');
+    expect(container.textContent).not.toMatch(/Joined\.|Try a different name|did not go through/);
+  });
+
   test('a server that cannot answer /me leaves the page working on what the preview said', async () => {
     window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
     const { container } = mount({
