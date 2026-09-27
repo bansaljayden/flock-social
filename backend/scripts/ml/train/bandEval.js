@@ -1213,10 +1213,19 @@ function parseArgs(argv) {
     else if (k === 'gate') args.gate = true;
     else if (k === 'slices') args.slices = true;
     else if (k === 'fit') args.fit = true;
-    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from', 'sports'].includes(k)) args[k] = v;
+    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from', 'sports', 'incumbent-serve'].includes(k)) args[k] = v;
     else throw new Error(`unrecognised argument --${k}`);
   }
   return args;
+}
+
+// --incumbent-serve=model | curve_offset | model+nowcast | curve_offset+nowcast,
+// else the switches as this process's environment sets them.
+function parseIncumbentServe(value, I) {
+  if (value === undefined) return { serveMode: I.serveMode(), nowcast: I.nowcastEnabled() };
+  const cfg = SERVE_CONFIGS.find((c) => c.name === value);
+  if (!cfg) throw new Error(`--incumbent-serve=${value} is not one of ${SERVE_CONFIGS.map((c) => c.name).join(', ')}`);
+  return { serveMode: cfg.serveMode, nowcast: cfg.nowcast };
 }
 
 // Within 10 first: the product's primary accuracy metric since 2026-08-28.
@@ -1302,6 +1311,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log(`[BandEval] sports schedule: ${sportsCsv} (${sports.byDate.size} game dates, ${sports.arenas.length} arenas)`);
   }
   const helpers = { I: art.I, crowdEngine, sports };
+  const incumbentServe = parseIncumbentServe(args['incumbent-serve'], art.I);
   const qmap = args.qmap === undefined ? undefined : args.qmap !== 'false';
   const sections = {};
   const perRow = [];
@@ -1312,7 +1322,13 @@ async function main(argv = process.argv.slice(2)) {
     // environment say: this is what a retrain changes, what the band gate
     // judges, and what the app serves with both switches off.
     const mine = await scoreArtifact(art, prepared, { qmap, serveMode: 'model', nowcast: false });
-    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, serveMode: 'model', nowcast: false }) : null;
+    // The incumbent AS PRODUCTION SERVES IT: under --incumbent-serve when
+    // given, else under the two switches exactly as this process's environment
+    // sets them (run the gate with the main service's CROWD_SERVE_MODE and
+    // CROWD_NOWCAST_ENABLED, as with CROWD_QMAP_ENABLED). Since 2026-09-25
+    // production serves curve_offset + nowcast, and a candidate that beats the
+    // model alone but not that arithmetic would make the card worse.
+    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, ...incumbentServe }) : null;
     // The four serving configurations the two switches make, through the same
     // serve path, under the same quantile-map setting.
     const configs = {};
@@ -1448,6 +1464,7 @@ async function main(argv = process.argv.slice(2)) {
     gateResult.incumbent_version = inc.meta.model_version;
     gateResult.incumbent_data_through_basis = incumbentDataThrough(inc.meta).basis;
     gateResult.quantile_map = { candidate: mine.qmapApplied, incumbent: theirs.qmapApplied };
+    gateResult.incumbent_serving = { serve_mode: theirs.serveMode, nowcast: theirs.nowcast };
     console.log(`\n[BandEval] BAND GATE: ${gateResult.pass ? 'PASS' : 'FAIL'}`);
     for (const [k, c] of Object.entries(gateResult.criteria)) {
       const detail = c.delta !== undefined ? ` delta ${c.delta}pp CI95 ${JSON.stringify(c.ci95)}` : '';
@@ -1679,6 +1696,7 @@ module.exports = {
   parseCsvLine,
   readCorpus,
   readSportsCsv,
+  parseIncumbentServe,
   isolateFromDatabases,
   pinUtcClock,
   wallClock,
