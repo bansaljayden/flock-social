@@ -424,9 +424,11 @@ test('links: every href points at the pinned production hosts, never localhost o
       );
     }
   }
-  // And the two secret-bearing links land where their consumers actually live.
+  // And the two secret-bearing links land where their consumers actually live:
+  // both on a web page with the token in the fragment, because both are spent
+  // only by a person pressing something there, never by a mail scanner's GET.
   assert.strictEqual(emailService.verificationLink('t'),
-    `${emailService.PROD_API_URL}/api/auth/verify-email?token=t`);
+    `${emailService.PROD_WEB_URL}/verify-email#token=t`);
   assert.strictEqual(emailService.passwordResetLink('t'),
     `${emailService.PROD_WEB_URL}/reset-password#token=t`);
 });

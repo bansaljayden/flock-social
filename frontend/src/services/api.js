@@ -2913,7 +2913,8 @@ export function trackAppOpened(shell) {
 
 /* THE EMAIL-VERIFICATION OUTCOME. A password signup lands email_verified false,
    and joining a flock is refused until it is true, so this step is a wall, not
-   a formality. The backend redirects to /?email_verified=<outcome>, App.js
+   a formality. The confirmation page (components/auth/VerifyEmailPage.js)
+   goes to /?email_verified=<outcome> once its button has been pressed, App.js
    reads and strips it (readEmailVerifiedOutcome) and calls this. '1' is the
    wall coming down; 'expired', 'invalid' and 'error' are the confirmation link
    failing, which is the drop most likely to be silently killing activation, so

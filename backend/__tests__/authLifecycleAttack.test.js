@@ -1172,7 +1172,7 @@ async function issueVerificationFor(user) {
   const r = await post('/api/auth/resend-verification', {}, token);
   assert.strictEqual(r.status, 200, `resend-verification refused: ${JSON.stringify(await r.json())}`);
   const link = sentMail.map((m) => `${m.html || ''}${m.text || ''}`).join(' ');
-  const m = link.match(/verify-email\?token=([A-Za-z0-9_.%-]+)/);
+  const m = link.match(/verify-email#token=([A-Za-z0-9_.%-]+)/);
   assert.ok(m, 'the verification mail carried no link');
   return decodeURIComponent(m[1]);
 }
@@ -2038,7 +2038,7 @@ test('H3 — a squat whose verification link gets clicked is handed over strippe
 
   // 2. The mail signup already sent went to the VICTIM's mailbox. They click it.
   const mailed = sentMail.map((m) => `${m.html || ''}${m.text || ''}`).join(' ');
-  const found = mailed.match(/verify-email\?token=([A-Za-z0-9_.%-]+)/);
+  const found = mailed.match(/verify-email#token=([A-Za-z0-9_.%-]+)/);
   assert.ok(found, 'signup sent no verification link');
   const raw = decodeURIComponent(found[1]);
   assert.strictEqual((await post('/api/auth/verify-email', { token: raw })).status, 200);

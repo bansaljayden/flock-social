@@ -19278,12 +19278,13 @@ const SIGNED_OUT_LINK_NOTES = {
 
 // WHAT THE CONFIRMATION LINK IN THE SIGNUP EMAIL COMES BACK WITH.
 //
-// The link points at the API, not at the web app, because only the API can
-// consume the token (backend/services/emailService.js says so at the function
-// that builds it). GET /api/auth/verify-email consumes it and then redirects
-// the browser to PUBLIC_WEB_URL/?email_verified=<outcome>, one of 1, expired,
-// invalid or error. index.js already lists email_verified in APP_INTENT_PARAMS,
-// so that URL boots the app rather than the marketing page.
+// The link lands on the confirmation page (/verify-email,
+// components/auth/VerifyEmailPage.js), which spends the token only when its
+// button is pressed, because mail scanners open every link and a scanner is
+// not a person confirming an address. The page then sends the browser to
+// /?email_verified=<outcome>, one of 1, expired, invalid or error. index.js
+// already lists email_verified in APP_INTENT_PARAMS, so that URL boots the app
+// rather than the marketing page.
 //
 // And then nothing read the parameter. Every one of the four outcomes landed in
 // silence. The ordinary path is a link tapped in a mail app on a phone, which
