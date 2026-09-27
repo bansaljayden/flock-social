@@ -515,6 +515,9 @@ _state = {
     # Where the people counter put each person in that frame, in frame pixels,
     # for the screen to mark. Same rule as the frame: screen units only.
     'thermal_points': None,
+    # Everything the model named in that frame, for the screen's boxes. Kinds
+    # of things only, never who. Same rule as the frame: screen units only.
+    'thermal_things': None,
     # Which counter produced the thermal count: 'model' or 'rule'.
     'thermal_counter': None,
     # The newest estimate of people inside, for the panel: a dict from
@@ -1399,6 +1402,14 @@ _THERMAL_IDENTICAL_LIMIT = 5
 # variance, and that is the point: it makes every other accuracy change
 # measurable instead of drowned in single-frame noise.
 _THERMAL_WINDOW = 15
+
+# How often the camera is read. Every two seconds is plenty for a count sent
+# every thirty, but on a unit with a screen it made the picture and its count
+# trail a moving hand by seconds, and with the fifteen-reading median on top
+# the number took half a minute to settle. With a screen the loop runs four
+# times a second, which the trained counter manages on one Pi 5 core; the
+# median then spans about four seconds.
+THERMAL_EVERY = 0.25 if THERMAL_VIEW_ON else 2.0
 _thermal_window = deque(maxlen=_THERMAL_WINDOW)
 
 def _import_onnxruntime_quietly():
@@ -1473,36 +1484,63 @@ class PeopleModel:
         relative = np.clip((t - med) / 4.0, -3.0, 8.0)
         return np.stack([absolute, relative])[None].astype(np.float32)
 
-    def points(self, frame):
-        """(x, y) in frame pixels for every person the model finds."""
+    # What owl-2 names, in its output order. owl-1 knows only the first.
+    CLASSES = ('person', 'hand', 'pet', 'hot drink', 'food', 'laptop', 'screen',
+               'heater', 'lamp', 'warm seat')
+
+    def read(self, frame):
+        """Everything the model finds in one frame.
+
+        Returns (people, things): people is [(x, y)] in frame pixels, one per
+        person, which is what is counted; things is [{'label', 'x', 'y',
+        'box'}] for everything it named, people included, for the screen.
+        Nothing is kept between calls. A frame is read on its own, so there is
+        nothing here that could follow a person from one frame to the next.
+        """
         np = self.np
-        prob = self.session.run(None, {self.input: self.inputs(frame)})[0][0, 0]
+        outputs = self.session.run(None, {self.input: self.inputs(frame)})
+        heat = outputs[0][0]
+        ltrb = outputs[1][0] if len(outputs) > 1 else None
         # A peak is a cell at least as sure as all eight neighbours, the same
         # rule training scored the model with.
-        padded = np.pad(prob, 1, constant_values=-1.0)
-        h, w = prob.shape
-        local = np.max([padded[dy:dy + h, dx:dx + w]
+        padded = np.pad(heat, ((0, 0), (1, 1), (1, 1)), constant_values=-1.0)
+        _, h, w = heat.shape
+        local = np.max([padded[:, dy:dy + h, dx:dx + w]
                         for dy in range(3) for dx in range(3)], axis=0)
-        ys, xs = np.nonzero((prob >= self.threshold) & (prob >= local))
+        ks, ys, xs = np.nonzero((heat >= self.threshold) & (heat >= local))
         t = np.asarray(frame, dtype=np.float32).reshape(THERMAL_ROWS, THERMAL_COLS)
         ambient = float(np.median(t))
-        found = []
-        for y, x in zip(ys.tolist(), xs.tolist()):
+        people, things = [], []
+        for k, y, x in zip(ks.tolist(), ys.tolist(), xs.tolist()):
             fx, fy = (x + 0.5) * self.STRIDE, (y + 0.5) * self.STRIDE
-            # Physical bounds, as a backstop to what the model learned: a
-            # person is warmer than the room around them, and a patch whose
-            # typical temperature is past THERMAL_MAX_PERSON_C is a mug or a
-            # lamp whatever its shape.
-            y0, x0 = max(0, int(fy) - 4), max(0, int(fx) - 4)
-            patch = t[y0:int(fy) + 4, x0:int(fx) + 4]
-            if patch.size == 0:
-                continue
-            if float(patch.max()) < ambient + 1.0:
-                continue
-            if float(np.median(patch)) > THERMAL_MAX_PERSON_C:
-                continue
-            found.append((fx, fy))
-        return found
+            if k == 0:
+                # Physical bounds, as a backstop to what the model learned: a
+                # person is warmer than the room around them, and a patch
+                # whose typical temperature is past THERMAL_MAX_PERSON_C is a
+                # mug or a lamp whatever its shape.
+                y0, x0 = max(0, int(fy) - 4), max(0, int(fx) - 4)
+                patch = t[y0:int(fy) + 4, x0:int(fx) + 4]
+                if patch.size == 0:
+                    continue
+                if float(patch.max()) < ambient + 1.0:
+                    continue
+                if float(np.median(patch)) > THERMAL_MAX_PERSON_C:
+                    continue
+                people.append((fx, fy))
+            if ltrb is not None:
+                left, top, right, bottom = (float(v) * self.STRIDE for v in ltrb[:, y, x])
+                box = (max(0.0, fx - left), max(0.0, fy - top),
+                       min(float(THERMAL_COLS), fx + right), min(float(THERMAL_ROWS), fy + bottom))
+            else:
+                box = None
+            label = self.CLASSES[k] if k < len(self.CLASSES) else 'warm thing'
+            things.append({'label': label, 'x': fx, 'y': fy, 'box': box,
+                           'score': float(heat[k, y, x])})
+        return people, things
+
+    def points(self, frame):
+        """(x, y) in frame pixels for every person the model finds."""
+        return self.read(frame)[0]
 
 
 def load_people_model():
@@ -1632,10 +1670,10 @@ def thermal_loop():
                     continue
                 failures = 0
                 backoff = 0.0
-                points, counter = None, 'rule'
+                points, things, counter = None, None, 'rule'
                 if people_model is not None:
                     try:
-                        points = people_model.points(frame)
+                        points, things = people_model.read(frame)
                         counter = 'model'
                     except Exception as e:
                         # One bad inference falls back for that frame; the
@@ -1649,7 +1687,7 @@ def thermal_loop():
                     log_throttled('thermal_seeding', logging.INFO,
                                   'Learning the scene background; no headcount '
                                   f'until about {_BG_SEED_FRAMES * 2}s after start')
-                    _stop.wait(2)
+                    _stop.wait(THERMAL_EVERY)
                     continue
                 _thermal_window.append(n)
                 n = _median(list(_thermal_window))
@@ -1664,6 +1702,7 @@ def thermal_loop():
                         _state['thermal_frame'] = frame
                         _state['thermal_frame_at'] = time.monotonic()
                         _state['thermal_points'] = points
+                        _state['thermal_things'] = things
         except Exception as e:
             failures += 1
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
@@ -1681,7 +1720,7 @@ def thermal_loop():
             last_signature, identical = None, 0
             _thermal_window.clear()
             failures = 0
-        _stop.wait(2)
+        _stop.wait(THERMAL_EVERY)
 
 
 # ---------------------------------------------------------------------------
@@ -4238,6 +4277,17 @@ def thermal_image_box(w, h, cols, rows, pad, top, reserve):
     return max(1, img_w), max(1, img_h)
 
 
+def thing_colour(label):
+    """The box colour for a kind of thing on the thermal view."""
+    if label == 'person':
+        return BRAND_GREEN
+    if label == 'hand':
+        return BRAND_AMBER
+    if label in ('hot drink', 'food', 'heater', 'lamp'):
+        return BRAND_ORANGE
+    return BRAND_CREAM
+
+
 def occupancy_line(estimate):
     """The door screen's sentence about people inside, or None."""
     if not estimate:
@@ -4729,7 +4779,7 @@ class Panel:
             self.blit_centred(self.f_body, 'Listening. The trace fills in from here.',
                               BRAND_MUTED, self.w // 2, (gtop + gbot) // 2)
 
-    def thermal(self, frame, count, live, points=None):
+    def thermal(self, frame, count, live, points=None, things=None):
         m = self.m
         pad = m['pad']
         self.header('What the sensor sees', back=True, live=live)
@@ -4766,14 +4816,34 @@ class Panel:
                 self._thermal_surf = self.pygame.transform.scale(raw, (iw, ih))
             self._thermal_key = key
         self.screen.blit(self._thermal_surf, (pad, top))
-        # A ring on everybody the trained counter found, so what it counted
-        # can be checked against the picture: a hand at the lens should carry
-        # no ring, two people close together should carry two.
-        if points:
+        # What the trained counter saw, drawn on the picture: a box and a name
+        # on everything it found, so what it counted can be checked against
+        # the room at a glance. A hand at the lens is boxed as a hand and not
+        # counted; two people shoulder to shoulder get a box each. owl-1 has
+        # no boxes, so its people get a ring instead.
+        kx, ky = iw / float(THERMAL_COLS), ih / float(THERMAL_ROWS)
+        if things and any(t['box'] for t in things):
+            for t in things:
+                if not t['box']:
+                    continue
+                x0, y0, x1, y1 = t['box']
+                r = self.pygame.Rect(pad + int(x0 * kx), top + int(y0 * ky),
+                                     max(6, int((x1 - x0) * kx)), max(6, int((y1 - y0) * ky)))
+                colour = thing_colour(t['label'])
+                self.pygame.draw.rect(self.screen, BRAND_NAVY, r.inflate(4, 4), 3)
+                self.pygame.draw.rect(self.screen, colour, r, 2)
+                tag = self.text(self.f_body, t['label'], BRAND_NAVY)
+                tw, th = tag.get_width() + 12, tag.get_height() + 4
+                ty = r.top - th if r.top - th >= top else r.top
+                # Kept inside the picture: a box at its right edge used to
+                # push its name out over the readings beside it.
+                tx = max(pad, min(r.left, pad + iw - tw))
+                self.pygame.draw.rect(self.screen, colour, (tx, ty, tw, th))
+                self.screen.blit(tag, (tx + 6, ty + 2))
+        elif points:
             ring = max(7, iw // 34)
             for x, y in points:
-                cx = pad + int(x * iw / float(THERMAL_COLS))
-                cy = top + int(y * ih / float(THERMAL_ROWS))
+                cx, cy = pad + int(x * kx), top + int(y * ky)
                 # Navy under cream, so the ring shows on the white of a face
                 # as well as on the dark of the room.
                 self.pygame.draw.circle(self.screen, BRAND_NAVY, (cx, cy), ring, 5)
@@ -4788,7 +4858,11 @@ class Panel:
                      + self.f_med.get_height() + 26 + 3 * (m['font_xs'] + 6))
             y = top + max(0, (ih - col_h) // 2)
             self.label('In view now', (sx, y))
-            v = self.text(self.f_big, f'{count}' if live else '--', BRAND_CREAM)
+            # This frame's people when the model drew them, so the number and
+            # the boxes beside it always agree; the published count is the
+            # steadier median of the last few seconds.
+            shown = len(points) if points is not None else count
+            v = self.text(self.f_big, f'{shown}' if live else '--', BRAND_CREAM)
             self.screen.blit(v, (sx, y + m['font_sm'] + 4))
             y += m['font_sm'] + v.get_height() + 22
             self.label('Warmest point', (sx, y))
@@ -4955,6 +5029,7 @@ def display_loop():
                 clipped_at = _state['noise_clipped_at']
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
                 points = _state['thermal_points'] if THERMAL_VIEW_ON else None
+                things = _state['thermal_things'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
                 door_history = list(_state['door_history'])
                 came_in, went_out = _state['door_in'], _state['door_out']
@@ -5000,7 +5075,7 @@ def display_loop():
             if dirty:
                 try:
                     if view == 'thermal':
-                        ui.thermal(frame, therm, therm_live, points)
+                        ui.thermal(frame, therm, therm_live, points, things)
                     elif view == 'door':
                         ui.door(ir, door_history, *directions, live=door_live,
                                 occupancy=occupancy)

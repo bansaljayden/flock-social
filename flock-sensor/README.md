@@ -979,10 +979,23 @@ looking noise: sensor noise presented to a judge as structure would be a lie.
 160x120 is smoothscaled up to the panel, which is what makes it read as thermal
 imagery rather than a grid of squares.
 
-**The rings.** When the trained people counter is running, the picture carries a
-ring on every person it counted, so the count can be checked against the room
-at a glance: a hand at the lens should carry no ring, two people shoulder to
-shoulder should carry two. `training/README.md` says how the counter was made.
+**The boxes.** When the trained counter (owl-2) is running, the picture
+carries a box and a name on everything it found: person, hand, pet, hot drink,
+food, laptop, screen, heater, lamp, warm seat. Only people are counted; the
+rest are named so it is plain why they were not. A hand at the lens is boxed
+as a hand, two people shoulder to shoulder get a box each. owl-1 draws a ring
+on each person instead. With a screen, the camera is read four times a second
+so the boxes keep up with a moving hand. `training/README.md` says how the
+counter was made.
+
+**What it names, and what it never does.** It names kinds of things. It cannot
+tell one person from another, it does not recognise anybody, and nothing in it
+follows a person from one frame to the next: every frame is read on its own
+and forgotten, with no ids and no history. How long people stay is worked out
+from totals (Little's law), never by following anyone. The names and boxes
+exist only on a unit with a screen and never leave it; what is sent is the
+same handful of counts. `test_main.py`'s `NamesKindsNeverWho` fails the build
+if any of that stops being true.
 
 ## What the noise screen adds
 
