@@ -156,8 +156,24 @@ describe('the screen', () => {
        is what this asserts: the swipe still replies to the ORIGINAL row, not
        the search-highlighted one. */
     expect(chatDetailSrc).toMatch(/onSwipeReply=\{stableSwipeReply\}/);
-    expect(chatDetailSrc).toMatch(/const stableSwipeReply = useStableFn\(\(m\) => setFlockReplyingTo\(originalRow\(m\)\)\)/);
+    expect(chatDetailSrc).toMatch(/const stableSwipeReply = useStableFn\(\(m\) => \{ const row = originalRow\(m\); if \(canQuote\(row\)\) setFlockReplyingTo\(row\); \}\)/);
     expect(chatDetailSrc).toMatch(/aria-label="Reply"[^\n]*setFlockReplyingTo\(originalRow\(actionsMessage\)\)/);
+  });
+
+  test('neither way in is offered on a bubble still sending or one that failed', () => {
+    /* A reply to your own Sending or failed bubble snapshotted its placeholder
+       id (Date.now() here, 'temp-...' in a DM). The socket refuses anything
+       past int4 ("That message is no longer there to reply to."), send_dm
+       drops it without a word, REST answers 400, and Retry resends the same
+       dead id, so the reply could only be discarded. Both screens now offer
+       Reply only where canQuote says a stored row is behind it, the same
+       test Pin and Unsend make, and MessageRow takes no swipe on the rest. */
+    expect(chatDetailSrc).toMatch(/\{canQuote\(actionsMessage\) && \(\n\s*<button aria-label="Reply"/);
+    const dmSrc = read('screens', 'DmDetail.js');
+    expect(dmSrc).toMatch(/\{canQuote\(dmActionMessage\) && \(\n\s*<button aria-label="Reply"/);
+    expect(dmSrc).toMatch(/const startDmReply = \(m\) => \{\n\s*const row = originalDmRow\(m\);\n\s*if \(canQuote\(row\)\) setDmReplyingTo\(row\);/);
+    // One rule, exported once, reached through the module's one door.
+    expect(read('components', 'chat', 'index.js')).toMatch(/\n\s*canQuote,\n/);
   });
 
   test('BOTH quote the original row, never the dressed one', () => {
