@@ -102,4 +102,69 @@ async function runPlacesOutageAlert(status) {
   }
 }
 
-module.exports = { runPlacesOutageAlert, ALERT_KEY, alertAddresses };
+// ---------------------------------------------------------------------------
+// THE PHOTOS LEG. Place Photos is metered on its own per-day Google quota, so
+// photos can be refused while every search works, and in September blank
+// venue cards were spotted by eye. utils/placesHealth.js keeps the photo
+// proxy's outcomes on a streak of their own; this is its alert, under its own
+// ledger key so it can go out on the same day as the search one.
+// ---------------------------------------------------------------------------
+const PHOTOS_ALERT_KEY = 'places_photos_outage';
+
+function photosBody(p) {
+  return [
+    `Google has refused the venue photo lookups ${p.consecutiveFailures} times in a row, with no`,
+    `success in between, over the last ${forPhrase(p.failingForMs)}.`,
+    '',
+    p.reasons.length ? `What Google said: ${p.reasons.join(', ')}.` : '',
+    '',
+    'What is broken for users right now: a venue photo that is not already cached',
+    'comes up blank, on cards and on map pins. Venue search and the crowd card',
+    'run on a different quota and can be working at the same time.',
+    '',
+    'This is NOT the photo budget, which has its own alert. A photo lookup Google',
+    'refuses with a 429 or a 403 bills nothing, and the proxy hands that charge',
+    'back to the month\'s budget.',
+    '',
+    'Check, in order:',
+    '  1. The GetPhotoMediaRequestPerDayPerProject quota (Place Photos, per day)',
+    '     on the project that owns GOOGLE_PLACES_API_KEY. It was one of the four',
+    '     per-day Places quotas clamped by hand on 2026-08-21.',
+    '  2. Billing on that same project.',
+    '  3. Whether the API key was restricted or rotated.',
+    '',
+    'This alert repeats at most once a day while photos stay broken.',
+  ].filter((line, i, all) => !(line === '' && all[i - 1] === '')).join('\n');
+}
+
+/**
+ * Tell a person once a day while the photo proxy's calls are failing.
+ * @param {object} [photos] the `photos` leg of placesHealthStatus(); injectable.
+ */
+async function runPlacesPhotoOutageAlert(photos) {
+  try {
+    const p = photos || placesHealthStatus().photos;
+    if (!p || !p.unhealthy) return { skipped: 'healthy' };
+    return await opsAlert({
+      key: PHOTOS_ALERT_KEY,
+      subject: 'Venue photos are failing for Flock',
+      text: photosBody(p),
+      push: {
+        title: 'Venue photos are failing',
+        body: `Google refused ${p.consecutiveFailures} photo lookups in a row over ${forPhrase(p.failingForMs)}.`,
+      },
+      tag: '[PlacesHealth]',
+    });
+  } catch (err) {
+    console.error('[PlacesHealth] photo alert failed:', err && err.message ? err.message : err);
+    return { failed: true };
+  }
+}
+
+module.exports = {
+  runPlacesOutageAlert,
+  runPlacesPhotoOutageAlert,
+  ALERT_KEY,
+  PHOTOS_ALERT_KEY,
+  alertAddresses,
+};

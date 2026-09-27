@@ -220,6 +220,39 @@ test('a hundred concurrent charges never exceed the brake', async () => {
   }
 });
 
+test('a refused Google call hands its charge back to the day it was taken from, never below zero', async () => {
+  // routes/venueSearch.js refunds a charge when Google answers 429 or 403,
+  // which bill nothing. The charge names its day as text so the refund cannot
+  // land on a neighbouring day through a local-midnight Date.
+  const REFUND_SQL = photoStoreTest.REFUND_SQL;
+  const a = await client.query(CHARGE_SQL, [1000, 1000]);
+  await client.query(CHARGE_SQL, [1000, 1000]);
+  const day = a.rows[0].day;
+  const { rows: [{ today }] } = await client.query(`SELECT ((NOW() AT TIME ZONE 'utc')::date)::text AS today`);
+  assert.strictEqual(day, today, 'the charge names the UTC day it wrote');
+
+  let r = await client.query(REFUND_SQL, [day]);
+  assert.strictEqual(Number(r.rows[0].fetches), 1);
+  r = await client.query(REFUND_SQL, [day]);
+  assert.strictEqual(Number(r.rows[0].fetches), 0);
+  r = await client.query(REFUND_SQL, [day]);
+  assert.strictEqual(r.rows.length, 0, 'a refund with nothing to refund changes nothing');
+  assert.strictEqual((await totals()).day, 0);
+
+  // Another day's row is never touched by today's refund.
+  await client.query(`INSERT INTO places_photo_spend (day, fetches) VALUES ('2020-01-01', 3)`);
+  await client.query(REFUND_SQL, ['2020-01-02']);
+  const { rows: [{ fetches }] } = await client.query(`SELECT fetches FROM places_photo_spend WHERE day = '2020-01-01'`);
+  assert.strictEqual(fetches, 3);
+});
+
+test('refundPhotoFetch refuses a day it cannot read, and never throws', async () => {
+  const photoStore = require('../services/photoStore');
+  assert.strictEqual(await photoStore.refundPhotoFetch(undefined), false);
+  assert.strictEqual(await photoStore.refundPhotoFetch('yesterday'), false);
+  assert.strictEqual(await photoStore.refundPhotoFetch(new Date()), false);
+});
+
 test('the cached photos table stores bytes and expires them by age', async () => {
   const KEY = 'a'.repeat(64);
   await client.query(
