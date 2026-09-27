@@ -478,10 +478,14 @@ const SEND_TIMEOUT_MS = 8000;
 const MAX_TOKENS_PER_USER = 20;
 
 // The rows a send to an account goes to: bounded, and newest first. $2 narrows
-// them to the devices a caller names, or is NULL for every device.
+// them to the devices a caller names, or is NULL for every device. $3 TRUE
+// leaves browser registrations out, which only a badge sync asks for (see
+// sendBadgeToUser). IS DISTINCT FROM rather than <> so a row with no type
+// recorded still counts as an app install and keeps its badge.
 const DEVICE_ROWS_SQL = `SELECT id, token FROM device_tokens
         WHERE user_id = $1
           AND ($2::int[] IS NULL OR id = ANY($2::int[]))
+          AND ($3::boolean IS NOT TRUE OR device_type IS DISTINCT FROM 'web')
         ORDER BY updated_at DESC NULLS LAST, id DESC
         LIMIT ${MAX_TOKENS_PER_USER}`;
 
@@ -490,7 +494,7 @@ const DEVICE_ROWS_SQL = `SELECT id, token FROM device_tokens
 // whose row has gone since (its token replaced, or pruned as dead) can only be
 // reached through the rows that are there now.
 async function currentDeviceIds(userId) {
-  const r = await pool.query(DEVICE_ROWS_SQL, [userId, null]);
+  const r = await pool.query(DEVICE_ROWS_SQL, [userId, null, false]);
   return (r && r.rows ? r.rows : []).map((row) => Number(row.id));
 }
 
@@ -587,8 +591,16 @@ async function sendPushToUser(userId, title, body, data = {}, opts = {}) {
   return sendToUserDevices(userId, (row) => sendPushNotification(row.token, title, body, data), opts);
 }
 
+// App installs only, never a browser. A browser has no icon badge to set, and
+// a data-only push to one is a push that shows nothing: the web service worker
+// returns without a notification for badge_sync (firebase-messaging-sw.js),
+// because a blank "Flock" card is worse. So with no Flock tab visible, every
+// DM thread opened or plan read on the phone spent the laptop's silent-push
+// allowance. Chrome answers that with its own "This site has been updated in
+// the background" notice, and Safari revokes a subscription that keeps
+// getting pushes that show nothing, which takes every real web alert with it.
 async function sendBadgeToUser(userId, badge) {
-  return sendToUserDevices(userId, (row) => sendBadgeNotification(row.token, badge));
+  return sendToUserDevices(userId, (row) => sendBadgeNotification(row.token, badge), { appsOnly: true });
 }
 
 // The device ids a caller restricted a send to (a queued retry names the
@@ -660,7 +672,8 @@ async function settleLate(userId, atDeadline, late) {
 // token. firebase-admin retries a send by itself, and an attempt that landed
 // can still answer as a failure when its reply is lost. Both are told before
 // the answer resolves, and a throw from either is logged and never touches
-// the send.
+// the send. `opts.appsOnly` leaves browser registrations out of the send
+// entirely; sendBadgeToUser says why.
 async function sendToUserDevices(userId, perToken, opts = {}) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
@@ -669,7 +682,7 @@ async function sendToUserDevices(userId, perToken, opts = {}) {
     // unbounded row count here is an unbounded burst of outbound requests for
     // one notification. routes/notifications.js prunes to the same ceiling on
     // registration; this is the half that also bounds rows that predate it.
-    const result = await pool.query(DEVICE_ROWS_SQL, [userId, targetIds(opts.onlyIds)]);
+    const result = await pool.query(DEVICE_ROWS_SQL, [userId, targetIds(opts.onlyIds), opts.appsOnly === true]);
 
     if (result.rows.length === 0) return { sent: 0, failed: 0 };
 

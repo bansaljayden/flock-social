@@ -421,6 +421,43 @@ test('the icon badge does not count unread messages from a banned sender, in DMs
     'a banned sender\'s DM and plan message are on no screen and can never be read, so the icon kept them forever');
 });
 
+test('a badge sync goes to the phones and never to a browser, while an alert still reaches both', async () => {
+  // A browser has no icon badge, and the web service worker shows nothing for
+  // badge_sync. So every read on the phone was a silent push to the laptop:
+  // Chrome's "updated in the background" notice once the allowance ran out,
+  // and on Safari a revoked subscription. Run on the real statement, because
+  // it is the one every push in the product goes through.
+  const rae = await mkUser('Rae');
+  const iphone = deviceToken();
+  const pixel = deviceToken();
+  const laptop = deviceToken();
+  for (const [token, deviceType] of [[iphone, 'ios'], [pixel, 'android'], [laptop, 'web']]) {
+    const r = await call('POST', '/api/notifications/register', { session: rae.session, body: { token, deviceType } });
+    assert.equal(r.status, 200, r.text);
+  }
+
+  pushHelper._resetDebounce();
+  const sent = [];
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    const badge = await pushHelper.pushBadgeSync(rae.id);
+    assert.equal(badge.sent, 2, JSON.stringify(badge));
+    assert.deepEqual(sent.map((m) => m.token).sort(), [iphone, pixel].sort(),
+      'the badge-only push went to the browser, which can only show it as nothing');
+    assert.ok(sent.every((m) => m.data && m.data.type === 'badge_sync'));
+
+    sent.length = 0;
+    const alert = await pushHelper.pushIfOffline(offline, rae.id, 'Ava', 'running late', { type: 'dm_message', senderId: '1' });
+    assert.equal(alert.sent, 3, JSON.stringify(alert));
+    assert.ok(sent.some((m) => m.token === laptop), 'an alert must still reach the browser; only the badge sync leaves it out');
+    assert.deepEqual((await firebaseService.currentDeviceIds(rae.id)).length, 3,
+      'the device list an SOS correction reads still names the browser');
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+});
+
 // ── 5. What a push is owed to ────────────────────────────────────────────────
 
 test('a batch where one device failed is retried to that device alone', async () => {
