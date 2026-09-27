@@ -528,6 +528,25 @@ test('clicking the link verifies the account and lifts the gate', async () => {
   assert.strictEqual((await post('/api/friends/accept', {}, token)).status, 200);
 });
 
+test('the session that was open when the link was clicked reads confirmed on its next /me', async () => {
+  // The app's "I've confirmed" (App.js checkEmailConfirmed, and the re-read it
+  // makes on coming back to the foreground) asks /me with the token it already
+  // holds and patches its copy from the answer. That only works if the answer
+  // comes off the row, not off anything baked into the token at sign-up, and
+  // if the gated routes read the row too, so no fresh token is needed. Both
+  // halves are pinned here against the same token the signup issued.
+  reset();
+  const { token } = await signupUnverified();
+  const before = await (await call('GET', '/api/auth/me', null, token)).json();
+  assert.strictEqual(before.user.email_verified, false);
+
+  assert.strictEqual((await post('/api/auth/verify-email', { token: tokenFromLastMail() })).status, 200);
+
+  const after = await (await call('GET', '/api/auth/me', null, token)).json();
+  assert.strictEqual(after.user.email_verified, true);
+  assert.strictEqual((await post('/api/friends/accept', {}, token)).status, 200);
+});
+
 // ---------------------------------------------------------------------------
 // Link properties: single use, expiring, constant-time compared, bound to the
 // address it was mailed to.
