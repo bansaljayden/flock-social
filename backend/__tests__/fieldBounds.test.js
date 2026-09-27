@@ -526,6 +526,31 @@ test('markup in a bio is stripped before it is stored, and the ceiling reads the
   assert.equal(wrote(/^UPDATE users SET name/i)[0].params[6], pad(U.BIO));
 });
 
+test('an emptied bio reaches the UPDATE as a removal, and an absent one leaves the stored text alone', async () => {
+  // The statement is `bio = COALESCE($7, bio)`, so $7 decides everything: ''
+  // replaces the stored bio and NULL keeps it. The Edit Profile box sends ''
+  // when somebody deletes their bio, and that '' used to become NULL on the
+  // way in, so the old bio stayed on the person card any signed-in user can
+  // open while the form said the profile was updated.
+  const bioParam = async (body) => {
+    clearLimiters();
+    const res = await call('PUT', '/api/users/profile', { ...body, current_password: PASSWORD });
+    assert.equal(res.status, 200, res.text);
+    const update = wrote(/^UPDATE users SET name/i);
+    assert.equal(update.length, 1);
+    return update[0].params[6];
+  };
+
+  assert.strictEqual(await bioParam({ bio: '' }), '', 'an emptied bio must be stored as empty, not skipped');
+  assert.strictEqual(await bioParam({ bio: '   ' }), '', 'whitespace trims to empty, which is a removal too');
+  assert.strictEqual(await bioParam({ bio: '<b></b>' }), '', 'markup with no text in it is a bio with no text in it');
+
+  // The other direction has to keep holding: a form that does not send the
+  // field, or spells it null, must not wipe a bio it never touched.
+  assert.strictEqual(await bioParam({ name: 'Ava' }), null, 'no bio in the body leaves the stored bio alone');
+  assert.strictEqual(await bioParam({ bio: null }), null, 'an explicit null leaves the stored bio alone');
+});
+
 // MEASURED, NOT ASSUMED. The first draft of this test asserted that an address
 // at MAX_EMAIL is accepted, and it failed: validator.js's isEmail caps the whole
 // address at 254 characters, one below users.email's width, so the route's own
