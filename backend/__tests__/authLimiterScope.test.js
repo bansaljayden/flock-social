@@ -62,7 +62,7 @@ async function withApp(fn) {
   const app = express();
   const router = express.Router();
   for (const p of ['/me']) router.get(p, (_req, res) => res.json({ ok: true }));
-  for (const p of ['/logout', '/logout-all', '/resend-verification', '/login', '/signup',
+  for (const p of ['/logout', '/logout-all', '/resend-verification', '/refresh', '/login', '/signup',
     '/forgot-password', '/reset-password', '/google', '/apple', '/verify-email']) {
     router.post(p, (_req, res) => res.json({ ok: true }));
   }
@@ -98,6 +98,19 @@ test('a whole school opening the app at once is never refused by the sign-in lim
     // the same network.
     assert.strictEqual(await call('POST', '/login'), 200,
       'forty app launches used up the address\'s sign-in attempts');
+  });
+});
+
+test('the same school opening the app a day later renews without being refused', async () => {
+  await withApp(async (call) => {
+    // After a day away every launch renews its session before GET /me. Metered
+    // per address, the renewal would bring the lockout straight back.
+    for (let i = 0; i < 40; i++) {
+      assert.strictEqual(await call('POST', '/refresh'), 200,
+        `renewal ${i + 1} from one address got refused by authLimiter`);
+      assert.strictEqual(await call('GET', '/me'), 200);
+    }
+    assert.strictEqual(await call('POST', '/login'), 200);
   });
 });
 
@@ -152,6 +165,20 @@ test('every exempt route really does require a signed-in account', () => {
       `SIGNED_IN_ROUTES names ${entry}, and routes/auth.js does not mount it behind authenticate. `
       + 'Only a route that acts for an account that is already signed in may skip authLimiter.');
   }
+});
+
+test('the one exempt route without authenticate is the renewal, and it spends a refresh credential', () => {
+  // POST /refresh exists for the moment the access token has run out, so it
+  // cannot mount authenticate. Its proof is the refresh credential a sign-in
+  // issued: 32 random bytes compared by hash, with no bcrypt behind it and
+  // nothing a per-address meter could slow a guess at.
+  assert.deepStrictEqual([...authRoutes.SESSION_RENEWAL_ROUTES], ['POST /refresh']);
+  const handler = /router\.post\('\/refresh', \[[\s\S]*?\n\}\);/.exec(AUTH_SRC);
+  assert.ok(handler, 'routes/auth.js no longer declares POST /refresh in the shape this test reads');
+  assert.match(handler[0], /await exchangeRefreshToken\(req\.body\.refreshToken\)/);
+  assert.doesNotMatch(handler[0], /bcrypt/, 'the renewal must never grow a password compare while skipping the address meter');
+  assert.strictEqual(authRoutes.isSignedInRoute({ method: 'POST', path: '/refresh' }), true);
+  assert.strictEqual(authRoutes.isSignedInRoute({ method: 'GET', path: '/refresh' }), false);
 });
 
 test('the exempt routes keep a ceiling: apiLimiter is mounted on /api/auth beside authLimiter', () => {

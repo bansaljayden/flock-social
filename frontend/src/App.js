@@ -17,7 +17,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
-import { resendVerificationEmail, trackPurchaseCompleted } from './services/api';
+import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
@@ -19534,6 +19534,23 @@ const FlockApp = () => {
   useEffect(() => {
     const unsubscribe = onSessionRevoked((payload) => {
       const reason = payload && payload.reason;
+      // 'session_expired' is the server's socket recheck finding the token the
+      // connection was opened with has run out. That is not a revocation: a
+      // session this device can renew is renewed (services/api.js), and the
+      // socket re-dials on the renewed token by itself (services/socket.js
+      // adoptRefreshedToken). It used to end the session on the spot, which
+      // signed everyone out mid-chat a day after they signed in. Only a
+      // renewal the server refuses ends it now; one that cannot reach the
+      // server keeps it, and the next request or return to the app tries
+      // again. Every other reason is a real revocation and ends it as before.
+      if (reason === 'session_expired' && hasRenewableSession()) {
+        renewSession()
+          .then((outcome) => {
+            if (outcome !== 'ok') endSession(sessionEndCopy(reason), { specific: false });
+          })
+          .catch(() => { /* the wire, not a verdict: the session stays */ });
+        return;
+      }
       endSession(sessionEndCopy(reason), { specific: !!reason && reason !== 'session_expired' });
     });
     const onExpired = () => endSession(sessionEndCopy('session_expired'));

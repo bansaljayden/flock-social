@@ -1,6 +1,9 @@
 // Consent, read live on every capture. See the gate in withPostHog below.
 import { hasAnalyticsConsent } from './analyticsConsent';
-import { lsGet } from '../lib/storage';
+import { lsGet, lsSet, lsRemove } from '../lib/storage';
+// Which sign-in a token belongs to (lib/sessionIdentity.js): a renewal keeps
+// it, a sign-out or an account switch does not.
+import { tokenClaims, sameSignIn } from '../lib/sessionIdentity';
 // The one "is this the app" answer (lib/nativeShell.js), for the RevenueCat
 // half of sign-out. Already in the entry chunk through index.js, so free here.
 import { isNativeShell } from '../lib/nativeShell';
@@ -124,9 +127,45 @@ function getToken() {
   return lsGet('flockToken');
 }
 
+// THE SECOND HALF OF A SESSION. The access token above lives a day; the
+// refresh credential kept here is what renews it (renewSession below, POST
+// /api/auth/refresh, backend/services/refreshTokens.js), so nobody is signed
+// out a day after signing in. It is stored the way the access token is, next
+// to it, under a flock* key, so every sign-out path that wipes one wipes the
+// other (clearLocalSession's sweep). It is only ever sent to /api/auth/refresh
+// and to /api/auth/logout, never on an ordinary request.
+const REFRESH_TOKEN_KEY = 'flockRefreshToken';
+// When THIS device received the access token it holds, by its own clock. The
+// token's remaining life is worked out from this and the token's own lifetime
+// (exp minus iat), never from exp against the device clock alone: a phone set
+// hours fast would otherwise think every token was about to run out and renew
+// on every request, and one set hours slow would let tokens die unrenewed.
+const TOKEN_RECEIVED_KEY = 'flockTokenReceivedAt';
+
+function getRefreshToken() {
+  return lsGet(REFRESH_TOKEN_KEY);
+}
+
 function setToken(token) {
   localStorage.setItem('flockToken', token);
+  lsSet(TOKEN_RECEIVED_KEY, String(Date.now()));
   sessionExpiryAnnounced = false; // fresh session, the expiry notice may fire again someday
+}
+
+// An empty value removes the credential rather than storing one, so a sign-in
+// whose answer carried none can never leave the previous account's behind to
+// be renewed into.
+function setRefreshToken(value) {
+  if (typeof value === 'string' && value) lsSet(REFRESH_TOKEN_KEY, value);
+  else lsRemove(REFRESH_TOKEN_KEY);
+}
+
+// What a sign-in, a sign-up and a password change answer with, stored as one
+// thing: the access token and the refresh credential that renews it.
+function storeSession(data) {
+  setToken(data.token);
+  setRefreshToken(data && data.refreshToken);
+  scheduleRenewal();
 }
 
 /**
@@ -149,6 +188,10 @@ function setToken(token) {
  *
  *   CLEARED — belongs to the account, not the handset:
  *     flockToken                 the credential itself
+ *     flockRefreshToken          the credential that renews it. Left behind,
+ *                                it would sign the next person on the phone
+ *                                straight back into this account
+ *     flockTokenReceivedAt       when this device got the token above
  *     flockUserMode              user / venue / admin surface
  *     flockOnboardingComplete    per-account onboarding
  *     flockVenueOnboardingComplete
@@ -576,12 +619,18 @@ function badResponseGuard(res, data, method) {
   return null;
 }
 
-// Mid-session token death (24h JWT expiry, password change, account claim).
-// Without this, every request fails 401 forever while the UI looks merely
-// flaky. We clear the token so isLoggedIn() goes false and the next boot
-// lands on sign-in, and we announce it once: App.js listens for 'flock-toast'
-// and routes to sign-in on 'flock-session-expired'; socket.js tears down its
+// Mid-session token death (password change, account claim, sign out
+// everywhere, a ban, or an expired token that could not be renewed). Without
+// this, every request fails 401 forever while the UI looks merely flaky. We
+// clear the token so isLoggedIn() goes false and the next boot lands on
+// sign-in, and we announce it once: App.js listens for 'flock-toast' and
+// routes to sign-in on 'flock-session-expired'; socket.js tears down its
 // connection on the same event so the dead token stops being re-presented.
+//
+// An access token that has merely run out is NOT this. It used to be, every
+// day, for everyone: nothing renewed the 24h token. request() now renews the
+// session before the token runs out and once more on a 401 "Token expired",
+// and only a renewal the server refuses reaches this.
 //
 // Exclusions: the auth flows themselves (a wrong password is 401 and is not
 // an expired session), requests that carried no token, and account deletion
@@ -610,6 +659,246 @@ function handleSessionExpiry(endpoint, hadToken, data) {
     }));
   }
   return true;
+}
+
+/**
+ * RENEWING THE SESSION — read before changing anything about the token.
+ *
+ * The access token lives 24 hours and nothing used to renew it, so every user
+ * was signed out a day after signing in: in the middle of a chat, when the
+ * server's socket recheck found the token expired, or at the next launch,
+ * when GET /api/auth/me answered 401. A sign-in now also returns a refresh
+ * credential, and POST /api/auth/refresh trades it for a new access token and
+ * a new credential (backend/services/refreshTokens.js has the server's rules).
+ * Four things here make that invisible:
+ *
+ *  1. AHEAD OF TIME. request() renews before sending once the token has less
+ *     than RENEW_AHEAD_S left, and a timer does the same for a session that is
+ *     only using the socket (a chat left open sends no REST at all). Coming
+ *     back to the app and coming back online check too, because a backgrounded
+ *     tab's timers are frozen.
+ *  2. AFTER THE FACT. A 401 "Token expired" is renewed once and the request
+ *     sent again. That is safe for a write as well as a read: authenticate
+ *     refused the request before any handler ran, so nothing happened.
+ *  3. ONE AT A TIME. Every caller shares one renewal in flight. The server
+ *     rotates the credential on use, so two renewals racing from one tab would
+ *     spend it twice; it forgives that for a couple of minutes, and this keeps
+ *     it from being asked to.
+ *  4. THE WIRE IS NOT A VERDICT. A renewal that fails because the network did
+ *     leaves the session alone and the caller hears a network error, exactly
+ *     as for any other request. Only the server refusing the credential (401,
+ *     or 403 for a ban) ends anything, and it ends it through
+ *     handleSessionExpiry above, the same as before.
+ *
+ * The renewed token is the SAME sign-in (lib/sessionIdentity.js): same account,
+ * same auth_time. 'flock-token-refreshed' tells services/socket.js to re-dial
+ * with it, keeping every room, before the server's recheck finds the old one
+ * expired.
+ */
+const RENEW_AHEAD_S = 6 * 60 * 60;
+// A floor under how often a renewal is attempted ahead of time. A token that
+// has actually run out is always worth one attempt; this only stops a device
+// whose sums go wrong from renewing on every request.
+const RENEW_MIN_GAP_MS = 60 * 1000;
+const RENEW_RETRY_MS = 60 * 1000;
+const RENEW_PATH = '/api/auth/refresh';
+// The longest the renewal timer is set for in one go. Browsers clamp long
+// timers and freeze them in the background, so it wakes up and re-reads the
+// token rather than trusting one very long wait.
+const RENEW_TIMER_CAP_MS = 6 * 60 * 60 * 1000;
+
+// Seconds of life the token has left, or null when it cannot be read. Measured
+// from when this device received it (TOKEN_RECEIVED_KEY), so a wrong device
+// clock does not move it; falls back to exp against the clock for a token
+// stored before that key existed.
+function tokenLifeLeft(token) {
+  const claims = tokenClaims(token);
+  if (!claims || !Number.isFinite(claims.exp)) return null;
+  const receivedAt = Number(lsGet(TOKEN_RECEIVED_KEY));
+  if (Number.isFinite(claims.iat) && Number.isFinite(receivedAt) && receivedAt > 0) {
+    return (claims.exp - claims.iat) - (Date.now() - receivedAt) / 1000;
+  }
+  return claims.exp - Date.now() / 1000;
+}
+
+// Calls that must never renew first. The sign-in doors mint their own
+// session. Sign-out runs beside the local wipe (logout() below), and a renewal
+// landing after the wipe would write a session back onto a device that was
+// just signed out. Sign out everywhere is deliberately NOT here: it needs a
+// live token to reach the server at all, and it wipes nothing until it has
+// its answer.
+const NO_RENEW_PREFIXES = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple', RENEW_PATH];
+function mayRenewBefore(endpoint) {
+  if (endpoint === '/api/auth/logout') return false;
+  return !NO_RENEW_PREFIXES.some((p) => endpoint.startsWith(p));
+}
+
+// For App.js: whether this device can renew a session at all. A session
+// signed in before refresh credentials existed cannot, and ends as it did.
+export function hasRenewableSession() {
+  return !!getToken() && !!getRefreshToken();
+}
+
+let renewing = null;
+let lastRenewAttempt = 0;
+
+// Renew now, sharing the one renewal already in flight if there is one.
+// Resolves 'ok' (this device holds a live session for the same sign-in),
+// 'dead' (the server refused the credential, which is now forgotten) or
+// 'gone' (the session was cleared on this device while the renewal was out).
+// Rejects on the network and on a server fault, which prove nothing about
+// the credential.
+export function renewSession() {
+  if (!renewing) {
+    renewing = performRenewal().finally(() => { renewing = null; });
+  }
+  return renewing;
+}
+
+async function performRenewal() {
+  const sent = getRefreshToken();
+  if (!sent) return 'dead';
+  lastRenewAttempt = Date.now();
+  if (isOffline()) throw connectionError();
+  const { res, data } = await fetchWithTimeout(`${BASE_URL}${RENEW_PATH}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken: sent }),
+  }, DEFAULT_TIMEOUT_MS);
+
+  // The device moved on while this was out: a sign-out wiped it, or another
+  // tab renewed first and stored its own answer. Neither may be overwritten.
+  // Another tab's answer is as good as this one; a wipe is final.
+  if (getRefreshToken() !== sent) return getToken() ? 'ok' : 'gone';
+
+  if (res.ok) {
+    const guardErr = badResponseGuard(res, data, 'POST');
+    if (guardErr) throw guardErr;
+    if (!data || typeof data.token !== 'string' || typeof data.refreshToken !== 'string') {
+      throw badReplyError('POST');
+    }
+    setToken(data.token);
+    setRefreshToken(data.refreshToken);
+    scheduleRenewal();
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('flock-token-refreshed'));
+    return 'ok';
+  }
+  if (res.status === 401 || res.status === 403) {
+    // Refused for good: revoked, replayed, expired, from before a password
+    // change, or a ban. Keeping it would only mean asking again.
+    setRefreshToken(null);
+    return 'dead';
+  }
+  // A 5xx, a 429 or a gateway page. The credential may be perfectly good.
+  throw buildHttpError(res, data === PARSE_FAILED ? null : data, RENEW_PATH, false);
+}
+
+// Whether a renewal ahead of time is due right now. Synchronous, so a request
+// with nothing to renew goes out exactly as it did before renewal existed,
+// without so much as an extra tick in front of it.
+function renewalIsDue() {
+  const token = getToken();
+  if (!token || !getRefreshToken()) return false;
+  const left = tokenLifeLeft(token);
+  if (left === null || left > RENEW_AHEAD_S) return false;
+  return left <= 0 || Date.now() - lastRenewAttempt >= RENEW_MIN_GAP_MS;
+}
+
+// Renew ahead of time if the token is due. Never ends a session itself; see
+// rule 4 above for the one case it throws.
+async function renewIfDue() {
+  if (!renewalIsDue()) return;
+  const left = tokenLifeLeft(getToken());
+  try {
+    await renewSession();
+  } catch (err) {
+    // A token with life left in it is still good, so the caller goes ahead
+    // with it. One that has run out would only earn a 401 that ends the
+    // session, so the caller hears the network error instead and the session
+    // survives the dead spot.
+    if (left <= 0) throw err;
+  }
+}
+
+// For the few callers that send the token with their own fetch rather than
+// through request() (the moderation console): the renewal to wait for when one
+// is due, and null when nothing is, so a caller with nothing to renew does not
+// take so much as an extra tick. The promise rejects only where renewIfDue
+// does, for a token that has already run out.
+export function ensureFreshSession() {
+  return renewalIsDue() ? renewIfDue() : null;
+}
+
+// After a 401 "Token expired": the token to send the request again with, or
+// null when there is none and the 401 stands. Throws when the renewal could
+// not reach the server (the session is kept), or when the session was
+// cleared on this device meanwhile (nothing to announce: it was a sign-out).
+async function renewAfterExpiry(sentToken) {
+  // Another tab, or a renewal this tab ran meanwhile, may already hold a
+  // newer token for this same sign-in.
+  const current = getToken();
+  if (current && current !== sentToken) return sameSignIn(current, sentToken) ? current : null;
+  if (!getRefreshToken()) return null;
+  const outcome = await renewSession();
+  if (outcome === 'gone') throw signedOutError();
+  if (outcome !== 'ok') return null;
+  const next = getToken();
+  return next && sameSignIn(next, sentToken) ? next : null;
+}
+
+// What a request hears when this device was signed out while it waited on a
+// renewal. A 401, because it is one, but not sessionExpired: the sign-out
+// already happened on purpose and must not be announced as an expiry.
+function signedOutError() {
+  const err = new Error('You signed out.');
+  err.status = 401;
+  err.signedOut = true;
+  return err;
+}
+
+let renewTimer = null;
+
+// Keep a timer set for the moment the token becomes due. `delayMs` overrides
+// the wait, for a retry after a failed attempt.
+function scheduleRenewal(delayMs) {
+  if (typeof window === 'undefined') return;
+  if (renewTimer) {
+    clearTimeout(renewTimer);
+    renewTimer = null;
+  }
+  const token = getToken();
+  if (!token || !getRefreshToken()) return;
+  let wait = delayMs;
+  if (wait === undefined) {
+    const left = tokenLifeLeft(token);
+    if (left === null) return;
+    wait = Math.max(RENEW_MIN_GAP_MS, (left - RENEW_AHEAD_S) * 1000);
+  }
+  renewTimer = setTimeout(() => {
+    renewTimer = null;
+    renewIfDue().then(() => scheduleRenewal(), () => scheduleRenewal(RENEW_RETRY_MS));
+  }, Math.min(wait, RENEW_TIMER_CAP_MS));
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const nudgeRenewal = () => { renewIfDue().catch(() => { /* the next request or nudge tries again */ }); };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') nudgeRenewal();
+  });
+  window.addEventListener('online', nudgeRenewal);
+  // Another tab renewed, or signed in or out. The timer follows the token this
+  // tab now holds, and a renewal of the SAME sign-in is passed on so this
+  // tab's socket re-dials with it too.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== null && e.key !== 'flockToken') return;
+    scheduleRenewal();
+    if (e.key === 'flockToken' && e.newValue && e.oldValue && e.newValue !== e.oldValue
+      && sameSignIn(e.newValue, e.oldValue)) {
+      window.dispatchEvent(new CustomEvent('flock-token-refreshed'));
+    }
+  });
+  // A session already on this device when the app loads.
+  scheduleRenewal();
 }
 
 function buildHttpError(res, data, endpoint, hadToken) {
@@ -649,8 +938,12 @@ function buildHttpError(res, data, endpoint, hadToken) {
 }
 
 async function request(endpoint, options = {}) {
-  const token = getToken();
   const { timeout, retry, ...fetchOptions } = options;
+  // Renew first when the token is nearly out (see RENEWING THE SESSION above),
+  // so the request goes out on a live one instead of earning a 401.
+  const mayRenew = mayRenewBefore(endpoint);
+  if (mayRenew && renewalIsDue()) await renewIfDue();
+  let token = getToken();
   const headers = {
     'Content-Type': 'application/json',
     ...fetchOptions.headers,
@@ -665,6 +958,11 @@ async function request(endpoint, options = {}) {
   // with retry: false when it has server-side effects (the NFC check-in tap).
   const canRetry = method === 'GET' && retry !== false;
   const timeoutMs = timeout || DEFAULT_TIMEOUT_MS;
+  // One renewal per request after a 401 "Token expired", and the request sent
+  // once more on the renewed token. Not an attempt in the retry budget above:
+  // the server refused the request before running it, so resending is not the
+  // duplicate write that budget exists to prevent.
+  let renewedAfterExpiry = false;
 
   let attempt = 0;
   for (;;) {
@@ -695,6 +993,21 @@ async function request(endpoint, options = {}) {
       await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
       attempt += 1;
       continue;
+    }
+
+    // The access token ran out between the check above and the server (or
+    // this device could not renew ahead of time). The exact sentence
+    // middleware/auth.js answers an expired token with; every other 401 is
+    // a revocation that no renewal can undo, and goes straight on below.
+    if (res.status === 401 && token && mayRenew && !renewedAfterExpiry
+      && data && data !== PARSE_FAILED && data.error === 'Token expired') {
+      renewedAfterExpiry = true;
+      const next = await renewAfterExpiry(token);
+      if (next) {
+        token = next;
+        headers['Authorization'] = `Bearer ${token}`;
+        continue;
+      }
     }
 
     if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, endpoint, !!token);
@@ -779,7 +1092,7 @@ export async function signup(name, email, password, dateOfBirth) {
     if (authFailureIsRecordable(err)) track('signup_failed', { method: 'email', reason: authFailureReason(err) });
     throw err;
   }
-  setToken(data.token);
+  storeSession(data);
   identifyUser(data.user);
   track('signup', { method: 'email' });
   return data;
@@ -892,7 +1205,7 @@ export async function login(email, password, dateOfBirth, opts) {
     if (authFailureIsRecordable(err)) track('login_failed', { method: 'email', reason: authFailureReason(err) });
     throw err;
   }
-  setToken(data.token);
+  storeSession(data);
   identifyUser(data.user);
   track('login', { method: 'email' });
   return data;
@@ -915,7 +1228,7 @@ export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
     if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
     throw err;
   }
-  setToken(data.token);
+  storeSession(data);
   identifyUser(data.user);
   track('login', { method: 'google' });
   return data;
@@ -938,7 +1251,7 @@ export async function googleLogin(credential, dateOfBirth, opts) {
     if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
     throw err;
   }
-  setToken(data.token);
+  storeSession(data);
   identifyUser(data.user);
   track('login', { method: 'google' });
   return data;
@@ -965,7 +1278,7 @@ export async function appleLogin(identityToken, fullName, authorizationCode, dat
     if (authFailureIsRecordable(err)) track('login_failed', { method: 'apple', reason: authFailureReason(err) });
     throw err;
   }
-  setToken(data.token);
+  storeSession(data);
   identifyUser(data.user);
   track('login', { method: 'apple' });
   return data;
@@ -1126,15 +1439,20 @@ export async function getCurrentUser() {
 // second half is not conditional on the first.
 //
 // POST /api/auth/logout requires the bearer token, takes this device's push
-// token as { pushToken } when there is one, and answers { message }. The
-// session half is advisory (tokens carry no per-session id, so single-device
-// revocation would have to bump token_version and sign the user out of their
-// laptop too) — but the call is made anyway, because the client's job is to
-// declare the session over. The device half is not advisory: the server
-// deletes this device's push registration in the same request, so the next DM
-// or SOS for the account does not ring a phone sitting on the sign-in screen.
-// POST /api/auth/logout-all is the one that truly revokes, by bumping
-// token_version; no UI reaches it, so nothing here calls it.
+// token as { pushToken } and its refresh credential as { refreshToken } when
+// there are ones, and answers { message }. The access-token half is advisory
+// (access tokens carry no per-session id, so revoking one would have to bump
+// token_version and sign the user out of their laptop too) — but the call is
+// made anyway, because the client's job is to declare the session over. The
+// other two halves are not advisory: the server retires this sign-in's refresh
+// credentials, so nothing left anywhere can renew the session, and deletes
+// this device's push registration in the same request, so the next DM or SOS
+// for the account does not ring a phone sitting on the sign-in screen.
+// POST /api/auth/logout-all is the one that revokes everything, by bumping
+// token_version (logoutAll below).
+//
+// NEVER RENEWS. This runs beside the wipe, and a renewal answered after the
+// wipe would write a session back onto the device (mayRenewBefore).
 //
 // FAILURE BEHAVIOR, which is the whole point: the local wipe is synchronous and
 // runs whether the server answers, refuses, or never hears us. A user hitting
@@ -1154,8 +1472,13 @@ export function handOverPushTokenForSignOut(token) {
 
 export async function logout() {
   const token = getToken();
+  const refreshToken = getRefreshToken();
   const pushToken = signOutPushToken;
   signOutPushToken = null;
+  const body = {
+    ...(pushToken ? { pushToken } : {}),
+    ...(refreshToken ? { refreshToken } : {}),
+  };
   // Issued before the wipe so it carries a live credential, with the header
   // pinned explicitly so the order of these two lines can never quietly become
   // load-bearing. .catch() here, not try/await: nothing this returns can
@@ -1165,7 +1488,7 @@ export async function logout() {
       method: 'POST',
       timeout: LOGOUT_TIMEOUT_MS,
       headers: { Authorization: `Bearer ${token}` },
-      ...(pushToken ? { body: JSON.stringify({ pushToken }) } : {}),
+      ...(Object.keys(body).length > 0 ? { body: JSON.stringify(body) } : {}),
     }).catch(() => null)
     : null;
   clearLocalSession();
@@ -1423,10 +1746,11 @@ export async function updateProfile({ name, email, phone, bio, current_password,
     body: JSON.stringify({ name, email, phone, bio, current_password, new_password }),
   });
   // A password change bumps token_version and the server mints a replacement
-  // token in the same answer. It was dropped here, so the very next request
+  // session in the same answer. It was dropped here, so the very next request
   // 401'd and the app said "Your session expired" for a change that had just
-  // succeeded. Stored before anything else can run.
-  if (data && typeof data.token === 'string' && data.token) setToken(data.token);
+  // succeeded. Stored before anything else can run, refresh credential and
+  // all: the bump ended the old credential along with the old token.
+  if (data && typeof data.token === 'string' && data.token) storeSession(data);
   return data;
 }
 
@@ -2102,14 +2426,27 @@ export async function getVenueDetails(placeId) {
 // may have stored the image even when the response got lost.
 export async function uploadProfileImage(file) {
   if (isOffline()) throw connectionError();
-  const token = getToken();
+  // The same renewal request() does, ahead of time and once after a 401
+  // "Token expired" (see RENEWING THE SESSION). Sending the upload again then
+  // is not the retry this function refuses: authenticate turned the first one
+  // away before the image was read, let alone stored.
+  if (renewalIsDue()) await renewIfDue();
+  let token = getToken();
   const formData = new FormData();
   formData.append('image', file);
-  const { res, data } = await fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
+  const send = (bearer) => fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${bearer}` },
     body: formData,
   }, UPLOAD_TIMEOUT_MS);
+  let { res, data } = await send(token);
+  if (res.status === 401 && token && data && data !== PARSE_FAILED && data.error === 'Token expired') {
+    const next = await renewAfterExpiry(token);
+    if (next) {
+      token = next;
+      ({ res, data } = await send(token));
+    }
+  }
   if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, '/api/users/upload-image', !!token);
   // Same 200-but-not-JSON guard as request(): venue wifi portals intercept
   // multipart POSTs too, and never retried for the same reason as above.

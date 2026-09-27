@@ -1,6 +1,14 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 
+// The ACCESS token's life. It stays short on purpose: it is the bearer
+// credential every request and socket carries, so it is the one a theft
+// yields, and a ban or a sign-out that does not bump token_version only bites
+// once it runs out. What keeps a person signed in past it is the separate
+// refresh credential (services/refreshTokens.js, POST /api/auth/refresh),
+// which is stored server-side, rotated on every use, bound to token_version
+// and revocable on its own. Before that existed this number was also how long
+// anybody stayed signed in: everyone was signed out a day after signing in.
 const TOKEN_EXPIRY = '24h';
 
 // Only HMAC. jsonwebtoken infers this from the secret today, but pinning it
@@ -41,12 +49,36 @@ function currentTokenVersion(row) {
 // Mint a Flock JWT for a user row. Single place so no call site can forget the
 // `tv` claim (a token without it is treated as version 0 and would survive a
 // bump-based revocation only until the first bump).
-function signUserToken(user) {
+//
+// `auth_time` is when the person SIGNED IN, in seconds, and it is not the same
+// thing as `iat` any more. `iat` is when this token was minted; a renewal
+// (services/refreshTokens.js) mints a new token for a sign-in that happened
+// days ago, and passes that sign-in's time through here so it survives. The
+// two readers that mean "signed in" read it through signedInAt below:
+// hasFreshSession in routes/users.js, which must not treat a renewal as a
+// fresh sign-in for deletion and export, and the device-token claim in
+// routes/notifications.js, which must not let a renewed old session look newer
+// than a later sign-in. Left out, it is now, which is right for every caller
+// that mints at an actual sign-in.
+function signUserToken(user, { authTime } = {}) {
+  const signedIn = Number.isInteger(authTime) && authTime > 0
+    ? authTime
+    : Math.floor(Date.now() / 1000);
   return jwt.sign(
-    { userId: user.id, tv: currentTokenVersion(user) },
+    { userId: user.id, tv: currentTokenVersion(user), auth_time: signedIn },
     process.env.JWT_SECRET,
     { expiresIn: TOKEN_EXPIRY }
   );
+}
+
+// When the session a verified token belongs to signed in, in seconds, or null.
+// `auth_time` where the token carries one; `iat` for a token minted before the
+// claim existed, which was minted at a sign-in (nothing renewed tokens then),
+// so its iat IS its sign-in time.
+function signedInAt(decoded) {
+  if (Number.isInteger(decoded?.auth_time) && decoded.auth_time > 0) return decoded.auth_time;
+  if (Number.isInteger(decoded?.iat) && decoded.iat > 0) return decoded.iat;
+  return null;
 }
 
 // Round 15: bumping token_version only bites at the NEXT authentication.
@@ -349,14 +381,17 @@ function makeAuthenticate({ allowBanned = false } = {}) {
       }
 
       req.user = result.rows[0];
-      // When this session signed in, in seconds, from the token's own `iat`
-      // (jsonwebtoken stamps it on every token signUserToken mints). One
-      // reader: routes/notifications.js, which lets a device token move to
-      // another account only for a session that signed in no earlier than the
-      // one holding it, so a request still in flight from a session that has
+      // When this session signed in, in seconds: the token's auth_time, or its
+      // iat when it predates that claim (signedInAt above). One reader:
+      // routes/notifications.js, which lets a device token move to another
+      // account only for a session that signed in no earlier than the one
+      // holding it, so a request still in flight from a session that has
       // since signed out cannot take the phone back from whoever signed in
-      // after it. Null when a token carries none.
-      req.tokenIssuedAt = Number.isInteger(decoded.iat) && decoded.iat > 0 ? decoded.iat : null;
+      // after it. The sign-in, not the mint: a renewed token is minted today
+      // for a sign-in from last week, and reading its iat would let that old
+      // session take the phone back from a newer one. Null when a token
+      // carries neither.
+      req.tokenIssuedAt = signedInAt(decoded);
       next();
     } catch (err) {
       if (err.name === 'TokenExpiredError') {
@@ -429,6 +464,8 @@ module.exports = {
   tokenVersionOf,
   issuedTokenVersion,
   currentTokenVersion,
+  // The one reading of "when did this session sign in", for routes/users.js.
+  signedInAt,
 };
 
 // Exported for backend/__tests__/emailVerification.test.js.

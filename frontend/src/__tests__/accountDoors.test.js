@@ -7,7 +7,10 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('a password change keeps the replacement token', () => {
   const api = read('services/api.js');
-  expect(api).toMatch(/if \(data && typeof data\.token === 'string' && data\.token\) setToken\(data\.token\);/);
+  // Stored as a whole session: the change ends the old refresh credential
+  // along with the old token, and the answer carries a new one of each.
+  expect(api).toMatch(/if \(data && typeof data\.token === 'string' && data\.token\) storeSession\(data\);/);
+  expect(api).toMatch(/function storeSession\(data\) \{\s*setToken\(data\.token\);\s*setRefreshToken\(data && data\.refreshToken\);/);
   expect(api).toMatch(/export async function logoutAll\(\) \{\s*return request\('\/api\/auth\/logout-all', \{ method: 'POST' \}\);/);
 });
 

@@ -34,11 +34,13 @@ const React = require('react');
 const { render, screen, fireEvent, waitFor, within } = require('@testing-library/react');
 
 // services/api opens PostHog and a fetch wrapper on import; the console needs
-// two names off it. Plain functions, not jest.fn(): react-scripts sets
+// three names off it. Plain functions, not jest.fn(): react-scripts sets
 // resetMocks: true, which strips implementations off jest mocks between tests.
 jest.mock('../services/api', () => ({
   BASE_URL: 'https://api.test',
   getToken: () => 'test-token',
+  // The console renews an expiring session before each fetch; nothing is due here.
+  ensureFreshSession: () => null,
 }));
 
 const ModerationDashboard = require('../website/ModerationDashboard').default;

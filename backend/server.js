@@ -1209,13 +1209,14 @@ const apiLimiter = countOncePerRequest(isDev ? (_req, _res, next) => next() : ra
   message: { error: 'Too many requests, please try again later' },
 }), 'apiLimiter');
 
-// The credential doors only. GET /me, both sign-outs and the verification
-// resend run for an account that is already signed in, and the address key
-// put every phone on one school's Wi-Fi into a single 10-a-minute bucket for
-// its app launches, so the eleventh cold start got a 429 and the unreachable
-// screen, and real sign-ins on that network were refused with it. Those
-// routes skip this and are charged to apiLimiter, mounted beside it below.
-// routes/auth.js owns the list (SIGNED_IN_ROUTES) and says what may join it.
+// The credential doors only. GET /me, both sign-outs, the verification resend
+// and the session renewal (POST /refresh) run for an account that is already
+// signed in, and the address key put every phone on one school's Wi-Fi into a
+// single 10-a-minute bucket for its app launches, so the eleventh cold start
+// got a 429 and the unreachable screen, and real sign-ins on that network were
+// refused with it. Those routes skip this and are charged to apiLimiter,
+// mounted beside it below. routes/auth.js owns the list (SIGNED_IN_ROUTES and
+// SESSION_RENEWAL_ROUTES) and says what may join it.
 const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
   max: 10,

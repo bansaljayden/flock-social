@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BirdNote, WARM_BIRD } from './ui/BirdieBird';
 import { hourlySourcePhrase } from '../lib/crowd';
+import { signInKey } from '../lib/sessionIdentity';
 
 // Roost, the advisor's T0 surface (ADVISOR-PRODUCT-SHAPE.md sec 5), grown into
 // a screen a venue owner can poke at: a daypart-aware lead card, a tappable
@@ -342,9 +343,13 @@ let cardsStore = { key: null, at: 0, payload: null };
 // nothing in production, where this tab is only reachable by a signed-in
 // owner, and it is why the suite never sees a held payload: jsdom has no
 // token.
+// The sign-in rather than the token string, because the token is renewed for
+// the same owner about once a day now (services/api.js) and a renewal is not a
+// different owner. VenueAdvisorChat's sessionKey says the rest.
 const sessionKey = () => {
   try {
-    return (window.localStorage.getItem('flockToken') || '').slice(-32) || null;
+    const token = window.localStorage.getItem('flockToken') || '';
+    return signInKey(token) || token.slice(-32) || null;
   } catch (e) {
     return null;
   }

@@ -654,6 +654,10 @@ async function revalidateSession(socket) {
       decoded = jwt.verify(socket.handshake?.auth?.token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
     } catch (_) {
       // Expired or tampered — the same verdict the handshake would give it.
+      // An expired one is rare now: the client renews its session before the
+      // access token runs out and re-dials with the new token
+      // (frontend/src/services/socket.js), and on this reason App.js tries a
+      // renewal before it signs anybody out.
       revokeSession(socket, 'session_expired');
       return 'session_expired';
     }

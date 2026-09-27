@@ -125,6 +125,14 @@ const SUITE_SLOTS = {
                                  // ingest run against a real, migrated schema.
                                  // 31 is the last slot below 49152; the gap is
                                  // left for suites written in the same week.
+  sessionRenewal: 36,            // new in 2026-09-27; the refresh credential
+                                 // (migration 097): rotation, replay, the
+                                 // token_version bind and bans, on real row
+                                 // locks. Above 49152, so inside the dynamic
+                                 // range: the bind probe below is what keeps a
+                                 // port some other process borrowed from being
+                                 // picked. Not 32, which the next suite written
+                                 // alongside this one is likeliest to take.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

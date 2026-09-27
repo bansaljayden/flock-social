@@ -110,6 +110,11 @@ let verifications = [];
 let resets = [];
 let resetRequests = [];
 let bannedIdentities = [];
+// Refresh credentials the sign-in doors issued (migration 097). The exchange
+// runs on a real Postgres in __tests__/sessionRenewal.test.js; here they are
+// recorded, so a test can say what a sign-in handed out and when it said the
+// person signed in.
+let refreshRows = [];
 let nextId = 1;
 let unknownQueries = [];
 let understoodQueries = 0;
@@ -406,6 +411,16 @@ pool.query = async (text, params = []) => {
   // in, so the fixture models all three and no identity has spent a week here.
   if (sql.includes('grace_spent_identities')) return ok({ rows: [], rowCount: 0 });
 
+  // ---- refresh credentials (migration 097) --------------------------------
+  // services/refreshTokens.js issueSession, at every sign-in door.
+  if (sql.startsWith('INSERT INTO refresh_tokens')) {
+    refreshRows.push({
+      user_id: params[0], family_id: params[1], parent_id: params[2],
+      token_hash: params[3], token_version: params[4], auth_time: params[5],
+    });
+    return ok({ rows: [], rowCount: 1 });
+  }
+
   unknownQueries.push(sql);
   return { rows: [], rowCount: 0 };
 };
@@ -512,7 +527,7 @@ const put = (path, body, token) => call('PUT', path, body || {}, token);
 const get = (path, token) => call('GET', path, undefined, token);
 
 function reset() {
-  users = []; verifications = []; resets = []; resetRequests = []; bannedIdentities = [];
+  users = []; verifications = []; resets = []; resetRequests = []; bannedIdentities = []; refreshRows = [];
   nextId = 1; disconnectedRooms = []; sentMail = []; unknownQueries = []; understoodQueries = 0;
   banLookupThrows = false; verifyWrites = 0;
   authRouter.__testing.clearUnderageAttempts();
@@ -2101,19 +2116,40 @@ test('H5 — nothing lets a stale token be exchanged for a fresh one', async () 
 
   const auth = fs.readFileSync(path.join(__dirname, '..', 'routes', 'auth.js'), 'utf8');
   const usersSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
-  // Four mints in routes/auth.js (signup, login, google, apple) plus the import
-  // line, and one mint in routes/users.js plus its import line.
-  const mintCalls = (auth.match(/= signUserToken\(/g) || []).length
-    + (usersSrc.match(/signUserToken\(result\.rows\[0\]\)/g) || []).length;
-  assert.strictEqual(mintCalls, 5,
-    'a signUserToken call site appeared or vanished — re-audit which ones a bearer token alone can reach');
+  const renewalSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'refreshTokens.js'), 'utf8');
+  // A session is minted through issueSession (services/refreshTokens.js):
+  // four times in routes/auth.js (signup, login, google, apple) and once in
+  // routes/users.js. Nothing in either file calls signUserToken directly any
+  // more, so a new mint cannot slip in beside them.
+  const sessionMints = (auth.match(/= await issueSession\(/g) || []).length
+    + (usersSrc.match(/await issueSession\(result\.rows\[0\]\)/g) || []).length;
+  assert.strictEqual(sessionMints, 5,
+    'an issueSession call site appeared or vanished — re-audit which ones a bearer token alone can reach');
+  assert.strictEqual((auth.match(/signUserToken\(/g) || []).length, 0,
+    'routes/auth.js mints a token without going through issueSession');
+  assert.strictEqual((usersSrc.match(/signUserToken\(/g) || []).length, 0,
+    'routes/users.js mints a token without going through issueSession');
 
   // The only authenticated one is PUT /api/users/profile, and it mints ONLY when
   // a password actually changed — which requires the current password, and is
-  // refused outright on an OAuth row, i.e. exactly the accounts for which `iat`
-  // is the proof.
-  assert.ok(usersSrc.includes('...(hashedPassword ? { token: signUserToken(result.rows[0]) } : {})'));
+  // refused outright on an OAuth row, i.e. exactly the accounts for which the
+  // sign-in time is the proof.
+  assert.ok(usersSrc.includes('const replacement = hashedPassword ? await issueSession(result.rows[0]) : null;'));
   assert.match(usersSrc, /\} else if \(new_password\) \{[\s\S]{0,200}signs in with Google or Apple and has no password/);
+
+  // The renewal is the one exchange of an old credential for a new token that
+  // exists, and it must hand back the ORIGINAL sign-in time: the token it mints
+  // takes auth_time from the credential's row, never from the clock. The whole
+  // exchange is exercised end to end in __tests__/sessionRenewal.test.js; this
+  // pins the one line a refactor could quietly change.
+  assert.equal((renewalSrc.match(/signUserToken\(/g) || []).length, 2,
+    'services/refreshTokens.js grew a mint site: one for a sign-in, one for a renewal');
+  assert.match(renewalSrc, /token: signUserToken\(\{ id: row\.user_id, token_version: tokenVersion \}, \{ authTime \}\)/);
+  assert.match(renewalSrc, /const authTime = Number\(row\.auth_time\);/);
+  // And every sign-in the fixture saw recorded a sign-in time of now.
+  for (const r of refreshRows) {
+    assert.ok(Math.abs(r.auth_time - Math.floor(Date.now() / 1000)) < 120, 'a sign-in stamped a sign-in time other than now');
+  }
 
   // And an OAuth row cannot reach /login to mint one either: no password means
   // the compare runs against the dummy hash and the answer is 401.

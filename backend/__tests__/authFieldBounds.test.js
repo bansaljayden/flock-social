@@ -361,7 +361,7 @@ function emailOfLength(n) {
 const PROBED_FIELDS = new Set([
   'email', 'password', 'name', 'interests', 'date_of_birth',
   'token', 'credential', 'access_token', 'identityToken', 'fullName',
-  'authorizationCode', 'nonce', 'pushToken',
+  'authorizationCode', 'nonce', 'pushToken', 'refreshToken',
 ]);
 
 test('every field routes/auth.js declares is one this file bounds', () => {
@@ -567,6 +567,11 @@ test('no field on the auth router accepts an 8000-character value', async () => 
     ['POST', '/api/auth/apple', { identityToken: pad(60), fullName: { givenName: OVERSIZED } }],
     ['POST', '/api/auth/apple', { identityToken: pad(60), fullName: { familyName: OVERSIZED } }],
     ['POST', '/api/auth/logout', { pushToken: OVERSIZED }],
+    // The refresh credential, on both routes that take one. The renewal is
+    // unauthenticated by design (the access token is expected to have run
+    // out), so its bound is the only thing between a caller and the hash.
+    ['POST', '/api/auth/refresh', { refreshToken: OVERSIZED }],
+    ['POST', '/api/auth/logout', { refreshToken: OVERSIZED }],
   ];
   for (const [method, pathname, body] of cases) {
     scriptSignup();

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BirdieStill, BirdNote } from './ui/BirdieBird';
+import { signInKey } from '../lib/sessionIdentity';
 
 // Roost, the chat half of the venue advisor: a Q&A thread on the venue
 // dashboard, below the insight cards.
@@ -412,9 +413,17 @@ let threadStore = { key: null, turns: [] };
 const NO_SESSION = 'anon';
 const UNREADABLE_SESSION = 'storage-unreadable';
 
+// WHICH SIGN-IN, NOT WHICH TOKEN STRING. The token is renewed about once a day
+// for the same person now (services/api.js, RENEWING THE SESSION), and keyed on
+// its tail a renewal read as an account switch: the owner's thread was dropped,
+// and a renewal made on the way out with a question discarded that question's
+// answer as somebody else's. signInKey names the account and the moment it
+// signed in, which a renewal keeps and a switch does not. A token it cannot
+// read falls back to the tail, as before.
 const sessionKey = () => {
   try {
-    return (window.localStorage.getItem('flockToken') || '').slice(-32) || NO_SESSION;
+    const token = window.localStorage.getItem('flockToken') || '';
+    return signInKey(token) || token.slice(-32) || NO_SESSION;
   } catch (e) {
     return UNREADABLE_SESSION;
   }
