@@ -992,7 +992,11 @@ counter was made.
 tell one person from another, it does not recognise anybody, and nothing in it
 follows a person from one frame to the next: every frame is read on its own
 and forgotten, with no ids and no history. How long people stay is worked out
-from totals (Little's law), never by following anyone. The names and boxes
+from totals (Little's law), never by following anyone. The one place anything
+is followed at all is the doorway counter: to tell in from out it holds a
+nameless position on its 8 by 8 grid for the second or two a crossing takes,
+then keeps only the count. Say exactly that; do not say the sensor does no
+tracking of any kind. The names and boxes
 exist only on a unit with a screen and never leave it; what is sent is the
 same handful of counts. `test_main.py`'s `NamesKindsNeverWho` fails the build
 if any of that stops being true.

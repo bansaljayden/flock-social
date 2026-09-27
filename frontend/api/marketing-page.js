@@ -221,7 +221,7 @@ const PAGE_BLOCKS = {
     ["p", "Every vote inside a flock is a group actively deciding where to go tonight. For a bar or restaurant, that is the moment every ad channel misses: review sites show what people thought after the fact, social ads broadcast to people who aren't going out, and busyness charts are read-only. A free venue account shows a venue the flocks that picked it and lets it write a deal onto its own venue card, which a group reads when it opens that card while it is choosing."],
     ["p", "That's the business: the planning side stays free for you and your friends, and Roost, the paid plan for venues, adds the venue's own hour-by-hour demand curve and the week ahead from the same crowd numbers the app shows. No venue is being charged today. There is a paid plan for people as well, Flock Pro, with more Birdie and more crowd forecasts, and it is not on sale to the public today. If you run a venue and want in early, email social@flockcorp.com."],
     ["h2", "Who's behind it"],
-    ["p", "Flock is built by Jayden Bansal, a student founder in Bethlehem, PA. It took 1st place at PA DECA States. It exists because the group chat kept killing perfectly good Friday nights."],
+    ["p", "Flock is built by Jayden Bansal, a student founder in Bethlehem, PA. It took 1st place at PA DECA States. It exists because the group chat kept killing perfectly good Friday nights. Flock Social LLC is not affiliated with Flock Safety or its license plate cameras."],
   ],
   support: [
     ["h1", "Support"],

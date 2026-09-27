@@ -192,7 +192,8 @@ export default function AboutPage() {
         <p>
           Flock is built by Jayden Bansal, a student founder in Bethlehem, PA. It
           took 1st place at PA DECA States. It exists because the group chat kept
-          killing perfectly good Friday nights.
+          killing perfectly good Friday nights. Flock Social LLC is not affiliated
+          with Flock Safety or its license plate cameras.
         </p>
       </section>
 
