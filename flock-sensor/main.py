@@ -5816,8 +5816,16 @@ def selftest():
             if model is None:
                 print('    people counter : heat-cluster rule (see the log line above)')
             else:
-                print(f'    people counter : trained model, '
-                      f'{len(model.points(frame))} person(s) in view')
+                # Timed on this Pi and this frame, because the screen reads the
+                # camera four times a second and the counter has to keep up.
+                started = time.monotonic()
+                for _ in range(10):
+                    people, things = model.read(frame)
+                took = (time.monotonic() - started) / 10 * 1000
+                named = ', '.join(sorted(t['label'] for t in things)) or 'nothing'
+                print(f'    people counter : trained model, {len(people)} person(s) in view, '
+                      f'{took:.0f} ms a frame')
+                print(f'                     named: {named}')
         _thermal_camera.close()
     # Opening the SPI bus proves a bus, not a converter. This line used to
     # print ok on the strength of that alone, and did so for an entire evening
