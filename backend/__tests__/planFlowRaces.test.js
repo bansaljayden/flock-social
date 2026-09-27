@@ -25,6 +25,8 @@
 //      a real uuid[] and the membership its own transaction just wrote.
 //   5. A BLOCKED PAIR DOES NOT BECOME CO-MEMBERS through a third member's
 //      invite: the accept asks the whole accepted roster, both directions.
+//      Nor through the two doors at once: the accept and the share link's
+//      join both ask under the plan's row lock, forced here into both orders.
 //   6. A PLAN CREATED FOR A PAST TIME COUNTS AS HAPPENING WHEN IT WAS MADE,
 //      so the reliability tally cannot be farmed one past slot per create.
 //   7. A NEW VENUE REPLACES THE OLD ONE WHOLE: no coordinate, photo, rating
@@ -517,6 +519,96 @@ test('a member already in is not turned out by a block made since, and a plan wi
   const again = await call('POST', `/api/flocks/${flockId}/join`, { token: gus.token });
   assert.strictEqual(again.status, 200, JSON.stringify(again.body));
   assert.strictEqual(await memberStatus(flockId, gus), 'accepted');
+});
+
+// How many requests are queued behind a lock right now. Both doors wait on
+// the plan's row the same way, so this is how a test knows each one has got
+// as far as the lock before the holder lets go.
+async function waitForLockWaiters(n) {
+  for (let i = 0; i < 200; i += 1) {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`
+    );
+    if (rows[0].n >= n) return;
+    await sleep(25);
+  }
+  throw new Error(`fewer than ${n} requests ever waited on the plan's row`);
+}
+
+test('a blocked pair joining through the two doors at once cannot both be seated', async () => {
+  // Alice holds an in-app invite and Bob holds the share link, and Alice has
+  // blocked him. The link door used to ask the roster on the pool before its
+  // transaction: Bob read no Alice (she was still only invited), Alice's
+  // accept took the row, read no Bob and committed, and Bob's join then
+  // seated him beside her. Both doors ask under the row lock now, so the
+  // second to commit reads the first one's member. The interleaving is
+  // forced: the row is held while both requests queue on it, Alice first.
+  const host = await mkUser('Host TwentyFour');
+  const alice = await mkUser('Alice TwentyFour');
+  const bob = await mkUser('Bob TwentyFour');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  await addMember(flockId, alice, 'invited');
+  await block(alice, bob);
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+
+  const holder = await pool.connect();
+  let accept;
+  let walkIn;
+  try {
+    await holder.query('BEGIN');
+    await holder.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+    accept = call('POST', `/api/flocks/${flockId}/join`, { token: alice.token });
+    await waitForLockWaiters(1);
+    walkIn = call('POST', `/api/guest/${link}/join`, { token: bob.token });
+    await waitForLockWaiters(2);
+    await holder.query('COMMIT');
+  } finally {
+    holder.release();
+  }
+  const [a, b] = await Promise.all([accept, walkIn]);
+
+  assert.strictEqual(a.status, 200, JSON.stringify(a.body));
+  assert.strictEqual(await memberStatus(flockId, alice), 'accepted', 'Alice took the row first and is in');
+  assert.strictEqual(b.status, 403, JSON.stringify(b.body));
+  assert.deepStrictEqual(b.body, { error: 'You cannot join this plan.', code: 'CANNOT_JOIN' },
+    'the link door reads her under the lock, and says it the way the accept does');
+  assert.strictEqual(await memberStatus(flockId, bob), undefined, 'and nothing was written for Bob');
+});
+
+test('the accept is refused the same way when the walk-in commits first', async () => {
+  // The other order: Bob's link join takes the row first and is seated, and
+  // Alice's accept, queued behind it, reads him and is refused with the
+  // code the app takes the invite card away on.
+  const host = await mkUser('Host TwentyFive');
+  const alice = await mkUser('Alice TwentyFive');
+  const bob = await mkUser('Bob TwentyFive');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  await addMember(flockId, alice, 'invited');
+  await block(bob, alice);
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+
+  const holder = await pool.connect();
+  let walkIn;
+  let accept;
+  try {
+    await holder.query('BEGIN');
+    await holder.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+    walkIn = call('POST', `/api/guest/${link}/join`, { token: bob.token });
+    await waitForLockWaiters(1);
+    accept = call('POST', `/api/flocks/${flockId}/join`, { token: alice.token });
+    await waitForLockWaiters(2);
+    await holder.query('COMMIT');
+  } finally {
+    holder.release();
+  }
+  const [b, a] = await Promise.all([walkIn, accept]);
+
+  assert.strictEqual(b.status, 200, JSON.stringify(b.body));
+  assert.strictEqual(b.body.joined, true);
+  assert.strictEqual(a.status, 403, JSON.stringify(a.body));
+  assert.deepStrictEqual(a.body, { error: 'You cannot join this plan.', code: 'CANNOT_JOIN' });
+  assert.strictEqual(await memberStatus(flockId, alice), 'invited');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
