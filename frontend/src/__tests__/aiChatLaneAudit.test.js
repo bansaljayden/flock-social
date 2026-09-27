@@ -24,6 +24,6 @@ test('a dropped reply reads in Birdie voice, not as a form submission', () => {
 
 test('Roost renders a 4xx sentence as a quiet answer and keeps the error row for 5xx', () => {
   const chat = read('components/VenueAdvisorChat.js');
-  expect(chat).toContain("const said = [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12");
+  expect(chat).toContain(": [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12");
   expect(chat).toContain("? (said ? { ...turn, status: 'done', answer: { mode: 'refusal', text: said } } : { ...turn, status: 'error' })");
 });
