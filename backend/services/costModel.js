@@ -378,7 +378,7 @@ const FIXED_MONTHLY = [
     kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
-    note: 'Dedicated key, commercial use permitted. Bought monthly rather than at the $90 annual rate because only a three-month test was committed. Feeds scripts/ml/collectSportsSchedules.js, which is a monthly chore rather than a cron.',
+    note: 'Dedicated key, commercial use permitted. Bought monthly rather than at the $90 annual rate because only a three-month test was committed. Feeds scripts/ml/collectSportsSchedules.js, which the hourly collector runs about once a day.',
   },
   {
     id: 'vercel',
@@ -853,7 +853,7 @@ const DEPENDENCIES = [
     fixedId: 'sportsdb',
     configuredEnv: ['SPORTSDB_API_KEY'],
     observedLineId: null,
-    usageNote: 'Flat tier, run as a monthly chore rather than a cron, so usage does not move the bill.',
+    usageNote: 'Flat tier, refreshed about once a day from the hourly collector (a few dozen requests), so usage does not move the bill.',
   },
 
   // -- Free or unused. Every one is $0, and every one says why. --------------
