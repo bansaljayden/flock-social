@@ -112,7 +112,7 @@ const RC_MIN_KEY_LENGTH = 16;
 const APPLE_COMMISSION_PCT = costModel.RATES.stores.appleStandardPct;
 
 const EXPENSE_KINDS = ['infrastructure', 'tooling', 'legal', 'other'];
-const EXPENSE_CADENCES = ['monthly', 'yearly', 'usage', 'one_time'];
+const EXPENSE_CADENCES = ['monthly', 'quarterly', 'yearly', 'usage', 'one_time'];
 const EXPENSE_LIST_LIMIT = 500;
 const RENEWAL_WINDOW_DAYS = 60;
 
@@ -403,6 +403,10 @@ function expenseFromRow(r) {
     verified: r.verified === true,
     note: r.note || null,
     replacesLine: r.replaces_line || null,
+    // Migration 096. A credit is money back (a refund, a vendor credit): the
+    // amount is stored positive like every other row and subtracted from
+    // every total it lands in.
+    isCredit: r.is_credit === true,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   };
 }
@@ -411,7 +415,7 @@ async function readExpenses(db = pool) {
   const r = await db.query(
     `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
             last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-            active, verified, note, replaces_line, updated_at
+            active, verified, note, replaces_line, is_credit, updated_at
        FROM business_expenses
       ORDER BY active DESC, kind, lower(vendor), id
       LIMIT ${EXPENSE_LIST_LIMIT}`
@@ -429,6 +433,7 @@ const KIND_WORDS = {
 };
 const CADENCE_WORDS = {
   monthly: 'monthly', month: 'monthly', mo: 'monthly',
+  quarterly: 'quarterly', quarter: 'quarterly', qtr: 'quarterly', every_3_months: 'quarterly', every_three_months: 'quarterly',
   yearly: 'yearly', year: 'yearly', annual: 'yearly', annually: 'yearly', yr: 'yearly',
   usage: 'usage', metered: 'usage',
   one_time: 'one_time', onetime: 'one_time', once: 'one_time', one_off: 'one_time',
@@ -456,10 +461,12 @@ function normalizeExpenseAliases(raw) {
   alias('last_charged_on', 'lastChargedOn');
   alias('renews_on', 'renewsOn');
   alias('replaces_line', 'replacesLine');
+  alias('is_credit', 'isCredit');
+  alias('credit', 'isCredit');
   if (has(out, 'kind')) out.kind = foldWord(out.kind, KIND_WORDS);
   if (has(out, 'cadence')) out.cadence = foldWord(out.cadence, CADENCE_WORDS);
   if (typeof out.currency === 'string') out.currency = out.currency.trim().toUpperCase();
-  for (const b of ['active', 'verified']) {
+  for (const b of ['active', 'verified', 'isCredit']) {
     if (typeof out[b] === 'string') {
       const k = out[b].trim().toLowerCase();
       if (has(BOOL_WORDS, k)) out[b] = BOOL_WORDS[k];
@@ -513,6 +520,7 @@ function expenseRowFromInput(raw) {
     verified: raw.verified === true,
     note: text(raw.note, 500),
     replacesLine: raw.replacesLine || null,
+    isCredit: raw.isCredit === true,
   };
 }
 
@@ -520,18 +528,18 @@ function expenseParams(row) {
   return [
     row.vendor, row.product, row.category, row.kind, row.amountCents, row.currency,
     row.cadence, row.lastChargedOn, row.renewsOn, row.active, row.verified, row.note,
-    row.replacesLine,
+    row.replacesLine, row.isCredit === true,
   ];
 }
 
 const EXPENSE_INSERT_SQL = `INSERT INTO business_expenses
        (vendor, product, category, kind, amount_cents, currency, cadence,
-        last_charged_on, renews_on, active, verified, note, replaces_line,
+        last_charged_on, renews_on, active, verified, note, replaces_line, is_credit,
         updated_at, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
      RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-               active, verified, note, replaces_line, updated_at`;
+               active, verified, note, replaces_line, is_credit, updated_at`;
 
 // A whole-row write by id. The admin PUT route and the import both use it, so
 // an edit on the screen and a corrected paste store a bill the same way.
@@ -539,37 +547,41 @@ const EXPENSE_UPDATE_SQL = `UPDATE business_expenses
         SET vendor = $2, product = $3, category = $4, kind = $5, amount_cents = $6,
             currency = $7, cadence = $8, last_charged_on = $9, renews_on = $10,
             active = $11, verified = $12, note = $13, replaces_line = $14,
-            updated_at = NOW(), updated_by = $15
+            is_credit = $15, updated_at = NOW(), updated_by = $16
       WHERE id = $1
       RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                 last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-                active, verified, note, replaces_line, updated_at`;
+                active, verified, note, replaces_line, is_credit, updated_at`;
 
-// The import's insert. The same vendor, product and cadence is the same bill,
-// and migration 080 makes that a unique key (business_expenses_bill_key), so
-// when a second import inserted the bill after this one looked for it, this
-// insert waits for that one to commit and then does nothing, and the import
-// reads the row again and merges into it instead of adding a copy.
+// The import's insert. The same vendor, product, cadence and charge-or-credit
+// is the same bill, and migrations 080 and 096 make that a unique key
+// (business_expenses_bill_key), so when a second import inserted the bill
+// after this one looked for it, this insert waits for that one to commit and
+// then does nothing, and the import reads the row again and merges into it
+// instead of adding a copy.
 const EXPENSE_IMPORT_INSERT_SQL = `INSERT INTO business_expenses
        (vendor, product, category, kind, amount_cents, currency, cadence,
-        last_charged_on, renews_on, active, verified, note, replaces_line,
+        last_charged_on, renews_on, active, verified, note, replaces_line, is_credit,
         updated_at, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14)
-     ON CONFLICT (lower(vendor), lower(COALESCE(product, '')), cadence) DO NOTHING
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
+     ON CONFLICT (lower(vendor), lower(COALESCE(product, '')), cadence, is_credit) DO NOTHING
      RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-               active, verified, note, replaces_line, updated_at`;
+               active, verified, note, replaces_line, is_credit, updated_at`;
 
-// The import's match: the same vendor, product and cadence, ignoring case,
-// is the same bill, so pasting the list again updates rather than doubles it.
-// Locked, because the merge below reads the row before it writes it.
+// The import's match: the same vendor, product and cadence, ignoring case, and
+// the same side (a charge or a credit), is the same bill, so pasting the list
+// again updates rather than doubles it, and a refund pasted beside the charge
+// it refunds never overwrites that charge. Locked, because the merge below
+// reads the row before it writes it.
 const EXPENSE_MATCH_SQL = `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
             last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-            active, verified, note, replaces_line, updated_at
+            active, verified, note, replaces_line, is_credit, updated_at
        FROM business_expenses
       WHERE lower(vendor) = lower($1)
         AND lower(COALESCE(product, '')) = lower(COALESCE($2, ''))
         AND cadence = $3
+        AND is_credit = $4
       ORDER BY id
       FOR UPDATE`;
 
@@ -605,6 +617,9 @@ function mergeIntoStored(stored, item) {
     verified: stored.verified,
     note: stored.note,
     replacesLine: stored.replacesLine,
+    // Part of the key the row was matched on, like vendor and cadence, so it
+    // is never changed by a merge.
+    isCredit: stored.isCredit,
   };
   for (const [field, keys] of Object.entries(IMPORT_FIELD_KEYS)) {
     if (keys.some((k) => has(item, k) && item[k] !== undefined)) merged[field] = incoming[field];
@@ -637,7 +652,7 @@ async function importExpenses(items, userId, db = pool) {
     await client.query('BEGIN');
     for (const item of items) {
       const row = expenseRowFromInput(item);
-      const key = [row.vendor, row.product, row.cadence];
+      const key = [row.vendor, row.product, row.cadence, row.isCredit];
       const found = await client.query(EXPENSE_MATCH_SQL, key);
       if (found.rows && found.rows.length > 0) {
         await mergeInto(found.rows, item);
@@ -673,12 +688,18 @@ async function importExpenses(items, userId, db = pool) {
 //   * expense rows: counted while active and in USD.
 //
 // Two figures come out of every line:
-//   perMonth   the run rate. Monthly and usage bills in full, yearly bills at
-//              a twelfth, one-time bills never. The sum is the monthly burn.
+//   perMonth   the run rate. Monthly and usage bills in full, quarterly bills
+//              at a third, yearly bills at a twelfth, one-time bills never.
+//              The sum is the monthly burn.
 //   thisMonth  what belongs to this calendar month: the run rate, plus any
-//              one-time bill charged this month. Yearly bills are spread, so a
-//              renewal does not make one month look eleven times worse; the
-//              renewal list below is where the cash dates are.
+//              one-time bill charged this month. Quarterly and yearly bills
+//              are spread, so a renewal does not make one month look several
+//              times worse; the renewal list below is where the cash dates are.
+//
+// A credit row (is_credit, migration 096) is the same arithmetic with the sign
+// turned over: a quarterly credit takes a third of itself off the burn, a
+// one-time refund dated this month comes off this month. Its kind and category
+// totals fall by the same figures, so every table still adds up to the total.
 
 const KIND_LABEL = {
   infrastructure: 'Running the app',
@@ -693,6 +714,8 @@ function perMonthCents(cadence, amountCents) {
     case 'monthly':
     case 'usage':
       return amountCents;
+    case 'quarterly':
+      return amountCents / 3;
     case 'yearly':
       return amountCents / 12;
     default:
@@ -704,7 +727,7 @@ function perMonthCents(cadence, amountCents) {
 // worked out from the last charge.
 function nextChargeOn(x, todayYmd) {
   if (x.renewsOn && x.renewsOn >= todayYmd) return { on: x.renewsOn, estimated: false };
-  const step = x.cadence === 'monthly' ? 1 : x.cadence === 'yearly' ? 12 : null;
+  const step = { monthly: 1, quarterly: 3, yearly: 12 }[x.cadence] || null;
   const base = x.renewsOn || x.lastChargedOn;
   if (!step || !base) return null;
   for (let k = 1; k <= 240; k += 1) {
@@ -756,9 +779,11 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Only a row that is itself counted may take a code line out of the total:
   // active, and in dollars. A euro bill linked to Railway would otherwise
   // remove the $20 and add nothing, since nothing here converts currencies.
+  // Nor may a credit: it has no code figure to stand in for (096 refuses the
+  // pair in the table as well).
   const replacedBy = new Map();
   for (const x of expenses) {
-    if (x.active && x.currency === 'USD' && x.replacesLine) {
+    if (x.active && x.currency === 'USD' && x.replacesLine && !x.isCredit) {
       if (!replacedBy.has(x.replacesLine)) replacedBy.set(x.replacesLine, []);
       replacedBy.get(x.replacesLine).push(x.id);
     }
@@ -785,6 +810,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       lastChargedOn: x.lastChargedOn,
       renewsOn: x.renewsOn,
       replacesLine: x.replacesLine,
+      isCredit: x.isCredit === true,
       counted: x.active && usd,
       inactive: !x.active,
       nonUsd: !usd,
@@ -792,10 +818,13 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   }
 
   for (const l of lines) {
+    const sign = l.isCredit ? -1 : 1;
     const run = l.counted ? perMonthCents(l.cadence, l.amountCents) : 0;
     const once = l.counted && l.cadence === 'one_time' && inMonth(l.lastChargedOn, month) ? l.amountCents : 0;
-    l.perMonthCents = Math.round(run);
-    l.thisMonthCents = Math.round(run + once);
+    // Rounded before the sign goes on, so a credit and a charge of the same
+    // amount cancel to exactly zero (Math.round(-0.5) is 0, not -1).
+    l.perMonthCents = sign * Math.round(run) || 0;
+    l.thisMonthCents = sign * Math.round(run + once) || 0;
   }
 
   const byKind = {};
@@ -819,11 +848,12 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
-  // dates, and the panel says so rather than guessing one.
+  // dates, and the panel says so rather than guessing one. A credit is money
+  // coming back, not a charge to plan for, so it is not listed.
   const horizon = addDaysYmd(month.todayYmd, RENEWAL_WINDOW_DAYS);
   const upcoming = [];
   for (const x of expenses) {
-    if (!x.active || (x.cadence !== 'monthly' && x.cadence !== 'yearly')) continue;
+    if (!x.active || x.isCredit || !['monthly', 'quarterly', 'yearly'].includes(x.cadence)) continue;
     const next = nextChargeOn(x, month.todayYmd);
     if (!next || next.on > horizon) continue;
     upcoming.push({
@@ -847,7 +877,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   for (const c of lines) {
     if (c.origin === 'expense' || !c.counted || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
     for (const x of expenses) {
-      if (!x.active || x.replacesLine) continue;
+      if (!x.active || x.replacesLine || x.isCredit) continue;
       const name = `${x.vendor} ${x.product || ''}`;
       if (CODE_LINE_LOOKALIKE[c.id].test(name) && fits(c.cadence, x.cadence)) {
         possibleDoubles.push({ codeLineId: c.id, codeLabel: c.label, expenseId: x.id, expenseLabel: x.product ? `${x.vendor}, ${x.product}` : x.vendor });
@@ -874,6 +904,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       currency: l.currency,
       // Named so the screen can say the code line it points at still counts.
       replacesLine: l.replacesLine || null,
+      isCredit: l.isCredit === true,
     })),
     undatedCodeYearly: lines.filter((l) => l.origin === 'code' && l.cadence === 'yearly' && l.counted).length,
   };
@@ -2813,6 +2844,7 @@ module.exports = {
   EXPENSE_LIST_LIMIT,
   EXPENSE_INSERT_SQL,
   EXPENSE_UPDATE_SQL,
+  EXPENSE_IMPORT_INSERT_SQL,
   HUB_TZ,
   __test: {
     resetCache: () => externalCache.clear(),

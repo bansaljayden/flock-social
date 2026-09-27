@@ -2877,11 +2877,19 @@ function expenseRules(prefix) {
       .custom(moneyHub.isYmd).withMessage('renewsOn must be a date, YYYY-MM-DD'),
     f('active').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('active must be true or false'),
     f('verified').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('verified must be true or false'),
+    // Money back rather than a charge (migration 096). The amount stays a
+    // positive figure; the flag is what turns it into a subtraction.
+    f('isCredit').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('isCredit must be true or false'),
     optionalText('note', 500),
     f('replacesLine')
       .optional({ values: 'null' })
       .custom((v) => isText(v) && EXPENSE_CODE_LINES.includes(v))
       .withMessage(`replacesLine must be one of ${EXPENSE_CODE_LINES.join(', ')}`),
+    // A refund has no code figure to stand in for, and the table refuses the
+    // pair too (business_expenses_credit_line_check), so say it here as a 400.
+    whole()
+      .custom((item) => !(isPlainObject(item) && item.isCredit === true && item.replacesLine))
+      .withMessage('a credit cannot count instead of a code line; leave replacesLine empty'),
   ];
 }
 
@@ -2912,10 +2920,11 @@ router.get('/expenses', async (req, res) => {
   }
 });
 
-// The same vendor, product and cadence is the same bill (migration 080's
-// business_expenses_bill_key). A second copy typed into the add or edit form is
-// a conflict to show the person, not a server fault.
-const DUPLICATE_BILL = 'That bill is already on the list: same vendor, product and how often. Edit that row, or give this one a different product name.';
+// The same vendor, product and cadence, and the same side (charge or credit),
+// is the same bill (business_expenses_bill_key, migrations 080 and 096). A
+// second copy typed into the add or edit form is a conflict to show the
+// person, not a server fault.
+const DUPLICATE_BILL = 'That bill is already on the list: same vendor, product, how often, and charge or credit. Edit that row, or give this one a different product name.';
 const isDuplicateBill = (err) => !!err && err.code === '23505' && err.constraint === 'business_expenses_bill_key';
 
 router.post('/expenses', normalizeExpenseBody, expenseRules(''), async (req, res) => {
@@ -2967,7 +2976,8 @@ router.delete('/expenses/:id', async (req, res) => {
 
 // Paste the whole list once. Every row is validated before any is written,
 // the write is one transaction, and a bill already on the list (same vendor,
-// product and cadence, ignoring case) is updated rather than added again, so
+// product and cadence, ignoring case, and the same charge or credit side) is
+// updated rather than added again, so
 // pasting the list a second time corrects it instead of doubling it. A field
 // the paste leaves out keeps what is stored.
 router.post(

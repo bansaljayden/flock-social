@@ -323,6 +323,7 @@ function dbRow(x) {
     verified: x.verified === true,
     note: x.note || null,
     replaces_line: x.replaces_line || null,
+    is_credit: x.is_credit === true,
     updated_at: new Date('2026-09-20T12:00:00Z'),
   };
 }
@@ -790,7 +791,7 @@ function writeHandlers() {
     inserted,
     handlers: [
       [/^INSERT INTO business_expenses/, (p) => {
-        const row = { id: nextId++, vendor: p[0], product: p[1], category: p[2], kind: p[3], amount_cents: p[4], currency: p[5], cadence: p[6], last_charged_on: p[7], renews_on: p[8], active: p[9], verified: p[10], note: p[11], replaces_line: p[12] };
+        const row = { id: nextId++, vendor: p[0], product: p[1], category: p[2], kind: p[3], amount_cents: p[4], currency: p[5], cadence: p[6], last_charged_on: p[7], renews_on: p[8], active: p[9], verified: p[10], note: p[11], replaces_line: p[12], is_credit: p[13] };
         inserted.push({ params: p, row });
         return { rows: [dbRow(row)], rowCount: 1 };
       }],
@@ -835,7 +836,8 @@ test('POST /expenses validates shape first and stores cents, stamped by the admi
   assert.strictEqual(p[6], 'yearly', '"annual" is folded onto the stored cadence');
   assert.strictEqual(p[9], true, 'a new bill is active unless it says otherwise');
   assert.strictEqual(p[12], 'domain');
-  assert.strictEqual(p[13], 9, 'updated_by is the admin who wrote it');
+  assert.strictEqual(p[13], false, 'a bill is a charge unless it says it is a credit');
+  assert.strictEqual(p[14], 9, 'updated_by is the admin who wrote it');
   assert.strictEqual(ok.body.expense.amountCents, 1108);
 });
 
@@ -912,7 +914,7 @@ test('import: pasting the list again updates the matching bill, and keeps what t
   assert.strictEqual(r.body.updated, 1);
   assert.strictEqual(r.body.inserted, 0);
   assert.strictEqual(w.inserted.length, 0);
-  assert.deepStrictEqual(matches[0].p, ['railway', 'pro', 'monthly'], 'matched on vendor, product and cadence');
+  assert.deepStrictEqual(matches[0].p, ['railway', 'pro', 'monthly', false], 'matched on vendor, product, cadence and charge or credit');
   assert.match(matches[0].sql, /FOR UPDATE/, 'the row is locked between the read and the write');
   const u = updates[0];
   assert.strictEqual(u[0], 7, 'written back by id');
@@ -920,7 +922,8 @@ test('import: pasting the list again updates the matching bill, and keeps what t
   assert.strictEqual(u[9], '2026-10-16', 'a renewal date the paste did not mention is kept');
   assert.strictEqual(u[12], 'typed on the screen', 'so is the note');
   assert.strictEqual(u[11], true, 'and the verified mark');
-  assert.strictEqual(u[14], 9, 'stamped by the admin');
+  assert.strictEqual(u[14], false, 'still a charge');
+  assert.strictEqual(u[15], 9, 'stamped by the admin');
 });
 
 test('import: a failed write rolls the whole paste back', async () => {
@@ -1210,7 +1213,7 @@ test('a bill in another currency cannot take a code line out of the total', () =
   assert.strictEqual(pic.lines.find((l) => l.id === 'railway').counted, true, 'the $20 code line still counts');
   assert.strictEqual(pic.totals.perMonthCents, base.totals.perMonthCents, 'nothing left and nothing arrived');
   assert.deepStrictEqual(pic.replaced, []);
-  assert.deepStrictEqual(pic.nonUsd, [{ label: 'Railway', amountCents: 1900, currency: 'EUR', replacesLine: 'railway' }]);
+  assert.deepStrictEqual(pic.nonUsd, [{ label: 'Railway', amountCents: 1900, currency: 'EUR', replacesLine: 'railway', isCredit: false }]);
 });
 
 test('import: a bill another import inserted a moment earlier is merged into, not added twice', async () => {
@@ -1228,7 +1231,7 @@ test('import: a bill another import inserted a moment earlier is merged into, no
         ? { rows: [], rowCount: 0 }
         : { rows: [dbRow({ id: 31, vendor: 'Registrar', product: 'flockcorp.com', kind: 'infrastructure', amount_cents: 1108, cadence: 'yearly', renews_on: '2027-08-01' })], rowCount: 1 };
     }],
-    [/^INSERT INTO business_expenses .* ON CONFLICT \(lower\(vendor\), lower\(COALESCE\(product, ''\)\), cadence\) DO NOTHING/, (p) => {
+    [/^INSERT INTO business_expenses .* ON CONFLICT \(lower\(vendor\), lower\(COALESCE\(product, ''\)\), cadence, is_credit\) DO NOTHING/, (p) => {
       conflictInserts.push(p);
       return { rows: [], rowCount: 0 };
     }],
@@ -1269,6 +1272,193 @@ test('the add and edit forms answer a duplicate bill with 409, not a server erro
 test('the bill key is unique in the migration, so the database holds the rule and not only the import', () => {
   const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '080_business_expenses.sql'), 'utf8');
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS business_expenses_bill_key\s+ON business_expenses \(lower\(vendor\), lower\(COALESCE\(product, ''\)\), cadence\)/);
+  // 096 widens it to charge or credit, under the same name, and the import's
+  // ON CONFLICT names exactly those four expressions.
+  const sql096 = fs.readFileSync(path.join(__dirname, '..', 'migrations', '096_business_expense_quarterly_credits.sql'), 'utf8');
+  assert.match(sql096, /CREATE UNIQUE INDEX business_expenses_bill_key\s+ON business_expenses \(lower\(vendor\), lower\(COALESCE\(product, ''\)\), cadence, is_credit\)/);
+  assert.match(moneyHub.EXPENSE_IMPORT_INSERT_SQL, /ON CONFLICT \(lower\(vendor\), lower\(COALESCE\(product, ''\)\), cadence, is_credit\)/);
+});
+
+// ===========================================================================
+// 6e. QUARTERLY BILLS AND CREDITS (migration 096)
+// ===========================================================================
+
+test('the cadence list in the migration is the one the routes accept', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '096_business_expense_quarterly_credits.sql'), 'utf8');
+  const m = /CHECK \(cadence IN \(([^)]*)\)\)/.exec(sql);
+  assert.ok(m, '096 names the cadence list');
+  const inTable = m[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+  assert.deepStrictEqual([...inTable].sort(), [...moneyHub.EXPENSE_CADENCES].sort());
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS is_credit BOOLEAN NOT NULL DEFAULT false/);
+  assert.match(sql, /business_expenses_credit_line_check\s+CHECK \(NOT is_credit OR replaces_line IS NULL\)/);
+});
+
+test('a quarterly bill is a third a month in the burn and this month, and renews three months on', () => {
+  const lastCharged = moneyHub.__test.addMonthsYmd(MONTH.todayYmd, -2);
+  const pic = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'Quarterly tool', kind: 'tooling', category: 'Developer tools', amountCents: 3000, cadence: 'quarterly', lastChargedOn: lastCharged })],
+    month: MONTH,
+  });
+  const line = pic.lines.find((l) => l.expenseId === 1);
+  assert.strictEqual(line.perMonthCents, 1000);
+  assert.strictEqual(line.thisMonthCents, 1000, 'spread like a yearly bill, not charged in full in its renewal month');
+  const kind = Object.fromEntries(pic.byKind.map((k) => [k.kind, k]));
+  assert.strictEqual(kind.tooling.perMonthCents, 1000);
+  assert.ok(pic.byCategory.some((c) => c.category === 'Developer tools' && c.perMonthCents === 1000));
+  const due = pic.upcoming.find((u) => u.expenseId === 1);
+  assert.ok(due, 'a quarterly bill is in the renewals');
+  assert.strictEqual(due.on, moneyHub.__test.addMonthsYmd(lastCharged, 3), 'three months after the last charge');
+  assert.strictEqual(due.estimated, true);
+  assert.strictEqual(due.cadence, 'quarterly');
+
+  const ledger = moneyHub.costsLedger({ expenses: [expense({ id: 1, kind: 'tooling', amountCents: 3000, cadence: 'quarterly' })], month: MONTH });
+  assert.strictEqual(ledger.toolingMonthlyUsd, 10);
+});
+
+test('a credit comes off every total, its kind and its category, and is never a renewal or a stand-in', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Tool', kind: 'tooling', category: 'Developer tools', amountCents: 5000, cadence: 'monthly' }),
+      expense({ id: 2, vendor: 'Tool', product: 'Startup credit', kind: 'tooling', category: 'Developer tools', amountCents: 1500, cadence: 'monthly', isCredit: true, lastChargedOn: MONTH.startYmd }),
+      expense({ id: 3, vendor: 'Filing', kind: 'legal', category: 'Company', amountCents: 12500, cadence: 'one_time', lastChargedOn: MONTH.startYmd }),
+      expense({ id: 4, vendor: 'Filing', product: 'Refund', kind: 'legal', category: 'Company', amountCents: 2500, cadence: 'one_time', isCredit: true, lastChargedOn: MONTH.startYmd }),
+      expense({ id: 5, vendor: 'Quarterly', kind: 'other', category: 'Misc', amountCents: 900, cadence: 'quarterly', isCredit: true }),
+      // A credit naming a code line is refused by the route and the table;
+      // should one ever arrive, the code figure still counts.
+      expense({ id: 6, vendor: 'Railway', kind: 'infrastructure', amountCents: 500, cadence: 'monthly', isCredit: true, replacesLine: 'railway' }),
+    ],
+    month: MONTH,
+  });
+  const line = (id) => pic.lines.find((l) => l.expenseId === id);
+  assert.strictEqual(line(2).perMonthCents, -1500);
+  assert.strictEqual(line(2).isCredit, true);
+  assert.strictEqual(line(4).perMonthCents, 0, 'a one-time refund is not in the run rate');
+  assert.strictEqual(line(4).thisMonthCents, -2500, 'and comes off the month it is dated in');
+  assert.strictEqual(line(5).perMonthCents, -300, 'a quarterly credit is a third a month');
+
+  const kind = Object.fromEntries(pic.byKind.map((k) => [k.kind, k]));
+  assert.strictEqual(kind.tooling.perMonthCents, 5000 - 1500);
+  assert.strictEqual(kind.legal.thisMonthCents, 12500 - 2500);
+  assert.strictEqual(kind.other.perMonthCents, -300, 'a kind holding only a credit reads below zero, it is not floored');
+  const cat = Object.fromEntries(pic.byCategory.map((c) => [c.category, c]));
+  assert.strictEqual(cat['Developer tools'].perMonthCents, 3500);
+  assert.strictEqual(cat.Company.thisMonthCents, 10000);
+
+  assert.strictEqual(pic.lines.find((l) => l.id === 'railway').counted, true, 'a credit never takes a code line out');
+  assert.deepStrictEqual(pic.replaced, []);
+  assert.strictEqual(
+    pic.totals.perMonthCents,
+    base.totals.perMonthCents + 5000 - 1500 - 300 - 500,
+    'the burn falls by each credit\'s run rate'
+  );
+  assert.strictEqual(
+    pic.totals.thisMonthCents,
+    base.totals.thisMonthCents + 5000 - 1500 + 12500 - 2500 - 300 - 500,
+  );
+  const sumKinds = pic.byKind.reduce((s, k) => s + k.perMonthCents, 0);
+  const sumCats = pic.byCategory.reduce((s, c) => s + c.perMonthCents, 0);
+  assert.strictEqual(sumKinds, pic.totals.perMonthCents, 'the kinds still add up to the total');
+  assert.strictEqual(sumCats, pic.totals.perMonthCents, 'and so do the categories');
+  assert.ok(!pic.upcoming.some((u) => u.expenseId === 2), 'a credit is not a charge to plan for');
+  assert.ok(!pic.possibleDoubles.some((d) => d.expenseId === 6), 'nor a lookalike of a code line');
+
+  const ledger = moneyHub.costsLedger({ expenses: [expense({ id: 1, kind: 'tooling', amountCents: 5000 }), expense({ id: 2, kind: 'tooling', amountCents: 1500, isCredit: true })], month: MONTH });
+  assert.strictEqual(ledger.toolingMonthlyUsd, 35, 'the Costs tab reads the same net figure');
+});
+
+test('a credit and a charge of an odd amount cancel to exactly zero', () => {
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, kind: 'other', category: 'Z', amountCents: 1001, cadence: 'yearly' }),
+      expense({ id: 2, kind: 'other', category: 'Z', amountCents: 1001, cadence: 'yearly', isCredit: true, product: 'refund' }),
+    ],
+    month: MONTH,
+  });
+  const cat = pic.byCategory.find((c) => c.category === 'Z');
+  assert.strictEqual(cat.perMonthCents, 0);
+  assert.ok(Object.is(pic.lines.find((l) => l.expenseId === 2).perMonthCents, -83));
+});
+
+test('the add form takes a credit and a quarterly bill, and refuses what does not fit', async () => {
+  const w = writeHandlers();
+  handlers = w.handlers;
+  const bad = [
+    [{ vendor: 'X', kind: 'other', cadence: 'biweekly', amount: 1 }, /cadence must be one of monthly, quarterly, yearly, usage, one_time/],
+    [{ vendor: 'X', kind: 'other', cadence: 'monthly', amount: 1, isCredit: 'maybe' }, /isCredit must be true or false/],
+    [{ vendor: 'X', kind: 'other', cadence: 'monthly', amount: 1, isCredit: 1 }, /isCredit must be true or false/],
+    [{ vendor: 'X', kind: 'other', cadence: 'monthly', amount: -5, isCredit: true }, /amount must be/],
+    [{ vendor: 'X', kind: 'other', cadence: 'monthly', amountCents: -500, isCredit: true }, /amount must be/],
+    [{ vendor: 'Railway', kind: 'infrastructure', cadence: 'monthly', amount: 5, isCredit: true, replacesLine: 'railway' }, /a credit cannot count instead of a code line/],
+  ];
+  for (const [body, re] of bad) {
+    const r = await req('POST', '/api/admin/expenses', body);
+    assert.strictEqual(r.status, 400, `expected 400 for ${JSON.stringify(body)}: ${r.text}`);
+    assert.match(r.body.error, re);
+  }
+  assert.strictEqual(w.inserted.length, 0);
+
+  let r = await req('POST', '/api/admin/expenses', { vendor: 'Host', product: 'Refund', kind: 'infrastructure', cadence: 'one_time', amount: '12.50', isCredit: true });
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(w.inserted[0].params[4], 1250, 'the amount is stored positive');
+  assert.strictEqual(w.inserted[0].params[13], true, 'the flag makes it a credit');
+  assert.strictEqual(r.body.expense.isCredit, true);
+
+  r = await req('POST', '/api/admin/expenses', { vendor: 'Tool', kind: 'tooling', cadence: 'Quarter', amount: 30 });
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(w.inserted[1].params[6], 'quarterly', '"Quarter" is folded onto the stored cadence');
+  assert.strictEqual(w.inserted[1].params[13], false);
+  assert.strictEqual(r.body.expense.isCredit, false);
+});
+
+test('import: quarterly bills and credits in one paste, and a credit never merges into the charge it refunds', async () => {
+  const w = writeHandlers();
+  const matches = [];
+  handlers = [
+    [/^SELECT .* FROM business_expenses WHERE lower\(vendor\)/, (p, sql) => { matches.push({ p, sql }); return { rows: [], rowCount: 0 }; }],
+    ...w.handlers,
+  ];
+  const r = await req('POST', '/api/admin/expenses/import', [
+    { vendor: 'Host', product: 'Setup', kind: 'infra', cadence: 'one-time', amount: 50 },
+    { vendor: 'Host', product: 'Setup', kind: 'infra', cadence: 'one-time', amount: 20, is_credit: 'yes' },
+    { vendor: 'Tool', kind: 'tools', cadence: 'quarterly', amount_cents: 9000, credit: false },
+  ]);
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(r.body.inserted, 3);
+  assert.deepStrictEqual(matches.map((m) => m.p), [
+    ['Host', 'Setup', 'one_time', false],
+    ['Host', 'Setup', 'one_time', true],
+    ['Tool', null, 'quarterly', false],
+  ], 'the charge and its refund are looked up as two bills');
+  assert.match(matches[0].sql, /AND is_credit = \$4/);
+  assert.deepStrictEqual(w.inserted.map((x) => x.params[13]), [false, true, false]);
+  assert.deepStrictEqual(w.inserted.map((x) => x.params[6]), ['one_time', 'one_time', 'quarterly']);
+  assert.deepStrictEqual(w.inserted.map((x) => x.params[4]), [5000, 2000, 9000]);
+
+  const bad = await req('POST', '/api/admin/expenses/import', [
+    { vendor: 'A', kind: 'other', cadence: 'quarterly', amount: 1 },
+    { vendor: 'B', kind: 'other', cadence: 'monthly', amount: 1, isCredit: 'sometimes' },
+  ]);
+  assert.strictEqual(bad.status, 400);
+  assert.match(bad.body.error, /^Row 2: isCredit must be true or false/);
+});
+
+test('import: a pasted credit keeps its side when it updates the stored credit', async () => {
+  const updates = [];
+  handlers = [
+    [/^SELECT .* FROM business_expenses WHERE lower\(vendor\)/, () => ({
+      rows: [dbRow({ id: 12, vendor: 'Host', product: 'Setup', kind: 'infrastructure', amount_cents: 2000, cadence: 'one_time', is_credit: true })], rowCount: 1,
+    })],
+    [/^UPDATE business_expenses SET vendor/, (p) => {
+      updates.push(p);
+      return { rows: [dbRow({ id: p[0], vendor: p[1], product: p[2], kind: p[4], amount_cents: p[5], cadence: p[7], is_credit: p[14] })], rowCount: 1 };
+    }],
+  ];
+  const r = await req('POST', '/api/admin/expenses/import', [{ vendor: 'host', product: 'setup', kind: 'infrastructure', cadence: 'one_time', amount: 25, isCredit: true }]);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(updates[0][5], 2500);
+  assert.strictEqual(updates[0][14], true);
+  assert.strictEqual(r.body.expenses[0].isCredit, true);
 });
 
 test('a renewal retried and paid this month on an invoice from last month is in this month\'s money', async () => {
