@@ -702,6 +702,15 @@ function prepareRows(rows, corpus, helpers, { category = 'guess' } = {}) {
   return out;
 }
 
+// Which of the scored artifacts consume the sports features, as the labels
+// the error message names. Empty means neither does and no schedule is read.
+function sportsScheduleReaders(art, inc) {
+  const readers = [];
+  if (art && art.I.artifactReadsSportsFeatures(art.meta)) readers.push('candidate');
+  if (inc && inc.I.artifactReadsSportsFeatures(inc.meta)) readers.push('incumbent');
+  return readers;
+}
+
 // One artifact over prepared rows: the served score and its parts, under one
 // serving configuration. Every option defaults to what the process
 // environment says, exactly as predictBusyness reads it: `qmap`
@@ -1311,12 +1320,17 @@ async function main(argv = process.argv.slice(2)) {
   const toDate = args.to || '9999-12-31';
   const inWindow = (r) => r.date >= fromDate && r.date <= toDate;
 
-  // The game schedule, when the artifact reads it: --sports=<csv>, else
+  // The game schedule, when EITHER artifact reads it: --sports=<csv>, else
   // train/sports_events.csv (exportSportsEvents.js), the file training read.
+  // Both artifacts score the same prepared rows, so an incumbent that reads
+  // the sports family needs the schedule even when the candidate does not;
+  // without it the incumbent would be scored on no-game defaults it never
+  // serves, and the gate would compare against a handicapped incumbent.
   let sports = null;
-  if (art.I.artifactReadsSportsFeatures(art.meta)) {
+  const sportsReaders = sportsScheduleReaders(art, inc);
+  if (sportsReaders.length) {
     const sportsCsv = args.sports || path.join(trainDir, 'sports_events.csv');
-    if (!fs.existsSync(sportsCsv)) throw new Error(`the artifact reads the sports features and ${sportsCsv} does not exist; run exportSportsEvents.js or pass --sports=.`);
+    if (!fs.existsSync(sportsCsv)) throw new Error(`the ${sportsReaders.join(' and ')} read${sportsReaders.length === 1 ? 's' : ''} the sports features and ${sportsCsv} does not exist; run exportSportsEvents.js or pass --sports=.`);
     sports = art.I.buildSportsTable(readSportsCsv(sportsCsv));
     console.log(`[BandEval] sports schedule: ${sportsCsv} (${sports.byDate.size} game dates, ${sports.arenas.length} arenas)`);
   }
@@ -1706,6 +1720,7 @@ module.exports = {
   parseCsvLine,
   readCorpus,
   readSportsCsv,
+  sportsScheduleReaders,
   parseIncumbentServe,
   isolateFromDatabases,
   pinUtcClock,
