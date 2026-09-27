@@ -3927,5 +3927,81 @@ class PeopleInside(unittest.TestCase):
             self.assertIsInstance(payload[key], int)
 
 
+class NamesKindsNeverWho(unittest.TestCase):
+    """owl-2 names what is in a frame. It must never become surveillance:
+    no telling one person from another, nothing that follows a person from
+    frame to frame, and nothing but counts leaving the device."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def _model(self, heat, ltrb):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest('numpy not installed')
+        m = main.PeopleModel.__new__(main.PeopleModel)
+        m.np = np
+        m.input = 'frame'
+        m.threshold = 0.4
+        m.session = mock.Mock()
+        m.session.run.return_value = [np.asarray(heat, dtype=np.float32)[None],
+                                      np.asarray(ltrb, dtype=np.float32)[None]]
+        return m, np
+
+    def test_it_names_and_boxes_what_it_finds(self):
+        np = __import__('numpy')
+        heat = np.zeros((10, 30, 40))
+        heat[0, 10, 10] = 0.9            # a person
+        heat[1, 20, 30] = 0.8            # a hand
+        ltrb = np.ones((4, 30, 40))
+        m, _ = self._model(heat, ltrb)
+        frame = np.full((120, 160), 21.0)
+        frame[38:46, 38:46] = 33.0
+        people, things = m.read(frame.ravel().tolist())
+        self.assertEqual(people, [(42.0, 42.0)])
+        labels = sorted(t['label'] for t in things)
+        self.assertEqual(labels, ['hand', 'person'])
+        person = [t for t in things if t['label'] == 'person'][0]
+        self.assertEqual(person['box'], (38.0, 38.0, 46.0, 46.0))
+
+    def test_a_hand_is_named_but_never_counted(self):
+        np = __import__('numpy')
+        heat = np.zeros((10, 30, 40))
+        heat[1, 15, 20] = 0.95
+        m, _ = self._model(heat, np.ones((4, 30, 40)))
+        people, things = m.read([21.0] * 19200)
+        self.assertEqual(people, [])
+        self.assertEqual([t['label'] for t in things], ['hand'])
+
+    def test_nothing_is_carried_from_one_frame_to_the_next(self):
+        np = __import__('numpy')
+        heat = np.zeros((10, 30, 40))
+        heat[0, 10, 10] = 0.9
+        m, _ = self._model(heat, np.ones((4, 30, 40)))
+        before = set(vars(m))
+        frame = np.full((120, 160), 21.0)
+        frame[38:46, 38:46] = 33.0
+        m.read(frame.ravel().tolist())
+        m.read(frame.ravel().tolist())
+        # No history, no ids, no memory of who was where.
+        self.assertEqual(set(vars(m)), before)
+
+    def test_no_identity_or_tracking_anywhere_in_the_sensor(self):
+        source = (self.HERE / 'main.py').read_text(encoding='utf-8').lower()
+        for word in ('track_id', 'person_id', 'reidentif', 're-identif', 'embedding',
+                     'face_recogn', 'gait'):
+            self.assertNotIn(word, source, f'{word!r} has no place in a counter')
+
+    def test_the_names_and_boxes_stay_on_a_screen_unit(self):
+        source = (self.HERE / 'main.py').read_text(encoding='utf-8')
+        at = source.index("_state['thermal_things'] = things")
+        self.assertIn('if THERMAL_VIEW_ON:', source[at - 400:at])
+
+    def test_a_label_on_the_screen_is_a_kind_of_thing(self):
+        for label in main.PeopleModel.CLASSES:
+            self.assertNotIn(' ', label.replace('hot drink', 'x').replace('warm seat', 'x'))
+        self.assertEqual(main.PeopleModel.CLASSES[0], 'person')
+
+
 if __name__ == '__main__':
     unittest.main()
