@@ -335,9 +335,33 @@ function dbRow(x) {
 // the model versions seen. The default is a quiet month with nothing paired.
 const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, versions: [] };
 
-// Everything the hub asks Postgres, answered with a quiet but real database.
-function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accuracy = QUIET_ACCURACY } = {}) {
+// The five people statements' rows, as Postgres answers them. The default is a
+// quiet fortnight: nobody new, nobody active, no plans.
+const QUIET_PEOPLE = {
+  byDay: [],
+  weeks: { last_7: 0, prior_7: 0 },
+  activation: { cohort: 0, activated: 0 },
+  active: { last_7: 0, prior_7: 0 },
+  plans: { made_last_7: 0, made_prior_7: 0, passed_last_7: 0, confirmed_last_7: 0, guests_last_7: 0, guests_prior_7: 0 },
+};
+const one = (row) => ({ rows: [row], rowCount: 1 });
+function peopleHandlers(people = QUIET_PEOPLE) {
+  const answer = (fn) => () => (people instanceof Error ? Promise.reject(people) : fn());
   return [
+    [/AS day, COUNT\(\*\)::int AS n FROM users u/, answer(() => ({ rows: people.byDay, rowCount: people.byDay.length }))],
+    [/AS prior_7 FROM users u WHERE/, answer(() => one(people.weeks))],
+    [/AS cohort/, answer(() => one(people.activation))],
+    [/^WITH acts AS/, answer(() => one(people.active))],
+    [/^WITH plans AS/, answer(() => one(people.plans))],
+  ];
+}
+
+// Everything the hub asks Postgres, answered with a quiet but real database.
+function hubHandlers({ collectorMinutesAgo = 20, premiumIds = [5, 7, 14], accuracy = QUIET_ACCURACY, people = QUIET_PEOPLE } = {}) {
+  return [
+    // The people statements name users, flocks and served_predictions, which
+    // the patterns below look for, so they are answered first.
+    ...peopleHandlers(people),
     // First, because its WITH clause names no table the other patterns look for,
     // and a check that fell through to "unscripted" would read as an error.
     [/FROM served_predictions sp/, () => (accuracy instanceof Error ? Promise.reject(accuracy) : { rows: [accuracy], rowCount: 1 })],
@@ -2452,4 +2476,150 @@ test('no variable\'s value reaches the payload or a log line: not a key, the hos
     assert.deepStrictEqual(Object.keys(db).sort(), ['checkedBy', 'fix', 'id', 'label', 'link', 'network', 'optional', 'roundTrip', 'state', 'via', 'words']);
     assert.ok(['private', 'public'].includes(db.network), name);
   }
+});
+
+// ===========================================================================
+// 11. PEOPLE: signups, first-week activation, weekly active, plans
+// ===========================================================================
+
+// 10:05 in the morning in New York, a Sunday. The fortnight of bars runs from
+// Monday the 14th to today, and the 14th began at 04:00 UTC (EDT).
+const PEOPLE_NOW = new Date('2026-09-27T14:05:00Z');
+const peopleQueries = () => ({
+  byDay: log.filter((q) => /AS day, COUNT\(\*\)::int AS n FROM users u/.test(q.sql)),
+  weeks: log.filter((q) => /AS prior_7 FROM users u WHERE/.test(q.sql)),
+  activation: log.filter((q) => /AS cohort/.test(q.sql)),
+  active: log.filter((q) => /^WITH acts AS/.test(q.sql)),
+  plans: log.filter((q) => /^WITH plans AS/.test(q.sql)),
+});
+
+test('people: every day of the fortnight by New York date, rolling weeks, and each figure from its own statement', async () => {
+  handlers = peopleHandlers({
+    byDay: [{ day: '2026-09-14', n: 3 }, { day: '2026-09-20', n: 5 }, { day: '2026-09-27', n: 2 }],
+    weeks: { last_7: 9, prior_7: 4 },
+    activation: { cohort: 40, activated: 17 },
+    active: { last_7: 61, prior_7: 55 },
+    plans: { made_last_7: 12, made_prior_7: 8, passed_last_7: 10, confirmed_last_7: 7, guests_last_7: 23, guests_prior_7: 15 },
+  });
+  const p = await moneyHub.readPeople(pool, PEOPLE_NOW);
+  assert.strictEqual(p.status, 'ok');
+  assert.strictEqual(p.asOf, PEOPLE_NOW.toISOString());
+  // Fourteen days, oldest first, today last, and a day with nobody new is a
+  // real zero rather than a missing bar.
+  assert.strictEqual(p.signups.days.length, 14);
+  assert.deepStrictEqual(p.signups.days[0], { day: '2026-09-14', n: 3 });
+  assert.deepStrictEqual(p.signups.days[6], { day: '2026-09-20', n: 5 });
+  assert.deepStrictEqual(p.signups.days[13], { day: '2026-09-27', n: 2 });
+  assert.strictEqual(p.signups.days.filter((d) => d.n === 0).length, 11);
+  assert.strictEqual(p.signups.todayYmd, '2026-09-27');
+  assert.strictEqual(p.signups.last7, 9);
+  assert.strictEqual(p.signups.prior7, 4);
+  assert.deepStrictEqual(p.activation, { cohort: 40, activated: 17, percent: 42.5, fromDays: 8, toDays: 37, windowDays: 7, minForShare: 10 });
+  assert.deepStrictEqual(p.active, { last7: 61, prior7: 55 });
+  assert.deepStrictEqual(p.plans, {
+    madeLast7: 12, madePrior7: 8, passedLast7: 10, confirmedLast7: 7, confirmedPercent: 70,
+    guestAnswersLast7: 23, guestAnswersPrior7: 15, minForShare: 10,
+  });
+  // Each statement once, asked about the hub's own clock: the zone and the
+  // instant the first New York day began for the bars, `now` for the rest.
+  const q = peopleQueries();
+  for (const [name, list] of Object.entries(q)) assert.strictEqual(list.length, 1, `${name} ran ${list.length} times`);
+  assert.strictEqual(q.byDay[0].params[0], 'America/New_York');
+  assert.strictEqual(q.byDay[0].params[1].toISOString(), '2026-09-14T04:00:00.000Z');
+  assert.deepStrictEqual(q.weeks[0].params, [PEOPLE_NOW]);
+  assert.deepStrictEqual(q.activation[0].params, [PEOPLE_NOW, 8, 37, 7]);
+  assert.deepStrictEqual(q.active[0].params, [PEOPLE_NOW]);
+  assert.deepStrictEqual(q.plans[0].params, [PEOPLE_NOW]);
+});
+
+test('people: in winter the first day begins at 05:00 UTC, and a New York evening is still that New York day', async () => {
+  handlers = peopleHandlers();
+  // 23:30 on 5 January in New York is 04:30 on the 6th in UTC.
+  const p = await moneyHub.readPeople(pool, new Date('2027-01-06T04:30:00Z'));
+  assert.strictEqual(p.signups.todayYmd, '2027-01-05');
+  assert.strictEqual(p.signups.days[13].day, '2027-01-05');
+  assert.strictEqual(p.signups.days[0].day, '2026-12-23');
+  assert.strictEqual(peopleQueries().byDay[0].params[1].toISOString(), '2026-12-23T05:00:00.000Z');
+});
+
+test('people: under ten a share is withheld and the counts stand alone, and a count never exceeds its whole', async () => {
+  handlers = peopleHandlers({
+    ...QUIET_PEOPLE,
+    activation: { cohort: 9, activated: 12 },
+    plans: { ...QUIET_PEOPLE.plans, passed_last_7: 3, confirmed_last_7: 2 },
+  });
+  const p = await moneyHub.readPeople(pool, PEOPLE_NOW);
+  assert.strictEqual(p.activation.percent, null, 'nine accounts is under the floor');
+  assert.strictEqual(p.activation.activated, 9, 'more activated than the cohort holds is clamped to the cohort');
+  assert.strictEqual(p.plans.confirmedPercent, null);
+  assert.strictEqual(p.plans.confirmedLast7, 2);
+  assert.strictEqual(p.plans.passedLast7, 3);
+
+  handlers = peopleHandlers({ ...QUIET_PEOPLE, activation: { cohort: 10, activated: 3 } });
+  assert.strictEqual((await moneyHub.readPeople(pool, PEOPLE_NOW)).activation.percent, 30, 'exactly at the floor, the share shows');
+});
+
+test('people: every statement counts people accounts only, reads the naive columns as UTC, and is static', () => {
+  const flat = (sql) => sql.replace(/\s+/g, ' ');
+  const all = {
+    byDay: moneyHub.PEOPLE_SIGNUPS_BY_DAY_SQL,
+    weeks: moneyHub.PEOPLE_SIGNUPS_WEEKS_SQL,
+    activation: moneyHub.PEOPLE_ACTIVATION_SQL,
+    active: moneyHub.PEOPLE_ACTIVE_SQL,
+    plans: moneyHub.PEOPLE_PLANS_SQL,
+  };
+  for (const [name, sql] of Object.entries(all)) {
+    const s = flat(sql);
+    assert.match(s, /u\.role = 'user'/, `${name} counts venue owners or admins`);
+    assert.match(s, /u\.is_banned IS NOT TRUE/, `${name} counts banned accounts`);
+    assert.ok(!sql.includes('${'), `${name} is not static, so the sqlParameterTypes suite cannot prepare it`);
+    assert.ok(!/\bNOW\(\)/.test(sql), `${name} reads the database's clock instead of the hub's`);
+    assert.ok(!/email|\bname\b/i.test(sql), `${name} reads something personal`);
+  }
+  // The bars bucket a naive UTC time into its New York day.
+  assert.match(flat(all.byDay), /\(\(u\.created_at AT TIME ZONE 'UTC'\) AT TIME ZONE \$1::text\)::date/);
+  // A first week is a week after this account's own signup, by making a plan
+  // or accepting one.
+  const act = flat(all.activation);
+  assert.match(act, /f\.creator_id = u\.id AND f\.created_at >= u\.created_at AND f\.created_at < u\.created_at \+ make_interval\(days => \$4::int\)/);
+  assert.match(act, /fm\.status = 'accepted' AND fm\.joined_at >= u\.created_at AND fm\.joined_at < u\.created_at \+ make_interval\(days => \$4::int\)/);
+  // Active means one of these, each within the fortnight, counted once a person.
+  const active = flat(all.active);
+  for (const source of ['FROM messages m', 'FROM direct_messages d', 'FROM venue_votes v', 'FROM dm_venue_votes dv', 'FROM flocks f', 'FROM flock_members fm', 'FROM served_predictions sv']) {
+    assert.ok(active.includes(source), `weekly active does not read ${source}`);
+  }
+  assert.match(active, /COUNT\(DISTINCT a\.user_id\)/);
+  assert.match(active, /sv\.served_at AT TIME ZONE 'UTC'/, 'the one TIMESTAMPTZ source is turned to UTC wall time with the rest');
+  // A plan reached confirmed if it was confirmed, or completed from confirmed.
+  assert.match(flat(all.plans), /p\.status IN \('confirmed', 'completed'\)/);
+  assert.match(flat(all.plans), /FROM guest_rsvps g JOIN plans gp ON gp\.id = g\.flock_id/);
+});
+
+test('people: on the hub, counts only, and a failed read is an error with no numbers while the rest stands', async () => {
+  handlers = hubHandlers({ people: { ...QUIET_PEOPLE, weeks: { last_7: 4, prior_7: 1 } } });
+  let r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.body.people.status, 'ok');
+  assert.strictEqual(r.body.people.signups.last7, 4);
+  assert.strictEqual(r.body.people.signups.days.length, 14);
+  assert.strictEqual(r.body.people.signups.todayYmd, r.body.month.todayYmd, 'the bars end on the hub\'s own today');
+  // Nothing in the block but numbers, dates and the rules they were read by.
+  const walk = (v, where) => {
+    if (v === null || typeof v === 'number' || typeof v === 'boolean') return;
+    if (typeof v === 'string') {
+      assert.ok(/^(ok|\d{4}-\d{2}-\d{2}(T[\d:.]+Z)?)$/.test(v), `${where} carries the text "${v}"`);
+      return;
+    }
+    for (const [k, x] of Object.entries(v)) walk(x, `${where}.${k}`);
+  };
+  walk(r.body.people, 'people');
+
+  handlers = hubHandlers({ people: new Error('relation "flock_members" does not exist') });
+  const { result } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  r = result;
+  assert.strictEqual(r.status, 200, r.text);
+  assert.deepStrictEqual(r.body.people, { status: 'error', reason: 'The account and plan tables could not be read, so there are no people figures to show.' });
+  assert.strictEqual(r.body.health.collector.status, 'ok');
+  assert.strictEqual(r.body.costs.status, 'ok');
+  assert.ok(!r.text.includes('does not exist'), 'the database\'s own words stay in the log');
 });

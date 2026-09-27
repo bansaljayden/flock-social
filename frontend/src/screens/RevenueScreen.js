@@ -201,6 +201,7 @@ const HUB_CARD = {
   crowd: { id: 'hub-crowd', link: 'Go to Crowd data' },
   model: { id: 'hub-model', link: 'Go to Model' },
   health: { id: 'hub-health', link: 'Go to Health' },
+  people: { id: 'hub-people', link: 'Go to People' },
 };
 
 function hubTag(tone) {
@@ -1456,6 +1457,123 @@ function HubModel({ h, colors }) {
   );
 }
 
+// PEOPLE: who signed up, whether new accounts start anything, how many people
+// used Flock this week, and what became of the plans they made. Every figure
+// is the server's count (backend/services/moneyHub.js, PEOPLE), of people
+// accounts only, and each row says what it counts. A share under the server's
+// floor arrives as null and is drawn as its two counts, never as a percentage.
+
+// The fortnight of signups as one plain bar per New York day. Bars rise from
+// one baseline with rounded tops, a day with nobody new is a flat stub so the
+// strip always reads as fourteen days, and today, which is still filling,
+// is drawn lighter and labelled. The label on the strip lists every day's
+// count, so a screen reader gets the numbers the bars stand for.
+function HubSignupBars({ days, navy }) {
+  const peak = days.reduce((m, d) => Math.max(m, d.n), 0);
+  const H = 48;
+  const words = days.map((d, i) => `${i === days.length - 1 ? 'today' : hubDay(d.day)} ${hubCount(d.n)}`).join(', ');
+  return (
+    <div>
+      <div role="img" aria-label={`Signups each day: ${words}.`} style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: `${H}px`, borderBottom: '1px solid var(--border-default)' }}>
+        {days.map((d, i) => {
+          const today = i === days.length - 1;
+          const h = d.n === 0 || peak === 0 ? 2 : Math.max(4, Math.round((d.n / peak) * H));
+          return (
+            <div
+              key={d.day}
+              title={`${today ? 'Today so far' : hubDay(d.day)}: ${hubCount(d.n)}`}
+              style={{ flex: '1 1 0', minWidth: 0, height: `${h}px`, borderRadius: d.n === 0 ? '1px' : '4px 4px 0 0', backgroundColor: d.n === 0 ? 'var(--border-default)' : navy, opacity: today && d.n > 0 ? 0.55 : 1 }}
+            />
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginTop: '4px', fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+        <span>{hubDay(days[0].day)}</span>
+        <span>{peak > 0 ? `Busiest day ${hubCount(peak)}` : 'Nobody new'}</span>
+        <span>Today so far</span>
+      </div>
+    </div>
+  );
+}
+
+function HubPeople({ h, colors }) {
+  const p = h.people;
+  // A server from before this block sends none of it: no card, not an empty one.
+  if (!p) return null;
+  const navy = colors.navy;
+  const pct = (x) => `${Math.round(x)}%`;
+  // The server withholds a share under its floor; this is the screen's own
+  // half of that rule, so an older or broken server cannot put one here.
+  const shown = (share, whole, floor) => Number.isFinite(share) && Number.isFinite(floor) && whole >= floor;
+  let body;
+  if (p.status !== 'ok') {
+    body = <HubNotice status="error" reason={p.reason} />;
+  } else {
+    const s = p.signups;
+    const a = p.activation;
+    const act = p.active;
+    const pl = p.plans;
+    const fortnight = s.days.reduce((sum, d) => sum + d.n, 0);
+    let activationValue;
+    let activationNote;
+    if (a.cohort === 0) {
+      activationValue = 'None yet';
+      activationNote = `No people account is ${a.fromDays} to ${a.toDays} days old, so no first week has finished inside the window.`;
+    } else {
+      const share = shown(a.percent, a.cohort, a.minForShare);
+      activationValue = share ? pct(a.percent) : `${hubCount(a.activated)} of ${hubCount(a.cohort)}`;
+      activationNote = `${hubCount(a.activated)} of the ${hubPlural(a.cohort, 'account', 'accounts')} made ${a.fromDays} to ${a.toDays} days ago made a plan or accepted one within ${a.windowDays} days of signing up.${share ? '' : ` The share shows from ${hubCount(a.minForShare)} accounts.`}`;
+    }
+    let confirmedValue;
+    let confirmedNote;
+    if (pl.passedLast7 === 0) {
+      confirmedValue = 'None';
+      confirmedNote = 'No plan made by a people account had its time come in the last 7 days.';
+    } else {
+      const share = shown(pl.confirmedPercent, pl.passedLast7, pl.minForShare);
+      confirmedValue = share ? pct(pl.confirmedPercent) : `${hubCount(pl.confirmedLast7)} of ${hubCount(pl.passedLast7)}`;
+      confirmedNote = `Of the ${hubPlural(pl.passedLast7, 'plan', 'plans')} whose time came in the last 7 days, ${hubCount(pl.confirmedLast7)} had been confirmed.${share ? '' : ` The share shows from ${hubCount(pl.minForShare)} plans.`}`;
+    }
+    body = (
+      <>
+        <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>Signups, last 14 days</p>
+        <HubSignupBars days={s.days} navy={navy} />
+        {fortnight === 0 && <p style={hubStyle.note}>Nobody signed up in the last 14 days.</p>}
+        <div style={{ marginTop: '8px' }}>
+          <HubRow
+            navy={navy}
+            label="Signups, last 7 days"
+            value={hubCount(s.last7)}
+            note={`${hubCount(s.prior7)} in the 7 days before. Both count back from now, so a morning never reads as a drop. The bars are New York days.`}
+          />
+          <HubRow navy={navy} label="Made or accepted a plan in their first week" value={activationValue} note={activationNote} />
+          <HubRow
+            navy={navy}
+            label="Used Flock, last 7 days"
+            value={hubCount(act.last7)}
+            note={`${hubCount(act.prior7)} in the 7 days before. Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in.`}
+          />
+          <HubRow navy={navy} label="Plans made, last 7 days" value={hubCount(pl.madeLast7)} note={`${hubCount(pl.madePrior7)} in the 7 days before.`} />
+          <HubRow navy={navy} label="Confirmed before their time" value={confirmedValue} note={confirmedNote} />
+          <HubRow
+            navy={navy}
+            label="Guest answers from share links"
+            value={hubCount(pl.guestAnswersLast7)}
+            note={`${hubCount(pl.guestAnswersPrior7)} in the 7 days before. Someone without an account answering a plan's link, in or out.`}
+          />
+        </div>
+      </>
+    );
+  }
+  return (
+    <div id={HUB_CARD.people.id} style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>People</h3>
+      <p style={hubStyle.sub}>People accounts only: not venue owners, admins or banned accounts. Counts from the database{p.status === 'ok' ? `, read at ${hubTime(p.asOf)}` : ''}.</p>
+      {body}
+    </div>
+  );
+}
+
 // NEEDS ATTENTION: every live problem the payload already carries, in one list
 // at the top of the Overview. On a phone the month's figures alone fill the
 // first screen, and each of these sat inside a long card further down: a
@@ -1517,7 +1635,7 @@ function hubAttention(h) {
       tone: c.state === 'stopped' ? 'bad' : 'warn',
       label: 'Crowd collector',
       value: c.state === 'stopped' ? 'Stopped' : 'Late',
-      note: `${since} It runs every hour, and the model is scored against what it collects.`,
+      note: `${since} It runs every hour.`,
       card: HUB_CARD.health,
     });
   }
@@ -1541,7 +1659,7 @@ function hubAttention(h) {
 
   const p = h.pricing || {};
   if (n(p.mismatches) > 0) {
-    add({ key: 'prices', tone: 'bad', label: 'Price disagreements', value: hubCount(p.mismatches), note: 'A price a store charges and a price the code or a document states do not match, or two places in the code differ. The Prices card says each one in words.', card: HUB_CARD.prices });
+    add({ key: 'prices', tone: 'bad', label: 'Price disagreements', value: hubCount(p.mismatches), note: "A store's price, the RevenueCat offering and what the code states do not all agree.", card: HUB_CARD.prices });
   }
 
   // Stripe. A key that did not answer, or answered for only some lists, left
@@ -1675,8 +1793,13 @@ function HubAttention({ h, colors }) {
       </div>
     );
   }
-  const jump = (card) => (
-    <a className="hit44" href={`#${card.id}`} onClick={hubJump(card.id)} style={hubStyle.link}>{card.link}</a>
+  // The jump sits at the end of the note rather than on a line of its own, so
+  // a morning with five problems is not five extra lines of links.
+  const withJump = (text, card) => (
+    <>
+      {text}{' '}
+      <a className="hit44" href={`#${card.id}`} onClick={hubJump(card.id)} style={{ ...hubStyle.link, marginTop: 0, whiteSpace: 'nowrap' }}>{card.link}</a>
+    </>
   );
   const when = (d) => (d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`);
   return (
@@ -1686,9 +1809,7 @@ function HubAttention({ h, colors }) {
       </h3>
       <p style={hubStyle.sub}>{[checked, problems.length > 0 ? 'Each one is read from a card below and jumps to it.' : ''].filter(Boolean).join(' ')}</p>
       {problems.map((r) => (
-        <HubRow key={r.key} navy={navy} label={r.label} value={r.value} tone={r.tone} note={r.note}>
-          {jump(r.card)}
-        </HubRow>
+        <HubRow key={r.key} navy={navy} label={r.label} value={r.value} tone={r.tone} note={withJump(r.note, r.card)} />
       ))}
       {soon.length > 0 && (
         <>
@@ -1699,10 +1820,8 @@ function HubAttention({ h, colors }) {
               navy={navy}
               label={u.label}
               value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
-              note={`Renews ${when(u.inDays)}, ${hubDay(u.on)}.${u.estimated ? ' Worked out from the last charge date.' : ''}`}
-            >
-              {jump(HUB_CARD.costs)}
-            </HubRow>
+              note={withJump(`Renews ${when(u.inDays)}, ${hubDay(u.on)}.${u.estimated ? ' Worked out from the last charge date.' : ''}`, HUB_CARD.costs)}
+            />
           ))}
         </>
       )}
@@ -1759,6 +1878,7 @@ function MoneyHub({ colors }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <HubAttention h={data} colors={colors} />
       <HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
+      <HubPeople h={data} colors={colors} />
       <HubOwnerActions h={data} colors={colors} />
       <HubRevenue h={data} colors={colors} />
       <HubCosts h={data} colors={colors} />

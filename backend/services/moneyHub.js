@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // THE OWNER'S MONEY HUB: every dollar in and out, read where it actually is.
 //
-// GET /api/admin/money (routes/admin.js) is the only caller. It answers eight
+// GET /api/admin/money (routes/admin.js) is the only caller. It answers nine
 // questions on one screen, each from the system that holds the answer:
 //
 //   revenue  Stripe for everything sold on flockcorp.com (Flock Pro on the web
@@ -24,7 +24,10 @@
 //            forecasts landed within one crowd band of what the collector
 //            then measured, against the goal.
 //   health   whether the crowd-data collector is still landing rows.
-//   steps    what only the operator can do: a variable on the Railway
+//   people   signups by day, how many new accounts start or join a plan in
+//            their first week, how many people used Flock this week, and
+//            what happened to the plans they made (PEOPLE, below).
+//   steps   what only the operator can do: a variable on the Railway
 //            service, a key made in RevenueCat, an agreement with Apple.
 //            Checked here where the server can see the answer, and marked
 //            for the operator to check where it cannot (ONLY YOU CAN DO
@@ -43,7 +46,7 @@
 // answer is MIN_FORCE_REFRESH_MS old. Each answer is held under the inputs it
 // was read with (the month, and for RevenueCat the Pro accounts it was asked
 // about), so a new month or a new subscriber is a new read rather than a stale
-// one. The database reads (expenses, costs, health) are never cached: an edit
+// one. The database reads (expenses, costs, health, people) are never cached: an edit
 // shows on the next load. There are two exceptions. The model's served-forecast
 // check, a month of serves joined to the collector's readings, is held for
 // MODEL_TTL_MS (an hour): the readings it scores against land once an hour, so
@@ -1939,6 +1942,227 @@ async function readHealth(db = pool, now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
+// PEOPLE: signups, first-week activation, weekly active, plans
+// ---------------------------------------------------------------------------
+//
+// The Overview had no user numbers at all, and the two the Research tab shows
+// count every role, so a venue owner or an admin read as a user. These count
+// people accounts only: role 'user', not banned. Every figure is a count; no
+// id, name or email leaves the database, per NOTHING PERSONAL above.
+//
+// WHY NOT POSTHOG. Capture there waits on analytics consent
+// (frontend/src/services/api.js), so its funnels only see the people who said
+// yes. The database holds every signup and every action.
+//
+// THE TIMES. users.created_at, flocks.created_at and event_time, messages,
+// direct messages, votes and flock_members.joined_at are naive TIMESTAMP
+// columns holding UTC wall time (the pool pins TimeZone=UTC,
+// config/database.js), so each window compares them with `now` read as UTC
+// wall time. served_predictions.served_at and guest_rsvps.created_at are
+// TIMESTAMPTZ and compare with `now` directly. `now` is a parameter, not the
+// database's NOW(), so the hub's own clock decides every window.
+//
+// ROLLING WEEKS. "Last 7 days" is counted back from now, and "the 7 before"
+// from there, rather than by calendar day: at nine in the morning a calendar
+// week holds six days and a morning, and would read as a drop every day. The
+// daily bars are New York calendar days, today so far, and say so.
+//
+// Held nowhere: like the other database reads, a new signup shows on the next
+// load. The five statements run side by side, and each is static SQL, so the
+// sqlParameterTypes suite prepares every one against the real schema.
+
+const PEOPLE_DAYS = 14;
+// First-week activation: accounts from 8 to 37 days old, so each has had a
+// whole week to start or join a plan, and the group is the last month's.
+const PEOPLE_ACTIVATION_WINDOW_DAYS = 7;
+const PEOPLE_COHORT_FROM_DAYS = 8;
+const PEOPLE_COHORT_TO_DAYS = 37;
+// Under this many, a share is withheld and the two counts stand alone: one
+// account either way would move it ten points or more.
+const PEOPLE_MIN_FOR_SHARE = 10;
+
+// $1 the time zone, $2 the UTC instant the first day began there.
+const PEOPLE_SIGNUPS_BY_DAY_SQL = `SELECT to_char(((u.created_at AT TIME ZONE 'UTC') AT TIME ZONE $1::text)::date, 'YYYY-MM-DD') AS day,
+              COUNT(*)::int AS n
+         FROM users u
+        WHERE u.role = 'user'
+          AND u.is_banned IS NOT TRUE
+          AND u.created_at >= ($2::timestamptz AT TIME ZONE 'UTC')
+        GROUP BY 1
+        ORDER BY 1`;
+
+// $1 now. The last 7 days, and the 7 before them.
+const PEOPLE_SIGNUPS_WEEKS_SQL = `SELECT COUNT(*) FILTER (WHERE u.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days')::int AS last_7,
+              COUNT(*) FILTER (WHERE u.created_at < ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days')::int AS prior_7
+         FROM users u
+        WHERE u.role = 'user'
+          AND u.is_banned IS NOT TRUE
+          AND u.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+          AND u.created_at < ($1::timestamptz AT TIME ZONE 'UTC')`;
+
+// $1 now, $2 the youngest age in days, $3 the oldest, $4 the first-week
+// window in days. An account counts once it created a plan, or accepted one,
+// inside that window after it signed up. A plan's creator is also its first
+// accepted member, so either path alone would do; both are asked so a plan
+// made by one route that skipped the member row still counts.
+const PEOPLE_ACTIVATION_SQL = `SELECT COUNT(*)::int AS cohort,
+              COUNT(*) FILTER (WHERE EXISTS (
+                SELECT 1 FROM flocks f
+                 WHERE f.creator_id = u.id
+                   AND f.created_at >= u.created_at
+                   AND f.created_at < u.created_at + make_interval(days => $4::int)
+              ) OR EXISTS (
+                SELECT 1 FROM flock_members fm
+                 WHERE fm.user_id = u.id
+                   AND fm.status = 'accepted'
+                   AND fm.joined_at >= u.created_at
+                   AND fm.joined_at < u.created_at + make_interval(days => $4::int)
+              ))::int AS activated
+         FROM users u
+        WHERE u.role = 'user'
+          AND u.is_banned IS NOT TRUE
+          AND u.created_at <= ($1::timestamptz AT TIME ZONE 'UTC') - make_interval(days => $2::int)
+          AND u.created_at > ($1::timestamptz AT TIME ZONE 'UTC') - make_interval(days => $3::int + 1)`;
+
+// $1 now. Anyone who did one of these in the window: sent a flock message or
+// a DM, voted on a venue in a plan or a DM, made a plan or accepted one, or
+// was served a crowd forecast (a venue card or the vote list, signed in).
+// Counted once however many they did.
+const PEOPLE_ACTIVE_SQL = `WITH acts AS (
+       SELECT m.sender_id AS user_id, m.created_at AS at FROM messages m
+        WHERE m.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT d.sender_id, d.created_at FROM direct_messages d
+        WHERE d.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT v.user_id, v.created_at FROM venue_votes v
+        WHERE v.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT dv.user_id, dv.created_at FROM dm_venue_votes dv
+        WHERE dv.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT f.creator_id, f.created_at FROM flocks f
+        WHERE f.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT fm.user_id, fm.joined_at FROM flock_members fm
+        WHERE fm.status = 'accepted'
+          AND fm.joined_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+       UNION ALL
+       SELECT sv.user_id, sv.served_at AT TIME ZONE 'UTC' FROM served_predictions sv
+        WHERE sv.served_at >= $1::timestamptz - INTERVAL '14 days'
+     )
+     SELECT COUNT(DISTINCT a.user_id) FILTER (WHERE a.at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days')::int AS last_7,
+            COUNT(DISTINCT a.user_id) FILTER (WHERE a.at < ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days')::int AS prior_7
+       FROM acts a
+       JOIN users u ON u.id = a.user_id
+      WHERE u.role = 'user'
+        AND u.is_banned IS NOT TRUE
+        AND a.at < ($1::timestamptz AT TIME ZONE 'UTC')`;
+
+// $1 now. Plans people made; plans whose time came in the last 7 days and how
+// many of them had been confirmed (the sweep turns a confirmed plan whose time
+// has passed into a completed one, and an unconfirmed one into a cancelled
+// one); and guests answering a plan's share link without an account. Plans
+// are counted when a people account made them.
+const PEOPLE_PLANS_SQL = `WITH plans AS (
+       SELECT f.id, f.created_at, f.event_time, f.status
+         FROM flocks f
+         JOIN users u ON u.id = f.creator_id
+        WHERE u.role = 'user'
+          AND u.is_banned IS NOT TRUE
+          AND (f.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+               OR f.event_time >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days')
+     )
+     SELECT COUNT(*) FILTER (WHERE p.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days'
+                               AND p.created_at < ($1::timestamptz AT TIME ZONE 'UTC'))::int AS made_last_7,
+            COUNT(*) FILTER (WHERE p.created_at >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '14 days'
+                               AND p.created_at < ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days')::int AS made_prior_7,
+            COUNT(*) FILTER (WHERE p.event_time >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days'
+                               AND p.event_time < ($1::timestamptz AT TIME ZONE 'UTC'))::int AS passed_last_7,
+            COUNT(*) FILTER (WHERE p.event_time >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days'
+                               AND p.event_time < ($1::timestamptz AT TIME ZONE 'UTC')
+                               AND p.status IN ('confirmed', 'completed'))::int AS confirmed_last_7,
+            (SELECT COUNT(*)::int FROM guest_rsvps g JOIN plans gp ON gp.id = g.flock_id
+              WHERE g.created_at >= $1::timestamptz - INTERVAL '7 days'
+                AND g.created_at < $1::timestamptz) AS guests_last_7,
+            (SELECT COUNT(*)::int FROM guest_rsvps g JOIN plans gp ON gp.id = g.flock_id
+              WHERE g.created_at >= $1::timestamptz - INTERVAL '14 days'
+                AND g.created_at < $1::timestamptz - INTERVAL '7 days') AS guests_prior_7
+       FROM plans p`;
+
+// A share, or null under the minimum: the counts go either way.
+function peopleShare(part, whole) {
+  return whole >= PEOPLE_MIN_FOR_SHARE ? Math.round((part / whole) * 1000) / 10 : null;
+}
+
+async function readPeople(db = pool, now = new Date()) {
+  const count = (v) => {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+  };
+  const today = ymdIn(HUB_TZ, now);
+  const firstDay = addDaysYmd(today, -(PEOPLE_DAYS - 1));
+  const from = new Date(zonedMidnightMs(firstDay, HUB_TZ));
+  try {
+    const [byDay, weeks, activation, active, plans] = await Promise.all([
+      db.query(PEOPLE_SIGNUPS_BY_DAY_SQL, [HUB_TZ, from]),
+      db.query(PEOPLE_SIGNUPS_WEEKS_SQL, [now]),
+      db.query(PEOPLE_ACTIVATION_SQL, [now, PEOPLE_COHORT_FROM_DAYS, PEOPLE_COHORT_TO_DAYS, PEOPLE_ACTIVATION_WINDOW_DAYS]),
+      db.query(PEOPLE_ACTIVE_SQL, [now]),
+      db.query(PEOPLE_PLANS_SQL, [now]),
+    ]);
+    // Every day of the strip, a day with nobody new as a real zero.
+    const seen = new Map((byDay.rows || []).map((r) => [String(r.day), count(r.n)]));
+    const days = [];
+    for (let i = 0; i < PEOPLE_DAYS; i += 1) {
+      const day = addDaysYmd(firstDay, i);
+      days.push({ day, n: seen.get(day) || 0 });
+    }
+    const w = (weeks.rows && weeks.rows[0]) || {};
+    const a = (activation.rows && activation.rows[0]) || {};
+    const act = (active.rows && active.rows[0]) || {};
+    const p = (plans.rows && plans.rows[0]) || {};
+    const cohort = count(a.cohort);
+    const activated = Math.min(count(a.activated), cohort);
+    const passed = count(p.passed_last_7);
+    const confirmed = Math.min(count(p.confirmed_last_7), passed);
+    return {
+      status: 'ok',
+      asOf: now.toISOString(),
+      signups: {
+        days,
+        todayYmd: today,
+        last7: count(w.last_7),
+        prior7: count(w.prior_7),
+      },
+      activation: {
+        cohort,
+        activated,
+        percent: peopleShare(activated, cohort),
+        fromDays: PEOPLE_COHORT_FROM_DAYS,
+        toDays: PEOPLE_COHORT_TO_DAYS,
+        windowDays: PEOPLE_ACTIVATION_WINDOW_DAYS,
+        minForShare: PEOPLE_MIN_FOR_SHARE,
+      },
+      active: { last7: count(act.last_7), prior7: count(act.prior_7) },
+      plans: {
+        madeLast7: count(p.made_last_7),
+        madePrior7: count(p.made_prior_7),
+        passedLast7: passed,
+        confirmedLast7: confirmed,
+        confirmedPercent: peopleShare(confirmed, passed),
+        guestAnswersLast7: count(p.guests_last_7),
+        guestAnswersPrior7: count(p.guests_prior_7),
+        minForShare: PEOPLE_MIN_FOR_SHARE,
+      },
+    };
+  } catch (err) {
+    console.error('[money] people read failed:', err && err.message ? err.message : err);
+    return { status: 'error', reason: 'The account and plan tables could not be read, so there are no people figures to show.' };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CROWD DATA: what BestTime's key endpoint says, and the plan the code records
 // ---------------------------------------------------------------------------
 //
@@ -2679,7 +2903,7 @@ async function buildMoneyHub({
     { force, logMessage: false }
   );
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion] = await Promise.all([
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -2712,6 +2936,9 @@ async function buildMoneyHub({
       )
       : Promise.resolve({ status: 'error', reason: ladder.reason }),
     readModelVersion({ predictor, metaPath: modelMetaPath }),
+    // Never held, like the other database reads, and never throws: a failed
+    // read comes back as a block with a reason.
+    readPeople(db, now),
   ]);
 
   const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
@@ -2808,6 +3035,8 @@ async function buildMoneyHub({
     },
     net,
     pricing,
+    // Counts only, of people accounts. See PEOPLE above.
+    people,
     // The collector's own rows are health.collector, which the screen shows
     // beside this block; they are not read a second time here.
     crowdData: {
@@ -2830,6 +3059,12 @@ module.exports = {
   costsLedger,
   readExpenses,
   readHealth,
+  readPeople,
+  PEOPLE_SIGNUPS_BY_DAY_SQL,
+  PEOPLE_SIGNUPS_WEEKS_SQL,
+  PEOPLE_ACTIVATION_SQL,
+  PEOPLE_ACTIVE_SQL,
+  PEOPLE_PLANS_SQL,
   readBestTime,
   statedBestTimePlan,
   readServedBandAccuracy,

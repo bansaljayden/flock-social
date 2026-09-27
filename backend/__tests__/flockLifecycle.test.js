@@ -277,3 +277,80 @@ test('the finished night is in history for both people who were there', async ()
     assert.equal(list[0].venue_name, 'Kome');
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stage 5 — the owner's Overview reading the walk back
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The money hub's People figures are five statements over the same tables this
+// walk wrote (services/moneyHub.js, PEOPLE). The suite beside it proves their
+// wording against a scripted pool; this proves they count what the routes
+// really leave behind, on the real schema, with the naive UTC columns read in
+// New York days.
+
+test('the Overview counts this walk as people: signups by New York day, first weeks, the active, the plan', async () => {
+  const moneyHub = require('../services/moneyHub');
+  const now = new Date();
+  const naive = `($1::timestamptz AT TIME ZONE 'UTC')`;
+  const mk = async (email, { role = 'user', banned = false, ageDays = 0, at = null } = {}) => {
+    const createdAt = at || new Date(now.getTime() - ageDays * 86400000);
+    const { rows } = await pool.query(
+      `INSERT INTO users (email, password, name, role, is_banned, created_at)
+       VALUES ($2, 'x', 'Fixture', $3, $4, ${naive}) RETURNING id`,
+      [createdAt, email, role, banned]
+    );
+    return { id: rows[0].id, createdAt };
+  };
+  // Signed up ten days ago and made a plan on day two: a first week that
+  // started something, inside the 8 to 37 day group.
+  const carol = await mk('carol@lifecycle.test', { ageDays: 10 });
+  await pool.query(
+    `INSERT INTO flocks (name, creator_id, status, created_at) VALUES ('Carol Day Two', $2, 'planning', ${naive})`,
+    [new Date(carol.createdAt.getTime() + 2 * 86400000), carol.id]
+  );
+  // In the group, did nothing.
+  await mk('dave@lifecycle.test', { ageDays: 20 });
+  // Too old for the group, whatever she did.
+  const erin = await mk('erin@lifecycle.test', { ageDays: 45 });
+  await pool.query(
+    `INSERT INTO flocks (name, creator_id, status, created_at) VALUES ('Erin Early', $2, 'planning', ${naive})`,
+    [new Date(erin.createdAt.getTime() + 86400000), erin.id]
+  );
+  // Not people: a venue owner and a banned account, both new today.
+  await mk('venue@lifecycle.test', { role: 'venue_owner' });
+  await mk('banned@lifecycle.test', { banned: true });
+  // Half an hour before the New York midnight that began the day before
+  // yesterday: 11:30 PM three days back in New York, and already the next
+  // date in UTC. It belongs on the New York day.
+  const twoDaysAgo = moneyHub.ymdIn(moneyHub.HUB_TZ, new Date(now.getTime() - 2 * 86400000));
+  const evening = new Date(moneyHub.__test.zonedMidnightMs(twoDaysAgo, moneyHub.HUB_TZ) - 30 * 60000);
+  await mk('evening@lifecycle.test', { at: evening });
+
+  const p = await moneyHub.readPeople(pool, now);
+  assert.equal(p.status, 'ok', p.reason);
+  const on = (ymd) => (p.signups.days.find((d) => d.day === ymd) || { n: null }).n;
+  const eveningDay = moneyHub.ymdIn(moneyHub.HUB_TZ, evening);
+  const eveningUtcDay = evening.toISOString().slice(0, 10);
+  assert.notEqual(eveningDay, eveningUtcDay, 'the fixture must straddle midnight to prove anything');
+  assert.equal(on(eveningDay), 1, 'a New York evening counts on its New York day');
+  assert.equal(on(eveningUtcDay), 0, 'and not on the UTC date it already was');
+  // Alice and Bob, Carol, and the evening account: the venue owner, the banned
+  // account and the two older than the fortnight are not in the bars.
+  assert.equal(p.signups.days.reduce((s, d) => s + d.n, 0), 4);
+  assert.equal(p.signups.last7, 3);
+  assert.equal(p.signups.prior7, 1);
+  // Carol and Dave are the group; Carol started something in her first week.
+  assert.equal(p.activation.cohort, 2);
+  assert.equal(p.activation.activated, 1);
+  assert.equal(p.activation.percent, null, 'two accounts is under the floor for a share');
+  // Alice made the plan and both accepted it this week; Carol's plan was eight
+  // days ago.
+  assert.deepEqual(p.active, { last7: 2, prior7: 1 });
+  // The one walked plan: made this week, its night passed this week, and it
+  // had been confirmed (the sweep has since completed it).
+  assert.equal(p.plans.madeLast7, 1);
+  assert.equal(p.plans.madePrior7, 1);
+  assert.equal(p.plans.passedLast7, 1);
+  assert.equal(p.plans.confirmedLast7, 1);
+  assert.equal(p.plans.guestAnswersLast7, 0);
+});
