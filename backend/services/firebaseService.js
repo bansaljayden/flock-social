@@ -22,6 +22,8 @@ function init() {
     if (!warnedOnce) {
       console.warn('[Firebase] FIREBASE_SERVICE_ACCOUNT not set — push notifications disabled');
       warnedOnce = true;
+      // Ordinary on a laptop, an outage on the production service.
+      if (process.env.NODE_ENV === 'production') raisePushAlarm('unset');
     }
     return false;
   }
@@ -39,8 +41,245 @@ function init() {
     console.error('[Firebase] Failed to initialize:', err.message);
     warnedOnce = true;
     initFailed = true;
+    // A JSON parse error quotes the start of its input, and the input is the
+    // service account, private key included. Only the kind of failure is kept.
+    pushHealth.initError = err instanceof SyntaxError
+      ? 'FIREBASE_SERVICE_ACCOUNT is not valid JSON'
+      : String(err.message || err).slice(0, 200);
+    raisePushAlarm('init');
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// PUSH HEALTH, and the alarm this service never had.
+// ---------------------------------------------------------------------------
+// Every failed device send logged one console line and nothing counted them.
+// An APNs auth key that expires in the Firebase console, or a service account
+// key that is rotated or deleted, fails EVERY push: the SOS alarm to
+// flockmates, the "Still in?" check before a plan, every chat notification.
+// The app looks normal on both ends, and nobody would know until somebody
+// noticed they had stopped getting notifications. emailService.js has had a
+// health object and a consecutive-failure alarm for exactly this since
+// round 27; this is the same thing for push.
+//
+// Two ways to trip it:
+//   * a RUN of CONSECUTIVE_FAILURES_BEFORE_ALARM failed sends with no success
+//     between them. A dead token is not a failure here: it is one uninstalled
+//     app, the send is pruned, and it says nothing about the channel.
+//   * ONE send answered with an auth-class code. Those codes are about our
+//     credentials, not about a device, so every send after it fails the same
+//     way and waiting for five of them only delays the alarm.
+// Plus the two ways push is off before a send is ever tried: the SDK failing
+// to start, and FIREBASE_SERVICE_ACCOUNT unset on the production service.
+//
+// The alarm goes by EMAIL ONLY through services/opsAlert.js: a push about push
+// failing would go down the channel that is failing. Once per day through
+// ops_alert_ledger. It reports, it never refuses: nothing here changes a send.
+// ---------------------------------------------------------------------------
+const CONSECUTIVE_FAILURES_BEFORE_ALARM = 5;
+const AUTH_FAILURE_CODES = new Set([
+  'messaging/third-party-auth-error',
+  'messaging/authentication-error',
+  'messaging/mismatched-credential',
+  'app/invalid-credential',
+]);
+// How soon a failed or unaddressed alarm may try again. The ledger dedupes a
+// sent one for the day; this only stops every failed send from asking.
+const ALARM_RETRY_MS = 10 * 60 * 1000;
+
+const pushHealth = {
+  day: null,
+  sent: 0,
+  failed: 0,
+  stale: 0,
+  consecutiveFailures: 0,
+  lastCode: null,
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  authFailureAt: null,
+  authCode: null,
+  initError: null,
+};
+const alarmState = { day: null, nextTryAt: 0 };
+
+function utcDay(now = Date.now()) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+function rollDay() {
+  const day = utcDay();
+  if (pushHealth.day === day) return;
+  pushHealth.day = day;
+  pushHealth.sent = 0;
+  pushHealth.failed = 0;
+  pushHealth.stale = 0;
+}
+
+function codeOf(err) {
+  return (err && (err.code || (err.errorInfo && err.errorInfo.code))) || '';
+}
+
+function notePushOutcome(ok, stale, err) {
+  try {
+    rollDay();
+    if (ok) {
+      pushHealth.sent += 1;
+      pushHealth.consecutiveFailures = 0;
+      pushHealth.lastSuccessAt = Date.now();
+      return;
+    }
+    if (stale) {
+      pushHealth.stale += 1;
+      return;
+    }
+    const code = String(codeOf(err) || (err && err.message) || 'unknown').slice(0, 120);
+    pushHealth.failed += 1;
+    pushHealth.consecutiveFailures += 1;
+    pushHealth.lastCode = code;
+    pushHealth.lastFailureAt = Date.now();
+    if (AUTH_FAILURE_CODES.has(code)) {
+      pushHealth.authFailureAt = Date.now();
+      pushHealth.authCode = code;
+      raisePushAlarm('auth');
+    } else if (pushHealth.consecutiveFailures >= CONSECUTIVE_FAILURES_BEFORE_ALARM) {
+      raisePushAlarm('failing');
+    }
+  } catch (e) {
+    // The health count is allowed to be wrong; it is not allowed to touch a send.
+  }
+}
+
+const CHECK_LINES = [
+  'Check, in order:',
+  '  1. The APNs auth key in the Firebase console, under Project settings,',
+  '     Cloud Messaging, Apple app configuration. An expired or revoked key',
+  '     fails every iOS push.',
+  '  2. FIREBASE_SERVICE_ACCOUNT on the Railway service. A service account key',
+  '     that was rotated or deleted in Google Cloud fails every push.',
+];
+
+function alarmWords(reason) {
+  const stakes = 'Nothing is reaching a phone: not an SOS alarm to flockmates, not the "Still in?" check before a plan, not a chat notification. The app looks normal on both ends.';
+  if (reason === 'auth') {
+    return {
+      subject: 'Flock push notifications are failing',
+      lines: [
+        `Firebase refused a push with ${pushHealth.authCode}. That code is about our credentials, not about one phone, so every push fails the same way until they are fixed.`,
+        '',
+        stakes,
+        '',
+        ...CHECK_LINES,
+      ],
+    };
+  }
+  if (reason === 'failing') {
+    return {
+      subject: 'Flock push notifications are failing',
+      lines: [
+        `The last ${pushHealth.consecutiveFailures} push sends all failed. The last code Firebase gave was ${pushHealth.lastCode}.`,
+        '',
+        stakes,
+        '',
+        ...CHECK_LINES,
+        '  3. The Firebase status page, for an outage on their side.',
+      ],
+    };
+  }
+  if (reason === 'init') {
+    return {
+      subject: 'Flock push notifications are off',
+      lines: [
+        `The Firebase Admin SDK did not start: ${pushHealth.initError}. Every push is skipped until the server restarts with a working service account.`,
+        '',
+        stakes,
+        '',
+        'Put the whole service account JSON in FIREBASE_SERVICE_ACCOUNT on the Railway service.',
+      ],
+    };
+  }
+  return {
+    subject: 'Flock push notifications are off',
+    lines: [
+      'FIREBASE_SERVICE_ACCOUNT is not set on the production service, so no push is sent.',
+      '',
+      stakes,
+      '',
+      'Put the service account JSON in FIREBASE_SERVICE_ACCOUNT on the Railway service.',
+    ],
+  };
+}
+
+function raisePushAlarm(reason) {
+  try {
+    const now = Date.now();
+    const day = utcDay(now);
+    if (alarmState.day === day) return;
+    if (now < alarmState.nextTryAt) return;
+    alarmState.nextTryAt = now + ALARM_RETRY_MS;
+    const words = alarmWords(reason);
+    console.error(`🛡️ PUSH: ${words.lines[0]}`);
+    // Lazy: opsAlert loads pushHelper for its push leg, and pushHelper loads
+    // this file. This alarm never asks for that leg.
+    // eslint-disable-next-line global-require
+    const opsAlertModule = require('./opsAlert');
+    Promise.resolve(opsAlertModule.opsAlert({
+      key: 'push_failing',
+      subject: words.subject,
+      text: [...words.lines, '', 'This alert repeats at most once a day while push stays broken.'].join('\n'),
+      legs: ['email'],
+      tag: '[Firebase]',
+    })).then((out) => {
+      if (out && (out.sent || out.skipped === 'already-sent-today')) alarmState.day = day;
+    }).catch(() => {});
+  } catch (err) {
+    // The alarm is allowed to say nothing; it is not allowed to touch a send.
+  }
+}
+
+// For the money watch: push can be off with no send ever failing (unset, or
+// the SDK never started), and a process that warned once at boot says nothing
+// after that. The fifteen-minute watch asks again; the ledger keeps it to one
+// email a day.
+function checkPushHealth() {
+  try {
+    if (senderOverride) return;
+    if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+      if (process.env.NODE_ENV === 'production') raisePushAlarm('unset');
+      return;
+    }
+    if (initFailed) raisePushAlarm('init');
+  } catch (err) {
+    // Never throws.
+  }
+}
+
+// What an ops surface reads to answer "is push working right now", the same
+// shape as emailService.emailHealthStatus. Process-local, so a deploy resets
+// the counts the way it resets every other in-memory meter.
+function pushHealthStatus() {
+  rollDay();
+  return {
+    ...pushHealth,
+    configured: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT) && !initFailed,
+    consecutiveFailuresBeforeAlarm: CONSECUTIVE_FAILURES_BEFORE_ALARM,
+  };
+}
+
+function __resetPushHealthForTests() {
+  pushHealth.day = null;
+  pushHealth.sent = 0;
+  pushHealth.failed = 0;
+  pushHealth.stale = 0;
+  pushHealth.consecutiveFailures = 0;
+  pushHealth.lastCode = null;
+  pushHealth.lastSuccessAt = null;
+  pushHealth.lastFailureAt = null;
+  pushHealth.authFailureAt = null;
+  pushHealth.authCode = null;
+  pushHealth.initError = null;
+  alarmState.day = null;
+  alarmState.nextTryAt = 0;
 }
 
 // Test seam. The delivery tests need to drive the provider's failure modes —
@@ -525,14 +764,22 @@ async function rawSend(message) {
 // What one device's send came to, as { success } or { success: false, stale }.
 // Never rejects: a thrown error IS the answer, read for whether it names the
 // token as gone.
+//
+// Every final answer is also counted into pushHealth here, including one that
+// arrives after the deadline below, because this is the promise that settles
+// with what the send actually came to.
 function settleSend(buildMessage, label) {
   return Promise.resolve()
     .then(() => rawSend(buildMessage()))
     .then(
-      () => ({ success: true }),
+      () => {
+        notePushOutcome(true, false, null);
+        return { success: true };
+      },
       (err) => {
         const stale = isStaleError(err);
         if (!stale) console.error(`[Firebase] ${label}:`, err.code || err.message);
+        notePushOutcome(false, stale, err);
         return { success: false, stale };
       }
     );
@@ -827,4 +1074,12 @@ module.exports = {
   scopeKeys,
   collapseId,
   __setSenderForTests,
+  // Is push working. pushHealthStatus() is what an ops surface reads, beside
+  // emailService.emailHealthStatus(); checkPushHealth() is the money watch's
+  // fifteen-minute ask for the outages no send can reveal.
+  pushHealthStatus,
+  checkPushHealth,
+  CONSECUTIVE_FAILURES_BEFORE_ALARM,
+  AUTH_FAILURE_CODES,
+  __resetPushHealthForTests,
 };

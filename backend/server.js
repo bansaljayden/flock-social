@@ -2310,6 +2310,13 @@ async function runMoneyWatch() {
   // stopped succeeding, counted by utils/serverFault.js. Read on this timer
   // because the window is the same fifteen minutes.
   await require('./services/serverFaultAlert').runServerFaultAlert();
+
+  // Push that is off before any send could fail: FIREBASE_SERVICE_ACCOUNT unset
+  // in production, or the SDK that never started. A failing send raises its own
+  // alarm from services/firebaseService.js; these two only this timer can see.
+  try {
+    require('./services/firebaseService').checkPushHealth();
+  } catch (e) { console.error('[moneyWatch] push health read failed:', e && e.message); }
 }
 
 // Handles for the background timers, held so shutdown() can clear them —
