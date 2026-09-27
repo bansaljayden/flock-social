@@ -983,12 +983,12 @@ const INVENTORY = [
   {
     file: 'services/placeDetailsCache.js', name: 'gonePlaceIds', kind: 'cache',
     key: 'the same placeId',
-    callerControls: 'the place id, shape-checked by isPlaceIdShaped at every route that reaches this',
-    protects: 'the paid Place Details call, and a unit of the caller\'s hourly Places allowance, for an id Google has already answered NOT_FOUND to; a flock\'s saved venue whose listing was retired cost a call every time anyone opened it',
-    denominator: 'NOT_FOUND answers, 6h TTL',
+    callerControls: 'the place id, shape-checked by isPlaceIdShaped at every route that reaches this, and at Birdie\'s get_crowd_prediction tool (routes/ai.js), which reads and writes this map too',
+    protects: 'the paid Place Details call, and a unit of the caller\'s hourly Places allowance, for an id Google has already answered NOT_FOUND to; a flock\'s saved venue whose listing was retired cost a call every time anyone opened it, and every Birdie turn that asked about it',
+    denominator: 'NOT_FOUND answers (and INVALID_ARGUMENT naming the place id), 6h TTL',
     bound: 'GONE_PLACE_MAX = 2000, oldest out first with delete-before-set',
     verdict: 'SAFE',
-    why: 'Written only after Google answered NOT_FOUND to a call the caller was already charged a unit for, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries. A 429, a 5xx, a timeout, INVALID_ARGUMENT (which is also what a dead API key looks like) and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart.',
+    why: 'Written only after Google answered NOT_FOUND, or INVALID_ARGUMENT with a message naming the place id and no API key reason (utils/placesHealth.js isPlaceNotFoundAnswer), to a call the caller was already charged a unit for. The two cards and Birdie all charge allowPlacesSearch, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries across all three. A 429, a 5xx, a timeout, a dead API key\'s INVALID_ARGUMENT and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart.',
   },
 
   // ── services/pushHelper.js ────────────────────────────────────────────────

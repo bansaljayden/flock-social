@@ -129,7 +129,9 @@
 // shared cache between the two ledgers means an unauthenticated request can be
 // served a payload an account paid for and vice versa, so the reserve stops
 // being an accounting fact. If that is ever wanted it needs its own argument
-// about which ledger a cache hit belongs to, not an extra import.
+// about which ledger a cache hit belongs to, not an extra import. The Birdie
+// tool does share one thing, the gonePlaceIds memory below, and the note there
+// says why that crosses no line.
 const { upstreamSignal } = require('../utils/upstream');
 // Outage detection for the SHARED details path. GetPlaceRequest was clamped
 // to 38/day alongside Text Search in the September outage, so this half of
@@ -197,12 +199,29 @@ const detailsInflight = new Map();
 // for in error comes back the same evening. Bounded the way detailsCache is,
 // against what one account can mint: every entry is written only after a paid,
 // charged call, and PER_USER_HOURLY is 30, so one account can hold at most 180.
+//
+// BIRDIE READS AND WRITES THIS TOO, and only this. Its get_crowd_prediction
+// tool in routes/ai.js makes its own Place Details call (see "WHO SHARES THIS"
+// above for why it does not share the payload cache), so a model that kept
+// asking about a retired id bought the same NOT_FOUND on every turn. It charges
+// allowPlacesSearch, the same per-user ledger as the two cards, before every
+// call it makes, so its writes sit inside the same 180-per-account bound, and a
+// negative answer carries no payload that could cross a ledger line.
 const GONE_PLACE_TTL = 6 * 60 * 60 * 1000;
 const GONE_PLACE_MAX = 2000;
 // placeId -> ts of the NOT_FOUND answer.
 const gonePlaceIds = new Map();
 
+/**
+ * Remember that Google answered this place id with "no such place" (see
+ * isPlaceNotFoundAnswer in utils/placesHealth.js). Exported for routes/ai.js,
+ * which makes its own Place Details call; this module's own fetch calls it
+ * directly.
+ *
+ * @param {string} placeId
+ */
 function rememberGone(placeId) {
+  if (typeof placeId !== 'string' || !placeId) return;
   // Delete before set, so the oldest-first eviction below drops the entry that
   // was answered longest ago rather than one refreshed just now.
   gonePlaceIds.delete(placeId);
@@ -350,9 +369,10 @@ async function fetchOnceRaw(placeId) {
   // sends `{error:{...}}` under a 4xx, and both callers have always read the
   // message rather than the code).
   //
-  // Except NOT_FOUND, which gets its own kind. It is Google's final answer
-  // about this id, not a fault, so it is remembered (gonePlaceIds above) and
-  // the routes answer it 404, which the client does not retry.
+  // Except NOT_FOUND, which gets its own kind, and so does an INVALID_ARGUMENT
+  // that names the place id (isPlaceNotFoundAnswer says which). It is Google's
+  // final answer about this id, not a fault, so it is remembered (gonePlaceIds
+  // above) and the routes answer it 404, which the client does not retry.
   if (p.error) {
     if (isPlaceNotFoundAnswer(httpStatus, p.error)) {
       rememberGone(placeId);
@@ -444,6 +464,7 @@ module.exports = {
   willCostUpstreamCall,
   fetchPlaceDetails,
   isGonePlace,
+  rememberGonePlace: rememberGone,
   PLACE_DETAILS_FIELD_MASK,
   PLACE_DETAILS_TTL,
   PLACE_DETAILS_CACHE_MAX,

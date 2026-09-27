@@ -680,3 +680,94 @@ test('Birdie asking about a retired id is told the venue is not found, and that 
     'an id the model carried from an old conversation is not Places being down');
   assert.strictEqual(health.unhealthy, false);
 });
+
+// An id that never decoded (a truncated one, or one Birdie's model made up)
+// answers 400 INVALID_ARGUMENT rather than NOT_FOUND, and three of those in a
+// row were FAILURE_STREAK_ALARM just the same. It is Google answering about the
+// id when the message names the id and no ErrorInfo names an API key problem;
+// the dead-key test above is the other side of that line.
+const notAPlaceId = (placeId) => ({ error: { code: 400, status: 'INVALID_ARGUMENT', message: `Not a valid Place ID: ${placeId}` } });
+
+test('an id Google says is not a valid place id is answered like a retired one, and is not an outage', async () => {
+  for (let i = 0; i < 3; i += 1) {
+    const placeId = uniqueId();
+    failNextWith = notAPlaceId(placeId);
+    failNextStatus = 400;
+    const out = await get(`/api/venues/details?place_id=${placeId}`);
+    assert.strictEqual(out.status, 404, `a 502 invites a retry that cannot succeed: ${out.text}`);
+    assert.strictEqual(placeDetailsCache.isGonePlace(placeId), true,
+      'an id that does not decode will not decode on the next tap either');
+  }
+  const health = placesHealthStatus();
+  assert.strictEqual(health.consecutiveFailures, 0);
+  assert.strictEqual(health.unhealthy, false);
+});
+
+test('Birdie refuses an id no place id could be before it charges or calls anything', async () => {
+  const { executeTool } = require('../routes/ai').__testables;
+  for (const bad of ['The Shared Payload', '', 'abc', 'x/../../places:searchText', 42, null, undefined]) {
+    const out = await executeTool('get_crowd_prediction', { place_id: bad }, 7, {});
+    assert.deepStrictEqual(out, { error: 'That venue id is not usable.' }, String(bad));
+  }
+  assert.strictEqual(detailCalls.length, 0, 'a venue name is not a place id, and Google can only refuse it');
+  assert.strictEqual(charged(), 0, 'a refusal that made no call cost an hourly venue lookup');
+  assert.strictEqual(placesHealthStatus().totalFailed, 0, 'a call never made was recorded as Places failing');
+});
+
+test('Birdie shares the retired-id memory with the venue cards, in both directions', async () => {
+  const { executeTool } = require('../routes/ai').__testables;
+
+  // Birdie is told first. One call and one charge, then the rest of the
+  // conversation, and the card opened from it, cost nothing.
+  const fromBirdie = uniqueId();
+  goneIds.add(fromBirdie);
+  for (let i = 0; i < 3; i += 1) {
+    assert.deepStrictEqual(await executeTool('get_crowd_prediction', { place_id: fromBirdie }, 7, {}),
+      { error: 'Venue not found' });
+  }
+  assert.strictEqual(detailCalls.length, 1, 'every Birdie turn about a retired id bought the same NOT_FOUND again');
+  assert.strictEqual(charged(), 1);
+  assert.strictEqual((await get(`/api/venues/details?place_id=${fromBirdie}`)).status, 404);
+  assert.strictEqual(detailCalls.length, 1, 'the card asked Google about an id Birdie had just been told names nothing');
+  assert.strictEqual(charged(), 1);
+
+  // The card is told first, and Birdie never asks.
+  const fromCard = uniqueId();
+  goneIds.add(fromCard);
+  assert.strictEqual((await get(`/api/crowd/${fromCard}?localHour=20&localDay=5`)).status, 404);
+  assert.strictEqual(detailCalls.length, 2);
+  assert.strictEqual(charged(), 2);
+  assert.deepStrictEqual(await executeTool('get_crowd_prediction', { place_id: fromCard }, 7, {}),
+    { error: 'Venue not found' });
+  assert.strictEqual(detailCalls.length, 2, 'Birdie asked Google about an id the card had just been told names nothing');
+  assert.strictEqual(charged(), 2, 'an answer from memory cost an hourly venue lookup');
+});
+
+test('Birdie inventing ids that do not decode is not a Places outage, and a dead key through it still is', async () => {
+  const { executeTool } = require('../routes/ai').__testables;
+  const ids = [uniqueId(), uniqueId(), uniqueId()];
+  for (const placeId of ids) {
+    failNextWith = notAPlaceId(placeId);
+    failNextStatus = 400;
+    assert.deepStrictEqual(await executeTool('get_crowd_prediction', { place_id: placeId }, 7, {}),
+      { error: 'Venue not found' });
+  }
+  const health = placesHealthStatus();
+  assert.strictEqual(health.consecutiveFailures, 0, 'three made-up ids in a row mailed "Places is down"');
+  assert.strictEqual(health.unhealthy, false);
+  for (const placeId of ids) assert.strictEqual(placeDetailsCache.isGonePlace(placeId), true);
+
+  for (let i = 0; i < 3; i += 1) {
+    failNextWith = {
+      error: {
+        code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com' }],
+      },
+    };
+    failNextStatus = 400;
+    const placeId = uniqueId();
+    await executeTool('get_crowd_prediction', { place_id: placeId }, 7, {});
+    assert.strictEqual(placeDetailsCache.isGonePlace(placeId), false, 'a dead key says nothing about the id');
+  }
+  assert.strictEqual(placesHealthStatus().unhealthy, true, 'a dead key through Birdie must still alarm');
+});
