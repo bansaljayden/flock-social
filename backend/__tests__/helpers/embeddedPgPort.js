@@ -133,6 +133,11 @@ const SUITE_SLOTS = {
                                  // port some other process borrowed from being
                                  // picked. Not 32, which the next suite written
                                  // alongside this one is likeliest to take.
+  profileSettingsAndStreak: 57,  // new in 2026-09-27; overlapping settings
+                                 // saves merged by the upsert, and the profile
+                                 // streak counted in the person's own days.
+                                 // Far from 32-40 so suites written the same
+                                 // week in other branches cannot land on it.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

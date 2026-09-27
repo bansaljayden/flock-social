@@ -2499,6 +2499,11 @@ router.get('/settings', async (req, res) => {
 });
 
 // PATCH /api/users/settings - Merge partial settings into stored JSONB
+//
+// The ceiling on the MERGED blob, measured as Postgres prints it (jsonb::text,
+// which puts a space after every colon and comma, so it reads a little wider
+// than JSON.stringify of the same object).
+const MAX_SETTINGS_STORED = 16384;
 router.patch('/settings', async (req, res) => {
   try {
     // Bounded (round 7): a plain object only (arrays CONCATENATE under
@@ -2508,21 +2513,30 @@ router.patch('/settings', async (req, res) => {
     if (JSON.stringify(partial).length > 8192) {
       return res.status(400).json({ error: 'Settings payload too large' });
     }
-    const current = await pool.query('SELECT settings FROM user_settings WHERE user_id = $1', [req.user.id]);
-    const merged = { ...(current.rows[0]?.settings || {}), ...partial };
-    const serialized = JSON.stringify(merged);
-    if (serialized.length > 16384) {
-      return res.status(400).json({ error: 'Settings storage limit reached' });
-    }
+    // THE MERGE HAPPENS IN THE STATEMENT. This used to SELECT the blob, merge
+    // in JavaScript and write the whole merged object back. Each device sends
+    // only the keys it changed, so two saves that overlapped (Crowd alerts
+    // turned off on the phone while the web tab flushed a flock reorder) both
+    // read the same old blob, and whichever wrote second put the other's key
+    // back to its old value. crowdAlerts is read from this row by the
+    // pre-peak push, so the lost save was an opt-out the server stopped
+    // honouring. An upsert merges against the row as it stands when the
+    // statement takes its lock, so overlapping saves each land. The size cap
+    // is checked on that same merged value; a refused merge updates no row
+    // and returns none.
     const result = await pool.query(
       `INSERT INTO user_settings (user_id, settings, updated_at)
        VALUES ($1, $2::jsonb, NOW())
        ON CONFLICT (user_id) DO UPDATE
-       SET settings = EXCLUDED.settings,
+       SET settings = user_settings.settings || EXCLUDED.settings,
            updated_at = NOW()
+       WHERE length((user_settings.settings || EXCLUDED.settings)::text) <= $3
        RETURNING settings`,
-      [req.user.id, serialized]
+      [req.user.id, JSON.stringify(partial), MAX_SETTINGS_STORED]
     );
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Settings storage limit reached' });
+    }
     res.json({ settings: result.rows[0].settings });
   } catch (err) {
     console.error('Update user settings error:', err);
