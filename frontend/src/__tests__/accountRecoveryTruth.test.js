@@ -20,7 +20,11 @@ test('a superseded link is superseded, not reported as spent', () => {
   expect(issue).toMatch(/DELETE FROM password_resets/);
   expect(issue).not.toMatch(/UPDATE password_resets SET used_at/);
   // consumeReset still stamps its siblings: there a link really was spent.
-  const consume = auth.slice(auth.indexOf('async function consumeReset('), auth.indexOf('async function consumeReset(') + 3000);
+  // The whole function, to its closing brace, rather than a fixed number of
+  // characters that a longer comment inside it silently runs past.
+  const consumeAt = auth.indexOf('async function consumeReset(');
+  expect(consumeAt).toBeGreaterThan(0);
+  const consume = auth.slice(consumeAt, consumeAt + auth.slice(consumeAt).search(/\r?\n\}\r?\n/) + 3);
   expect(consume).toMatch(/UPDATE password_resets SET used_at = NOW\(\) WHERE user_id = \$1 AND used_at IS NULL/);
 });
 
@@ -29,7 +33,8 @@ test('a completed reset lifts the sign-in lockout it exists to get past', () => 
   // so ten wrong guesses then a successful reset ended on "Too many failed
   // sign-in attempts" for the password the person had just chosen.
   expect(auth).toMatch(/clearLoginFailures\(canonicalEmail\(result\.email\)\);/);
-  expect(auth).toMatch(/return \{ ok: true, userId: row\.user_id, email: row\.current_email \};/);
+  // The address it matched the row on is what the lockout is keyed by.
+  expect(auth).toMatch(/return \{\s*ok: true,\s*userId: row\.user_id,\s*email: row\.current_email,/);
 });
 
 test('both credential-change doors retire an outstanding reset link', () => {
