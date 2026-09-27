@@ -49,10 +49,15 @@ pool.query = async (text, params) => {
 
 const sent = [];
 let sendError = null;
+// What a real failed send looks like. sendEmail never throws; it RESOLVES
+// { sent: false, ... }, and a stub that only threw hid a claim that no real
+// failure ever released.
+let sendResult = null;
 emailService.sendEmail = async (msg) => {
   if (sendError) throw sendError;
+  if (sendResult) return sendResult;
   sent.push(msg);
-  return { id: 'msg_' + sent.length };
+  return { sent: true, id: 'msg_' + sent.length };
 };
 
 // Load after the stubs so the module binds to them.
@@ -63,6 +68,7 @@ function reset() {
   sent.length = 0;
   queryError = null;
   sendError = null;
+  sendResult = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +188,46 @@ test('a failed send releases the claim so the next sweep can try again', async (
     await hb.runCostHeartbeat();
     assert.equal(sent.length, 1, 'the claim was released, so the retry mailed');
   } finally {
+    costModel.RECONCILED.asOf = saved;
+  }
+});
+
+test('a send that RESOLVES as failed releases the claim and is not logged as mailed', async () => {
+  // The shape every real failure takes. The photo budget crossing 90% while
+  // Resend answers 429 used to keep the day's claim and log "Alert mailed.",
+  // so the three sweeps after it stayed silent and the warning came a day
+  // late, if the budget had not run out by then.
+  const saved = costModel.RECONCILED.asOf;
+  costModel.RECONCILED.asOf = new Date().toISOString().slice(0, 10);
+  photoStore.photoSpendStatus = async () => ({ monthUsed: 4200, monthUsd: 23, limits });
+  const realError = console.error;
+  try {
+    for (const failure of [
+      { sent: false, error: 'Too many requests', refused: true },
+      { sent: false, error: 'This operation was aborted' },
+      { sent: false, error: 'per-recipient daily cap', refused: true },
+      { sent: false, skipped: true },
+    ]) {
+      reset();
+      sendResult = failure;
+      const logged = [];
+      console.error = (...a) => logged.push(a.join(' '));
+      try {
+        await hb.runCostHeartbeat();
+      } finally {
+        console.error = realError;
+      }
+      assert.equal(ledger.size, 0, `${JSON.stringify(failure)} kept the day's claim`);
+      assert.ok(!logged.some((l) => /Alert mailed/.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
+      assert.ok(logged.some((l) => /NOT delivered/.test(l)), 'the failure is said out loud');
+
+      sendResult = null;
+      await hb.runCostHeartbeat();
+      assert.equal(sent.length, 1, 'the next sweep mails once the provider recovers');
+      assert.ok(/photo budget/.test(sent[0].subject));
+    }
+  } finally {
+    console.error = realError;
     costModel.RECONCILED.asOf = saved;
   }
 });

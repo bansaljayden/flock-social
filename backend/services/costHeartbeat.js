@@ -78,15 +78,26 @@ async function releaseToday(alertKey) {
     .catch(() => {});
 }
 
+// True only when the mail actually left. sendEmail never throws: a refusal, a
+// 429 or 5xx, the 8s deadline, a missing key and the per-recipient cap all
+// come back as { sent: false }. Releasing only inside a catch meant none of
+// those ever released, so a failed send kept the day's claim, logged "Alert
+// mailed.", and the sweeps after it stayed quiet until tomorrow. That is the
+// day the photo alert exists to buy. The catch stays for a sendEmail that does
+// throw, and is treated the same way.
 async function mailOnce(alertKey, to, subject, lines) {
   if (!(await claimToday(alertKey))) return false;
+  let result;
   try {
-    await sendEmail({ to, subject, text: lines.join('\n') });
-    return true;
+    result = await sendEmail({ to, subject, text: lines.join('\n') });
   } catch (sendErr) {
-    await releaseToday(alertKey);
-    throw sendErr;
+    result = { sent: false, error: sendErr && sendErr.message ? sendErr.message : String(sendErr) };
   }
+  if (result && result.sent === true) return true;
+  await releaseToday(alertKey);
+  const why = (result && (result.error || result.reason)) || (result && result.skipped ? 'no email key' : 'send failed');
+  console.error(`[COST-HEARTBEAT] ${subject}, and the alert was NOT delivered (${why}). The next sweep will try again.`);
+  return false;
 }
 
 // The two checks, split out so a test can drive each with plain inputs and
