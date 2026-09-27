@@ -2068,7 +2068,7 @@ const MONEY_WARN_FRACTION = 0.8;
 // per day per level.
 const moneyWatchSaid = new Map();
 
-function sayOnceToday(leg, level, day, message, extra) {
+function sayOnceToday(leg, level, day, message, extra, title) {
   const key = `${leg}:${level}`;
   // THE DAY IS ONLY A DEDUPE KEY IF THERE IS ONE. moneyWatchSaid.get(key) is
   // undefined before a leg has ever spoken, so a status reader that came back
@@ -2091,17 +2091,48 @@ function sayOnceToday(leg, level, day, message, extra) {
     tags: { money_leg: leg, money_level: level },
     extra: { day, ...extra },
   });
+  // AND THE HALF THAT REACHES A PERSON. Both lines above are dead ends on this
+  // deployment: the Railway log nobody reads, and a Sentry that is a no-op
+  // while SENTRY_DSN is unset. A spent ceiling is the moment the product has
+  // started refusing people, so it goes out as an email and a push to the
+  // admins, once per leg per day through ops_alert_ledger, which a deploy
+  // cannot reset the way it resets moneyWatchSaid. The 80% warning stays in
+  // the log: it is a decision that can wait for somebody to look.
+  if (level === 'exhausted' && title) pageMoneyLeg(leg, title, message);
+}
+
+function pageMoneyLeg(leg, title, message) {
+  require('./services/opsAlert').opsAlert({
+    key: `money_${leg}`,
+    subject: `Flock: ${title}`,
+    text: [
+      message,
+      '',
+      'The daily ceilings reset at 00:00 UTC and the photo budget on the 1st.',
+      'Each daily ceiling is a constant beside its own counter, in the files',
+      'listed at the top of the money watch in backend/server.js, so raising one',
+      'needs a deploy. The photo budget is PHOTO_BUDGET_USD_PER_YEAR on the',
+      'Railway service.',
+      '',
+      'This alert repeats at most once a day per budget.',
+    ].join('\n'),
+    push: { title, body: message },
+    tag: '[moneyWatch]',
+  }).catch(() => {});
 }
 
 // One leg: used against its ceiling, plus the sentence to say. `noun` is what
 // the numbers are denominated in, because "2000/2000" means nothing on its own
 // and the four legs count four different things (calls, calls, tokens, fetches).
-function checkMoneyLeg({ leg, day, used, ceiling, noun, atCeiling, atWarn }) {
+// `title` is the subject and lock-screen line of the exhaustion alert: what a
+// person notices in the app, in a few words. A leg with no title stays in the
+// log, which is right only for a leg something else already alerts on.
+function checkMoneyLeg({ leg, day, used, ceiling, noun, atCeiling, atWarn, title }) {
   if (!Number.isFinite(used) || !Number.isFinite(ceiling) || ceiling <= 0) return;
   const pct = Math.round((used / ceiling) * 100);
   const numbers = `${used}/${ceiling} ${noun} (${pct}%) on ${day}`;
   if (used >= ceiling) {
-    sayOnceToday(leg, 'exhausted', day, `${atCeiling} ${numbers}`, { used, ceiling, pct });
+    sayOnceToday(leg, 'exhausted', day, `${atCeiling} ${numbers}`, { used, ceiling, pct }, title);
     return;
   }
   if (used >= ceiling * MONEY_WARN_FRACTION) {
@@ -2118,6 +2149,7 @@ async function runMoneyWatch() {
       noun: 'paid Google Places calls',
       atCeiling: 'Google Places DAILY CEILING REACHED. Venue search, the crowd card, the owner dashboard and Birdie venue lookups all answer 429 until 00:00 UTC.',
       atWarn: 'Google Places daily budget is nearly spent.',
+      title: 'Venue search is off until 00:00 UTC',
     });
     // The unauthenticated share is a separate decision (M5-1) and reaching it
     // means the badge, the photo proxy and the marketing demo are done for the
@@ -2128,6 +2160,7 @@ async function runMoneyWatch() {
       noun: 'paid Places calls from doors with no account',
       atCeiling: 'The UNAUTHENTICATED Places share is spent. Venue badges, the photo proxy and the public demo are refusing until 00:00 UTC; the signed-in product still has its reserve.',
       atWarn: 'The unauthenticated Places share is nearly spent.',
+      title: 'Public venue lookups are off until 00:00 UTC',
     });
   } catch (e) { console.error('[moneyWatch] places read failed:', e && e.message); }
 
@@ -2166,10 +2199,12 @@ async function runMoneyWatch() {
         // AND THE HALF THAT REACHES A PERSON. Both lines above are dead ends on
         // this deployment: console.error goes to the Railway log, which carried
         // this exact outage for five days unread, and Sentry is a no-op because
-        // SENTRY_DSN is unset (the boot log says so on every deploy). The email
-        // dedupes through ops_alert_ledger in Postgres rather than sayOnceToday's
-        // in-memory map, because migration 058 exists precisely because a restart
-        // resets that map and mails twice.
+        // SENTRY_DSN is unset (the boot log says so on every deploy). The alert
+        // (an email and a push to the admins) dedupes through ops_alert_ledger in
+        // Postgres rather than sayOnceToday's in-memory map, because migration
+        // 058 exists precisely because a restart resets that map and mails
+        // twice. That is also why the sayOnceToday call above carries no title:
+        // this is the one alert for this leg.
         await require('./services/placesOutageAlert').runPlacesOutageAlert(h);
     }
   } catch (e) { console.error('[moneyWatch] places health read failed:', e && e.message); }
@@ -2183,6 +2218,7 @@ async function runMoneyWatch() {
       noun: 'billed Cloud Vision screens',
       atCeiling: 'Cloud Vision DAILY CEILING REACHED. Image screening fails CLOSED by design, so EVERY photo upload in the app (chat, DM, story, avatar) is refused until 00:00 UTC.',
       atWarn: 'Cloud Vision daily budget is nearly spent; photo uploads stop entirely when it runs out.',
+      title: 'Photo uploads are off until 00:00 UTC',
     });
   } catch (e) { console.error('[moneyWatch] vision read failed:', e && e.message); }
 
@@ -2195,6 +2231,7 @@ async function runMoneyWatch() {
       noun: 'Gemini tokens',
       atCeiling: 'Gemini DAILY TOKEN CEILING REACHED. Birdie and the Roost advisor answer 429 until 00:00 UTC.',
       atWarn: 'The Gemini daily token budget is nearly spent.',
+      title: 'Birdie is off until 00:00 UTC',
     });
   } catch (e) { console.error('[moneyWatch] gemini read failed:', e && e.message); }
 
@@ -2209,12 +2246,14 @@ async function runMoneyWatch() {
       noun: 'Ticketmaster lookups',
       atCeiling: 'The Ticketmaster DAILY BUDGET is spent. Event search and the advisor\'s event facts answer 429 until 00:00 UTC.',
       atWarn: 'The Ticketmaster daily budget is nearly spent.',
+      title: 'Event search is off until 00:00 UTC',
     });
     checkMoneyLeg({
       leg: 'events-unauth', day: s.day, used: s.unauthUsed, ceiling: s.limits.unauthDaily,
       noun: 'Ticketmaster lookups from doors with no account',
       atCeiling: 'The UNAUTHENTICATED Ticketmaster share is spent; the signed-in product still has its reserve.',
       atWarn: 'The unauthenticated Ticketmaster share is nearly spent.',
+      title: 'Public event lookups are off until 00:00 UTC',
     });
   } catch (e) { console.error('[moneyWatch] events read failed:', e && e.message); }
 
@@ -2228,6 +2267,7 @@ async function runMoneyWatch() {
       noun: 'night-context Ticketmaster lookups',
       atCeiling: 'The night-context sweep has spent its Ticketmaster budget. Tonight\'s listings will not be snapshotted, and the advisor cannot answer about this night later.',
       atWarn: 'The night-context Ticketmaster budget is nearly spent.',
+      title: 'Night snapshots are paused until 00:00 UTC',
     });
   } catch (e) { console.error('[moneyWatch] nightContext read failed:', e && e.message); }
 
@@ -2246,6 +2286,9 @@ async function runMoneyWatch() {
       noun: 'Places photo fetches this month',
       atCeiling: 'The Places photo MONTH budget is spent. Cached photos keep serving; a venue nobody has viewed this month has no picture until the 1st.',
       atWarn: 'The Places photo month budget is nearly spent.',
+      // No title, so no page: services/costHeartbeat.js already sends the
+      // photo budget alert, from 90% of the month, and two alerts a day about
+      // one ceiling is how the second one gets filtered away.
     });
   } catch (e) { console.error('[moneyWatch] photo read failed:', e && e.message); }
 }

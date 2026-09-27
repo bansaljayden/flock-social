@@ -40,6 +40,7 @@
 //   bill_reminder      the payer asked them to pay back their share
 //                                                             (routes/billing.js, user-initiated)
 //   moderation_report  admin-only: a report needs review      (services/moderationAlerts.js)
+//   ops_alert          admin-only: something on the server broke (services/opsAlert.js)
 //   crowd_alert        forecast for an event they committed to (services/crowdAlerts.js)
 //
 // crowd_alert is the only push not directly triggered by a person's action, so

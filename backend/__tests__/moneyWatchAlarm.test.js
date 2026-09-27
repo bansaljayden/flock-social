@@ -112,7 +112,7 @@ function loadAlarm() {
   const pieces = [
     /const MONEY_WARN_FRACTION = [^\n]+;/,
     /const moneyWatchSaid = new Map\(\);/,
-    /function sayOnceToday\(leg, level, day, message, extra\) \{[\s\S]*?\n\}/,
+    /function sayOnceToday\(leg, level, day, message, extra, title\) \{[\s\S]*?\n\}/,
     /function checkMoneyLeg\(\{[\s\S]*?\n\}/,
   ].map((re) => {
     const m = re.exec(SRC);
@@ -121,13 +121,51 @@ function loadAlarm() {
   });
 
   const captured = [];
+  const paged = [];
   const Sentry = { captureMessage: (msg, opts) => captured.push({ msg, level: opts.level, tags: opts.tags }) };
   const fakeConsole = { error: () => {} };
-  const make = Function('Sentry', 'console', `"use strict";
+  const pageMoneyLeg = (leg, title, message) => paged.push({ leg, title, message });
+  const make = Function('Sentry', 'console', 'pageMoneyLeg', `"use strict";
     ${pieces.join('\n')}
     return { checkMoneyLeg, reset: () => moneyWatchSaid.clear() };`);
-  return { ...make(Sentry, fakeConsole), captured };
+  return { ...make(Sentry, fakeConsole, pageMoneyLeg), captured, paged };
 }
+
+// ── 3. A spent ceiling reaches a person, not just the log ───────────────────
+
+test('a spent ceiling pages the admins once, and the 80% warning stays in the log', () => {
+  const a = loadAlarm();
+  const leg = { leg: 'vision-global', day: '2026-09-27', ceiling: 100, noun: 'screens', atCeiling: 'Uploads are off.', atWarn: 'Nearly spent.', title: 'Photo uploads are off' };
+  a.checkMoneyLeg({ ...leg, used: 85 });
+  assert.deepStrictEqual(a.paged, [], 'a warning is a decision that can wait for somebody to look');
+  a.checkMoneyLeg({ ...leg, used: 100 });
+  a.checkMoneyLeg({ ...leg, used: 100 });
+  assert.strictEqual(a.paged.length, 1, 'the ceiling pages once per leg per day');
+  assert.strictEqual(a.paged[0].leg, 'vision-global');
+  assert.strictEqual(a.paged[0].title, 'Photo uploads are off');
+  assert.ok(a.paged[0].message.includes('Uploads are off.'));
+});
+
+test('a leg with no title stays in the log, so a leg another alert covers is not paged twice', () => {
+  const a = loadAlarm();
+  a.checkMoneyLeg({ leg: 'photo-month', day: '2026-09', used: 100, ceiling: 100, noun: 'fetches', atCeiling: 'Spent.', atWarn: 'w' });
+  assert.strictEqual(a.captured.length, 1);
+  assert.deepStrictEqual(a.paged, []);
+});
+
+test('every paged leg in runMoneyWatch carries a title, and only the photo leg goes without', () => {
+  const body = moneyWatchBody();
+  const calls = [...body.matchAll(/checkMoneyLeg\(\{([\s\S]*?)\n\s*\}\);/g)].map((m) => m[1]);
+  assert.ok(calls.length >= 6);
+  const untitled = calls
+    .filter((c) => !/\btitle: '/.test(c))
+    .map((c) => (/leg: '([^']+)'/.exec(c) || [])[1]);
+  assert.deepStrictEqual(untitled, ['photo-month'],
+    'a spent ceiling with no title is never paged. Only the photo month budget may go without, because '
+    + 'services/costHeartbeat.js already alerts on it.');
+  // And the pager itself goes through the shared sender, keyed per leg.
+  assert.match(SRC, /function pageMoneyLeg\(leg, title, message\) \{[\s\S]*?opsAlert\(\{[\s\S]*?key: `money_\$\{leg\}`/);
+});
 
 test('nothing is said below the warning threshold', () => {
   const a = loadAlarm();

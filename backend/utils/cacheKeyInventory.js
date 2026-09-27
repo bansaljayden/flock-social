@@ -661,6 +661,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'This is the only map in this file that cannot refuse anything. Nothing reads it to decide whether a message goes out; it decides whether the log has already said this today, so the worst an attacker gets by flooding distinct keys is an alarm repeated, which is the direction that makes a problem MORE visible rather than less. It is swept stale-first rather than cleared for the rule rather than for the risk. Added in round 27 with the alarm itself: every caller in this codebase fails soft on a mail failure, correctly and independently, and the sum of that was a product where an expired Resend key meant no account could be created, no password could be recovered and no parent was told their child raised an alarm, with nothing on any screen looking wrong and nobody told.',
   },
+  {
+    file: 'services/emailService.js', name: 'alarmPaged', kind: 'cache',
+    key: 'the alarm CONDITION CLASS (the part of the alarm key before the colon: failing, no-key, cap, locked-out, emergency-loop) -> the UTC day the admins were last paged about it',
+    callerControls: 'nothing. The address half of a locked-out or emergency-loop key is cut off before the class is taken, so a thousand distinct addresses are one entry',
+    protects: 'a Postgres claim in ops_alert_ledger and an admin push. A miss costs one INSERT that the ledger then dedupes, never a second push the same day',
+    denominator: 'not a counter. One entry per condition class, holding a date string',
+    bound: 'the five condition classes the alarm raises, plus one per new class a future alarm adds; nothing a caller can grow',
+    verdict: 'SAFE',
+    why: 'The page leg of the email alarm goes through services/opsAlert.js, which already dedupes per key per day in Postgres. This map only saves that claim on a bad day when alarmSaid speaks about many distinct addresses of one class: keyed by class, it cannot grow with the addresses and cannot be used to force pushes, since the ledger key is the class too.',
+  },
 
   // ── services/emailSuppression.js ──────────────────────────────────────────
   {
