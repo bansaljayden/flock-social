@@ -1476,6 +1476,61 @@ test('a creator who deletes their account while others still owe hands the plan 
   assert.equal(read.body.bill.hasPayer, true);
   assert.ok(!emits.some((e) => e.event === 'flock_deleted' && e.payload.flockId === flockId),
     'nobody is told a plan that survived is off');
+  // Everybody still in it is told who hosts it now, Alice included, so her
+  // open app gains the host controls and nobody's keeps the deleted account.
+  const hostNotices = emits.filter((e) => e.event === 'flock_updated' && e.payload.flockId === flockId);
+  assert.deepEqual(hostNotices.map((e) => e.room).sort(), [alice, bob, dave, eve].map((u) => `user:${u.id}`).sort());
+  for (const e of hostNotices) assert.deepEqual(e.payload, { flockId, creator_id: alice.id, creator_name: 'Alice' });
+});
+
+test('a banned payer is passed over for a member who can still sign in, and the debt to them survives', async () => {
+  // A banned account cannot sign in, so a plan handed to it had nobody who
+  // could confirm, invite or run the budget on it. The money it is owed is on
+  // the bill whoever hosts, so the plan goes to the first member who can.
+  const carol = await withPassword(await mkUser('Carol'));
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const eve = await mkUser('Eve');
+  const flockId = await mkFlock(carol, [alice, bob, eve], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: 120, tipPercent: 0, splitType: 'equal', paidBy: alice.id },
+  })).status, 201);
+  await pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [alice.id]);
+
+  emits.length = 0;
+  const gone = await deleteAccount(carol);
+  assert.equal(gone.status, 200, gone.text);
+
+  const plan = await one('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+  assert.ok(plan, 'the plan was cascaded away');
+  assert.equal(plan.creator_id, bob.id, 'the longest-standing member who is not banned hosts it');
+  const bill = await one('SELECT paid_by FROM bill_splits WHERE flock_id = $1', [flockId]);
+  assert.equal(bill.paid_by, alice.id, 'the bill still says who is owed');
+  const owed = await one(
+    `SELECT COUNT(*)::int AS n FROM bill_split_shares bss JOIN bill_splits bs ON bs.id = bss.bill_id
+      WHERE bs.flock_id = $1 AND bss.settled IS NOT TRUE AND bss.user_id <> bs.paid_by`,
+    [flockId]
+  );
+  assert.equal(owed.n, 2, "Bob's and Eve's debts to Alice are both still on it");
+});
+
+test('a plan whose members are all banned still goes to the payer rather than being lost', async () => {
+  // Banned comes last, not never: a banned host keeps the record of what is
+  // owed, and a deleted plan does not.
+  const carol = await withPassword(await mkUser('Carol'));
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const flockId = await mkFlock(carol, [bob, alice], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: 90, tipPercent: 0, splitType: 'equal', paidBy: alice.id },
+  })).status, 201);
+  await pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = ANY($1::int[])', [[alice.id, bob.id]]);
+
+  const gone = await deleteAccount(carol);
+  assert.equal(gone.status, 200, gone.text);
+  const plan = await one('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+  assert.ok(plan, 'the plan was cascaded away');
+  assert.equal(plan.creator_id, alice.id, 'among members who are all banned, the payer is still first');
 });
 
 test('a plan where nobody else is owed still goes with its creator, and its members are told', async () => {

@@ -11524,6 +11524,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           showToast(`${name} moved to ${formatEventTime(data.event_time)}.`);
         } else if (data.event_time && !before.eventTime) {
           showToast(`${name} is set for ${formatEventTime(data.event_time)}.`);
+        } else if (data.creator_id != null && String(data.creator_id) !== String(before.creatorId)
+          && String(data.creator_id) === String(meRef.current?.id)) {
+          // The plan was handed to this person when its creator deleted their
+          // account while one member still owed another on the bill
+          // (routes/users.js HAND_ON_OWED_PLANS_SQL). Everybody left in it is
+          // sent the new host; only the new host is told anything, because
+          // theirs is the only app that now offers something it did not.
+          showToast(`You're the host of ${name} now.`);
         }
       }
       // THE VENUE BLOCK IS TAKEN AS SENT. The PUT sends the row's whole
@@ -11537,10 +11545,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // only a key the event does not carry at all (the sweep sends a bare
       // { flockId, status }) leaves what this app holds.
       const sent = (key) => Object.prototype.hasOwnProperty.call(data, key);
+      // Only that hand-on carries creator_id. creatorId is what every host
+      // control is gated on and hostId and host are who the plan says it is
+      // hosted by, so all three follow it; creator_name is null across a
+      // block, and 'Unknown' is what the flock list shows then too.
+      const hostChanged = data.creator_id != null;
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
         return {
           ...f,
+          ...(hostChanged ? { creatorId: data.creator_id, hostId: data.creator_id, host: data.creator_name || 'Unknown' } : {}),
           name: data.name || f.name,
           venue: data.venue_name || f.venue,
           venueAddress: sent('venue_address') ? (data.venue_address || null) : f.venueAddress,
@@ -11572,9 +11586,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
         };
       }).filter(f => f.status !== 'completed' && f.status !== 'cancelled'));
+      // The account that handed the plan on was in its roster, and its
+      // membership went with the account, so the faces are read again.
+      if (hostChanged && before) refreshFlockRoster(data.flockId);
     });
     return unsub;
-  }, [showToast]);
+  }, [showToast, refreshFlockRoster]);
 
   // The night-of window. Opened by the server a few hours before a confirmed
   // plan (one event per member, wherever they are); each answer moves the

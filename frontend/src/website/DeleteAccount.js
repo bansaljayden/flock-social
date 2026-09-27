@@ -135,8 +135,8 @@ export default function DeleteAccount() {
           those flocks: the whole chat, the RSVPs, and the votes, for every person who was
           in them. They are not moved to another owner, with one exception. If a plan you
           created has a bill split that somebody else paid, and somebody besides you still
-          owes them, the plan goes to the person who paid, so the record of what is owed is
-          not lost. Your messages, RSVP, votes and share of that bill are deleted all the
+          owes them, the plan goes to the person who paid (or, if they have left the plan or
+          been banned, to another member of it), so the record of what is owed is not lost. Your messages, RSVP, votes and share of that bill are deleted all the
           same. Flocks you only joined are left
           alone; you are removed from them, and the messages you sent in them go with you.
           The people who were going to a plan that is deleted are told it is off: in the app if
@@ -198,8 +198,9 @@ export default function DeleteAccount() {
           </li>
           <li>
             A plan you created whose bill split somebody else paid and somebody besides you
-            still owes on, as described above. It goes to the person who paid, and its name,
-            time and place stay with it. Nothing of yours inside it does.
+            still owes on, as described above. It goes to the person who paid, or to another
+            member if they have left the plan or been banned, and its name, time and place
+            stay with it. Nothing of yours inside it does.
           </li>
         </ul>
       </section>

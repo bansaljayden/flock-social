@@ -627,7 +627,10 @@ let failForget = false;
 // erase lands inside the transaction under the lock and before the delete.
 let deletionOrder = [];
 
-function stubQuery(text) {
+// Who a handed-on plan goes to in this fixture: member 21 of plan 200.
+const HEIR = { id: 21, name: 'Sam' };
+
+function stubQuery(text, params = []) {
   const q = String(text);
   const has = (f) => q.includes(f);
 
@@ -680,7 +683,14 @@ function stubQuery(text) {
   // owed on the bill (HAND_ON_OWED_PLANS_SQL). None by default; the database
   // side of that choice is driven in budgetBillIntegrity.test.js.
   if (has('SET creator_id = heir.user_id')) {
-    return { rows: handedOn.map((id) => ({ id })), rowCount: handedOn.length };
+    return { rows: handedOn.map((id) => ({ id, heir_id: HEIR.id, heir_name: HEIR.name })), rowCount: handedOn.length };
+  }
+  // After the COMMIT, who is still in a handed-on plan, to be told its new
+  // host. The deleted account's membership has cascaded away by then.
+  if (has('SELECT user_id FROM flock_members WHERE flock_id = $1')) {
+    const plan = OWNED.find((f) => f.id === Number(params[0]));
+    const ids = plan ? plan.member_ids : [];
+    return { rows: ids.map((user_id) => ({ user_id })), rowCount: ids.length };
   }
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
@@ -720,9 +730,9 @@ const server = http.createServer(app);
 let base;
 
 test.before(() => new Promise((resolve) => {
-  sharedPool.query = async (text) => stubQuery(text);
+  sharedPool.query = async (text, params) => stubQuery(text, params);
   sharedPool.connect = async () => ({
-    query: async (text) => stubQuery(text),
+    query: async (text, params) => stubQuery(text, params),
     release() {},
   });
   server.listen(0, '127.0.0.1', () => {
@@ -813,6 +823,48 @@ test('a plan handed on because somebody is still owed on its bill is not announc
   assert.deepEqual(deletes.map((e) => e.payload.flockId), [201], 'only the plan that really went is announced');
   assert.deepEqual(deletes.map((e) => e.room), ['user:23']);
   assert.deepEqual(pushed, [], 'and nobody is pushed "Plan cancelled" for the plan that survived');
+});
+
+test('everybody left in a handed-on plan is told who hosts it now, the new host included', async () => {
+  // Their open apps still held the deleted account as creatorId, which is
+  // what every host control is gated on, so the new host had no controls
+  // and was never told the plan was theirs until the list was read again.
+  const res = await deleteAccountAs({ handedOn: [200] });
+  assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
+  assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+  const hostNotices = emitted.filter((e) => e.event === 'flock_updated');
+  assert.deepEqual(hostNotices.map((e) => e.room).sort(), ['user:21', 'user:22']);
+  for (const e of hostNotices) {
+    assert.deepEqual(e.payload, { flockId: 200, creator_id: HEIR.id, creator_name: HEIR.name });
+  }
+  // Only the plan that survived: the one that went is announced as deleted.
+  assert.ok(!emitted.some((e) => e.event === 'flock_updated' && e.payload.flockId !== 200));
+});
+
+test("a member on either side of a block with the new host is told the host changed, without the host's name", async () => {
+  // The flock list leaves creator_name out across a block; the live notice
+  // must not hand over what the list withholds.
+  await deleteAccountAs({ handedOn: [200], blocked: [22] });
+  const byRoom = new Map(emitted.filter((e) => e.event === 'flock_updated').map((e) => [e.room, e.payload]));
+  assert.deepEqual(byRoom.get('user:22'), { flockId: 200, creator_id: HEIR.id, creator_name: null });
+  assert.deepEqual(byRoom.get('user:21'), { flockId: 200, creator_id: HEIR.id, creator_name: HEIR.name });
+});
+
+test('a host-change notice that fails does not turn a finished deletion into an error', async () => {
+  // The account is gone by then; a 500 would tell the person it was not.
+  const realQuery = sharedPool.query;
+  sharedPool.query = async (text, params) => {
+    if (String(text).includes('SELECT user_id FROM flock_members WHERE flock_id = $1')) throw new Error('simulated read failure');
+    return stubQuery(text, params);
+  };
+  try {
+    const res = await deleteAccountAs({ handedOn: [200] });
+    assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
+    assert.equal(rowDeleted, true);
+    assert.ok(!emitted.some((e) => e.event === 'flock_updated'));
+  } finally {
+    sharedPool.query = realQuery;
+  }
 });
 
 test('a member who blocked the deleter is not sent a payload naming them', async () => {

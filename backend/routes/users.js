@@ -3101,17 +3101,25 @@ const ACCOUNT_FLOCK_LOCKS_SQL = `SELECT id FROM flocks
 //
 // The plan goes to the person the money is owed to, who is on it by
 // construction (a payer who is owed cannot leave, memberBoundToBill), and to
-// the longest-standing accepted member if that is ever not so. Runs after
-// ACCOUNT_FLOCK_LOCKS_SQL, which already holds every plan this account
-// created, so no bill can be posted or settled between the choice and the
-// DELETE.
+// the longest-standing accepted member if that is ever not so. A banned
+// account comes last, payer or not: it cannot sign in, so a plan handed to it
+// has nobody who can confirm, invite or run the budget, while the debt it is
+// owed survives on the bill whoever hosts. It still gets the plan when every
+// other member is banned too, because a plan with a banned host keeps the
+// record and a deleted plan does not. Runs after ACCOUNT_FLOCK_LOCKS_SQL,
+// which already holds every plan this account created, so no bill can be
+// posted or settled between the choice and the DELETE.
+//
+// Returns the heir and their name as well, for the host change the members'
+// open apps are told about once the deletion has committed.
 const HAND_ON_OWED_PLANS_SQL = `UPDATE flocks f
    SET creator_id = heir.user_id, updated_at = NOW()
-  FROM (SELECT DISTINCT ON (bs.flock_id) bs.flock_id, fm.user_id
+  FROM (SELECT DISTINCT ON (bs.flock_id) bs.flock_id, fm.user_id, hu.name AS heir_name
           FROM bill_splits bs
           JOIN flocks pf ON pf.id = bs.flock_id AND pf.creator_id = $1
           JOIN flock_members fm ON fm.flock_id = bs.flock_id
            AND fm.status = 'accepted' AND fm.user_id <> $1
+          JOIN users hu ON hu.id = fm.user_id
          WHERE bs.paid_by IS NOT NULL
            AND bs.paid_by <> $1
            AND bs.quarantined IS NOT TRUE
@@ -3120,9 +3128,9 @@ const HAND_ON_OWED_PLANS_SQL = `UPDATE flocks f
                           AND bss.settled IS NOT TRUE
                           AND bss.user_id <> $1
                           AND bss.user_id <> bs.paid_by)
-         ORDER BY bs.flock_id, (fm.user_id = bs.paid_by) DESC, fm.id) heir
+         ORDER BY bs.flock_id, (hu.is_banned IS TRUE), (fm.user_id = bs.paid_by) DESC, fm.id) heir
  WHERE f.id = heir.flock_id
-RETURNING f.id`;
+RETURNING f.id, heir.user_id AS heir_id, heir.heir_name`;
 
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
 // Hard-deletes the user row; ON DELETE CASCADE removes their flocks (all but
@@ -3385,9 +3393,10 @@ async function deleteAccount(req, res) {
     let deleted;
     let tombstoned = false;
     // Plans this account created that survive it, because one member still
-    // owes another on their bill (HAND_ON_OWED_PLANS_SQL). They are not
-    // cancelled, so nobody in them is told they are.
-    let handedOn = new Set();
+    // owes another on their bill (HAND_ON_OWED_PLANS_SQL), keyed by plan id
+    // to the member who now hosts it. They are not cancelled, so nobody in
+    // them is told they are; they are told who hosts them instead.
+    let handedOn = new Map();
     // What the LOCKED read said, not the stale fetch at the top — the audit line
     // and the retention purge below both key off "was this account banned", and
     // after the re-read that answer is only correct inside the transaction.
@@ -3403,7 +3412,7 @@ async function deleteAccount(req, res) {
       // Under those locks, and before the DELETE whose cascade would take
       // them: a plan where somebody is still owed goes to another member.
       const kept = await client.query(HAND_ON_OWED_PLANS_SQL, [req.user.id]);
-      handedOn = new Set(((kept && kept.rows) || []).map((r) => r.id));
+      handedOn = new Map(((kept && kept.rows) || []).map((r) => [r.id, { id: r.heir_id, name: r.heir_name }]));
 
       await client.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]);
       await client.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]);
@@ -3531,6 +3540,34 @@ async function deleteAccount(req, res) {
         await emitToFlockMembers(io, f.id, 'flock_deleted', {
           flockId: f.id, flockName: f.name, deletedBy: deleterName,
         }, recipients).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+      }
+    }
+
+    // A plan that was handed on is still on, under a new host, and the open
+    // apps of the people in it still hold the old one: the creatorId the host
+    // controls are gated on, and the name it says it is hosted by. So every
+    // member is told who hosts it now, the heir included, which is how the
+    // heir finds out. Membership is read after the COMMIT, so the deleted
+    // account is not in it. The heir's name is left out for a member on
+    // either side of a block with them, as the flock list leaves out
+    // creator_name. Guarded per plan: the account is already gone, and a
+    // notice that fails must not turn that into a 500.
+    if (io && handedOn.size > 0) {
+      for (const [flockId, heir] of handedOn) {
+        try {
+          const members = await pool.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+            [flockId]
+          );
+          const ids = members.rows.map((r) => r.user_id);
+          if (ids.length === 0) continue;
+          const hidden = new Set(await getInvisibleUserIds(heir.id));
+          const notice = (named) => ({ flockId, creator_id: heir.id, creator_name: named ? heir.name : null });
+          await emitToFlockMembers(io, flockId, 'flock_updated', notice(true), ids.filter((id) => !hidden.has(id)));
+          await emitToFlockMembers(io, flockId, 'flock_updated', notice(false), ids.filter((id) => hidden.has(id)));
+        } catch (e) {
+          console.error('host change fan-out failed:', e.message);
+        }
       }
     }
 
