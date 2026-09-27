@@ -2260,6 +2260,10 @@ router.post('/venues/:userId/tier', async (req, res) => {
            expires_at = CASE
              WHEN $1 = 'free' THEN NULL
              WHEN $6 THEN EXCLUDED.expires_at
+             -- A Stripe period end is not a comp's end date. A founding comp
+             -- laid over a paying venue kept it, and ran out with the period
+             -- (days) instead of the six months the offer names.
+             WHEN $7 AND venue_subscriptions.source = 'stripe' THEN EXCLUDED.expires_at
              -- A founding re-grant fills in a MISSING end date and never
              -- replaces a live one; a lapsed one counts as missing.
              WHEN $7 THEN COALESCE(

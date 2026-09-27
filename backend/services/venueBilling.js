@@ -402,6 +402,20 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            grace. syncVenueSubscription therefore runs one sync per venue at
 //            a time, with its Stripe read inside the lock and this statement
 //            on the same transaction, so the last write is the latest read.
+//            And never over a live paid grant WE wrote (source 'comp' or
+//            'admin', from POST /api/admin/venues/:userId/tier) unless the
+//            subscription is live and paid past that grant's end. A comp laid
+//            over a paying venue keeps the Stripe columns it found, so the row
+//            still names the old subscription, and "the same subscription
+//            overwrites its own row" let that subscription's events undo the
+//            comp: the cancel_at_period_end update cut six months down to the
+//            Stripe period plus grace, and the deleted event wrote 'canceled'
+//            and the cache 'free'. Checkout already refuses a venue holding a
+//            live grant (buildVenueCheckout), so the only subscription that can
+//            reach such a row is one that was running before the grant. It
+//            takes the row back once the venue is paying for longer than the
+//            grant covers, so a venue that kept paying never falls into a gap
+//            between the two.
 //   upd      moves the cache only when it changes, only when the grant was
 //            written, and never to a paid tier for an unverified profile.
 //   audit    one tier_changed row per actual change, none per renewal.
@@ -431,10 +445,16 @@ const SYNC_SQL = `WITH old AS (
       cancel_at = EXCLUDED.cancel_at,
       trial_end = EXCLUDED.trial_end,
       updated_at = NOW()
-    WHERE venue_subscriptions.stripe_subscription_id IS NULL
+    WHERE (venue_subscriptions.stripe_subscription_id IS NULL
        OR venue_subscriptions.stripe_subscription_id = EXCLUDED.stripe_subscription_id
        OR $11::boolean
-       OR venue_subscriptions.status NOT IN ('active', 'trialing', 'past_due')
+       OR venue_subscriptions.status NOT IN ('active', 'trialing', 'past_due'))
+      AND NOT (venue_subscriptions.source IS DISTINCT FROM 'stripe'
+       AND venue_subscriptions.tier IN ('premium', 'pro')
+       AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
+       AND (venue_subscriptions.expires_at IS NULL OR venue_subscriptions.expires_at > NOW())
+       AND NOT ($11::boolean AND venue_subscriptions.expires_at IS NOT NULL
+                AND EXCLUDED.expires_at > venue_subscriptions.expires_at))
     RETURNING user_id
   ),
   upd AS (
@@ -559,6 +579,13 @@ async function syncVenueSubscription(subscriptionId) {
     await client.query('COMMIT');
     const row = r.rows[0] || {};
     if (!row.profiles) return { ignored: 'no_venue_profile' };
+    // Live and not written can only be the rule in SYNC_SQL that keeps a
+    // grant we wrote: Stripe is billing a venue that already holds Roost from
+    // us for longer than this period. Nothing is taken from the venue, but
+    // somebody is paying for what we gave away, so it is said out loud.
+    if (g.live && !(row.written > 0)) {
+      console.error(`[venue-billing] venue user ${userId} holds a Roost grant from us (a comp or a hand-sold plan) that runs past Stripe subscription ${sub.id} (${g.status}), so the grant was kept and the subscription was not written over it. Stripe has billed a venue we already cover: refund or cancel it in Stripe, or end the grant.`);
+    }
     if (g.live && row.verified !== true) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
     }
