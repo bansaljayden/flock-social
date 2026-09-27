@@ -1020,10 +1020,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const src = map.getSource('user-accuracy');
       if (src) src.setData({ type: 'FeatureCollection', features: [metersCirclePolygon(userLocation.lat, userLocation.lng, userLocation.accuracy || 50)] });
     }
-    // Re-feed heatmap data from current venues
+    /* Re-feed heatmap data from current venues, through the category filter
+       like the other two places that feed the heat (the markers effect and
+       applyCategoryFilter). This one used to skip it, and nothing re-runs
+       either of those after a swap: with Nightlife chosen, tapping satellite
+       or the phone turning to dark mode at sunset brought back heat over every
+       restaurant and cafe while their pins stayed hidden, until the filter or
+       the venue list next changed. */
     const heatSrc = map.getSource('venue-heat');
     if (heatSrc) {
       const features = (venuesRef.current || [])
+        .filter(v => venueMatchesCategory(v, filterCategoryRef.current))
         .filter(v => typeof v.crowd === 'number' && v.location?.latitude && v.location?.longitude)
         .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
       heatSrc.setData({ type: 'FeatureCollection', features });
