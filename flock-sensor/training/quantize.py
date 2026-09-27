@@ -1,6 +1,6 @@
 """Make an 8-bit copy of a trained model, and say what it costs.
 
-    python quantize.py runs/3/people.onnx runs/3/people-int8.onnx
+    python quantize.py runs/3/people.onnx runs/3/people-int8.onnx [real_cache.pkl]
 
 8-bit arithmetic is what the Pi 5's cores are fastest at, so the same network
 stored in 8 bits usually runs two to three times faster there. It is only
@@ -27,10 +27,19 @@ import synth  # noqa: E402
 
 
 class Frames(CalibrationDataReader):
-    def __init__(self, n=400, seed=77):
+    """Frames to set the 8-bit ranges from. Half real when a real cache is
+    given: calibrated on generated frames alone, owl-3 lost eight points on
+    the real ceiling test, because real frames span ranges drawings do not."""
+
+    def __init__(self, n=400, seed=77, real_path=None):
         rng = np.random.default_rng(seed)
-        self.items = iter([{'frame': synth.model_input(synth.scene_full(rng)[0])[None]}
-                           for _ in range(n)])
+        frames = [synth.scene_full(rng)[0] for _ in range(n if not real_path else n // 2)]
+        if real_path:
+            import pickle
+            from train import real_frame
+            real = pickle.load(open(real_path, 'rb'))['val']
+            frames += [real_frame(real, rng)[0] for _ in range(n - len(frames))]
+        self.items = iter([{'frame': synth.model_input(t)[None]} for t in frames])
 
     def get_next(self):
         return next(self.items, None)
@@ -58,9 +67,10 @@ def counts(sess, frames, threshold=0.4):
 
 def main(argv):
     src, dst = Path(argv[0]), Path(argv[1])
+    real_path = argv[2] if len(argv) > 2 else None
     pre = dst.with_suffix('.pre.onnx')
     quant_pre_process(str(src), str(pre))
-    quantize_static(str(pre), str(dst), Frames(), quant_format=QuantFormat.QDQ,
+    quantize_static(str(pre), str(dst), Frames(real_path=real_path), quant_format=QuantFormat.QDQ,
                     activation_type=QuantType.QUInt8, weight_type=QuantType.QInt8,
                     per_channel=True)
     pre.unlink()
