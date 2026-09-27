@@ -2212,7 +2212,7 @@ export default function RevenueScreen({
                       : (Number.isFinite(fixed.infrastructureMonthlyUsd) ? fixed.infrastructureMonthlyUsd + reconciledTotal : null);
                     const tooling = ledger ? ledger.toolingMonthlyUsd : null;
                     const price = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
-                    const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.ceil(usd / price) : null);
+                    const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.max(0, Math.ceil(usd / price)) : null);
                     const infraVenues = venuesFor(infra);
                     const allVenues = venuesFor(allInMonthly);
                     const plural = (n) => (n === 1 ? 'venue' : 'venues');
