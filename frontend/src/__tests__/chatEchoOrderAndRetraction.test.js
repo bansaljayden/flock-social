@@ -646,6 +646,65 @@ describe('a stored row never settles a photo; its own echo does', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A photo arrives live as its thumbnail
+// ---------------------------------------------------------------------------
+// The server sends image_url null on every live copy of a row that has a
+// thumbnail, the history read's rule (toLiveImageShape in
+// backend/sockets/handlers.js), instead of the full photo to every socket.
+describe('a live photo row carries its thumbnail and no full image', () => {
+  const FULL = 'data:image/jpeg;base64,FULLFULL';
+  const THUMB = 'data:image/jpeg;base64,THUMB';
+  const photo = (id, clientId) => bubble(id, '', { clientId, afterId: 20, type: 'image', image: `data:image/jpeg;base64,${clientId}` });
+
+  test('the DM echo swaps the server row in and keeps the photo this phone sent', () => {
+    const tempId = 'temp-1700000000222-fghij';
+    const sending = { id: tempId, sender: 'You', senderId: ME, text: '', message_type: 'image', image_url: FULL, clientId: 'cE', pending: true };
+    const run = dmEcho({
+      threads: [{ userId: 5, name: 'Bo', messages: [sending], unread: 0 }],
+      pending: [[tempId, { userId: 5, payload: { text: '', message_type: 'image', image_url: FULL, clientId: 'cE' }, timer: 'timer-E' }]],
+    });
+    run.handler(dmWire(22, { message_text: '', message_type: 'image', image_url: null, thumb_url: THUMB, client_id: 'cE', status: 'sent' }));
+    const settled = run.state.threads[0].messages[0];
+    expect([settled.id, settled.status, settled.image_url, settled.thumb_url]).toEqual([22, 'sent', FULL, THUMB]);
+    expect(run.state.timersCleared).toEqual(['timer-E']);
+  });
+
+  test('an incoming DM photo draws its thumbnail and reads as a photo in the list', () => {
+    const run = dmEcho({ threads: [{ userId: 5, name: 'Bo', messages: [], unread: 0 }] });
+    run.handler(dmWire(23, { sender_id: 5, receiver_id: ME, sender_name: 'Bo', message_text: '', message_type: 'image', image_url: null, thumb_url: THUMB }));
+    const got = run.state.threads[0];
+    expect([got.messages[0].image_url, got.messages[0].thumb_url]).toEqual([null, THUMB]);
+    expect(got.lastMessage).toBe('Photo');
+    expect(got.unread).toBe(1);
+  });
+
+  test('the flock echo settles the bubble in place, so the photo it drew stays', () => {
+    const sending = photo(1700000000333, 'cF');
+    const run = flockEcho({
+      flocks: [{ id: 7, messages: [row(20, 'before'), sending] }],
+      pending: [[sending.id, { flockId: 7, text: '', message_type: 'image', image: sending.image, clientId: 'cF', timer: 't' }]],
+    });
+    run.handler(flockWire(24, { message_type: 'image', image_url: null, thumb_url: THUMB, client_id: 'cF', status: 'sent' }));
+    const settled = run.state.flocks[0].messages[1];
+    expect([settled.id, settled.pending, settled.image]).toEqual([24, false, sending.image]);
+  });
+
+  test("another member's live photo maps to the thumbnail, the same object a reload makes", () => {
+    const run = flockEcho({ flocks: [{ id: 7, messages: [] }] });
+    run.handler(flockWire(25, { sender_id: 2, sender_name: 'Bo', message_type: 'image', image_url: null, thumb_url: THUMB }));
+    const got = run.state.flocks[0].messages[0];
+    expect(got.thumb).toBe(THUMB);
+    expect(got.image).toBeUndefined();
+  });
+
+  test('a thumbnail on its own is enough for the preview to say Photo', () => {
+    expect(H.messagePreview({ text: '', message_type: 'text', thumb_url: THUMB })).toBe('Photo');
+    expect(H.messagePreview({ text: '', message_type: 'text', thumb: THUMB })).toBe('Photo');
+    expect(H.messagePreview({ text: '', message_type: 'text' })).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4 and 5. A pin and a quote go with the message
 // ---------------------------------------------------------------------------
 describe('the takedown clear takes the pin as well as the bubble and the quotes', () => {

@@ -2075,7 +2075,10 @@ const sameSend = (local, server) => {
   // out but actually landed came back on the next open as a SECOND bubble
   // reading "Didn't send. Tap to retry", the failed copy was rewritten to
   // localStorage every time, and tapping retry posted a third. The socket echo
-  // was never affected because it carries image_url from INSERT ... RETURNING.
+  // was not affected then, because it carried image_url from INSERT ...
+  // RETURNING. It no longer does: a photo with a thumbnail now arrives live
+  // without image_url too (toLiveImageShape in backend/sockets/handlers.js),
+  // which is the other reason the thumbnail has to count here.
   // A history row no longer settles a photo's bubble at all (sendLandedAs says
   // why), so presence on a stored row now decides one thing: a line of text
   // is never taken for a captioned photo that says the same words.
@@ -2632,7 +2635,9 @@ const messagePreview = (m) => {
   const text = typeof m.text === 'string' ? m.text.trim() : '';
   if (text) return text;
   if (m.message_type === 'venue_card' || m.venue_data) return 'Venue';
-  if (m.message_type === 'image' || m.image_url || m.image || m.hadContent) return 'Photo';
+  // A thumbnail counts: a live row and a history row both carry a photo as its
+  // thumbnail alone, with image_url null.
+  if (m.message_type === 'image' || m.image_url || m.image || m.thumb_url || m.thumb || m.hadContent) return 'Photo';
   return '';
 };
 
@@ -15066,7 +15071,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             }
             if (tempIdx !== -1) {
               const updated = [...d.messages];
-              updated[tempIdx] = mapped;
+              // The server sends a photo live as its thumbnail only
+              // (toLiveImageShape in backend/sockets/handlers.js), so the row
+              // swapped in here has no image_url. The bubble keeps the full
+              // photo this phone already drew and sent, which is what the flock
+              // echo does by settling in place: no flicker to the smaller copy,
+              // and no download on tap of a photo that is already here.
+              updated[tempIdx] = mapped.image_url || !updated[tempIdx].image_url
+                ? mapped
+                : { ...mapped, image_url: updated[tempIdx].image_url };
               return { ...d, messages: orderByServerId(updated), lastMessage: previewText, lastMessageIsYou: true, lastMessageTime: msg.created_at };
             }
             // In id order, not arrival order: see orderByServerId.

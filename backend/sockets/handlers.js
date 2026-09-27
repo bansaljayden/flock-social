@@ -839,6 +839,32 @@ function ownEcho(row, clientId, extra = {}) {
   return { ...row, ...extra, ...(clientId ? { client_id: clientId } : {}) };
 }
 
+// A PHOTO GOES OUT LIVE AS ITS THUMBNAIL, by the rule the history reads have
+// kept since migration 053: `CASE WHEN thumb_url IS NOT NULL THEN NULL ELSE
+// image_url END` (routes/messages.js, flock and DM history alike). The four
+// send paths, send_message and send_dm here and their REST twins, fanned out
+// the INSERT ... RETURNING * row as it stood, so every member's socket carried
+// the whole photo (up to about 700 KB of base64) on each send and the sender
+// got it back again in the echo, while a history read of the same thread
+// carried only thumbnails. Every live event queued behind that frame on the
+// same socket (typing, votes, the next message) waited for it.
+//
+// Nothing on the client needs the full photo on the live row. The sender's
+// bubble keeps the image it drew; everyone else draws the thumbnail, which is
+// what they would draw after any reload; and the viewer fetches the original
+// on tap from GET /flocks/:id/messages/:messageId/image or the DM twin, which
+// is where it has come from for history rows all along. A row with no
+// thumbnail keeps its image, as history does, because the client's thumbnail
+// step can come back empty and the photo would otherwise arrive as nothing.
+//
+// Applied to the stored row in place, right after the INSERT, so every copy
+// built from it afterwards (the echo, each member's copy, the HTTP answer) is
+// already the live shape and no path can forget one of them.
+function toLiveImageShape(row) {
+  if (row && row.thumb_url) row.image_url = null;
+  return row;
+}
+
 // Reusable membership check for socket handlers
 async function verifyMembership(flockId, userId) {
   const result = await pool.query(
@@ -1961,7 +1987,8 @@ function registerHandlers(io, socket) {
         ]
       );
 
-      const message = result.rows[0];
+      // The thumbnail, not the photo, on every copy that follows.
+      const message = toLiveImageShape(result.rows[0]);
       message.sender_name = user.name;
       // Oversized base64 avatars fan out to every member on every message —
       // drop them from the payload instead of amplifying them (REVIEW-ROUND5)
@@ -2966,7 +2993,8 @@ function registerHandlers(io, socket) {
       // out the rest of the 30s TTL after the first message landed.
       invalidateDmRelationshipCache(user.id, receiverId);
 
-      const msg = result.rows[0];
+      // The thumbnail, not the photo, on both copies below (toLiveImageShape).
+      const msg = toLiveImageShape(result.rows[0]);
       msg.sender_name = user.name;
       // Same oversized-avatar guard as the flock send path (REVIEW-ROUND5)
       msg.sender_image =
@@ -3892,6 +3920,9 @@ module.exports = {
   // than spelling the shape a second time.
   readClientId,
   ownEcho,
+  // The thumbnail-not-photo rule for a freshly stored row, so the REST send
+  // twins fan out the same shape as the socket paths and the history reads.
+  toLiveImageShape,
   // The end of a flock location share, for the ways a share ends outside this
   // file: routes/flocks.js calls the first once a sharing member's leave has
   // committed (from the audience it read before the membership row went), and

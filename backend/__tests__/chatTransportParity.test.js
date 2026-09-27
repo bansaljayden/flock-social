@@ -58,7 +58,9 @@ let imageVerdict = { allowed: true, reason: null };
 let moderateImageCalls = 0;
 moderationMod.moderateImage = async () => {
   moderateImageCalls += 1;
-  return imageVerdict;
+  // A function answers per call, for a test that needs the photo and its
+  // thumbnail judged differently.
+  return typeof imageVerdict === 'function' ? imageVerdict(moderateImageCalls) : imageVerdict;
 };
 
 const {
@@ -168,8 +170,10 @@ const SMALL_IMAGE = dataUrl(2048);
 function scriptFlockSend() {
   routes = [
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 10 }]],
+    // thumb_url as RETURNING * hands it back, so the live shape below is the
+    // one a real stored row produces.
     [/INSERT INTO messages/, (p) => [{
-      id: 501, flock_id: p[0], sender_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5],
+      id: 501, flock_id: p[0], sender_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5], thumb_url: p[6],
     }]],
     [/SELECT name FROM flocks WHERE id = \$1/, [{ name: 'Friday' }]],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/, [{ user_id: 2 }]],
@@ -183,7 +187,7 @@ function scriptDmSend() {
     [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
     [/SELECT id, name FROM users WHERE id = \$1/, [{ id: 7, name: 'Bo' }]],
     [/INSERT INTO direct_messages/, (p) => [{
-      id: 88, sender_id: p[0], receiver_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5],
+      id: 88, sender_id: p[0], receiver_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5], thumb_url: p[7],
     }]],
   ];
 }
@@ -671,4 +675,113 @@ test('the server error channel is subscribable through the registry', () => {
   const off = api.onSocketError((d) => seen.push(d));
   assert.strictEqual(typeof off, 'function', 'it must return an unsubscribe like every other onX');
   off();
+});
+
+// ---------------------------------------------------------------------------
+// 8. A photo goes out live as its thumbnail, the way history ships it
+// ---------------------------------------------------------------------------
+//
+// The send paths used to fan out the INSERT ... RETURNING * row as it stood,
+// so every member's socket carried the full photo (up to ~700 KB of base64)
+// and the sender got it back in the echo, while the history read of the same
+// thread carried only thumbnails. The REST twins are pinned in
+// chatRestLiveDelivery.test.js.
+
+const THUMB = dataUrl(1024);
+
+test('send_message fans out the thumbnail and no full photo, to members and the echo alike', async () => {
+  const { io, socket } = connect();
+  scriptFlockSend();
+
+  await fire(socket, 'send_message', {
+    flockId: 3, message_text: 'we made it', message_type: 'image', image_url: SMALL_IMAGE, thumb_url: THUMB,
+  });
+
+  assert.deepStrictEqual(errors(socket), []);
+  // Stored whole: the full photo is still what a tap fetches.
+  assert.strictEqual(wrote('messages')[0].params[5], SMALL_IMAGE);
+  assert.strictEqual(wrote('messages')[0].params[6], THUMB);
+  const copies = io.emitted.filter((e) => e.event === 'new_message');
+  assert.deepStrictEqual(copies.map((e) => e.room).sort(), ['user:1', 'user:2']);
+  for (const c of copies) {
+    assert.strictEqual(c.payload.image_url, null, `${c.room} was sent the full photo`);
+    assert.strictEqual(c.payload.thumb_url, THUMB, `${c.room} lost the thumbnail`);
+    assert.strictEqual(c.payload.message_text, 'we made it');
+  }
+});
+
+test('send_message keeps the full photo on a row that has no thumbnail, as history does', async () => {
+  // The client's thumbnail step can come back empty, and a row without one is
+  // served its image by history too. Stripping it here would deliver nothing.
+  const { io, socket } = connect();
+  scriptFlockSend();
+
+  await fire(socket, 'send_message', { flockId: 3, message_type: 'image', image_url: SMALL_IMAGE });
+
+  const copies = io.emitted.filter((e) => e.event === 'new_message');
+  assert.ok(copies.length > 0, `nothing fanned out: ${errors(socket).join(' | ')}`);
+  for (const c of copies) assert.strictEqual(c.payload.image_url, SMALL_IMAGE);
+});
+
+test('send_message drops a thumbnail that fails screening and then keeps the full photo', async () => {
+  const { io, socket } = connect();
+  scriptFlockSend();
+  // The photo passes, its thumbnail does not: the thumbnail is dropped, so the
+  // row has none and the photo itself is what everyone is sent.
+  imageVerdict = (call) => (call === 1 ? { allowed: true, reason: null } : { allowed: false, reason: 'unsafe_adult' });
+  await fire(socket, 'send_message', { flockId: 3, message_type: 'image', image_url: SMALL_IMAGE, thumb_url: THUMB });
+  assert.strictEqual(moderateImageCalls, 2, 'the photo and its thumbnail are each screened');
+  const copies = io.emitted.filter((e) => e.event === 'new_message');
+  assert.ok(copies.length > 0);
+  for (const c of copies) {
+    assert.strictEqual(c.payload.thumb_url, null);
+    assert.strictEqual(c.payload.image_url, SMALL_IMAGE);
+  }
+});
+
+test('send_dm sends the thumbnail and no full photo, to the recipient and the echo alike', async () => {
+  const { io, socket } = connect();
+  scriptDmSend();
+
+  await fire(socket, 'send_dm', { receiverId: 7, message_text: 'look', message_type: 'image', image_url: SMALL_IMAGE, thumb_url: THUMB });
+
+  assert.deepStrictEqual(errors(socket), []);
+  assert.strictEqual(wrote('direct_messages')[0].params[5], SMALL_IMAGE);
+  const toRecipient = socket.emitted.find((e) => e.event === 'new_dm' && e.target === 'user:7');
+  const echo = io.emitted.find((e) => e.event === 'new_dm' && e.room === 'user:1');
+  assert.ok(toRecipient && echo, 'both copies go out');
+  for (const c of [toRecipient, echo]) {
+    assert.strictEqual(c.payload.image_url, null);
+    assert.strictEqual(c.payload.thumb_url, THUMB);
+  }
+});
+
+test('send_dm keeps the full photo when there is no thumbnail', async () => {
+  const { io, socket } = connect();
+  scriptDmSend();
+
+  await fire(socket, 'send_dm', { receiverId: 7, message_type: 'image', image_url: SMALL_IMAGE });
+
+  const toRecipient = socket.emitted.find((e) => e.event === 'new_dm' && e.target === 'user:7');
+  const echo = io.emitted.find((e) => e.event === 'new_dm' && e.room === 'user:1');
+  assert.strictEqual(toRecipient.payload.image_url, SMALL_IMAGE);
+  assert.strictEqual(echo.payload.image_url, SMALL_IMAGE);
+});
+
+test('the live rule is the history rule, spelled once for all four send paths', () => {
+  const { toLiveImageShape } = require('../sockets/handlers');
+  assert.deepStrictEqual(toLiveImageShape({ image_url: 'full', thumb_url: 'small' }), { image_url: null, thumb_url: 'small' });
+  assert.deepStrictEqual(toLiveImageShape({ image_url: 'full', thumb_url: null }), { image_url: 'full', thumb_url: null });
+  assert.deepStrictEqual(toLiveImageShape({ message_text: 'hi', image_url: null, thumb_url: null }), { message_text: 'hi', image_url: null, thumb_url: null });
+  assert.strictEqual(toLiveImageShape(undefined), undefined);
+
+  // And each of the four stores its row through it before any copy is built.
+  const handlersSrc = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
+  const routesSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'messages.js'), 'utf8');
+  assert.strictEqual((handlersSrc.match(/const message = toLiveImageShape\(result\.rows\[0\]\);/g) || []).length, 1);
+  assert.strictEqual((handlersSrc.match(/const msg = toLiveImageShape\(result\.rows\[0\]\);/g) || []).length, 1);
+  assert.strictEqual((routesSrc.match(/const message = toLiveImageShape\(result\.rows\[0\]\);/g) || []).length, 2);
+  // The history reads still say the same thing in SQL.
+  assert.match(routesSrc, /CASE WHEN m\.thumb_url IS NOT NULL THEN NULL ELSE m\.image_url END AS image_url/);
+  assert.match(routesSrc, /CASE WHEN dm\.thumb_url IS NOT NULL THEN NULL ELSE dm\.image_url END AS image_url/);
 });
