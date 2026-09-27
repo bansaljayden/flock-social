@@ -758,7 +758,7 @@ export default function VenueDashboard({
         'Set your live crowd number, on any plan',
         'Post deals and specials',
         'List your events',
-        'See which groups have you in their vote',
+        'See which flocks have you in their vote',
       ],
       roost: [
         'Crowd forecasts for your venue, today by the hour and a week out',
@@ -1166,13 +1166,19 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${tonightPeak.hour}` : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Groups Eyeing You</p>
+              {/* One name for one list. This tile, the section on the Events
+                  tab and its empty state were "Groups Eyeing You", "Incoming
+                  Flocks" and "No incoming flocks yet": three names for
+                  GET /incoming-flocks, and the last two promised arrivals. The
+                  route lists a flock when one member voted for this venue, so
+                  every surface now says "in their vote" and nothing more. */}
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In Their Vote</p>
               {/* A read that never landed is not zero. The other three tiles on
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
                   timed out, and 0 here is the number a venue would act on. */}
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, next 7 days</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
@@ -1799,9 +1805,9 @@ export default function VenueDashboard({
                 {Icons.plus('white', 18)} Create Event
               </button>
 
-              {/* Incoming Flocks */}
+              {/* Flocks with you in their vote (GET /incoming-flocks) */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Incoming Flocks</h3>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks With You in Their Vote</h3>
                 {/* Banner above the list, never instead of it — same rule as
                     the promotions and events tabs. */}
                 {venueListErrors.incomingFlocks && (
@@ -1810,7 +1816,7 @@ export default function VenueDashboard({
                       layout="row"
                       size={48}
                       bird={BIRDIE}
-                      body="We couldn't load the flocks heading your way."
+                      body="We couldn't load the flocks with you in their vote."
                       action={<button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                     />
                   </div>
@@ -1824,7 +1830,7 @@ export default function VenueDashboard({
                     offered is the one that can work. */}
                 {venueListErrors.incomingFlocksLocked && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include the incoming-flocks feed.</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include this list.</p>
                     {(process.env.REACT_APP_PURCHASES !== 'off') && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
                   </div>
                 )}
@@ -1863,7 +1869,7 @@ export default function VenueDashboard({
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 0 4px' }}>
                       <BirdieStill size={84} />
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '10px 0 12px' }}>No incoming flocks yet</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '10px 0 12px' }}>No flock has you in its vote yet</p>
                     </div>
                   )
                 )}

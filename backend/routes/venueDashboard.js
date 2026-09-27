@@ -636,9 +636,12 @@ router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async
 const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
 const INCOMING_AHEAD_HOURS = 168; // = 7 days
 
-// GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue.
-// Free on every plan, inside the 12-hour / 7-day window above; only
-// verification gates it (below).
+// GET /api/venue-dashboard/incoming-flocks — flocks with this venue in their
+// vote. One member's vote is enough to list a flock, whether or not the group
+// then chose this venue, so nothing that renders this feed may say a group
+// "chose" or "picked" the venue: the dashboard and the public pages call it
+// the flocks with you in their vote. Free on every plan, inside the 12-hour /
+// 7-day window above; only verification gates it (below).
 router.get('/incoming-flocks', async (req, res) => {
   try {
     const venue = await getVenueCtx(req.user.id);

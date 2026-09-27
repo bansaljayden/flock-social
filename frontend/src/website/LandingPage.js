@@ -1043,20 +1043,27 @@ export default function LandingPage() {
                   be opened.
 
                   What is below ships today, with the route behind each one:
-                    GET /incoming-flocks   the flocks that chose this venue
+                    GET /incoming-flocks   flocks with this venue in their vote
                     POST /promotions + GET /public-promotions/:placeId
                     POST /reviews/:id/reply, over public reviews on the card
                     GET /intelligence      the owner's own forecast + demand curve
 
                   This is the fifth time this page has had to delete a claim
                   nothing implemented. Before adding a line here, find the route
-                  that answers it and the screen that renders it. */}
+                  that answers it and the screen that renders it.
+
+                  "Who picked you tonight" and "the flocks that chose you" were
+                  the sixth. GET /incoming-flocks lists a flock when one member
+                  voted for the venue, whether or not the group went there, and
+                  it looks seven days ahead, not one night. "In their vote" is
+                  what the route knows, and it is the name the dashboard uses. */}
               <p className="lp-plan-note">
-                A dashboard for your door: who picked you tonight, how the week
-                ahead looks, and a card inside the app that you write.
+                A dashboard for your door: which flocks have you in their vote,
+                how the week ahead looks, and a card inside the app that you
+                write.
               </p>
               <ul className="lp-list">
-                <li>See the flocks that chose you</li>
+                <li>See which flocks have you in their vote this week</li>
                 <li>Put a deal on your venue’s card, where groups open it</li>
                 <li>Reply to reviews from people who went</li>
                 <li>Your own hour-by-hour forecast, the same one the app shows</li>

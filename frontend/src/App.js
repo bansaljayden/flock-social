@@ -17023,7 +17023,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
   // A failed list read is NOT an empty list. Every one of these lists renders a
   // confident empty state from an empty array — "No promotions yet. Create your
-  // first one!", "No incoming flocks yet", "No reviews yet" — so a network blip
+  // first one!", "No flock has you in its vote yet", "No reviews yet" — so a network blip
   // on the dashboard load told a venue owner their content was gone and, on the
   // promotions tab, invited them to type it in again. `.catch(() => ({ … }))`
   // is what made that indistinguishable from the truth.
@@ -17035,7 +17035,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // "Try again" on one is a button that can only ever refuse again, which is
   // the control-that-cannot-succeed this dashboard has already removed twice.
   // So the flag still keeps such an answer from reading as a zero or as "No
-  // incoming flocks yet", though the server no longer sends one.
+  // flock has you in its vote yet", though the server no longer sends one.
   const [venueListErrors, setVenueListErrors] = useState({
     promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
   });
@@ -17423,7 +17423,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setRealIncomingFlocks(d?.flocks || []);
       // The route answers 200 { flocks: [], unverified: true } for a venue it
       // will not serve yet; that used to render as a confident 0 and "No
-      // incoming flocks yet".
+      // flock has you in its vote yet".
       const unverified = !!d?.unverified;
       setVenueListErrors(prev => (
         (prev.incomingFlocks || prev.incomingFlocksLocked || prev.incomingFlocksUnverified !== unverified)

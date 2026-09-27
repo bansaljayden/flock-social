@@ -129,8 +129,19 @@ describe('the page only sells things that exist', () => {
     const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
     const venueCard = visible.slice(visible.indexOf('For venues'), visible.indexOf('lp-cta'));
 
-    // "See the flocks that chose you"
-    expect(venueCard).toMatch(/flocks that chose you/i);
+    // "See which flocks have you in their vote this week". It said "the
+    // flocks that chose you" and "who picked you tonight", and the route
+    // behind it lists a flock when ONE member voted for the venue, whether or
+    // not the group went there, for seven days ahead rather than one night.
+    // Nothing in the feed knows who chose whom, so the pitch may not say so.
+    expect(venueCard).toMatch(/which flocks have you in their vote this week/i);
+    expect(venueCard).not.toMatch(/\b(chose|picked|choosing|picking) you\b/i);
+    expect(venueCard).not.toMatch(/\btonight\b/i);
+    const route = fs.readFileSync(
+      path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8'
+    );
+    expect(route).toMatch(/JOIN venue_votes vv ON vv\.flock_id = f\.id\s+WHERE vv\.venue_id = \$1/);
+    expect(route).toMatch(/const INCOMING_AHEAD_HOURS = 168;/);
     expect(api).toMatch(/venue-dashboard\/incoming-flocks/);
     expect(app).toMatch(/getIncomingFlocks\(/);
 
@@ -166,6 +177,71 @@ describe('the page only sells things that exist', () => {
     // runs the trained model does not make them, so the line must not credit
     // them to the model's training corpus.
     expect(copy).not.toMatch(/same model that ships inside Flock/);
+  });
+
+  test('the in-their-vote list has one honest name on every surface', () => {
+    // GET /incoming-flocks lists a flock when one member voted for the venue.
+    // The public pages sold it as the flocks that "chose" or "picked" a venue,
+    // and the dashboard gave it three names on one screen, two of which
+    // promised arrivals. Every surface now calls it the flocks with you in
+    // their vote, and the old names may not come back.
+    const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
+    const flat = (s) => s.replace(/\s+/g, ' ');
+    // Comments are where the old names are quoted on purpose, as the record
+    // of why they went. Only what renders is under test.
+    const strip = (s) => s
+      .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const dashboard = strip(read('frontend', 'src', 'screens', 'VenueDashboard.js'));
+    const surfaces = [
+      ['LandingPage.js', flat(visible)],
+      ['AboutPage.js', flat(strip(read('frontend', 'src', 'website', 'AboutPage.js')))],
+      ['marketing-page.js', flat(strip(read('frontend', 'api', 'marketing-page.js')))],
+      ['llms.txt', flat(read('frontend', 'public', 'llms.txt'))],
+      ['VenueDashboard.js', dashboard],
+      // The one email every venue from before Roost had a price receives,
+      // which lists this feed among what stays free.
+      ['roostNoticeEmail.js', flat(strip(read('backend', 'templates', 'roostNoticeEmail.js')))],
+    ];
+    const OVERCLAIMS = [
+      /\b(chose|picked) (you|it|this venue|their venue)\b/i,
+      /flocks that (chose|picked|selected)\b/i,
+      /have your venue in their plans/i,
+      /Groups Eyeing You/,
+      />[^<]*Incoming Flocks[^<]*</,
+      /No incoming flocks/,
+      /heading your way/,
+    ];
+    const hits = [];
+    for (const [name, text] of surfaces) {
+      for (const re of OVERCLAIMS) {
+        const m = text.match(re);
+        if (m) hits.push(`${name}: "${m[0]}"`);
+      }
+    }
+    expect(hits).toEqual([]);
+
+    expect(dashboard).toContain('>In Their Vote</p>');
+    expect(dashboard).toContain('Flocks With You in Their Vote</h3>');
+    expect(dashboard).toContain('>No flock has you in its vote yet</p>');
+    expect(dashboard).toContain("'See which flocks have you in their vote'");
+    expect(surfaces[1][1]).toContain('the flocks that have it in their vote');
+    expect(surfaces[3][1]).toContain('the flocks that have their venue in their vote');
+    expect(surfaces[5][1]).toContain('seeing which flocks have your venue in their vote');
+  });
+
+  test('llms.txt does not sell Roost in the present tense while no venue is charged', () => {
+    // It said "Venues are the side Flock charges. Roost ... is $99 a month ...
+    // bought on flockcorp.com" ninety lines below its own "no venue is being
+    // charged today". VENUE_BILLING_ENABLED is unset, so checkout cannot run.
+    // /about already speaks in the right tense; llms.txt now matches it.
+    const llms = fs.readFileSync(path.join(REPO, 'frontend', 'public', 'llms.txt'), 'utf8')
+      .replace(/\s+/g, ' ');
+    expect(llms).not.toMatch(/Venues are the side Flock charges/);
+    expect(llms).not.toMatch(/bought on flockcorp\.com/);
+    expect(llms).toContain('Roost, the venue plan, will be $99 a month or $990 a year per location');
+    expect(llms).toContain('No venue is being charged today');
   });
 
   test('the SOS email on the page is the one the backend sends', () => {
