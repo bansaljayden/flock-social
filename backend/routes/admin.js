@@ -1859,11 +1859,17 @@ router.put('/venues/:profileId/verify', async (req, res) => {
     // no place: taking a badge away is the safe direction, and refusing it
     // because the claim moved would keep a badge up that someone decided to
     // pull.
+    //
+    // The refusal's words are written for the one person likely to see them:
+    // an admin whose console tab was opened before this rule shipped. That
+    // page sends no place and shows the server's error text as it is, so the
+    // sentence says what to do (reload) before it names the field, which is
+    // what someone sending the request by hand needs.
     let reviewedPlaceId = null;
     if (verified) {
       if (!('googlePlaceId' in payload)) {
         return res.status(400).json({
-          error: 'Send googlePlaceId, the Google place id you checked, with a verify decision.',
+          error: 'Nothing was changed. This verify did not say which Google listing you checked. Reload the moderation console and verify again. Sending it by hand? Add googlePlaceId, the place id you checked.',
           code: 'PLACE_ID_REQUIRED',
         });
       }
