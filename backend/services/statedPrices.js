@@ -161,6 +161,9 @@ const STATED_PRICES = [
     group: 1,
   },
   // The crawler summary AI answer engines read (frontend/public/llms.txt).
+  // It says "will be", like /about, because no venue is being charged while
+  // VENUE_BILLING_ENABLED is unset. Whitespace is \s+ because the file is
+  // wrapped by hand and a reflow should not read as a missing price.
   {
     id: 'roost-monthly-llms',
     product: 'roost',
@@ -169,7 +172,7 @@ const STATED_PRICES = [
     file: 'frontend/public/llms.txt',
     what: 'the Roost price in the crawler summary',
     kind: 'public',
-    pattern: 'Roost, the venue plan, is \\$(\\d+) a month or \\$([\\d,]+) a\\s+year per location',
+    pattern: 'Roost, the venue plan, will be \\$(\\d+)\\s+a\\s+month\\s+or\\s+\\$([\\d,]+)\\s+a\\s+year\\s+per\\s+location',
     group: 1,
   },
   {
@@ -180,7 +183,7 @@ const STATED_PRICES = [
     file: 'frontend/public/llms.txt',
     what: 'the Roost price in the crawler summary',
     kind: 'public',
-    pattern: 'Roost, the venue plan, is \\$(\\d+) a month or \\$([\\d,]+) a\\s+year per location',
+    pattern: 'Roost, the venue plan, will be \\$(\\d+)\\s+a\\s+month\\s+or\\s+\\$([\\d,]+)\\s+a\\s+year\\s+per\\s+location',
     group: 2,
   },
   // The one email a venue account from before Roost had a price is sent
@@ -302,7 +305,7 @@ const STATED_TRIALS = [
     days: 14,
     file: 'frontend/public/llms.txt',
     what: 'the Roost trial in the crawler summary',
-    pattern: 'with a (\\d+)-day free trial',
+    pattern: 'with a (\\d+)-day free\\s+trial',
     group: 1,
   },
   {

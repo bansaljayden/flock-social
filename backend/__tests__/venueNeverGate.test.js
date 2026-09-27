@@ -135,7 +135,7 @@ function world() {
     })],
     [/^UPDATE venue_reviews/, (p) => ({ rows: [{ id: 702, rating: 5, text: 'Great night', venue_reply: p[0], venue_replied_at: new Date().toISOString() }], rowCount: 1 })],
 
-    // The groups that have this venue in their plans.
+    // The flocks that have this venue in their vote.
     [/FROM flocks f JOIN venue_votes vv/, () => ({ rows: [{ id: 31, event_time: new Date(Date.now() + 86400e3).toISOString(), status: 'confirmed', member_count: 4 }] })],
     [/WHERE vv\.venue_id IS NULL/, () => ({ rows: [{ n: 0 }] })],
 

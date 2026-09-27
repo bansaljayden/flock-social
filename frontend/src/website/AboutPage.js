@@ -148,8 +148,9 @@ export default function AboutPage() {
           for it. LandingPage cut the identical claim on 2026-08-12 and this
           page kept it, so the site was still advertising a screen that had
           already been deleted (DESIGN-STANDARD C1 / design rule 5). All three
-          replacements are shipping code: GET /incoming-flocks (the flocks that
-          selected this venue), GET /intelligence (the hour-by-hour demand
+          replacements are shipping code: GET /incoming-flocks (the flocks with
+          this venue in their vote, which is one member's vote and not the
+          group's choice), GET /intelligence (the hour-by-hour demand
           curve, same crowd model users see), and venue promotions, which
           App.js fetches through getPublicPromotions onto the venue detail
           screen, i.e. in front of a group while it is choosing.
@@ -164,9 +165,9 @@ export default function AboutPage() {
           tonight. For a bar or restaurant, that is the moment every ad channel
           misses: review sites show what people thought after the fact, social ads
           broadcast to people who aren't going out, and busyness charts are
-          read-only. A free venue account shows a venue the flocks that picked it
-          and lets it write a deal onto its own venue card, which a group reads
-          when it opens that card while it is choosing.
+          read-only. A free venue account shows a venue the flocks that have it
+          in their vote and lets it write a deal onto its own venue card, which
+          a group reads when it opens that card while it is choosing.
         </p>
         {/* TWO PAID PLANS, AND NEITHER IS CHARGING THE PUBLIC TODAY. This
             paragraph used to call Roost the only paid plan while Terms section

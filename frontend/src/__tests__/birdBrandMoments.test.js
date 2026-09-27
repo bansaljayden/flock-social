@@ -252,7 +252,7 @@ describe('empty AND error states carry a bird', () => {
   });
 
   test('incoming flocks: same structure, cobalt bird', () => {
-    const block = before('No incoming flocks yet</p>');
+    const block = before('No flock has you in its vote yet</p>');
     expect(block).toContain(
       'venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked'
     );
@@ -272,7 +272,7 @@ describe('empty AND error states carry a bird', () => {
   test('the four venue banners each render a bird', () => {
     for (const banner of [
       "We couldn't load your promotions",
-      "We couldn't load the flocks heading your way",
+      "We couldn't load the flocks with you in their vote",
       "We couldn't load your events",
       "We couldn't load your reviews",
     ]) {
@@ -288,7 +288,7 @@ describe('empty AND error states carry a bird', () => {
     // is company; a bird INSTEAD of the sentence would be the lie.
     for (const banner of [
       "We couldn't load your promotions. Nothing has been deleted.",
-      "We couldn't load the flocks heading your way.",
+      "We couldn't load the flocks with you in their vote.",
       "We couldn't load your events. Nothing has been deleted.",
       "We couldn't load your reviews. Nothing has been deleted.",
     ]) {

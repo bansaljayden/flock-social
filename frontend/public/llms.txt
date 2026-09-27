@@ -17,7 +17,7 @@ the home page, /about, /support, /privacy and /terms. /guidelines and
 /delete-account are not among them and need JavaScript to read. This file is
 the summary and the index.
 
-Updated: September 25, 2026.
+Updated: September 27, 2026.
 
 ## What Flock does
 
@@ -95,13 +95,14 @@ all included at no cost.
 There is also a paid plan for people, Flock Pro, with more Birdie and more crowd
 forecasts. It is not on sale to the public today.
 
-Venues are the side Flock charges. Roost, the venue plan, is $99 a month or $990 a
-year per location, bought on flockcorp.com, with a 14-day free trial; a venue
-account created before September 25, 2026 is emailed at least 30 days before it
-can be charged anything. The venue tools that ship are a
-dashboard an owner signs into, holding the flocks that chose their venue, their
-own hour-by-hour forecast, the same one the app shows, replies to reviews, and a
-deal they can put on their own venue card for groups that open it. Flock does
+Venues are the side Flock is built to charge. Roost, the venue plan, will be $99
+a month or $990 a year per location, sold on flockcorp.com with a 14-day free
+trial. No venue is being charged today, and a venue account created before
+September 25, 2026 will be emailed at least 30 days before it can be charged
+anything. The venue tools that ship are a dashboard an owner signs into, holding
+the flocks that have their venue in their vote, their own hour-by-hour forecast,
+the same one the app shows, replies to reviews, and a deal they can put on their
+own venue card for groups that open it. Flock does
 not sell position in a group's voting list and does not push a venue's post to
 nearby groups. Neither exists.
 
