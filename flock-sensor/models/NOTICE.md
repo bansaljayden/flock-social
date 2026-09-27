@@ -1,8 +1,9 @@
 # Acknowledgements for the people counter
 
 `people.onnx` was trained on generated thermal frames and on frames from the
-two datasets below. None of their images are included in this product. Their
-licences are reproduced in full, as they require.
+datasets below. None of their images are included in this product. The MIT
+licences are reproduced in full, and the Creative Commons ones credited, as
+they require.
 
 ## PUT Thermo Presence
 
