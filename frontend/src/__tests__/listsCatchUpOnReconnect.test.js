@@ -30,7 +30,9 @@ test('the lists refetch on every reconnect, not only when they are in error', ()
 test('a reconnect that lands while hidden is held and flushed on the return', () => {
   const effect = block('const listsGapPendingRef = useRef(false);', '[reconnectTick, loadFlocks, loadDmConversations]);');
   expect(effect).toMatch(/visibilityState === 'hidden'\) \{\s*listsGapPendingRef\.current = true;\s*return;/);
-  const flush = block("if (document.visibilityState !== 'visible' || !listsGapPendingRef.current) return;", '[loadFlocks, loadDmConversations]);');
+  // The flush also runs on any return with the socket gone, which the return
+  // itself is a gap for (foregroundCatchUp.test.js runs it).
+  const flush = block("if (!listsGapPendingRef.current && getSocket()?.connected) return;", '[loadFlocks, loadDmConversations]);');
   expect(flush).toMatch(/listsGapPendingRef\.current = false;\s*loadFlocks\(\);\s*loadDmConversations\(\);/);
   expect(flush).toMatch(/addEventListener\('visibilitychange', onVisible\)/);
 });

@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -10595,6 +10595,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // is instance-agnostic and costs a boolean. The price is that a drop shorter
   // than one sample is never seen; that is the deliberate trade, and the socket
   // reconnect itself takes longer than a sample in every real case.
+  //
+  // A DROP IS ALSO HEARD, NOT ONLY SAMPLED. The sampler compares consecutive
+  // samples, so it saw a drop only if it ticked while the socket was down.
+  // socket.js lets the connection go the moment the native app is hidden, and
+  // iOS can suspend timers right after, so the sampler often never ticked in
+  // that window, the socket was back before its next tick, and no catch-up
+  // ran at all. The disconnect event (through socket.js's registry, which
+  // survives instance swaps) marks the socket dead the moment it goes, and
+  // the next sample after it comes back is a reconnect. Only the drop is
+  // heard: the tick itself still comes from the sampler, so a flapping
+  // connection still reaches the reads below at most once per sample.
   const socketAliveRef = useRef(null); // null until the first sample
   const [reconnectTick, setReconnectTick] = useState(0);
   // WHAT WAS ON SCREEN BEFORE THE SOCKET DROPPED, for the catch-up to measure
@@ -10625,7 +10636,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setReconnectTick(n => n + 1);
       }
     }, SOCKET_SAMPLE_MS);
-    return () => clearInterval(id);
+    const offDisconnect = onSocketDisconnect(() => { socketAliveRef.current = false; });
+    return () => { clearInterval(id); offDisconnect(); };
   }, []);
 
   // What a catch-up would target, read at fire time rather than closed over.
@@ -10635,7 +10647,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const catchUpPendingRef = useRef(false);
   const runCatchUpRef = useRef(null);
 
-  const runCatchUp = useCallback(() => {
+  // `force` skips the minimum gap, for the one caller that has to: the return
+  // to the foreground with the socket gone (the visibility handler below says
+  // why). The gap exists for a flapping connection, and coming back to the app
+  // is not flapping.
+  const runCatchUp = useCallback(({ force = false } = {}) => {
     // Nobody is looking. Hold the intent and flush it when they are, rather
     // than either spending the request or losing the gap.
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
@@ -10663,7 +10679,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       catchUpOwedRef.current = false;
       return;
     }
-    const waitMs = CATCHUP_MIN_GAP_MS - (Date.now() - (historyReadAtRef.current[key] || 0));
+    if (!key) return; // no conversation open, nothing to catch up on
+    const waitMs = force ? 0 : CATCHUP_MIN_GAP_MS - (Date.now() - (historyReadAtRef.current[key] || 0));
     if (waitMs <= 0) {
       // A deferred read is now redundant — this one covers the same window.
       if (catchUpTimerRef.current) {
@@ -10697,9 +10714,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     if (reconnectTick) runCatchUp();
   }, [reconnectTick, runCatchUp]);
+  // BACK IN THE FOREGROUND WITH THE SOCKET GONE. socket.js lets the connection
+  // go the moment the native app is hidden (and after a grace period on the
+  // web), so whatever was said in the open chat while it was away never
+  // arrived live, the reply a push just announced included. The only thing
+  // that used to bring it in was the reconnect sampler, up to two seconds
+  // after the handshake, and then the minimum gap held the read back for the
+  // rest of its twelve seconds when the chat had been opened just before
+  // leaving: the message appeared a median 1.9 s after the return, and 5 to 7
+  // s in that case, for a read that takes under 200 ms. So the read goes out
+  // on the return itself, gap skipped. The reconnect tick that follows the
+  // handshake finds this read's fresh stamp and defers one more read to the
+  // end of the window, which covers whatever was said during the handshake.
+  // A socket still connected on the return missed nothing and reads nothing,
+  // apart from an intent a hidden reconnect left pending.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && catchUpPendingRef.current) runCatchUp();
+      if (document.visibilityState !== 'visible') return;
+      if (!getSocket()?.connected) runCatchUp({ force: true });
+      else if (catchUpPendingRef.current) runCatchUp();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -14578,9 +14611,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     refreshMyPulse();
     refreshFriendsPulses();
   }, [reconnectTick, refreshMyPulse, refreshFriendsPulses]);
+  // The return with the socket gone is a gap too, and the lists are read on
+  // it rather than after the handshake, for the reason the conversation
+  // catch-up beside runCatchUp gives. The reconnect tick still reads them
+  // again once the socket is back, because an invite or a cancelled plan sent
+  // during the handshake reaches neither this read nor a socket.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState !== 'visible' || !listsGapPendingRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+      if (!listsGapPendingRef.current && getSocket()?.connected) return;
       listsGapPendingRef.current = false;
       loadFlocks();
       loadDmConversations();

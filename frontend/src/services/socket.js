@@ -770,6 +770,19 @@ export function onSocketError(callback) {
   return register('error', callback);
 }
 
+/**
+ * The connection going away, on whichever instance is current. App.js samples
+ * `.connected` on a timer to notice a reconnect, and a sampler only sees a
+ * drop if it happens to tick while the socket is down. The drop that matters
+ * most is the one this file makes on purpose when the app is hidden in the
+ * native shell, and iOS can suspend timers right after it, so the sampler
+ * never saw it and a whole catch-up was skipped. Through the registry for the
+ * reason onSocketError gives.
+ */
+export function onSocketDisconnect(callback) {
+  return register('disconnect', callback);
+}
+
 // --- Direct messages ---
 
 export function socketSendDm(receiverId, messageText, opts = {}) {
