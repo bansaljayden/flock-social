@@ -257,7 +257,11 @@ def main(argv=None):
         # Everything but the output layer carries over; that is where owl-1
         # learned what a person looks like in this camera.
         state = torch.load(args.init, map_location=device)
-        state = {k: v for k, v in state.items() if not k.startswith('head.')}
+        own = net.state_dict()
+        # Layers that fit carry over, the output layer included when the
+        # kinds of things are the same (fine-tuning owl-3); a layer whose
+        # shape changed (owl-1's single map into owl-2's ten) starts fresh.
+        state = {k: v for k, v in state.items() if k in own and own[k].shape == v.shape}
         missing = net.load_state_dict(state, strict=False)
         print(f'started from {args.init}; new layers: {missing.missing_keys}', flush=True)
     params = sum(p.numel() for p in net.parameters())
