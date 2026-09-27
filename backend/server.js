@@ -2529,13 +2529,27 @@ function shutdown(signal) {
   if (moneyWatchInterval) clearInterval(moneyWatchInterval);
   if (moneyWatchKickoff) clearTimeout(moneyWatchKickoff);
 
-  // Disconnect socket clients FIRST: a live WebSocket is an open connection
-  // and server.close() waits on open connections indefinitely. Clients
-  // auto-reconnect (to the freshly deployed instance) — that is the
-  // transport's normal recovery path, exercised by every phone that rides an
-  // elevator.
-  try { io.disconnectSockets(true); } catch (err) {
-    console.error('[shutdown] socket disconnect failed:', err?.message || err);
+  // Close socket clients FIRST: a live WebSocket is an open connection and
+  // server.close() waits on open connections indefinitely.
+  //
+  // By closing their TRANSPORTS, not by disconnecting them. This used to be
+  // io.disconnectSockets(true), on the belief that clients would reconnect to
+  // the freshly deployed instance. They did not: that call writes a socket.io
+  // DISCONNECT packet to every client before closing, and socket.io-client
+  // reads that packet as "io server disconnect", the one reason it never
+  // reconnects from, by design (it is how a ban or a revoke keeps a client
+  // off). So every deploy left every open app with a dead socket and no retry
+  // scheduled: no live messages, votes, typing or location, the chat header
+  // stuck on "reconnecting", until the app was backgrounded or the network
+  // changed. Deploys happen many times a day.
+  //
+  // engine.close() ends every connection at the transport, with no DISCONNECT
+  // packet, including the ones still mid-handshake. The client sees
+  // "transport close", which is the drop it does recover from (the same path
+  // as a phone riding an elevator), and dials again on its backoff. Pinned
+  // with a real client in __tests__/deployReconnect.test.js.
+  try { io.engine.close(); } catch (err) {
+    console.error('[shutdown] socket close failed:', err?.message || err);
   }
 
   // Stop accepting connections and let in-flight HTTP requests finish...
