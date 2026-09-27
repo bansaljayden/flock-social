@@ -1263,6 +1263,22 @@ function missingTwoHeadFeatureNames(meta) {
   return missing;
 }
 
+// The live and sports feature names a two-head artifact lists, at the top
+// level or in either head. scoreTwoHead builds its map WITHOUT the live and
+// sports context (predictBusyness gathers it only for the single head), so
+// both heads would read those columns at their no-context defaults, and a
+// top-level recent_offset would also switch off the post-model offset
+// (artifactLearnsOffset) that no head actually received. Rather than serve
+// that silently, such an artifact is refused at load; wiring the context
+// into two-head scoring is the change that would lift this.
+function twoHeadContextFeatureNames(meta) {
+  const names = new Set(artifactFeatureNames(meta));
+  for (const name of TWO_HEAD_NAMES) {
+    for (const n of (((meta && meta.two_head) || {})[name] || {}).feature_names || []) names.add(n);
+  }
+  return [...LIVE_FEATURE_NAMES, ...SPORTS_FEATURE_NAMES].filter((n) => names.has(n));
+}
+
 async function loadTwoHead(ort, candidate, version, gate, overridden) {
   const override = process.env.ML_SHIP_GATE_OVERRIDE === 'true';
   let profileSpec;
@@ -1288,6 +1304,15 @@ async function loadTwoHead(ort, candidate, version, gate, overridden) {
       metadata = null;
       return false;
     }
+  }
+
+  // Not overridable: these features HAVE an inference twin, just not on this
+  // path, so the override's "promote despite a missing twin" does not apply.
+  const contextNames = twoHeadContextFeatureNames(candidate);
+  if (contextNames.length > 0) {
+    console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: it lists live or sports feature(s) the two-head path does not supply (${contextNames.join(', ')}), so both heads would score them at their no-context defaults. Serving rule engine instead.`);
+    metadata = null;
+    return false;
   }
 
   const missing = missingTwoHeadFeatureNames(candidate);
@@ -4229,7 +4254,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     } else if (twoHead) {
       // Two graphs, profile then deviation; see scoreTwoHead. A non-finite
       // output from either head throws into the catch below like the single
-      // head's guard does.
+      // head's guard does. No live or sports context is gathered here: a
+      // two-head artifact listing those features is refused at load
+      // (twoHeadContextFeatureNames), so neither head can ask for one.
       score = await scoreTwoHead(ort, venue, weather, timestamp, eventData, feedback, baseline, neighbors);
     } else {
       // The live and sports inputs, read only for an artifact that lists
@@ -4875,6 +4902,7 @@ module.exports = {
     // unreachable rather than merely unused).
     reconstructTwoHeadScore,
     missingTwoHeadFeatureNames,
+    twoHeadContextFeatureNames,
     TWO_HEAD_PROFILE_FEATURE,
     twoHeadState: () => twoHead,
     evaluateShipGate,

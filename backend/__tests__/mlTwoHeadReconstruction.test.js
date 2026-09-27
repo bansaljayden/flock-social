@@ -338,6 +338,57 @@ test('a two_head metadata whose ship gate fails is refused like any other artifa
   });
 });
 
+// --- 8. the live and sports families are refused, not defaulted -------------
+//
+// scoreTwoHead builds its map without the live and sports context, so a head
+// that lists those columns would read their no-context defaults, and a
+// top-level recent_offset would switch off the post-model offset besides.
+// Refused at load, override or not.
+
+test('a two_head artifact that lists live or sports features is refused, override or not', async () => {
+  const { LIVE_FEATURE_NAMES, SPORTS_FEATURE_NAMES, twoHeadContextFeatureNames } = mlPredictor._internals;
+  assert.deepEqual(twoHeadContextFeatureNames(twoHeadMeta(META)), []);
+  const cases = [
+    ['deviation head lists recent_offset', (m) => twoHeadMeta(m, {
+      deviation: { file: 'deviation.onnx', onnx_input_name: 'input', feature_names: [...DEVIATION_NAMES, 'recent_offset'].sort() },
+    }), ['recent_offset']],
+    ['profile head lists a sports column', (m) => twoHeadMeta(m, {
+      profile: { file: 'profile.onnx', onnx_input_name: 'input', feature_names: [...PROFILE_NAMES, SPORTS_FEATURE_NAMES[0]].sort() },
+    }), [SPORTS_FEATURE_NAMES[0]]],
+    ['only the top-level list names recent_offset', (m) => {
+      const t = twoHeadMeta(m);
+      t.feature_names = [...t.feature_names, 'recent_offset'].sort();
+      return t;
+    }, ['recent_offset']],
+    ['every live column in the deviation head', (m) => twoHeadMeta(m, {
+      deviation: { file: 'deviation.onnx', onnx_input_name: 'input', feature_names: [...DEVIATION_NAMES, ...LIVE_FEATURE_NAMES].sort() },
+    }), [...LIVE_FEATURE_NAMES]],
+  ];
+  for (const override of [undefined, 'true']) {
+    for (const [what, mutate, expected] of cases) {
+      assert.deepEqual(twoHeadContextFeatureNames(mutate(META)), expected, `${what}: names`);
+      const { ort, runs } = stubTwoHeadOrt({ profile: [60], deviation: [0] });
+      if (override) process.env.ML_SHIP_GATE_OVERRIDE = override;
+      const errors = [];
+      const realError = console.error;
+      console.error = (...a) => errors.push(a.join(' '));
+      try {
+        await withFreshPredictor({ ort, mutateMeta: mutate }, async (fresh) => {
+          assert.equal(await fresh.init(), false, `${what}: must refuse to promote`);
+          assert.equal(fresh._internals.twoHeadState(), null, `${what}: no two-head state`);
+          const venue = baselineVenue(50);
+          assertIsRuleEngine(await fresh.predictBusyness(venue, WEATHER, TS), venue, 'rule_engine', what);
+        });
+      } finally {
+        console.error = realError;
+        delete process.env.ML_SHIP_GATE_OVERRIDE;
+      }
+      assert.equal(runs.profile.length + runs.deviation.length, 0, `${what}: no head ran`);
+      assert.ok(errors.some((e) => /REFUSING/.test(e) && /live or sports/.test(e)), `${what}: the refusal names why`);
+    }
+  }
+});
+
 test('missingTwoHeadFeatureNames exempts profile_pred and nothing else', () => {
   const { missingTwoHeadFeatureNames } = mlPredictor._internals;
   assert.deepEqual(missingTwoHeadFeatureNames(twoHeadMeta(META)), []);
