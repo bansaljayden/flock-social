@@ -19726,6 +19726,9 @@ const FlockApp = () => {
     }
     sessionEndedRef.current = true;
     sessionEndedByRevokeRef.current = !!note;
+    // Whether a session ran in this page load, read before it is cleared
+    // below. The notifications and the auth screen both turn on it.
+    const ranHere = sessionLiveRef.current;
     unregisterPushToken().catch(() => {});
     // A session that ran takes its notifications with it: the ones still in
     // the tray and any tap still waiting to be routed. Left behind, the last
@@ -19748,7 +19751,15 @@ const FlockApp = () => {
     // survived. api.js clearLocalSession() is the single answer.
     logout().catch(() => {});
     setAuthUser(null);
-    setAuthScreen('login');
+    // Back to sign-in after a session that ran here: that person was signed
+    // in, and signing in again is what they will want. Not at a boot that
+    // finds the stored session already dead, for the reason the notifications
+    // above stay: nothing ran, and the screen the page opened on is the one
+    // the person came for. /signup is where the invite page's Join and the
+    // site's Create account send somebody with no account, and a token left to
+    // expire in this browser by an earlier visit swapped that form for the
+    // sign-in one under them. The expiry note still shows over it.
+    if (ranHere) setAuthScreen('login');
     setVenueLoginFlag(false);
     setSessionNote(note || '');
   }, []);
