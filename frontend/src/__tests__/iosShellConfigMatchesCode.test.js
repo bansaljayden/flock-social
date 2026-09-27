@@ -199,18 +199,21 @@ describe('the shell config files are well formed', () => {
 describe('every NS*UsageDescription is one the app actually needs', () => {
   const usageKeys = () => plistKeys(infoPlist).filter((k) => /UsageDescription$/.test(k));
 
-  test('the plist declares exactly the five purpose strings the shell needs', () => {
-    // Four are exercised by code. The fifth, always-and-when-in-use location,
+  test('the plist declares exactly the six purpose strings the shell needs', () => {
+    // Five are exercised by code. The sixth, always-and-when-in-use location,
     // is exercised by nothing: App Store Connect flagged build 28 with
     // ITMS-90683 because the geolocation plugin's binary references the
     // always-on API, and Apple requires the string whenever the API is
     // referenced, used or not. Its text says the app never does that (see
-    // the test below). Adding a sixth still has to be justified here.
+    // the test below). The photo-library-add string is the newest, and the
+    // test for it below says which code needs it. Adding a seventh still has
+    // to be justified here.
     expect(usageKeys().sort()).toEqual([
       'NSCameraUsageDescription',
       'NSContactsUsageDescription',
       'NSLocationAlwaysAndWhenInUseUsageDescription',
       'NSLocationWhenInUseUsageDescription',
+      'NSPhotoLibraryAddUsageDescription',
       'NSPhotoLibraryUsageDescription',
     ]);
   });
@@ -246,6 +249,34 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
       expect(app).toContain(handler);
     }
     expect(app).not.toContain('handleVenueLogoUpload');
+  });
+
+  test('a photo-library-add string is present exactly while an image goes to the share sheet', () => {
+    // This test used to pin the key ABSENT, on the belief that a Save Image
+    // tap inside the share sheet is the sheet's own permission. It is not.
+    // WebKit presents navigator.share as a UIActivityViewController inside
+    // this app's process, so the sheet's Save Image is a photo-library write
+    // by Flock: without the string, iOS leaves Save Image out of the sheet or
+    // stops the app when it is chosen. A long-press Save to Photos on a chat
+    // photo is the same write.
+    //
+    // The image that reaches the sheet is the night recap: shareNightRecap
+    // draws a PNG, wraps it in a File, and hands navigator.share that file.
+    const appJs = read('frontend', 'src', 'App.js');
+    const recapStart = appJs.indexOf('const shareNightRecap');
+    expect(recapStart).toBeGreaterThan(-1);
+    const recap = appJs.slice(recapStart, appJs.indexOf('}, [recapSharing, showToast]);', recapStart));
+    const sharesImage = /new File\(\[blob\],[^)]*type:\s*'image\/png'/.test(recap)
+      && /navigator\.share\(\{\s*files:\s*\[file\]/.test(recap);
+    expect(sharesImage).toBe(true);
+    expect(hasKey(infoPlist, 'NSPhotoLibraryAddUsageDescription')).toBe(sharesImage);
+
+    // The string names a save the person chooses, and the button it names is
+    // on screen under that label.
+    const add = plistString(infoPlist, 'NSPhotoLibraryAddUsageDescription');
+    expect(add).toMatch(/only when you choose/);
+    expect(add).toContain('Share the night');
+    expect(read('frontend', 'src', 'screens', 'FlockDetail.js')).toContain("'Share the night'");
   });
 
   test('a location string is present exactly while the client reads location', () => {
@@ -344,72 +375,6 @@ describe('the permissions that are absent are absent for a reason', () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const [, args] of calls) expect(args).toMatch(/audio:\s*false/);
     expect(hasKey(infoPlist, 'NSMicrophoneUsageDescription')).toBe(false);
-  });
-
-  test('no photo-library-add string: nothing writes an image back to the library', () => {
-    // This guard used to read only App.js and only the literal spelling
-    // `download=`. Both halves were holes, and a JSON data export walked
-    // through them without anybody intending to: it lives in
-    // services/dataExport.js, which was not scanned, and it sets the attribute
-    // with setAttribute('download', ...), which the regex could not see. A
-    // photo save written either of those two ways would have kept this green.
-    //
-    // So it scans every source file now and matches both spellings. What it
-    // asserts is not "nothing downloads". That was never the point. The point
-    // is the Info.plist claim below: nothing writes IMAGE data to the device,
-    // so no NSPhotoLibraryAddUsageDescription is owed.
-    const files = [];
-    (function walk(dir) {
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) { if (e.name !== '__tests__' && e.name[0] !== '.') walk(p); }
-        else if (/\.(js|jsx)$/.test(e.name)) files.push(p);
-      }
-    })(path.join(REPO, 'frontend', 'src'));
-
-    const SAVE = /\bdownload\s*=|setAttribute\(\s*['"]download['"]|\bsaveAs\b|Media\.savePhoto|savePicture/;
-    const savers = files.filter((f) => SAVE.test(fs.readFileSync(f, 'utf8')))
-      .map((f) => path.relative(REPO, f).split(path.sep).join('/'));
-
-    // Exactly two files may save anything, and each is held to what it saves.
-    // App.js joined 2026-08-28 with the night recap card. The key fact that
-    // keeps the Info.plist claim below true: an anchor download goes to the
-    // BROWSER'S download manager (on iOS, the Files-backed download list),
-    // never to the photo library. NSPhotoLibraryAddUsageDescription is owed
-    // for PHAsset writes by native code, which nothing here performs; when a
-    // person taps Save to Photos inside the SHARE SHEET, that is the sheet's
-    // own permission, not the app's. So the recap saver must stay the LAST
-    // rung of the share ladder, behind both navigator.share gates, which is
-    // asserted structurally here.
-    expect(savers.sort()).toEqual(['frontend/src/App.js', 'frontend/src/services/dataExport.js']);
-
-    const app = read('frontend', 'src', 'App.js');
-    const recapStart = app.indexOf('const shareNightRecap');
-    expect(recapStart).toBeGreaterThan(-1);
-    const recap = app.slice(recapStart, app.indexOf('}, [recapSharing, showToast]);', recapStart));
-    // Every download-attribute write in the app lives inside the recap ladder.
-    expect((app.match(/\bdownload\s*=/g) || []).length).toBe(1);
-    expect((recap.match(/\bdownload\s*=/g) || []).length).toBe(1);
-    // And it sits in the final else, after file-share and sheet-share both
-    // declined, so a platform with a share sheet never reaches it.
-    const ladder = recap.indexOf('navigator.canShare && navigator.canShare({ files: [file] })');
-    const sheet = recap.indexOf('} else if (navigator.share) {', ladder);
-    const fallback = recap.indexOf('a.download', sheet);
-    expect(ladder).toBeGreaterThan(-1);
-    expect(sheet).toBeGreaterThan(ladder);
-    expect(fallback).toBeGreaterThan(sheet);
-
-    // The one saver is JSON and only JSON. An image MIME here would mean
-    // picture data reaching the device, which is the thing the missing
-    // Info.plist key promises does not happen.
-    const saver = read('frontend', 'src', 'services', 'dataExport.js');
-    expect(saver).toContain("EXPORT_MIME = 'application/json'");
-    expect(saver).not.toMatch(/image\/(png|jpe?g|gif|webp|heic)/);
-    // And the payload itself must never carry inline image bytes, which is
-    // what keeps the clipboard branch honest as well.
-    expect(saver).toContain('assertNoInlineImages');
-
-    expect(hasKey(infoPlist, 'NSPhotoLibraryAddUsageDescription')).toBe(false);
   });
 
   test('the contacts string is present exactly while native code reads contacts', () => {
