@@ -677,6 +677,12 @@ export default function VenueDashboard({
     const stripPeaksFrom = venueStrip?.available
       ? peersSourcePhrase(stripPeakBars([venueStrip.you, ...(venueStrip.competitors || [])]))
       : null;
+    // The hours those peaks were read from. The server ranks bars, clubs and
+    // restaurants on the evening and any other kind of place on its whole day
+    // (peakWindow 'day'), so a coffee shop's strip says today, not tonight.
+    // An answer without the field is an evening one, which is all the server
+    // sent before it had the choice.
+    const stripAllDay = venueStrip?.peakWindow === 'day';
 
     // Two plans: free and Roost. 'pro' is Roost's stored name, and 'premium'
     // is the word a retired middle plan left behind, which the server reads
@@ -1336,11 +1342,13 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* The strip — you vs the venues around you, tonight. Google's
-              busyness chart can't do this: per-venue, read-only, no API. */}
+          {/* The strip — you vs the venues around you, tonight, or today for
+              a place that is not a bar, club or restaurant (stripAllDay).
+              Google's busyness chart can't do this: per-venue, read-only,
+              no API. */}
           {venueStrip?.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your Strip Tonight</h3>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>{stripAllDay ? 'Your Strip Today' : 'Your Strip Tonight'}</h3>
               {[{ ...venueStrip.you, you: true }, ...venueStrip.competitors].map((v, i) => (
                 <div key={`${v.name}-${i}`} style={{ padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1348,7 +1356,7 @@ export default function VenueDashboard({
                     {/* A rule-engine number is a category-typical figure, the
                         same for every venue of its kind. It shows, labeled,
                         and the server never draws a ranking against it. The
-                        bar is the evening's peak, so the peak's method
+                        bar is the window's peak, so the peak's method
                         decides while a serving switch sends one. */}
                     {stripRowMethod(v) && stripRowMethod(v) !== 'ml' && (
                       <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', flexShrink: 0 }}>typical for its category</span>
@@ -1363,7 +1371,7 @@ export default function VenueDashboard({
                       at small gaps measured worse than a coin flip. */}
                   {v.orderingClaim && (
                     <p style={{ fontSize: 'var(--t-micro)', color: v.orderingClaim === 'busier' ? 'var(--accent-red-text)' : 'var(--accent-green-text)', margin: '2px 0 0' }}>
-                      Projected {v.orderingClaim} than you tonight
+                      Projected {v.orderingClaim} than you {stripAllDay ? 'today' : 'tonight'}
                     </p>
                   )}
                 </div>
@@ -1374,8 +1382,8 @@ export default function VenueDashboard({
                     model's. The rows carry no peak source with both
                     switches off, and the old words stand. */}
                 {stripPeaksFrom
-                  ? `Projected evening peaks within 1.5 km, from ${stripPeaksFrom}.`
-                  : "Projected evening peaks within 1.5 km, from Flock's crowd model."}
+                  ? `Projected ${stripAllDay ? 'peaks today' : 'evening peaks'} within 1.5 km, from ${stripPeaksFrom}.`
+                  : `Projected ${stripAllDay ? 'peaks today' : 'evening peaks'} within 1.5 km, from Flock's crowd model.`}
                 {venueStrip.orderingMinGap ? ` Venues within ${venueStrip.orderingMinGap} points are too close to rank.` : ''}
               </p>
             </div>
