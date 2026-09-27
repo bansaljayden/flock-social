@@ -1412,7 +1412,17 @@ export default function VenueDashboard({
             // precisely so no client has to carry this constant; wire that in
             // when this panel next grows a fetch.
             const online = lastSeenMin < 15;
-            const max24 = Math.max(1, ...ownerSensorHistory.map(r => r.thermal_headcount || 0));
+            // Newer sensors send `occupancy`, people inside, worked out on the
+            // device from the doorway in/out count and the thermal count.
+            // Older ones send only the thermal count. Prefer the room figure
+            // per row, so an hour charts with what that hour actually had.
+            const people = (r) => (typeof r?.occupancy === 'number' ? r.occupancy : r?.thermal_headcount);
+            const hasOccupancy = typeof sd.occupancy === 'number';
+            const band = hasOccupancy && typeof sd.occupancy_low === 'number'
+              && typeof sd.occupancy_high === 'number' && sd.occupancy_low !== sd.occupancy_high
+              ? `${sd.occupancy_low} to ${sd.occupancy_high} inside` : null;
+            const dwell = typeof sd.dwell_minutes === 'number' ? sd.dwell_minutes : null;
+            const max24 = Math.max(1, ...ownerSensorHistory.map(r => people(r) || 0));
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
@@ -1439,9 +1449,12 @@ export default function VenueDashboard({
                         venue owner quoting an occupancy figure to a fire
                         marshal is the conversation that copy was going to
                         start. design rule 5: never claim more than the build
-                        measures. */}
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In View Now</p>
-                    <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{sd.thermal_headcount}</p>
+                        measures. A sensor that sends its room estimate is
+                        labelled for what that is, an estimate, with the
+                        range the device gives around it. */}
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{hasOccupancy ? 'Estimated Inside' : 'In View Now'}</p>
+                    <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{hasOccupancy ? sd.occupancy : sd.thermal_headcount}</p>
+                    {band && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{band}</p>}
                   </div>
                   <div>
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
@@ -1466,6 +1479,13 @@ export default function VenueDashboard({
                   </div>
                 </div>
 
+                {/* Typical stay, from the device: average people inside over
+                    arrivals in the last hour. The device sends nothing when
+                    too few people arrived to say, and then neither do we. */}
+                {dwell !== null && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>People stay about {dwell} minute{dwell === 1 ? '' : 's'}</p>
+                )}
+
                 {ownerSensorHistory.length > 0 && (() => {
                   // Build 24 hourly slots, anchored to "now". Match API rows by
                   // hour-truncated timestamp so the chart actually represents
@@ -1486,7 +1506,7 @@ export default function VenueDashboard({
                           if (!r) {
                             return <div key={i} style={{ flex: 1, height: '4px', borderRadius: '2px', background: 'repeating-linear-gradient(45deg, var(--border-subtle), var(--border-subtle) 2px, transparent 2px, transparent 4px)', opacity: 0.5 }} />;
                           }
-                          const h = Math.max(2, Math.round((r.thermal_headcount / max24) * 48));
+                          const h = Math.max(2, Math.round(((people(r) || 0) / max24) * 48));
                           return <div key={i} style={{ flex: 1, height: `${h}px`, borderRadius: '2px', backgroundColor: colors.navy, opacity: 0.85 }} />;
                         })}
                       </div>
