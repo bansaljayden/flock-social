@@ -124,6 +124,33 @@ function recordPlacesResult(ok, reason) {
 }
 
 /**
+ * Is this Place Details failure Google saying the place id names nothing?
+ *
+ * GOOGLE ANSWERING "NO SUCH PLACE" IS GOOGLE WORKING. Place ids retire: a venue
+ * closes, moves or is merged, and a flock that saved it weeks ago still holds
+ * the old id. Asking about it gets NOT_FOUND, which is a precise, healthy
+ * answer, and routes/publicCrowd.js already records it as one. Counted as a
+ * failure, one tap on a stale saved venue was three recorded failures in a row
+ * (the crowd card's request is retried twice on a 502), which is
+ * FAILURE_STREAK_ALARM at Flock's traffic, and the operator was mailed "Google
+ * Places is down" while it was up.
+ *
+ * NOT_FOUND ONLY, NOT INVALID_ARGUMENT, although a malformed id can come back
+ * as the second. Google answers a dead or wrong API key with 400
+ * INVALID_ARGUMENT ("API key not valid"), and a key problem is one of the
+ * outages this alarm exists to report, so that status keeps counting.
+ *
+ * @param {number} httpStatus the HTTP status the answer came with (0 if unknown)
+ * @param {object} error      Google's `error` object from the body
+ * @returns {boolean}
+ */
+function isPlaceNotFoundAnswer(httpStatus, error) {
+  if (!error || typeof error !== 'object') return false;
+  if (error.status === 'NOT_FOUND') return true;
+  return Number(error.code) === 404 || httpStatus === 404;
+}
+
+/**
  * Non-consuming read, shaped like placesBudgetStatus() and visionBudgetStatus()
  * so server.js's money watch can treat it as one more leg.
  *
@@ -160,6 +187,7 @@ function __resetPlacesHealth() {
 
 module.exports = {
   recordPlacesResult,
+  isPlaceNotFoundAnswer,
   placesHealthStatus,
   __resetPlacesHealth,
   FAILURE_STREAK_ALARM,

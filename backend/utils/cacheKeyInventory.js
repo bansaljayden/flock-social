@@ -980,6 +980,16 @@ const INVENTORY = [
     verdict: 'FIXED-THIS-ROUND',
     why: 'The load-bearing half. The two duplicate requests are simultaneous, so the second one looks at a cache the first has not filled yet — deduplication has to happen on the FLIGHT. The leader charges utils/placesBudget.js and calls Google; every follower rides the same promise for nothing, which is the round-18 reading of "charge what you spend". Self-draining: the worker never rejects, so the cleanup .then() cannot leak, and a FAILED fetch is never written to the cache, so a bad minute is not pinned for a whole TTL.',
   },
+  {
+    file: 'services/placeDetailsCache.js', name: 'gonePlaceIds', kind: 'cache',
+    key: 'the same placeId',
+    callerControls: 'the place id, shape-checked by isPlaceIdShaped at every route that reaches this',
+    protects: 'the paid Place Details call, and a unit of the caller\'s hourly Places allowance, for an id Google has already answered NOT_FOUND to; a flock\'s saved venue whose listing was retired cost a call every time anyone opened it',
+    denominator: 'NOT_FOUND answers, 6h TTL',
+    bound: 'GONE_PLACE_MAX = 2000, oldest out first with delete-before-set',
+    verdict: 'SAFE',
+    why: 'Written only after Google answered NOT_FOUND to a call the caller was already charged a unit for, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries. A 429, a 5xx, a timeout, INVALID_ARGUMENT (which is also what a dead API key looks like) and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart.',
+  },
 
   // ── services/pushHelper.js ────────────────────────────────────────────────
   {

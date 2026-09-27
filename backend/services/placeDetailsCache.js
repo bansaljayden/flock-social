@@ -134,7 +134,7 @@ const { upstreamSignal } = require('../utils/upstream');
 // Outage detection for the SHARED details path. GetPlaceRequest was clamped
 // to 38/day alongside Text Search in the September outage, so this half of
 // Places can be just as dead while search looks fine.
-const { recordPlacesResult } = require('../utils/placesHealth');
+const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 
 // The union of everything any consumer of a Place Details response reads. This
 // is routes/venueSearch.js's former DETAILS_FIELD_MASK unchanged; routes/crowd.js
@@ -184,6 +184,52 @@ const detailsCache = new Map();
 // placeId -> Promise<result>. Self-draining; the worker never rejects.
 const detailsInflight = new Map();
 
+// PLACE IDS GOOGLE HAS SAID NAME NOTHING. A failure is never cached (see the
+// header), and that is right for a timeout or a 429. It is wrong for NOT_FOUND,
+// which is not a failure at all: it is Google's final word on a retired id, and
+// asking again bought the same answer at the same price. A flock's saved venue
+// whose listing Google dropped was a paid call, and a unit of the user's hourly
+// Places allowance, every time anyone opened it. Same idea as deadPhotoRefs in
+// routes/venueSearch.js, which remembers photo names Google has refused.
+//
+// SIX HOURS, not a day. Long enough that a session of repeat taps on the same
+// dead venue costs one call; short enough that an id Google answered NOT_FOUND
+// for in error comes back the same evening. Bounded the way detailsCache is,
+// against what one account can mint: every entry is written only after a paid,
+// charged call, and PER_USER_HOURLY is 30, so one account can hold at most 180.
+const GONE_PLACE_TTL = 6 * 60 * 60 * 1000;
+const GONE_PLACE_MAX = 2000;
+// placeId -> ts of the NOT_FOUND answer.
+const gonePlaceIds = new Map();
+
+function rememberGone(placeId) {
+  // Delete before set, so the oldest-first eviction below drops the entry that
+  // was answered longest ago rather than one refreshed just now.
+  gonePlaceIds.delete(placeId);
+  gonePlaceIds.set(placeId, Date.now());
+  while (gonePlaceIds.size > GONE_PLACE_MAX) {
+    gonePlaceIds.delete(gonePlaceIds.keys().next().value);
+  }
+}
+
+/**
+ * Has Google answered NOT_FOUND for this place id within GONE_PLACE_TTL? The
+ * routes read it after a failed fetch to answer 404 rather than 502, because a
+ * 502 is retried by the client and a retry here cannot succeed.
+ *
+ * @param {string} placeId
+ * @returns {boolean}
+ */
+function isGonePlace(placeId) {
+  const ts = gonePlaceIds.get(placeId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts >= GONE_PLACE_TTL) {
+    gonePlaceIds.delete(placeId);
+    return false;
+  }
+  return true;
+}
+
 function readFresh(placeId) {
   const entry = detailsCache.get(placeId);
   if (!entry) return null;
@@ -226,6 +272,8 @@ function write(placeId, place) {
  */
 function willCostUpstreamCall(placeId) {
   if (detailsInflight.has(placeId)) return false;
+  // A remembered NOT_FOUND is answered from memory, so it costs nothing.
+  if (isGonePlace(placeId)) return false;
   return readFresh(placeId) === null;
 }
 
@@ -246,10 +294,17 @@ function willCostUpstreamCall(placeId) {
 // 'unconfigured' is deliberately NOT recorded. That is OUR missing API key,
 // not Google refusing us, and counting it would fire the outage alarm on
 // every dev box that never set GOOGLE_PLACES_API_KEY.
+//
+// 'not_found' is recorded as HEALTH. Google answered, precisely, about one
+// place id; see isPlaceNotFoundAnswer in utils/placesHealth.js for the spurious
+// "Places is down" email that counting it as a failure produced.
 async function fetchOnce(placeId) {
   const out = await fetchOnceRaw(placeId);
   if (out.kind !== 'unconfigured') {
-    recordPlacesResult(out.ok === true, out.ok ? undefined : (out.message || out.kind));
+    recordPlacesResult(
+      out.ok === true || out.kind === 'not_found',
+      out.ok || out.kind === 'not_found' ? undefined : (out.message || out.kind)
+    );
   }
   return out;
 }
@@ -294,7 +349,17 @@ async function fetchOnceRaw(placeId) {
   // than being reclassified by the HTTP status that carries it (Places (New)
   // sends `{error:{...}}` under a 4xx, and both callers have always read the
   // message rather than the code).
-  if (p.error) return { ok: false, kind: 'api', message: p.error.message };
+  //
+  // Except NOT_FOUND, which gets its own kind. It is Google's final answer
+  // about this id, not a fault, so it is remembered (gonePlaceIds above) and
+  // the routes answer it 404, which the client does not retry.
+  if (p.error) {
+    if (isPlaceNotFoundAnswer(httpStatus, p.error)) {
+      rememberGone(placeId);
+      return { ok: false, kind: 'not_found', message: p.error.message || 'NOT_FOUND' };
+    }
+    return { ok: false, kind: 'api', message: p.error.message };
+  }
 
   // NOTHING BELOW `write()` IS A FAILURE, SO NOTHING ABOVE IT MAY BE ONE. The
   // two checks here exist because `p.error` is not the only shape a non-answer
@@ -351,6 +416,10 @@ async function fetchOnceRaw(placeId) {
 function fetchPlaceDetails(placeId) {
   const cached = readFresh(placeId);
   if (cached) return Promise.resolve({ ok: true, place: cached });
+  // Not a call, so not a health reading either: nothing is recorded.
+  if (isGonePlace(placeId)) {
+    return Promise.resolve({ ok: false, kind: 'not_found', message: 'NOT_FOUND (remembered)' });
+  }
 
   let flight = detailsInflight.get(placeId);
   if (!flight) {
@@ -374,10 +443,13 @@ function fetchPlaceDetails(placeId) {
 module.exports = {
   willCostUpstreamCall,
   fetchPlaceDetails,
+  isGonePlace,
   PLACE_DETAILS_FIELD_MASK,
   PLACE_DETAILS_TTL,
   PLACE_DETAILS_CACHE_MAX,
   PLACE_DETAILS_CACHE_LOW_WATER,
+  GONE_PLACE_TTL,
+  GONE_PLACE_MAX,
 };
 
 // Tests only. Production code must never clear a cache that stands in front of
@@ -386,7 +458,13 @@ module.exports.__test = {
   reset() {
     detailsCache.clear();
     detailsInflight.clear();
+    gonePlaceIds.clear();
   },
   size: () => detailsCache.size,
   inflightSize: () => detailsInflight.size,
+  goneSize: () => gonePlaceIds.size,
+  // Backdates a remembered NOT_FOUND, so a test can walk past the TTL.
+  ageGone(placeId, ms) {
+    if (gonePlaceIds.has(placeId)) gonePlaceIds.set(placeId, gonePlaceIds.get(placeId) - ms);
+  },
 };

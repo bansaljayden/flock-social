@@ -21,8 +21,13 @@ const { isPlaceIdShaped } = require('../utils/places');
 // header of services/placeDetailsCache.js. `willCostUpstreamCall` is how the
 // charge below stays honest: true only when a NEW paid Google request will
 // actually be made, so a cache hit or a ride on somebody else's in-flight fetch
-// costs the ledger nothing.
-const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
+// costs the ledger nothing. `isGonePlace` says a failed fetch was Google
+// answering NOT_FOUND for the id, which is a 404 here rather than a 502.
+const { willCostUpstreamCall, fetchPlaceDetails, isGonePlace } = require('../services/placeDetailsCache');
+
+// A 502 is retried by the client and can never succeed for an id Google has
+// retired, and each retry was a paid call recorded as a Places failure.
+const VENUE_GONE = 'This venue is no longer listed on Google.';
 // Google's `timeZone` off a Places payload, and the same check for a zone a
 // client forwards in a batch body. See utils/venueZone.js.
 const { placeTimeZone, validTimeZone } = require('../utils/venueZone');
@@ -671,7 +676,9 @@ function priceLevelToNum(priceLevel) {
 // The null return is unchanged and still covers all three failure kinds: an
 // upstreamSignal abort, an unreachable/garbled upstream, and a Google `error`
 // body. Both callers turn it into a 502, which is the round-19 answer ("both
-// are Google failing rather than this server").
+// are Google failing rather than this server"), except when the error body was
+// NOT_FOUND: that is Google answering about a retired id, and isGonePlace lets
+// both callers say 404 instead.
 async function fetchVenueFromGoogle(placeId, clientDay) {
   if (!API_KEY) return null;
 
@@ -857,6 +864,7 @@ router.get('/:placeId',
       // Fetch venue from Google Places
       const venue = await fetchVenueFromGoogle(placeId, localDay);
       if (!venue) {
+        if (isGonePlace(placeId)) return res.status(404).json({ error: VENUE_GONE });
         return res.status(502).json({ error: 'Failed to fetch venue data from Google Places' });
       }
 
@@ -1907,6 +1915,7 @@ router.get('/:placeId/alternatives',
       // Fetch target venue
       const target = await fetchVenueFromGoogle(placeId, localDay);
       if (!target) {
+        if (isGonePlace(placeId)) return res.status(404).json({ error: VENUE_GONE });
         return res.status(502).json({ error: 'Failed to fetch venue data' });
       }
 

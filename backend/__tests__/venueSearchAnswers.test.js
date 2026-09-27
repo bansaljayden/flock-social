@@ -239,11 +239,25 @@ test('a search Google answers with nothing is a 200 and an empty list, never a 5
 // ---------------------------------------------------------------------------
 
 test('a Places error on the detail sheet is a sentence about the venue, not about Google', async () => {
-  googleAnswer = { error: { status: 'NOT_FOUND', message: 'NOT_FOUND' } };
+  // A transient refusal is a 502 that says to try again.
+  googleStatus = 503;
+  googleAnswer = { error: { code: 503, status: 'UNAVAILABLE', message: 'UNAVAILABLE' } };
   const res = await get('/api/venues/details?place_id=ChIJAAAAAAAAAAAAAAAAAAAAAA');
   assert.strictEqual(res.status, 502, res.text);
   assert.strictEqual(res.body.error, 'That venue is not loading right now. Try again in a moment.');
-  assert.ok(!/NOT_FOUND|Places API/i.test(res.text), 'Google\'s status reached the client');
+  assert.ok(!/UNAVAILABLE|Places API/i.test(res.text), 'Google\'s status reached the client');
+});
+
+test('a retired listing on the detail sheet is a 404 that does not say to try again, still in our words', async () => {
+  // NOT_FOUND is Google's final answer about the id. This was the 502 above,
+  // which told the user to try again (it cannot work) and counted toward the
+  // "Google Places is down" alarm.
+  googleStatus = 404;
+  googleAnswer = { error: { code: 404, status: 'NOT_FOUND', message: 'Requested entity was not found.' } };
+  const res = await get('/api/venues/details?place_id=ChIJCCCCCCCCCCCCCCCCCCCCCC');
+  assert.strictEqual(res.status, 404, res.text);
+  assert.strictEqual(res.body.error, 'This venue is no longer listed on Google, so its details cannot load.');
+  assert.ok(!/NOT_FOUND|Places API|Requested entity/i.test(res.text), 'Google\'s status reached the client');
 });
 
 // ---------------------------------------------------------------------------
