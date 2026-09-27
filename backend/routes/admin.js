@@ -1832,16 +1832,47 @@ router.put('/venues/:profileId/verify', async (req, res) => {
     // is a SERIAL integer, so anything that is not all digits names no row.
     const profileId = serialId(req.params.profileId);
     if (profileId === null) return res.status(404).json({ error: 'Venue profile not found' });
-    // `verified` defaults to true (the button that just says "Verify" sends no
-    // body), but anything that is not a real boolean is refused rather than
-    // coerced: `{"verified":"false"}` used to VERIFY a claim, which is the
-    // dangerous direction to get wrong on the route that decides who is allowed
-    // to speak as a business.
+    // `verified` defaults to true when the key is absent, but anything that is
+    // not a real boolean is refused rather than coerced: `{"verified":"false"}`
+    // used to VERIFY a claim, which is the dangerous direction to get wrong on
+    // the route that decides who is allowed to speak as a business.
     const payload = req.body || {};
     if ('verified' in payload && typeof payload.verified !== 'boolean') {
       return res.status(400).json({ error: 'verified must be true or false' });
     }
     const verified = payload.verified !== false;
+    // A VERIFY NAMES THE LISTING THAT WAS CHECKED. The decision used to carry
+    // only the profile id, and an owner can re-point their claim at any
+    // unverified place id whenever they like (PUT /api/venue-profile resets
+    // verified and the pending request, and a fresh request is one press). So
+    // an owner who really runs place A could ask to be verified, switch the
+    // claim to a competitor's place B, ask again, and an admin who checked A
+    // (from a console loaded a minute earlier, or from the request email) made
+    // them the verified owner of B: the badge, B's public live number, replies
+    // under B's name and B's incoming-flocks feed, with B's real owner then
+    // refused as "already claimed".
+    //
+    // So granting requires `googlePlaceId`, the place the admin looked at, and
+    // the UPDATE below only fires while the claim still names that place.
+    // null is allowed and means "a claim with no listing", which the partial
+    // unique index cannot conflict on either. Declining or un-verifying needs
+    // no place: taking a badge away is the safe direction, and refusing it
+    // because the claim moved would keep a badge up that someone decided to
+    // pull.
+    let reviewedPlaceId = null;
+    if (verified) {
+      if (!('googlePlaceId' in payload)) {
+        return res.status(400).json({
+          error: 'Send googlePlaceId, the Google place id you checked, with a verify decision.',
+          code: 'PLACE_ID_REQUIRED',
+        });
+      }
+      reviewedPlaceId = payload.googlePlaceId;
+      if (reviewedPlaceId !== null
+        && (typeof reviewedPlaceId !== 'string' || reviewedPlaceId.length === 0 || reviewedPlaceId.length > 255)) {
+        return res.status(400).json({ error: 'googlePlaceId must be the place id you checked, or null' });
+      }
+    }
     // Optional, and validated exactly like the reason on PUT /reports/:id, for
     // the same reason: node-postgres CONVERTS a non-string for a TEXT
     // parameter rather than refusing it, and this string is about to become
@@ -1911,6 +1942,11 @@ router.put('/venues/:profileId/verify', async (req, res) => {
          -- decided claim at the front of the queue above people still waiting.
          UPDATE venue_profiles SET verified = $1, verification_requested_at = NULL, updated_at = NOW()
          WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM blocked)
+           -- The place the admin checked (see reviewedPlaceId above). Read
+           -- against the row being written, not the snapshot in target, so a
+           -- switch that commits while this statement waits on the row lock
+           -- still stops the grant.
+           AND ($1::boolean = false OR google_place_id IS NOT DISTINCT FROM $5::varchar)
          RETURNING id, business_name, verified
        ),
        audit AS (
@@ -1932,19 +1968,40 @@ router.put('/venues/:profileId/verify', async (req, res) => {
               ou.name AS owner_name,
               -- And whose plan the notice describes (roostIsOnFor above).
               t.user_id AS owner_user_id,
-              (SELECT user_id FROM blocked) AS conflict_user_id
+              (SELECT user_id FROM blocked) AS conflict_user_id,
+              -- Why a refusal was a refusal, both read in this statement.
+              -- place_changed: the claim names another listing than the one
+              -- checked. place_taken: another account holds the place. With
+              -- neither, the row moved under the write itself (a switch or a
+              -- delete that committed while this waited), which is a changed
+              -- claim too.
+              ($1::boolean AND t.google_place_id IS DISTINCT FROM $5::varchar) AS place_changed,
+              EXISTS (SELECT 1 FROM blocked) AS place_taken
        FROM target t
        LEFT JOIN upd u ON true
        LEFT JOIN users ou ON ou.id = t.user_id`,
-      [verified, profileId, req.user.id, reason || null]
+      [verified, profileId, req.user.id, reason || null, reviewedPlaceId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
     const row = result.rows[0];
     // The refusal is read off the UPDATE, not off the conflicting owner's id:
     // venue_profiles.user_id is nullable, so a conflicting row with a NULL
     // user_id would otherwise have looked like success and answered 200 with a
-    // row of nulls. `blocked` is the only thing that can stop the UPDATE, so a
-    // target that exists with no updated row IS the conflict.
+    // row of nulls. Once the place check exists, `blocked` is no longer the
+    // only thing that can stop the UPDATE, so a changed claim is named first
+    // and gets its own answer: telling the admin "another account owns this
+    // place" about a claim that simply moved would send them to un-verify an
+    // owner who did nothing.
+    if (row.id == null && (row.place_changed === true || row.place_taken === false)) {
+      return res.status(409).json({
+        error: row.place_changed === true
+          ? `This claim now names ${row.google_place_id ? `Google place ${row.google_place_id}` : 'no Google listing'}, not the one you checked. Nothing was changed. Reload the claim and check the listing it names now.`
+          : 'This claim changed after you loaded it. Nothing was changed. Reload the claim and check it again.',
+        code: 'CLAIM_CHANGED',
+        googlePlaceId: row.google_place_id ?? null,
+        reviewedPlaceId,
+      });
+    }
     if (row.id == null) {
       const who = row.conflict_user_id != null ? `Another account (user ${row.conflict_user_id})` : 'Another account';
       return res.status(409).json({

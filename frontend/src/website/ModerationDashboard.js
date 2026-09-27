@@ -752,7 +752,14 @@ export default function ModerationDashboard() {
     });
     try {
       const reason = (own(venueReasons, venue.id) || '').trim();
-      const body = reason ? { verified, reason } : { verified };
+      // The place this card showed, which is the place the admin checked. The
+      // server refuses a grant that does not name it, and refuses one whose
+      // claim has since been re-pointed at another listing, so an owner who
+      // switches their claim to a competitor while this tab sits open cannot
+      // be verified onto the competitor by a click on the old card. Sent on a
+      // decline too; the server ignores it there.
+      const body = { verified, googlePlaceId: venue.google_place_id ?? null };
+      if (reason) body.reason = reason;
       await adminFetch(`/api/admin/venues/${venue.id}/verify`, {
         method: 'PUT',
         body: JSON.stringify(body),
@@ -1386,10 +1393,27 @@ function VenueClaim({ venue: v, busy, error, reason, onReason, onDecide }) {
         {v.location || 'No address on file'}
         {'  ·  '}owner: {v.email || 'no address on file'}
       </div>
-      <div style={{ ...S.dimSmall, marginTop: 2 }}>
+      <div style={{ ...S.dimSmall, marginTop: 2, overflowWrap: 'anywhere' }}>
         {linked ? `Google place ${v.google_place_id}` : 'No Google listing linked'}
         {'  ·  '}claimed {fmt(v.created_at)}
       </div>
+      {/* Google's own page for the place id. The name and address above are
+          what the OWNER typed, and they stay the same when a claim is
+          re-pointed at another business, so without this the only sign that
+          the listing changed was an opaque id. The same link the venue card
+          uses, so it opens the listing and costs no Places call. */}
+      {linked ? (
+        <div style={{ ...S.dimSmall, marginTop: 2 }}>
+          <a
+            href={`https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(v.google_place_id)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={S.link}
+          >
+            See this listing on Google Maps
+          </a>
+        </div>
+      ) : null}
       {requested ? (
         <div style={{ ...S.record, marginTop: 6 }}>
           <div>

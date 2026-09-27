@@ -96,7 +96,7 @@ async function decide(body) {
 
 test('a verified owner is told, and told what it turned on', async () => {
   handlers = [decisionReturns(verified())];
-  const res = await decide({ verified: true });
+  const res = await decide({ verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(sent.length, 1, 'the owner was not told their claim was verified');
   assert.strictEqual(sent[0].to, 'owner@example.com');
@@ -127,7 +127,7 @@ const planIs = (tier) => [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/
 test('billing off: a verified venue is told Roost is on, because every venue has it', async () => {
   await withBilling(false, async () => {
     handlers = [decisionReturns(verified({ owner_user_id: 5 }))];
-    await decide({ verified: true });
+    await decide({ verified: true, googlePlaceId: 'PLACE_A' });
     assert.strictEqual(sent.length, 1);
     assert.match(sent[0].text, /Roost, the forecast and advisor for your venue, is on too\./);
     assert.match(sent[0].text, /reply to reviews and set your live number/);
@@ -137,7 +137,7 @@ test('billing off: a verified venue is told Roost is on, because every venue has
 test('billing on: a verified FREE venue is not told it can use Roost', async () => {
   await withBilling(true, async () => {
     handlers = [decisionReturns(verified({ owner_user_id: 5 })), planIs('free')];
-    await decide({ verified: true });
+    await decide({ verified: true, googlePlaceId: 'PLACE_A' });
     assert.strictEqual(sent.length, 1);
     const text = sent[0].text;
     assert.doesNotMatch(text, /use Roost|Roost[^.]*is on/, 'a free venue was promised Roost by its verification email');
@@ -151,7 +151,7 @@ test('billing on: a verified FREE venue is not told it can use Roost', async () 
 test('billing on: a verified Roost venue is told Roost is on', async () => {
   await withBilling(true, async () => {
     handlers = [decisionReturns(verified({ owner_user_id: 5 })), planIs('pro')];
-    await decide({ verified: true });
+    await decide({ verified: true, googlePlaceId: 'PLACE_A' });
     assert.match(sent[0].text, /Roost, the forecast and advisor for your venue, is on too\./);
   });
 });
@@ -159,7 +159,7 @@ test('billing on: a verified Roost venue is told Roost is on', async () => {
 test('billing on and the plan unreadable: the email says nothing about Roost either way', async () => {
   await withBilling(true, async () => {
     handlers = [decisionReturns(verified({ owner_user_id: 5 })), [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => new Error('db down')]];
-    await decide({ verified: true });
+    await decide({ verified: true, googlePlaceId: 'PLACE_A' });
     assert.strictEqual(sent.length, 1, 'a failed plan read must not cost the owner the email');
     assert.doesNotMatch(sent[0].text, /Roost/);
   });
@@ -213,7 +213,7 @@ test('a mail failure does not turn a committed decision into an error', async ()
   emailService.sendEmail = async () => { throw new Error('resend is down'); };
   try {
     handlers = [decisionReturns(verified())];
-    const res = await decide({ verified: true });
+    const res = await decide({ verified: true, googlePlaceId: 'PLACE_A' });
     assert.strictEqual(res.status, 200, res.text);
     assert.match(res.text, /"verified":true/);
   } finally {
@@ -227,7 +227,7 @@ test('a refused conflict tells nobody, because nothing was decided', async () =>
     id: null, business_name: null, verified: null,
     google_place_id: 'PLACE_A', conflict_user_id: 42, ...OWNER,
   })];
-  const res = await decide({ verified: true });
+  const res = await decide({ verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 409, res.text);
   assert.strictEqual(sent.length, 0,
     'an owner was emailed about a decision that was refused and never happened');

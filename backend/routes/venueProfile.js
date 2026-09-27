@@ -439,7 +439,7 @@ async function notifyVerificationRequested(profile) {
     `[venue-verification] profile #${profile.id} (${name}) requested verification. `
     + `Place ${profile.google_place_id}, owner ${profile.owner_email}. `
     + 'Queue: GET /api/admin/venues/unverified. Decide: PUT /api/admin/venues/'
-    + `${profile.id}/verify.`
+    + `${profile.id}/verify with googlePlaceId ${profile.google_place_id}.`
   );
 
   const esc = emailService.escapeHtml;
@@ -450,7 +450,12 @@ async function notifyVerificationRequested(profile) {
     ['Owner account', profile.owner_email],
     ['Profile id', String(profile.id)],
   ];
-  const next = `Check that this account runs the listing, then decide it with PUT /api/admin/venues/${profile.id}/verify. The queue is GET /api/admin/venues/unverified, requested claims first.`;
+  // The place id goes INTO the instruction, because the admin route refuses a
+  // grant that does not name the listing that was checked. Copying the body
+  // from this email binds the decision to the place this request was about,
+  // so a claim re-pointed at another business after the email went out is
+  // refused instead of verified onto that business.
+  const next = `Check that this account runs the listing, then decide it with PUT /api/admin/venues/${profile.id}/verify and the body {"verified": true, "googlePlaceId": ${JSON.stringify(profile.google_place_id ?? null)}}. If the claim has moved to another listing since this email, that decision is refused. The queue is GET /api/admin/venues/unverified, requested claims first.`;
 
   const result = await emailService.sendEmail({
     to: verificationAlertRecipient(),

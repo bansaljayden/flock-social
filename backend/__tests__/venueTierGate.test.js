@@ -364,7 +364,7 @@ const verifyReturns = (row) => [/UPDATE venue_profiles SET verified/, () => ({ r
 test('verifying a place another account already holds is a 409 naming the conflict', async () => {
   CURRENT_USER = ADMIN;
   handlers = [verifyReturns({ id: null, business_name: null, verified: null, google_place_id: 'PLACE_A', conflict_user_id: 42 })];
-  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 409);
   assert.strictEqual(res.body.code, 'PLACE_ALREADY_VERIFIED');
   assert.strictEqual(res.body.conflictUserId, 42);
@@ -378,7 +378,7 @@ test('a blocked write is a 409 even when the conflicting owner has no user id', 
   // admin told the claim was verified when the UPDATE never fired.
   CURRENT_USER = ADMIN;
   handlers = [verifyReturns({ id: null, business_name: null, verified: null, google_place_id: 'PLACE_A', conflict_user_id: null })];
-  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 409);
   assert.strictEqual(res.body.code, 'PLACE_ALREADY_VERIFIED');
   assert.strictEqual(res.body.conflictUserId, null);
@@ -390,7 +390,7 @@ test('the conflict is decided in the same statement as the write', async () => {
   // the second one still 500s on the unique index.
   CURRENT_USER = ADMIN;
   handlers = [verifyReturns({ id: 7, business_name: 'V', verified: true, google_place_id: 'PLACE_A', conflict_user_id: null })];
-  await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(log.length, 1, 'the route issued more than one query');
   const sql = log[0].sql;
   assert.ok(/other\.verified = true/.test(sql), 'nothing looks for a rival verified claim');
@@ -403,7 +403,7 @@ test('losing the unique-index race is a 409 too, never a 500', async () => {
   CURRENT_USER = ADMIN;
   const dup = Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' });
   handlers = [[/UPDATE venue_profiles SET verified/, () => dup]];
-  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 409);
   assert.strictEqual(res.body.code, 'PLACE_ALREADY_VERIFIED');
 });
@@ -411,12 +411,12 @@ test('losing the unique-index race is a 409 too, never a 500', async () => {
 test('a clean verify still returns the profile, and a missing one is still 404', async () => {
   CURRENT_USER = ADMIN;
   handlers = [verifyReturns({ id: 7, business_name: 'The Bar', verified: true, google_place_id: 'PLACE_A', conflict_user_id: null })];
-  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  let res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(res.body, { id: 7, business_name: 'The Bar', verified: true });
 
   handlers = [verifyReturns(null)];
-  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 404);
 });
 
@@ -440,16 +440,85 @@ test('a non-boolean `verified` is refused instead of coerced', async () => {
     assert.strictEqual(res.status, 400, `accepted ${JSON.stringify(bad)}`);
     assert.strictEqual(log.length, 0, 'the bad value reached the database');
   }
-  // An empty body still means "verify", which is what the admin UI sends.
-  const ok = await call('PUT', '/api/admin/venues/7/verify', {});
+  // An absent `verified` still means "verify", so it also has to name the
+  // place that was checked. An empty body names nothing and is refused before
+  // the database, rather than granting whatever the claim points at by then.
+  log = [];
+  const bare = await call('PUT', '/api/admin/venues/7/verify', {});
+  assert.strictEqual(bare.status, 400);
+  assert.strictEqual(bare.body.code, 'PLACE_ID_REQUIRED');
+  assert.strictEqual(log.length, 0, 'a verify naming no place reached the database');
+  const ok = await call('PUT', '/api/admin/venues/7/verify', { googlePlaceId: 'PLACE_A' });
   assert.strictEqual(ok.status, 200);
   assert.strictEqual(log[0].params[0], true);
+});
+
+// A grant names the listing the admin checked. An owner can re-point a claim
+// at any unverified place id and ask again, so a decision that carried only
+// the profile id verified whatever the claim named by the time the admin
+// clicked: check place A, grant place B.
+test('a verify is bound, in the same statement, to the place the admin checked', async () => {
+  CURRENT_USER = ADMIN;
+  handlers = [verifyReturns({ id: 7, business_name: 'V', verified: true, google_place_id: 'PLACE_A', conflict_user_id: null, place_changed: false, place_taken: false })];
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(log.length, 1, 'the place check became a second query');
+  assert.strictEqual(log[0].params[4], 'PLACE_A', 'the checked place is not what the write is bound to');
+  const upd = log[0].sql.slice(log[0].sql.indexOf('upd AS'), log[0].sql.indexOf('audit AS'));
+  assert.match(upd, /google_place_id IS NOT DISTINCT FROM \$5::varchar/,
+    'the UPDATE itself does not require the claim to still name the checked place');
+  assert.match(upd, /\$1::boolean = false OR/, 'un-verifying would be refused for a claim that moved');
+});
+
+test('a claim that moved to another place since it was checked is refused as changed, not granted', async () => {
+  CURRENT_USER = ADMIN;
+  handlers = [verifyReturns({
+    id: null, business_name: null, verified: null, google_place_id: 'PLACE_B',
+    conflict_user_id: null, place_changed: true, place_taken: false,
+  })];
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'CLAIM_CHANGED');
+  assert.strictEqual(res.body.googlePlaceId, 'PLACE_B');
+  assert.strictEqual(res.body.reviewedPlaceId, 'PLACE_A');
+  assert.match(res.body.error, /PLACE_B/, 'the admin is not told which listing the claim names now');
+  assert.doesNotMatch(res.body.error, /already the verified owner/,
+    'a moved claim is blamed on an owner who did nothing');
+});
+
+test('a claim whose row moved under the write is refused as changed too', async () => {
+  // The snapshot still named the checked place and nobody else holds it, yet
+  // the UPDATE found nothing: the switch committed while the grant waited on
+  // the row lock. That is a changed claim, not a taken place.
+  CURRENT_USER = ADMIN;
+  handlers = [verifyReturns({
+    id: null, business_name: null, verified: null, google_place_id: 'PLACE_A',
+    conflict_user_id: null, place_changed: false, place_taken: false,
+  })];
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.code, 'CLAIM_CHANGED');
+});
+
+test('un-verifying and declining need no place, and a bad place id is refused', async () => {
+  CURRENT_USER = ADMIN;
+  handlers = [verifyReturns({ id: 7, business_name: 'V', verified: false, google_place_id: 'PLACE_A', conflict_user_id: null })];
+  const off = await call('PUT', '/api/admin/venues/7/verify', { verified: false });
+  assert.strictEqual(off.status, 200, off.text);
+  assert.strictEqual(log[0].params[4], null);
+
+  for (const bad of ['', 42, ['PLACE_A'], { id: 'PLACE_A' }, 'x'.repeat(256)]) {
+    log = [];
+    const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: bad });
+    assert.strictEqual(res.status, 400, `accepted googlePlaceId ${JSON.stringify(bad)}`);
+    assert.strictEqual(log.length, 0, 'the bad place id reached the database');
+  }
 });
 
 test('a non-admin cannot verify anything', async () => {
   CURRENT_USER = { id: 1, name: 'Ava', role: 'venue_owner' };
   handlers = [];
-  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true });
+  const res = await call('PUT', '/api/admin/venues/7/verify', { verified: true, googlePlaceId: 'PLACE_A' });
   assert.strictEqual(res.status, 403);
   assert.strictEqual(log.length, 0);
 });

@@ -418,7 +418,7 @@ function routeTable() {
 const VALID_BODY = {
   'PUT /reports/:id': { action: 'dismiss' },
   'POST /venues/:userId/tier': { tier: 'free' },
-  'PUT /venues/:profileId/verify': { verified: true },
+  'PUT /venues/:profileId/verify': { verified: true, googlePlaceId: 'PLACE_A' },
   'PUT /expenses/:id': { vendor: 'Registrar', kind: 'infrastructure', cadence: 'yearly', amount: '12.00' },
 };
 

@@ -259,6 +259,11 @@ test('the first request mails an operator with what it takes to decide the claim
   }
   // And where to act on it. The admin routes exist; no screen calls them.
   assert.match(mail.text, /PUT \/api\/admin\/venues\/7\/verify/);
+  // With the place this request was about written into the body to send. The
+  // route refuses a grant that names no place, and one copied from here is
+  // bound to this listing, so a claim re-pointed at another business after
+  // the email went out is refused rather than verified onto it.
+  assert.ok(mail.text.includes(`"googlePlaceId": "${PLACE}"`), 'the decision to copy names the place that was requested');
   assert.strictEqual(sent.calls.length, 1, 'one claim is one notification');
 });
 
@@ -369,7 +374,7 @@ test('the unverified queue serves requested claims first, oldest request first',
 test('the admin decision clears the pending request in the same statement as the flip, in both directions', async () => {
   CURRENT_USER = { id: 99, name: 'Root', role: 'admin' };
   handlers = [[/UPDATE venue_profiles SET verified/, () => ({ rows: [{ id: 7, business_name: 'Bar', verified: true, google_place_id: PLACE, conflict_user_id: null }] })]];
-  const res = await call('PUT', '/api/admin/venues/7/verify', {});
+  const res = await call('PUT', '/api/admin/venues/7/verify', { googlePlaceId: PLACE });
   assert.strictEqual(res.status, 200);
   const q = ran(/UPDATE venue_profiles SET verified/)[0];
   assert.ok(q, 'the verify statement ran');
