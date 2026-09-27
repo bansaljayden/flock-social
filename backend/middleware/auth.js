@@ -431,16 +431,38 @@ const authenticateAllowBanned = makeAuthenticate({ allowBanned: true });
 // Opt-in variant for POST /api/auth/logout alone (see allowExpired above).
 const authenticateAllowExpired = makeAuthenticate({ allowExpired: true });
 
+// The answer to a handshake the server could not CHECK, as opposed to one it
+// checked and refused. A pool timeout, a Postgres restart or a statement
+// timeout says nothing about the credential, and it used to share the
+// catch-all's 'Authentication failed', which the client counts as a strike
+// against a dead credential. It is kept free of every string on the client's
+// fatal list (FATAL_AUTH_ERRORS in frontend/src/services/socket.js) and flagged
+// retryable in `data`, so the client dials again on its backoff instead.
+const SOCKET_RETRYABLE_MESSAGE = 'Server busy, try again shortly';
+
+function socketRetryableError() {
+  const err = new Error(SOCKET_RETRYABLE_MESSAGE);
+  err.data = { retryable: true };
+  return err;
+}
+
 // Socket.io middleware: verify JWT from handshake auth
 const authenticateSocket = async (socket, next) => {
+  let decoded;
   try {
     const token = socket.handshake.auth?.token;
     if (!token) {
       return next(new Error('No token provided'));
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: TOKEN_ALGORITHMS });
+  } catch (err) {
+    // Expired, tampered or malformed: this credential will be refused the
+    // same way on every attempt.
+    return next(new Error('Authentication failed'));
+  }
 
+  try {
     const result = await pool.query(
       'SELECT id, email, name, role, profile_image_url, email_verified, is_banned, token_version FROM users WHERE id = $1',
       [decoded.userId]
@@ -463,7 +485,9 @@ const authenticateSocket = async (socket, next) => {
     // already know the session is dead. Neither can be dropped for the other.
     next();
   } catch (err) {
-    next(new Error('Authentication failed'));
+    // The lookup failed, not the credential. See SOCKET_RETRYABLE_MESSAGE.
+    console.error('[auth] socket handshake lookup failed:', err?.message || err);
+    next(socketRetryableError());
   }
 };
 
@@ -479,6 +503,7 @@ module.exports = {
   TOKEN_EXPIRY,
   TOKEN_ALGORITHMS,
   UNVERIFIED_MESSAGE,
+  SOCKET_RETRYABLE_MESSAGE,
   // Token-version helpers, exported so sockets/handlers.js and
   // routes/checkin.js compare versions with THIS file's rule instead of a copy.
   tokenVersionOf,
