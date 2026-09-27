@@ -1632,12 +1632,19 @@ app.use('/api/email-events', require('./routes/emailWebhook'));
 // that one route, breaking the right to erasure (Apple 5.1.1(v) / GDPR).
 // Neither catch-all defines any /users path, so the move changes nothing else.
 app.use('/api/users', apiLimiter, userRoutes);
+// /api/safety has to sit up here for the same reason. Three of its routes
+// (GET /contacts, POST /alert, POST /alert/cancel) mount authenticateAllowBanned
+// so an SOS survives a ban, and while this line sat below the catch-alls a
+// banned account's SOS was answered 403 "suspended" by moderation.js before
+// safety.js ran: no email reached any trusted contact, and an alert raised just
+// before the ban could not be stood down. Neither catch-all defines a /safety
+// path. __tests__/safetyFlow.test.js pins this position against this file.
+app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/contacts, /api/safety/alert, etc.
 app.use('/api', apiLimiter, moderationRoutes);  // /api/reports, /api/blocks/* — before messages catch-all
 app.use('/api', apiLimiter, messageRoutes);     // Handles /api/flocks/:id/messages, /api/messages/:id/react, /api/dm/*
 app.use('/api/flocks', apiLimiter, venueRoutes); // Handles /api/flocks/:id/vote, /api/flocks/:id/votes
 app.use('/api/stories', apiLimiter, storyRoutes);     // Handles /api/stories
 app.use('/api/friends', apiLimiter, friendRoutes);    // Handles /api/friends, /api/friends/request, etc.
-app.use('/api/safety', apiLimiter, safetyRoutes);     // Handles /api/safety/contacts, /api/safety/alert, etc.
 app.use('/api/crowd', apiLimiter, crowdRoutes);       // Handles /api/crowd/:placeId, /api/crowd/batch, /api/crowd/:placeId/alternatives
 app.use('/api/feedback', apiLimiter, feedbackRoutes); // Handles /api/feedback, /api/feedback/venue/:placeId
 app.use('/api/weather', apiLimiter, weatherRoutes);   // Handles /api/weather?lat=...&lon=...
