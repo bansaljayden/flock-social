@@ -299,9 +299,28 @@ const analyticsEnabled = !!process.env.REACT_APP_POSTHOG_KEY && (
    __tests__/analyticsPrivacy.test.js pins. Only the MOMENT moved. */
 export function startAnalytics() {
   if (!analyticsEnabled || !hasAnalyticsConsent()) return;
-  import('posthog-js').then(({ default: posthog }) => {
+  // Returned so a caller can wait for init before anything else reaches the
+  // SDK. A call that lands before init is dropped (services/api.js).
+  return import('posthog-js').then(({ default: posthog }) => {
     posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
   }).catch(() => { /* analytics is never load-bearing */ });
+}
+
+/* A YES GIVEN INSIDE THE APP IS USUALLY GIVEN AFTER SIGN-IN. The native shell
+   holds the bar back until the tab bar is on screen, and on the web a visitor
+   who signs in first answers later. The sign-in's identify had already run
+   into the consent gate in services/api.js and been dropped, so without this
+   everything after the yes was recorded against an anonymous id until the next
+   sign-in, a day later at the soonest. Once init has run, the account signed
+   in now is named. api.js is the module the App chunk already holds, and it
+   does nothing when nobody is signed in. */
+function startAnalyticsInApp(answer) {
+  const started = startAnalytics();
+  if (answer !== 'yes' || !started) return;
+  started
+    .then(() => import('./services/api'))
+    .then((api) => api.identifySignedInUser())
+    .catch(() => { /* analytics is never load-bearing */ });
 }
 
 /* Already answered yes on a previous visit: no banner, nothing to ask, and
@@ -971,8 +990,9 @@ if (page) {
   root.render(
     <React.StrictMode>
       {/* The ask, on every surface analytics can run on. Renders nothing
-          once answered, and declining is remembered. */}
-      <ConsentBanner onAnswer={startAnalytics} />
+          once answered, and declining is remembered. Here a yes also names
+          the account signed in (startAnalyticsInApp). */}
+      <ConsentBanner onAnswer={startAnalyticsInApp} />
       {/* ThemeProvider writes data-theme onto <html> and never removes it, and
           applyStoredTheme above set it before this first render, so the
           fallback paints in the user's theme even though it renders before
