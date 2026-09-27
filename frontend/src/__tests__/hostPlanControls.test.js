@@ -40,6 +40,11 @@
 //      the host's Change place, which the server allows but the plan screen
 //      already hides then. The chat itself stays open.
 //
+// And one more thing only the host gets, at the end of the file: the
+// notification row on a plan nobody else has joined yet. A new host lands in
+// this chat straight from Create, alone, and the first push their plan will
+// ever send them is a friend answering the link.
+//
 // HOW TO RUN
 //   cd frontend && CI=true npx react-scripts test hostPlanControls --watchAll=false
 // ---------------------------------------------------------------------------
@@ -1231,5 +1236,74 @@ describe('locking in a venue voted from a shared card', () => {
     expect(updateFlockVenue).toHaveBeenCalledWith(1, expect.objectContaining({
       name: "Joe's Bar", place_id: 'pj1', addr: '2 Joe St', lat: 40.72, lng: -73.99, status: 'confirmed',
     }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. The notification ask, for a host nobody has answered yet
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// CreateScreen makes the flock with memberCount 1 and every exit from its made
+// step lands in this chat. The row used to need a second member, so a new
+// host was never asked, and the "is in!" push routes/guest.js sends on the
+// first yes from the link reached a phone with no permission to show it.
+
+describe('a host alone on a new plan is asked about notifications', () => {
+  const firebase = require('../services/firebase');
+  // The OS has not answered and the row has not been waved off: the state a
+  // brand-new install is in.
+  const unasked = { notifStatus: 'default', notifAskDismissed: false };
+
+  test('the host of a one-person plan sees the row, and it names the push they will get', () => {
+    mount({ ...unasked, flock: { memberCount: 1 } });
+    expect(screen.getByText('Know when they answer')).toBeInTheDocument();
+    expect(screen.getByText("Flock can tell you when someone says they're in.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+  });
+
+  test('a member alone on a plan is still not asked: nothing is sent to them there', () => {
+    mount({ ...unasked, authUser: { id: MEMBER, name: 'Bo' }, flock: { memberCount: 1 } });
+    expect(screen.queryByText('Know when they answer')).toBeNull();
+  });
+
+  test('once somebody else is on it, the host gets the line every member gets', () => {
+    // RSVP pushes stop being the thing the host is waiting on, and the group
+    // line names only what every member is sent.
+    mount({ ...unasked, flock: { memberCount: 3 } });
+    expect(screen.getByText('Flock can tell you when someone replies here, or this plan changes.')).toBeInTheDocument();
+    expect(screen.queryByText("Flock can tell you when someone says they're in.")).toBeNull();
+  });
+
+  test('a plan that has ended does not ask its lone host: nobody can answer it now', () => {
+    for (const status of ['cancelled', 'completed']) {
+      const { unmount } = mount({ ...unasked, flock: { memberCount: 1, status } });
+      expect(screen.queryByText('Know when they answer')).toBeNull();
+      unmount();
+    }
+  });
+
+  test('a device that has answered, or a row already waved off, is not asked again', () => {
+    for (const over of [
+      { notifStatus: 'granted', notifAskDismissed: false },
+      { notifStatus: 'denied', notifAskDismissed: false },
+      { notifStatus: 'default', notifAskDismissed: true },
+    ]) {
+      const { unmount } = mount({ ...over, flock: { memberCount: 1 } });
+      expect(screen.queryByText('Know when they answer')).toBeNull();
+      unmount();
+    }
+  });
+
+  test('Turn on is the tap that asks the OS, and the row remembers it was answered', async () => {
+    firebase.requestNotificationPermission.mockReset();
+    firebase.requestNotificationPermission.mockResolvedValue('fcm-token');
+    const { p } = mount({ ...unasked, flock: { memberCount: 1 } });
+    // Nothing asks the OS until the tap.
+    expect(firebase.requestNotificationPermission).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+    expect(p.dismissNotifAsk).toHaveBeenCalledTimes(1);
+    expect(firebase.requestNotificationPermission).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(p.setNotifStatus).toHaveBeenCalledWith('granted'));
+    expect(api.trackNotificationPermission).toHaveBeenCalledWith('granted', 'chat_banner');
   });
 });

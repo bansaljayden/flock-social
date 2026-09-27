@@ -3113,17 +3113,33 @@ export default function ChatDetail({
             so the OS is only reached from the button below: a "not now" here
             costs nothing and can be asked again, a "no" at the OS cannot.
 
-            Conditions, in order: somebody else is on this plan (a flock of one
-            has nothing to notify about), the OS has not already answered, and
-            this row has not been dismissed before.
+            Conditions, in order: there is something to notify about, the OS
+            has not already answered, and this row has not been dismissed
+            before.
 
-            The copy names only pushes this build actually sends to every
-            member of a flock: flock_message from routes/messages.js and
-            sockets/handlers.js, and flock_updated / flock_confirmed from
-            routes/flocks.js. It does NOT say "when someone RSVPs", because
-            flock_rsvp goes to the creator alone and most readers of this row
-            are not the creator. */}
-        {(flock.memberCount || 1) > 1 && notifStatus !== 'granted' && notifStatus !== 'denied'
+            "Something to notify about" is somebody else on this plan, OR this
+            reader being its creator. A flock of one used to be skipped as
+            having nothing to say, and for a member that is still true. For
+            the creator it is exactly backwards. Create ends by sending the
+            link and landing here with memberCount 1, and the next thing that
+            happens on that plan is a friend answering it: routes/guest.js
+            pushes the host "Maya is in!" on a new yes from the link, and
+            claimRsvpPush in routes/flocks.js pushes "is going!" when an
+            account joins. The row used to appear only once a second member
+            existed, which is after that first push had already reached a
+            phone with no permission to show it. A first plan nobody hears
+            back on is how a first plan dies. Not on a plan that has ended:
+            the server refuses a new answer there, so the reason is gone.
+
+            The copy names only pushes this build actually sends to that
+            reader. Every member gets flock_message from routes/messages.js
+            and sockets/handlers.js, and flock_updated / flock_confirmed from
+            routes/flocks.js, so the group line says replies and plan changes.
+            The RSVP pushes (flock_rsvp, guest_rsvp) go to the creator alone,
+            so only the creator's line mentions someone saying they're in, and
+            only while the creator has nobody else yet, which is the one time
+            that is the thing they are waiting on. */}
+        {((flock.memberCount || 1) > 1 || (isCreator && !planClosed)) && notifStatus !== 'granted' && notifStatus !== 'denied'
           && notifStatus !== 'unsupported' && !notifAskDismissed && (
           <div style={{ padding: '10px 14px', background: 'var(--bg-primary)', borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3131,7 +3147,9 @@ export default function ChatDetail({
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Know when they answer</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Flock can tell you when someone replies here, or this plan changes.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{isCreator && (flock.memberCount || 1) <= 1
+                ? "Flock can tell you when someone says they're in."
+                : 'Flock can tell you when someone replies here, or this plan changes.'}</p>
             </div>
             <button
               className="hit44 glass-btn glass-navy"
