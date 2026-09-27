@@ -115,7 +115,7 @@ function call(path, { apiKey, body, method = 'POST' } = {}) {
       headers['content-length'] = Buffer.byteLength(payload);
     }
     if (apiKey !== undefined) headers['x-api-key'] = apiKey;
-    const req = http.request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
+    const req = http.request({ agent: false, host: '127.0.0.1', port, path, method, headers }, (res) => {
       let raw = '';
       res.on('data', (c) => { raw += c; });
       res.on('end', () => {

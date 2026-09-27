@@ -56,7 +56,7 @@ function put(urlPath, bodyObj) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const payload = JSON.stringify(bodyObj || {});
-    const req = http.request({
+    const req = http.request({ agent: false,
       host: '127.0.0.1', port: addr.port, path: urlPath, method: 'PUT',
       headers: {
         Authorization: `Bearer ${TOKEN}`,

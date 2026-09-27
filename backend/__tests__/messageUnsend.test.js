@@ -75,7 +75,7 @@ const server = http.createServer(app);
 function del(urlPath) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
-    const req = http.request({
+    const req = http.request({ agent: false,
       host: '127.0.0.1', port: addr.port, path: urlPath, method: 'DELETE',
       headers: { Authorization: `Bearer ${TOKEN}` },
     }, (res) => {

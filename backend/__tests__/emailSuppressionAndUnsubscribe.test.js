@@ -395,7 +395,7 @@ function serveRouter(mountPath, router) {
 function request(app, method, path, { headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const server = app.listen(0, () => {
-      const req = http.request({
+      const req = http.request({ agent: false,
         host: '127.0.0.1', port: server.address().port, path, method, headers,
       }, (res) => {
         let text = '';
