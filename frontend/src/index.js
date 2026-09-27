@@ -8,7 +8,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
 import ConsentBanner from './components/ConsentBanner';
-import { hasAnalyticsConsent } from './services/analyticsConsent';
+import { hasAnalyticsConsent, onConsentChange } from './services/analyticsConsent';
 import { detectNativeShell } from './lib/nativeShell';
 
 // Bearer tokens ride in URLs in two places. Guest invites carry one in the
@@ -303,6 +303,13 @@ export function startAnalytics() {
   // SDK. A call that lands before init is dropped (services/api.js).
   return import('posthog-js').then(({ default: posthog }) => {
     posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
+    // A sign-out turns the SDK off (clearLocalSession in services/api.js), so
+    // that nothing is recorded for the next person before they answer. The
+    // yes that reaches here is that answer, so capture comes back on. A second
+    // init on the same page is a no-op in posthog-js and would not do it, and
+    // the opt-out is remembered across launches, so it is asked every time.
+    // No $opt_in event: the answer itself is not something to record.
+    if (posthog.has_opted_out_capturing()) posthog.opt_in_capturing({ captureEventName: false });
   }).catch(() => { /* analytics is never load-bearing */ });
 }
 
@@ -322,6 +329,17 @@ function startAnalyticsInApp(answer) {
     .then((api) => api.identifySignedInUser())
     .catch(() => { /* analytics is never load-bearing */ });
 }
+
+/* A YES THAT COMES BACK WITH ITS OWN ACCOUNT. A session ending takes the
+   analytics answer with it and turns the SDK off; when the same account signs
+   in again on this page, services/analyticsConsent.js gives the answer back
+   without asking (WHOSE ANSWER IT IS there). Nothing tapped the bar, so nothing
+   called the handler above, and a yes restored that way would otherwise sit
+   in storage with the SDK still off. The sweep itself announces too, and
+   leaves no yes, so this starts nothing then. */
+onConsentChange(() => {
+  if (hasAnalyticsConsent()) startAnalyticsInApp('yes');
+});
 
 /* Already answered yes on a previous visit: no banner, nothing to ask, and
    nothing on screen waiting on this.
@@ -343,8 +361,10 @@ function startAnalyticsInApp(answer) {
    fresh yes starts immediately rather than waiting for a load event that has
    long since fired. The hasAnalyticsConsent() test here is what keeps those
    two paths from both firing: the banner only renders when nobody has
-   answered, so deferring only the already-answered case means init can never
-   be queued twice for one visit. */
+   answered, so deferring only the already-answered case means the two cannot
+   both run on the first answer of a visit. A later yes on the same page, from
+   the next account after a sign-out, reaches init again, which posthog-js
+   ignores, and turns capture back on (startAnalytics). */
 if (hasAnalyticsConsent()) afterLoad(startAnalytics);
 
 // ---------------------------------------------------------------------------

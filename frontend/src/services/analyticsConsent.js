@@ -29,6 +29,41 @@
 
 const KEY = 'flock_analytics_consent';
 
+/**
+ * WHOSE ANSWER IT IS.
+ *
+ * In the app the question is about an account: the app copy says the events
+ * carry "your account number". So an answer is good for the account that gave
+ * it and for nobody else. The stored key is swept with every other flock* key
+ * when a session ends (services/api.js clearLocalSession), which means the next
+ * account on a shared phone is asked for itself and nothing is sent for it
+ * until it answers. Keeping the key across sign-out, as one fix tried, handed
+ * A's yes to B: B was identified to PostHog by account id without ever seeing
+ * the bar, which is the "unset is not permission" rule above broken one person
+ * later.
+ *
+ * Sweeping it outright asked everybody again after every sign-out and every
+ * 24h token expiry, including the person who had said no, which breaks the
+ * bar's promise that declining is remembered. So the answer is HELD, in this
+ * module and nowhere else, from the end of a session until the next sign-in on
+ * the same page, and given back only when that sign-in is the same account.
+ * The daily case is covered by that: an expired token is found at launch, the
+ * sign-in screen follows in the same page, and the person who signs in there
+ * is usually the one who answered. Anyone else is asked.
+ *
+ * Memory, not storage, on purpose. Writing "account 42 answered no" to the
+ * device would leave behind exactly what the sign-out sweep exists to remove:
+ * which account used this phone. A page that closes before the next sign-in
+ * forgets the hold, and the next sign-in is asked, which costs one tap and
+ * never sends anything unasked.
+ *
+ * An answer given while nobody is signed in (the web bar on the landing page
+ * or the sign-in screen) has no account yet. It stays for the sign-in that
+ * follows, because the person who just answered is the one signing in.
+ */
+let heldAtSignOut = null;
+const listeners = new Set();
+
 /** 'yes' | 'no' | null. Never throws: private windows and locked-down
  *  webviews make localStorage itself raise, and this runs during boot. */
 export function readConsent() {
@@ -51,9 +86,58 @@ export function consentUnanswered() {
 }
 
 export function setConsent(answer) {
+  // An answer given at this device now replaces whatever a signed-out account
+  // left waiting below: it is the newer word from whoever is holding it.
+  heldAtSignOut = null;
   try {
     window.localStorage.setItem(KEY, answer === 'yes' ? 'yes' : 'no');
   } catch { /* a browser that refuses to remember the answer will ask again */ }
+}
+
+/** Hear about a change to the answer in force that the bar did not make itself:
+ *  a session ending took it away, or a sign-in gave a held one back. Returns
+ *  the unsubscribe. The bar uses it to open again for the next account, and
+ *  index.js uses it to start analytics for a yes that comes back. */
+export function onConsentChange(listener) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+export function announceConsentChange() {
+  const answer = readConsent();
+  listeners.forEach((listener) => {
+    try { listener(answer); } catch { /* one listener cannot stop the others */ }
+  });
+}
+
+/** Called by services/api.js as a session ends, BEFORE its sweep removes the
+ *  key. `account` is the id of the account whose session it was, or nothing
+ *  when that is not known, in which case nothing is held and the next sign-in
+ *  is asked. */
+export function holdConsentAtSignOut(account) {
+  const answer = readConsent();
+  // Nothing in force means nothing new to hold. One ending can clear twice
+  // (a boot's 401, then the logout App.js sends after it, by which time the
+  // token that named the account is gone), and the second must not drop what
+  // the first one held.
+  if (answer === null) return;
+  heldAtSignOut = account !== undefined && account !== null && String(account)
+    ? { account: String(account), answer }
+    : null;
+}
+
+/** Called by services/api.js whenever it learns which account is signed in.
+ *  Gives the held answer back to that account and to no other, and only when
+ *  nothing newer has been answered since. The hold is spent either way. */
+export function restoreConsentFor(account) {
+  const held = heldAtSignOut;
+  heldAtSignOut = null;
+  if (!held || account === undefined || account === null) return;
+  if (held.account !== String(account) || readConsent() !== null) return;
+  try {
+    window.localStorage.setItem(KEY, held.answer);
+  } catch { return; /* not remembered, so the bar asks, which is safe */ }
+  announceConsentChange();
 }
 
 /**

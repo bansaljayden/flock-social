@@ -13,6 +13,7 @@ import { act, render } from '@testing-library/react';
 jest.mock('../services/analyticsConsent', () => ({
   consentUnanswered: () => true,
   setConsent: jest.fn(),
+  onConsentChange: () => () => {},
 }));
 
 const { default: ConsentBanner, APP_COPY } = require('../components/ConsentBanner');
