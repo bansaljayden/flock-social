@@ -2124,12 +2124,17 @@ export default function ChatDetail({
       ))?.venue_data || null;
       const pin = allVenues.find(v => (rowPlaceId && v.place_id === rowPlaceId) || v.name === venueName) || null;
       setShowVotePanel(false);
+      // A card as the server stores it carries latitude/longitude
+      // (utils/venuePayload.js); lat/lng is only the sender's own local copy
+      // before it went through. Reading lat alone sent no coordinates for
+      // every card anybody else shared, and the plan kept pointing at its
+      // old venue.
       return updateFlockVenue(selectedFlockId, {
         name: venueName,
         addr: card?.addr || pin?.addr || pin?.formatted_address || '',
         place_id: rowPlaceId || card?.place_id || pin?.place_id || null,
-        lat: card?.lat || pin?.location?.latitude || null,
-        lng: card?.lng || pin?.location?.longitude || null,
+        lat: card?.lat ?? card?.latitude ?? pin?.location?.latitude ?? null,
+        lng: card?.lng ?? card?.longitude ?? pin?.location?.longitude ?? null,
         photo_url: card?.photo_url || pin?.photo_url || null,
         rating: card?.rating || card?.stars || pin?.stars || pin?.rating || null,
         status: 'confirmed',

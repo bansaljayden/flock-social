@@ -27,6 +27,8 @@
 //      invite: the accept asks the whole accepted roster, both directions.
 //   6. A PLAN CREATED FOR A PAST TIME COUNTS AS HAPPENING WHEN IT WAS MADE,
 //      so the reliability tally cannot be farmed one past slot per create.
+//   7. A NEW VENUE REPLACES THE OLD ONE WHOLE: no coordinate, photo, rating
+//      or place id of the old venue survives a PUT that names another.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -569,4 +571,109 @@ test('a plan made before its evening still counts at the evening it was for', as
   }
   const { rows } = await pool.query('SELECT total_plans_joined FROM users WHERE id = $1', [cal.id]);
   assert.strictEqual(rows[0].total_plans_joined, 2);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7. A new venue replaces the old one whole
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Every venue column was COALESCEd on its own, so a PUT naming a different
+// venue with no coordinates, photo or rating kept the old venue's: a plan
+// called Joe's Bar that pointed at Kome. Which venue the plan is at is decided
+// in the statement, against the row, so it is run.
+
+const KOME_PHOTO = '/api/venues/photo?ref=kome0001';
+
+async function venueOf(flockId) {
+  const { rows } = await pool.query(
+    `SELECT venue_name, venue_address, venue_id, venue_latitude, venue_longitude,
+            venue_rating::float AS venue_rating, venue_photo_url
+       FROM flocks WHERE id = $1`,
+    [flockId]
+  );
+  return rows[0];
+}
+
+async function atKome(host) {
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  await pool.query(
+    `UPDATE flocks SET venue_name = 'Kome', venue_address = '1 Kome St', venue_id = 'ChIJkome000001',
+                       venue_latitude = 40.7, venue_longitude = -74.0, venue_rating = 4.5,
+                       venue_photo_url = $2
+      WHERE id = $1`,
+    [flockId, KOME_PHOTO]
+  );
+  return flockId;
+}
+
+test('confirming a different venue with no coordinates leaves nothing of the old venue behind', async () => {
+  const host = await mkUser('Host Sixteen');
+  const flockId = await atKome(host);
+
+  // What the vote panel sends for a venue voted from a shared card that
+  // carried no coordinates, photo or rating: a name, an empty address and
+  // the vote row's place id.
+  const res = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token,
+    body: { venue_name: "Joe's Bar", venue_address: '', venue_id: 'ChIJjoes00001', status: 'confirmed' },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const want = {
+    venue_name: "Joe's Bar", venue_address: '', venue_id: 'ChIJjoes00001',
+    venue_latitude: null, venue_longitude: null, venue_rating: null, venue_photo_url: null,
+  };
+  assert.deepStrictEqual(await venueOf(flockId), want, 'no coordinate, photo or rating of Kome survives');
+  assert.strictEqual(res.body.flock.venue_latitude, null, 'and the members are told the same thing');
+});
+
+test('a different venue with no place id does not keep the old place id', async () => {
+  const host = await mkUser('Host Seventeen');
+  const flockId = await atKome(host);
+  const res = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token,
+    body: { venue_name: "Joe's Bar", venue_latitude: 40.8, venue_longitude: -73.9 },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const v = await venueOf(flockId);
+  assert.strictEqual(v.venue_id, null, 'Directions and check-in no longer lead to Kome');
+  assert.deepStrictEqual([v.venue_latitude, v.venue_longitude], [40.8, -73.9]);
+  assert.strictEqual(v.venue_address, null);
+});
+
+test('the same venue sent again with less than the plan has keeps what the plan has', async () => {
+  const host = await mkUser('Host Eighteen');
+  const flockId = await atKome(host);
+  // Lock it in on the venue the plan is already at, from a card with none of
+  // the detail: by place id, and by name when the body carries no id.
+  const byId = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token,
+    body: { venue_name: 'Kome', venue_id: 'ChIJkome000001', status: 'confirmed' },
+  });
+  assert.strictEqual(byId.status, 200, JSON.stringify(byId.body));
+  const byName = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token,
+    body: { venue_name: 'Kome', venue_rating: 4.8 },
+  });
+  assert.strictEqual(byName.status, 200, JSON.stringify(byName.body));
+  assert.deepStrictEqual(await venueOf(flockId), {
+    venue_name: 'Kome', venue_address: '1 Kome St', venue_id: 'ChIJkome000001',
+    venue_latitude: 40.7, venue_longitude: -74.0, venue_rating: 4.8, venue_photo_url: KOME_PHOTO,
+  }, 'kept, and filled in where the body added something');
+
+  // A PUT that names no venue at all touches none of it.
+  const rename = await call('PUT', `/api/flocks/${flockId}`, { token: host.token, body: { name: 'Friday' } });
+  assert.strictEqual(rename.status, 200, JSON.stringify(rename.body));
+  assert.strictEqual((await venueOf(flockId)).venue_latitude, 40.7);
+});
+
+test('the same name at a different place id is a different venue', async () => {
+  const host = await mkUser('Host Nineteen');
+  const flockId = await atKome(host);
+  const res = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token,
+    body: { venue_name: 'Kome', venue_id: 'ChIJkome000002' },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const v = await venueOf(flockId);
+  assert.deepStrictEqual([v.venue_id, v.venue_latitude, v.venue_photo_url], ['ChIJkome000002', null, null]);
 });

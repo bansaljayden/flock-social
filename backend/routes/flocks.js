@@ -1559,16 +1559,41 @@ router.put('/:id',
       const mayCloseWindow = (event_time !== undefined && event_time !== null) || leftConfirmed;
       // `db` is the pool for an edit that cannot close a window, and the
       // transaction's client for one that can.
+      //
+      // A NEW VENUE IS ONE BLOCK. Every venue column was COALESCEd on its
+      // own, so a PUT naming a different venue without coordinates, a photo
+      // or a rating kept the old venue's: the host confirms Joe's Bar from a
+      // vote whose card carried no lat/lng, and every member gets a plan
+      // called Joe's Bar that points at Kome, with Kome's photo, Kome's
+      // weather and distances measured to Kome (and Kome's place id when the
+      // vote row had none, so Directions and check-in went there too). So
+      // when the body names a DIFFERENT venue, every venue column comes from
+      // the body, and what the body leaves out is cleared rather than kept.
+      //
+      // "Different" is decided on the row, in the statement: by place id when
+      // both sides have one, by name otherwise. The same venue sent again
+      // (Lock it in on the venue the plan already has, from a card or pin
+      // that carries less than the plan does) is not a move, and still only
+      // fills in what the body adds, so a re-confirm never strips the plan's
+      // own coordinates. $2 and $4 are cast the same way everywhere they
+      // appear, because a parameter read as two types is refused whole
+      // (42P08; __tests__/sqlParameterTypes.test.js prepares this).
       const runFlockUpdate = (db) => db.query(
         `UPDATE flocks
          SET name = COALESCE($1, name),
-             venue_name = COALESCE($2, venue_name),
-             venue_address = COALESCE($3, venue_address),
-             venue_id = COALESCE($4, venue_id),
-             venue_latitude = COALESCE($5, venue_latitude),
-             venue_longitude = COALESCE($6, venue_longitude),
-             venue_rating = COALESCE($7, venue_rating),
-             venue_photo_url = COALESCE($8, venue_photo_url),
+             venue_name = COALESCE($2::text, venue_name),
+             venue_address = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                                  THEN $3::text ELSE COALESCE($3::text, venue_address) END,
+             venue_id = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                             THEN $4::text ELSE COALESCE($4::text, venue_id) END,
+             venue_latitude = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                                   THEN $5::double precision ELSE COALESCE($5::double precision, venue_latitude) END,
+             venue_longitude = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                                    THEN $6::double precision ELSE COALESCE($6::double precision, venue_longitude) END,
+             venue_rating = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                                 THEN $7::numeric ELSE COALESCE($7::numeric, venue_rating) END,
+             venue_photo_url = CASE WHEN $2::text IS NOT NULL AND CASE WHEN $4::text IS NOT NULL AND venue_id IS NOT NULL THEN $4::text <> venue_id ELSE $2::text IS DISTINCT FROM venue_name END
+                                    THEN $8::text ELSE COALESCE($8::text, venue_photo_url) END,
              event_time = COALESCE($9, event_time),
              status = COALESCE($10::text, status),
              updated_at = NOW()
