@@ -514,6 +514,69 @@ test('a card carries no crowd number unless the crowd tool produced one', async 
   assert.strictEqual(r.body.venues[0].crowd_label, null);
 });
 
+// A turn that searches, then asks the crowd tool about the first result, then
+// answers. The crowd tool's reading is what the card for that turn carries.
+const SEARCH_ARGS = { query: 'bars', location: '39.74,-104.98' };
+const searchThenCrowd = (_p, call) => {
+  if (call === 1) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'search_venues', args: SEARCH_ARGS } }] } }] };
+  }
+  if (call === 2) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c2', name: 'get_crowd_prediction', args: { place_id: 'PLACE_CLEAN' } } }] } }] };
+  }
+  return { candidates: [{ content: { parts: [{ text: 'oakwood is filling up' }] } }] };
+};
+
+test("one account's crowd reading never rides the shared search cache into another account's card", async () => {
+  // The search cache is keyed on the words and a ~1 km square, so everyone
+  // nearby shares an entry for five minutes. The card enrichment used to write
+  // onto the cached venue objects themselves.
+  sendImpl = searchThenCrowd;
+  const asker = await chat({ messages: [{ role: 'user', text: 'bars near me, how busy is oakwood' }] });
+  assert.strictEqual(asker.status, 200);
+  assert.strictEqual(asker.body.venues[0].crowd, 55, 'the account that asked gets the reading on its card');
+
+  // A second account, same neighbourhood, same words, well inside five minutes.
+  CURRENT_USER = { id: ++nextUserId, name: 'Ben' };
+  sendCalls = [];
+  sendImpl = oneToolCall('search_venues', SEARCH_ARGS, 'here are some bars');
+  const other = await chat({ messages: [{ role: 'user', text: 'bars near me' }] });
+  assert.strictEqual(other.status, 200);
+  assert.strictEqual(other.body.venues[0].crowd, null,
+    "another account's crowd reading reached this card through the search cache");
+  assert.strictEqual(other.body.venues[0].crowd_label, null);
+  const searched = sendCalls[1].message[0].functionResponse.response.venues[0];
+  assert.ok(!('crowd' in searched) && !('crowd_label' in searched),
+    "the model was handed another account's crowd reading inside a search result, with no source beside it");
+});
+
+test('the search result the model was handed does not grow a crowd number when its card does', async () => {
+  sendImpl = searchThenCrowd;
+  const r = await chat({ messages: [{ role: 'user', text: 'bars near me, how busy is oakwood' }] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.venues[0].crowd, 55);
+  // What the SDK was given for the search round, which is also what the chat
+  // history carries into every later round of the turn.
+  const searched = sendCalls[1].message[0].functionResponse.response.venues[0];
+  assert.ok(!('crowd' in searched) && !('crowd_label' in searched),
+    'the card enrichment wrote an unattributed crowd number into a search result the model had already been given');
+});
+
+test('the leader of a search, a caller that joined its flight and a later cache hit each hold their own venues', async () => {
+  const { executeTool } = aiRouter.__testables;
+  const [leader, joiner] = await Promise.all([
+    executeTool('search_venues', SEARCH_ARGS, 1),
+    executeTool('search_venues', SEARCH_ARGS, 2),
+  ]);
+  leader.venues[0].crowd = 85;
+  leader.venues[0].types.push('written_by_a_turn');
+  const hit = await executeTool('search_venues', SEARCH_ARGS, 3);
+  for (const [who, out] of [['a caller that joined the flight', joiner], ['a later cache hit', hit]]) {
+    assert.strictEqual(out.venues[0].crowd, undefined, `${who} saw a number another turn wrote`);
+    assert.deepStrictEqual(out.venues[0].types, ['bar'], `${who} shares a types list with another turn`);
+  }
+});
+
 // ===========================================================================
 // 5. NAVIGATION IS A CLOSED SET
 // ===========================================================================

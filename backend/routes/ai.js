@@ -683,6 +683,26 @@ function birdieSearchSet(key, data) {
   }
 }
 
+// EVERY CALLER GETS ITS OWN COPY OF A SEARCH, AND THE STORED ONE IS NEVER
+// HANDED OUT. The key is a query and a ~1 km square, so an entry is shared by
+// every account nearby for five minutes, and the tool loop writes a crowd
+// reading onto the venues it collects for the cards. Handed the stored objects,
+// that write landed in the cache: the next person to ask for "bars" nearby got
+// a card showing a crowd number they never asked for, the model got it in their
+// search result with no crowd_source or attribution beside it, and an account
+// whose crowd meter was spent got the number through the one path that never
+// checks the meter. A copy per caller, on a hit, on the leader's own miss and
+// on a joined flight alike, means nothing a turn writes can reach another turn.
+// Shallow per venue plus its types list, which is every nested thing the
+// search builds.
+function copySearchResult(result) {
+  if (!result || !Array.isArray(result.venues)) return result;
+  return {
+    ...result,
+    venues: result.venues.map((v) => ({ ...v, types: Array.isArray(v.types) ? [...v.types] : v.types })),
+  };
+}
+
 // THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
 // OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
 // locked and nothing paid was computed, and the tool loop, when another turn
@@ -728,9 +748,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // nothing. See BIRDIE'S VENUE SEARCH CACHE above.
       const searchKey = birdieSearchKey(toolInput.query, toolInput.location);
       const cachedVenues = birdieSearchGet(searchKey);
-      if (cachedVenues) return { venues: cachedVenues };
+      if (cachedVenues) return copySearchResult({ venues: cachedVenues });
       const inflight = birdieSearchInflight.get(searchKey);
-      if (inflight) return inflight;
+      if (inflight) return copySearchResult(await inflight);
       // Birdie was a complete bypass of every Places cost control: the tool
       // loop runs up to 5 iterations and executes every call the model emits,
       // so one free account could drive thousands of PAID Places calls a day
@@ -788,7 +808,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       })();
       birdieSearchInflight.set(searchKey, work);
       try {
-        return await work;
+        // A copy for the leader too: `venues` inside `work` is the array the
+        // cache just stored and the one every joined flight reads.
+        return copySearchResult(await work);
       } finally {
         birdieSearchInflight.delete(searchKey);
       }
@@ -2018,9 +2040,17 @@ router.post('/chat',
               if (charged.locked) lockForecastResult(result, { salesOff });
             }
 
-            // Collect venue data for cards
+            // Collect venue data for cards. The cards get copies of their own,
+            // because the crowd enrichment below writes onto them and
+            // `result.venues` is also the search result handed back to the
+            // model this round and kept in the chat history for the next ones.
+            // Written through, a crowd number with no crowd_source and no
+            // attribution appeared inside a search result the model had
+            // already been given, which is a number it could present as
+            // Flock's own. The model keeps exactly what the search returned;
+            // only the cards carry the reading.
             if (name === 'search_venues' && result.venues) {
-              collectedVenues.push(...result.venues);
+              collectedVenues.push(...result.venues.map((v) => ({ ...v })));
             }
             if (name === 'navigate_app' && result.navigated) {
               navigationAction = { tab: result.tab, screen: result.screen, profile_section: result.profile_section };
