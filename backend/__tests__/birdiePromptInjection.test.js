@@ -584,6 +584,43 @@ test('the leader of a search, a caller that joined its flight and a later cache 
   }
 });
 
+// A turn whose searches return the same place twice. `secondResults`, when
+// given, is what the second search returns; otherwise it is the same search
+// again, answered from the cache as a copy of its own.
+const searchTwiceThenCrowd = (secondArgs, secondResults) => (_p, call) => {
+  if (call === 1) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'search_venues', args: SEARCH_ARGS } }] } }] };
+  }
+  if (call === 2) {
+    if (secondResults) placesResponse = secondResults;
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c2', name: 'search_venues', args: secondArgs } }] } }] };
+  }
+  if (call === 3) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c3', name: 'get_crowd_prediction', args: { place_id: 'PLACE_CLEAN' } } }] } }] };
+  }
+  return { candidates: [{ content: { parts: [{ text: 'oakwood is filling up' }] } }] };
+};
+
+test('the same search run twice in one turn is one card per place, and the card carries the reading', async () => {
+  sendImpl = searchTwiceThenCrowd(SEARCH_ARGS);
+  const r = await chat({ messages: [{ role: 'user', text: 'bars near me, how busy is oakwood' }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.venues.map((v) => v.place_id), ['PLACE_CLEAN'],
+    'one venue became two cards because two searches returned it');
+  assert.strictEqual(r.body.venues[0].crowd, 55);
+  assert.ok(r.body.venues[0].crowd_label, 'the card got the number without its label');
+});
+
+test('two overlapping searches in one turn give a repeated place one card and a new place the next slot', async () => {
+  const OTHER_PLACE = { ...CLEAN_PLACE, id: 'PLACE_OTHER', displayName: { text: 'Linden' } };
+  sendImpl = searchTwiceThenCrowd({ ...SEARCH_ARGS, query: 'cocktail bars' }, [CLEAN_PLACE, OTHER_PLACE]);
+  const r = await chat({ messages: [{ role: 'user', text: 'bars or cocktail bars near me, how busy is oakwood' }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.venues.map((v) => v.place_id), ['PLACE_CLEAN', 'PLACE_OTHER']);
+  assert.strictEqual(r.body.venues[0].crowd, 55, 'the reading landed on a card other than the one shown for the place');
+  assert.strictEqual(r.body.venues[1].crowd, null, 'a venue nobody asked the crowd tool about carries a number');
+});
+
 // ===========================================================================
 // 5. NAVIGATION IS A CLOSED SET
 // ===========================================================================
