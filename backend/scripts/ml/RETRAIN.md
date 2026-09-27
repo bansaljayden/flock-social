@@ -311,6 +311,7 @@ The band gate requires, on the model-served live readings of the window
 | sample | at least 1,000 readings over at least 5 dates |
 | the incumbent never saw the window | its `time_holdout.training_live_through` (else `trained_at`) is before the window |
 | beats the incumbent | within one band up, and the date-block CI95 lower bound above −1.0 point |
+| within-10 not worse (2026-09-26) | within-10 against the incumbent, CI95 lower bound above −1.0 point |
 | beats the weekly curve | within one band up with a CI95 lower bound above 0, AND band MAE no worse than the curve's (this is what stops a hedge) |
 | not worse than the rule engine | within one band not below it |
 | no city regresses | every city with 300+ readings within 2 points of the incumbent |
@@ -522,6 +523,92 @@ incumbent and the curve by clear margins on the band gate and still be refused
 there. Keep it, or make it advisory whenever the band gate is required (the
 band gate's "beats the weekly curve" asks the same question on the population
 the card is scored on). This change keeps it binding.
+
+### The live features, rehearsed (2026-09-26)
+
+The same partial export and window as the rehearsal above (the 4,183
+model-served readings of Lehigh 09-06..08 and Miami, 3 dates),
+`FLOCK_TIME_HOLDOUT_DAYS=3`, `FLOCK_MIN_REALTIME_ROWS=1000`,
+`FLOCK_DEAD_SLOT_POLICY=warn`, `FLOCK_CALENDAR_POLICY=drop`,
+`FLOCK_WEEKLY_ANCHOR_WEIGHT=auto`, CPU. The export was widened to the 48-column
+contract with migration 094's three columns empty (the truth for every row
+it holds) and the local `sports_events.csv` (2026-08-30) present, so the
+sports family was on. Three candidates: **new** (live features on, month
+family off), **month on** (the same with `FLOCK_CALENDAR_POLICY=require`) and
+**no live** (`FLOCK_LIVE_FEATURES=off`, otherwise new). Each is served the way
+predictBusyness serves it: model mode, no quantile map, no post-hoc offset
+for an artifact that learns it, and no nowcast (its weights belong to
+2.6.0-starling).
+
+| on the held-out readings | w10 | w1b | band exact | band MAE | MAE | bias | Packed w1b |
+|---|---|---|---|---|---|---|---|
+| **production today: curve_offset + nowcast** (the bar) | **53.8%** | 78.8% | **56.0%** | **0.735** | **17.06** | −0.98 | 53.0% |
+| new: live features, month off | 41.6% | 79.7% | 43.1% | 0.817 | 18.96 | +0.40 | 41.9% |
+| month on | 39.7% | **80.0%** | 42.3% | 0.818 | 19.17 | +1.00 | 41.2% |
+| no live features | 31.7% | 70.8% | 35.5% | 1.039 | 24.21 | −5.12 | 19.5% |
+| curve_offset alone | 30.2% | 70.2% | 33.5% | 1.061 | 24.45 | −1.75 | 24.6% |
+| v2.6.0-starling as served before the switches (map on) | 28.6% | 58.5% | 32.2% | 1.321 | 30.61 | +13.00 | 62.3% |
+| weekly curve | 32.3% | 65.9% | 31.5% | 1.128 | 25.66 | +4.39 | 32.3% |
+
+Date-block bootstrap, change in points [CI95] (three dates, so coarse):
+
+| comparison | w10 | w1b |
+|---|---|---|
+| new vs production (curve_offset + nowcast) | −12.19 [−16.29, −2.74] | +0.88 [0.33, 3.71] |
+| new vs curve_offset alone | +11.40 [9.00, 12.98] | +9.47 [5.65, 11.49] |
+| new vs v2.6.0 as served before the switches | +13.05 [9.35, 15.17] | +21.18 [15.81, 24.22] |
+| new vs weekly curve | +9.30 [5.07, 12.36] | +13.77 [8.06, 15.83] |
+| new minus no live (what the live features buy) | +9.97 [8.87, 10.54] | +8.87 [2.42, 11.70] |
+| **new minus month on (the month ablation)** | **+1.91 [1.32, 3.39]** | **−0.33 [−0.81, −0.09]** |
+| month on vs production | −14.10 [−17.61, −6.13] | +1.22 [0.61, 4.52] |
+
+Band gate against production's arithmetic (`--incumbent-serve=curve_offset+nowcast`):
+new and month on pass beats-the-incumbent, beats-the-curve (with a lower band
+MAE), the rule engine and the city check, and FAIL the point-error guard (MAE
+18.96 and 19.17 against 17.06 + 1) and the sample (3 dates). No live fails
+against production outright.
+
+What it says:
+
+- **The live features are the change that matters.** They carry 47% of the new
+  candidate's split gain (`last_live_dev` 23.1%, `curve_prev_hour` 10.1%,
+  `last_live_age_h` 6.2%, `recent_offset` 5.1%, `recent_offset_n` 2.7%) and
+  are worth +10.0 within-10 and +8.9 within one band over the same candidate
+  without them. The sports family carries 0.02% (the local schedule lights 292
+  training rows); it cannot be judged until the table is refreshed.
+- **The model does not yet beat production on the owner's metric.** It wins
+  within one band by +0.9 and loses within-10 by 12.2 and exact band by 12.9.
+  The reason is the sticky vendor value: production carries a one-hour-old
+  reading as the number itself, which is within 10 points 86% of the time on
+  those rows; the model, trained on 3,579 live readings, learns to move toward
+  the reading but not to copy it. With 60,000 live training rows in October it
+  has fifteen times the evidence; re-measure before concluding anything.
+- **The month decision: keep it dropped for October.** Month on gains 0.33 of
+  within one band and loses 1.91 of within-10, the primary metric, with both
+  intervals excluding zero. Every training row here is from one month (the
+  weekly anchors carry the collection month and all live rows are September),
+  so month can only learn "when collected". Re-admit the month family when
+  the live corpus spans at least two full seasons (live collection started
+  2026-09-01, so no earlier than June 2027), and then only if this same
+  ablation, re-run on that export, wins within-10 with a CI above zero.
+- **What ships in October is decided by the band gate against production**,
+  not against the model alone: `--incumbent-serve=curve_offset+nowcast`. A
+  candidate that loses within-10 to production does not ship even if it wins
+  within one band; production keeps the switches and the candidate waits.
+- **The next thing to measure** is the new model as the nowcast's base (the
+  switch's model table re-fitted for it). It cannot be fitted honestly here:
+  the fit dates are the model's own training rows. In October, with a 14-day
+  holdout, fit the weights on its first seven days and score the last seven.
+
+The October runbook adds, to the commands above: export the schedule after a
+refresh (`collectSportsSchedules.js`, then `exportSportsEvents.js`); run the
+three variants (new, `FLOCK_CALENDAR_POLICY=require`,
+`FLOCK_LIVE_FEATURES=off`) into copies of `models/`; gate each with
+`--incumbent-serve=curve_offset+nowcast`; ship only a candidate that passes
+every criterion, which now includes `within_10_not_worse` (within-10 against
+the incumbent as served, CI95 lower bound above −1 point; added to
+`bandGate` after this rehearsal); otherwise keep v2.6.0-starling with both
+switches on.
 
 ### Packed rooms under the serving switches (2026-09-26): no change shipped
 

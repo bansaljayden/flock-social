@@ -1026,6 +1026,11 @@ function bandGate({ rows, cuts, labels, candidate, incumbent, naive, rule, fromD
   const rul = summarize(actual, rule, cuts);
   const dates = new Set(rows.map((r) => r.date)).size;
   const vsInc = pairedDateBootstrap(rows, hits(candidate), hits(incumbent));
+  // Within 10 is the owner's primary metric (since 2026-08-28). A candidate
+  // may not buy within one band with it: the 2026-09-26 rehearsal won within
+  // one band by +0.9 against production and lost within-10 by 12.
+  const w10hits = (pred) => rows.map((r, i) => Math.abs(pred[i] - r.y) <= 10);
+  const vsIncW10 = pairedDateBootstrap(rows, w10hits(candidate), w10hits(incumbent));
   const vsNaive = pairedDateBootstrap(rows, hits(candidate), hits(naive));
   const vsRule = pairedDateBootstrap(rows, hits(candidate), hits(rule));
 
@@ -1049,6 +1054,11 @@ function bandGate({ rows, cuts, labels, candidate, incumbent, naive, rule, fromD
     sample: { pass: rows.length >= limits.minRows && dates >= limits.minDates, rows: rows.length, dates, need: `>= ${limits.minRows} rows over >= ${limits.minDates} dates` },
     incumbent_unseen: { pass: unseen, incumbent_data_through: incumbentThrough, from: fromDate, need: 'the incumbent stopped learning before the first held-out date' },
     beats_incumbent: { pass: vsInc.delta > 0 && !!vsInc.ci95 && vsInc.ci95[0] > limits.incumbentCiLowerMin, ...vsInc, need: `delta > 0 and CI95 low > ${limits.incumbentCiLowerMin}pp` },
+    within_10_not_worse: {
+      pass: !!vsIncW10.ci95 && vsIncW10.ci95[0] > limits.incumbentCiLowerMin,
+      ...vsIncW10,
+      need: `within-10 against the incumbent: CI95 low > ${limits.incumbentCiLowerMin}pp`,
+    },
     // Beating the curve is the "something real" bar, and it is argued in
     // bands AND in band distance: a model that wins within_one_band by hedging
     // toward Not Busy loses band_mae to the curve and fails here.

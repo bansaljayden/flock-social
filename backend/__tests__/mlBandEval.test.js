@@ -194,6 +194,21 @@ test('a candidate that reads the room better than the incumbent and the curve pa
   assert.ok(g.hedge_reference && g.hedge_reference.band, 'the constant-answer reference rides on every verdict');
 });
 
+test('a candidate that wins within one band by losing within-10 fails the gate', () => {
+  const { cuts, labels } = B.bandLadder(crowdEngine.getLabel);
+  const rows = gatePopulation();
+  const truth = rows.map((r) => r.y);
+  // Right band everywhere but 12 points off: within one band 100%, within-10 0%.
+  const candidate = truth.map((y) => (y >= 50 ? y - 12 : y + 12));
+  const incumbent = truth.map((y, i) => (i % 10 < 2 ? 60 : y));
+  const naive = truth.map((y, i) => (i % 10 < 4 ? 60 : y));
+  const rule = truth.map(() => 50);
+  const g = B.bandGate({ rows, cuts, labels, candidate, incumbent, naive, rule, fromDate: '2026-10-01', incumbentThrough: '2026-08-18' });
+  assert.equal(g.criteria.within_10_not_worse.pass, false);
+  assert.ok(g.criteria.within_10_not_worse.delta < -50);
+  assert.equal(g.pass, false);
+});
+
 test('a candidate that hedges to Not Busy wins within-one-band and still fails the gate', () => {
   const { cuts, labels } = B.bandLadder(crowdEngine.getLabel);
   const rows = gatePopulation();
