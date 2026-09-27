@@ -38,6 +38,66 @@ const isNativeIos = () =>
 // never written to storage, and it dies with the page.
 let lastDelivered = null;
 
+// FINISHING A NEW ACCOUNT WITHOUT A SECOND SHEET.
+//
+// A brand-new Apple account is answered 403 {needsDob, dobGranularity:'year'}:
+// Apple never sends a birth year and the server will not create an account
+// without one. That answer used to end the sheet's usefulness, so the person
+// typed a year and then had to tap Continue with Apple and go through Apple's
+// sheet a second time. App Review's first action on build 38 was exactly that
+// path, as a new user.
+//
+// The second sheet was never needed. The server refuses at the date check,
+// BEFORE the one-use authorization code is exchanged (backend/routes/auth.js,
+// the exchange sits under "The code exchange is a gate"), and its identity
+// token replay guard releases the claim on every refusal (the `finally` on
+// the /apple route, R4-A1), precisely so the same credential can come back
+// with a birthday. So on that 403 the credentials from this sheet are held in
+// a closure, handed to the screen as `resume`, and sent again with the year.
+//
+// Memory only. They are never written to storage, never put in React state
+// that devtools or a crash report could serialise, and the closure is dropped
+// by the screen the moment it is used or fails. Apple's authorization code
+// lasts about five minutes, so after that `resume` refuses without posting
+// and the screen asks for the Apple tap again, which is the old path and
+// still works.
+export const APPLE_CODE_LIFETIME_MS = 5 * 60 * 1000;
+
+export class AppleResumeExpiredError extends Error {
+  constructor() {
+    super('Apple sign-in timed out');
+    this.name = 'AppleResumeExpiredError';
+    this.expired = true;
+  }
+}
+
+const makeResume = ({ identityToken, fullName, authorizationCode }) => {
+  const heldAt = Date.now();
+  let used = false;
+  return async (dob, dobGranularity) => {
+    // One use. A second call, whatever happened to the first, is a stale
+    // handle, and the server would refuse a spent credential anyway.
+    if (used || Date.now() - heldAt > APPLE_CODE_LIFETIME_MS) {
+      used = true;
+      throw new AppleResumeExpiredError();
+    }
+    used = true;
+    let data;
+    try {
+      data = await appleLogin(identityToken, fullName, authorizationCode, dob,
+        ...(dobGranularity ? [{ dobGranularity }] : []));
+    } catch (err) {
+      // Offline, or the connection failed before an answer: the server never
+      // saw the credentials, so they are still good until the deadline above.
+      if (err?.isNetworkError && !err?.isTimeout) used = false;
+      throw err;
+    }
+    // Accepted, so the same rule as a first-tap success: forget the name.
+    lastDelivered = null;
+    return data;
+  };
+};
+
 // `dob` (optional): passed through on account CREATION — the server requires a
 // date of birth for new accounts on every auth path (age gate). Existing
 // accounts sign in fine without it.
@@ -59,6 +119,8 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
     if (busy) return;
     if (beforeAuthorize && beforeAuthorize() === false) return;
     setBusy(true);
+    // What this sheet handed over, kept only for the catch below.
+    let held = null;
     try {
       const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
       const result = await SignInWithApple.authorize({
@@ -82,6 +144,7 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
         ? lastDelivered.fullName
         : undefined;
       const fullName = delivered || remembered;
+      held = { identityToken: r.identityToken, fullName, authorizationCode: r.authorizationCode };
       const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob,
         ...(dobGranularity ? [{ dobGranularity }] : []));
       // Accepted: the account carries the name now, and nothing else on this
@@ -94,8 +157,15 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
       // `err.data.needsDob` — the server answers 403 {needsDob:true} when a
       // brand-new Apple account arrives with no date of birth, and a screen
       // that only sees the message string cannot offer the retry field.
+      //
+      // The third argument is `resume`, and only on the creation 403 that asks
+      // for a year: see makeResume above. Every other refusal gets none.
       const msg = String(err?.message || err);
-      if (!/cancel|1001/i.test(msg)) onError?.(msg || 'Apple sign-in failed', err);
+      const resume = held && err?.data?.needsDob && err.data.dobGranularity === 'year'
+        ? makeResume(held)
+        : undefined;
+      held = null;
+      if (!/cancel|1001/i.test(msg)) onError?.(msg || 'Apple sign-in failed', err, resume);
     } finally {
       setBusy(false);
     }
