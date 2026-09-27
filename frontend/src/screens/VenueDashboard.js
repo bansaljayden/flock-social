@@ -1211,7 +1211,7 @@ export default function VenueDashboard({
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>The weekly summary is part of Roost.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'The weekly summary is part of Roost.' : 'The weekly summary is not turned on for your venue.'}</p>
             </div>
           )}
 

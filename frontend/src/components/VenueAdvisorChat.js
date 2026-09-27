@@ -673,7 +673,11 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       // A 403 that says the plan could not be CHECKED is a retryable error,
       // not a lock; the locked state has no retry.
       if (err?.status === 403 && err?.data?.reason !== 'ENTITLEMENT_UNAVAILABLE') {
-        setLockedReason(err?.data?.error || 'This is part of Roost.');
+        // The App Store build names no plan (see lib/purchasesBuild.js),
+        // including the server's own wording.
+        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'
+          ? (err?.data?.error || 'This is part of Roost.')
+          : 'This is not turned on for your venue.');
         setState('locked');
       } else {
         setState('error');
