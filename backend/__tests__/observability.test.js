@@ -389,7 +389,13 @@ function loadShutdown() {
     exit(code) { calls.push(`exit(${code})`); this.exitCodes.push(code); },
     on: (sig, fn) => { signals[sig] = fn; },
   };
-  const io = { disconnectSockets: (close) => calls.push(`io.disconnectSockets(${close})`) };
+  // The transports are closed, not the sockets disconnected: a DISCONNECT
+  // packet is the one thing socket.io-client never reconnects from
+  // (deployReconnect.test.js drives a real client through this).
+  const io = {
+    engine: { close: () => calls.push('io.engine.close') },
+    disconnectSockets: (close) => calls.push(`io.disconnectSockets(${close})`),
+  };
   const server = {
     closeError: null,
     close(cb) { calls.push('server.close'); setImmediate(() => cb(this.closeError)); },
@@ -428,7 +434,7 @@ test('SIGTERM drains: sockets kicked, server closed, pool ended, THEN exit 0 —
   // request that could change a meter, before the connection that writes it
   // is taken away.
   assert.deepStrictEqual(order, [
-    'io.disconnectSockets(true)',
+    'io.engine.close',
     'server.close',
     'server.closeIdleConnections',
     'usageStore.flushNow',
